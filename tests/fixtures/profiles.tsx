@@ -124,7 +124,10 @@ async function attestAgentProfile() {
       : head,
   );
 }
-function session() {
+let replacementDiscovery: Promise<void> | undefined;
+let releaseReplacementDiscovery = () => {};
+let replacementDiscoveryStarted = false;
+function session(discoveryGate?: Promise<void>) {
   return createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -160,6 +163,13 @@ function session() {
             : url;
       },
       async query(filters) {
+        if (
+          discoveryGate &&
+          filters.some((filter) => filter.kinds?.includes(39002))
+        ) {
+          replacementDiscoveryStarted = true;
+          await discoveryGate;
+        }
         if (
           replyGate &&
           filters.some((filter) => filter.ids?.includes(reply.id))
@@ -369,6 +379,7 @@ const pages = new PagesService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    generation: () => snapshot.generation,
     messages: { root: root.id, reply: reply.id },
     holdReply() {
       replyPending = false;
@@ -411,12 +422,50 @@ Object.assign(window, {
         profile(missing, { name: "Recovered", about: "Recovered biography" }),
       );
     },
-    replace() {
+    retain() {
+      snapshot = { ...snapshot, status: "connecting", cached: true };
+      for (const listener of listeners) listener();
+    },
+    holdReplacementDiscovery() {
+      replacementDiscovery = new Promise<void>((resolve) => {
+        releaseReplacementDiscovery = resolve;
+      });
+    },
+    replacementDiscoveryStarted: () => replacementDiscoveryStarted,
+    releaseReplacementDiscovery: () => releaseReplacementDiscovery(),
+    retained: () => !!snapshot.cached,
+    // A retained cached reconnect replaces the session without resetting generation.
+    async replace() {
+      const successor = session(replacementDiscovery);
+      // provideRelay restores discovery before publishing its successor. This
+      // transport-only fixture instead reads its signed roster and metadata;
+      // publishing an idle session would introduce a gap the service avoids.
+      const channels = successor.session.channels;
+      await new Promise<void>((resolve, reject) => {
+        const ready = () => {
+          const list = channels.list();
+          if (list.status === "error") {
+            stop();
+            reject(new Error(list.error));
+          } else if (
+            list.status === "ready" &&
+            list.channels.every((channel) => !channel.metadataPending)
+          ) {
+            stop();
+            resolve();
+          }
+        };
+        const stop = channels.subscribeList(ready);
+        channels.ensureList();
+        ready();
+      });
+      for (const id of owner.retainedChannels()) channels.ensure(id);
       owner.dispose();
-      owner = session();
+      owner = successor;
+      const { cached: _cached, ...retained } = snapshot;
       snapshot = {
-        ...snapshot,
-        generation: snapshot.generation + 1,
+        ...retained,
+        status: "ready",
         session: owner.session,
       };
       for (const listener of listeners) listener();

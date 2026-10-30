@@ -217,7 +217,7 @@ async function page(
         complete: () => true,
       }
     : undefined;
-  render(
+  const content = (request = navigation) => (
     <ToastProvider>
       <ChannelsPage
         relay={relay}
@@ -226,14 +226,33 @@ async function page(
           navigator ??
           createNavigationController(createMemoryHistory()).navigation
         }
-        navigation={navigation}
+        navigation={request}
       />
-    </ToastProvider>,
+    </ToastProvider>
   );
+  let view = render(content());
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
     hidden: routed,
+  });
+  const channelVisit = (id: string): NonNullable<typeof navigation> => ({
+    entryId: `channel-${id}`,
+    target: {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        viewer: viewer.pubkey,
+        communityOrigin: "https://relay.test",
+      },
+      channelId: id,
+    },
+    signal: new AbortController().signal,
+    forSession() {
+      return this;
+    },
+    resolve: () => true,
+    complete: () => true,
   });
   const open = () =>
     user.click(screen.getByRole("button", { name: "Open notes" }));
@@ -241,6 +260,11 @@ async function page(
     user,
     composer,
     open,
+    showChannel: (id: string) => view.rerender(content(channelVisit(id))),
+    remount: (id?: string) => {
+      view.unmount();
+      view = render(content(id ? channelVisit(id) : navigation));
+    },
     session: snapshot.session,
     scope,
     viewer: viewer.pubkey,
@@ -913,3 +937,49 @@ it("opens another conversation's tab in its channel, but not the current channel
     }),
   );
 });
+
+it.each([false, true])(
+  "a host remount preserves menu tabs but changing channel retires them (remount=%s)",
+  async (remount) => {
+    const h = await page();
+    const menu: RegisteredPanel = {
+      id: "menu",
+      pluginId: "fixture",
+      key: "fixture/menu",
+      revision: "1",
+      title: "Canvas test",
+      matches: () => false,
+      channelMenu: { label: "Canvas test", eligible: () => true },
+      component: () => <p>Retained menu view</p>,
+    };
+    (h.panels.snapshot() as RegisteredPanel[]).push(menu);
+    const state = renderHook(() => useChannelTabState(h.session, "alpha"));
+    act(() => {
+      state.result.current.setEntries([
+        {
+          channelId: "alpha",
+          panel: menu,
+          target: "",
+          channelContext: {
+            scope: h.scope,
+            viewer: h.viewer,
+            channelId: "alpha",
+            channelName: "Alpha",
+            relayUrl: "wss://relay.test",
+          },
+        },
+      ]);
+      state.result.current.select("fixture/menu:");
+    });
+    expect(
+      screen.getByRole("tab", { name: "Canvas test" }),
+    ).toBeInTheDocument();
+    h.remount();
+    expect(
+      await screen.findByRole("tab", { name: "Canvas test" }),
+    ).toBeInTheDocument();
+    act(() => (remount ? h.remount("beta") : h.showChannel("beta")));
+    await screen.findByRole("textbox", { name: "Message #Beta" });
+    expect(state.result.current.entries).toEqual([]);
+  },
+);

@@ -84,6 +84,7 @@ export function applyApps(
   };
   ctx.panels.register({
     id: "app",
+    restore: "view",
     title: "App",
     keepOpen: true,
     matches: (target) => ctx.browser.available && isAppUrl(target),

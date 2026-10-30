@@ -691,7 +691,7 @@ function ChannelWorkspace({
     "messages",
     navigator,
   );
-  const { settings, setSettings, retireMenuEntries } = tabState;
+  const { settings, setSettings } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -1054,7 +1054,7 @@ function ChannelWorkspace({
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
-    onCloseTabs: (tabs, entries, keep) => {
+    onCloseTabs: (tabs, entries, keep, pending = []) => {
       const remaining = tabState.entries.filter(
         (entry) => panelTabId(entry) === keep,
       );
@@ -1064,7 +1064,11 @@ function ChannelWorkspace({
         ? tabPane(keptTab)
         : keptEntry
           ? entryPane(tabState.mainEntries, keptEntry)
-          : "main";
+          : tabState.pendingEntries?.some(
+                (entry) => `${entry.key}:${entry.target}` === keep,
+              ) && !tabState.mainEntries?.includes(keep ?? "")
+            ? "side"
+            : "main";
       const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
       const visits = [
@@ -1078,6 +1082,9 @@ function ChannelWorkspace({
             ? tabState.detailVisits(entry.channelId, entry.target)
             : [],
         ),
+        ...pending.flatMap((entry) =>
+          tabState.detailVisits(entry.channelId, entry.target),
+        ),
       ];
       dismissContent(
         visits,
@@ -1085,6 +1092,15 @@ function ChannelWorkspace({
         keep === "settings" ? "side" : pane,
         remaining,
       );
+    },
+    onClosePending: (entry, pane) => {
+      const fallback = closeTarget(pane);
+      if (fallback)
+        dismissContent(
+          tabState.detailVisits(entry.channelId, entry.target),
+          fallback,
+          pane,
+        );
     },
     onClosePanel: (entry, remaining) => {
       if (!historyPanel(entry)) return;
@@ -1262,15 +1278,17 @@ function ChannelWorkspace({
         (kept.pane === "main"
           ? tabState.getMainSelected()
           : tabState.getSelected()) === kept.id;
+      const visit = `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`;
+      const applying = tabState.visit !== visit;
       tabState.enterVisit(
-        `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
+        visit,
         detail ? undefined : routedThread,
         !!detail,
         detail && currentId
           ? { channelId: currentId, target: detail.target }
           : undefined,
       );
-      if (detail && currentId) {
+      if (detail && currentId && applying) {
         const entry = panelOpening(
           panels,
           currentId,
@@ -1327,6 +1345,7 @@ function ChannelWorkspace({
     exact?.inTimeline,
     routedThread,
     tabState.enterVisit,
+    tabState.visit,
     tabState.select,
     tabState.selectMain,
     tabState.setPaneOpen,
@@ -1337,11 +1356,6 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
-  // Menu panels belong to one visit. Retire only this visit's keyed entries.
-  useEffect(() => {
-    if (!currentId) return;
-    return () => retireMenuEntries();
-  }, [currentId, retireMenuEntries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {
@@ -2285,6 +2299,8 @@ function ChannelWorkspace({
                       ? [
                           {
                             id: "settings",
+                            load:
+                              tabState.paneOpen && selectedTab === "settings",
                             label: "Channel settings",
                             icon: <GearIcon size="1rem" />,
                             close: closeSettings,

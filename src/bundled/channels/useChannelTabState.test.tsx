@@ -681,6 +681,9 @@ test.each(["channel", "message"])(
     act(() =>
       h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
     );
+    // The restoration branch also hands off the last applied visit. Leave it
+    // before checking a new application with a different address.
+    act(() => h.result.current.enterVisit("between:channel"));
     h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
     const changed = {
       ...route,

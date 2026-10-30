@@ -267,7 +267,11 @@ ctx.reflect.get("sidebarSections")?.register({
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
-`ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
+`ctx.panels.register({ id, title, icon?, matches, order?, launcher?, toolbar?, component })`.
+The optional `icon` is a shared design-system icon component used by channel menus
+and content tabs before the body mounts. A mounted view can still override its
+tab identity through `usePanelTabTitle` for target-specific content.
+An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
@@ -455,6 +459,43 @@ and returns false after the originating opening, channel, session or host
 presentation retires. This is not a global navigation API or an access grant.
 A tab's `open` replaces that tab; a channel drawer or side-column panel's `open`
 opens the target as a new tab.
+
+### Restoring tab content
+
+A saved content tab is an address and presentation, not a running component.
+Channels saves every panel tab's contribution key, target, channel/root address,
+order, pane and selection in the window's session storage. A missing contribution
+keeps an unavailable tab that can still be selected or closed. Link tabs resolve
+only through the same currently winning contribution; channel-menu/launcher tabs
+bind their exact current contribution and rebuild public context from the current
+channel/session, checking eligibility again. Saved context never grants access.
+
+Restored background content waits until its tab is selected in an open pane. Once shown,
+it remains mounted while hidden; this is deferred loading, not automatic suspension
+or eviction of running work. The existing browser and Terminal services continue
+to own their resource lifetimes.
+
+Panels can declare `restore: "view"` to allow a restored view to mount without
+another confirmation. They receive `PanelProps.restored: true`: re-read current
+access/data, reconnect existing work when supported, and show an explicit start
+state when it is absent. Never replay a save, join a call, or start a new shell
+from a restored mount. Without that declaration the host retains the tab and
+requires **Resume** before mounting its component. An ordinary explicit opening
+keeps its existing behavior, including explicitly reopening a retained dormant
+tab. Built-in Profile, GitHub, Canvas, app and Huddles views declare this contract.
+Terminal and Todos currently use drawer/side-column placement and do not enter
+this tab-recovery path; their existing session and start behavior is unchanged.
+
+A retained reconnect keeps the connection generation and hands mounted tab state
+to the replacement relay session in the same account/community scope, regardless
+of which service first accesses the successor store. Panel bodies stay mounted
+without showing Resume. A connection reset still remounts the workspace.
+Session-bound callbacks are still revoked and reconstructed. A fresh host uses
+the saved-address recovery boundary; account/community changes never hand off
+runtime entries.
+
+Drawer and side-column presentation remains page-owned. This contract does not
+change a contribution's placement or persist transient dialogs and pending actions.
 
 ### Opening targets from channel plugins
 
@@ -1555,7 +1596,16 @@ keyboard focus to the opened tab's composer (a thread's reply box, keeping any
 reply target chosen in it) once it can take focus, unless the user clicks or
 types first; an open at a message reveals it instead, and a tab restored when
 the page remounts takes no focus. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
-Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
+Channels tabs do. Window-session storage restores conversation/thread descriptors,
+tab order, pane placement, selection and visit associations across refresh,
+partitioned by community and viewer. Panel targets use the recovery contract above,
+including contributions that register later or remain unavailable. Channel settings
+reopens for its own channel with a fresh view that reads current details and
+permissions; edit dialogs are not restored.
+Focus/reply requests, callbacks and runtime panel objects are never saved. Storage failure leaves live
+tabs usable but makes refresh restoration best effort. Leaving the community
+revokes the live workspace writer and clears its saved workspace. This does not create Back/Forward visits for the
+workspace itself. Showing a tab enters its
 channel visit, as in Channels; `visits: false` leaves reading to the page, as
 Inbox does.
 The tab workspace belongs to Channels, which supplies it with

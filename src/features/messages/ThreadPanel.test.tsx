@@ -19,6 +19,7 @@ import type { MessageComposerProps } from "./MessageComposer";
 import { createAgentLibrary } from "../agents/library";
 import type { RelaySession } from "../relay/session";
 import type { PageNavigation } from "../navigation/service";
+import type { JsonValue } from "../navigation/targets";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
@@ -149,6 +150,8 @@ function ordinaryNavigation() {
     complete: vi.fn<PageNavigation["complete"]>(() => true),
     resolve: vi.fn(() => true),
     forSession: vi.fn<PageNavigation["forSession"]>(),
+    position: vi.fn<PageNavigation["position"]>(),
+    savePosition: vi.fn<PageNavigation["savePosition"]>(),
   } satisfies PageNavigation;
 }
 function messagesHarness(
@@ -1857,6 +1860,160 @@ it("a new reveal request reopens a branch the reader collapsed, and live updates
   Object.assign(props, { messageId: second.id, revealRequest: 3 });
   h.rerenderProps();
   await revealed(second);
+});
+
+/** Visits as navigation keeps them: a visit's place outlives each presentation. */
+function visitPlaces() {
+  const places = new Map<string, JsonValue>();
+  const visit = (entryId: string, traversal?: true) => ({
+    ...ordinaryNavigation(),
+    entryId,
+    ...(traversal && { traversal }),
+    position: (key: string) => places.get(`${entryId}:${key}`),
+    savePosition(key: string, value: JsonValue) {
+      places.set(`${entryId}:${key}`, value);
+    },
+  });
+  /** A link to the root message: an exact reveal, not an ordinary opening. */
+  const linked = (
+    entryId: string,
+    traversal?: true,
+    messageId = row.id,
+  ): PageNavigation => {
+    const navigation = visit(entryId, traversal);
+    const { threadRootId: _root, ...target } = navigation.target;
+    return { ...navigation, target: { ...target, messageId } };
+  };
+  return { places, visit, linked };
+}
+const threadReply = (id: string, replyParentId: string) => ({
+  ...row,
+  id: id.repeat(64),
+  content: `reply ${id}`,
+  replyParentId,
+  createdAt: 2,
+});
+
+it.each([
+  ["the reply it was left at, reopening its branch", true],
+  ["the nearest ancestor of a reply that is gone", false],
+])("Back to a thread visit anchors on %s", (_, present) => {
+  const { places, visit } = visitPlaces();
+  const parent = threadReply("d", row.id);
+  const child = threadReply("e", parent.id);
+  places.set("thread-visit:thread", {
+    anchor: { id: child.id, top: -100, ancestors: [parent.id] },
+  });
+  const h = messagesHarness(visit("thread-visit", true));
+  h.snapshot.replies = present ? [parent, child] : [parent];
+  h.render();
+  const anchor = present ? child : parent;
+  expect(
+    h.element.querySelector(`[data-message-id="${anchor.id}"]`),
+  ).not.toBeNull();
+  // jsdom rows sit at the scroller top, so the row moves back to 100 px above
+  // it: the place, not the end of the thread.
+  expect(h.element.scrollTop).toBe(100);
+  expect(h.element).not.toHaveAttribute("data-positioning");
+});
+
+it.each([
+  ["reveals its linked message again", true],
+  ["opens an ordinary thread at its end again", false],
+])("Back to a place no longer loaded %s", async (_, exact) => {
+  const { places, visit, linked } = visitPlaces();
+  // An older page the reopened thread has not loaded.
+  places.set("thread-visit:thread", {
+    anchor: { id: "f".repeat(64), top: -100, ancestors: [] },
+  });
+  const h = messagesHarness(
+    exact ? linked("thread-visit", true) : visit("thread-visit", true),
+  );
+  h.snapshot.replies = [threadReply("d", row.id)];
+  h.snapshot.target = row;
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  if (!exact) {
+    expect(h.element.scrollTop).toBe(3400);
+    return;
+  }
+  const root = h.element.querySelector(`[data-message-id="${row.id}"]`);
+  await waitFor(() => expect(root).toHaveFocus());
+  expect(
+    vi
+      .mocked(HTMLElement.prototype.scrollIntoView)
+      .mock.contexts.includes(root),
+  ).toBe(true);
+});
+
+it("records a visit's place only once that visit was presented", async () => {
+  const { places, visit, linked } = visitPlaces();
+  const reply = threadReply("d", row.id);
+  const h = messagesHarness(visit("thread-visit"));
+  h.snapshot.replies = [reply];
+  const mounted = render(<ThreadPanel {...h.props} retainThread />);
+  // The retained reader is already positioned for the ordinary visit; the
+  // linked reply's target is still loading, so its reveal has not run.
+  await act(async () =>
+    mounted.rerender(
+      <ThreadPanel
+        {...h.props}
+        retainThread
+        messageId={reply.id}
+        navigation={linked("linked", undefined, reply.id)}
+      />,
+    ),
+  );
+  expect(h.view.retarget).toHaveBeenCalledOnce();
+  expect(places.get("thread-visit:thread")).toEqual({});
+  mounted.unmount();
+  expect(places.has("linked:thread")).toBe(false);
+});
+
+it("records a visit's place when the reader leaves, not as replies arrive", () => {
+  const { places, visit } = visitPlaces();
+  // A return with no recorded place opens as it first did.
+  const h = messagesHarness(visit("thread-visit", true));
+  h.render();
+  expect(h.element.scrollTop).toBe(3400);
+  h.snapshot.replies = [threadReply("d", row.id)];
+  h.render();
+  expect(places.has("thread-visit:thread")).toBe(false);
+  h.unmount();
+  expect(places.has("thread-visit:thread")).toBe(true);
+});
+
+it("a reader first shown while its route retargets stays hidden until the route restores its place", async () => {
+  const { places, visit } = visitPlaces();
+  places.set("thread-visit:thread", {
+    anchor: { id: row.id, top: 100, ancestors: [] },
+  });
+  const h = messagesHarness();
+  h.snapshot.status = "loading";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  let release!: (value: "selected") => void;
+  h.view.retarget.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  h.rerenderProps();
+  try {
+    expect(h.view.retarget).toHaveBeenCalledOnce();
+    // The first page lands: the reader positions at the end, out of sight.
+    h.snapshot.status = "ready";
+    h.render();
+    expect(h.element.scrollTop).toBe(3400);
+    expect(h.element).toHaveAttribute("data-positioning");
+  } finally {
+    await act(async () => release("selected"));
+  }
+  expect(h.element).not.toHaveAttribute("data-positioning");
+  expect(h.element.scrollTop).toBe(3300);
 });
 
 it("an unrouted retained opening retries allocation locally", () => {

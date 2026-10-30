@@ -155,6 +155,22 @@ describe("navigation attempts over one history driver", () => {
     nav.back();
     expect(nav.snapshot().entry).toBe(opener);
   });
+  it("counts a return to a visit history held as traversal, not a dismissal's new fallback", () => {
+    const { navigation: nav } = setup();
+    void nav.open(page);
+    const opener = nav.snapshot().entry;
+    void nav.open(settings);
+    nav.dismiss([nav.snapshot().entry.id], page);
+    expect(nav.snapshot().entry).toBe(opener);
+    expect(nav.snapshot().attempt.traversal).toBe(true);
+    void nav.open(settings);
+    const dialog = nav.snapshot().entry.id;
+    // The fallback isn't the preceding visit, so it replaces the dialog anew.
+    nav.dismiss([dialog], homeTarget);
+    expect(nav.snapshot().entry.target).toEqual(homeTarget);
+    expect(nav.snapshot().entry.id).not.toBe(dialog);
+    expect(nav.snapshot().attempt.traversal).toBeUndefined();
+  });
   it("rejects late acknowledgments and aborts obsolete work even after successful reveal", async () => {
     const { host, navigation: nav } = setup();
     const first = nav.open(settings),

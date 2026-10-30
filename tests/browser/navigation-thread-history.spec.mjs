@@ -1141,6 +1141,37 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
         return now.id === saved.id && Math.abs(now.y - saved.y) < 4;
       })
       .toBe(true);
+  // Sample each frame from before a traversal until stopped, recording the
+  // place of every one that shows this thread's rows.
+  const sampleFrames = () =>
+    page.evaluate((id) => {
+      const frames = [];
+      window.threadFrames = frames;
+      const sample = () => {
+        if (window.threadFrames !== frames) return;
+        const node = [
+          ...document.querySelectorAll('[aria-label="Thread messages"]'),
+        ].find((node) => node.querySelector(`[data-message-id="${id}"]`));
+        if (node && !node.hasAttribute("data-positioning")) {
+          const top = node.getBoundingClientRect().top;
+          const row = [...node.querySelectorAll("[data-message-id]")].find(
+            (row) => row.getBoundingClientRect().bottom > top + 1,
+          );
+          frames.push({
+            id: row?.dataset.messageId,
+            y: Math.round((row?.getBoundingClientRect().top ?? top) - top),
+          });
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }, root.id);
+  const sampledFrames = () =>
+    page.evaluate(() => {
+      const frames = window.threadFrames;
+      window.threadFrames = undefined;
+      return frames;
+    });
 
   await rootLink.click();
   await opened();
@@ -1169,11 +1200,21 @@ test("Back and Forward return to a root-linked thread's reading place; a fresh l
   await page.goForward();
   await expect(panel.getByText("Beta reply", { exact: true })).toBeVisible();
   await opened();
+  // The remounted thread stays hidden until its route restores the place:
+  // no frame shows the bottom it positions at first.
+  await sampleFrames();
   await page.goBack();
   await expect(region.locator(`[data-message-id="${root.id}"]`)).toHaveCount(1);
   await opened();
   await settle(page, region);
   await expectPlace(saved);
+  const frames = await sampledFrames();
+  expect(frames.length).toBeGreaterThan(0);
+  expect(
+    frames.filter(
+      (frame) => frame.id !== saved.id || Math.abs(frame.y - saved.y) >= 4,
+    ),
+  ).toEqual([]);
 
   // Forward into the visit from its own channel keeps the mounted place too.
   await page.goBack();

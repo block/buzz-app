@@ -8579,6 +8579,61 @@ it("keeps what it lists when the community's records cannot be read", async () =
   });
 });
 
+it.each([
+  ["confirmed Solo", { channelType: "solo" }, true],
+  ["DM", { channelType: "dm" }, false],
+  ["cached Solo", { channelType: "solo", cached: true }, false],
+  ["pending Solo", { channelType: "solo", pending: true }, false],
+  [
+    "metadata-pending Solo",
+    { channelType: "solo", metadataPending: true },
+    false,
+  ],
+] as const)(
+  "captures completion metadata for %s agent work",
+  async (_kind, channelPatch, eligible) => {
+    const f = await setup();
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, name: " Launch planning ", ...channelPatch }
+          : row,
+      ),
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    f.emit({
+      events: [
+        event("completion-metadata", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    try {
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        channelId: channel,
+        ...(eligible
+          ? { soloChat: true, conversationName: "Launch planning" }
+          : {}),
+      });
+      if (!eligible) {
+        expect(f.activity.reader.work()[0]).not.toHaveProperty("soloChat");
+        expect(f.activity.reader.work()[0]).not.toHaveProperty(
+          "conversationName",
+        );
+      }
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
 it("projects accepted queued work and keeps working past handover until the plugin's actual result", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });

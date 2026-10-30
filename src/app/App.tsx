@@ -48,6 +48,7 @@ import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
+import { AgentCompletionNotifications } from "../features/notifications/AgentCompletionNotifications";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -370,6 +371,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     <ToastProvider
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
+      <AgentCompletionNotifications services={services} />
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell

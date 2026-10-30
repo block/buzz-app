@@ -1794,6 +1794,7 @@ export class AgentsService extends Service implements Agents {
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
+      channel: (agent, event) => this.channelOf(agent, event),
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),

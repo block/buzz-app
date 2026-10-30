@@ -174,6 +174,7 @@ export function createServices() {
     identity,
     browser,
     notifications,
+    agentActivity: localActivity.reader,
     navigation,
     navigationHost,
     shortcuts,

@@ -178,3 +178,19 @@ it("refuses questions it cannot map before asking", async () => {
   );
   expect(decide).not.toHaveBeenCalled();
 });
+
+it("lists a schema every harness's model provider accepts", () => {
+  const { tool } = setup(() => {
+    throw new Error("not asked");
+  });
+  // Some model APIs refuse an array schema without `items`.
+  const arrays: unknown[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if ((node as { type?: unknown }).type === "array") arrays.push(node);
+    for (const child of Object.values(node)) walk(child);
+  };
+  walk(tool.inputSchema);
+  expect(arrays.length).toBeGreaterThan(0);
+  for (const array of arrays) expect(array).toHaveProperty("items");
+});

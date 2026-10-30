@@ -13,7 +13,7 @@ import type {
 } from "./service";
 
 const json = {
-  anyOf: [{ type: "string" }, { type: "object" }, { type: "array" }],
+  anyOf: [{ type: "string" }, { type: "object" }, { type: "array", items: {} }],
 };
 
 const FAILURES: Record<DecisionFailure, string> = {
@@ -24,7 +24,7 @@ const FAILURES: Record<DecisionFailure, string> = {
   unauthorized:
     "The decisions provider refused your owner's key or sign-in. Your owner can fix it in Settings > Decisions API.",
   invalid_request:
-    "The provider refused the questions. Each needs instructions; a choice takes 2 to 255 criteria and a score 2 to 10. Ask 1 to 32 questions, each named in at most 64 characters.",
+    "The provider refused the request. state must not be empty, and each question needs instructions; a choice takes 2 to 255 criteria and a score 2 to 10. Ask 1 to 32 questions, each named in at most 64 characters.",
   input_limit: "The request is over 128 KiB. Send less state.",
   timeout: "The provider did not answer within 30 seconds. Try again.",
   service_error: "The provider failed. Try again later.",
@@ -141,7 +141,7 @@ export function registerDecideTool(
               type: { type: "string", enum: ["noul", "choice", "score"] },
               instructions: json,
               criteria: {
-                anyOf: [{ type: "object" }, { type: "array" }],
+                anyOf: [{ type: "object" }, { type: "array", items: {} }],
                 description:
                   'noul (optional): {"true": …, "false": …}, what each answer means. choice: 2 to 255 choices, each mapped to when it applies. score: 2 to 10 levels, lowest first.',
               },

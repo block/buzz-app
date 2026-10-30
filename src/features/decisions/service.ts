@@ -277,9 +277,12 @@ export class DecisionsService extends Service implements Decisions {
     const provider = this.current();
     return provider ? statusOf(provider) : "unavailable";
   };
-  /** Host-only: Settings chooses the provider. Not part of `Decisions`. */
+  /** Host-only: Settings chooses the provider. Not part of `Decisions`.
+   * The newest choice wins: a plugin turned on earlier whose provider has not
+   * registered yet is no longer chosen when it does. */
   setBackend(key: string): void {
     if (!this.sorted.some((provider) => provider.key === key)) return;
+    this.enabling.clear();
     const before = this.backend();
     this.chosen = key;
     try {

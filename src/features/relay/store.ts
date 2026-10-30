@@ -115,6 +115,14 @@ const UNAVAILABLE: ChannelList = Object.freeze({
 const describe = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const isAbort = (error: unknown) => readErrorKind(error) === "cancelled";
+/** An open channel name's match rank: the joined-channel rule (`matchRank`),
+ * so "buzz community" finds "buzz-community"; an exact lookup names one. */
+const publicRank = (name: string, needle: string, exact?: boolean) =>
+  exact
+    ? name.toLowerCase() === needle
+      ? MatchRank.exact
+      : undefined
+    : matchRank(name, needle);
 const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on
  * reaching the rows the reader kept across the disconnect. */
@@ -1907,23 +1915,17 @@ export function createChannelStore(
       const candidates = [...latest.entries()]
         .flatMap(([id, event]) => {
           const name = metadataName(event);
-          return openMetadata(event) &&
+          // Rank last: it is the costly check.
+          const rank =
+            name &&
+            openMetadata(event) &&
             !event.tags.some(
               ([key, value]) => key === "archived" && value === "true",
             ) &&
-            !discovery.authorized(id) &&
-            name &&
-            (settings?.exact
-              ? name.toLowerCase() === needle
-              : name.toLowerCase().includes(needle))
-            ? [
-                {
-                  id,
-                  name,
-                  rank: matchRank(name, needle) ?? MatchRank.substring,
-                },
-              ]
-            : [];
+            !discovery.authorized(id)
+              ? publicRank(name, needle, settings?.exact)
+              : undefined;
+          return name && rank !== undefined ? [{ id, name, rank }] : [];
         })
         // Best match first before the cut, so an exact name is never dropped.
         .sort(
@@ -2091,17 +2093,9 @@ export function createChannelStore(
     return recentPublic.ids
       .flatMap((id) => {
         const channel = previewable(id);
-        const name = channel?.name.toLowerCase();
-        return channel &&
-          name &&
-          (settings?.exact ? name === needle : name.includes(needle))
-          ? [
-              {
-                channel,
-                rank: matchRank(channel.name, needle) ?? MatchRank.substring,
-              },
-            ]
-          : [];
+        const rank =
+          channel && publicRank(channel.name, needle, settings?.exact);
+        return channel && rank !== undefined ? [{ channel, rank }] : [];
       })
       .sort((a, b) => a.rank - b.rank)
       .map(({ channel }) => channel);

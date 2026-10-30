@@ -307,15 +307,18 @@ focus is deliberate, so it opens hints and previews at once, and anything that
 opens on hover also opens with Enter; Escape dismisses them all. Every hover
 surface belongs to exactly one bucket, and the timings live in
 `ui/hoverIntent.ts`. The components accept a bucket, never a delay: to change a
-timing, change the bucket for everyone. Submenus inside an open menu are the one
-exception and open on hover at once, as menus conventionally do.
+timing, change the bucket for everyone.
+
+Inside an open menu, submenus open immediately. A side explanation for grouped
+unavailable choices uses `PopoverTrigger openOnHover="control"` (0.1s). Keep
+each disabled choice keyboard reachable and connected to the shared description.
 
 | Bucket | Use for | Timing | API |
 | --- | --- | --- | --- |
 | Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
-| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled (use Hover control for side explanations of grouped unavailable choices in an open menu), an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
 | Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.6s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
-| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed; side explanations for grouped unavailable choices in an open menu | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
 | No hover | A control whose visible text already says what it does | None | Omit `title` |
 
 Hints share the app's `TooltipProvider`: once one is showing, its neighbors open
@@ -883,7 +886,8 @@ Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Proposed: medium labelled buttons with a leading icon use 12px leading and 16px
 trailing padding for optical balance. Text-only and icon-only buttons retain their
-existing insets.
+existing insets. Small buttons that lead with an `AvatarStack`, such as the composer's
+agent pill, use 6px leading padding (matching the vertical inset) and 12px trailing.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
 extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
@@ -1765,6 +1769,7 @@ level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
 
 Mentions are people, not destinations, so they are chips rather than links.
+Mention chips use `radius-pill` for capsule ends in messages and composers.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.

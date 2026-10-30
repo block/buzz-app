@@ -55,6 +55,8 @@ export type OpenAttempt = Readonly<{
   entry: NavigationEntry;
   signal: AbortSignal;
   focus?: NavigationFocus;
+  /** History traversal returned to this visit; it was not opened again. */
+  traversal?: true;
 }>;
 export type NavigationSnapshot = Readonly<{
   entry: NavigationEntry;
@@ -191,7 +193,10 @@ export function createNavigationController(
       });
     emit();
   }
-  function start(focus: NavigationFocus = "content"): Promise<OpenResult> {
+  function start(
+    focus: NavigationFocus = "content",
+    traversal = false,
+  ): Promise<OpenResult> {
     if (disposed) return Promise.resolve({ status: "cancelled" });
     ingressRetry = undefined;
     const old = active;
@@ -207,6 +212,7 @@ export function createNavigationController(
       entry: state.current,
       signal: controller.signal,
       focus,
+      ...(traversal && { traversal }),
     });
     let resolve: (result: OpenResult) => void = () => {};
     const promise = new Promise<OpenResult>((settle) => {
@@ -325,7 +331,8 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
-        start(focus);
+        // Only open() publishes while opening; anything else revisits a visit.
+        start(focus, !opening);
       }
     });
   });

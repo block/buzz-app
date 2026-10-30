@@ -31,7 +31,8 @@ async function setup(
   let archived = false,
     records = saved,
     gate: Promise<void> | undefined,
-    receive!: (events: readonly RelayEvent[]) => void;
+    receive!: (events: readonly RelayEvent[]) => void,
+    deny!: (channelId: string, reason: string) => void;
   /** The channels of each writer read of exact viewer rosters. */
   const confirmations: string[][] = [];
   const members = new Set([gone, kept]);
@@ -127,6 +128,7 @@ async function setup(
       },
       subscribe(callbacks) {
         receive = callbacks.receive;
+        deny = callbacks.denied;
         return { update() {}, retry() {}, dispose() {} };
       },
     },
@@ -153,6 +155,8 @@ async function setup(
     publish,
     lag: (id: string) => lagging.add(id),
     refuse: (id: string, status: number) => refusals.set(id, status),
+    /** The relay closes the viewer's live subscription to `id`. */
+    deny: (id: string) => deny(id, "restricted: not a channel member"),
     confirmations,
     /** Holds the next writer confirmation's reply until released. */
     hold() {
@@ -379,6 +383,22 @@ it("runs one writer confirmation at a time and sweeps again after it", async () 
   }
   await vi.waitFor(() => expect(h.confirmations).toEqual([[gone], [gone]]));
   expect(h.pending()).toEqual([[unsent.event.id], [unsent.event.id]]);
+});
+
+it("sweeps again when an access change cancels its writer read", async () => {
+  const unsent = failed(gone, "Never sent");
+  const h = await setup([unsent]);
+  const release = h.hold();
+  try {
+    await h.remove(gone, "roster refresh");
+    await vi.waitFor(() => expect(h.confirmations).toEqual([[gone]]));
+    // A live refusal elsewhere starts no roster read, but retires the held one.
+    h.deny(kept);
+    await vi.waitFor(() => expect(h.pending()).toEqual([[], []]));
+    expect(h.confirmations).toEqual([[gone], [gone]]);
+  } finally {
+    release();
+  }
 });
 
 it("discards failed sends an earlier session left in a channel the viewer is not on", async () => {

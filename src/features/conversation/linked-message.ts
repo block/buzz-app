@@ -75,8 +75,9 @@ function lookups(session: RelaySession) {
       scheduled = false;
       for (const [key, want] of wanted) {
         if (want.failed || running.has(key)) continue;
-        // A window restored from disk waits until it is revalidated; like the
-        // exact reader, only messages count, never system rows.
+        // A cached window (restored from disk, or since a stream drop) isn't
+        // trusted; the exact reader decides. Like that reader, only messages
+        // count, never system rows.
         const window = session.channels.window(want.channelId);
         const row =
           window.freshness === "cached"

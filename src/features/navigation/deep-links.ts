@@ -20,11 +20,13 @@ export type DeepLinkShell = Readonly<{
   watch(listener: () => void): () => void;
 }>;
 export type DeepLinkHost = Readonly<{
-  navigation: Pick<Navigation, "open" | "back" | "snapshot" | "subscribe">;
+  navigation: Pick<Navigation, "open" | "snapshot" | "subscribe">;
   /** Host-only: record an ingress that produced no destination. */
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
   /** Explain a link that names no Buzz destination; the binding opens Inbox. */
   rejected(): void;
+  /** Inbox is known to be turned off, so a rejected link stays where it is. */
+  inboxOff(): boolean;
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
 }>;
@@ -115,36 +117,25 @@ export function bindDeepLinks(
   let attempt = host.navigation.snapshot().attempt;
   let client = communities.snapshot();
   let clientEpoch = 0;
-  // A malformed link opens Inbox once there is one to show. When Inbox is
-  // turned off, the failed visit steps back to the page the link interrupted.
-  // Until then it waits like any held link, and newer navigation cancels it.
+  // A malformed link opens Inbox once there is one to show; with Inbox turned
+  // off, its notice shows over the current page. Until then it waits like any
+  // held link, and newer navigation cancels it.
   const reject = (client: Client): Promise<OpenResult> => {
     if (client.status !== "ready" || !client.viewer || !client.selected)
       return Promise.resolve({ status: "failed", reason: "invalid-target" });
     held = undefined;
     host.rejected();
-    const from = host.navigation.snapshot().entry.id;
-    return host.navigation
-      .open({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.inbox",
-        pageId: "inbox",
-        scope: {
-          viewer: client.viewer,
-          communityOrigin: communityDestination(client.selected).url,
-        },
-      })
-      .then((result) => {
-        const { entry } = host.navigation.snapshot();
-        if (
-          result.status === "failed" &&
-          result.reason === "unavailable" &&
-          entry.id !== from
-        )
-          host.navigation.back();
-        return result;
-      });
+    if (host.inboxOff()) return Promise.resolve({ status: "cancelled" });
+    return host.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.inbox",
+      pageId: "inbox",
+      scope: {
+        viewer: client.viewer,
+        communityOrigin: communityDestination(client.selected).url,
+      },
+    });
   };
   const openHeld = (): Promise<OpenResult> => {
     if (closed || !held) return Promise.resolve({ status: "cancelled" });

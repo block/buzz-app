@@ -153,17 +153,13 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   const current = services;
   const queue = [`buzz://repo?owner=${viewer}&d=project`];
   let ping = () => {};
-  stop = bindDeepLinks(
-    { ...current.navigationHost, rejected: current.rejectedLinks.reject },
-    current.communities,
-    {
-      take: async () => queue.splice(0),
-      watch(listener) {
-        ping = listener;
-        return () => {};
-      },
+  stop = bindDeepLinks(current.deepLinks, current.communities, {
+    take: async () => queue.splice(0),
+    watch(listener) {
+      ping = listener;
+      return () => {};
     },
-  );
+  });
   render(<App services={current} />);
   await screen.findByRole("button", { name: "Try again" });
   expect(current.navigation.snapshot()).toMatchObject({
@@ -217,18 +213,22 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   await act(async () => current.navigation.back());
   await screen.findByText("Actual recovered destination");
   expect(current.navigation.snapshot().entry.id).toBe(recovered);
-  // With Inbox turned off, the link leaves the interrupted page in place.
+  // With Inbox turned off, the notice shows over the page in place and
+  // history is unchanged.
   await act(() => current.plugins.change("disable", "buzz.inbox"));
+  const shown = current.rejectedLinks.snapshot();
+  const before = current.navigation.snapshot();
   await act(async () => {
     queue.push("buzz://");
     ping();
   });
-  await waitFor(() =>
-    expect(current.navigation.snapshot()).toMatchObject({
-      status: "opened",
-      entry: { id: recovered },
-    }),
-  );
+  await waitFor(() => expect(current.rejectedLinks.snapshot()).not.toBe(shown));
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "opened",
+    attempt: { id: before.attempt.id },
+    entry: { id: recovered },
+    canGoForward: before.canGoForward,
+  });
   expect(screen.getByText("Actual recovered destination")).toBeVisible();
   await act(async () => {
     queue.push("buzz://channel/general");
@@ -285,21 +285,13 @@ function bindCommunityLinks(
   services = createServices();
   const current = services;
   let ping = () => {};
-  stop = bindDeepLinks(
-    {
-      ...current.navigationHost,
-      invite: current.invites.open,
-      rejected: current.rejectedLinks.reject,
+  stop = bindDeepLinks(current.deepLinks, current.communities, {
+    take,
+    watch(listener) {
+      ping = listener;
+      return () => {};
     },
-    current.communities,
-    {
-      take,
-      watch(listener) {
-        ping = listener;
-        return () => {};
-      },
-    },
-  );
+  });
   render(<App services={current} />);
   return { current, ping: () => ping() };
 }

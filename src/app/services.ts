@@ -157,16 +157,17 @@ export function createServices() {
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
   const rejectedLinks = createRejectedLinks();
-  ctx.effect(() =>
-    bindDeepLinks(
-      {
-        ...navigationHost,
-        invite: invites.open,
-        rejected: rejectedLinks.reject,
-      },
-      communities,
-    ),
-  );
+  const deepLinks = {
+    ...navigationHost,
+    invite: invites.open,
+    rejected: rejectedLinks.reject,
+    // As the router decides: settled startup with no Inbox page.
+    inboxOff: () =>
+      plugins.startup() !== "loading" &&
+      plugins.snapshot().activation["buzz.inbox"]?.status !== "starting" &&
+      !pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
+  };
+  ctx.effect(() => bindDeepLinks(deepLinks, communities));
   // Search ranks places by how often and how recently they were opened.
   ctx.effect(() =>
     bindSearchUsage(navigation, () => {
@@ -205,6 +206,7 @@ export function createServices() {
     communities,
     invites,
     rejectedLinks,
+    deepLinks,
     appearance,
     updates,
     dispose() {

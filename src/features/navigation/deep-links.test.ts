@@ -167,6 +167,7 @@ function harness(initial: Client, pending: string[] = []) {
     rejected: vi.fn(() => {
       log.push("rejected");
     }),
+    inboxOff: vi.fn(() => false),
   };
   const stop = bindDeepLinks(
     host,
@@ -232,7 +233,13 @@ it.each([""])(
     const fail = vi.fn();
     const rejected = vi.fn();
     const stop = bindDeepLinks(
-      { navigation: host.navigation, fail, invite, rejected },
+      {
+        navigation: host.navigation,
+        fail,
+        invite,
+        rejected,
+        inboxOff: () => false,
+      },
       {
         snapshot: () => client,
         subscribe(fn) {
@@ -287,7 +294,13 @@ it.each([""])(
     const fail = vi.fn();
     const rejected = vi.fn();
     const stop = bindDeepLinks(
-      { navigation: host.navigation, fail, invite, rejected },
+      {
+        navigation: host.navigation,
+        fail,
+        invite,
+        rejected,
+        inboxOff: () => false,
+      },
       { snapshot: () => ready, subscribe: () => () => {} },
       {
         take: async () => queue.splice(0),
@@ -386,41 +399,21 @@ it("explains each repeated malformed link without stacking visits, then opens a 
   });
   t.stop();
 });
-it("steps back to the interrupted page, without stacking visits, when Inbox is turned off", async () => {
+it("explains a malformed link over the current page, adding no visit, when Inbox is turned off", async () => {
   const t = harness(ready);
-  t.host.navigation.open.mockImplementation(async (target, options) => {
-    const result = t.controller.navigation.open(target, options);
-    const attempt = t.controller.navigation.snapshot().attempt;
-    t.controller.complete(
-      attempt,
-      target.kind === "page" && target.pluginId === "buzz.inbox"
-        ? { status: "failed", reason: "unavailable" }
-        : { status: "opened" },
-    );
-    return result;
-  });
+  t.host.inboxOff.mockReturnValue(true);
   await settle();
-  await t.host.navigation.open({
-    version: 1,
-    kind: "page",
-    pluginId: "buzz.channels",
-    pageId: "channels",
-    scope: { viewer, communityOrigin: origin },
-  });
-  const messages = t.host.navigation.snapshot().entry;
-  for (let repeat = 1; repeat <= 2; repeat++) {
-    t.arrive("buzz://");
-    await vi.waitFor(() =>
-      expect(t.host.rejected).toHaveBeenCalledTimes(repeat),
-    );
-    await vi.waitFor(() =>
-      expect(t.host.navigation.snapshot().entry.id).toBe(messages.id),
-    );
-  }
-  t.host.navigation.back();
-  expect(t.host.navigation.snapshot().entry.target).toEqual({
-    version: 1,
-    kind: "home",
+  await t.host.navigation.open({ version: 1, kind: "settings" });
+  const before = t.host.navigation.snapshot();
+  t.arrive("buzz://");
+  await settle();
+  t.arrive("buzz://");
+  await settle();
+  expect(t.host.rejected).toHaveBeenCalledTimes(2);
+  expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
+  expect(t.host.navigation.snapshot()).toMatchObject({
+    entry: { id: before.entry.id },
+    canGoForward: false,
   });
   t.stop();
 });
@@ -752,7 +745,12 @@ it("latches the first available account and community before retry", async () =>
 it("still drains once when the shell cannot deliver updates, without aborting startup", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const controller = createNavigationController(createMemoryHistory());
-  const host = { ...controller, fail: vi.fn(), rejected: vi.fn() };
+  const host = {
+    ...controller,
+    fail: vi.fn(),
+    rejected: vi.fn(),
+    inboxOff: () => false,
+  };
   const stop = bindDeepLinks(
     host,
     { snapshot: () => ready, subscribe: () => () => {} },
@@ -788,7 +786,7 @@ it("is a no-op in the browser build, where no shell exists", async () => {
   const host = createNavigationController(createMemoryHistory());
   const subscribe = vi.fn(() => () => {});
   const stop = bindDeepLinks(
-    { ...host, rejected: vi.fn() },
+    { ...host, rejected: vi.fn(), inboxOff: () => false },
     { snapshot: () => ready, subscribe },
   );
   await settle();
@@ -841,7 +839,12 @@ it("drains URLs arriving between startup take and deferred native watch registra
     throw new Error(`Unexpected native command: ${command}`);
   });
   const controller = createNavigationController(createMemoryHistory());
-  const host = { ...controller, fail: vi.fn(), rejected: vi.fn() };
+  const host = {
+    ...controller,
+    fail: vi.fn(),
+    rejected: vi.fn(),
+    inboxOff: () => false,
+  };
   const stop = bindDeepLinks(host, {
     snapshot: () => ready,
     subscribe: () => () => {},

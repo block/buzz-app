@@ -20,7 +20,7 @@ import { LinkLabel } from "../links/InlineLink";
 import { ChannelCompletion } from "./ChannelCompletion";
 import {
   composerClipboard,
-  buzzCopyMarkdown,
+  buzzCopyDocument,
 } from "../../features/messages/composer-clipboard";
 import { composerSchema } from "../../features/messages/composer-document";
 
@@ -108,6 +108,11 @@ it("offers joined streams/forums, including private and still-confirming channel
     channel("stream"),
     channel("forum", { channelType: "forum" }),
     channel("private", { private: true }),
+    channel("private-guest", {
+      private: true,
+      readOnly: true,
+      viewerRole: "guest",
+    }),
     channel("huddle", { huddle: true }),
     channel("archived", { archived: true }),
     // The real store's shape for a joined channel restored from cache.
@@ -126,6 +131,7 @@ it("offers joined streams/forums, including private and still-confirming channel
     "cached",
     "forum",
     "private",
+    "private-guest",
     "stream",
     "unknown",
   ]);
@@ -206,7 +212,7 @@ it.each(["Beta", "a [b] *c* _d_ ~e~ &amp; <f> \\ !"])(
     const html = new DOMParser().parseFromString(copied.html, "text/html");
     expect(html.querySelector("a")?.textContent).toBe(`#${name}`);
     expect(
-      scanMarkdown(buzzCopyMarkdown(copied.html) ?? "").links[0],
+      scanMarkdown(buzzCopyDocument(copied.html)?.textContent ?? "").links[0],
     ).toMatchObject({
       url: "buzz://channel/beta",
       children: [{ type: "text", value: `#${name}` }],

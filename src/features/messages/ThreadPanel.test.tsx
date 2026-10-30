@@ -1396,6 +1396,11 @@ it("passes readiness through to thread composition, and gives a Solo thread none
 it.each([
   { channelType: "stream" as const, joinable: true },
   { channelType: "forum" as const, joinable: true },
+  {
+    channelType: "stream" as const,
+    joinRole: "guest" as const,
+    joinable: false,
+  },
   { channelType: "stream" as const, archived: true as const, joinable: false },
   { channelType: "solo" as const, joinable: false },
 ])(
@@ -1419,12 +1424,66 @@ it.each([
     });
     h.render();
     expect(
-      screen.getByRole("region", { name: "Channel preview" }),
+      screen.getByRole("region", {
+        name:
+          metadata.joinRole === "guest"
+            ? "Read-only channel"
+            : "Channel preview",
+      }),
     ).toBeVisible();
     expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
     expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
   },
 );
+
+it("keeps guest threads readable without a reply composer or Join action across default changes", () => {
+  const h = messagesHarness();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    viewerRole: "guest",
+    readOnly: true,
+    joinRole: "guest",
+  };
+  let list: ChannelList = { status: "ready", channels: [channel] };
+  const listeners = new Set<() => void>();
+  Object.assign(h.session, {
+    channels: {
+      list: () => list,
+      get: () => list.channels[0],
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    channelLifecycle: { available: true, run: vi.fn() },
+  });
+  h.render();
+  expect(
+    screen.getByRole("region", { name: "Read-only channel" }),
+  ).toHaveTextContent("This channel is read-only.");
+  expect(
+    screen.getByRole("region", { name: "Thread messages" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  act(() => {
+    list = { ...list, channels: [{ ...channel, joinRole: "member" }] };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getByRole("region", { name: "Read-only channel" }),
+  ).toHaveTextContent("Read-only access");
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  act(() => {
+    const { readOnly: _, ...promoted } = channel;
+    list = { ...list, channels: [{ ...promoted, viewerRole: "member" }] };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
+});
 
 it("keeps a thread preview until membership arrives, with failed joins retryable", async () => {
   const h = messagesHarness();

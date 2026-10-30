@@ -114,6 +114,9 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   await expect(toggle).toBeEnabled();
   await toggle.press("Space");
   await expect(toggle).toHaveAccessibleName("Disable GitHub");
+  // Re-enabling GitHub adds its settings card to the stacked navigation above,
+  // which pushes the toggle down.
+  await toggle.scrollIntoViewIfNeeded();
   await expect(toggle).toBeInViewport({ ratio: 1 });
   // Narrow Settings stacks its own navigation above the detail, reachable by
   // scrolling the modal; wide Settings keeps it beside the detail.
@@ -592,8 +595,8 @@ confirmedPresence(
         "Channel templates",
         "Software updates",
         "Manage plugins",
-        "Builderlab agents",
-        "Builderlab hosting",
+        "Builderlab",
+        "GitHub comment authors",
       ]) {
         await tab();
         await expect(
@@ -693,7 +696,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Builderlab hosting").click();
+  await button(page, "Builderlab").click();
   await expect(
     page.getByText("Deletion status is unknown", { exact: true }),
   ).toBeVisible();
@@ -712,7 +715,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   // Reload restores the open Settings modal over its workspace.
   await page.reload();
   await expect(settingsDialog(page)).toBeVisible();
-  await button(page, "Builderlab hosting").click();
+  await button(page, "Builderlab").click();
   await expect(button(page, "Check deletion status")).toBeEnabled();
   await button(page, "Check deletion status").click();
   await expect(
@@ -776,7 +779,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Builderlab hosting").click();
+  await button(page, "Builderlab").click();
   await button(page, "Delete").click();
   const dialog = page.getByRole("dialog", { name: /Permanently delete north/ });
   await dialog

@@ -174,7 +174,7 @@ function fixture(
     },
     typing: { subscribe: () => () => {}, snapshot: () => emptyTyping },
     agentChoices: createAgentLibrary(undefined).queries,
-    messages: { retry() {} },
+    messages: { retry() {}, canRetry: () => true },
     media: () => undefined,
     unread,
     outbox,

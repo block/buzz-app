@@ -75,7 +75,11 @@ import {
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import {
+  useChannelList,
+  useChannelRoster,
+  useRelayConnection,
+} from "../../features/relay/react";
 import {
   panelOpening,
   type PanelOpening,
@@ -207,6 +211,14 @@ export function ChannelsPage({
   );
 }
 
+/** Recent ordering reads activity, which the workspace's roster ignores. */
+function LiveNewMessage(
+  props: Omit<React.ComponentProps<typeof NewMessage>, "channels">,
+) {
+  const { channels } = useChannelList(props.session.channels);
+  return <NewMessage {...props} channels={channels} />;
+}
+
 function ChannelWorkspace({
   extensions,
   queries,
@@ -256,7 +268,7 @@ function ChannelWorkspace({
         : undefined,
     [draft?.linked, scope, navigation?.signal],
   );
-  const list = useChannelList(queries.channels);
+  const list = useChannelRoster(queries.channels);
   const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
@@ -459,9 +471,11 @@ function ChannelWorkspace({
   useEffect(() => {
     if (!joiningChannel || !current) return;
     if (current.id !== joiningChannel) setJoiningChannel(undefined);
-    else if (!current.readOnly) {
+    else if (!current.readOnly || current.viewerRole === "guest") {
       setJoiningChannel(undefined);
-      setComposerFocus((value) => value + 1);
+      if (current.viewerRole === "guest")
+        historyContainer.current?.focus({ preventScroll: true });
+      else setComposerFocus((value) => value + 1);
     }
   }, [joiningChannel, current]);
   const CurrentChannelIcon = channelIcon(current);
@@ -1595,7 +1609,7 @@ function ChannelWorkspace({
       setupTools={
         current &&
         handoff &&
-        !current.readOnly &&
+        (!current.readOnly || current.viewerRole === "guest") &&
         current.channelType !== "dm" && (
           <ChannelLifecycleActions
             key={`${current.id}:${!!current.archived}`}
@@ -1645,7 +1659,11 @@ function ChannelWorkspace({
         </Button>
       )}
       {queries.outbox ? (
-        <OutboxStatus outbox={queries.outbox} profiling={queries.profiling} />
+        <OutboxStatus
+          outbox={queries.outbox}
+          profiling={queries.profiling}
+          memberAdditions={queries.memberAdditions}
+        />
       ) : (
         <RelayTimings profiling={queries.profiling} />
       )}
@@ -1691,21 +1709,24 @@ function ChannelWorkspace({
               : "Select a channel to read it."}
           </div>
         )}
-        {current?.readOnly && !current.cached && (
-          <ChannelJoinNotice
-            key={`join:${current.id}`}
-            ready={contentReadyChannel === current.id}
-            channelId={current.id}
-            lifecycle={queries.channelLifecycle}
-            joinable={
-              !current.archived &&
-              (current.channelType === "stream" ||
-                current.channelType === "forum")
-            }
-            onJoin={() => setJoiningChannel(current.id)}
-            onHeightChange={setJoinNoticeHeight}
-          />
-        )}
+        {current?.readOnly &&
+          (!current.cached || current.viewerRole === "guest") && (
+            <ChannelJoinNotice
+              key={`join:${current.id}`}
+              ready={contentReadyChannel === current.id}
+              channelId={current.id}
+              guest={current.viewerRole === "guest"}
+              joinRole={current.joinRole}
+              lifecycle={queries.channelLifecycle}
+              joinable={
+                !current.archived &&
+                (current.channelType === "stream" ||
+                  current.channelType === "forum")
+              }
+              onJoin={() => setJoiningChannel(current.id)}
+              onHeightChange={setJoinNoticeHeight}
+            />
+          )}
       </section>
       {!cached && (
         <LiveStatus
@@ -1733,38 +1754,40 @@ function ChannelWorkspace({
           }
         />
       )}
-      {current && (!current.readOnly || current.cached) && (
-        <ConversationComposer
-          key={`composer:${current.id}`}
-          autoFocus={
-            // Conversion remounts the body, but isn't a new conversation opening.
-            // Its dialog hands off focus after closing and releasing modality.
-            !(
-              continuingVisit &&
-              committedVisit.current?.channelType === "solo" &&
-              current.channelType !== "solo"
-            ) &&
-            // The bound request arrives after the composer's first render.
-            (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
-              "preserve" &&
-            !current.readOnly &&
-            !requestedMessage &&
-            !requestedThread &&
-            !routedThread
-          }
-          trailingTool={
-            solo ? (
-              <WorkspaceControl
-                session={queries}
-                channelId={current.id}
-                disabled={!!current.archived}
-              />
-            ) : undefined
-          }
-          onSend={onComposerSend}
-          focusRequest={composerFocus}
-        />
-      )}
+      {current &&
+        current.viewerRole !== "guest" &&
+        (!current.readOnly || current.cached) && (
+          <ConversationComposer
+            key={`composer:${current.id}`}
+            autoFocus={
+              // Conversion remounts the body, but isn't a new conversation opening.
+              // Its dialog hands off focus after closing and releasing modality.
+              !(
+                continuingVisit &&
+                committedVisit.current?.channelType === "solo" &&
+                current.channelType !== "solo"
+              ) &&
+              // The bound request arrives after the composer's first render.
+              (navigation?.focus ?? navigator?.snapshot().attempt.focus) !==
+                "preserve" &&
+              !current.readOnly &&
+              !requestedMessage &&
+              !requestedThread &&
+              !routedThread
+            }
+            trailingTool={
+              solo ? (
+                <WorkspaceControl
+                  session={queries}
+                  channelId={current.id}
+                  disabled={!!current.archived}
+                />
+              ) : undefined
+            }
+            onSend={onComposerSend}
+            focusRequest={composerFocus}
+          />
+        )}
     </>
   );
   const workspace = (
@@ -1777,6 +1800,7 @@ function ChannelWorkspace({
     >
       {current && membersOpen && (
         <ChannelMembersDialog
+          communityScope={scope}
           key={current.id}
           session={queries}
           channelId={current.id}
@@ -1808,7 +1832,8 @@ function ChannelWorkspace({
           style={
             {
               "--channel-preview-inset":
-                current?.readOnly && !current.cached
+                current?.readOnly &&
+                (!current.cached || current.viewerRole === "guest")
                   ? `calc(${joinNoticeHeight}px + var(--space-3))`
                   : "0px",
             } as React.CSSProperties
@@ -1816,8 +1841,7 @@ function ChannelWorkspace({
           data-attachment-drop-zone=""
         >
           {composingMessage ? (
-            <NewMessage
-              channels={list.channels}
+            <LiveNewMessage
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -2018,7 +2042,8 @@ function ChannelWorkspace({
                               drawerContext.channelId !== channel?.id ||
                               !channel ||
                               channel.cached ||
-                              channel.readOnly ||
+                              (channel.readOnly &&
+                                channel.viewerRole !== "guest") ||
                               !channel.members?.includes(
                                 queries.viewer ?? "",
                               ) ||

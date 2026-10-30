@@ -285,7 +285,8 @@ export function useConversationTabs({
       (!eligible || eligible(entry)) &&
       (!entry.channelContext ||
         (current &&
-          !current.readOnly &&
+          !current.cached &&
+          (!current.readOnly || current.viewerRole === "guest") &&
           (!current.archived ||
             entry.panel.channelMenu?.eligible(current, queries)) &&
           current.id === entry.channelId)),
@@ -369,7 +370,10 @@ export function useConversationTabs({
   };
   const drawerContext = useMemo(
     () =>
-      current && !current.readOnly && viewer
+      current &&
+      !current.cached &&
+      (!current.readOnly || current.viewerRole === "guest") &&
+      viewer
         ? {
             scope,
             viewer,
@@ -675,7 +679,7 @@ export function useConversationTabs({
   const nodes = useTabNodes(
     tabState.tabs.filter((tab) => tab.kind === "thread").map((tab) => tab.id),
   );
-  // Hidden thread tabs mount when first shown, then stay mounted for the visit.
+  // Threads and opted-in panels mount when shown, then stay for the visit.
   const visitTabs = useRef<{ shown: Set<string>; entered: Map<string, Tab> }>(
     undefined,
   );
@@ -686,7 +690,10 @@ export function useConversationTabs({
     };
   const visitTab = visitTabs.current;
   // A closed tab's lifetime ends; reopening it starts its requests afresh.
-  const openIds = new Set(tabState.tabs.map((tab) => tab.id));
+  const openIds = new Set([
+    ...tabState.tabs.map((tab) => tab.id),
+    ...panelTabs.map(tabId),
+  ]);
   for (const id of visitTab.entered.keys())
     if (!openIds.has(id)) visitTab.entered.delete(id);
   for (const id of visitTab.shown)
@@ -848,8 +855,15 @@ export function useConversationTabs({
 
   function panelItem(entry: Opening) {
     const main = inMain(entry);
+    const id = tabId(entry);
+    if (
+      main
+        ? tabState.mainSelected === id
+        : tabState.paneOpen && selectedTab === id
+    )
+      visitTab.shown.add(id);
     return {
-      id: tabId(entry),
+      id,
       instance: entry,
       label: entry.panel.title,
       ...(entry.channelContext && {
@@ -863,15 +877,16 @@ export function useConversationTabs({
             placeEntry(tabId(entry), main ? "side" : "main");
         },
       }),
-      content: (
-        <PanelCard
-          panel={entry.panel}
-          target={entry.target}
-          context={panelContext(entry)}
-          channelContext={entry.channelContext}
-          close={() => closeTab(entry)}
-        />
-      ),
+      content:
+        !entry.panel.deferUntilShown || visitTab.shown.has(id) ? (
+          <PanelCard
+            panel={entry.panel}
+            target={entry.target}
+            context={panelContext(entry)}
+            channelContext={entry.channelContext}
+            close={() => closeTab(entry)}
+          />
+        ) : null,
     };
   }
 

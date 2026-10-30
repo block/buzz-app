@@ -99,6 +99,7 @@ it("shows every affected community with unsaved shared settings and submits the 
     configHistory: () => undefined,
     addedTabs: () => [],
     registerTab: () => {},
+    controlAttention: () => {},
     memberships: () => [
       { key: agent.key, origin: "https://current.example", connected: true },
       { key: "other", origin: "wss://other.example", connected: false },

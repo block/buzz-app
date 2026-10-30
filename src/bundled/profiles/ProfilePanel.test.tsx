@@ -423,6 +423,7 @@ function renderAgentActivity(
     configHistory: () => undefined,
     addedTabs: () => [],
     registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
   const target =
     profileActivityViewTarget(key, { transcript: !!transcript }) ?? "";

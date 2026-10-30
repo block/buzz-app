@@ -280,7 +280,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the Agents host adds the device Attention switch. An optional
+configuration belongs in its `tabs`; the plugin that controls Attention shows the device switch. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -299,6 +299,20 @@ follows Activity and precedes History and Settings, in the agent's Build view an
 its profile panel, and is not offered for hosted or elsewhere agents. It is
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
+
+A plugin that shows Attention and its device switch calls
+`ctx.agents.controlAttention()`. Installed plugins may call it too, and one that
+does should show that switch. Agents' watches, timers and sources run on this
+device only while such a plugin is on. With none on, every agent's
+`attentionEnabled` reads false and each keeps its saved switch. Messages from
+then wake no kind 9 watch later, even across a restart, though a relay replay
+after a reconnect can still deliver one, as it can after the switch is off. While plugins are still
+starting and none has shown Attention yet, kind 9 watches keep their catch-up
+place, so startup still catches up on what the app missed while closed, and the
+events an agent with its switch on would hear wait to be matched once startup
+ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
+other watches keep no such record, so they still match them. The bundled Agent
+Attention UI plugin calls it.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
@@ -325,6 +339,8 @@ call while that no longer holds, and for good once the agent's type or its
 plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
 
 Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
+
+A source may also `present` its watches on the Agent Attention page. Given a watch and its display name, it returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a provider has no `present`, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.
 
 Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
 
@@ -495,7 +511,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
-Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
+Repositories, Agents, Claude, Codex, Workflows, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
@@ -509,7 +525,7 @@ without a saved flag use the current default, so changing a default also changes
 those existing profiles. There is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
-only on macOS/Linux desktop; Hosted communities needs either the desktop app or
+only on macOS/Linux desktop; Builderlab's hosted communities need either the desktop app or
 the live development broker. Disabling Membership removes its Invite to community shortcut.
 
 Membership and Moderation share app-owned access controllers composed in
@@ -579,9 +595,10 @@ Create resolves its agents and its teams' members to those that are the owner's
 agents in this community and sends them with the Canvas as ordinary channel setup,
 which the session applies and retries as before.
 
-Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
-under Settings → Plugins → Builderlab hosting. It manages Block-hosted relays through a Builderlab
-account: browser sign-in, binding the local Buzz identity (a locally signed kind
+Hosted communities are part of the Block-specific Builderlab plugin
+(`block.builderlab`, `communities/`), shown under Settings → Plugins → Builderlab
+beside remote agents. They manage Block-hosted relays through the plugin's one
+Builderlab sign-in: binding the local Buzz identity (a locally signed kind
 24243 challenge), and create/archive/unarchive/transfer. A server-declared,
 default-off capability also exposes owner deletion for archived communities. The
 card persists the bound four-field request before admission. A fresh request can
@@ -596,14 +613,15 @@ re-read and verified before dispatch; browser local storage has no atomic compar
 so exactly simultaneous contexts remain a documented client-side race;
 it never signs deletion or infers acceptance from a missing list row. Joining
 stays in the existing Join a community dialog; the card only copies the new relay address. Its
-account backend follows the same split as `HostService`: live development uses the
-broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`), which keep the session
-credential and signing key in Node. Desktop builds use `native.ts`, the same routes
-over the shared `oauth_callback` sign-in, host HTTP to the manifest's single
-`https://app.builderlab.xyz` grant, and `identity_sign_builderlab_binding`, which
-validates the challenge and signs only the fixed kind 24243 binding. The desktop
-credential lives in plugin memory for the plugin's lifetime and is never persisted,
-so restarting the app signs out. Other browser builds show the unavailable notice.
+account backend follows the same split as `HostService`: live development with a
+pinned viewer uses the broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`),
+which keep their own session credential and signing key in Node. Desktop builds use
+`native.ts`, the same routes with the plugin's shared session credential, host HTTP to
+the configured `BUZZ_BUILDERLAB_URL` grant, and `identity_sign_builderlab_binding`, which
+validates the challenge and signs only the fixed kind 24243 binding. They read the
+account after sign-in's automatic identity link settles. The desktop credential lives in
+plugin memory for the plugin's lifetime and is never persisted, so restarting the app
+signs out. Builds without a configured Builderlab URL show the unavailable notice.
 
 ### Composer accessories
 
@@ -651,6 +669,12 @@ signing authority. Plugins decide when to capture it into their own work.
 A tab a link opens is a transient detail: the next link or thread replaces it. A panel
 that sets `keepOpen: true` keeps each target it opens from links as its own tab until
 the viewer closes it, as a launcher's tab is kept.
+
+A panel may set `deferUntilShown: true` to mount tab content on its first selection
+in a workspace visit, then retain it for that visit. The default remains eager.
+Component-provided titles (`usePanelTabTitle`) and local detail tabs (`PanelLocalTab`)
+are also deferred; opt in when the contribution's static title is sufficient until
+selection.
 
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
@@ -1408,7 +1432,14 @@ does not fetch metadata or infer a service from names in paths or query strings.
 Its `order` is a function: recognised services and Buzz entities claim the default
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
-It does not fetch titles. Messages currently recognize
+It does not fetch titles. The bundled GitHub plugin contributes a pull request
+renderer at a lower `order` for github.com pull request URLs: the same label
+with the pull request's state (open, draft, merged, closed) as a coloured icon,
+read with the person's `gh` sign-in or the public API and kept current while
+shown. Repositories, issues and commits, and every pull request link when that
+plugin is disabled, keep the Links presentation. If the renderer fails, a pull
+request link shows as a plain link.
+Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
@@ -1423,7 +1454,11 @@ link to the same destination, routed through the same host navigation handler. O
 session's bounded thread reader; closing disposes it. The reader supplies verified
 message content, author and timestamp and preserves edit/deletion/access handling.
 Previewing never acknowledges reading or switches community. The host offers a
-resolved label to the bundled presentation via `LinkLabelContext`; no author API
+resolved label to the bundled presentation via `LinkLabelContext`, and whether
+the link is live or a composer decoration or preview via `LinkInteractiveContext`,
+so a renderer reads nothing for a draft. A renderer that shows a status, such as
+a pull request's state, describes the host anchor via `LinkDescriptionContext`,
+so the link keeps its label or URL as its name; no author API
 contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.

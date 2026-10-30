@@ -227,6 +227,8 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
+/// Exact Apps domain paired with the build's login origin, or empty when native SSO is unconfigured.
+pub const BUILDERLAB_APPS_DOMAIN: &str = env!("BUZZ_BUILDERLAB_APPS_DOMAIN");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
 /// `origin` is, which the bundled Builderlab plugin deploys apps to. Kept in
 /// step with `src/bundled/builderlab/apps/environment.ts`.
@@ -238,6 +240,8 @@ pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+/// The matching Builderlab API base path, or empty when unconfigured.
+pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
@@ -319,10 +323,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/hosted-communities/manifest.json"
-        ))
-        .expect("hosted communities manifest"),
-        serde_json::from_str(include_str!(
             "../../../src/bundled/moderation/manifest.json"
         ))
         .expect("moderation manifest"),
@@ -364,7 +364,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"

@@ -437,6 +437,7 @@ it("guards an invalid Pi provider draft through an agent tab switch", async () =
           configHistory: () => undefined,
           addedTabs: () => [],
           registerTab: () => {},
+          controlAttention: () => {},
         } as unknown as Agents
       }
       agent={agent}

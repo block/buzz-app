@@ -17,9 +17,15 @@ export interface ProfileQueries {
   ensure(ids: readonly string[], priority?: Priority): Promise<void>;
   /** The winning signed kind 0 retained for one identity, for provenance checks. */
   event?(pubkey: string): RelayEvent | undefined;
+  /** Identities a completed read found no profile for, until one arrives. */
+  unnamed?(): ReadonlySet<string>;
   /** Cryptographically verified owner of the retained signed profile head. */
   owner?(pubkey: string): string | undefined;
 }
+
+/** Authors per profile read, the reader's largest page. A page that fills it
+ * may have left out authors who do have a profile. */
+const PROFILE_PAGE = 500;
 
 /** One bounded source of signed profile events. Display values are derived from it. */
 export function createProfileDirectory(
@@ -40,6 +46,8 @@ export function createProfileDirectory(
   >();
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
+  // Replaced, never mutated, so stores can compare it like `snapshot`.
+  let unnamed: ReadonlySet<string> = new Set();
   let controller = new AbortController();
   let closed = false;
   function accept(incoming: readonly RelayEvent[]) {
@@ -99,9 +107,18 @@ export function createProfileDirectory(
     if (
       next.size !== snapshot.size ||
       [...next].some(([id, value]) => snapshot.get(id) !== value)
-    )
+    ) {
       snapshot = next;
-    else if (!headChanged) return;
+      if ([...unnamed].some((id) => next.has(id)))
+        unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
+    } else if (!headChanged) return;
+    for (const listener of listeners) notify(listener);
+  }
+  /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
+  function missed(ids: readonly string[]) {
+    const fresh = ids.filter((id) => !snapshot.has(id) && !unnamed.has(id));
+    if (!fresh.length) return;
+    unnamed = new Set([...unnamed, ...fresh].slice(-1024));
     for (const listener of listeners) notify(listener);
   }
   async function ensure(
@@ -124,18 +141,18 @@ export function createProfileDirectory(
           batch.priority = priority;
           if (batch.reading)
             void reader
-              .read([{ kinds: [0], authors: batch.authors, limit: 500 }], {
-                signal,
-                priority,
-              })
+              .read(
+                [{ kinds: [0], authors: batch.authors, limit: PROFILE_PAGE }],
+                { signal, priority },
+              )
               .catch(() => {});
         }
         waiting.add(batch.work);
       }
       return !batch && (refresh || !snapshot.has(id));
     });
-    for (let offset = 0; offset < missing.length; offset += 500) {
-      const authors = missing.slice(offset, offset + 500);
+    for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {
+      const authors = missing.slice(offset, offset + PROFILE_PAGE);
       let answered = false;
       const batch = {
         authors,
@@ -148,7 +165,7 @@ export function createProfileDirectory(
         batch.reading = true;
         try {
           const result = await reader.read(
-            [{ kinds: [0], authors, limit: 500 }],
+            [{ kinds: [0], authors, limit: PROFILE_PAGE }],
             { signal, priority: batch.priority },
           );
           answered = true;
@@ -158,8 +175,10 @@ export function createProfileDirectory(
         }
       }, signal)
         .then((result) => {
-          if (!signal.aborted)
-            accept(result.filter((event) => authors.includes(event.pubkey)));
+          if (signal.aborted) return;
+          accept(result.filter((event) => authors.includes(event.pubkey)));
+          // A page at the limit may have left out authors who do have one.
+          if (result.length < PROFILE_PAGE) missed(authors);
         })
         .catch((error: unknown) => {
           // The old directory contract silently discards a retired success.
@@ -179,7 +198,9 @@ export function createProfileDirectory(
     controller = new AbortController();
     pending.clear();
     events.clear();
-    publish();
+    const forgot = unnamed.size > 0;
+    unnamed = new Set();
+    publish(forgot);
   }
   const queries: ProfileQueries = Object.freeze({
     snapshot: () => snapshot,
@@ -191,6 +212,7 @@ export function createProfileDirectory(
     },
     ensure,
     event: (pubkey: string) => events.peek(pubkey),
+    unnamed: () => unnamed,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

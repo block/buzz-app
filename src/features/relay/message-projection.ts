@@ -26,9 +26,10 @@ export class MessageProjection {
    * reply is counted by the relay's follow-up.
    * The relay emits a thread's summary after each reply commits, racing the
    * publish receipt and the echo, so a newer root summary observed since the
-   * send began vouches for it and the reply leaves once its send is also settled
-   * (the relay accepted or echoed it), whichever lands second. Clocks never
-   * decide this: the reply carries the client's, the summary the relay's. */
+   * send began vouches for it and the reply leaves once its send also has no
+   * attempt in flight (accepted, echoed or unanswered), whichever lands second.
+   * Clocks never decide this: the reply carries the client's, the summary the
+   * relay's. */
   private pending = new Set<string>();
   private vouched = new Set<string>();
   private rows: readonly ChannelMessage[] = Object.freeze([]);
@@ -71,10 +72,6 @@ export class MessageProjection {
     };
     const parents = (event: EventData) =>
       targets(event).filter((target) => target !== event.id);
-    const settled = (id: string) => {
-      const delivery = deliveries.get(id)?.delivery;
-      return !delivery || delivery === "accepted" || delivery === "seen";
-    };
     const summarized = new Set<string>();
     for (const [id, event] of this.inputs) {
       if (next.has(id)) continue;
@@ -128,9 +125,10 @@ export class MessageProjection {
         if (this.pending.has(ref.id)) this.vouched.add(ref.id);
     }
     for (const id of this.pending) {
+      const delivery = deliveries.get(id)?.delivery;
       // A failed attempt never committed, so no summary so far has counted it.
-      if (deliveries.get(id)?.delivery === "failed") this.vouched.delete(id);
-      if (!this.vouched.has(id) || !settled(id)) continue;
+      if (delivery === "failed") this.vouched.delete(id);
+      if (!this.vouched.has(id) || delivery === "sending") continue;
       this.pending.delete(id);
       this.vouched.delete(id);
       affected.add(id);

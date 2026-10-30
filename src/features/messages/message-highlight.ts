@@ -7,8 +7,12 @@ export function highlightMessage(
   row: HTMLElement,
   signal?: AbortSignal,
   mode: "return" | "linked" = "return",
+  container?: HTMLElement,
 ) {
   const owner = row.ownerDocument;
+  const messageId =
+    row.closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
+  let current = row;
   const linked = mode === "linked";
   const style = linked ? styles.linkedHighlight : styles.returnHighlight;
   const previous = cues.get(row);
@@ -18,25 +22,48 @@ export function highlightMessage(
     row.getBoundingClientRect();
   }
   const clear = () => {
-    if (cues.get(row) !== clear) return;
-    cues.delete(row);
-    row.classList.remove(style ?? "");
-    row.removeEventListener("animationend", finish);
+    if (cues.get(current) !== clear) return;
+    cues.delete(current);
+    current.classList.remove(style ?? "");
+    current.removeEventListener("animationend", finish);
+    observer?.disconnect();
     owner.removeEventListener("click", dismiss, true);
     owner.removeEventListener("keydown", dismiss, true);
     signal?.removeEventListener("abort", clear);
   };
   const finish = (event: AnimationEvent) => {
-    if (event.target === row && event.pseudoElement === "::after") clear();
+    if (event.target === current && event.pseudoElement === "::after") clear();
   };
   const dismiss = (event: Event) => {
     if (
       event.type === "keydown"
         ? (event as KeyboardEvent).key === "Escape"
-        : event.target instanceof Node && !row.contains(event.target)
+        : event.target instanceof Node && !current.contains(event.target)
     )
       clear();
   };
+  // Late history can replace the target node without ending its reveal request.
+  const observer =
+    linked && container && messageId
+      ? new MutationObserver(() => {
+          if (container.contains(current)) return;
+          const replacement = [
+            ...container.querySelectorAll<HTMLElement>("[data-message-id]"),
+          ].find((element) => element.dataset.messageId === messageId);
+          const message = replacement?.matches("[data-message-highlight]")
+            ? replacement
+            : replacement?.querySelector<HTMLElement>(":scope > [data-layout]");
+          if (!message) return;
+          cues.get(message)?.();
+          cues.delete(current);
+          current.classList.remove(style ?? "");
+          current = message;
+          cues.set(current, clear);
+          current.classList.add(style ?? "");
+        })
+      : undefined;
+  if (container)
+    observer?.observe(container, { childList: true, subtree: true });
   cues.set(row, clear);
   row.classList.add(style ?? "");
   if (linked) {

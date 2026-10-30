@@ -148,6 +148,35 @@ it("keeps the verified target highlighted until dismissal and repeats for a new 
   expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
 });
 
+it.each([false, true])(
+  "keeps only undismissed cues through a late row replacement (dismissed: %s)",
+  async (dismissed) => {
+    const { remountRow, complete, outside } = mount();
+    await frame();
+    await frame();
+    await frame();
+    const original = screen.getByText("Target");
+    if (dismissed) fireEvent.click(outside);
+    outside.focus();
+    await act(async () => remountRow());
+    const replacement = screen.getByText("Target");
+    expect(replacement).not.toBe(original);
+    expect(replacement.classList.contains(styles.linkedHighlight ?? "")).toBe(
+      !dismissed,
+    );
+    expect(original.classList.contains(styles.linkedHighlight ?? "")).toBe(
+      false,
+    );
+    expect(document.activeElement).toBe(outside);
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(replacement.classList.contains(styles.linkedHighlight ?? "")).toBe(
+      false,
+    );
+  },
+);
+
 it.each(["abort", "unmount"])("retires a painted cue on %s", async (end) => {
   const { request, unmount } = mount();
   const message = screen.getByText("Target");

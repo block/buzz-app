@@ -131,7 +131,12 @@ export function useMessageReveal({
           ? row
           : row.querySelector<HTMLElement>(":scope > [data-layout]");
         if (message)
-          highlighted.current = highlightMessage(message, signal, "linked");
+          highlighted.current = highlightMessage(
+            message,
+            signal,
+            "linked",
+            container,
+          );
         cancel();
         readingPositioned(container);
         complete();

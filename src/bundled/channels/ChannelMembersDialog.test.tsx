@@ -43,6 +43,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { profileTarget } from "../../features/profiles/target";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
 const stops: (() => void)[] = [];
+const memberData = () => screen.getByRole("region", { name: "Member list" });
 // Vitest globals are disabled; join owned tasks before this file's explicit cleanup.
 const tasks: {
   controller: AbortController;
@@ -279,6 +280,109 @@ async function setup(
     },
   };
 }
+it("keeps the same focused search input when a cached roster is confirmed", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  const events = [
+    roster(relay, id, [viewer.pubkey]),
+    metadata(relay, id, "Cached channel", 1700000000, [
+      ["private"],
+      ["t", "stream"],
+    ]),
+    signed(relay, {
+      kind: 39001,
+      tags: [
+        ["d", id],
+        ["p", viewer.pubkey, "owner"],
+      ],
+      content: "",
+    }),
+    profile(viewer, { name: "Carl" }),
+  ];
+  let confirm!: () => void;
+  const confirmation = new Promise<void>((resolve) => {
+    confirm = resolve;
+  });
+  const publish = vi.fn(async () => {});
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      scope: "https://relay.example.test",
+      media: () => undefined,
+      query: async (filters) => {
+        if (filters.some((filter) => filter.kinds?.includes(39002)))
+          await confirmation;
+        return events.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+      },
+      channelDetails: {
+        sign: async (template) => signed(viewer, template),
+        publish,
+      },
+    },
+    {
+      prepared: true,
+      persistence: {
+        readStartup: async () => ({
+          discovery: {
+            savedAt: Date.now(),
+            relayAuthor: relay.pubkey,
+            events: events.slice(0, 2),
+          },
+        }),
+        writeStartup: async () => {},
+        read: async () => [],
+        write: async () => {},
+        retain: async () => {},
+        remove: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    },
+  );
+  stops.push(owner.dispose);
+  try {
+    await owner.restore();
+    owner.session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(owner.session.channels.get?.(id)?.cached).toBe(true),
+    );
+    render(
+      <ToastProvider>
+        <ChannelMembersButton session={owner.session} channelId={id} />
+      </ToastProvider>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    const input = screen.getByRole("searchbox");
+    await user.type(input, "Mor");
+    expect(input).toHaveFocus();
+    expect(
+      screen.queryByRole("combobox", { name: "General access" }),
+    ).toBeNull();
+    await act(async () => {
+      confirm();
+      await confirmation;
+    });
+    await screen.findByRole("combobox", { name: "General access" });
+    expect(owner.session.channels.get?.(id)?.cached).toBeUndefined();
+    expect(screen.getByRole("searchbox")).toBe(input);
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("Mor");
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).not.toContainElement(input);
+    await user.keyboard("gan");
+    expect(input).toHaveValue("Morgan");
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    confirm();
+  }
+});
+
 it("offers your agents when you are the only member and adds one without a directory search", async () => {
   const t = await setup();
   const yours = await screen.findByRole("region", {
@@ -315,9 +419,13 @@ it.each([false, true])(
         ],
       }),
     );
-    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    expect(
+      screen.getByRole("button", { name: "Retry member data" }),
+    ).toBeVisible();
     const settled = () =>
-      vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+      vi.waitFor(() =>
+        expect(memberData()).toHaveAttribute("aria-busy", "false"),
+      );
     const suggestions = () =>
       screen.queryByRole("region", { name: "Not in this channel" });
     const search = screen.getByRole("searchbox");
@@ -325,7 +433,9 @@ it.each([false, true])(
     expect(suggestions()).toBeVisible();
 
     t.confirmRoster();
-    await t.user.click(refresh);
+    await t.user.click(
+      screen.getByRole("button", { name: "Retry member data" }),
+    );
     await settled();
     const roster = () =>
       screen.getByRole("region", {
@@ -350,7 +460,9 @@ it.each([false, true])(
     await t.user.clear(search);
 
     t.removeTarget();
-    await t.user.click(refresh);
+    await t.user.click(
+      screen.getByRole("button", { name: "Retry member data" }),
+    );
     await settled();
     expect(suggestions()).toBeVisible();
     expect(
@@ -438,10 +550,14 @@ it("keeps setup guidance behind its information popover", async () => {
 
 it("distinguishes invitation and roster People regions while retaining the caption", async () => {
   const t = await setup();
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   t.confirmRoster();
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByText("Morgan");
   const guest = profile(keypair(), { name: "Morgan Guest" });
   const query = t.query.getMockImplementation();
@@ -946,7 +1062,7 @@ it("keeps archived agents out of the default invitations", async () => {
   await t.user.type(screen.getByRole("searchbox"), "Fixture");
   await vi.waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Refresh member data" }),
+      screen.getByRole("button", { name: "Retry member data" }),
     ).toHaveAttribute("aria-busy", "false"),
   );
   expect(
@@ -1036,10 +1152,16 @@ it("DMs are view-only and never search outside their members", async () => {
   expect(
     screen.queryByRole("region", { name: "Not in this channel" }),
   ).not.toBeInTheDocument();
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(
     t.query.mock.calls.some(([filters]) =>
       filters.some((filter) => filter.search),
@@ -1066,14 +1188,19 @@ it("failed directory searches recover through the shared refresh, not a false em
     within(section).queryByText("No other matching people or agents."),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /^Retry/ }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
   t.failSearch(false);
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  await t.user.click(refresh);
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await within(section).findByRole("button", { name: /Add Morgan/ });
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
+  expect(screen.getByRole("searchbox")).toHaveFocus();
   expect(within(section).queryByText("Search offline")).not.toBeInTheDocument();
 });
 
@@ -1097,9 +1224,11 @@ it.each(["pending", "failed"])(
   async (state) => {
     const t = await setup("stream", true);
     await t.search();
-    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    expect(
+      screen.getByRole("button", { name: "Retry member data" }),
+    ).toBeVisible();
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("aria-busy", "false"),
     );
     const nameReads = () =>
       t.query.mock.calls.filter(([filters]) =>
@@ -1117,17 +1246,21 @@ it.each(["pending", "failed"])(
       }),
     );
     try {
-      await t.user.click(refresh);
+      await t.user.click(
+        screen.getByRole("button", { name: "Retry member data" }),
+      );
       await vi.waitFor(() => expect(nameReads()).toBe(beforeNames + 1));
       const add = await screen.findByRole("button", { name: /Add Morgan/ });
       await vi.waitFor(() => expect(add).toBeEnabled());
-      expect(refresh).toHaveAttribute("aria-busy", "true");
-      expect(refresh).toHaveAttribute("aria-disabled", "true");
+      expect(memberData()).toHaveAttribute("aria-busy", "true");
+      expect(
+        screen.queryByRole("button", { name: "Retry member data" }),
+      ).not.toBeEnabled();
       if (state === "failed") {
         await act(async () => release());
         await screen.findByText(/Some names could not load/);
         await vi.waitFor(() =>
-          expect(refresh).toHaveAttribute("aria-busy", "false"),
+          expect(memberData()).toHaveAttribute("aria-busy", "false"),
         );
         expect(add).toBeEnabled();
       }
@@ -1145,13 +1278,17 @@ it("one refresh retries every failed data source and never replays a failed invi
   t.fail("Invitation denied");
   await t.user.click(await t.search());
   await screen.findByText(/Invitation denied/);
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   const query = t.query.getMockImplementation();
   if (!query) throw new Error("Missing query fixture");
   t.query.mockRejectedValue(new Error("Reads offline"));
   t.readAgentLibrary.mockRejectedValueOnce(new Error("Agents offline"));
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByText(/The member list could not load/);
   await screen.findByText(/Some agents could not load/);
   await screen.findByText(/Archived identities could not be checked/);
@@ -1159,15 +1296,19 @@ it("one refresh retries every failed data source and never replays a failed invi
     screen.getByRole("region", { name: "Not in this channel" }),
   ).findByText("Reads offline");
   await screen.findByText(/Some names could not load/);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  // The sole remaining Retry is the explicit invitation intent, not a fetch.
-  expect(screen.getAllByRole("button", { name: /^Retry/ })).toHaveLength(1);
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
+  // Read recovery and invitation replay remain separate deliberate actions.
+  expect(screen.getAllByRole("button", { name: /^Retry/ })).toHaveLength(2);
   t.query.mockImplementation(query);
   t.query.mockClear();
   t.readAgentLibrary.mockClear();
   t.recoverNames();
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   const filters = t.query.mock.calls.flatMap(([filters]) => filters);
   expect(filters.some((filter) => filter.kinds?.includes(39002))).toBe(true);
   expect(filters.some((filter) => filter.kinds?.includes(39001))).toBe(true);
@@ -1194,9 +1335,11 @@ it.each(["search", "archives", "agents"])(
   async (source) => {
     const t = await setup();
     await t.search();
-    const refresh = screen.getByRole("button", { name: "Refresh member data" });
+    expect(
+      screen.getByRole("button", { name: "Retry member data" }),
+    ).toBeVisible();
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("aria-busy", "false"),
     );
     const query = t.query.getMockImplementation();
     if (!query) throw new Error("Missing query fixture");
@@ -1224,7 +1367,9 @@ it.each(["search", "archives", "agents"])(
         return query(filters);
       });
     try {
-      await t.user.click(refresh);
+      await t.user.click(
+        screen.getByRole("button", { name: "Retry member data" }),
+      );
       await vi.waitFor(() => expect(started).toBe(1));
       await vi.waitFor(() =>
         expect(
@@ -1233,14 +1378,18 @@ it.each(["search", "archives", "agents"])(
           ).status,
         ).toBe("error"),
       );
-      expect(refresh).toHaveAttribute("aria-busy", "true");
-      expect(refresh).toHaveAttribute("aria-disabled", "true");
-      await t.user.click(refresh);
+      expect(memberData()).toHaveAttribute("aria-busy", "true");
+      expect(
+        screen.queryByRole("button", { name: "Retry member data" }),
+      ).not.toBeEnabled();
+      await t.user.click(
+        screen.getByRole("button", { name: "Retry member data" }),
+      );
     } finally {
       await act(async () => release());
     }
     await vi.waitFor(() =>
-      expect(refresh).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("aria-busy", "false"),
     );
     expect(started).toBe(1);
     expect(t.publish).not.toHaveBeenCalled();
@@ -1278,13 +1427,19 @@ it("refresh restarts the current directory query from page one instead of mixing
   expect(within(people).getAllByRole("button", { name: /^Add / })).toHaveLength(
     31,
   );
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   fresh = true;
   t.query.mockClear();
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByText(nameText("Morgan 0"));
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(screen.queryByText(nameText("Morgan stale"))).not.toBeInTheDocument();
   expect(
     t.query.mock.calls
@@ -1335,7 +1490,7 @@ it("keeps known members quiet while rechecking membership without enabling unver
     expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();
     await act(async () => release());
     const retry = await screen.findByRole("button", {
-      name: "Refresh member data",
+      name: "Retry member data",
     });
     expect(add).toBeDisabled();
     await vi.waitFor(() => expect(retry).toHaveAttribute("aria-busy", "false"));
@@ -1433,17 +1588,19 @@ it("does not offer profile controls without an available Profiles contribution",
 
 it("refreshes membership even when verified role metadata is unavailable", async () => {
   const t = await setup();
-  const refresh = screen.getByRole("button", {
-    name: "Refresh member data",
-  });
+  expect(
+    screen.getByRole("button", {
+      name: "Retry member data",
+    }),
+  ).toBeVisible();
   await vi.waitFor(() =>
-    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
   );
   t.confirmRoster();
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByText("Morgan");
   await vi.waitFor(() =>
-    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
   );
   expect(screen.getByRole("region", { name: "People" })).toHaveTextContent(
     "People · 2",
@@ -1632,11 +1789,11 @@ it.each([
       t.confirmRoster();
       await vi.waitFor(() =>
         expect(
-          screen.getByRole("button", { name: "Refresh member data" }),
+          screen.getByRole("button", { name: "Retry member data" }),
         ).toHaveAttribute("aria-busy", "false"),
       );
       await t.user.click(
-        screen.getByRole("button", { name: "Refresh member data" }),
+        screen.getByRole("button", { name: "Retry member data" }),
       );
     } else await t.search();
     const owner = await screen.findByRole("button", {
@@ -1754,17 +1911,25 @@ it("removes ownership on a newer invalid signed head and never restores it from 
   );
   await t.search();
   await screen.findByRole("button", { name: "Open owner profile: Carl (you)" });
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   head = managedProfile(t.person, t.viewer, 1800000001, false);
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(
     screen.queryByText("managed by", { exact: false }),
   ).not.toBeInTheDocument();
   head = first;
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(
     screen.queryByRole("button", { name: /Open owner profile/ }),
   ).not.toBeInTheDocument();
@@ -1818,19 +1983,27 @@ it("retries ownership admission and failed owner names through the shared refres
   expect(
     screen.queryByRole("button", { name: /Open owner profile/ }),
   ).not.toBeInTheDocument();
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   for (const view of held) view.dispose();
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByRole("button", { name: /Open owner profile: npub/ });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(
     screen.getByText(/Some agent managers or their names could not load/),
   ).toBeVisible();
   failName = false;
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByRole("button", { name: "Open owner profile: Manager" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(
     screen.queryByText(/Some agent managers or their names could not load/),
   ).not.toBeInTheDocument();
@@ -1887,12 +2060,12 @@ async function pagedInvitations(
   // real setTimeout(0) after every action, so these steps drive fireEvent.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const input = screen.getByRole("searchbox");
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  const refresh = screen.getByRole("button", { name: "Retry member data" });
   const idle = () =>
     step(async () => {
       await act(() => vi.advanceTimersByTimeAsync(200));
       await vi.waitFor(() =>
-        expect(refresh).toHaveAttribute("aria-busy", "false"),
+        expect(memberData()).toHaveAttribute("aria-busy", "false"),
       );
     });
   const search = (value: string) =>
@@ -2148,19 +2321,25 @@ it("offers local agents to add by the shared name rule", async () => {
     filters.some((filter) => filter.search) ? [] : query(filters),
   );
   const input = screen.getByRole("searchbox");
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
   const offered = () =>
     screen
       .queryAllByRole("button", { name: /^Add / })
       .map((row) => row.getAttribute("aria-label"));
   // Accents fold, so `jose` finds the agent José.
   await t.user.type(input, "jose");
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(offered()).toEqual([expect.stringMatching(/^Add José/)]);
   // Text inside a word does not match: `oney` does not find Honey.
   await t.user.clear(input);
   await t.user.type(input, "oney");
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(offered()).toEqual([]);
 });
 
@@ -2513,10 +2692,16 @@ it("reveals Solo directory continuations in their group and resets expansion on 
   expect(
     screen.queryByRole("button", { name: "Find more matches" }),
   ).toBeNull();
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-  await t.user.click(refresh);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
+  await vi.waitFor(() =>
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
+  );
   expect(rows()).toHaveLength(4);
   expect(t.publish).not.toHaveBeenCalled();
 });
@@ -2631,11 +2816,13 @@ it("closing Solo members during an addition keeps the confirmed roster discovera
   await act(async () => t.release());
   await t.user.click(t.trigger);
   // The add's receipt can settle after close; Refresh reads the authoritative roster.
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  expect(
+    screen.getByRole("button", { name: "Retry member data" }),
+  ).toBeVisible();
   await vi.waitFor(() =>
-    expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
+    expect(memberData()).toHaveAttribute("aria-busy", "false"),
   );
-  await t.user.click(refresh);
+  await t.user.click(screen.getByRole("button", { name: "Retry member data" }));
   await screen.findByRole("heading", { name: "Agents · 1" });
   expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([9000]);
 });
@@ -2728,7 +2915,7 @@ it.each([false, true])(
       await t.user.click(screen.getByRole("button", { name: "Access" }));
       await screen.findByText(/The member list could not load/);
       await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
-      const control = screen.getByRole("combobox", { name: "Who can read" });
+      const control = screen.getByRole("combobox", { name: "General access" });
       expect(control).toBeDisabled();
       t.query.mockImplementation(query);
       if (signInBeforeRefusal) act(() => t.session.recovery?.retryAll());
@@ -2746,9 +2933,7 @@ it.each([false, true])(
         ).not.toBeInTheDocument(),
       );
       expect(
-        within(
-          screen.getByRole("region", { name: "General access" }),
-        ).queryByRole("alert"),
+        screen.queryByRole("group", { name: "General access recovery" }),
       ).not.toBeInTheDocument();
       expect(t.publish.mock.calls.length).toBe(publishes);
       expect(save).not.toHaveBeenCalled();
@@ -2817,20 +3002,33 @@ it.each(["public", "private"] as const)(
     ).toBeVisible();
     await vi.waitFor(() =>
       expect(
-        screen.getByRole("combobox", { name: "Who can read" }),
+        screen.getByRole("combobox", { name: "General access" }),
       ).toBeEnabled(),
     );
-    if (visibility === "public") {
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    expect(
+      screen.getByRole("combobox", { name: "General access" }),
+    ).toHaveTextContent(visibility === "public" ? "View only" : "Private");
+    const access = screen.getByRole("combobox", { name: "General access" });
+    const done = screen.getByRole("button", { name: "Done" });
+    const copy = screen.getByRole("button", { name: "Copy link" });
+    expect(copy.closest("footer")).toContainElement(done);
+    expect(access.closest("footer")).toBeNull();
+    const search = screen.getByRole("searchbox");
+    expect(
+      screen.getByRole("region", { name: "General access" }).parentElement,
+    ).toBe(screen.getByRole("region", { name: "Member list" }));
+    expect(
+      search.compareDocumentPosition(access) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(access).toHaveAttribute("data-size", "sm");
+    expect(
+      access.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    if (visibility === "private") {
       expect(
-        screen.getByRole("combobox", { name: "New people can" }),
-      ).toHaveTextContent("View only");
-    } else {
-      expect(
-        screen.queryByRole("combobox", { name: "New people can" }),
+        screen.queryByText("Only people you add can read this channel."),
       ).not.toBeInTheDocument();
-      expect(
-        screen.getByText("Only people you add can read this channel."),
-      ).toBeVisible();
     }
     expect(
       await within(
@@ -2838,9 +3036,8 @@ it.each(["public", "private"] as const)(
       ).findAllByText("Participating"),
     ).not.toHaveLength(0);
     role = "guest";
-    await h.user.click(
-      screen.getByRole("button", { name: "Refresh member data" }),
-    );
+    await h.user.click(screen.getByRole("button", { name: "Close" }));
+    await h.user.click(screen.getByRole("button", { name: "Access" }));
     expect(
       await within(
         screen.getByRole("region", { name: "Member list" }),
@@ -2952,8 +3149,8 @@ it.each([false, true])(
     // Finish the roster read before checking that the dialog cannot invite or mutate.
     await vi.waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toBeEnabled(),
+        screen.getByRole("region", { name: "Member list" }),
+      ).toHaveAttribute("aria-busy", "false"),
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(

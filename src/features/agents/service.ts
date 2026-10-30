@@ -145,6 +145,7 @@ import {
   readUnfinished,
   setAttention,
   writeArchiveUnchecked,
+  recentEntries,
   removeRecord,
   splitLegacyRecords,
   writeRecord,
@@ -152,6 +153,7 @@ import {
   writeUnfinished,
   withProgress,
   type AgentRecord,
+  type AttentionEntry,
   type TimerProgress,
   type SkippedObject,
   type Team,
@@ -1796,12 +1798,13 @@ export class AgentsService extends Service implements Agents {
         this.history(
           key,
           object,
-          events
-            ?.map(
-              (event) =>
-                `${new Date(event.created_at * 1000).toISOString()} · ${event.pubkey}\n${event.content}`,
-            )
-            .join("\n\n"),
+          events?.map((event) => ({
+            id: event.id,
+            at: event.created_at,
+            author: event.pubkey,
+            channel: event.tags.find(([name]) => name === "h")?.[1],
+            text: event.content,
+          })),
           Math.floor(Date.now() / 1000),
         ),
       finished: (key) => {
@@ -2179,27 +2182,22 @@ export class AgentsService extends Service implements Agents {
   private history(
     key: AgentKey,
     object: AttentionObject,
-    output?: string,
+    events: readonly AttentionEntry[] = [],
     lastWokeAt?: number,
   ) {
     void this.queued(key, async () => {
       const record = this.records[key];
       if (!record || record.attention[object.slug] !== object) return;
-      const prior = record.attentionHistory?.[object.slug];
+      const { output, ...prior } = record.attentionHistory?.[object.slug] ?? {};
+      // Entries replace the one string a watch kept before them.
       const entry = {
         ...prior,
         ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
-        ...(output !== undefined
-          ? {
-              output: [prior?.output, output]
-                .filter((part) => part !== undefined && part !== "")
-                .join(prior?.output?.endsWith("\n") ? "" : "\n")
-                .slice(-16384)
-                .split("\n")
-                .slice(-40)
-                .join("\n"),
-            }
-          : {}),
+        ...(events.length
+          ? { events: recentEntries([...(prior.events ?? []), ...events]) }
+          : output !== undefined
+            ? { output }
+            : {}),
       };
       await this.commit(key, record, {
         ...record,
@@ -2222,7 +2220,9 @@ export class AgentsService extends Service implements Agents {
             !object.value.enabled
           )
             throw new Error("This source watch is no longer enabled");
-          this.history(key, object, text);
+          this.history(key, object, [
+            { at: Math.floor(Date.now() / 1000), text },
+          ]);
           this.runners.wakeSource(
             key,
             {

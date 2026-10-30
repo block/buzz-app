@@ -62,10 +62,46 @@ export type SkippedObject = Readonly<{
   modifiedAt: number;
   problem: string;
 }>;
+/** One event a watch woke its agent for, or one output of a source. */
+export type AttentionEntry = Readonly<{
+  /** The woken event's id, so it can show as that message. */
+  id?: string | undefined;
+  at: number;
+  text: string;
+  author?: string | undefined;
+  channel?: string | undefined;
+}>;
 export type AttentionHistory = Readonly<{
   lastWokeAt?: number;
+  /** What a watch saved before it kept `events`. */
   output?: string;
+  events?: readonly AttentionEntry[];
 }>;
+/** The latest valid `entries` a watch's history keeps, each clipped. */
+export const recentEntries = (entries: readonly unknown[]) =>
+  entries
+    .flatMap((value): AttentionEntry[] => {
+      const entry = value as Partial<AttentionEntry> | null;
+      return entry &&
+        Number.isFinite(entry.at) &&
+        typeof entry.text === "string" &&
+        entry.text
+        ? [
+            {
+              at: entry.at as number,
+              text: entry.text.slice(0, 2000),
+              ...(typeof entry.id === "string" ? { id: entry.id } : {}),
+              ...(typeof entry.author === "string"
+                ? { author: entry.author }
+                : {}),
+              ...(typeof entry.channel === "string"
+                ? { channel: entry.channel }
+                : {}),
+            },
+          ]
+        : [];
+    })
+    .slice(-10);
 export type AgentRecord = Readonly<{
   /** Its membership's key (see `agentKey`): the agent's pubkey in its home
    * community. Saved as `pubkey`, which every record had before agents
@@ -222,6 +258,9 @@ function readRecord(
                                   .slice(-40)
                                   .join("\n"),
                               }
+                            : {}),
+                          ...(Array.isArray(entry.events)
+                            ? { events: recentEntries(entry.events) }
                             : {}),
                         },
                       ],

@@ -317,6 +317,9 @@ async function setup({
 /** Lets every pending promise chain finish: a macrotask runs only after the
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** The texts of a watch's recent events, oldest first. */
+const texts = (service: AgentsService, slug = "watch/pr") =>
+  service.find(bot)?.attentionHistory?.[slug]?.events?.map(({ text }) => text);
 /** The service's synced config state, which tests set as the relay would. */
 const internals = (service: AgentsService) =>
   service as unknown as {
@@ -1127,13 +1130,17 @@ it("delivers mentions and matching watches once, and never the agent's own event
   });
   await vi.waitFor(() =>
     expect(
-      service.find(bot)?.attentionHistory?.["watch/channel"]?.output,
-    ).toContain(watched.content),
+      service.find(bot)?.attentionHistory?.["watch/channel"]?.events,
+    ).toEqual([
+      {
+        id: watched.id,
+        at: watched.created_at,
+        author: watched.pubkey,
+        channel,
+        text: watched.content,
+      },
+    ]),
   );
-  const output = service.find(bot)?.attentionHistory?.["watch/channel"]?.output;
-  if (!output) throw new Error("missing history");
-  expect(output).toContain(watched.pubkey);
-  expect(output.match(/deploy/g)).toHaveLength(1);
   const history = service.find(bot)?.attentionHistory?.["watch/channel"];
   for (const enabled of [false, true]) {
     const expected = service.find(bot)?.attention["watch/channel"];
@@ -9482,9 +9489,7 @@ describe("Attention plugin sources", () => {
         expect(run).not.toHaveBeenCalled();
         expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
         expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined();
-        expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
-          "build failed",
-        );
+        expect(texts(service)).toEqual(["build failed"]);
         return;
       }
       await vi.waitFor(() =>
@@ -9563,7 +9568,7 @@ describe("Attention plugin sources", () => {
       ),
     ).toBe(true);
   });
-  it("separates source history emits that do not end in a newline", async () => {
+  it("keeps each source emit as its own recent event", async () => {
     const { service, plugin, native } = await sourceFixture();
     plugin.agents.addAttentionSource({
       id: "command",
@@ -9578,11 +9583,7 @@ describe("Attention plugin sources", () => {
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
     await service.save(bot, { attentionEnabled: true, attention: watches });
-    await vi.waitFor(() =>
-      expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
-        "first\nsecond",
-      ),
-    );
+    await vi.waitFor(() => expect(texts(service)).toEqual(["first", "second"]));
     await service.save(bot, { attentionEnabled: false });
   });
   it("stops sources while no plugin shows Attention, and starts them again", async () => {
@@ -9741,9 +9742,7 @@ describe("Attention plugin sources", () => {
       try {
         await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
         await vi.waitFor(() =>
-          expect(
-            service.find(bot)?.attentionHistory?.["watch/pr"]?.output,
-          ).toBe("final output\n"),
+          expect(texts(service)).toEqual(["final output\n"]),
         );
         expect(
           service.find(bot)?.attentionHistory?.["watch/pr"]?.lastWokeAt,
@@ -9761,9 +9760,7 @@ describe("Attention plugin sources", () => {
       await settle();
       if (outcome !== "success") {
         expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
-        expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
-          "final output\n",
-        );
+        expect(texts(service)).toEqual(["final output\n"]);
       } else {
         await vi.waitFor(() =>
           expect(service.find(bot)?.attention["watch/pr"]).toBeUndefined(),
@@ -9814,9 +9811,7 @@ describe("Attention plugin sources", () => {
       await settle();
       expect(produce).toHaveBeenCalledTimes(1);
       expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
-      expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
-        "final output",
-      );
+      expect(texts(service)).toEqual(["final output"]);
     },
   );
   it("delivers nonempty output, preserves queued output on completion, and does not rerun after restart", async () => {

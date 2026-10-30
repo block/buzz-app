@@ -400,3 +400,49 @@ it.each([undefined, null])(
     expect(read?.skipped?.["watch/broken"]).toBeDefined();
   },
 );
+
+it("keeps a watch's ten latest valid recent events, each clipped", async () => {
+  const storage = memoryStorage();
+  const saved = setAttention(
+    setAttention(
+      record,
+      "interest/release",
+      { type: "interest", instructions: "Follow releases." },
+      1,
+    ),
+    "watch/messages",
+    {
+      type: "event",
+      interest_id: "release",
+      enabled: true,
+      channels: "all",
+      kinds: [],
+      since: 1,
+    },
+    1,
+  );
+  await writeRecord(storage, saved);
+  const stored = JSON.parse(storage.getItem(recordKey(pubkey)) as string);
+  stored.attentionHistory = {
+    "watch/messages": {
+      lastWokeAt: 9,
+      events: [
+        ...Array.from({ length: 11 }, (_, at) => ({ at, text: `${at}` })),
+        { id: "e", at: 11, text: "x".repeat(3000), author: pubkey, channel: 7 },
+        { id: 7, at: 11, text: "id" },
+        { at: "12", text: "late" },
+        { at: 13, text: "" },
+        null,
+      ],
+    },
+  };
+  storage.setItem(recordKey(pubkey), JSON.stringify(stored));
+  const history = readRecords(storage)[pubkey]?.attentionHistory;
+  const events = history?.["watch/messages"]?.events ?? [];
+  expect(history?.["watch/messages"]?.lastWokeAt).toBe(9);
+  expect(events.map(({ at }) => at)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 11]);
+  expect(events.slice(-2)).toEqual([
+    { id: "e", at: 11, text: "x".repeat(2000), author: pubkey },
+    { at: 11, text: "id" },
+  ]);
+});

@@ -71,6 +71,7 @@ import {
 import {
   SidebarRightIcon,
   PlugIcon,
+  CloudOffIcon,
   ChatCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
@@ -198,8 +199,27 @@ export function ChannelsPage({
                 community. Your profile and settings work without a community.
               </p>
             </div>
+          ) : session.status === "error" && !session.retrying ? (
+            // Usually a failed visit's card covers this page, but a visit that
+            // already opened from cached content keeps it: say so plainly.
+            <div role="alert" className={styles.failed}>
+              <EmptyState
+                icon={<CloudOffIcon />}
+                title="Can’t connect"
+                description="Check your connection, then try again."
+                action={
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => relay.retry()}
+                  >
+                    Try again
+                  </Button>
+                }
+              />
+            </div>
           ) : (
-            // Connecting, or failed: a failed visit's card covers this page.
+            // Only real connection work animates.
             <div className={styles.connect}>
               <LoadingRegion
                 pending

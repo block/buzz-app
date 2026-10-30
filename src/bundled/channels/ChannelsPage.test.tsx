@@ -252,3 +252,42 @@ it("the actual workspace receives session-bound authority, never the page's reus
     await ctx.fiber.dispose();
   }
 });
+
+it("animates Connecting only while a connection is actually under way", async () => {
+  const { render, screen } = await import("@testing-library/react");
+  const retry = vi.fn();
+  const page = (snapshot: Partial<RelaySnapshot>) => {
+    const relay = {
+      snapshot: () => ({ scope: "s", generation: 0, ...snapshot }),
+      retry,
+    } as unknown as RelayData;
+    return (
+      <ChannelsPage
+        relay={relay}
+        panels={{} as Panels}
+        navigator={createNavigationController(createMemoryHistory()).navigation}
+      />
+    );
+  };
+  vi.useFakeTimers();
+  try {
+    // A refusal after cached content opened the visit: nothing is retrying.
+    const view = render(page({ status: "error" }));
+    expect(screen.getByRole("alert").textContent).toContain("Can’t connect");
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.queryByText("Connecting…")).toBeNull();
+    act(() => screen.getByRole("button", { name: "Try again" }).click());
+    expect(retry).toHaveBeenCalledOnce();
+    for (const working of [
+      { status: "connecting" },
+      { status: "error", retrying: true },
+    ] as const) {
+      view.rerender(page(working));
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(screen.getByRole("status").textContent).toContain("Connecting…");
+      expect(screen.queryByRole("alert")).toBeNull();
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});

@@ -591,6 +591,16 @@ html[data-keyboard-navigation]
 .connect button {
   margin: var(--space-4) 0;
 }
+.failed {
+  height: 100%;
+  background: var(--surface-panel);
+  display: grid;
+  place-items: center;
+  padding: var(--space-section-gap);
+}
+.failed > * {
+  max-inline-size: 28rem;
+}
 .connecting {
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);

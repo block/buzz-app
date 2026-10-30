@@ -157,7 +157,6 @@ body[data-closing="true"] #close-hint {
   grid-area: 1 / 1;
   inline-size: 1.125rem;
   block-size: 1.125rem;
-  flex-shrink: 0;
   visibility: hidden;
   animation: spin 1s linear infinite;
 }

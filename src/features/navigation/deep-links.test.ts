@@ -168,6 +168,7 @@ function harness(initial: Client, pending: string[] = []) {
       log.push("rejected");
     }),
     inboxOff: vi.fn(() => false),
+    accepted: vi.fn(),
   };
   const stop = bindDeepLinks(
     host,
@@ -239,6 +240,7 @@ it.each([""])(
         invite,
         rejected,
         inboxOff: () => false,
+        accepted: vi.fn(),
       },
       {
         snapshot: () => client,
@@ -300,6 +302,7 @@ it.each([""])(
         invite,
         rejected,
         inboxOff: () => false,
+        accepted: vi.fn(),
       },
       { snapshot: () => ready, subscribe: () => () => {} },
       {
@@ -384,8 +387,10 @@ it("explains each repeated malformed link without stacking visits, then opens a 
   t.arrive("buzz://");
   await settle();
   expect(t.log).toEqual(["rejected", inboxOpen, "rejected", inboxOpen]);
+  expect(t.host.accepted).not.toHaveBeenCalled();
   t.arrive("buzz://channel/general");
   await settle();
+  expect(t.host.accepted).toHaveBeenCalledTimes(1);
   expect(t.log.at(-1)).toBe(channelOpen);
   expect(t.host.navigation.snapshot().entry.target).toMatchObject({
     channelId: "general",
@@ -750,6 +755,7 @@ it("still drains once when the shell cannot deliver updates, without aborting st
     fail: vi.fn(),
     rejected: vi.fn(),
     inboxOff: () => false,
+    accepted: vi.fn(),
   };
   const stop = bindDeepLinks(
     host,
@@ -786,7 +792,7 @@ it("is a no-op in the browser build, where no shell exists", async () => {
   const host = createNavigationController(createMemoryHistory());
   const subscribe = vi.fn(() => () => {});
   const stop = bindDeepLinks(
-    { ...host, rejected: vi.fn(), inboxOff: () => false },
+    { ...host, rejected: vi.fn(), inboxOff: () => false, accepted: vi.fn() },
     { snapshot: () => ready, subscribe },
   );
   await settle();
@@ -844,6 +850,7 @@ it("drains URLs arriving between startup take and deferred native watch registra
     fail: vi.fn(),
     rejected: vi.fn(),
     inboxOff: () => false,
+    accepted: vi.fn(),
   };
   const stop = bindDeepLinks(host, {
     snapshot: () => ready,

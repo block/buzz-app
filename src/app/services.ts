@@ -161,6 +161,7 @@ export function createServices() {
     ...navigationHost,
     invite: invites.open,
     rejected: rejectedLinks.reject,
+    accepted: () => rejectedLinks.clear(),
     // As the router decides: settled startup with no Inbox page.
     inboxOff: () =>
       plugins.startup() !== "loading" &&

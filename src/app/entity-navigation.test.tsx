@@ -241,9 +241,13 @@ it("keeps an OS entity intent through real community selection and Retry in App"
       scope: { viewer, communityOrigin: origin },
     }),
   );
-  expect(
-    screen.getAllByRole("dialog", { name: "This link doesn’t work" }),
-  ).toHaveLength(1);
+  // The valid link clears the earlier notice.
+  expect(current.rejectedLinks.snapshot()).toBeUndefined();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "This link doesn’t work" }),
+    ).not.toBeInTheDocument(),
+  );
 });
 
 const elsewhere = "https://elsewhere.example";

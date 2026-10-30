@@ -25,6 +25,8 @@ export type DeepLinkHost = Readonly<{
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
   /** Explain a link that names no Buzz destination; the binding opens Inbox. */
   rejected(): void;
+  /** A newer link names a destination, so an earlier rejection's notice is stale. */
+  accepted(): void;
   /** Inbox is known to be turned off, so a rejected link stays where it is. */
   inboxOff(): boolean;
   /** Invite presentation belongs to the community switcher, not navigation. */
@@ -237,6 +239,7 @@ export function bindDeepLinks(
           selected: client.selected,
           reported: false,
         };
+        if (!held.invalid) host.accepted();
         if (client.status !== "loading") void openHeld();
         else flush();
       }
@@ -334,8 +337,9 @@ export function createRejectedLinks() {
       current = ++next;
       emit();
     },
-    clear(id: number) {
-      if (current !== id) return;
+    /** Without an id, clears whichever notice is showing. */
+    clear(id?: number) {
+      if (current === undefined || (id !== undefined && current !== id)) return;
       current = undefined;
       emit();
     },

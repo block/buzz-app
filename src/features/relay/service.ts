@@ -33,6 +33,8 @@ export type RelaySnapshot = Readonly<{
   restoring?: true;
   /** This error is transient: the service reconnects without anyone acting. */
   retrying?: true;
+  /** The community refused this account; not a connection problem. */
+  denied?: true;
 }>;
 export type RelayData = {
   snapshot(): RelaySnapshot;
@@ -326,6 +328,7 @@ export function provideRelay(
               generation,
               session: store.session,
               error: String(error),
+              denied: true,
             });
           } else {
             transientFailure = isTransientFailure(error);

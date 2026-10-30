@@ -788,6 +788,19 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
     .setup()
     .click(within(sidebar()).getByRole("button", { name: "Try again" }));
   expect(retry).toHaveBeenCalledOnce();
+  // A refusal is about access, not the connection.
+  f.connection({
+    status: "error",
+    error: "ReadError: Relay read failed (403)",
+    denied: true,
+  });
+  expect(
+    within(sidebar()).getByText("You don’t have access to this community."),
+  ).toBeVisible();
+  expect(within(sidebar()).queryByText("Couldn’t load channels.")).toBeNull();
+  expect(
+    within(sidebar()).getByRole("button", { name: "Try again" }),
+  ).toBeVisible();
   for (const working of [
     { status: "connecting" },
     { status: "error", error, retrying: true },

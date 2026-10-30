@@ -318,9 +318,11 @@ function ScopedSidebar({
                 <p>
                   {connection.status === "connecting" || connection.retrying
                     ? "Connecting…"
-                    : connection.status === "error"
-                      ? "Couldn’t load channels."
-                      : "Choose a community to see channels."}
+                    : connection.denied
+                      ? "You don’t have access to this community."
+                      : connection.status === "error"
+                        ? "Couldn’t load channels."
+                        : "Choose a community to see channels."}
                 </p>
                 {connection.status === "error" && !connection.retrying && (
                   <>

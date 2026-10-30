@@ -128,6 +128,35 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   ).toBeFocused();
 });
 
+test("a refused account is explained as access, in place and in the sidebar", async ({
+  page,
+  app,
+}) => {
+  app.report.relayFailures = [];
+  await page.route("**/api/relay/primary/session", (route) => {
+    app.report.relayFailures.push(route.request().url());
+    return route.fulfill({ status: 403, json: { error: "Forbidden" } });
+  });
+  await page.goto(app.origin);
+  const main = page.getByRole("main");
+  // Messages explains the refusal itself rather than giving network advice.
+  await expect(
+    main.getByRole("heading", { name: "You don’t have access to this" }),
+  ).toBeVisible();
+  await expect(main.getByText(/Check your connection/)).toHaveCount(0);
+  await expect(
+    page.getByText("You don’t have access to this community."),
+  ).toBeVisible();
+  const refusals = app.report.relayFailures.length;
+  await button(main, "Try again").click();
+  await expect
+    .poll(() => app.report.relayFailures.length)
+    .toBeGreaterThan(refusals);
+  await expect(
+    main.getByRole("heading", { name: "You don’t have access to this" }),
+  ).toBeVisible();
+});
+
 test("Skip to content focuses main without adding a visit or dropping Back", async ({
   page,
   app,

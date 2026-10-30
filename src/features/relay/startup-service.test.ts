@@ -169,6 +169,8 @@ it("explicit handshake denial purges saved history instead of retaining offline 
   await vi.waitFor(() => expect(data.snapshot().status).toBe("error"));
   expect(data.snapshot().cached).toBeUndefined();
   expect(data.snapshot().retrying).toBeUndefined();
+  // Pages explain a refusal as access, not as the connection.
+  expect(data.snapshot().denied).toBe(true);
   expect(data.snapshot().session.channels.list().channels).toEqual([]);
   expect(await disk.readStartup?.()).toBeUndefined();
   expect(await disk.read()).toEqual([]);

@@ -72,6 +72,7 @@ import {
   SidebarRightIcon,
   PlugIcon,
   CloudOffIcon,
+  LockIcon,
   ChatCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
@@ -180,13 +181,19 @@ export function ChannelsPage({
     // A connection that is retrying on its own keeps the visit pending; the
     // visit deadline bounds the wait and the host reopens it once connected.
     else if (session.status === "error" && !session.cached && !session.retrying)
-      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
+      sessionNavigation.complete(
+        // A refusal is explained in place, beside its own Try again.
+        session.denied
+          ? { status: "failed", reason: "denied", presented: true }
+          : { status: "failed", reason: "unavailable" },
+      );
   }, [
     navigation,
     sessionNavigation,
     session.status,
     session.cached,
     session.retrying,
+    session.denied,
   ]);
   return (
     <section className={styles.root} aria-label="Channels">
@@ -202,6 +209,23 @@ export function ChannelsPage({
                 Use the community picker in the header to choose or add a
                 community. Your profile and settings work without a community.
               </p>
+            </div>
+          ) : session.status === "error" && session.denied ? (
+            <div role="alert" className={styles.failed}>
+              <EmptyState
+                icon={<LockIcon />}
+                title="You don’t have access to this"
+                description="It belongs to another account or a community you haven’t joined."
+                action={
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => relay.retry()}
+                  >
+                    Try again
+                  </Button>
+                }
+              />
             </div>
           ) : session.status === "error" &&
             (!session.retrying || visitSettled) ? (

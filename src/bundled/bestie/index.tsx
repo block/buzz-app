@@ -29,6 +29,7 @@ import {
   type RemoteBestie,
 } from "./setup";
 import type { RemoteAgentModel } from "../builderlab/agents/client";
+import { bestieTab } from "./BestieTab";
 
 export const inject = [
   "pages",
@@ -66,6 +67,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   });
   ctx.effect(() => () => listeners.clear());
+  ctx.agents.registerTab(bestieTab(ctx.relay));
   ctx.pages.register({
     id: "bestie",
     title: "Bestie",

@@ -10,6 +10,13 @@ Open **Bestie** and choose **Set up Bestie**. Setup signs you in to Builderlab,
 creates your hosted Bestie, gives it its instructions, creates your private
 channel and sends a first message on your behalf so Bestie introduces itself.
 
+### The Bestie tab
+
+The agent you made your Bestie (with **Make my bestie** in Agents) gets a
+**Bestie** tab on its agent page while it runs on this device. **Change** picks
+another agent and asks before replacing your Bestie. The tab lists Bestie's
+settings, which are not set up yet.
+
 ---
 
 ## Changing Bestie's instructions

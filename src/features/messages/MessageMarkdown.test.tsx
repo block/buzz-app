@@ -933,6 +933,26 @@ it("renders tagged agent library names and profile names with the same agent ico
   ).not.toContain("data-mention-kind=");
 });
 
+describe("paragraph-leading profile capsules", () => {
+  it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
+    "aligns %s only at the paragraph start",
+    (mention) => {
+      for (const [content, leading] of [
+        [mention, true],
+        [`Hello ${mention}`, false],
+        [`Hello  \n${mention}`, false],
+      ] as const) {
+        const view = renderDom(<MessageMarkdown {...props(content)} />);
+        const capsule = view.getByRole("button", { name: "View Mic profile" });
+        expect(capsule.closest("p")?.hasAttribute("data-leading-mention")).toBe(
+          leading,
+        );
+        view.unmount();
+      }
+    },
+  );
+});
+
 it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {
   const target = profileTarget(mic);
   const view = renderDom(
@@ -946,6 +966,7 @@ it("keeps explicit profile identities visible but inert when Profiles is unavail
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
   expect(view.container.textContent).toContain(target);
+  expect(view.container.querySelector("[data-leading-mention]")).toBeNull();
   view.rerender(
     <MessageMarkdown
       {...props(`[@Mic](${target})`, {

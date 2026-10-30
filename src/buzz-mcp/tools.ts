@@ -212,15 +212,25 @@ export const TOOLS: readonly Tool[] = [
   tool("channel_archive", "Archive a channel.", { channel: str }),
   tool("channel_unarchive", "Unarchive a channel.", { channel: str }),
   tool("channel_delete", "Delete a channel permanently.", { channel: str }),
-  tool(
-    "members",
-    "A channel's members; add or remove pubkeys or npubs, giving those added a role.",
-    {
-      channel: str,
-      add: strs,
-      remove: strs,
-      role: { type: "string", enum: ROLES },
+  tool("member_list", "A channel's members (default: current).", {
+    channel: str,
+    limit: { type: "integer", description: "Default 100, max 500." },
+    offset: {
+      type: "integer",
+      description: "Members to skip, from a continue line.",
     },
+  }),
+  tool(
+    "member_add",
+    "Add pubkeys or npubs to a channel, optionally with a role.",
+    { channel: str, pubkeys: strs, role: { type: "string", enum: ROLES } },
+    ["pubkeys"],
+  ),
+  tool(
+    "member_remove",
+    "Remove pubkeys or npubs from a channel.",
+    { channel: str, pubkeys: strs },
+    ["pubkeys"],
   ),
   tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
   tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
@@ -329,9 +339,9 @@ export function callTool(
 ) {
   const handler = HANDLERS[name];
   if (!handler) throw new Error(`No tool ${name}`);
-  // A channel tool refuses arguments it does not list, so a misspelled
-  // target cannot fall back to the current channel.
-  if (name.startsWith("channel_")) {
+  // A channel or member tool refuses arguments it does not list, so a
+  // misspelled target cannot fall back to the current channel.
+  if (name.startsWith("channel_") || name.startsWith("member_")) {
     const listed =
       TOOLS.find((tool) => tool.name === name)?.inputSchema.properties ?? {};
     const extra = Object.keys(args).filter(
@@ -723,47 +733,50 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   channel_unarchive: (tools, args) => lifecycle(tools, args, "unarchive"),
   channel_delete: (tools, args) => lifecycle(tools, args, "delete"),
 
-  async members(tools, args) {
+  async member_list(tools, args) {
     const channel = target(tools, args);
-    const add = keys(args, "add");
-    const remove = keys(args, "remove");
+    const limit = bound(
+      typeof args.limit === "number" ? args.limit : undefined,
+      100,
+      500,
+    );
+    const offset = args.offset ?? 0;
+    if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0)
+      throw new Error("offset must be a whole number, 0 or more.");
+    // The relay keeps a channel's whole roster in one event; only the page
+    // shown needs names.
+    const members = await tools.members(channel);
+    const page = members.slice(offset, offset + limit);
+    if (!page.length) return "No members.";
+    const names = await tools.names(page.map((member) => member.pubkey));
+    const rest = members.length - offset - page.length;
+    return [
+      ...page.map(
+        ({ pubkey, role }) =>
+          `${pubkey} ${names.get(pubkey) ?? ""}${role === "member" ? "" : ` (${role})`}`,
+      ),
+      ...(rest > 0
+        ? [
+            `${rest} more; continue with ${JSON.stringify({ channel, limit, offset: offset + limit })}`,
+          ]
+        : []),
+    ].join("\n");
+  },
+  async member_add(tools, args) {
     const role = args.role;
     if (role !== undefined && !ROLES.includes(role as string))
       throw new Error(`role must be one of ${ROLES.join(", ")}.`);
-    if (role !== undefined && !add.length)
-      throw new Error("role is for the members you add.");
-    if (add.length || remove.length) {
-      lifecycleChannelId(channel);
-      if ([...add, ...remove].includes(tools.client.pubkey))
-        throw new Error("For yourself, use channel_join or channel_leave.");
-      if (add.some((key) => remove.includes(key)))
-        throw new Error("Add or remove someone, not both.");
-      if (add.length + remove.length > 50)
-        throw new Error("Change at most 50 members at a time.");
-      const { lines, changed } = await tools.change(
-        channel,
-        add,
-        remove,
-        role as string | undefined,
-      );
-      if (!changed) throw new Error(lines.join("\n"));
-      return lines.join("\n");
-    }
-    const members = await tools.members(channel);
-    const names = await tools.names(members.map((member) => member.pubkey));
-    return members
-      .map(
-        ({ pubkey, role }) =>
-          `${pubkey} ${names.get(pubkey) ?? ""}${role === "member" ? "" : ` (${role})`}`,
-      )
-      .join("\n");
+    return changeMembers(tools, args, "add", role as string | undefined);
   },
+  member_remove: async (tools, args) => changeMembers(tools, args, "remove"),
 
   async users(tools, args) {
     const { client } = tools;
     const ids = list(args.ids).map(pubkey);
     const q = text(args.q)?.toLowerCase();
     if (!ids.length && !q) throw new Error("Give ids or q.");
+    if (ids.length && q) throw new Error("Give ids or q, not both.");
+    if (ids.length > 100) throw new Error("Give at most 100 ids.");
     // Name search matches only name and display_name, best match first;
     // NIP-50 search matches the whole profile, so text in avatars or `about`
     // can fill its results and hide the person asked for. Name search refuses
@@ -2126,6 +2139,32 @@ async function lifecycle(
   const now = await until(shown, Boolean).catch(unread);
   if (now === true) return `${done[action]} ${channel}`;
   return `The community accepted ${action} but ${now ? now.message : "does not show it yet"}.`;
+}
+
+/** Adds or removes `pubkeys`, each tried on its own; a throw when none
+ * changed. */
+async function changeMembers(
+  tools: Tools,
+  args: Args,
+  change: "add" | "remove",
+  role?: string,
+) {
+  const channel = target(tools, args);
+  const pubkeys = keys(args, "pubkeys");
+  if (!pubkeys.length) throw new Error("pubkeys is required.");
+  lifecycleChannelId(channel);
+  if (pubkeys.includes(tools.client.pubkey))
+    throw new Error("For yourself, use channel_join or channel_leave.");
+  if (pubkeys.length > 50)
+    throw new Error("Change at most 50 members at a time.");
+  const { lines, changed } = await tools.change(
+    channel,
+    change === "add" ? pubkeys : [],
+    change === "remove" ? pubkeys : [],
+    role,
+  );
+  if (!changed) throw new Error(lines.join("\n"));
+  return lines.join("\n");
 }
 
 /** The `channel` argument, or the current channel only when it is left out. */

@@ -41,7 +41,7 @@ the usual Create agent form, may edit the name, runtime and settings, and create
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even
-when another community is selected. Use `members` separately after creation to add
+when another community is selected. Use `member_add` separately after creation to add
 it to a conversation. Agent tools do not expose draft approval.
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local

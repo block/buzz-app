@@ -22,6 +22,7 @@ import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
 import { builderlabType } from "./index";
 import { PanelCard } from "../../../features/panels/PanelCard";
+import { createSignInFooter } from "./SignInFooter";
 
 const first = "ab".repeat(32);
 const second = "cd".repeat(32);
@@ -72,15 +73,18 @@ afterEach(() => {
 });
 async function fixture(signedIn = true) {
   let subject = "account-a";
-  const session = createOAuthSession(async () => ({
+  let email = "a@example.com";
+  let canUseRemoteAgents = true;
+  const acquire = vi.fn(async () => ({
     value: "credential",
     account: {
       subject,
-      email: "a@example.com",
-      canUseRemoteAgents: true,
+      email,
+      canUseRemoteAgents,
       canUseBuilderlabDecisions: false,
     },
   }));
+  const session = createOAuthSession(acquire);
   if (signedIn) await session.signIn();
   let stored = response();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {
@@ -132,6 +136,16 @@ async function fixture(signedIn = true) {
     type,
     request,
     session,
+    acquire,
+    prepareAccount(next: {
+      subject: string;
+      email: string;
+      canUseRemoteAgents: boolean;
+    }) {
+      subject = next.subject;
+      email = next.email;
+      canUseRemoteAgents = next.canUseRemoteAgents;
+    },
     changeAccount: async () => {
       subject = "account-b";
       session.signOut();
@@ -338,6 +352,127 @@ it("hides a failed settings load and Retry while signed out, then loads after ex
   expect(await loadedInstructions()).toHaveValue("First instructions.");
   expect(screen.queryByRole("alert")).toBeNull();
 });
+it.each([true, false])(
+  "guides a mismatched account back to the loaded email and retries sign-in (remote access: %s)",
+  async (canUseRemoteAgents) => {
+    vi.stubEnv(
+      "VITE_BUZZ_BUILDERLAB_URL",
+      "https://staging.builderlab.example:8443/api",
+    );
+    const h = await fixture();
+    render(<h.Tab agent={agent()} save={vi.fn()} />);
+    const field = await loadedInstructions();
+    const user = userEvent.setup();
+    await user.type(field, " Draft");
+    const reads = h.request.mock.calls.length;
+    h.prepareAccount({
+      subject: "account-b",
+      email: "b@example.com",
+      canUseRemoteAgents,
+    });
+    await act(() => h.session.signIn());
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Open staging.builderlab.example:8443, sign in as a@example.com, then try again.",
+    );
+    expect(alert).not.toHaveTextContent("b@example.com");
+    expect(
+      screen.getByRole("link", { name: "staging.builderlab.example:8443" }),
+    ).toHaveAttribute("href", "https://staging.builderlab.example:8443");
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
+    expect(field).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /Switch account|Save|^Retry$/ }),
+    ).toBeNull();
+    expect(h.request).toHaveBeenCalledTimes(reads);
+    h.prepareAccount({
+      subject: "account-a",
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+    });
+    const attempts = h.acquire.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(h.acquire).toHaveBeenCalledTimes(attempts + 1);
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
+    expect(field).toHaveValue("First instructions. Draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  },
+);
+
+it("replaces unloaded no-access Retry with browser guidance and refreshes the credential from Try again", async () => {
+  const h = await fixture(false);
+  const Footer = createSignInFooter(h.session);
+  render(
+    <>
+      <h.Tab agent={agent()} save={vi.fn()} />
+      <Footer />
+    </>,
+  );
+  h.prepareAccount({
+    subject: "account-b",
+    email: "b@example.com",
+    canUseRemoteAgents: false,
+  });
+  await act(() => h.session.signIn());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This account can’t access Builderlab agents. Open builderlab.example, sign in with the account you used for this agent, then try again.",
+  );
+  expect(
+    screen.getByRole("link", { name: "builderlab.example" }),
+  ).toHaveAttribute("href", "https://builderlab.example");
+  expect(screen.queryByText(/coming soon/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /^Retry$|Switch account|Save/ }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: /^Model:/ })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
+  expect(h.request).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  // Returning the same browser account remains actionable rather than looping.
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(h.acquire).toHaveBeenCalledTimes(2);
+  expect(
+    await screen.findByRole("button", { name: "Try again" }),
+  ).toBeEnabled();
+  expect(h.request).not.toHaveBeenCalled();
+  const held = deferred<ReturnType<typeof h.session.credential>>();
+  h.acquire.mockImplementationOnce(() => held.promise);
+  h.request.mockResolvedValueOnce({ ...response(), status: 400 });
+  try {
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(h.acquire).toHaveBeenCalledTimes(3);
+    expect(
+      screen.getByRole("button", { name: "Sign in to Builderlab" }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  } finally {
+    await act(async () =>
+      held.resolve({
+        value: "credential-a",
+        account: {
+          subject: "account-a",
+          email: "a@example.com",
+          canUseRemoteAgents: true,
+          canUseBuilderlabDecisions: false,
+        },
+      }),
+    );
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(h.acquire).toHaveBeenCalledTimes(3);
+  expect(await loadedInstructions()).toHaveValue("First instructions.");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(h.request).toHaveBeenCalledTimes(3);
+});
+
 it("retries a failed load and refuses to save a draft through another account", async () => {
   const h = await fixture();
   const user = userEvent.setup();
@@ -360,7 +495,7 @@ it("retries a failed load and refuses to save a draft through another account", 
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "account that loaded these settings",
+    "sign in as a@example.com, then try again.",
   );
   expect(field).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
@@ -404,7 +539,7 @@ it("settles an aborted catalog read after switching accounts without losing the 
     expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
     const before = h.request.mock.calls.length;
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "account that loaded these settings",
+      "sign in as a@example.com, then try again.",
     );
     expect(field).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();

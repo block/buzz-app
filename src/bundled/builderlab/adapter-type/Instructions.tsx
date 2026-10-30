@@ -32,6 +32,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;
       subject: string;
+      email: string;
     }>();
     const [busy, setBusy] = useState(true);
     const [error, setError] = useState("");
@@ -55,7 +56,11 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
           throw new Error("Agent not found in this Builderlab account.");
         if (remote.status !== "Active")
           throw new Error("Only Active agents can have their settings edited.");
-        setLoaded({ agent: remote, subject: credential.account.subject });
+        setLoaded({
+          agent: remote,
+          subject: credential.account.subject,
+          email: credential.account.email,
+        });
       };
       void load()
         .catch((reason: unknown) => {

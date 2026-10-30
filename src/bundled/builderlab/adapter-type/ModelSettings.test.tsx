@@ -390,7 +390,7 @@ it("preserves a failed draft and refuses to save it through a different account"
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "account that loaded these settings",
+    "sign in with the account you used for this agent, then try again.",
   );
   const field = screen.getByRole("textbox", { name: "Instructions" });
   expect(field).toBeDisabled();
@@ -458,7 +458,7 @@ it("replaces a previous account's catalog error with mismatch guidance and recov
   const before = h.request.mock.calls.length;
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Sign in to the Builderlab account that loaded these settings.",
+    "sign in with the account you used for this agent, then try again.",
   );
   expect(screen.queryByText(/HTTP 400/)).toBeNull();
   expect(

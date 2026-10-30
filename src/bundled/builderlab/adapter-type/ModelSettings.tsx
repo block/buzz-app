@@ -17,6 +17,7 @@ import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 import { useToastNotification } from "../../../shared/design-system/ui/Toast";
+import inlineStyles from "../../../shared/InlineReference.module.css";
 import {
   MAX_INSTRUCTIONS_LENGTH,
   validInstructions,
@@ -25,6 +26,7 @@ import {
   type RemoteAgentModel,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
+import { oauthTarget } from "../oauth/browser";
 import { effortLabel, modelChoice } from "./models";
 
 const statuses = {
@@ -51,7 +53,7 @@ export function ModelSettings({
   session: OAuthSession;
   harnessControl?: ReactNode;
   settings:
-    | { agent: RemoteAgent; subject: string }
+    | { agent: RemoteAgent; subject: string; email?: string }
     | { pending: boolean; error: string; retry(): void };
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
@@ -60,7 +62,11 @@ export function ModelSettings({
   const subject = "subject" in settings ? settings.subject : undefined;
   const mismatch =
     signedIn && subject !== undefined && login.account?.subject !== subject;
-  const hasAccess = signedIn && !mismatch;
+  const accountProblem =
+    signedIn && (mismatch || login.account?.canUseRemoteAgents === false);
+  const hasAccess = signedIn && !accountProblem;
+  const email = mismatch && "email" in settings ? settings.email : undefined;
+  const builderlab = accountProblem ? new URL(oauthTarget()) : undefined;
   const form = useId();
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
@@ -93,7 +99,7 @@ export function ModelSettings({
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision retries a failed catalog request while keeping the draft.
   useEffect(() => {
     if (!agent || login.status !== "signed-in") return;
-    if (login.account?.subject !== subject) {
+    if (!hasAccess) {
       setLoading(false);
       return;
     }
@@ -114,7 +120,7 @@ export function ModelSettings({
         if (!current.signal.aborted) setLoading(false);
       });
     return () => current.abort();
-  }, [client, agent, revision, login, subject]);
+  }, [client, agent, revision, login, hasAccess]);
   const model = models?.find((choice) => choice.id === modelId);
   const valid = !!model?.supportedReasoningEfforts.includes(effort);
   const modelChanged =
@@ -204,10 +210,29 @@ export function ModelSettings({
       label={agent ? "Loading models…" : "Loading settings…"}
       statusVisibility="screen-reader"
       feedback={
-        mismatch ? (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {accountMismatchMessage}
-          </p>
+        builderlab ? (
+          <div className="grid gap-2">
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {!mismatch && "This account can’t access Builderlab agents. "}
+              Open{" "}
+              <a
+                className={inlineStyles.link}
+                href={builderlab.origin}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {builderlab.host}
+              </a>
+              {", sign in "}
+              {email
+                ? `as ${email}`
+                : "with the account you used for this agent"}
+              {", then try again."}
+            </p>
+            <div>
+              <Button onClick={() => void session.signIn()}>Try again</Button>
+            </div>
+          </div>
         ) : !hasAccess ? undefined : "error" in settings && settings.error ? (
           <div className="grid gap-2">
             <p role="alert" className="m-0 text-body-sm text-danger">

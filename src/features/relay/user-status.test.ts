@@ -442,31 +442,38 @@ it("saves a catalog code with its original image URL and unicode with a two-valu
   }
 });
 
-it("refuses a custom code before signing while the catalog is cold", async () => {
-  const catalog = createEmojiDirectory({ read: async () => [emojiSet] });
-  const { owner, queries, sign } = setup(undefined, undefined, catalog.tags);
-  owner.accept([status("Before")]);
-  await expect(
-    queries.save({ text: "Buzzin'", emoji: ":bee:" }),
-  ).rejects.toThrow("Community emoji isn't ready");
-  expect(sign).not.toHaveBeenCalled();
-  expect(queries.snapshot().get(alice.pubkey)?.text).toBe("Before");
-  catalog.dispose();
-});
-
-it("carries a code's URL forward on a re-save after the catalog lost it", async () => {
-  const catalog = createEmojiDirectory({ read: async () => [] });
-  await catalog.queries.refresh();
-  const { queries, publish } = setup(
-    { read: async () => [emojiStatus(["emoji", ":bee:", beeUrl])] },
-    undefined,
-    catalog.tags,
-  );
-  await queries.save({ text: "Still buzzin'", emoji: ":bee:" });
-  await queries.save({ text: "Still buzzin'", emoji: ":wasp:" });
-  expect(publish.mock.calls.map(([event]) => event.tags[1])).toEqual([
-    ["emoji", ":bee:", beeUrl],
-    ["emoji", ":wasp:"],
-  ]);
-  catalog.dispose();
-});
+const memberSet = (content: string, tags: string[][] = []) =>
+  signed(bob, {
+    kind: 30030,
+    content,
+    tags: [["d", "buzz:custom-emoji"], ...tags],
+  });
+it.each([
+  ["no longer lists the code", "ready", memberSet("")],
+  [
+    "lists an unusable URL",
+    "ready",
+    memberSet("", [["emoji", "bee", "data:image/png;base64,AA"]]),
+  ],
+  ["is cold", "idle", emojiSet],
+  ["is over budget", "error", memberSet("x".repeat(2 * 1024 * 1024))],
+])(
+  "carries a code's URL forward on a re-save when the catalog %s",
+  async (_, state, set) => {
+    const catalog = createEmojiDirectory({ read: async () => [set] });
+    if (state !== "idle") await catalog.queries.refresh();
+    expect(catalog.queries.snapshot().status).toBe(state);
+    const { queries, publish } = setup(
+      { read: async () => [emojiStatus(["emoji", ":bee:", beeUrl])] },
+      undefined,
+      catalog.tags,
+    );
+    await queries.save({ text: "Still buzzin'", emoji: ":bee:" });
+    await queries.save({ text: "Still buzzin'", emoji: ":wasp:" });
+    expect(publish.mock.calls.map(([event]) => event.tags[1])).toEqual([
+      ["emoji", ":bee:", beeUrl],
+      ["emoji", ":wasp:"],
+    ]);
+    catalog.dispose();
+  },
+);

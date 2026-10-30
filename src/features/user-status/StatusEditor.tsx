@@ -228,6 +228,8 @@ export function StatusEditor({
                 ref={emojiTrigger}
                 size="sm"
                 aria-label="Choose a status emoji"
+                // An unresolved code shows 💬; name the code it will save.
+                title={/^:[^:\s]+:$/.test(emoji) ? emoji : undefined}
                 aria-expanded={pickerOpen}
                 aria-haspopup="dialog"
                 aria-controls={pickerOpen ? pickerId : undefined}

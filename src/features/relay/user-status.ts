@@ -235,8 +235,6 @@ export function createUserStatuses(
       (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now() / 1000)
     )
       throw new Error("Choose an expiration in the future.");
-    // Throws while the catalog is not ready; the editor keeps the draft.
-    const resolved = emojiTags(emoji)[0]?.[2];
     saving = true;
     const signal = AbortSignal.any([
       controller.signal,
@@ -263,13 +261,18 @@ export function createUserStatuses(
         (records.get(viewer)?.event.created_at ?? 0) + 1,
       );
       const previous = records.get(viewer)?.status;
-      // A re-save keeps the URL of a code since removed from the catalog.
-      const url =
-        resolved ?? (previous?.emoji === emoji ? previous.emojiUrl : undefined);
-      const emojiTag =
-        url && validStatusEmojiUrl(emoji, url)
-          ? ["emoji", emoji, url]
-          : ["emoji", emoji];
+      let resolved: string | undefined;
+      try {
+        resolved = emojiTags(emoji)[0]?.[2];
+      } catch {
+        // An unready catalog never blocks a status; viewers resolve the code.
+      }
+      // A re-save keeps the URL of a code the catalog cannot resolve now.
+      const url = [
+        resolved,
+        previous?.emoji === emoji ? previous.emojiUrl : undefined,
+      ].find((candidate) => candidate && validStatusEmojiUrl(emoji, candidate));
+      const emojiTag = url ? ["emoji", emoji, url] : ["emoji", emoji];
       if (createdAt > now + 300)
         throw new Error(
           "Your current status is dated too far in the future. Check your devices’ clocks and try again later.",

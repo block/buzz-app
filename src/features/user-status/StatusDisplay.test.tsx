@@ -18,6 +18,7 @@ const viewer = keypair(),
   other = keypair(),
   relay = keypair();
 const beeUrl = "https://emoji.test/bee.png";
+const catalogUrl = "https://emoji.test/bee-catalog.png";
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
@@ -87,9 +88,25 @@ it("renders a status's own image in every mode without reading the catalog", asy
   expect(tip.querySelector("img")).toHaveAttribute("src", beeUrl);
   expect(tip).toHaveTextContent("Buzzin'");
   expect(h.catalogRead()).toBeUndefined();
-  // An image that fails to load degrades like an unresolved code.
+  // A failed image falls back to the catalog, then degrades like an unresolved code.
   if (decorative) fireEvent.error(decorative);
+  expect(h.compact).toHaveTextContent(/^$/);
+  await h.respondCatalog([["emoji", "bee", catalogUrl]]);
+  const fallback = h.compact.querySelector("img");
+  expect(fallback).toHaveAttribute("src", catalogUrl);
+  if (fallback) fireEvent.error(fallback);
   expect(h.compact).toHaveTextContent(/^💬$/);
+});
+
+it("resolves from the catalog when a status's own URL is not loadable", async () => {
+  const h = harness(status(":bee:", "http://emoji.test/bee.png"));
+  expect(h.compact).toHaveTextContent(/^$/);
+  await h.respondCatalog([["emoji", "bee", catalogUrl]]);
+  expect(h.full.getByRole("img", { name: ":bee:" })).toHaveAttribute(
+    "src",
+    catalogUrl,
+  );
+  expect(h.compact.querySelector("img")).toHaveAttribute("src", catalogUrl);
 });
 
 it("resolves a two-value status from the community catalog", async () => {

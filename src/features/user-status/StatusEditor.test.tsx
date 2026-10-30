@@ -192,6 +192,21 @@ it.each(["🏠", ":party:"])(
   },
 );
 
+it("names the custom code an unresolved emoji trigger will save", async () => {
+  setup({
+    userId: "a".repeat(64),
+    text: "Remote",
+    emoji: ":bee-intensifies:",
+    updatedAt: Date.now() / 1000,
+  });
+  const trigger = screen.getByRole("button", { name: "Choose a status emoji" });
+  act(() => trigger.focus());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    ":bee-intensifies:",
+  );
+  expect(trigger).toHaveAccessibleDescription(":bee-intensifies:");
+});
+
 it("shows non-expiring status honestly and preserves it until a duration is selected", async () => {
   const user = userEvent.setup();
   const { save } = setup({

@@ -72,7 +72,8 @@ they open the join dialog with the relay prefilled or, when this device already
 belongs to that community, switch to it. Links that name no destination, such
 as bare `buzz://`, unknown hosts, missing or malformed parameters, malformed join
 or community links, incomplete entity or plugin links and oversize links, open Inbox in the
-selected community with a "This link doesn't work" notice. A repeat replaces
+selected community with a "This link doesn't work" notice; with Inbox turned
+off, the notice shows over the page the link interrupted. A repeat replaces
 the notice. Without an identity and selected community the link waits for both,
 and new navigation cancels it. A valid link that cannot open yet, or that is
 not yours, keeps its own failure: `unavailable` with Retry, or `denied`.

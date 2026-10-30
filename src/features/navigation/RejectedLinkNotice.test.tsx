@@ -1,35 +1,38 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createRejectedLinks } from "./deep-links";
 import { RejectedLinkNotice } from "./RejectedLinkNotice";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
-it("shows one notice per rejected link, replacing a repeat, until dismissed", async () => {
+it("shows one notice per rejected link; a repeat restarts its expiry", async () => {
+  vi.useFakeTimers();
   const links = createRejectedLinks();
   render(
     <ToastProvider>
       <RejectedLinkNotice links={links} />
     </ToastProvider>,
   );
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  act(() => links.reject());
-  await screen.findByRole("dialog", { name: "This link doesn’t work" });
-  act(() => links.reject());
-  await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
-  fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
-  await waitFor(() => expect(links.snapshot()).toBeUndefined());
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
+  const notice = () =>
+    screen.queryAllByRole("dialog", { name: "This link doesn’t work" });
+  expect(notice()).toHaveLength(0);
+  await act(async () => links.reject());
+  await act(async () => vi.advanceTimersByTime(100));
+  expect(notice()).toHaveLength(1);
+  await act(async () => vi.advanceTimersByTime(6000));
+  await act(async () => links.reject());
+  await act(async () => vi.advanceTimersByTime(6000));
+  // Past the first notice's 8 s: the repeat replaced it and started over.
+  expect(links.snapshot()).toBe(2);
+  expect(notice()).toHaveLength(1);
+  await act(async () => vi.advanceTimersByTime(3000));
+  expect(links.snapshot()).toBeUndefined();
+  await act(async () => vi.advanceTimersByTime(1000));
+  expect(notice()).toHaveLength(0);
 });

@@ -386,7 +386,7 @@ it("explains each repeated malformed link without stacking visits, then opens a 
   });
   t.stop();
 });
-it("lands a malformed link on Messages in place of a turned-off Inbox", async () => {
+it("steps back to the interrupted page, without stacking visits, when Inbox is turned off", async () => {
   const t = harness(ready);
   t.host.navigation.open.mockImplementation(async (target, options) => {
     const result = t.controller.navigation.open(target, options);
@@ -400,22 +400,23 @@ it("lands a malformed link on Messages in place of a turned-off Inbox", async ()
     return result;
   });
   await settle();
-  t.arrive("buzz://");
-  await vi.waitFor(() =>
-    expect(t.host.navigation.snapshot()).toMatchObject({
-      status: "opened",
-      entry: {
-        target: {
-          kind: "page",
-          pluginId: "buzz.channels",
-          pageId: "channels",
-          scope: { viewer, communityOrigin: origin },
-        },
-      },
-    }),
-  );
-  expect(t.host.rejected).toHaveBeenCalledTimes(1);
-  // The failed Inbox visit was replaced, so Back leaves for where it came from.
+  await t.host.navigation.open({
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    scope: { viewer, communityOrigin: origin },
+  });
+  const messages = t.host.navigation.snapshot().entry;
+  for (let repeat = 1; repeat <= 2; repeat++) {
+    t.arrive("buzz://");
+    await vi.waitFor(() =>
+      expect(t.host.rejected).toHaveBeenCalledTimes(repeat),
+    );
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().entry.id).toBe(messages.id),
+    );
+  }
   t.host.navigation.back();
   expect(t.host.navigation.snapshot().entry.target).toEqual({
     version: 1,

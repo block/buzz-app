@@ -20,7 +20,7 @@ export type DeepLinkShell = Readonly<{
   watch(listener: () => void): () => void;
 }>;
 export type DeepLinkHost = Readonly<{
-  navigation: Pick<Navigation, "open" | "snapshot" | "subscribe">;
+  navigation: Pick<Navigation, "open" | "back" | "snapshot" | "subscribe">;
   /** Host-only: record an ingress that produced no destination. */
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
   /** Explain a link that names no Buzz destination; the binding opens Inbox. */
@@ -115,40 +115,36 @@ export function bindDeepLinks(
   let attempt = host.navigation.snapshot().attempt;
   let client = communities.snapshot();
   let clientEpoch = 0;
-  // A malformed link returns to Inbox once there is one to show, or to the
-  // required Messages when Inbox is turned off. Until then it waits like any
-  // held link, and newer navigation cancels it.
+  // A malformed link opens Inbox once there is one to show. When Inbox is
+  // turned off, the failed visit steps back to the page the link interrupted.
+  // Until then it waits like any held link, and newer navigation cancels it.
   const reject = (client: Client): Promise<OpenResult> => {
     if (client.status !== "ready" || !client.viewer || !client.selected)
       return Promise.resolve({ status: "failed", reason: "invalid-target" });
     held = undefined;
     host.rejected();
-    const scope = {
-      viewer: client.viewer,
-      communityOrigin: communityDestination(client.selected).url,
-    };
+    const from = host.navigation.snapshot().entry.id;
     return host.navigation
       .open({
         version: 1,
         kind: "page",
         pluginId: "buzz.inbox",
         pageId: "inbox",
-        scope,
+        scope: {
+          viewer: client.viewer,
+          communityOrigin: communityDestination(client.selected).url,
+        },
       })
-      .then((result) =>
-        result.status === "failed" && result.reason === "unavailable"
-          ? host.navigation.open(
-              {
-                version: 1,
-                kind: "page",
-                pluginId: "buzz.channels",
-                pageId: "channels",
-                scope,
-              },
-              { replace: true },
-            )
-          : result,
-      );
+      .then((result) => {
+        const { entry } = host.navigation.snapshot();
+        if (
+          result.status === "failed" &&
+          result.reason === "unavailable" &&
+          entry.id !== from
+        )
+          host.navigation.back();
+        return result;
+      });
   };
   const openHeld = (): Promise<OpenResult> => {
     if (closed || !held) return Promise.resolve({ status: "cancelled" });
@@ -183,9 +179,9 @@ export function bindDeepLinks(
       return host.navigation.open(step.open);
     }
     if (step.fail === "invalid-target") return reject(client);
-    if (step.fail !== "unavailable") held = undefined;
-    else incoming.reported = true;
-    host.fail(step.fail, held ? openHeld : undefined);
+    // Only an unbound link fails here; it stays held for Retry.
+    incoming.reported = true;
+    host.fail(step.fail, openHeld);
     attempt = host.navigation.snapshot().attempt;
     return Promise.resolve({ status: "failed", reason: step.fail });
   };

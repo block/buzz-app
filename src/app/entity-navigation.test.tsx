@@ -217,6 +217,19 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   await act(async () => current.navigation.back());
   await screen.findByText("Actual recovered destination");
   expect(current.navigation.snapshot().entry.id).toBe(recovered);
+  // With Inbox turned off, the link leaves the interrupted page in place.
+  await act(() => current.plugins.change("disable", "buzz.inbox"));
+  await act(async () => {
+    queue.push("buzz://");
+    ping();
+  });
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { id: recovered },
+    }),
+  );
+  expect(screen.getByText("Actual recovered destination")).toBeVisible();
   await act(async () => {
     queue.push("buzz://channel/general");
     ping();

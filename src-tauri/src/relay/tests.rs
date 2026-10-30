@@ -519,7 +519,8 @@ fn isolated_agent_ipc_probe() {
     }
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     use tauri::Manager;
-    // Declared before the app so it is removed after the app drops.
+    // The probe owns the spool dir, so it is removed when the probe returns
+    // or panics.
     let spools = tempfile::tempdir().unwrap();
     let app = mock_builder()
         .manage(IdentityHost::fixture())

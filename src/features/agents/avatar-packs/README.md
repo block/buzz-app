@@ -1,7 +1,7 @@
 # Agent avatar packs
 
 PNG posters from Block's Berd avatar catalog `20260925T154625166Z`, plus
-Buzzies from catalog `20261029T223026256Z`, with their animated WebM/HEVC
+Buzzies from catalog `20261030T174937230Z`, with their animated WebM/HEVC
 variants streamed from the same CDN. Each asset keeps the URLs of the catalog it
 was added from, so saved profile pictures continue to match.
 Berd's `scripts/avatar-manifest.mjs` and `src-tauri/src/commands/avatars.rs`

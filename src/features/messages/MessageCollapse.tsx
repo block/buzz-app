@@ -50,7 +50,9 @@ export function MessageCollapseItem({
   );
 }
 
-/** A collapsed message's one line: its plain opening text. */
+/** A collapsed message's one line: the author's tl;dr, labelled and in italics,
+ * or its plain opening text when it has none, so an excerpt never reads as a
+ * summary. */
 export function CollapsedMessageLine({
   row,
   author,
@@ -60,22 +62,32 @@ export function CollapsedMessageLine({
   author: string;
   onExpand(): void;
 }) {
+  const tldr = row.tldr;
   const text =
-    (row.diff
+    tldr ??
+    ((row.diff
       ? row.diff.description || row.diff.filePath
       : plainText(row.content)) ||
-    (row.attachments.length ? "Attachments" : "Message");
+      (row.attachments.length ? "Attachments" : "Message"));
   return (
     <button
       type="button"
       className={styles.collapsedLine}
       data-message-action-anchor
-      data-collapsed-message
+      data-collapsed-message={tldr ? "tldr" : "excerpt"}
       aria-expanded={false}
-      aria-label={`${author}, collapsed message: ${text}. Expand message`}
+      aria-label={`${author}, ${tldr ? `TL;DR: ${text}` : `collapsed message: ${text}`}. Expand message`}
       onClick={onExpand}
     >
-      <span className={styles.collapsedText} aria-hidden="true">
+      {tldr && (
+        <span className={styles.collapsedLabel} aria-hidden="true">
+          TL;DR
+        </span>
+      )}
+      <span
+        className={`${styles.collapsedText} ${tldr ? styles.collapsedTldr : ""}`}
+        aria-hidden="true"
+      >
         {text}
       </span>
       <CaretDownIcon className={styles.collapsedChevron} aria-hidden="true" />

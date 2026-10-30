@@ -414,6 +414,14 @@ export const groups: Group[] = [
           "An author's edit is marked after the last line, or below a closing block.",
         rows: [
           message("edited-own", "Hi how are ya.", { edited: true }),
+          message("edited-own-emoji", "🎉", { edited: true }),
+          message(
+            "edited-own-table",
+            "| Day | Room |\n| --- | --- |\n| Thu | 4B |",
+            {
+              edited: true,
+            },
+          ),
           message("edited-teammate", "Moved the review to Thursday.", {
             authorId: teammate,
             edited: true,

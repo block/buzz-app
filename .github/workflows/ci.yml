@@ -84,6 +84,8 @@ jobs:
         run: ./bin/cargo test --workspace --locked
       - name: Scheduled agent command identity
         run: ./bin/node scripts/test-agent-command.mjs
+      - name: Bundled buzz CLI
+        run: ./bin/node scripts/test-buzz-cli.mjs
       - name: All Node integration tests
         run: ./bin/node --test tests/integration/*.test.mjs
 

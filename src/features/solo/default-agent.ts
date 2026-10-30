@@ -30,6 +30,8 @@ const readErrors = new WeakMap<Account, string>();
 const readValues = new WeakMap<Account, string | undefined>();
 const readFailures = new WeakMap<Account, string>();
 const failedChoices = new WeakSet<Account>();
+// Accounts whose saved choice is known: read, or confirmed by a save here.
+const known = new WeakSet<Account>();
 const listeners = new Set<() => void>();
 function notifySaved() {
   for (const listener of listeners) listener();
@@ -111,6 +113,7 @@ export async function chooseDefaultAgent(
     );
   }
   failedChoices.delete(account);
+  known.add(account);
   remember(account, pubkey);
 }
 
@@ -145,6 +148,7 @@ export async function clearDefaultAgent(session: RelaySession, scope: string) {
       "Removing your Bestie couldn't be saved to your account. Try again.",
     );
   }
+  known.add(account);
   if (revision(account) === attempt) remember(account, undefined);
 }
 
@@ -198,6 +202,7 @@ function adopt(account: Account, scope: string) {
         }
         const adopts = !explicit.has(account);
         if (adopts && agent !== undefined) cache(scope, agent);
+        known.add(account);
         remember(account, adopts ? agent : (saved.get(account) ?? agent));
       },
       (cause) => {
@@ -284,6 +289,9 @@ export function savedAgentStore(session: RelaySession, scope: string) {
   const account = session.mainAgent;
   return Object.freeze({
     snapshot: () => (account ? saved.get(account) : chosenAgent(scope)),
+    /** Whether the account's choice is known, so an undefined snapshot means
+     * none was saved rather than not read yet, or unreadable. */
+    known: () => !!account && known.has(account),
     subscribe(listener: () => void) {
       if (account) void adopt(account, scope);
       // The device's choice is browser storage; without a window there is none

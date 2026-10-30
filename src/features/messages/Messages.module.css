@@ -247,7 +247,7 @@
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
-  padding-inline: var(--space-1);
+  padding-inline: var(--space-half);
   border-radius: calc(var(--size-control-sm) / 2);
   /* The strip follows the lightness of whatever it sits on, like a chip. */
   background: var(--reaction-surface, var(--affordance-reaction));
@@ -3152,25 +3152,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   max-width: calc(100% - var(--space-2));
 }
 .message .messageBubble > .reactions {
-  margin: var(--space-2) 0 0;
-  margin-inline-start: calc(-1 * var(--space-2));
-  /* Short prose still leaves room for a reaction and its add control. The add
-     control ends the strip with no end padding, so only the start padding counts. */
-  min-inline-size: calc(3 * var(--size-control-sm) + var(--space-1));
-  max-width: calc(100% + 2 * var(--space-2));
+  margin: var(--space-1) 0 0;
+  margin-inline-start: calc(-1 * var(--space-half));
+  /* Let short bubbles fit the whole strip; wrap at the bubble's width limit. */
+  width: max-content;
+  /* Include the leading overhang so the last control doesn't wrap early. */
+  max-width: calc(100% + var(--space-half));
   border: 0;
 }
 .messageBubble:has(> .reactions:is([data-populated], .reactionFallback)) {
   border-end-start-radius: calc(var(--size-control-sm) / 2 + var(--space-2));
   border-end-end-radius: calc(var(--size-control-sm) / 2 + var(--space-2));
-}
-.message
-  .messageBubble
-  > .reactions:has(> .inlineReactionTool:not(:empty)):has(
-    > .reactionItem:first-child:nth-last-child(2)
-  ) {
-  min-inline-size: max-content;
-  flex-wrap: nowrap;
 }
 .message .messageBubble > .reactions:empty {
   margin: 0;

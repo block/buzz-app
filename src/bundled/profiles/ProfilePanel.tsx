@@ -21,7 +21,10 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { CopyIcon } from "../../shared/design-system/icons/index";
+import {
+  CheckCircleIcon,
+  CopyIcon,
+} from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
@@ -247,6 +250,13 @@ function ProfileDetails({
     selection.snapshot,
   );
   const profile = profiles.get(pubkey);
+  const verificationDate = profile?.verified
+    ? new Date(profile.verified.verifiedAt * 1000)
+    : undefined;
+  const verificationIso =
+    verificationDate && Number.isFinite(verificationDate.getTime())
+      ? verificationDate.toISOString()
+      : undefined;
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -421,6 +431,17 @@ function ProfileDetails({
           </div>
           <div className={styles.identity}>
             <h2 className="text-body-lg">{name}</h2>
+            {profile?.verified && (
+              <p className="text-body-sm text-secondary">
+                {profile.verified.status === "checked" && (
+                  <CheckCircleIcon aria-hidden="true" />
+                )}{" "}
+                {profile.verified.status === "checked"
+                  ? "Name verified"
+                  : "Cached verification"}{" "}
+                · @{profile.verified.username}
+              </p>
+            )}
             {presence !== "unknown" && (
               <p className="text-body-sm text-primary">
                 {
@@ -477,6 +498,30 @@ function ProfileDetails({
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
                 <>
+                  {profile?.verified && (
+                    <SettingsGroup>
+                      <PreferenceRow
+                        title={`Name verified by ${profile.verified.issuerLabel}`}
+                        subtitle={
+                          <>
+                            Last verified{" "}
+                            <time dateTime={verificationIso}>
+                              {verificationIso
+                                ? verificationDate?.toLocaleString()
+                                : `Unix time ${profile.verified.verifiedAt}`}
+                            </time>
+                            .{" "}
+                            {profile.verified.status === "cached"
+                              ? "Cached evidence; reconnect to check for updates. "
+                              : ""}
+                            This verifies the name and public key at that time,
+                            and does not confirm current account access or
+                            current issuer endorsement.
+                          </>
+                        }
+                      />
+                    </SettingsGroup>
+                  )}
                   {profile?.about && (
                     <SettingsGroup layout="form">
                       <p className={styles.about}>{profile.about}</p>

@@ -224,6 +224,39 @@ it("fences a request to the session it starts under and registers again once aft
   );
 });
 
+it("registers again once when native retires the registration while admitting it", async () => {
+  const { root } = setup();
+  const a = await plugin(root);
+  publish({ payload: signedIn });
+  let retired = false;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "federated_identity_register" && !retired) {
+      retired = true;
+      throw "Plugin registration retired";
+    }
+    if (command === "federated_identity_request")
+      return { status: 200, headers: {}, body: "{}" };
+  });
+  await expect(a.service.request({ path: "/api/list" })).resolves.toMatchObject(
+    { status: 200 },
+  );
+  const registrations = vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "federated_identity_register")
+    .map(([, args]) => (args as { registration: string }).registration);
+  expect(registrations).toHaveLength(2);
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([command]) => command === "federated_identity_request",
+      )
+      .map(([, args]) => args as { registration: string; session: string }),
+  ).toEqual([
+    expect.objectContaining({ registration: registrations[1], session: "in" }),
+  ]);
+});
+
 it("retries every in-flight request whose shared registration native retires", async () => {
   const { root } = setup();
   const a = await plugin(root);

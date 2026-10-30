@@ -161,19 +161,19 @@ export class FederatedIdentityService
     const session = this.shared.snapshot.revision;
     for (let attempt = 0; ; attempt++) {
       const registration = this.registration(owner);
-      const token = await registration;
       try {
         return await invoke<HostResponse>("federated_identity_request", {
           id: owner.id,
           revision: owner.revision,
-          registration: token,
+          registration: await registration,
           session,
           request,
         });
       } catch (error) {
         // Native retires registrations around every plugin lifecycle change,
-        // even a refused one. Register again once; admission rechecks the
-        // artifact and grant.
+        // even a refused one or one still being admitted. Register again
+        // once; admission rechecks the artifact and grant. A disposed fiber
+        // rejects with an Error, not this string, so it is not retried.
         if (error === "Plugin registration retired") {
           if (this.shared.registrations.get(this.ctx.fiber) === registration)
             this.shared.registrations.delete(this.ctx.fiber);

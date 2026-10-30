@@ -25,8 +25,6 @@ import {
 import { AgentDefaults } from "../agents/AgentDefaults";
 import { AgentsPage } from "../agents/AgentsPage";
 import * as builderlab from "./index";
-import * as builderlabDecisions from "../builderlab-decisions";
-import decisionsManifest from "../builderlab-decisions/manifest.json";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import manifest from "./manifest.json";
@@ -123,25 +121,12 @@ function provideAgents(
   });
 }
 
-// Loads Builderlab, or the plugin that offers it as a decision provider.
-const loadPlugin = async ({ manifest: { id } }: PluginInfo) =>
-  id === decisionsManifest.id ? builderlabDecisions : builderlab;
-const decisionsPlugin: PluginInfo = {
-  manifest: { ...decisionsManifest, apiVersion: 1 },
-  source: "bundled",
-  revision: "bundled",
-  enabled: true,
-  previous: null,
-  reloadable: false,
-  error: null,
-};
-
 it.each([undefined, "", "http://builderlab.example"])(
   "an unavailable desktop build (%s) shows setup guidance without login or an agent type",
   async (url) => {
     vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
     const root = new Context();
-    const runtime = new PluginRuntime(root, loadPlugin);
+    const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     provideApps(root);
     const cards = new SettingsCardsService(root);
@@ -161,7 +146,6 @@ it.each([undefined, "", "http://builderlab.example"])(
           reloadable: false,
           error: null,
         },
-        decisionsPlugin,
       ]);
       await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
       const card = cards.snapshot()[0];
@@ -181,7 +165,7 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(agents.types()).toHaveLength(0);
       // No sign-in is possible, so no sync owner runs.
       expect(knownCommunities.subscribe).not.toHaveBeenCalled();
-      // Nor a decision provider, even with the Builderlab decisions plugin on.
+      // Nor a decision provider.
       expect(decisions.providers()).toEqual([]);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
@@ -229,10 +213,11 @@ it.each([undefined, false, true])(
       };
     });
     const root = new Context();
-    const runtime = new PluginRuntime(root, loadPlugin);
+    const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     provideApps(root);
     const cards = new SettingsCardsService(root);
+    new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     provideKnownCommunities(root, community.viewer);
@@ -379,10 +364,11 @@ it.each([
       return { status: 200, headers: {}, body: JSON.stringify(result) };
     });
     const root = new Context();
-    const runtime = new PluginRuntime(root, loadPlugin);
+    const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     provideApps(root);
     const cards = new SettingsCardsService(root);
+    new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     provideKnownCommunities(root, community.viewer);
@@ -595,7 +581,7 @@ it.each([
     return { status: 200, headers: {}, body: JSON.stringify(result) };
   });
   const root = new Context();
-  const runtime = new PluginRuntime(root, loadPlugin);
+  const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   provideApps(root);
   const cards = new SettingsCardsService(root);
@@ -617,6 +603,7 @@ it.each([
     runtime.reconcile([plugin]);
     if (flow === "shared login and re-enable") {
       await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+      expect(decisions.providers()).toEqual([]);
       expect(agents.types()).toMatchObject([
         { key: "block.builderlab/builderlab", title: "Builderlab" },
       ]);
@@ -664,20 +651,13 @@ it.each([
         "status",
       );
       expect(document.body).not.toHaveTextContent("private-token");
-      // Builderlab is not a decision provider until the Builderlab decisions
-      // plugin, which is off by default, is on.
-      expect(decisions.providers()).toEqual([]);
-      runtime.reconcile([plugin, decisionsPlugin]);
-      // The sign-in makes Builderlab a ready decision provider, but decisions
-      // move to it only when the user chooses it.
-      await waitFor(() => expect(decisions.providers()).toHaveLength(1));
+      // A sign-in Builderlab allows decisions for offers Builderlab as a
+      // decision provider. It answers, since the user chose no other.
       const [provider] = decisions.providers();
-      expect(provider?.key).toBe("block.builderlab-decisions/builderlab");
+      expect(provider?.key).toBe("block.builderlab/builderlab");
       expect(provider?.status()).toBe("ready");
-      expect(decisions.backend()).toBeUndefined();
-      decisions.setBackend("block.builderlab-decisions/builderlab");
+      expect(decisions.backend()).toBe("block.builderlab/builderlab");
       expect(decisions.status()).toBe("ready");
-      expect(decisions.backend()).toBe("block.builderlab-decisions/builderlab");
       expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
         id: "native-attempt-id",
       });
@@ -823,12 +803,10 @@ it.each([
         `30177:${community.viewer}:${hostedKey}`,
       ]);
       await act(async () => {
-        runtime.reconcile([decisionsPlugin]);
+        runtime.reconcile([]);
       });
       expect(cards.snapshot()).toHaveLength(0);
       expect(agents.types()).toHaveLength(0);
-      // The provider leaves with Builderlab, though its plugin stays on.
-      expect(decisions.providers()).toEqual([]);
       expect(
         screen.getByRole("button", { name: "Sign in with Builderlab" }),
       ).toBeEnabled();

@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
-import { builderlabProvider, type BuilderlabDecide } from "./decisions";
+import { DecisionsService } from "../../features/decisions/service";
+import { flush } from "../../features/relay/testing";
+import {
+  builderlabProvider,
+  offerBuilderlabDecisions,
+  type BuilderlabDecide,
+} from "./decisions";
 import type { Credential } from "./oauth/browser";
 import { createOAuthSession } from "./oauth/session";
 
@@ -137,30 +143,57 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
   await session.signIn();
   const decide = vi.fn<BuilderlabDecide>();
   const provider = builderlabProvider(session, true, decide);
-  // A user who chose Builderlab gets failures, not another provider.
   expect(provider.status()).toBe("needs-setup");
   await expect(provider.decide(request, { signal })).resolves.toEqual({
     outcome: "failed",
     reason: "unauthorized",
   });
   expect(decide).not.toHaveBeenCalled();
-  const Settings = provider.Settings;
-  if (!Settings) throw new Error("expected settings");
-  render(<Settings active={() => true} />);
-  expect(
-    screen.getByText(/Builderlab decisions are not turned on for your account/),
-  ).toHaveAttribute("role", "status");
 });
 
-it("starts sign-in when its plugin is turned on, only if signed out and sign-in is available", async () => {
-  const acquire = vi.fn(async () => credential("first"));
-  const session = createOAuthSession(acquire);
-  builderlabProvider(session, false, vi.fn()).setUp?.();
-  expect(acquire).not.toHaveBeenCalled();
-  const provider = builderlabProvider(session, true, vi.fn());
-  provider.setUp?.();
-  expect(session.snapshot().status).toBe("pending");
-  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
-  provider.setUp?.();
-  expect(acquire).toHaveBeenCalledOnce();
+it("offers Builderlab only while the signed-in account may use decisions", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const decisions = new DecisionsService(root, undefined);
+  let allowed = false;
+  const session = createOAuthSession(async () => ({
+    ...credential("first"),
+    account: {
+      ...credential("first").account,
+      canUseBuilderlabDecisions: allowed,
+    },
+  }));
+  const decide = vi.fn<BuilderlabDecide>();
+  const offer = (native: BuilderlabDecide | undefined) =>
+    root
+      .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+      .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, native));
+  const fiber = offer(decide);
+  await fiber.await();
+  await flush();
+  const keys = () => decisions.providers().map((provider) => provider.key);
+  expect(keys()).toEqual([]);
+  await session.signIn();
+  expect(keys()).toEqual([]);
+  session.signOut();
+  allowed = true;
+  await session.signIn();
+  expect(keys()).toEqual(["block.builderlab/builderlab"]);
+  expect(decisions.backend()).toBe("block.builderlab/builderlab");
+  session.signOut();
+  expect(keys()).toEqual([]);
+  await session.signIn();
+  expect(keys()).toEqual(["block.builderlab/builderlab"]);
+  // Turning the plugin off removes it, and a build without native calls
+  // never offers it.
+  await fiber.dispose();
+  expect(keys()).toEqual([]);
+  const browser = offer(undefined);
+  await browser.await();
+  await flush();
+  expect(keys()).toEqual([]);
+  expect(decide).not.toHaveBeenCalled();
 });

@@ -205,10 +205,10 @@ The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 “Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
 this capability.
 
-The plugin also provides Builderlab as a Decisions API provider, which the
-Builderlab decisions plugin (off by default) registers. It reads
-`capabilities.can_use_builderlab_decisions` the same way: only explicit `true`
-makes the provider ready. Otherwise its Settings show “Coming soon” and no
-decision request goes to Builderlab. A user who already chose Builderlab gets
-failed decisions, not another provider, until the capability returns or they
-choose a different provider.
+The plugin also offers Builderlab as a Decisions API provider. It reads
+`capabilities.can_use_builderlab_decisions` the same way, but only explicit
+`true` registers the provider, and only while the user is signed in. Otherwise
+Builderlab is not listed in Settings > Decisions API and no decision request
+goes to it. While it is registered, it answers unless the user chose another
+provider; when it goes away, TypeSafe answers. Sign out and back in to refresh
+this capability.

@@ -143,13 +143,8 @@ export type DecisionProvider = Readonly<{
   /** Its settings, shown under Settings > Decisions API while it is
    * selected. */
   Settings?: ComponentType<{ active(): boolean }>;
-  /** Lower comes first in Settings, and is preferred when the user has not
-   * chosen. Default 0. */
+  /** Lower comes first in Settings. Default 0. */
   order?: number;
-  /** Called once when the user turns this provider's plugin on and the host
-   * chooses it. A provider that needs setup can start it here, such as a
-   * sign-in. */
-  setUp?(): void;
 }>;
 
 /** What plugins get as `ctx.decisions`. `decide` never rejects. */
@@ -161,10 +156,10 @@ export interface Decisions {
   /** That provider's status, or `unavailable` when there is none. */
   status(): DecisionProviderStatus | "unavailable";
   subscribe(listener: () => void): () => void;
-  /** Offers a provider while the calling plugin runs. `Decisions` exposes no
-   * way to choose the provider; the user does, in Settings or by turning its
-   * plugin on or off. */
-  registerProvider(provider: DecisionProvider): void;
+  /** Offers a provider while the calling plugin runs, or until the returned
+   * function removes it. `Decisions` exposes no way to choose the provider;
+   * the user does in Settings. */
+  registerProvider(provider: DecisionProvider): () => void;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -197,23 +192,26 @@ export const statusOf = (
   }
 };
 
-/** The provider that answers until the user chooses one in Settings. */
+/** The provider that answers when no other default is registered. */
 export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
+/** Bundled providers that answer, in this order, while the user has not
+ * chosen one or their choice is not registered. Builderlab registers only
+ * for a signed-in account it allows. */
+export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
+  "block.builderlab/builderlab",
+  DEFAULT_DECISION_PROVIDER,
+];
 
-/** Answers come from the provider the user chose, or TypeSafe until they
- * choose. Decision text can include private messages, so no other provider
- * gets it without that choice: while the chosen provider is not registered,
- * decisions are unavailable rather than sent somewhere else. Turning a
- * provider's plugin on chooses that provider. Turning the chosen provider's
- * plugin off chooses the first other provider that is ready, if one is. */
+/** Answers come from the provider the user chose, or the first registered
+ * default until they choose. Decision text can include private messages, so
+ * no other provider gets it without that choice: while a chosen provider
+ * that is not a default is not registered, decisions are unavailable rather
+ * than sent somewhere else. */
 export class DecisionsService extends Service implements Decisions {
   private readonly registry;
   /** The user's choice in Settings; undefined until they make one. */
   private chosen: string | undefined;
   private sorted: readonly RegisteredProvider[] = [];
-  /** Plugins the user turned on this session whose provider has not
-   * registered yet; it is chosen once it does. */
-  private readonly enabling = new Set<string>();
   private readonly listeners = new Set<() => void>();
   constructor(
     ctx: Context,
@@ -248,7 +246,6 @@ export class DecisionsService extends Service implements Decisions {
         }
       });
       this.notify();
-      this.chooseEnabled();
     };
     ctx.effect(() => {
       const stop = this.registry.subscribe(watch);
@@ -260,16 +257,28 @@ export class DecisionsService extends Service implements Decisions {
       };
     });
   }
-  registerProvider(provider: DecisionProvider): void {
+  registerProvider(provider: DecisionProvider): () => void {
     // Registered under the calling plugin's scope, which `this.ctx` is when
     // a plugin calls through its injected `ctx.decisions`.
-    this.registry.register(this.ctx, provider);
+    return this.registry.register(this.ctx, provider);
   }
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
   private current(): RegisteredProvider | undefined {
-    const wanted = this.chosen ?? DEFAULT_DECISION_PROVIDER;
-    return this.sorted.find((provider) => provider.key === wanted);
+    const find = (key: string) =>
+      this.sorted.find((provider) => provider.key === key);
+    const chosen = this.chosen === undefined ? undefined : find(this.chosen);
+    if (chosen) return chosen;
+    if (
+      this.chosen !== undefined &&
+      !DEFAULT_DECISION_PROVIDERS.includes(this.chosen)
+    )
+      return undefined;
+    for (const key of DEFAULT_DECISION_PROVIDERS) {
+      const provider = find(key);
+      if (provider) return provider;
+    }
+    return undefined;
   }
   // Bound, so a caller can pass these on, as React's external stores do.
   backend = (): string | undefined => this.current()?.key;
@@ -277,12 +286,9 @@ export class DecisionsService extends Service implements Decisions {
     const provider = this.current();
     return provider ? statusOf(provider) : "unavailable";
   };
-  /** Host-only: Settings chooses the provider. Not part of `Decisions`.
-   * The newest choice wins: a plugin turned on earlier whose provider has not
-   * registered yet is no longer chosen when it does. */
+  /** Host-only: Settings chooses the provider. Not part of `Decisions`. */
   setBackend(key: string): void {
     if (!this.sorted.some((provider) => provider.key === key)) return;
-    this.enabling.clear();
     const before = this.backend();
     this.chosen = key;
     try {
@@ -291,34 +297,6 @@ export class DecisionsService extends Service implements Decisions {
       // Still in effect for this session.
     }
     if (before !== key) this.notify();
-  }
-  /** Host-only: the user turned plugin `id` on or off. */
-  pluginToggled(id: string, enabled: boolean): void {
-    if (enabled) {
-      this.enabling.add(id);
-      this.chooseEnabled();
-      return;
-    }
-    this.enabling.delete(id);
-    const chosen = this.chosen ?? DEFAULT_DECISION_PROVIDER;
-    if (!chosen.startsWith(`${id}/`)) return;
-    const next = this.sorted.find(
-      (provider) => provider.pluginId !== id && statusOf(provider) === "ready",
-    );
-    if (next) this.setBackend(next.key);
-  }
-  private chooseEnabled() {
-    const provider = this.sorted.find(({ pluginId }) =>
-      this.enabling.has(pluginId),
-    );
-    if (!provider) return;
-    this.enabling.delete(provider.pluginId);
-    this.setBackend(provider.key);
-    try {
-      provider.setUp?.();
-    } catch {
-      // Its setup failed to start; Settings still offers it.
-    }
   }
   private notify() {
     for (const listener of [...this.listeners]) listener();

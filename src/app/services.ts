@@ -65,10 +65,6 @@ export function createServices() {
   const browser = new BrowserService(ctx);
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const decisions = new DecisionsService(ctx);
-  // Turning a decision provider's plugin on or off changes the choice.
-  ctx.effect(() =>
-    plugins.onToggle((id, enabled) => decisions.pluginToggled(id, enabled)),
-  );
   const pages = new PagesService(ctx);
   const sidebarSections = new SidebarSectionsService(ctx);
   const panels = new PanelsService(ctx);

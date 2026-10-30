@@ -185,6 +185,52 @@ it("never sends decisions elsewhere while the chosen provider is missing", async
   expect(decide).not.toHaveBeenCalled();
 });
 
+it("uses Builderlab while it is registered, unless the user chose another", async () => {
+  const storage = memory();
+  const { service, plugin } = setup(storage);
+  const typesafe = await plugin("buzz.typesafe", { id: "typesafe" });
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  // Builderlab registers only for a signed-in account it allows.
+  let builderlab = await plugin("block.builderlab", { id: "builderlab" });
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+  await builderlab.dispose();
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  // A choice of Builderlab falls back to TypeSafe while it is missing.
+  builderlab = await plugin("block.builderlab", { id: "builderlab" });
+  service.setBackend("block.builderlab/builderlab");
+  await builderlab.dispose();
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  // A choice of TypeSafe stays when Builderlab registers again, and falls
+  // back to Builderlab while TypeSafe is off.
+  service.setBackend(DEFAULT_DECISION_PROVIDER);
+  builderlab = await plugin("block.builderlab", { id: "builderlab" });
+  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
+  await typesafe.dispose();
+  expect(service.backend()).toBe("block.builderlab/builderlab");
+  expect(storage.values.get(DECISION_BACKEND_KEY)).toBe(
+    DEFAULT_DECISION_PROVIDER,
+  );
+});
+
+it("removes a provider when the plugin asks, before its scope ends", async () => {
+  const { root, service } = setup();
+  let remove = () => {};
+  const fiber = root
+    .extend({ pluginOwner: { id: "buzz.typesafe", revision: "one" } })
+    .plugin((ctx) => {
+      remove = ctx.decisions.registerProvider(fake({ id: "typesafe" }));
+    });
+  await fiber.await();
+  await flush();
+  expect(service.providers()).toHaveLength(1);
+  remove();
+  expect(service.providers()).toEqual([]);
+  // Ending the scope afterwards is harmless.
+  remove();
+  await fiber.dispose();
+  expect(service.providers()).toEqual([]);
+});
+
 it("restores a saved choice once its provider registers, and survives unreadable storage", async () => {
   const { service, plugin } = setup(
     memory({ [DECISION_BACKEND_KEY]: "b/main" }),
@@ -208,86 +254,6 @@ it("restores a saved choice once its provider registers, and survives unreadable
   expect(other.service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
   other.service.setBackend("b/main");
   expect(other.service.backend()).toBe("b/main");
-});
-
-it("chooses a provider when the user turns its plugin on, and starts its setup", async () => {
-  const storage = memory();
-  const { service, plugin } = setup(storage);
-  await plugin("buzz.typesafe", { id: "typesafe" });
-  const setUp = vi.fn();
-  // Turned on before its provider registers, as a plugin starts after.
-  service.pluginToggled("block.builderlab-decisions", true);
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  await plugin("block.builderlab-decisions", {
-    id: "builderlab",
-    status: () => "needs-setup",
-    setUp,
-  });
-  expect(service.backend()).toBe("block.builderlab-decisions/builderlab");
-  expect(storage.values.get(DECISION_BACKEND_KEY)).toBe(
-    "block.builderlab-decisions/builderlab",
-  );
-  expect(setUp).toHaveBeenCalledOnce();
-  // Only once: a later choice in Settings stands.
-  service.setBackend(DEFAULT_DECISION_PROVIDER);
-  await plugin("acme.other", {});
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(setUp).toHaveBeenCalledOnce();
-  // A provider whose plugin was already on is not chosen by registering.
-  const fresh = setup();
-  await fresh.plugin("buzz.typesafe", { id: "typesafe" });
-  await fresh.plugin("block.builderlab-decisions", { id: "builderlab", setUp });
-  expect(fresh.service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
-  expect(setUp).toHaveBeenCalledOnce();
-});
-
-it("a newer choice in Settings supersedes a plugin turned on before its provider registers", async () => {
-  const storage = memory();
-  const { service, plugin } = setup(storage);
-  await plugin("buzz.typesafe", { id: "typesafe" });
-  await plugin("acme.other", {});
-  const setUp = vi.fn();
-  // Turned on while its provider cannot register yet, then the user chooses.
-  service.pluginToggled("block.builderlab-decisions", true);
-  service.setBackend("acme.other/main");
-  await plugin("block.builderlab-decisions", { id: "builderlab", setUp });
-  expect(service.backend()).toBe("acme.other/main");
-  expect(storage.values.get(DECISION_BACKEND_KEY)).toBe("acme.other/main");
-  expect(setUp).not.toHaveBeenCalled();
-  await expect(service.decide(request)).resolves.toMatchObject({
-    backend: "acme.other/main",
-  });
-});
-
-it("turning the chosen provider's plugin off chooses the first other ready provider", async () => {
-  const { service, plugin } = setup(
-    memory({ [DECISION_BACKEND_KEY]: "block.builderlab-decisions/builderlab" }),
-  );
-  const typesafe = settable("needs-setup");
-  const first = settable("ready");
-  await plugin("acme.first", { order: -1, ...first });
-  await plugin("buzz.typesafe", { id: "typesafe", ...typesafe });
-  const builderlab = await plugin("block.builderlab-decisions", {
-    id: "builderlab",
-  });
-  // Turning off another plugin keeps the choice, even with one ready ahead.
-  service.pluginToggled("buzz.typesafe", false);
-  expect(service.backend()).toBe("block.builderlab-decisions/builderlab");
-  first.set("needs-setup");
-  // None other is ready: the choice stays, and decisions go nowhere else.
-  service.pluginToggled("block.builderlab-decisions", false);
-  await builderlab.dispose();
-  expect(service.backend()).toBeUndefined();
-  // With TypeSafe ready, turning the chosen plugin off moves to it; the
-  // listener hears it before the plugin stops.
-  const again = await plugin("block.builderlab-decisions", {
-    id: "builderlab",
-  });
-  expect(service.backend()).toBe("block.builderlab-decisions/builderlab");
-  typesafe.set("ready");
-  service.pluginToggled("block.builderlab-decisions", false);
-  await again.dispose();
-  expect(service.backend()).toBe(DEFAULT_DECISION_PROVIDER);
 });
 
 it("checks requests before any provider sees them", async () => {

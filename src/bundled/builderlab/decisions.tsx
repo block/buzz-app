@@ -1,9 +1,10 @@
 // Builderlab as a decision provider: the user's Builderlab sign-in, which
-// native code sends with each call. Settings > Decisions API shows the same
-// sign-in control as this plugin's card while it is selected. This plugin
-// provides it unregistered; the Builderlab decisions plugin registers it.
+// native code sends with each call. It is offered only while that sign-in's
+// account may use decisions; see `offerBuilderlabDecisions`. Settings >
+// Decisions API shows the same sign-in control as this plugin's card while it
+// is selected.
+import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useSyncExternalStore } from "react";
 import type {
   DecisionProvider,
   DecisionProviderStatus,
@@ -24,6 +25,38 @@ export const nativeBuilderlabDecide = (): BuilderlabDecide | undefined =>
         invoke("decide", { backend: "builderlab", request, session })
     : undefined;
 
+/** Registers Builderlab in Settings > Decisions API while the user is signed
+ * in and Builderlab reports that the account may use decisions, and removes
+ * it otherwise. While registered it is a default provider, so it answers
+ * unless the user chose another. Builds without native calls never offer it. */
+export function offerBuilderlabDecisions(
+  ctx: Context,
+  session: OAuthSession,
+  loginAvailable: boolean,
+  native: BuilderlabDecide | undefined = nativeBuilderlabDecide(),
+) {
+  if (!native) return;
+  const provider = builderlabProvider(session, loginAvailable, native);
+  let withdraw: (() => void) | undefined;
+  const update = () => {
+    const state = session.snapshot();
+    const allowed =
+      state.status === "signed-in" &&
+      state.account?.canUseBuilderlabDecisions === true;
+    if (allowed && !withdraw)
+      withdraw = ctx.decisions.registerProvider(provider);
+    else if (!allowed && withdraw) {
+      withdraw();
+      withdraw = undefined;
+    }
+  };
+  ctx.effect(() => {
+    const stop = session.subscribe(update);
+    update();
+    return stop;
+  });
+}
+
 export function builderlabProvider(
   session: OAuthSession,
   loginAvailable: boolean,
@@ -34,8 +67,7 @@ export function builderlabProvider(
       ? session.credential()
       : undefined;
   // Builderlab reports at sign-in whether this account may use decisions.
-  // Only an explicit yes enables them; otherwise no call goes to Builderlab,
-  // and a user who chose Builderlab gets failures, not another provider.
+  // Only an explicit yes enables them; otherwise no call goes to Builderlab.
   const permitted = (credential: { account: Credential["account"] }) =>
     credential.account.canUseBuilderlabDecisions;
   return {
@@ -50,11 +82,6 @@ export function builderlabProvider(
         : "needs-setup";
     },
     subscribe: session.subscribe,
-    // Turning the Builderlab decisions plugin on starts sign-in, if needed.
-    setUp: () => {
-      if (loginAvailable && session.snapshot().status === "signed-out")
-        void session.signIn();
-    },
     decide: async (request) => {
       if (!native) return { outcome: "failed", reason: "unavailable" };
       const credential = signedIn();
@@ -100,47 +127,12 @@ export function builderlabProvider(
       ) as DecisionReply;
     },
     Settings: ({ active }) => (
-      <BuilderlabDecisionsSettings
-        session={session}
-        loginAvailable={loginAvailable}
-        active={active}
-      />
-    ),
-  };
-}
-
-function BuilderlabDecisionsSettings({
-  session,
-  loginAvailable,
-  active,
-}: {
-  session: OAuthSession;
-  loginAvailable: boolean;
-  active: () => boolean;
-}) {
-  const login = useSyncExternalStore(session.subscribe, session.snapshot);
-  return (
-    <div className="grid gap-3">
       <Login
         session={session}
         available={loginAvailable}
         active={active}
         showHeading={false}
       />
-      {login.status === "signed-in" &&
-        !login.account?.canUseBuilderlabDecisions && (
-          <p role="status" className="text-body-sm text-secondary">
-            Coming soon: Builderlab decisions are not turned on for your
-            account. Decisions sent here fail until they are. Sign out and back
-            in to check again, or choose another provider.
-          </p>
-        )}
-    </div>
-  );
-}
-
-declare module "@deepseek-ai/cordis" {
-  interface Context {
-    builderlabDecisions: DecisionProvider;
-  }
+    ),
+  };
 }

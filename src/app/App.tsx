@@ -348,7 +348,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const failureKind =
     failureReason === "denied"
       ? "denied"
-      : route.state.ingress && !route.state.retryable
+      : failureReason === "invalid-target" ||
+          (route.state.ingress && !route.state.retryable)
         ? "link"
         : route.reconnecting
           ? "offline"

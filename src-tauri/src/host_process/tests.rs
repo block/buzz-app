@@ -314,6 +314,25 @@ fn a_bundled_program_runs_from_the_app_bin_never_path() {
 }
 
 #[test]
+fn protected_launch_refuses_path_programs_and_preserves_bundled_resolution() {
+    let store = tempfile::tempdir().unwrap();
+    let mut process: HostProcess =
+        serde_json::from_value(serde_json::json!({"id":"shell", "program":"bash"})).unwrap();
+    assert!(protected_program_path(&process, || unreachable!(), store.path()).is_err());
+    process.bundled = true;
+    process.program = "buzz-agent-command".into();
+    assert_eq!(
+        protected_program_path(
+            &process,
+            || Some(PathBuf::from("/app/resources")),
+            store.path()
+        )
+        .unwrap(),
+        PathBuf::from("/app/resources/bin/buzz-agent-command")
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn artifact_program_requires_exact_executable_and_sibling_bytes() {
     use sha2::{Digest, Sha256};
@@ -366,4 +385,58 @@ fn process_mcp_connection_has_an_explicit_wire_shape() {
     ] {
         assert!(serde_json::from_value::<super::ProcessMcpConnection>(invalid).is_err());
     }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn snapshot_mcp_and_containment_keep_the_verified_target_and_argument_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let source = root.join("agent");
+    let bytes = std::fs::read("/usr/bin/true").unwrap();
+    std::fs::write(&source, &bytes).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
+    use sha2::{Digest, Sha256};
+    let artifact = ProcessArtifact {
+        path: source.to_str().unwrap().into(),
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        siblings: vec![],
+    };
+    let store = root.join("artifacts");
+    let target = artifact::snapshot(&artifact, &store).unwrap();
+    std::fs::write(source, b"replaced original").unwrap();
+    let profile = ProcessProtection {
+        read_only_paths: vec![],
+        hidden_paths: vec![],
+    }
+    .profile(&[root])
+    .unwrap();
+    let helper = std::path::Path::new("/app/resources/bin/buzz-agent-command");
+    let command = process_command(
+        &target,
+        Some(helper),
+        Some(&profile),
+        &["--stdio".into()],
+        &["--session".into()],
+    );
+    assert_eq!(command.as_std().get_program(), "/usr/bin/sandbox-exec");
+    assert_eq!(
+        command.as_std().get_args().collect::<Vec<_>>(),
+        [
+            OsStr::new("-p"),
+            OsStr::new(&profile),
+            helper.as_os_str(),
+            OsStr::new("--launch"),
+            target.as_os_str(),
+            OsStr::new("--stdio"),
+            OsStr::new("--session")
+        ]
+    );
+    assert!(std::process::Command::new("/usr/bin/sandbox-exec")
+        .args(["-p", &profile])
+        .arg(&target)
+        .status()
+        .unwrap()
+        .success());
 }

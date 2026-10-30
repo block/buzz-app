@@ -46,8 +46,11 @@ impl ProcessProtection {
             roots.insert(path);
         }
         let quote = |p: &Path| {
-            serde_json::to_string(p.to_str().ok_or("Invalid protection path")?)
-                .map_err(|_| "Invalid protection path")
+            let text = p.to_str().ok_or("Invalid protection path")?;
+            if text.chars().any(char::is_control) {
+                return Err("Protection paths cannot contain control characters");
+            }
+            serde_json::to_string(text).map_err(|_| "Invalid protection path")
         };
         let mut writes = Vec::new();
         for path in roots {
@@ -86,6 +89,38 @@ mod tests {
         assert!(protection.profile(&[]).is_err());
         protection.read_only_paths = vec![std::env::temp_dir(); 129];
         assert!(protection.profile(&[]).is_err());
+    }
+    #[test]
+    #[cfg(unix)]
+    fn refuses_control_characters_in_every_protection_path_role() {
+        let dir = tempfile::tempdir().unwrap();
+        for character in ['\u{1}', '\u{8}', '\u{c}', '\n', '\r', '\t', '\u{7f}'] {
+            let path = dir.path().join(format!("private{character}"));
+            std::fs::create_dir(&path).unwrap();
+            for role in 0..3 {
+                let protection = ProcessProtection {
+                    read_only_paths: if role == 0 {
+                        vec![path.clone()]
+                    } else {
+                        vec![]
+                    },
+                    hidden_paths: if role == 1 {
+                        vec![path.clone()]
+                    } else {
+                        vec![]
+                    },
+                };
+                let controls = if role == 2 {
+                    vec![path.clone()]
+                } else {
+                    vec![]
+                };
+                assert_eq!(
+                    protection.profile(&controls).unwrap_err(),
+                    "Protection paths cannot contain control characters"
+                );
+            }
+        }
     }
     #[test]
     #[cfg(target_os = "macos")]

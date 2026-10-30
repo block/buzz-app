@@ -1038,6 +1038,21 @@ SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access and no sandbox; the import preview says so.
 
+Contained launches require an app-bundled executable or an `artifact` descriptor;
+PATH-only entrypoints are refused. Artifact descriptors name an absolute executable,
+its SHA-256, and optional flat sibling files with their hashes. Native launch hashes
+while copying those declared files into a content-addressed generation beneath the
+actual shared Agents folder, then launches that copy. All contained workers are
+prevented from writing this store. Corrupt generations fail closed and are never
+repaired in place. Equivalent Windows path forms are accepted; symlinks remain
+rejected. Control characters in containment paths refuse launch.
+
+This is approval-authority containment, covering the application, controls, private
+approval state, and declared launch files. It does not verify every dependency an
+interpreter loads. Unsandboxed processes running as the same user, including code
+planted for later execution, are outside this boundary; broader isolation belongs
+to Sandpit. Ordinary launches retain their existing PATH and access behavior.
+
 A plugin that declares `"files": true` under `host` reads files and resolves
 directories natively, the same on every platform, rather than starting a
 program such as `base64` or `pwd` that Windows lacks.

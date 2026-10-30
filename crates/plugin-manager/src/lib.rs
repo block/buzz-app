@@ -1976,7 +1976,7 @@ mod tests {
         let hash = "a".repeat(64);
         let mut artifact = processes.clone();
         artifact["host"]["processes"][0]["artifact"] = serde_json::json!({
-            "path": "/opt/agents/example-cli", "sha256": hash,
+            "path": std::env::temp_dir().join("example-cli"), "sha256": hash,
             "siblings": [{"name": "runtime.js", "sha256": "b".repeat(64)}]
         });
         assert!(artifact_from_text(&artifact.to_string(), "export const x = 1".into()).is_ok());
@@ -1992,6 +1992,54 @@ mod tests {
             let mut invalid = artifact.clone();
             invalid["host"]["processes"][0]["artifact"][field] = value;
             assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
+        let sibling = |name: String| serde_json::json!({"name":name,"sha256":"b".repeat(64)});
+        for (siblings, valid) in [
+            (
+                (0..16)
+                    .map(|i| sibling(format!("file-{i}")))
+                    .collect::<Vec<_>>(),
+                true,
+            ),
+            (
+                (0..17).map(|i| sibling(format!("file-{i}"))).collect(),
+                false,
+            ),
+            (
+                vec![sibling("duplicate".into()), sibling("duplicate".into())],
+                false,
+            ),
+            (vec![sibling("a".repeat(80))], true),
+            (vec![sibling("a".repeat(81))], false),
+        ]
+        .into_iter()
+        .chain(["", ".", "..", "nul\0name"].map(|name| (vec![sibling(name.into())], false)))
+        {
+            let mut candidate = artifact.clone();
+            candidate["host"]["processes"][0]["artifact"]["siblings"] = serde_json::json!(siblings);
+            assert_eq!(
+                artifact_from_text(&candidate.to_string(), "export const x = 1".into()).is_ok(),
+                valid
+            );
+        }
+        let prefix = std::env::temp_dir()
+            .join("artifact-")
+            .to_string_lossy()
+            .into_owned();
+        for (path, valid) in [
+            (format!("{prefix}{}", "x".repeat(4096 - prefix.len())), true),
+            (
+                format!("{prefix}{}", "x".repeat(4097 - prefix.len())),
+                false,
+            ),
+            (format!("{prefix}\0name"), false),
+        ] {
+            let mut candidate = artifact.clone();
+            candidate["host"]["processes"][0]["artifact"]["path"] = serde_json::json!(path);
+            assert_eq!(
+                artifact_from_text(&candidate.to_string(), "export const x = 1".into()).is_ok(),
+                valid
+            );
         }
         let mut invalid = artifact.clone();
         invalid["host"]["processes"][0]["bundled"] = serde_json::json!(true);

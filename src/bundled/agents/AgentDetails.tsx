@@ -3,6 +3,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -120,6 +121,26 @@ export function AgentDetails({
   usePanelTabTitle(agent.name, tabAvatar);
   const [saveFooter, setSaveFooter] = useState<HTMLDivElement | null>(null);
   const content = useRef<HTMLDivElement>(null);
+  const panelFooter = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const footer = panelFooter.current;
+    const scroll = content.current;
+    if (!type?.PanelFooter || !footer || !scroll) return;
+    const measure = () => {
+      scroll.style.setProperty(
+        "--agent-footer-height",
+        `${footer.getBoundingClientRect().height}px`,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      scroll.style.removeProperty("--agent-footer-height");
+    };
+  }, [type?.PanelFooter]);
   useEffect(() => {
     // Completing setup removes its focused button; continue in Identity.
     if (document.activeElement === document.body)
@@ -493,6 +514,11 @@ export function AgentDetails({
           </section>
           <div ref={setSaveFooter} className={styles.saveFooter} />
         </div>
+        {type?.PanelFooter && (
+          <div ref={panelFooter} className={styles.panelFooter}>
+            <type.PanelFooter />
+          </div>
+        )}
       </div>
     </AgentSaveFooter>
   );

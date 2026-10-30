@@ -1005,6 +1005,12 @@ it.each([
       instructionsSave = undefined;
     }
     await user.click(screen.getByRole("button", { name: "Sign out" }));
+    // Sign-in stays user-started and the failed instructions draft survives it.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled(),
+    );
     await user.click(save);
     await waitFor(() => expect(instructions).toBeEnabled());
     expect(save).toHaveAttribute("aria-disabled", "true");

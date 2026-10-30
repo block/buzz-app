@@ -1,0 +1,237 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { createOAuthSession } from "../oauth/session";
+import {
+  browserCredential,
+  type Credential,
+  type OAuthCallback,
+  type BrowserBridge,
+} from "../oauth/browser";
+import type { Agent } from "../../../features/agents/service";
+import type { Host, HostResponse } from "../../../features/host/service";
+import { createAgentClient } from "../agents/client";
+import { createSettingsTab } from "./Instructions";
+import { deferred } from "../test-helpers";
+import { createSignInFooter } from "./SignInFooter";
+
+vi.mock("../oauth/browser", async (original) => ({
+  ...(await original<typeof import("../oauth/browser")>()),
+  browserLoginAvailable: () => true,
+}));
+const credential: Credential = {
+  value: "private-credential",
+  account: {
+    subject: "account",
+    email: "a@example.com",
+    canUseRemoteAgents: true,
+  },
+};
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
+
+it("waits for a click, exposes delayed guidance, cancels and retries without accepting late results", async () => {
+  vi.useFakeTimers();
+  const old = deferred<Credential>();
+  const next = deferred<Credential>();
+  const acquire = vi
+    .fn<(signal: AbortSignal) => Promise<Credential>>()
+    .mockImplementationOnce(() => old.promise)
+    .mockImplementationOnce(() => next.promise);
+  const session = createOAuthSession(acquire);
+  const Footer = createSignInFooter(session);
+  render(<Footer />, { wrapper: StrictMode });
+  expect(acquire).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(acquire).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
+  await act(() => vi.advanceTimersByTimeAsync(2999));
+  expect(screen.queryByText(/Finish sign-in/)).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish sign-in in your browser",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+  expect(acquire.mock.calls[0]?.[0].aborted).toBe(true);
+  expect(session.snapshot().status).toBe("signed-out");
+  expect(acquire).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(acquire).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
+  vi.useRealTimers();
+  await act(async () => {
+    old.resolve(credential);
+    await old.promise;
+  });
+  expect(session.snapshot().status).toBe("pending");
+  await act(async () => {
+    next.resolve(credential);
+  });
+  await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
+  expect(session.snapshot().status).toBe("signed-in");
+  session.dispose();
+});
+
+it("shows failure inline and leaves retry user-started", async () => {
+  const held = deferred<Credential>();
+  const acquire = vi.fn(() => held.promise);
+  const session = createOAuthSession(acquire);
+  const Footer = createSignInFooter(session);
+  render(<Footer />);
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  await act(async () => {
+    held.reject(new Error("Sign-in timed out. Try again."));
+  });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Sign-in timed out",
+  );
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+  expect(acquire).toHaveBeenCalledTimes(1);
+  session.dispose();
+});
+
+it("observes an existing attempt and leaves it running when the pane closes", async () => {
+  const held = deferred<Credential>();
+  const acquire = vi.fn(() => held.promise);
+  const session = createOAuthSession(acquire);
+  const pending = session.signIn();
+  const Footer = createSignInFooter(session);
+  const mounted = render(<Footer />, { wrapper: StrictMode });
+  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
+  mounted.unmount();
+  expect(session.snapshot().status).toBe("pending");
+  expect(acquire).toHaveBeenCalledTimes(1);
+  held.resolve(credential);
+  await pending;
+  expect(session.snapshot().status).toBe("signed-in");
+  session.dispose();
+});
+
+it("stays absent for an existing account and returns on explicit sign-out", async () => {
+  const session = createOAuthSession(async () => credential);
+  await session.signIn();
+  const Footer = createSignInFooter(session);
+  render(<Footer />);
+  expect(screen.queryByRole("button")).toBeNull();
+  act(() => session.signOut());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible(),
+  );
+  session.dispose();
+});
+
+it("loads the pane after a late browser callback and verified exchange without waiting for tab closure or focus return", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const callback = deferred<OAuthCallback>();
+  const callbackStarted = deferred<void>();
+  const accountStarted = deferred<void>();
+  const verified = deferred<HostResponse>();
+  const focus = deferred<void>();
+  const bridge: BrowserBridge = {
+    begin: vi.fn(async () => ({
+      id: "attempt",
+      callbackUrl: "http://127.0.0.1/callback",
+    })),
+    wait: vi.fn(() => {
+      callbackStarted.resolve();
+      return callback.promise;
+    }),
+    complete: vi.fn(() => focus.promise),
+    cancel: vi.fn(async () => {}),
+  };
+  const pubkey = "ab".repeat(32);
+  const reply = (body: unknown): HostResponse => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(body),
+  });
+  const request = vi.fn<Host["request"]>(async ({ url }) => {
+    if (url.endsWith("/exchange"))
+      return reply({ session_credential: credential.value });
+    if (url.endsWith("/me")) {
+      accountStarted.resolve();
+      return verified.promise;
+    }
+    if (url.endsWith("/list-agents"))
+      return reply({
+        status: 1,
+        agents: [
+          {
+            agent_id: "agent",
+            agent_pubkey: pubkey,
+            agent_name: "Helper",
+            status: 2,
+            agent_instructions: "Loaded after the browser handoff.",
+          },
+        ],
+      });
+    return reply({ models: [] });
+  });
+  const host: Host = { request, runCommand: vi.fn() };
+  const session = createOAuthSession((signal) =>
+    browserCredential(host, signal, bridge),
+  );
+  const Footer = createSignInFooter(session);
+  const Settings = createSettingsTab(
+    createAgentClient(host, session, null),
+    session,
+  );
+  const agent = { pubkey, name: "Helper" } as Agent;
+  vi.useFakeTimers();
+  render(
+    <>
+      <Footer />
+      <Settings agent={agent} save={vi.fn()} settingsSection="identity" />
+    </>,
+  );
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await callbackStarted.promise;
+  });
+  await act(() => vi.advanceTimersByTimeAsync(30_000));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish sign-in in your browser",
+  );
+  await act(async () => {
+    callback.resolve({ parameters: [["code", "late-code"]] });
+    await accountStarted.promise;
+  });
+  // A code alone is not a verified account. The pending card stays actionable.
+  expect(session.snapshot().status).toBe("pending");
+  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
+  vi.useRealTimers();
+  await act(async () => {
+    verified.resolve(
+      reply({
+        subject: "account",
+        capabilities: { can_use_remote_agents: true },
+      }),
+    );
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+      "Loaded after the browser handoff.",
+    ),
+  );
+  expect(session.snapshot().status).toBe("signed-in");
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
+  expect(bridge.cancel).not.toHaveBeenCalled();
+  await act(async () => {
+    focus.resolve();
+  });
+  expect(bridge.cancel).toHaveBeenCalledTimes(1);
+  session.dispose();
+});

@@ -87,6 +87,11 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
+Signed-out agent panes show a pinned sign-in card across every tab, including
+relay-backed Memory and Activity. Opening the pane does not start browser login;
+Sign in starts it, and Cancel sign-in cancels the shared account attempt.
+The card reserves its measured height for scrolling and clears once sign-in is
+verified. Slow settings/catalog reads offer a scoped retry after three seconds.
 The Identity tab also loads a separate model catalog from Builderlab. Choose a
 model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices

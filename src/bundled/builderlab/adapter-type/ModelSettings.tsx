@@ -1,4 +1,10 @@
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
 import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
 import { CaretDownIcon } from "../../../shared/design-system/icons";
@@ -49,6 +55,7 @@ export function ModelSettings({
     | { agent: RemoteAgent; subject: string }
     | { pending: boolean; error: string; retry(): void };
 }) {
+  const login = useSyncExternalStore(session.subscribe, session.snapshot);
   const agent = "agent" in settings ? settings.agent : undefined;
   const subject = "subject" in settings ? settings.subject : undefined;
   const form = useId();
@@ -62,7 +69,7 @@ export function ModelSettings({
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const busy = !saved || loading || saving;
+  const busy = !saved || loading || saving || login.status !== "signed-in";
   const [error, setError] = useState("");
   const [catalogError, setCatalogError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -81,7 +88,12 @@ export function ModelSettings({
   }, [agent]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision retries a failed catalog request while keeping the draft.
   useEffect(() => {
-    if (!agent) return;
+    if (
+      !agent ||
+      login.status !== "signed-in" ||
+      login.account?.subject !== subject
+    )
+      return;
     const current = new AbortController();
     setLoading(true);
     setCatalogError("");
@@ -99,7 +111,7 @@ export function ModelSettings({
         if (!current.signal.aborted) setLoading(false);
       });
     return () => current.abort();
-  }, [client, agent, revision]);
+  }, [client, agent, revision, login, subject]);
   const model = models?.find((choice) => choice.id === modelId);
   const valid = !!model?.supportedReasoningEfforts.includes(effort);
   const modelChanged =
@@ -110,6 +122,7 @@ export function ModelSettings({
     modelChanged ||
     (!instructionsChanged && saved?.modelSelectionStatus !== "valid");
   const disabled =
+    login.status !== "signed-in" ||
     !saved ||
     saving ||
     !validInstructions(instructions) ||
@@ -122,7 +135,6 @@ export function ModelSettings({
     setSaving(true);
     setError("");
     try {
-      await session.ensureSignedIn(signal);
       if (session.credential().account.subject !== subject)
         throw new Error(
           "Sign in to the Builderlab account that loaded these settings.",
@@ -166,8 +178,27 @@ export function ModelSettings({
       if (!signal.aborted) setSaving(false);
     }
   };
-  const pending = "pending" in settings ? settings.pending : loading;
-  const placeholder = pending ? "…" : "Unavailable";
+  const pending =
+    login.status === "signed-in" &&
+    ("pending" in settings ? settings.pending : loading);
+  const [slow, setSlow] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each agent/catalog retry starts a new loading phase, even if pending stays true.
+  useEffect(() => {
+    setSlow(false);
+    if (!pending) return;
+    const timer = setTimeout(() => setSlow(true), 3000);
+    return () => clearTimeout(timer);
+  }, [pending, agent, revision]);
+  const placeholder =
+    login.status === "pending"
+      ? "Signing in…"
+      : login.status === "signed-out"
+        ? "Sign in"
+        : pending
+          ? slow
+            ? "Still loading…"
+            : "…"
+          : "Unavailable";
   return (
     <LoadingRegion
       pending={pending}
@@ -182,6 +213,22 @@ export function ModelSettings({
             <div>
               <Button onClick={settings.retry}>Retry</Button>
             </div>
+          </div>
+        ) : slow && pending ? (
+          <div className="grid justify-items-start gap-2">
+            <p role="status" className="m-0 text-body-sm text-secondary">
+              {agent
+                ? "Models are taking longer to load."
+                : "Settings are taking longer to load."}
+            </p>
+            <Button
+              onClick={() => {
+                if ("retry" in settings) settings.retry();
+                else setRevision((value) => value + 1);
+              }}
+            >
+              {agent ? "Retry models" : "Retry"}
+            </Button>
           </div>
         ) : undefined
       }

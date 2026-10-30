@@ -724,6 +724,9 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Provider-owned account/recovery notice, pinned across the agent's tabs.
+   * The panel host owns placement and reserves its measured height for scrolling. */
+  PanelFooter?: ComponentType;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,

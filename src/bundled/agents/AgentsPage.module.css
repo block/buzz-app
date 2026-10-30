@@ -131,6 +131,7 @@
 
 /* Profile-style identity and shared agent sections in one scrollport. */
 .build {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -138,6 +139,7 @@
   min-width: 0;
 }
 .detailsScroll {
+  --agent-footer-height: 0px;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -145,11 +147,27 @@
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-5);
+  padding-block-end: calc(var(--space-5) + var(--agent-footer-height));
+  scroll-padding-block-end: calc(var(--space-5) + var(--agent-footer-height));
+}
+.panelFooter {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: var(--space-5);
+  pointer-events: none;
+}
+.panelFooter:empty {
+  display: none;
+}
+.panelFooter > * {
+  pointer-events: auto;
 }
 .saveFooter {
   flex: none;
   position: sticky;
-  bottom: calc(-1 * var(--space-5));
+  bottom: calc(var(--agent-footer-height) - var(--space-5));
   z-index: 1;
   margin-block-start: auto;
   margin-inline: calc(-1 * var(--space-5));

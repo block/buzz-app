@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import type { RelayData } from "../../../features/relay/service";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { AgentSaveFooter } from "../../../features/agents/AgentSaveButton";
@@ -59,14 +66,16 @@ beforeEach(() =>
 );
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
-function fixture() {
+async function fixture(signedIn = true) {
   let subject = "account-a";
   const session = createOAuthSession(async () => ({
     value: "credential",
     account: { subject, email: "a@example.com", canUseRemoteAgents: true },
   }));
+  if (signedIn) await session.signIn();
   let stored = response();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {
     if (url.endsWith("/update-agent")) {
@@ -115,9 +124,11 @@ function fixture() {
     Tab,
     type,
     request,
-    changeAccount: () => {
+    session,
+    changeAccount: async () => {
       subject = "account-b";
       session.signOut();
+      await session.signIn();
     },
   };
 }
@@ -126,10 +137,61 @@ async function loadedInstructions() {
   await waitFor(() => expect(field).toBeEnabled());
   return field;
 }
+it("does not start sign-in or provider reads on mount, then loads after explicit sign-in", async () => {
+  const h = await fixture(false);
+  const signIn = vi.spyOn(h.session, "signIn");
+  render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
+  expect(screen.getByRole("button", { name: "Model: Sign in" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
+  expect(signIn).not.toHaveBeenCalled();
+  expect(h.request).not.toHaveBeenCalled();
+  await act(() => h.session.signIn());
+  expect(await loadedInstructions()).toHaveValue("First instructions.");
+  const user = userEvent.setup();
+  await user.type(
+    screen.getByRole("textbox", { name: "Instructions" }),
+    " Draft",
+  );
+  act(() => h.session.signOut());
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "First instructions. Draft",
+  );
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(signIn).toHaveBeenCalledTimes(1);
+  h.session.dispose();
+});
+
+it("offers retry after a slow settings read and ignores its late result", async () => {
+  const h = await fixture(false);
+  await h.session.signIn();
+  const held = deferred<HostResponse>();
+  h.request.mockReturnValueOnce(held.promise);
+  vi.useFakeTimers();
+  render(<h.Tab agent={agent()} save={vi.fn()} />);
+  await act(() => vi.advanceTimersByTimeAsync(2999));
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(
+    screen.getByRole("button", { name: "Model: Still loading…" }),
+  ).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  vi.useRealTimers();
+  expect(await loadedInstructions()).toHaveValue("First instructions.");
+  const stale = JSON.parse(response().body);
+  stale.agents[0].agent_instructions = "Stale instructions";
+  await act(async () => {
+    held.resolve({ ...response(), body: JSON.stringify(stale) });
+  });
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "First instructions.",
+  );
+  h.session.dispose();
+});
+
 it.each([false, true])(
   "keeps the full form mounted across settings and catalog loading (catalog fails: %s)",
   async (fails) => {
-    const h = fixture();
+    const h = await fixture();
     const user = userEvent.setup();
     const settings = deferred<HostResponse>();
     const catalog = deferred<HostResponse>();
@@ -225,7 +287,7 @@ it.each([false, true])(
   },
 );
 it("retries a failed load and refuses to save a draft through another account", async () => {
-  const h = fixture();
+  const h = await fixture();
   const user = userEvent.setup();
   h.request.mockResolvedValueOnce({ ...response(), status: 400 });
   render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
@@ -253,7 +315,7 @@ it("retries a failed load and refuses to save a draft through another account", 
   expect(field).toHaveValue("First instructions.Changed.");
 });
 it("switching agents hides the old draft and ignores the switched-away read", async () => {
-  const h = fixture();
+  const h = await fixture();
   const user = userEvent.setup();
   const mounted = render(<h.Tab agent={agent()} save={vi.fn()} />, {
     wrapper: StrictMode,
@@ -290,7 +352,10 @@ it("switching agents hides the old draft and ignores the switched-away read", as
   );
 });
 
-function renderTabs(h: ReturnType<typeof fixture>, close?: () => void) {
+function renderTabs(
+  h: Awaited<ReturnType<typeof fixture>>,
+  close?: () => void,
+) {
   function Pane() {
     const [target, setTarget] = useState<HTMLDivElement | null>(null);
     return (
@@ -331,7 +396,7 @@ function renderTabs(h: ReturnType<typeof fixture>, close?: () => void) {
 }
 
 it("dismisses Harness help before allowing Escape to close the agent pane", async () => {
-  const h = fixture();
+  const h = await fixture();
   const user = userEvent.setup();
   const close = vi.fn();
   renderTabs(h, close);
@@ -356,7 +421,7 @@ it("dismisses Harness help before allowing Escape to close the agent pane", asyn
 });
 
 it("keeps hosted instructions on cancellation and resets a confirmed discard", async () => {
-  const h = fixture();
+  const h = await fixture();
   const user = userEvent.setup();
   renderTabs(h);
   expect(screen.queryByRole("tab", { name: "Instructions" })).toBeNull();
@@ -429,7 +494,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
 });
 
 it("guards hosted model drafts and a pending model save", async () => {
-  const h = fixture();
+  const h = await fixture();
   const user = userEvent.setup();
   renderTabs(h);
   await loadedInstructions();
@@ -484,7 +549,7 @@ it("guards hosted model drafts and a pending model save", async () => {
 });
 
 it("saves model and instructions together through one footer action", async () => {
-  const h = fixture();
+  const h = await fixture();
   const user = userEvent.setup();
   renderTabs(h);
   const field = await loadedInstructions();
@@ -526,8 +591,8 @@ it("saves model and instructions together through one footer action", async () =
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
-it("keeps runtime settings available without loading Builderlab configuration", () => {
-  const h = fixture();
+it("keeps runtime settings available without loading Builderlab configuration", async () => {
+  const h = await fixture();
   render(
     <h.Tab
       agent={agent()}

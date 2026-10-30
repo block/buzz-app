@@ -22,9 +22,111 @@ import type {
 import type { CommunityReader } from "../../features/communities/service";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { Input } from "../../shared/design-system/ui/Input";
+import { Button } from "../../shared/design-system/ui/Button";
 import { AgentDetails } from "./AgentDetails";
 
 afterEach(cleanup);
+
+it("keeps one provider footer across tabs and measures its changing height for the scroll area", async () => {
+  const callbacks = new Map<Element, () => void>();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private changed: () => void) {}
+      observe(target: Element) {
+        callbacks.set(target, this.changed);
+      }
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  function Footer() {
+    const [connected, setConnected] = useState(false);
+    return connected ? null : (
+      <section aria-label="Account access">
+        <Button onClick={() => setConnected(true)}>Sign in</Button>
+      </section>
+    );
+  }
+  const agent = {
+    key: "a".repeat(64),
+    pubkey: "a".repeat(64),
+    owner: "f".repeat(64),
+    name: "Ada",
+    type: "test/hosted",
+    place: "hosted",
+    relay: "wss://current.example",
+    config: {},
+    attention: {},
+    skipped: {},
+    timers: {},
+    attentionEnabled: true,
+  } satisfies Agent;
+  const type = {
+    key: agent.type,
+    pluginId: "test",
+    revision: "1",
+    id: "hosted",
+    title: "Hosted",
+    defaults: () => ({ config: {} }),
+    PanelFooter: Footer,
+    tabs: [
+      {
+        id: "settings",
+        title: "Identity",
+        role: "settings",
+        component: () => <p>Provider settings</p>,
+      },
+      {
+        id: "activity",
+        title: "Activity",
+        role: "activity",
+        component: () => <p>Agent activity</p>,
+      },
+    ],
+  } as RegisteredAgentType;
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => ({ agents: [agent] }),
+    configHistory: () => undefined,
+    addedTabs: () => [],
+    memberships: () => [],
+  } as unknown as Agents;
+  render(
+    <AgentDetails
+      agents={agents}
+      agent={agent}
+      type={type}
+      types={[type]}
+      channels={[]}
+      memories={undefined}
+      onRemoved={vi.fn()}
+      messageAction={() => null}
+    />,
+  );
+  const card = screen.getByRole("region", { name: "Account access" });
+  const footer = card.parentElement;
+  if (!footer) throw new Error("Missing pane footer");
+  const scroll = footer.previousElementSibling as HTMLElement;
+  const box = vi.spyOn(footer, "getBoundingClientRect");
+  box.mockReturnValue({ height: 240 } as DOMRect);
+  act(() => callbacks.get(footer)?.());
+  expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("240px");
+  const user = userEvent.setup();
+  for (const name of ["Memory", "Activity", "Settings", "Identity"]) {
+    await user.click(screen.getByRole("tab", { name }));
+    expect(screen.getByRole("region", { name: "Account access" })).toBe(card);
+  }
+  box.mockReturnValue({ height: 320 } as DOMRect);
+  act(() => callbacks.get(footer)?.());
+  expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("320px");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  box.mockReturnValue({ height: 0 } as DOMRect);
+  act(() => callbacks.get(footer)?.());
+  expect(screen.queryByRole("region", { name: "Account access" })).toBeNull();
+  expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("0px");
+  box.mockRestore();
+});
 
 function Settings({ agent, save }: AgentViewProps<{ reply: string }>) {
   const form = useId();

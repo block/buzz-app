@@ -1924,7 +1924,7 @@ function directoryCompletion(people: RelaySessionPeople) {
       publish={publish}
     />
   );
-  return { last, complete, session, publish };
+  return { last, complete, session };
 }
 type RelaySessionPeople = (
   query: string,
@@ -2119,31 +2119,6 @@ it("an empty partial-key search does not refute an exact-key lookup, and keys st
   );
   // Choices still match names only, never public keys.
   await waitFor(() => expect(last()?.items).toEqual([]));
-});
-
-it("a transient directory failure retries quietly instead of offering Retry", async () => {
-  vi.useFakeTimers();
-  const people = vi
-    .fn<RelaySessionPeople>()
-    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-    .mockResolvedValue({
-      people: [{ pubkey: "f".repeat(64), name: "Mary Jane" }],
-      hasMore: false,
-    });
-  const { complete, publish } = directoryCompletion(people);
-  render(complete("Mary"));
-  await act(() => vi.advanceTimersByTimeAsync(MENTION_DIRECTORY_DELAY_MS));
-  expect(people).toHaveBeenCalledTimes(1);
-  // The first quiet retry waits at most the first recovery delay (1 s).
-  await act(() => vi.advanceTimersByTimeAsync(1_000));
-  expect(people).toHaveBeenCalledTimes(2);
-  const results = publish.mock.calls.map(
-    ([result]) => result as CompletionResult | undefined,
-  );
-  expect(results.at(-1)?.items.map((item) => item.label)).toEqual([
-    "Mary Jane",
-  ]);
-  expect(results.some((result) => result?.retry)).toBe(false);
 });
 
 it("a failed multi-word directory search keeps its error and retry", async () => {

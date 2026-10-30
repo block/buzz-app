@@ -354,7 +354,7 @@ it("allocation failure exposes an effective retry rather than leaving a spinner"
     .mockReturnValue(h.view);
   h.render();
   expect(screen.getByRole("alert")).toHaveTextContent("capacity");
-  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(screen.getByText("root")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(h.thread).toHaveBeenCalledTimes(2);
@@ -367,7 +367,7 @@ it("loads history automatically with error-only retry and no routine history con
     [row.authorId],
     "background",
   );
-  for (const name of ["Refresh thread", "Retry thread", "Load more replies"])
+  for (const name of ["Refresh thread", "Try again", "Load more replies"])
     expect(screen.queryByRole("button", { name })).toBeNull();
   expect(screen.queryByText(/Existing history may be incomplete/)).toBeNull();
   expect(h.view.loadMore).not.toHaveBeenCalled();
@@ -380,14 +380,14 @@ it("loads history automatically with error-only retry and no routine history con
   h.snapshot.status = "error";
   h.snapshot.error = "offline";
   h.render();
-  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(h.view.loadMore).toHaveBeenCalledOnce();
   expect(h.view.refresh).toHaveBeenCalledTimes(2);
   h.snapshot.status = "ready";
   h.snapshot.error = undefined;
   h.snapshot.canLoadMore = false;
   h.render();
-  expect(screen.queryByRole("button", { name: "Retry thread" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   h.snapshot.limited = true;
   h.render();
   expect(screen.getByText("Thread history limit reached.")).toBeVisible();
@@ -395,7 +395,7 @@ it("loads history automatically with error-only retry and no routine history con
   h.snapshot.error = "Thread view exceeded its memory limit.";
   h.render();
   expect(screen.queryByText(/appear automatically/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Retry thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(h.view.refresh).toHaveBeenCalledTimes(3);
   expect(h.ensure).toHaveBeenCalledOnce();
 });
@@ -412,7 +412,7 @@ it("keeps initial rows pending until positioned, exposes errors, and lets readin
   h.render();
   expect(h.element).not.toHaveAttribute("data-positioning");
   expect(
-    within(h.element).getByRole("button", { name: "Retry thread" }),
+    within(h.element).getByRole("button", { name: "Try again" }),
   ).toBeVisible();
   h.snapshot.status = "loading";
   h.snapshot.error = undefined;
@@ -731,9 +731,7 @@ it("keeps older-page loading quiet and retry between root and replies", () => {
   expect(
     alert.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  fireEvent.click(
-    within(section).getByRole("button", { name: "Retry thread" }),
-  );
+  fireEvent.click(within(section).getByRole("button", { name: "Try again" }));
   expect(h.view.loadMore).toHaveBeenCalledTimes(2);
   expect(h.view.refresh).toHaveBeenCalledOnce();
 
@@ -764,9 +762,7 @@ it("keeps retained-range repair quiet and retry after the replies", () => {
   expect(
     reply.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  fireEvent.click(
-    within(section).getByRole("button", { name: "Retry thread" }),
-  );
+  fireEvent.click(within(section).getByRole("button", { name: "Try again" }));
   expect(h.view.refresh).toHaveBeenCalledTimes(2);
   expect(h.view.loadMore).not.toHaveBeenCalled();
 });
@@ -1181,6 +1177,7 @@ it("ordinary routed loading failure completes as unavailable, never as an opened
   expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
     status: "failed",
     reason: "unavailable",
+    presented: true,
   });
 });
 it.each(["ready", "unavailable", "error"] as const)(
@@ -1203,6 +1200,7 @@ it.each(["ready", "unavailable", "error"] as const)(
             status: "failed",
             reason:
               targetStatus === "unavailable" ? "not-found" : "unavailable",
+            presented: true,
           },
     );
   },
@@ -1661,6 +1659,7 @@ it.each(["unavailable", "error", "cancelled"] as const)(
     expect(next.complete).toHaveBeenCalledWith({
       status: "failed",
       reason: result === "unavailable" ? "not-found" : "unavailable",
+      presented: true,
     });
     if (result === "unavailable") {
       // Retrying can't restore a message that no longer exists.

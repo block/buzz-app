@@ -282,6 +282,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           navigation?.complete({
             status: "failed",
             reason: result === "unavailable" ? "not-found" : "unavailable",
+            presented: true,
           });
           return;
         }
@@ -312,7 +313,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         // An existing thread stays usable; its notice owns the retry.
         if (prior) settle({ unavailable: false });
         else settle(undefined, String(error));
-        navigation?.complete({ status: "failed", reason: "unavailable" });
+        navigation?.complete({
+          status: "failed",
+          reason: "unavailable",
+          presented: true,
+        });
       }
     }
     void select();
@@ -405,7 +410,11 @@ function OwnedThreadPanel({
       };
     } catch (error) {
       setError(String(error));
-      navigation?.complete({ status: "failed", reason: "unavailable" });
+      navigation?.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
     }
   }, [
     session,
@@ -420,7 +429,7 @@ function OwnedThreadPanel({
     <div className={styles.empty} role="alert">
       <p>{error}</p>
       <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
-        Retry thread
+        Try again
       </Button>
     </div>
   ) : view ? (
@@ -854,12 +863,25 @@ function ThreadMessages({
   });
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
+    // Each failure is shown in the thread, next to its own Try again.
     if (rootTarget && snapshot.status === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      navigation.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
     else if (snapshot.targetStatus === "unavailable")
-      navigation.complete({ status: "failed", reason: "not-found" });
+      navigation.complete({
+        status: "failed",
+        reason: "not-found",
+        presented: true,
+      });
     else if (snapshot.targetStatus === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      navigation.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
@@ -1548,7 +1570,7 @@ function ThreadMessages({
               <li className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
-                  Retry thread
+                  Try again
                 </Button>
               </li>
             )}
@@ -1586,7 +1608,7 @@ function ThreadMessages({
           (snapshot.targetStatus === "unavailable" && !selectionNotice)) && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>
-              Retry thread
+              Try again
             </Button>
           </div>
         )}

@@ -265,17 +265,19 @@ function ConnectedApp({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
+  // A page that presents its own failure in place stays on screen.
+  const failedPage = route.state.status === "failed" && !route.state.presented;
   const pageOwnsCompanion =
     !!workspace.page?.companion &&
     (settings
       ? !!workspace.request
-      : !route.failure && !route.waiting && route.state.status !== "failed");
+      : !route.failure && !route.waiting && !failedPage);
   // A registration lookup does not admit the target's parameters and scope.
   const pageSidebarReady =
     startup === "ready" &&
     (settings
       ? !!workspace.request
-      : !route.failure && !route.waiting && route.state.status !== "failed");
+      : !route.failure && !route.waiting && !failedPage);
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -348,7 +350,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
       ? "denied"
       : route.state.ingress && !route.state.retryable
         ? "link"
-        : route.offline
+        : route.reconnecting
           ? "offline"
           : "unavailable";
   const retryButton = (variant: "primary" | "quiet") => (
@@ -369,15 +371,25 @@ function ConnectedApp({ services }: { services: AppServices }) {
       Try again
     </Button>
   );
-  const messagesButton = (variant: "primary" | "quiet") => (
-    <Button
-      type="button"
-      variant={variant}
-      onClick={() => select("buzz.channels/channels")}
-    >
-      Go to Messages
-    </Button>
-  );
+  // The way out must exist: Messages itself may be what failed to start.
+  const messagesButton = (variant: "primary" | "quiet") =>
+    route.pages.some((page) => page.key === "buzz.channels/channels") ? (
+      <Button
+        type="button"
+        variant={variant}
+        onClick={() => select("buzz.channels/channels")}
+      >
+        Go to Messages
+      </Button>
+    ) : settings ? null : (
+      <Button
+        type="button"
+        variant={variant}
+        onClick={() => select("settings")}
+      >
+        Open Settings
+      </Button>
+    );
   const destinationFailure = (
     <div role="alert" className="page-status">
       {failureKind === "denied" ? (
@@ -414,7 +426,11 @@ function ConnectedApp({ services }: { services: AppServices }) {
         <EmptyState
           icon={<WarningCircleIcon />}
           title="This page isn’t available"
-          description="It may have been removed, or you may need to update Buzz."
+          description={
+            route.failure || failureReason === "not-found"
+              ? "It may have been removed, or you may need to update Buzz."
+              : "It didn’t load this time. Try again in a moment."
+          }
           action={
             <>
               {messagesButton("primary")}
@@ -535,8 +551,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&
-              ((!route.state.ingress && route.failure) ||
-                route.state.status === "failed") ? (
+              ((!route.state.ingress && route.failure) || failedPage) ? (
               destinationFailure
             ) : !settings && route.waiting ? (
               opening

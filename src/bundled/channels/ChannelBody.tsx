@@ -83,8 +83,13 @@ export const ChannelBody = memo(function ChannelBody({
     )
       return;
     if (window.status === "ready") navigation?.complete({ status: "opened" });
+    // The timeline shows this failure in place, beside its own Retry.
     else if (!cached && window.status === "error")
-      navigation?.complete({ status: "failed", reason: "unavailable" });
+      navigation?.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
   }, [cached, navigation, window.status]);
   // While the recovery notice shows, it owns the one Retry now; an empty
   // failed timeline waits for it instead of offering a second Retry.

@@ -332,25 +332,31 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
-  // A visit whose content could not load, or did not load in time, reopens by
-  // itself once per live connection: a dropped or slow connection recovers
-  // without Retry. Host-decided, denied and invalid visits keep their error.
-  const reopened = useRef<string | undefined>(undefined);
+  // A visit that failed while its connection was down reopens by itself, once,
+  // when that connection is live again. A live connection alone does not prove
+  // a failed read recovered. Host-decided, denied and invalid visits keep their
+  // error; a page presenting its failure in place owns that Retry.
+  const offline =
+    relay.status === "connecting" || relay.status === "error" || !!relay.cached;
+  const failedOffline = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (
       state.status !== "failed" ||
+      state.presented ||
       state.ingress ||
       failure ||
-      (state.reason !== "timeout" && state.reason !== "unavailable") ||
-      relay.status !== "ready" ||
-      relay.cached
+      (state.reason !== "timeout" && state.reason !== "unavailable")
     )
       return;
-    const key = `${state.entry.id}:${relay.generation}`;
-    if (reopened.current === key) return;
-    reopened.current = key;
-    void navigation.retry();
-  }, [navigation, state, failure, relay]);
+    if (offline) failedOffline.current = state.attempt.id;
+    else if (
+      relay.status === "ready" &&
+      failedOffline.current === state.attempt.id
+    ) {
+      failedOffline.current = undefined;
+      void navigation.retry();
+    }
+  }, [navigation, state, failure, offline, relay.status]);
   const select = (
     key: string,
     options?: Pick<NavigationOpenOptions, "focus"> & {
@@ -409,8 +415,10 @@ export function useAppNavigation(
     waiting,
     failure,
     selected: pageKey ?? target.kind,
-    /** The failed visit cannot reach its community yet; it reopens when it can. */
-    offline: relay.status === "connecting" || relay.status === "error",
+    /** The connection is still being made or retried, and the visit reopens
+     * once it is live; not a refused or misconfigured connection. */
+    reconnecting:
+      !failure && (relay.status === "connecting" || !!relay.retrying),
     workspace: {
       page: workspacePage || undefined,
       target: workspaceTarget,

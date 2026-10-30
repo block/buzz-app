@@ -209,6 +209,42 @@ it("reports a settled plugin's absent Settings provider as unavailable", async (
   });
 });
 
+it("offers Settings as the way out when Messages itself is unavailable", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope: null,
+      }),
+    )}`,
+  );
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  expect(
+    await screen.findByRole("heading", { name: "This page isn’t available" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target.kind).toBe("settings"),
+  );
+});
+
 it("opens Pair mobile in Personal space with no saved communities", async () => {
   vi.stubGlobal(
     "ResizeObserver",

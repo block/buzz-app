@@ -249,9 +249,10 @@ it("preserves a held reader's logical offset while its DOM lookup is absent", as
   const region = screen.getByRole("region", {
     name: "Channel message history",
   });
+  let rowY = 120;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
     function (this: HTMLElement) {
-      return new DOMRect(0, this.closest("ol") ? 120 : 0, 800, 100);
+      return new DOMRect(0, this.closest("ol") ? rowY : 0, 800, 100);
     },
   );
   region.scrollTop = 1400;
@@ -263,6 +264,10 @@ it("preserves a held reader's logical offset while its DOM lookup is absent", as
   scroll.itemOffset.mockImplementation((index) => index * 100);
   h.pageAroundAnchor();
   await h.measured();
+  // A drag after the hold starts must become the new logical baseline.
+  region.scrollTop -= 50;
+  rowY += 50;
+  fireEvent.scroll(region);
 
   // Model Virtua evicting the lookup, while React still owns the test DOM.
   const row = region.querySelector<HTMLElement>(
@@ -271,19 +276,19 @@ it("preserves a held reader's logical offset while its DOM lookup is absent", as
   expect(row).not.toBeNull();
   row?.removeAttribute("data-message-id");
   scroll.itemOffset.mockImplementation((index) => index * 100 + 45.5);
-  region.scrollTop = 473; // Virtua has already applied part of the batch.
+  region.scrollTop = 423; // Virtua has already applied part of the batch.
   await act(async () => {
     screen.getByRole("list").style.height = "2210px";
   });
-  expect(region.scrollTop).toBe(545.5);
+  expect(region.scrollTop).toBe(495.5);
 
-  // The next batch starts from the corrected logical baseline, not DOM Y=120.
+  // Another virtualized batch must not undo the drag or double-count a jump.
   scroll.itemOffset.mockImplementation((index) => index * 100 + 135.5);
   region.scrollTop += 10;
   await act(async () => {
     screen.getByRole("list").style.height = "2300px";
   });
-  expect(region.scrollTop).toBe(635.5);
+  expect(region.scrollTop).toBe(585.5);
 });
 it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
   const h = mount();

@@ -335,7 +335,8 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
-    const pending = await reading(page, app, 1400);
+    // Leave enough loaded history above the reader for an unclamped drag.
+    const pending = await reading(page, app, 250);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -349,6 +350,18 @@ test.describe("pages inside one second", () => {
         .toBeGreaterThan(height);
       await settle(page);
       await expectAnchor(page, held);
+      const heldTop = await history(page).evaluate(
+        (e, id) =>
+          e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
+            .top -
+          e.getBoundingClientRect().top +
+          e.scrollTop,
+        held.id,
+      );
+      expect(
+        await history(page).evaluate((e) => e.scrollTop - e.clientHeight - 150),
+        "the drag has enough loaded history to avoid the top clamp",
+      ).toBeGreaterThan(0);
       // Over a viewport at once, Virtua renders upward synchronously: the held
       // row is gone from the scroll event until Virtua's idle timer buffers
       // below again, too briefly for polling, so record its removal in page.
@@ -375,7 +388,10 @@ test.describe("pages inside one second", () => {
         return seen;
       }, held.id);
       await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);
-      // Once idle, Virtua remounts it.
+      // Bring it just below the viewport; idle overscan alone need not reach it.
+      await history(page).evaluate((e, top) => {
+        e.scrollTop = top - e.clientHeight - 50;
+      }, heldTop);
       await expect(row).toHaveCount(1);
       await settle(page);
       // It remounts below the viewport, where the reader no longer reads.

@@ -979,6 +979,7 @@ it("keeps technical data out of message summaries and avoids repeating the desti
 
 it("lists each recent event apart, shown as a chat message from its author", () => {
   const author = "b".repeat(64);
+  const casey = "c".repeat(64);
   const now = Math.floor(Date.now() / 1000);
   const output = (text: string, at: number) => ({ at, text });
   const agent = {
@@ -1005,6 +1006,14 @@ it("lists each recent event apart, shown as a chat message from its author", () 
             author,
             channel,
             text: "Tagged `v2`.",
+          },
+          {
+            id: "3".repeat(64),
+            at: now - 30,
+            author,
+            channel,
+            text: "Ask @Casey in #Beta.",
+            mentions: [casey],
           },
         ],
       },
@@ -1042,13 +1051,23 @@ it("lists each recent event apart, shown as a chat message from its author", () 
       },
     },
   };
-  const list = { channels: [{ id: channel, name: "Releases" }] };
+  const list = {
+    channels: [
+      { id: channel, name: "Releases" },
+      { id: "beta", name: "Beta" },
+    ],
+  };
   const queries = {
     ensureList() {},
     subscribeList: () => () => {},
     list: () => list,
   };
-  const profiles = new Map([[author, { name: "alex" }]]);
+  const profiles = new Map([
+    [author, { name: "alex" }],
+    [casey, { name: "Casey" }],
+  ]);
+  // Profile reads fail while the session closes; rows must not leave that unhandled.
+  const ensure = vi.fn(() => Promise.reject(new Error("closed")));
   const names = {
     resolve: (pubkey: string, fallback?: string) =>
       pubkey === author ? "Alex" : fallback,
@@ -1064,7 +1083,7 @@ it("lists each recent event apart, shown as a chat message from its author", () 
       profiles: {
         snapshot: () => profiles,
         subscribe: () => () => {},
-        ensure: async () => {},
+        ensure,
       },
       media: () => undefined,
     },
@@ -1096,18 +1115,29 @@ it("lists each recent event apart, shown as a chat message from its author", () 
     events.map((item) =>
       item.querySelector("[data-message-id]")?.getAttribute("data-message-id"),
     ),
-  ).toEqual(["2".repeat(64), "1".repeat(64)]);
+  ).toEqual(["3".repeat(64), "2".repeat(64), "1".repeat(64)]);
+  expect(ensure).toHaveBeenCalledWith([author], "background");
   for (const item of events)
     expect(within(item).getByText("Alex").tagName).toBe("STRONG");
-  expect(within(events[1] as HTMLElement).getByText("Release").tagName).toBe(
+  // Its tags and the community's channels give a message its references.
+  const tagged = events[0] as HTMLElement;
+  expect(
+    within(tagged)
+      .getByText("Casey", { selector: "[data-mention-kind]" })
+      .getAttribute("data-mention-kind"),
+  ).toBe("person");
+  expect(
+    within(tagged).getByRole("link", { name: "#Beta" }).getAttribute("href"),
+  ).toBe("buzz://channel/beta");
+  expect(within(events[2] as HTMLElement).getByText("Release").tagName).toBe(
     "STRONG",
   );
   expect(
-    within(events[1] as HTMLElement)
+    within(events[2] as HTMLElement)
       .getByRole("link", { name: "notes" })
       .getAttribute("href"),
   ).toBe("https://example.com/notes");
-  expect(within(events[0] as HTMLElement).getByText("v2").tagName).toBe("CODE");
+  expect(within(events[1] as HTMLElement).getByText("v2").tagName).toBe("CODE");
   // Command output stays as it was printed.
   expect(
     within(build)

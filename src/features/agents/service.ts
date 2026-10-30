@@ -1804,6 +1804,14 @@ export class AgentsService extends Service implements Agents {
             author: event.pubkey,
             channel: event.tags.find(([name]) => name === "h")?.[1],
             text: event.content,
+            mentions: event.tags.flatMap(([name, value]) =>
+              name === "p" && value ? [value] : [],
+            ),
+            mentionReferences: event.tags.flatMap((tag) =>
+              tag.length === 2 && tag[0] === "mention" && tag[1]
+                ? [tag[1]]
+                : [],
+            ),
           })),
           Math.floor(Date.now() / 1000),
         ),

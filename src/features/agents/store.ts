@@ -70,6 +70,10 @@ export type AttentionEntry = Readonly<{
   text: string;
   author?: string | undefined;
   channel?: string | undefined;
+  /** Pubkeys its signed `p` tags name. */
+  mentions?: readonly string[] | undefined;
+  /** Pubkeys its signed two-field `mention` tags name. */
+  mentionReferences?: readonly string[] | undefined;
 }>;
 export type AttentionHistory = Readonly<{
   lastWokeAt?: number;
@@ -77,6 +81,17 @@ export type AttentionHistory = Readonly<{
   output?: string;
   events?: readonly AttentionEntry[];
 }>;
+const pubkeys = (value: unknown) =>
+  Array.isArray(value)
+    ? [
+        ...new Set(
+          value.filter(
+            (key): key is string =>
+              typeof key === "string" && /^[0-9a-f]{64}$/.test(key),
+          ),
+        ),
+      ].slice(0, 100)
+    : [];
 /** The latest valid `entries` a watch's history keeps, each clipped. */
 export const recentEntries = (entries: readonly unknown[]) =>
   entries
@@ -96,6 +111,12 @@ export const recentEntries = (entries: readonly unknown[]) =>
                 : {}),
               ...(typeof entry.channel === "string"
                 ? { channel: entry.channel }
+                : {}),
+              ...(pubkeys(entry.mentions).length
+                ? { mentions: pubkeys(entry.mentions) }
+                : {}),
+              ...(pubkeys(entry.mentionReferences).length
+                ? { mentionReferences: pubkeys(entry.mentionReferences) }
                 : {}),
             },
           ]

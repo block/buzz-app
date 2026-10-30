@@ -243,7 +243,8 @@ export function createTab({
         authorId: author,
         createdAt: entry.at,
         content: entry.text,
-        mentions: [],
+        mentions: entry.mentions ?? [],
+        mentionReferences: entry.mentionReferences ?? [],
         participants: [],
         attachments: [],
         reactions: [],
@@ -252,7 +253,10 @@ export function createTab({
       [entry, author, channel],
     );
     const queries = session?.profiles ?? noProfiles;
-    React.useEffect(() => void queries.ensure([author]), [queries, author]);
+    React.useEffect(
+      () => void queries.ensure([author], "background").catch(() => {}),
+      [queries, author],
+    );
     const profiles = useRowProfiles(queries, [row]);
     const resolve = useChannelIdentityNames(session, channel);
     const profile = profiles.get(author);
@@ -265,6 +269,8 @@ export function createTab({
         row,
         profile: name ? { ...profile, name } : profile,
         participantProfiles: profiles,
+        // Names and references only: the full session offers the row's controls.
+        references: session,
         // Only a stored event id makes a link to the message.
         scope: entry.id ? scope : undefined,
         media: session?.media ?? (() => undefined),

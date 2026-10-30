@@ -905,7 +905,7 @@ export function ChannelMembersDialog({
   const currentMembers = [...members].sort(
     (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
   );
-  const groups = ["People", "Agents"].map((name) => {
+  const currentGroups = ["People", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
       const group =
         known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
@@ -914,9 +914,40 @@ export function ChannelMembersDialog({
     return {
       name,
       count: keys.length,
-      keys: keys.filter((key) => matches(key, label(key))),
+      keys,
     };
   });
+  // Optional profile updates change labels, not the identities being browsed.
+  // Reopening, refreshing or changing the roster takes a new paging order.
+  const [memberOrder, setMemberOrder] = useState({
+    session,
+    channelId,
+    memberKey,
+    refresh,
+    initialLoading,
+    groups: currentGroups,
+  });
+  const orderChanged =
+    memberOrder.session !== session ||
+    memberOrder.channelId !== channelId ||
+    memberOrder.memberKey !== memberKey ||
+    memberOrder.refresh !== refresh ||
+    memberOrder.initialLoading !== initialLoading;
+  if (largeRoster && orderChanged)
+    setMemberOrder({
+      session,
+      channelId,
+      memberKey,
+      refresh,
+      initialLoading,
+      groups: currentGroups,
+    });
+  const groups = (
+    largeRoster && !orderChanged ? memberOrder.groups : currentGroups
+  ).map((group) => ({
+    ...group,
+    keys: group.keys.filter((key) => matches(key, label(key))),
+  }));
   const presentGroups = groups.filter((group) => group.count > 0);
   const roleFilter =
     query.length === 0 &&

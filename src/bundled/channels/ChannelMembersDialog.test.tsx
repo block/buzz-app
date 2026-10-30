@@ -97,6 +97,7 @@ async function setup(
   options: {
     archivedAgent?: boolean;
     extraMembers?: number;
+    memberProfiles?: RelayEvent[];
     pendingMemberNames?: Promise<void>;
     channelCreation?: boolean;
     communities?: CommunityReader;
@@ -119,6 +120,7 @@ async function setup(
     ...Array.from({ length: options.extraMembers ?? 0 }, (_, i) =>
       (i + 10000).toString(16).padStart(64, "0"),
     ),
+    ...(options.memberProfiles ?? []).map((event) => event.pubkey),
   ];
   let clock = 1700000000;
   let failure = "";
@@ -160,6 +162,7 @@ async function setup(
       content: "",
       tags: [["-"], ...(options.archivedAgent ? [["p", agent.pubkey]] : [])],
     }),
+    ...(options.memberProfiles ?? []),
     profile(viewer, { name: "Carl" }),
     personProfile,
   ];
@@ -3055,4 +3058,56 @@ it("continues member name enrichment after an earlier batch fails", async () => 
     ),
   ).toBe(true);
   expect(screen.getByText(/Some names could not load/)).toBeVisible();
+});
+
+it("keeps the visible member page and focus stable while names arrive", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const memberProfiles = Array.from({ length: 125 }, (_, i) =>
+    profile(keypair(), {
+      name: `Member ${String(i).padStart(3, "0")}`,
+      is_agent: i === 0,
+    }),
+  );
+  try {
+    const t = await setup("stream", false, false, undefined, undefined, {
+      memberProfiles,
+      pendingMemberNames: pending,
+    });
+    const list = screen.getByRole("region", { name: "Member list" });
+    const pages = within(list).getByRole("navigation", {
+      name: "People member pages",
+    });
+    await t.user.click(within(pages).getByRole("button", { name: "Next" }));
+    const rows = within(list).getAllByRole("listitem");
+    const first = rows[0];
+    if (!first) throw new Error("Missing first member row");
+    const focused = within(first).getAllByRole("button")[0];
+    if (!focused) throw new Error("Missing member action");
+    focused.focus();
+    await act(async () => release());
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(
+      [...t.session.profiles.snapshot().values()].some(
+        (profile) => profile.name === "Member 000",
+      ),
+    ).toBe(true);
+    const loadedRows = within(list).getAllByRole("listitem");
+    expect(loadedRows).toHaveLength(rows.length);
+    expect(loadedRows.every((row, i) => row === rows[i])).toBe(true);
+    expect(focused).toHaveFocus();
+    expect(within(list).getAllByText(/^Member /).length).toBeGreaterThan(0);
+    await t.user.click(
+      screen.getByRole("button", { name: "Refresh member data" }),
+    );
+    await within(list).findByRole("heading", { name: "Agents · 1" });
+  } finally {
+    await act(async () => release());
+  }
 });

@@ -29,7 +29,7 @@ export function createSignInFooter(session: OAuthSession) {
     const available = browserLoginAvailable();
     return (
       <motion.div
-        initial={{ y: reducedMotion ? 0 : "1rem", opacity: 0 }}
+        initial={{ y: reducedMotion ? 0 : "100%", opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{
           duration:

@@ -127,6 +127,62 @@
   gap: var(--space-2);
   min-width: 0;
 }
+/* A date jump's history load, pinned over the top rows while it lasts.
+   Zero height: Virtua's startMargin measures only the history edge. */
+.jumpStatus {
+  position: sticky;
+  top: var(--space-2);
+  z-index: 2;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  pointer-events: none;
+}
+.jumpStatus > span {
+  @apply glass-secondary;
+  @apply text-caption;
+  border-radius: var(--radius-capsule);
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-subtle);
+}
+/* Channel timelines: the label opens "Jump to…". The shared plain button
+   keeps its clear background; the label brightens on hover and while open. */
+.dayJump {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-subtle);
+}
+.dayJumpChevron {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+}
+:is(.day, .pinnedDaySurface)
+  :is(button:hover, button[data-popup-open])
+  .dayJump {
+  color: var(--text-standard);
+}
+/* The top visible message's day, floating like the jump status above. */
+.pinnedDay {
+  position: sticky;
+  top: var(--space-2);
+  z-index: 2;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  pointer-events: none;
+}
+.pinnedDaySurface {
+  @apply glass-secondary;
+  @apply text-caption;
+  border-radius: var(--radius-capsule);
+  padding-inline: var(--space-2);
+  pointer-events: auto;
+}
 .message {
   --message-side-space: calc(var(--size-control-sm) + var(--space-2));
   width: min(100%, var(--timeline-measure));

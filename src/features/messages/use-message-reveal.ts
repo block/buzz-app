@@ -13,6 +13,7 @@ export function useMessageReveal({
   placed,
   hold,
   focus = true,
+  block = "start",
 }: {
   scroller: RefObject<HTMLElement | null>;
   settled: RefObject<boolean>;
@@ -25,6 +26,8 @@ export function useMessageReveal({
   placed?(): void;
   /** A covering modal owns focus; the underlying target still verifies/reveals. */
   focus?: boolean;
+  /** Where the row lands in the viewport. */
+  block?: "start" | "center";
   /**
    * While this returns true after the reveal, keep the row where the reveal put
    * it. Rows mounted around the target can measure after verification and push
@@ -72,7 +75,7 @@ export function useMessageReveal({
       if (!row) return; // Virtual rows mount asynchronously; observe the real mount.
       row.tabIndex = -1;
       row.scrollIntoView({
-        block: "start",
+        block,
         inline: "nearest",
         behavior: "instant",
       });
@@ -160,6 +163,7 @@ export function useMessageReveal({
     placed,
     focus,
     hold,
+    block,
   ]);
   return revealed;
 }

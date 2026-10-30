@@ -865,6 +865,14 @@ A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
 a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
 whose light gray fill holds up over the list where glass would disappear.
 
+Arriving at a message, by link, search, the inbox or closing its thread,
+briefly washes it with `surface-message-highlight`. The cue is paint-only and
+belongs to the message reveal, so every route that lands on a message gets it;
+a reveal behind a covering panel, restored scroll and your own send do not.
+Each row type marks its paint surface with `data-highlight-surface`, which
+excludes the day divider. A repeat arrival restarts the cue. Reduced motion
+holds the tint briefly and removes it without fading.
+
 The message hover toolbar uses the 12px rounded-container radius
 with a 2px inset. Its independent icon actions retain their shared 10px corners.
 

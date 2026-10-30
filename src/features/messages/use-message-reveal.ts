@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
+import { highlightMessage } from "./message-highlight";
 import { readingPositioned } from "./use-reading";
 
 /** One reveal per request signal, never per row/profile/image update. */
@@ -39,7 +40,15 @@ export function useMessageReveal({
   // Outlives the reveal effect: a dependency change after completion must not
   // end the hold, but unmount and the next reveal do.
   const holding = useRef<(() => void) | undefined>(undefined);
-  useLayoutEffect(() => () => holding.current?.(), []);
+  // Every arrival is marked the same way, whatever sent the reader here.
+  const highlight = useRef<() => void>(() => {});
+  useLayoutEffect(
+    () => () => {
+      holding.current?.();
+      highlight.current();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -123,6 +132,9 @@ export function useMessageReveal({
         }
         revealed.current = signal;
         cancel();
+        highlight.current();
+        // A reveal behind a covering panel is not an arrival the reader sees.
+        if (focus) highlight.current = highlightMessage(row);
         readingPositioned(container);
         complete();
       });

@@ -387,7 +387,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-surface-message-highlight",
         variable: "--surface-message-highlight",
         pointsAt: "accent step 3",
-        use: "Temporary return-to-message cue; follows the accent color.",
+        use: "Temporary arrival cue on a message the reader was taken to; follows the accent color.",
         status: "core",
       },
       {

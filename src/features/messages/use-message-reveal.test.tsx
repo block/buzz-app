@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useMessageReveal } from "./use-message-reveal";
@@ -113,27 +119,33 @@ it("notifies reading after the revealed row is verified", async () => {
   expect(complete).toHaveBeenCalledOnce();
 });
 
-it("highlights only the verified message, clears on animation end and repeats for a new request", async () => {
-  const { row, next, restart } = mount();
+it("keeps the verified target highlighted until dismissal and repeats for a new request", async () => {
+  const { row, next, restart, outside } = mount();
   const message = screen.getByText("Target");
   await frame();
   await frame();
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
   await frame();
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(true);
-  expect(row.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  expect(row.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
   const end = new Event("animationend", { bubbles: true });
   Object.defineProperty(end, "pseudoElement", { value: "::after" });
   message.dispatchEvent(end);
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  fireEvent.click(message);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  fireEvent.click(outside);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
   restart();
   await frame();
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
   next();
   await frame();
   await frame();
   await frame();
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(true);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
 });
 
 it.each(["abort", "unmount"])("retires a painted cue on %s", async (end) => {
@@ -142,10 +154,10 @@ it.each(["abort", "unmount"])("retires a painted cue on %s", async (end) => {
   await frame();
   await frame();
   await frame();
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(true);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
   if (end === "abort") request.abort();
   else unmount();
-  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
 });
 
 it.each([false, true])(

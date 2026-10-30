@@ -55,40 +55,7 @@ for (const destination of ["thread", "channel", "agents"]) {
         .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
         .getByRole("link");
       await expect(link).toBeVisible();
-      await page.evaluate(
-        ({ id, capture }) => {
-          window.targetCues = [];
-          window.targetCueEvents = [];
-          const observe = (event) => {
-            if (
-              event.pseudoElement !== "::after" ||
-              event.target.closest("[data-message-id]")?.dataset.messageId !==
-                id
-            )
-              return;
-            window.targetCueEvents.push({
-              type: event.type,
-              elapsedTime: event.elapsedTime,
-            });
-            if (event.type !== "animationstart") return;
-            const style = getComputedStyle(event.target, "::after");
-            window.targetCues.push({
-              background: style.backgroundColor,
-              opacity: style.opacity,
-            });
-            if (capture)
-              for (const animation of event.target.getAnimations())
-                animation.pause();
-          };
-          for (const type of [
-            "animationstart",
-            "animationend",
-            "animationcancel",
-          ])
-            document.addEventListener(type, observe);
-        },
-        { id: target.id, capture: !!process.env.BUZZ_CAPTURE_HIGHLIGHT },
-      );
+      await page.clock.install();
       await virtuaIdle(page);
       if (mode === "dark") await link.click();
       else await link.press("Enter");
@@ -98,55 +65,56 @@ for (const destination of ["thread", "channel", "agents"]) {
           : page.locator(`[data-channel-timeline=${channel}]`);
       const row = reader.locator(`[data-message-id="${target.id}"]`);
       await expect(row).toBeInViewport();
-      await expect
-        .poll(() => page.evaluate(() => window.targetCues.length))
-        .toBe(1);
-      const [cue] = await page.evaluate(() => window.targetCues);
+      await expect(row).toBeFocused();
+      const messageBody =
+        destination === "agents" ? row : row.locator(":scope > [data-layout]");
+      const paint = () =>
+        messageBody.evaluate((element) => {
+          const style = getComputedStyle(element, "::after");
+          return {
+            background: style.backgroundColor,
+            outline: style.outlineStyle,
+            width: style.outlineWidth,
+            animation: style.animationName,
+            content: style.content,
+          };
+        });
+      await expect.poll(paint).toMatchObject({
+        outline: "solid",
+        width: "2px",
+        animation: "none",
+      });
+      const cue = await paint();
+      expect(
+        await row.evaluate((element) => getComputedStyle(element).outlineStyle),
+      ).toBe("none");
       expect(cue.background).not.toBe("rgba(0, 0, 0, 0)");
-      expect(Number(cue.opacity)).toBeGreaterThan(0);
-      if (process.env.BUZZ_CAPTURE_HIGHLIGHT) {
+      await page.clock.fastForward(5000);
+      expect(await paint()).toEqual(cue);
+      if (process.env.BUZZ_CAPTURE_HIGHLIGHT)
         await page.screenshot({
           path: testInfo.outputPath(`highlight-${destination}-${mode}.png`),
         });
-        await row.evaluate((element) => {
-          for (const animation of element.getAnimations({ subtree: true }))
-            animation.play();
-        });
-      }
-      await expect
-        .poll(() => page.evaluate(() => window.targetCueEvents))
-        .toEqual([
-          { type: "animationstart", elapsedTime: 0 },
-          { type: "animationend", elapsedTime: 1.1 },
-        ]);
-      await expect
-        .poll(() =>
-          (destination === "agents"
-            ? row
-            : row.locator(":scope > [data-layout]")
-          ).evaluate(
-            (element) => getComputedStyle(element, "::after").animationName,
-          ),
-        )
-        .toBe("none");
+      await page.keyboard.press("Escape");
+      await expect(page.locator('[class*="linkedHighlight"]')).toHaveCount(0);
+      const reopen = async () => {
+        if (destination === "channel") await page.goBack();
+        await link.press("Enter");
+        await expect(row).toBeFocused();
+        await expect.poll(paint).toEqual(cue);
+      };
+      await reopen();
+      await page.mouse.click(5, 5);
+      await expect.poll(paint).toMatchObject({ content: "none" });
       if (destination === "agents") {
         await row.getByRole("button").click();
         await expect(
           row.getByText("Agent coordination target", { exact: true }),
         ).toBeVisible();
-        await link.press("Enter");
-        await expect
-          .poll(() => page.evaluate(() => window.targetCues.length))
-          .toBe(2);
-        await expect
-          .poll(() => page.evaluate(() => window.targetCueEvents))
-          .toEqual([
-            { type: "animationstart", elapsedTime: 0 },
-            { type: "animationend", elapsedTime: 1.1 },
-            { type: "animationstart", elapsedTime: 0 },
-            { type: "animationend", elapsedTime: 1.1 },
-          ]);
       }
+      await reopen();
+      await page.goBack();
+      await expect(page.locator('[class*="linkedHighlight"]')).toHaveCount(0);
     });
   }
 }

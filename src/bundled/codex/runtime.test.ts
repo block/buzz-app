@@ -3113,6 +3113,109 @@ it("returns a failed send to Codex for correction without ending its turn", asyn
   expect(f.publish).toHaveBeenCalledTimes(2);
 });
 
+it.each([
+  ["send", {}],
+  ["reply_in_subthread", { parent: root }],
+])(
+  "reports an uncorrected final %s failure when Codex completes",
+  async (name, extra) => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.publish.mockRejectedValueOnce(new Error("Signing rejected"));
+    expect(
+      (
+        await f.tool(name, {
+          ...extra,
+          audience: "everyone",
+          text: "answer",
+          final: true,
+        })
+      )?.result,
+    ).toMatchObject({ success: false });
+    await f.complete(0, "");
+    await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+      ok: false,
+      error: "Signing rejected",
+    });
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Needs attention"),
+    );
+    expect(f.publish.mock.calls[1]?.[0]).toMatchObject({
+      content: "Codex could not finish: Signing rejected.",
+    });
+  },
+);
+
+it.each([false, true])(
+  "keeps steered request delivery independent of an older send failing: %s",
+  async (olderFails) => {
+    const f = fixture();
+    await f.runtime.run(f.delivery("first"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const held = deferred<void>();
+    const publishing = deferred<void>();
+    f.publish.mockImplementationOnce(async (event) => {
+      publishing.resolve();
+      await held.promise;
+      if (olderFails) throw new Error("old delivery denied");
+      return { ...(event as object), id: "d".repeat(64) };
+    });
+    const started = f.starts()[0];
+    if (!started) throw new Error("Expected started turn");
+    f.emit({
+      id: "held-delivery",
+      method: "item/tool/call",
+      params: {
+        threadId: (started.params as { threadId: string }).threadId,
+        turnId: "turn-1",
+        callId: "held-delivery",
+        namespace: "buzz",
+        tool: "send",
+        arguments: { audience: "everyone", text: "first answer", final: true },
+      },
+    });
+    try {
+      await publishing.promise;
+      const acknowledged = vi.fn();
+      await f.runtime.run({
+        ...f.delivery("new request"),
+        step: vi.fn(),
+        acknowledged,
+      });
+      await vi.waitFor(() => expect(acknowledged).toHaveBeenCalledOnce());
+      if (!olderFails)
+        f.publish.mockRejectedValueOnce(new Error("new delivery denied"));
+      expect(
+        (
+          await f.tool("send", {
+            audience: "everyone",
+            text: "new answer",
+            final: true,
+          })
+        )?.result,
+      ).toMatchObject({ success: olderFails });
+    } finally {
+      held.resolve();
+    }
+    await vi.waitFor(() =>
+      expect(
+        f.sent.find((wire) => wire.id === "held-delivery" && !wire.method)
+          ?.result,
+      ).toMatchObject({ success: !olderFails }),
+    );
+    await f.complete(0, "");
+    await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toEqual(
+      olderFails ? { ok: true } : { ok: false, error: "new delivery denied" },
+    );
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)[0]?.status).toBe(
+        olderFails ? "Idle" : "Needs attention",
+      ),
+    );
+  },
+);
+
 it.each(["accepted", "rejected"] as const)(
   "moves same-thread activity only after steering is accepted: %s",
   async (outcome) => {

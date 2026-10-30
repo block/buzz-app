@@ -99,6 +99,8 @@ type Request = {
    * a steering rejection is posted in its place, or the turn ends normally.
    * `stopped` is that the owner's interrupt ended the turn. */
   answered: (stopped?: boolean) => void;
+  /** A failed final delivery stays pending until this request gets a reply. */
+  finalDelivery?: Error | true;
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
@@ -1404,16 +1406,25 @@ export class CodexRuntime {
             : {}),
         }
       : {};
+    const final = isFinalMessage(call.tool, args);
     const reply = await callSessionTool(
       client,
       context,
       call.tool,
       args,
       this.added(),
-    );
-    const final = isFinalMessage(call.tool, args);
+    ).catch((error) => {
+      if (final)
+        for (const taken of answering)
+          if (taken.finalDelivery !== true)
+            taken.finalDelivery = new Error(message(error));
+      throw error;
+    });
     if (final) {
-      for (const taken of answering) taken.answered();
+      for (const taken of answering) {
+        taken.finalDelivery = true;
+        taken.answered();
+      }
     }
     return {
       success: true,
@@ -1850,6 +1861,10 @@ export class CodexRuntime {
         );
         this.status(agent.key, key, "Interrupted");
       } else {
+        const failed = active.requests.find(
+          (taken) => taken.finalDelivery instanceof Error,
+        )?.finalDelivery;
+        if (failed instanceof Error) throw failed;
         // A turn may end without a reply when there is nothing new to say.
         for (const taken of active.requests) taken.answered();
         this.status(agent.key, key, "Idle");

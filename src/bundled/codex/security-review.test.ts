@@ -210,3 +210,31 @@ it.each(["cancel", "exit"])(
     expect(f.process.end).toHaveBeenCalledOnce();
   },
 );
+
+it("preserves the review deadline instead of reporting its connection closure", async () => {
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockReturnValueOnce(deadline.signal);
+  const f = fixture(true);
+  const review = reviewModel(
+    f.spawn,
+    { id: "recommended-model" },
+    prompt,
+    new AbortController().signal,
+  );
+  const reason = new DOMException(
+    "The security review timed out",
+    "TimeoutError",
+  );
+  const rejected = expect(review).rejects.toBe(reason);
+  try {
+    await f.started;
+    expect(timeout).toHaveBeenCalledWith(60_000);
+    deadline.abort(reason);
+    await rejected;
+    expect(f.process.end).toHaveBeenCalledOnce();
+  } finally {
+    timeout.mockRestore();
+  }
+});

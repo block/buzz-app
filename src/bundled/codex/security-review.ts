@@ -130,6 +130,9 @@ export async function reviewModel(
         id: started.model,
       },
     };
+  } catch (error) {
+    signal.throwIfAborted();
+    throw error;
   } finally {
     off();
     signal.removeEventListener("abort", cancel);

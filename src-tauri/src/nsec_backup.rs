@@ -455,6 +455,16 @@ impl NsecBackupHost {
         drop(state);
         Ok(self.trigger(identity))
     }
+    /// Stops a federated session as signed out once its revision is retired,
+    /// so a request built under it is not sent after a native sign-out.
+    fn still_signed_in(&self, session: &Session) -> std::result::Result<(), Stop> {
+        match &session.auth {
+            Auth::Federated(revision) if !self.federated_current(revision) => {
+                Err(Stop::Failed(Failure::SignedOut))
+            }
+            _ => Ok(()),
+        }
+    }
     fn federated_current(&self, revision: &str) -> bool {
         self.federated
             .as_ref()
@@ -605,6 +615,7 @@ impl NsecBackupHost {
         let api = self.api(session, &config.service_url)?;
         let account = api.me().await?;
         self.valid(epoch)?;
+        self.still_signed_in(session)?;
         match api.current().await? {
             None => return Ok(Outcome::Waiting(Waiting::NotLinked)),
             Some(current) if current != pubkey => {
@@ -679,6 +690,7 @@ impl NsecBackupHost {
             return Ok(Outcome::Complete);
         };
         self.valid(epoch)?;
+        self.still_signed_in(session)?;
         let receipt = client
             .upload(envelope.as_bytes())
             .await

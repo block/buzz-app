@@ -107,6 +107,8 @@ struct FixtureState {
     requests: HashMap<String, usize>,
     uploads: Vec<Vec<u8>>,
     rows: HashMap<String, Vec<u8>>,
+    /// Holds this route's response until `release_upload` gets a permit.
+    pause_path: Option<&'static str>,
 }
 struct Service {
     root: String,
@@ -146,6 +148,7 @@ impl Service {
             requests: HashMap::new(),
             uploads: Vec::new(),
             rows: HashMap::new(),
+            pause_path: None,
         }));
         let pause_upload = Arc::new(AtomicBool::new(false));
         let pause_current = Arc::new(AtomicBool::new(false));
@@ -289,6 +292,7 @@ async fn serve(
     if (path == "/v1/buzz/nsec-backups" || path == "/v1/buzz/nsec-backups/recovery")
         && pause.load(Ordering::SeqCst)
         || path == "/v1/buzz/nostr-identities/current" && pause_current.load(Ordering::SeqCst)
+        || shared.lock().unwrap().pause_path == Some(path.as_str())
     {
         started.notify_one();
         release.acquire().await.unwrap().forget();
@@ -1783,6 +1787,43 @@ async fn a_federated_session_is_signed_out_once_its_revision_is_not_current() {
         host.backup(&IdentityHost::fixture(), &session, 0).await,
         Err(Stop::Failed(Failure::SignedOut))
     );
+}
+
+#[tokio::test]
+async fn a_native_sign_out_mid_pass_stops_the_next_federated_request() {
+    for (paused, next) in [
+        ("/v1/auth/me", "/v1/buzz/nostr-identities/current"),
+        ("/v1/buzz/nsec-backups/enrollment", "/v1/buzz/nsec-backups"),
+    ] {
+        let service = Service::new().await;
+        let directory = tempfile::tempdir().unwrap();
+        let (fi, revision) = signed_in();
+        let host = NsecBackupHost {
+            federated: Some(fi.clone()),
+            ..service.host(directory.path())
+        };
+        service.enable(&host).await;
+        service.state.lock().unwrap().pause_path = Some(paused);
+        let session = Session {
+            source: Source::Builderlab,
+            auth: Auth::Federated(revision),
+        };
+        let pass =
+            tokio::spawn(async move { host.backup(&IdentityHost::fixture(), &session, 0).await });
+        service.upload_started.notified().await;
+        // No renderer handoff: only the native session changes.
+        fi.sign_out_for_test();
+        service.release_upload.add_permits(1);
+        assert_eq!(
+            pass.await.unwrap(),
+            Err(Stop::Failed(Failure::SignedOut)),
+            "{paused}"
+        );
+        assert!(
+            !service.state.lock().unwrap().requests.contains_key(next),
+            "{next}"
+        );
+    }
 }
 
 #[test]

@@ -10509,6 +10509,54 @@ it("a saved chat's pick is restored whole while agent discovery is incomplete", 
   expect(pill("Ada, Bea")).toBeInTheDocument();
 });
 
+it("a pill that takes over from mount-time text seeding keeps the history's agent", () => {
+  setDefaultAgent("scope", second.pubkey);
+  const viewer = "e".repeat(64);
+  const third = "f".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setHistory("ready");
+  h.setLibrary([first, second]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  h.setRows([editableMessage({ authorId: viewer, mentions: [first.pubkey] })]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo" as const,
+        members: [first.pubkey, second.pubkey, third],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => list },
+    } as unknown as RelaySession,
+  });
+  // A member's profile is loading: the text is seeded.
+  expect(h.input()).toHaveValue("@Ada ");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+      [third, { name: "Cal", isAgent: true }],
+    ]),
+  );
+  // Alone with agents, the history's agent moves to the pill.
+  expect(h.input()).toHaveValue("");
+  expect(
+    screen.getByRole("status", { name: "Sending to Ada. Change agents" }),
+  ).toBeInTheDocument();
+});
+
 it("the pill waits for the chat's history before any stand-in seeds it", () => {
   const { h, viewer } = mountSoloChat([first.pubkey, second.pubkey], {
     history: "loading",

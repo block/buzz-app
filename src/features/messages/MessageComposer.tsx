@@ -977,6 +977,9 @@ function Composer({
     const before = mentionCount.current;
     mentionCount.current = routing ? recipients.length : 0;
     if (!routing || !recipients.length || before) return;
+    // The composer's own prefill is withdrawn as the pill takes over, not
+    // the viewer's choice.
+    if (automaticTag.current === JSON.stringify(valueRef.current)) return;
     setReplacedKey(draftKey);
     setRouted([]);
     if (pillKey) writeView(scope, pillKey, null);

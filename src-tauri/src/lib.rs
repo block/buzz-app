@@ -70,6 +70,7 @@ mod workspace_folder;
 use legacy_communities::legacy_communities;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::repositories_folder_validate;
+mod relaunch;
 mod relay;
 mod relay_admin;
 mod sign_out;
@@ -575,7 +576,7 @@ async fn plugin_recover(
 }
 #[tauri::command]
 async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    app.request_restart();
+    relaunch::request(&app);
     Ok(())
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
@@ -1055,6 +1056,8 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 shut_down(app);
+                #[cfg(target_os = "macos")]
+                relaunch::on_exit(app);
             }
         });
 }

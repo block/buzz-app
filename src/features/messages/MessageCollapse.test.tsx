@@ -93,7 +93,7 @@ function show(
 // The rendered body; the collapsed line has the same words, unformatted.
 const body = () => screen.queryByText("Ran", { selector: "strong" });
 const line = () =>
-  screen.getByRole("button", { name: /, collapsed message: / });
+  screen.getByRole("button", { name: /, (TL;DR|collapsed message): / });
 
 it("collapses an agent message to its opening line and expands it again", async () => {
   const user = userEvent.setup();
@@ -150,6 +150,26 @@ it("shows an edit's text in place while collapsed", async () => {
   rerender({ ...row, content: "Now **all** green." });
   expect(line()).toHaveTextContent(/^Now all green\.$/);
   expect(screen.queryByText("all", { selector: "strong" })).toBeNull();
+});
+
+it("collapses to the agent's tl;dr, labelled apart from it", async () => {
+  const user = userEvent.setup();
+  show({ ...row, tldr: "Suite passes apart from one flaky upload test" });
+  await user.click(screen.getByRole("button", { name: "Collapse message" }));
+  expect(line()).toHaveAccessibleName(
+    `${agent.slice(0, 10)}, TL;DR: Suite passes apart from one flaky upload test. Expand message`,
+  );
+  expect(line()).toHaveTextContent(
+    /^TL;DRSuite passes apart from one flaky upload test$/,
+  );
+});
+
+it("shows a tl;dr an edit adds while collapsed", async () => {
+  const user = userEvent.setup();
+  const { rerender } = show(row);
+  await user.click(screen.getByRole("button", { name: "Collapse message" }));
+  rerender({ ...row, tldr: "Now with a summary" });
+  expect(line()).toHaveTextContent(/^TL;DRNow with a summary$/);
 });
 
 it("offers collapse only for agent messages where the host supports it", () => {

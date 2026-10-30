@@ -394,18 +394,25 @@ function ConnectedApp({ services }: { services: AppServices }) {
       </Button>
     ) : null;
   // A link or access failure returns to where the person came from; opened
-  // cold, Messages is the nearest useful place.
-  const leaveFailure = route.state.canGoBack ? (
-    <Button
-      type="button"
-      variant="primary"
-      onClick={() => services.navigation.back()}
-    >
-      Go back
-    </Button>
-  ) : (
-    messagesButton("primary")
-  );
+  // cold, Messages is the nearest useful place. A rejected incoming link
+  // never became a visit: it overlays the page still underneath, so
+  // reopening that page is going back, and history Back would skip it.
+  const leaveFailure =
+    route.state.ingress || route.state.canGoBack ? (
+      <Button
+        type="button"
+        variant="primary"
+        onClick={() =>
+          route.state.ingress
+            ? void services.navigation.open(route.state.entry.target)
+            : services.navigation.back()
+        }
+      >
+        Go back
+      </Button>
+    ) : (
+      messagesButton("primary")
+    );
   const destinationFailure = (
     <div role="alert" className="page-status">
       {failureKind === "denied" ? (

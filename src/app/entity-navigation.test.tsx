@@ -196,14 +196,18 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   expect(
     screen.queryByRole("button", { name: "Try again" }),
   ).not.toBeInTheDocument();
-  // Followed from a working page, the way out returns there.
-  const failed = current.navigation.snapshot().entry.id;
+  // The rejected link never became a visit, so Go back returns to the
+  // page underneath it rather than the one before that.
+  const recovered = current.navigation.snapshot().entry.id;
   await userEvent.click(
     within(screen.getByRole("alert")).getByRole("button", { name: "Go back" }),
   );
-  await waitFor(() =>
-    expect(current.navigation.snapshot().entry.id).not.toBe(failed),
-  );
+  await screen.findByText("Actual recovered destination");
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "opened",
+    entry: { id: recovered },
+  });
+  expect(current.navigation.snapshot().ingress).toBeUndefined();
   expect(screen.queryByText("This link doesn’t work")).toBeNull();
 });
 

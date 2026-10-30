@@ -25,6 +25,7 @@ import { attestedOwner } from "../features/agents/owner-attestation";
 import type {
   BuzzClient,
   BuzzEvent,
+  ChannelTemplate,
   Context,
   Filter,
   Memory,
@@ -50,6 +51,12 @@ const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const ttl = {
   type: "integer",
   description: "Seconds without a message before it archives; 0: never.",
+} as const;
+const joinRole = {
+  type: "string",
+  enum: ["member", "guest"],
+  description:
+    "The role people get when they join. guest on an open channel makes an announce channel: anyone can read, only members can post.",
 } as const;
 const tool = (
   name: string,
@@ -185,6 +192,7 @@ export const TOOLS: readonly Tool[] = [
           "system: left out of ordinary channel lists; anyone can still list an open one.",
       },
       ttl,
+      join_role: joinRole,
       template: str,
     },
     ["name", "visibility"],
@@ -195,6 +203,7 @@ export const TOOLS: readonly Tool[] = [
     about: str,
     visibility: { type: "string", enum: ["open", "private"] },
     ttl,
+    join_role: joinRole,
     topic: str,
     purpose: str,
   }),
@@ -1356,6 +1365,7 @@ class Tools {
       tag(metadata, "ttl")
         ? `archives after ${tag(metadata, "ttl")}s idle`
         : "",
+      tag(metadata, "join_role") === "guest" ? "join as guest" : "",
     ].filter(Boolean);
     return [
       `${channel} ${tag(metadata, "name") ?? ""} (${flags.join(", ")})`,
@@ -1376,6 +1386,7 @@ class Tools {
     const type = args.type ?? "stream";
     if (type !== "stream" && type !== "forum" && type !== "system")
       throw new Error("type must be stream, forum or system.");
+    const role = join(args);
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined
@@ -1396,9 +1407,25 @@ class Tools {
     });
     const shown = await until(() => this.metadata(id), Boolean).catch(unread);
     if (!shown || shown instanceof Error)
-      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}.`;
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}${role === "guest" ? "; join_role was not set" : ""}.`;
     const lines = [`created ${id}`];
-    if (!template) return lines.join("\n");
+    if (template) lines.push(...(await this.apply(id, template)));
+    // Last, so the template's agents join as members, not guests.
+    if (role === "guest")
+      try {
+        const answer = await this.update(id, { join_role: role });
+        lines.push(
+          answer === `updated ${id}` ? "new people join as guests" : answer,
+        );
+      } catch (error) {
+        lines.push(`join_role not set: ${reason(error)}`);
+      }
+    return lines.join("\n");
+  }
+
+  /** Starts a new channel's Canvas and adds its agents from `template`. */
+  async apply(id: string, template: ChannelTemplate) {
+    const lines: string[] = [];
     // The template's own agents, as Buzz adds them; each is tried.
     const agents = template.agents.filter((key) => key !== this.client.pubkey);
     if (template.canvas.trim())
@@ -1417,10 +1444,10 @@ class Tools {
         lines.push(
           `Canvas not started${agents.length ? ", so no agents were added" : ""}: ${reason(error)}`,
         );
-        return lines.join("\n");
+        return lines;
       }
     if (agents.length) lines.push(...(await this.change(id, agents, [])).lines);
-    return lines.join("\n");
+    return lines;
   }
 
   /** The owner's template named `name`, as one, without guessing. */
@@ -1461,8 +1488,12 @@ class Tools {
     }
     if (args.ttl !== undefined)
       wanted.push(["ttl", String(seconds(args.ttl) ?? "")]);
+    const role = join(args);
+    if (role) wanted.push(["join_role", role]);
     if (!wanted.length)
-      throw new Error("Give name, about, visibility, ttl, topic or purpose.");
+      throw new Error(
+        "Give name, about, visibility, ttl, join_role, topic or purpose.",
+      );
     const value = (key: string) => wanted.find((t) => t[0] === key)?.[1];
     checkDetails(
       value("name"),
@@ -2115,6 +2146,15 @@ function seconds(value: unknown) {
   if (value === undefined || value === 0) return undefined;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
     throw new Error("ttl must be a whole number of seconds.");
+  return value;
+}
+
+/** A `join_role` argument: undefined when absent. */
+function join(args: Args) {
+  const value = args.join_role;
+  if (value === undefined) return undefined;
+  if (value !== "member" && value !== "guest")
+    throw new Error("join_role must be member or guest.");
   return value;
 }
 

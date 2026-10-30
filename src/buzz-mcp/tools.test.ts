@@ -1720,9 +1720,19 @@ it("refuses channel arguments that do not fit, before publishing", async () => {
   await expect(
     channel("channel_create", { name: "x", visibility: "open", ttl: 1.5 }),
   ).rejects.toThrow("ttl must be a whole number of seconds.");
+  await expect(
+    channel("channel_create", {
+      name: "x",
+      visibility: "open",
+      join_role: "admin",
+    }),
+  ).rejects.toThrow("join_role must be member or guest.");
   await expect(channel("channel_update", {})).rejects.toThrow(
-    "Give name, about, visibility, ttl, topic or purpose.",
+    "Give name, about, visibility, ttl, join_role, topic or purpose.",
   );
+  await expect(
+    channel("channel_update", { join_role: "owner" }),
+  ).rejects.toThrow("join_role must be member or guest.");
   await expect(
     callTool(client, { channel: "chan" }, "channel_leave", {}),
   ).rejects.toThrow("Invalid channel ID");
@@ -1758,6 +1768,106 @@ it("shows a channel's details and changes them as the channel shows", async () =
   ).rejects.toThrow(
     "No channel gone that you can see (it may not be visible yet).",
   );
+});
+
+it("makes a channel an announce channel and back", async () => {
+  const { client, published } = relay();
+  const context = { channel: room };
+  await expect(
+    callTool(client, context, "channel_update", { join_role: "guest" }),
+  ).resolves.toBe(`updated ${room}`);
+  await expect(callTool(client, context, "channel_get", {})).resolves.toBe(
+    `${room} plans (stream, open, join as guest)\nabout: roadmap\nyou: owner`,
+  );
+  await expect(
+    callTool(client, context, "channel_update", { join_role: "member" }),
+  ).resolves.toBe(`updated ${room}`);
+  expect(published.map((template) => template.tags)).toEqual([
+    [
+      ["h", room],
+      ["join_role", "guest"],
+    ],
+    [
+      ["h", room],
+      ["join_role", "member"],
+    ],
+  ]);
+});
+
+it("creates an announce channel after adding its template's agents", async () => {
+  const { client, published } = relay();
+  client.templates = vi.fn(async () => [
+    { name: "Team", canvas: "", agents: [alice] },
+  ]);
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "team",
+    visibility: "open",
+    join_role: "guest",
+    template: "Team",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  // Set last: an agent added with no role would otherwise join as a guest.
+  expect(published.map((template) => [template.kind, template.tags])).toEqual([
+    [
+      9007,
+      [
+        ["h", id],
+        ["name", "team"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ],
+    ],
+    [
+      9000,
+      [
+        ["h", id],
+        ["p", alice],
+      ],
+    ],
+    [
+      9002,
+      [
+        ["h", id],
+        ["join_role", "guest"],
+      ],
+    ],
+  ]);
+  expect(answer).toBe(
+    [
+      `created ${id}`,
+      `added ${alice} Alice Smith`,
+      "new people join as guests",
+    ].join("\n"),
+  );
+  await expect(
+    callTool(client, { channel: id }, "channel_get", {}),
+  ).resolves.toBe(`${id} team (stream, open, join as guest)\nyou: owner`);
+});
+
+it("reports a new channel whose join_role was refused", async () => {
+  const { client, published } = relay();
+  const publish = client.publish;
+  client.publish = vi.fn(async (template: Template) => {
+    if (template.kind === 9002) throw new Error("restricted: admins only");
+    return publish(template);
+  });
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "news",
+    visibility: "open",
+    join_role: "guest",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(published.map((template) => template.kind)).toEqual([9007]);
+  expect(answer).toBe(
+    `created ${id}\njoin_role not set: restricted: admins only`,
+  );
+  // member is the default, so it needs no second event.
+  await callTool(client, {}, "channel_create", {
+    name: "chat",
+    visibility: "open",
+    join_role: "member",
+  });
+  expect(published.map((template) => template.kind)).toEqual([9007, 9007]);
 });
 
 it("leaves, joins, archives, unarchives and deletes a channel", async () => {

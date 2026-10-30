@@ -18,27 +18,24 @@ channel membership remains access authority.
   conversation scope (`features/conversation/Conversation.tsx`), so every view
   of a chat (the main reader or a secondary tab) composes under the same rules.
   Other channels are threaded. Conversion to a channel clears the label.
-- **The label decides the sidebar.** Every Solo chat the viewer is a member of
-  lists under Solo: their own and any shared with them, whether added directly or
-  through a shared link's access grant. A shared chat starts in Chats and the
-  viewer may file it in one of their own workspaces; it never lists under Team.
-  Ordinary channels list under Team. Opening a chat without membership adds
-  nothing to the sidebar.
+- **The label decides the conversation's scope.** Every Solo chat the viewer is
+  a member of appears as Solo, including shared chats. The viewer may file it in
+  their own section alongside Team channels and DMs. Unfiled Solo sessions and
+  Team messages have separate lists ordered by latest activity; pinned conversations
+  and saved sections keep their grouping. Opening a chat without
+  membership adds nothing to the sidebar.
 - **Tags follow company.** Alone with agents, a send must tag one. Once another
   person is a member, people can talk without a tag; agents still answer only
   when tagged. The composer reads "Message your agents" alone and "Message this
-  conversation" once shared. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
-  Team's channel sections; it never changes the open conversation. Opening a
-  destination reveals its inventory unless the filter is All; an unlisted
-  conversation waits for the channel list rather than guess. Solo is always on.
-- **Workspaces are the only private state.** The encrypted `groups:me` preference
-  record holds Solo workspaces and which chat is filed in which workspace. It never
-  decides what is Solo.
+  conversation" once shared. Messages includes Inbox as the first item in Pinned. Solo is always available.
+- **Sections are private filing.** Existing encrypted Solo and Team preference
+  records retain section definitions and assignments. The unified section view
+  can mix conversation types; filing never decides what is Solo or grants access.
 - **Drafts are a Messages route.** A new Solo chat is
   `{ kind: "solo-draft", project?, agent? }` on the Messages page; nothing exists
   on the relay until the first send. The retired `buzz.me/me`,
   `buzz.sessions/sessions` and channel `new-session` routes no longer exist.
-- **Workspaces** are Solo groups. Repositories, pull requests and issues are a
+- **Sections** can contain Solo sessions, Team channels and DMs. Repositories, pull requests and issues are a
   separate destination (`buzz.repos`), not a container of chats.
 
 Display names ("Solo", "Team", "chat", "workspace") are presentation; code keys
@@ -46,9 +43,17 @@ behavior on the label, so a rename touches copy only.
 
 ## Current behavior
 
-- Solo workspaces and workspace filing live in the existing encrypted,
-  account/community-scoped `groups:me` preference record. Messages groups remain
-  independent. Records from before the label also list a `channels` placement
+Sidebar conversation sections start with five rows. **More** (ellipsis) reveals
+the full unfiled list; **Less** returns to the cap. The open chat stays within
+those five, with other chats ordered by latest activity. A new-session draft
+appears above the list. Pinned conversations appear only in Pinned, without a cap.
+Section expansion remains remembered on this device.
+
+- Existing Solo sections remain in the encrypted, account/community-scoped
+  `groups:me` record; existing Team sections retain their sidebar preference
+  record. Qualified UI IDs distinguish the stores without migrating records.
+  Moves save the destination before removing the previous assignment, with
+  visible recovery for partial failure. Records from before the label also list a `channels` placement
   array; it is ignored and dropped on the next workspace write.
 - **Label only:** a private channel without `buzz.solo` is an ordinary Team
   channel, whatever its `about` text. No code reads the retired
@@ -169,8 +174,8 @@ behavior on the label, so a rename touches copy only.
 - Solo rows share Team's working-agent signal, animated indicator and activity
   popover, including owned-agent typing in threads and unread-thread actions.
   Agent activity opens the agent's profile in the conversation's panel workspace;
-  exact-message/thread actions use the canonical channel reader. Solo workspaces and
-  row menus remain independent of Team's sections.
+  exact-message/thread actions use the canonical channel reader. Sections share filing across Solo and Team, while each conversation keeps
+  its own row actions.
 - A Solo chat uses the Messages conversation page: the same secondary
   conversation/tool/panel tabs, pane geometry and tab persistence as any channel.
   Its main timeline is full width, with no main-pane tabs, so its threads open
@@ -183,7 +188,8 @@ behavior on the label, so a rename touches copy only.
 
 ## Organization, settings and recovery
 
-Solo workspaces, assignments and workspace defaults never fall back to Messages defaults.
+Section instructions apply only to new Solo sessions; Team conversation settings
+are unchanged. Moving an existing conversation changes filing only.
 Workspace folders, optional worktree/base branch and Canvas are instructions saved
 in ordinary Canvas Markdown; saving settings does not create a worktree or change
 an agent process. Templates are copied into each new chat, not live-linked.
@@ -201,10 +207,9 @@ warns that Public exposes the full existing history to the community. It appears
 in Messages with the same ID, history, Canvas, membership, labels and lifetime.
 Conversion is one signed details edit that clears `buzz.solo` (keeping any other
 labels) and applies the chosen visibility; the chat moves to Team for everyone.
-It then removes the chat's workspace assignment, if any, and opens the channel in
-Messages. Share alone never does this. If unfiling fails, Finish conversion
-retries only that step. The existing preference owner preserves other workspaces
-and assignments. Deleted/archived chats can still hold an assignment. No
+It preserves the viewer's section assignment and opens the channel in Messages.
+Share alone never converts a chat. Section storage failures do not block a
+confirmed conversion. Deleted/archived chats can still hold an assignment. No
 cross-device atomicity, automatic compaction or new storage protocol is claimed.
 
 Share attempts retain in-process intent plus durable per-operation Outbox receipts,

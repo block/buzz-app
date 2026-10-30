@@ -32,6 +32,12 @@
 .panelStack > * {
   --secondary-panel-width: initial;
 }
+.sidebarFrame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .sidebar,
 .conversation {
   height: 100%;
@@ -45,6 +51,7 @@
   container: solo-conversation / inline-size;
 }
 .sidebar {
+  flex: 1;
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
   --type-weight-semibold: 600;
   --sidebar-padding: var(--space-2);
@@ -207,6 +214,15 @@
   padding-block-end: var(--sidebar-padding);
 }
 /* Inset Retry like a row, so its focus ring stays inside the scrollport. */
+/* Combined inventories own section spacing, including across nested containers. */
+.channelListContent:has(> nav[data-combined]) {
+  --sidebar-section-gap: var(--space-4);
+  gap: 0;
+}
+/* Saved Team groups and the nested Solo inventory meet at the same section gap. */
+.channelListContent > nav[data-combined]:not(:first-child) {
+  margin-block-start: var(--space-4);
+}
 .channelListContent > button {
   align-self: flex-start;
   margin-inline-start: var(--channel-row-fill-start);
@@ -296,7 +312,7 @@
   flex-shrink: 0;
 }
 .channelSection + .channelSection {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap, var(--space-4));
 }
 .channelSection[data-drop-target] {
   border-radius: var(--radius-row);
@@ -410,7 +426,7 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   font-size: var(--text-label-sm);
   line-height: var(--text-label-sm--line-height);
   letter-spacing: var(--text-label-sm--letter-spacing);
-  font-weight: var(--text-label-sm--font-weight);
+  font-weight: var(--type-weight-normal);
   cursor: pointer;
   list-style: none;
   border-radius: var(--radius-control);

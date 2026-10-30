@@ -59,7 +59,7 @@ async function refusedLive(refusal: string) {
 it("offers explicit sign-in when the live socket refuses a protected community", async () => {
   const h = await refusedLive("Federated sign-in is required");
   // The cached channel list stays; nothing signs in on its own.
-  expect(screen.getByRole("button", { name: "Chats" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Sessions" })).toBeVisible();
   expect(h.identity.service.signIn).not.toHaveBeenCalled();
   expect(h.connects()).toBe(1);
   await userEvent
@@ -86,7 +86,7 @@ it.each(["adapter-refused", "grant-refused", "invalid-response"])(
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Restart Buzz to try again",
     );
-    expect(screen.getByRole("button", { name: "Chats" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Sessions" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(h.connects()).toBe(1);
   },

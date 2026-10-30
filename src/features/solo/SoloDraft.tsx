@@ -1,3 +1,4 @@
+import { sectionPreferences } from "../channel-navigation/section-preferences";
 import { linkedDraftKey, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
@@ -62,8 +63,8 @@ function readDraftSettings(scope: string, draftKey: string) {
   };
 }
 
-export function resetNewChatProject(scope: string, projectId: string) {
-  const key = `solo:project:${projectId}`;
+export function resetNewChatProject(scope: string, projectId?: string) {
+  const key = projectId ? `solo:project:${projectId}` : "solo";
   const selected = readView<unknown>(scope, `${key}:new-project`, projectId);
   // Instructions belong to the previous project; name and lifetime stay.
   if (selected !== projectId)
@@ -283,7 +284,7 @@ export function SoloDraft({
       // relay. Its Canvas is saved once the chat exists; until then local
       // agents read it from the start.
       if (setup?.projectId)
-        void session.soloPreferences
+        void sectionPreferences(session)
           .assign(channelId, setup.projectId)
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),

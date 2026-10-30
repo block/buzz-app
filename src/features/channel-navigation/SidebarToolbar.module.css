@@ -1,0 +1,6 @@
+.toolbar {
+  padding: var(--space-2);
+}
+.toolbar [data-new-conversation-menu] {
+  width: 100%;
+}

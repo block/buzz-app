@@ -1,3 +1,8 @@
+import { isApplePlatform } from "../../features/shortcuts/format";
+import {
+  SidebarToolbarContent,
+  SidebarToolbar,
+} from "../../features/channel-navigation/SidebarToolbar";
 import {
   useEffect,
   useLayoutEffect,
@@ -7,7 +12,6 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { isApplePlatform } from "../../features/shortcuts/format";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarIcon, DotsThreeIcon } from "../../shared/design-system/icons";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -38,6 +42,12 @@ import { hasIntegratedWindowControls, WindowControls } from "./WindowControls";
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
+function creationButton() {
+  return document.querySelector<HTMLButtonElement>(
+    "#shell-navigation button[data-new-conversation-menu]",
+  );
+}
+
 export function AppShell({
   pages,
   selected,
@@ -61,7 +71,6 @@ export function AppShell({
   launchers,
   companion,
   creationAction,
-  creationInSidebar = true,
   children,
 }: {
   pages: readonly RegisteredPage[];
@@ -75,7 +84,10 @@ export function AppShell({
   workspace?: boolean;
   /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
-  sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
+  sidebar?: (
+    pages: ReactNode,
+    groups: { general: ReactNode; team: ReactNode },
+  ) => ReactNode;
   communities: Communities;
   invite?: (InviteLink & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
@@ -90,18 +102,10 @@ export function AppShell({
   onOpenTarget?: (target: OpenTarget) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
-  creationAction?: (
-    open: boolean,
-    onOpenChange: (open: boolean) => void,
-    triggerContainer: HTMLElement | null,
-  ) => ReactNode;
-  creationInSidebar?: boolean;
+  creationAction?: ReactNode;
   children: ReactNode;
 }) {
   const fillsWorkspace = workspace || selected === "settings";
-  const [creationContainer, setCreationContainer] =
-    useState<HTMLDivElement | null>(null);
-  const [creationOpen, setCreationOpen] = useState(false);
   const channelsNavigation = selected === "buzz.channels/channels";
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
@@ -123,27 +127,41 @@ export function AppShell({
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggle = useRef<HTMLButtonElement>(null);
   const visibleSidebar = narrow ? navigationOpen : sidebarOpen;
-  useEffect(
-    () =>
-      searchServices?.shortcuts.registerHost({
-        id: "new",
-        title: "Open New menu",
-        binding: { key: "n", mod: true },
-        order: 75,
-        allowInEditable: true,
-        when: () =>
-          !!creationAction &&
-          !!creationContainer?.querySelector("button:not(:disabled)") &&
-          (isApplePlatform(navigator.platform) ||
-            !document.activeElement?.closest(".xterm")),
-        run: () => {
-          setSidebarOpen(true);
-          setNavigationOpen(true);
-          setCreationOpen(true);
-        },
-      }),
-    [searchServices, creationAction, creationContainer],
-  );
+  const [pendingNew, setPendingNew] = useState(false);
+  useEffect(() => {
+    if (!creationAction || !searchServices) return;
+    return searchServices.shortcuts.registerHost({
+      id: "new-conversation-menu",
+      title: "New session, project, or conversation",
+      binding: { key: "n", mod: true },
+      order: 10,
+      allowInEditable: true,
+      when: () => {
+        const trigger = creationButton();
+        return (
+          !!trigger &&
+          !trigger.disabled &&
+          (isApplePlatform(window.navigator.platform) ||
+            !document.activeElement?.closest(".xterm"))
+        );
+      },
+      run: () => {
+        if (narrow) setNavigationOpen(true);
+        else setSidebarOpen(true);
+        setPendingNew(true);
+      },
+    });
+  }, [creationAction, searchServices, narrow]);
+  useEffect(() => {
+    if (!pendingNew || !visibleSidebar) return;
+    setPendingNew(false);
+    const trigger = creationButton();
+    if (trigger && !trigger.disabled) {
+      trigger.focus();
+      if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
+    }
+  }, [pendingNew, visibleSidebar]);
+
   const toggleLabel = narrow
     ? navigationOpen
       ? "Hide navigation"
@@ -163,30 +181,35 @@ export function AppShell({
     const sidebarPages = orderPages(
       pages.filter((page) => pagePlacement(page) === "sidebar"),
     );
-    const pageNavigation = sidebarPages.length ? (
-      <nav aria-label="Pages" className="shell-pages">
-        <PageNavigation
-          pages={sidebarPages}
-          selected={selected}
-          onSelect={onSelect}
-        />
-      </nav>
-    ) : null;
+    const pageLinks = (entries: readonly RegisteredPage[]) =>
+      entries.length ? (
+        <nav aria-label="Pages" className="shell-pages">
+          <PageNavigation
+            pages={entries}
+            selected={selected}
+            onSelect={onSelect}
+          />
+        </nav>
+      ) : null;
+    const pageNavigation = pageLinks(sidebarPages);
     return sidebar ? (
-      sidebar(
-        pageNavigation,
-        creationAction && creationInSidebar && (
-          <div ref={setCreationContainer} />
+      sidebar(pageNavigation, {
+        general: pageLinks(
+          sidebarPages.filter((page) => page.key !== "buzz.inbox/inbox"),
         ),
-      )
+        team: pageLinks(
+          sidebarPages.filter((page) => page.key === "buzz.inbox/inbox"),
+        ),
+      })
     ) : (
       <div className="shell-sidebar-default">
         <Panel as="aside" aria-label="Page sidebar">
+          <SidebarToolbar />
           <div className="p-2">{pageNavigation}</div>
         </Panel>
       </div>
     );
-  }, [pages, selected, onSelect, sidebar, creationAction, creationInSidebar]);
+  }, [pages, selected, onSelect, sidebar]);
   const headerPages = useMemo(
     () =>
       orderPages(
@@ -212,7 +235,6 @@ export function AppShell({
   const headerRef = useRef<HTMLElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
   const topbarRef = useRef<HTMLElement>(null);
   const toolbarRef = useRef<HTMLElement>(null);
   const overflowTrigger = useRef<HTMLButtonElement>(null);
@@ -236,10 +258,7 @@ export function AppShell({
         (toolbarRef.current?.offsetWidth ?? 0) +
         parseFloat(style.paddingRight) +
         gap;
-      const center =
-        (topbarRef.current?.offsetWidth ?? 0) +
-        (searchRef.current?.offsetWidth ?? 0) +
-        gap;
+      const center = (topbarRef.current?.offsetWidth ?? 0) + gap;
       const compact =
         narrow ||
         2 * (Math.max(left, right) + gap) + center > header.clientWidth;
@@ -261,7 +280,6 @@ export function AppShell({
       historyRef.current,
       actionsRef.current,
       topbarRef.current,
-      searchRef.current,
       toolbarRef.current,
     ]) {
       if (element) observer.observe(element);
@@ -341,12 +359,9 @@ export function AppShell({
             />
           )}
           {navigationControls}
-          {creationAction && !creationInSidebar && (
-            <div ref={setCreationContainer} />
-          )}
         </div>
-        <div className="shell-center-capsule shell-capsule">
-          <div className="shell-page-switcher chrome-navigation">
+        <div className="shell-center-capsule shell-capsule chrome-navigation">
+          <div className="shell-page-switcher">
             {headerPages.length > 0 && (
               <PopoverRoot
                 open={overflowOpen && compactPages}
@@ -414,13 +429,6 @@ export function AppShell({
                 />
               </nav>
             )}
-          </div>
-          <div ref={searchRef} className="shell-search-action shell-capsule">
-            <PageSearch
-              pages={pages}
-              onSelect={onSelect}
-              services={searchServices}
-            />
           </div>
         </div>
         <div
@@ -503,7 +511,23 @@ export function AppShell({
                   }
                 }}
               >
-                <div className="shell-navigation-content">{navigation}</div>
+                <div className="shell-navigation-content">
+                  <SidebarToolbarContent
+                    value={
+                      <div className="flex w-full items-center gap-2">
+                        <div className="min-w-0 flex-1">{creationAction}</div>
+                        <PageSearch
+                          variant="subtle"
+                          pages={pages}
+                          onSelect={onSelect}
+                          services={searchServices}
+                        />
+                      </div>
+                    }
+                  >
+                    {navigation}
+                  </SidebarToolbarContent>
+                </div>
               </div>
               <main
                 id="main-content"
@@ -545,7 +569,6 @@ export function AppShell({
           </div>
         </div>
       </div>
-      {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
     </div>
   );
 }

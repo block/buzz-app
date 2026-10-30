@@ -1,3 +1,6 @@
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { sectionKey } from "../channel-navigation/section-preferences";
+import { Switch } from "../../shared/design-system/ui/Switch";
 import { useId, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
 import { emptyLineup } from "../channel-templates/model";
@@ -34,7 +37,15 @@ export function NewWorkspace({
   close(): void;
   onCreated(id: string): void;
 }) {
-  const [id] = useState(() => crypto.randomUUID());
+  const [showDefaults, setShowDefaults] = useState(false);
+  const [id] = useState(() =>
+    sectionKey(
+      session.soloPreferences?.snapshot().status === "unsupported"
+        ? "team"
+        : "solo",
+      crypto.randomUUID(),
+    ),
+  );
   const [name, setName] = useState("");
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
   const [busy, setBusy] = useState(false);
@@ -48,6 +59,7 @@ export function NewWorkspace({
       defaults.current.id = eventId;
     },
   });
+  const defaultsControl = useId();
   const form = useId();
   const input = useRef<HTMLInputElement>(null);
   const submit = async () => {
@@ -58,7 +70,7 @@ export function NewWorkspace({
     setError("");
     try {
       // Validate defaults before anything is published.
-      const canvas = workspaceCanvas(workspace);
+      const canvas = showDefaults ? workspaceCanvas(workspace) : "";
       const template = canvas
         ? projectTemplate(session.scope, await projectTemplateId(id), trimmed, {
             ...emptyLineup(),
@@ -73,7 +85,7 @@ export function NewWorkspace({
         await session.channelKit.refresh();
         const state = session.channelKit.snapshot();
         if (state.status !== "ready")
-          throw new Error(state.error ?? "Workspace defaults are unavailable.");
+          throw new Error(state.error ?? "Section defaults are unavailable.");
         const existing = state.entries.find(
           (entry) =>
             entry.record.value.type === "template" &&
@@ -86,7 +98,7 @@ export function NewWorkspace({
         ) {
           setConflict(true);
           throw new Error(
-            "Workspace defaults changed. Close this dialog and review Workspace settings.",
+            "Section defaults changed. Close this dialog and review Section settings.",
           );
         }
         if (!existing)
@@ -104,7 +116,7 @@ export function NewWorkspace({
       setError(
         reason instanceof Error
           ? reason.message
-          : "Workspace could not be created. Try again.",
+          : "Section could not be created. Try again.",
       );
     } finally {
       pending.current = false;
@@ -120,8 +132,11 @@ export function NewWorkspace({
       preventClose={busy}
       // A partly created workspace keeps its retry state; never drop it on a stray click.
       dismissOnOutsideClick={false}
-      title="New workspace"
-      description="The chats you start in this workspace begin with its folders and instructions."
+      size="compact"
+      headerGap="compact"
+      footerGap="compact"
+      title="New section"
+      description="Keep related Solo sessions and Team conversations together."
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
@@ -145,7 +160,7 @@ export function NewWorkspace({
     >
       <form
         id={form}
-        className={styles.sections}
+        className={styles.newSectionForm}
         inert={busy}
         onSubmit={(event) => {
           event.preventDefault();
@@ -162,11 +177,32 @@ export function NewWorkspace({
             onChange={(event) => setName(event.target.value)}
           />
         </Field>
-        <WorkspaceFields
-          value={workspace}
-          onChange={setWorkspace}
-          disabled={busy || submitted}
-        />
+        <div className={styles.sectionDefaults}>
+          <PreferenceRow
+            title="Add custom Solo instructions"
+            subtitle="Give new Solo sessions in this section shared instructions and folders."
+            controlId={defaultsControl}
+            trailing={(label) => (
+              <Switch
+                {...label}
+                id={defaultsControl}
+                aria-label="Add custom Solo instructions"
+                checked={showDefaults}
+                onCheckedChange={setShowDefaults}
+                disabled={busy || submitted}
+              />
+            )}
+          />
+          {showDefaults && (
+            <WorkspaceFields
+              value={workspace}
+              onChange={setWorkspace}
+              disabled={busy || submitted}
+              instructionRows={3}
+              instructionPlaceholder="How should agents work in new Solo sessions?"
+            />
+          )}
+        </div>
         {submitted && !busy && !conflict && (
           <p role="status">
             Name, folders and instructions are kept for the retry.

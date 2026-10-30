@@ -1,5 +1,13 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import type { ComponentProps, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
+
+/** Optional density for a whole navigation surface. */
+export const NavigationDensity = createContext<"medium" | undefined>(undefined);
 
 /** One navigation surface for a primary row and independent sibling controls.
  * The primary NavigationItem still owns focus and aria-current. */
@@ -39,6 +47,7 @@ export function NavigationItem({
   inset = false,
   variant = "row",
   multiline = false,
+  density,
   ...props
 }: {
   label: ReactNode;
@@ -51,12 +60,16 @@ export function NavigationItem({
   variant?: "row" | "pill" | "option" | "search" | "text";
   /** Stacked labels grow the row without clipping its primary target. */
   multiline?: boolean;
+  /** Room for conversation identity artwork in Messages. */
+  density?: "medium";
 } & Omit<ComponentProps<typeof BaseButton>, "className" | "children">) {
+  const inheritedDensity = useContext(NavigationDensity);
   return (
     <BaseButton
       {...props}
       type={props.type ?? "button"}
       data-variant={variant}
+      data-density={density ?? inheritedDensity}
       data-multiline={multiline || undefined}
       data-buzz-ui=""
       className="navigation-item"

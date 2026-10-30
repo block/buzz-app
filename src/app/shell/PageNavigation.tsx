@@ -1,3 +1,4 @@
+import { useSidebarRowInset } from "../../features/channel-navigation/sidebar-presentation";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
@@ -23,6 +24,7 @@ export function PageNavigation({
   onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
+  const rowInset = useSidebarRowInset();
   if (placement === "topbar") {
     return (
       <Tabs
@@ -97,6 +99,7 @@ export function PageNavigation({
         label={label}
         title={label}
         variant="row"
+        inset={rowInset}
         trailing={badge}
         icon={
           placement === "sidebar" ? (

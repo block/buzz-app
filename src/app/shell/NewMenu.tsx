@@ -1,7 +1,7 @@
-import { createPortal } from "react-dom";
+import { sectionPreferences } from "../../features/channel-navigation/section-preferences";
+import { Button } from "../../shared/design-system/ui/Button";
 import { useRef, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
-import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
@@ -13,26 +13,30 @@ import { splitPartition } from "../../features/relay/partition";
 import { NewWorkspace } from "../../features/solo/NewWorkspace";
 import { resetNewChatProject } from "../../features/solo/SoloDraft";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
   MenuGroup,
   MenuGroupLabel,
   MenuSeparator,
+  MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
+import { KeyboardShortcut } from "../../shared/design-system/ui/KeyboardShortcut";
 import styles from "./NewMenu.module.css";
-import { PlusIcon } from "../../shared/design-system/icons";
+import {
+  PlusIcon,
+  ChatCircleIcon,
+  HashIcon,
+  FolderSimpleIcon,
+} from "../../shared/design-system/icons";
 
 type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
-  triggerContainer?: HTMLElement | null;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
 };
 
 export function NewMenu(props: Props) {
@@ -53,102 +57,155 @@ function ReadyNewMenu({
   agents,
   session,
   available,
-  triggerContainer,
-  open,
-  onOpenChange,
 }: Props & { session: RelaySession; available: boolean }) {
   useSyncExternalStore(
-    session.soloPreferences.subscribe,
-    session.soloPreferences.snapshot,
+    sectionPreferences(session).subscribe,
+    sectionPreferences(session).snapshot,
   );
-  const preferences = useSidebarPreferences(session.sidebarPreferences);
+  const preferences = useSidebarPreferences(sectionPreferences(session));
+  const [menuOpen, setMenuOpen] = useState(false);
   const [creatingChannel, setCreatingChannel] = useState(false);
-  const [creatingSection, setCreatingSection] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const scope = splitPartition(session.scope);
   const current = () => relay.snapshot().session === session;
-  const menuTrigger = (
-    <MenuTrigger
-      render={
-        <IconButton
-          hint="familiar"
-          ref={trigger}
-          disabled={!available}
-          aria-label="New"
-          title="New"
-          variant="inset"
-          shape="round"
-          size="sm"
-          icon={<PlusIcon className={styles.createIcon} size={16} />}
-        />
-      }
-    />
+  const menu = (
+    <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+      <MenuTrigger
+        render={
+          <Button
+            ref={trigger}
+            disabled={!available}
+            data-new-conversation-menu=""
+            aria-label="New"
+            variant="subtle"
+            size="sm"
+          >
+            <PlusIcon className={styles.createIcon} size={16} />
+            New
+          </Button>
+        }
+      />
+
+      <MenuPopup
+        style={{
+          width: "var(--anchor-width)",
+          minWidth: 0,
+          maxWidth: "var(--available-width)",
+        }}
+        onKeyDownCapture={(event) => {
+          if (
+            !menuOpen ||
+            event.repeat ||
+            event.nativeEvent.isComposing ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            !/^[1-4]$/.test(event.key)
+          )
+            return;
+          const item = event.currentTarget.querySelector<HTMLElement>(
+            `[role="menuitem"][aria-keyshortcuts="${event.key}"]`,
+          );
+          if (!item) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (item.getAttribute("aria-disabled") !== "true") item.click();
+        }}
+      >
+        <MenuGroup>
+          <MenuGroupLabel emphasis="quiet">Solo</MenuGroupLabel>
+          <MenuItem
+            aria-keyshortcuts="1"
+            onClick={() => {
+              if (current()) {
+                resetNewChatProject(session.scope);
+                void navigator.open(soloDraftTarget(session.scope));
+              }
+            }}
+          >
+            <MenuIcon>
+              <ChatCircleIcon size={16} />
+            </MenuIcon>
+            New session
+            <MenuTrailing>
+              <span aria-hidden="true">
+                <KeyboardShortcut text="1" label="1" />
+              </span>
+            </MenuTrailing>
+          </MenuItem>
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuGroup>
+          <MenuGroupLabel emphasis="quiet">Team</MenuGroupLabel>
+          <MenuItem
+            aria-keyshortcuts="2"
+            disabled={!scope}
+            onClick={() => {
+              if (scope && current())
+                void navigator.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.channels",
+                  pageId: "channels",
+                  scope,
+                  route: { version: 1, params: "new-message" },
+                });
+            }}
+          >
+            <MenuIcon>
+              <ChatCircleIcon size={16} />
+            </MenuIcon>
+            New DM
+            <MenuTrailing>
+              <span aria-hidden="true">
+                <KeyboardShortcut text="2" label="2" />
+              </span>
+            </MenuTrailing>
+          </MenuItem>
+          <MenuItem
+            aria-keyshortcuts="3"
+            disabled={!session.channelCreation.available}
+            onClick={() => {
+              if (current()) setCreatingChannel(true);
+            }}
+          >
+            <MenuIcon>
+              <HashIcon size={16} />
+            </MenuIcon>
+            New channel
+            <MenuTrailing>
+              <span aria-hidden="true">
+                <KeyboardShortcut text="3" label="3" />
+              </span>
+            </MenuTrailing>
+          </MenuItem>
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuItem
+          aria-keyshortcuts="4"
+          disabled={!sectionPreferences(session).sectionCreationWritable}
+          onClick={() => {
+            if (current()) setCreatingProject(true);
+          }}
+        >
+          <MenuIcon>
+            <FolderSimpleIcon size={16} />
+          </MenuIcon>
+          New section
+          <MenuTrailing>
+            <span aria-hidden="true">
+              <KeyboardShortcut text="4" label="4" />
+            </span>
+          </MenuTrailing>
+        </MenuItem>
+      </MenuPopup>
+    </MenuRoot>
   );
   return (
     <>
-      <MenuRoot open={open} onOpenChange={onOpenChange}>
-        {triggerContainer === undefined
-          ? menuTrigger
-          : triggerContainer && createPortal(menuTrigger, triggerContainer)}
-        <MenuPopup>
-          <MenuGroup>
-            <MenuGroupLabel emphasis="quiet">Solo</MenuGroupLabel>
-            <MenuItem
-              onClick={() => {
-                if (current())
-                  void navigator.open(soloDraftTarget(session.scope));
-              }}
-            >
-              New chat
-            </MenuItem>
-            <MenuItem
-              disabled={!session.soloPreferences.sectionCreationWritable}
-              onClick={() => {
-                if (current()) setCreatingProject(true);
-              }}
-            >
-              New workspace
-            </MenuItem>
-          </MenuGroup>
-          <MenuSeparator />
-          <MenuGroup>
-            <MenuGroupLabel emphasis="quiet">Team</MenuGroupLabel>
-            <MenuItem
-              disabled={!scope}
-              onClick={() => {
-                if (scope && current())
-                  void navigator.open({
-                    version: 1,
-                    kind: "page",
-                    pluginId: "buzz.channels",
-                    pageId: "channels",
-                    scope,
-                    route: { version: 1, params: "new-message" },
-                  });
-              }}
-            >
-              New DM
-            </MenuItem>
-            <MenuItem
-              disabled={!session.channelCreation.available}
-              onClick={() => {
-                if (current()) setCreatingChannel(true);
-              }}
-            >
-              New channel
-            </MenuItem>
-            <MenuItem
-              disabled={!preferences.sectionCreationWritable}
-              onClick={() => {
-                if (current()) setCreatingSection(true);
-              }}
-            >
-              New section
-            </MenuItem>
-          </MenuGroup>
-        </MenuPopup>
-      </MenuRoot>
+      {menu}
       <CreateChannelDialog
         open={creatingChannel}
         onOpenChange={setCreatingChannel}
@@ -163,38 +220,15 @@ function ReadyNewMenu({
           revealCreatedChannel(relay, session, navigator, input, channelId);
         }}
       />
-      {creatingSection && (
-        <CreateSidebarSection
-          writable={preferences.sectionCreationWritable}
-          refreshing={preferences.status === "loading"}
-          retry={preferences.reload}
-          finalFocus={trigger}
-          close={() => setCreatingSection(false)}
-          create={async (section) => {
-            if (
-              !current() ||
-              !session.sidebarPreferences.sectionCreationWritable
-            )
-              return false;
-            await preferences.createSection(section);
-            if (current()) setCreatingSection(false);
-            return true;
-          }}
-        />
-      )}
       {creatingProject && (
         <NewWorkspace
           session={session}
-          create={(section) => session.soloPreferences.createSection(section)}
+          create={(section) =>
+            sectionPreferences(session).createSection(section)
+          }
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
-          onCreated={(id) => {
-            if (!current()) return;
-            resetNewChatProject(session.scope, id);
-            void navigator.open(
-              soloDraftTarget(session.scope, { project: id }),
-            );
-          }}
+          onCreated={() => {}}
         />
       )}
     </>

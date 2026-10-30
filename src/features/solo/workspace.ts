@@ -1,3 +1,8 @@
+import {
+  sectionPreferences,
+  sectionOwner,
+  sectionKey,
+} from "../channel-navigation/section-preferences";
 import { templateAgentChoices } from "../agents/choices";
 import type { KitEntry, Lineup, Template } from "../channel-templates/model";
 import {
@@ -160,7 +165,11 @@ function parseWorkspace(content: string): Workspace {
 export async function projectTemplateId(projectId: string) {
   const hash = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(projectId),
+    new TextEncoder().encode(
+      sectionOwner(projectId).owner === "solo"
+        ? sectionOwner(projectId).id
+        : projectId,
+    ),
   );
   return `me-section-${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
@@ -214,7 +223,11 @@ export function projectDefault(
   )?.record.value;
   const defaultId =
     groups?.type === "groups"
-      ? groups.groups.find((group) => group.id === projectId)?.defaultTemplateId
+      ? groups.groups.find(
+          (group) =>
+            group.id === sectionOwner(projectId).id &&
+            sectionOwner(projectId).owner === "solo",
+        )?.defaultTemplateId
       : undefined;
   const fallback = defaultId
     ? templateEntry(entries, defaultId)?.record.value
@@ -259,7 +272,11 @@ export async function loadChatSetup(
   session: RelaySession,
   projectId: string,
 ): Promise<ChatSetup & { revision: string }> {
-  const store = session.soloPreferences;
+  projectId = sectionKey(
+    sectionOwner(projectId).owner,
+    sectionOwner(projectId).id,
+  );
+  const store = sectionPreferences(session);
   await store.refresh();
   const preferences = store.snapshot();
   if (

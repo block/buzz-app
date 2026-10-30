@@ -1,3 +1,6 @@
+import { sectionPreferences } from "./section-preferences";
+import { useSidebarRowInset } from "./sidebar-presentation";
+import { SidebarChatArtwork } from "../../bundled/channels/SidebarChatArtwork";
 import { useSoloRowActivation } from "./useSoloRowActivation";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
@@ -64,6 +67,11 @@ export function SoloInventory({
   chatIcons,
   chatMenus,
   renderContents,
+  renderUngrouped,
+  hideWorkspaces = false,
+  filedTeamRows,
+  filedTeamReveal,
+  revealSection,
 }: {
   session: RelaySession;
   scope: string;
@@ -72,6 +80,11 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  hideWorkspaces?: boolean;
+  filedTeamRows?: ComponentProps<typeof SoloWorkspaces>["filedTeamRows"];
+  filedTeamReveal?: string | undefined;
+  revealSection?: ComponentProps<typeof SoloWorkspaces>["revealSection"];
+  renderUngrouped?: ComponentProps<typeof SoloWorkspaces>["renderUngrouped"];
   renderContents?: (
     content: ReactNode,
     actions: ReactNode,
@@ -80,14 +93,15 @@ export function SoloInventory({
     pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>,
   ) => ReactNode;
 }) {
+  const rowInset = useSidebarRowInset();
   const list = useChannelList(session.channels);
   const regions = useSoloNavigation(session);
   const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
   const preferences = useSyncExternalStore(
-    session.soloPreferences.subscribe,
-    session.soloPreferences.snapshot,
+    sectionPreferences(session).subscribe,
+    sectionPreferences(session).snapshot,
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -161,7 +175,7 @@ export function SoloInventory({
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
           (a.lastActivityAt ?? a.updatedAt ?? 0) || a.id.localeCompare(b.id),
     );
-  // Capped workspaces never hide the open chat or one that needs the viewer.
+  // The open chat has priority; working and unread chats share the remaining slots.
   const unreadChats = useUnreadChannelIds(
     session.unread,
     JSON.stringify(conversations.map((item) => item.id)),
@@ -179,14 +193,14 @@ export function SoloInventory({
   };
   const creationItems = (
     <>
-      <MenuItem onClick={() => newChat()}>New chat</MenuItem>
+      <MenuItem onClick={() => newChat()}>New session</MenuItem>
       <MenuItem
-        disabled={!session.soloPreferences.sectionCreationWritable}
+        disabled={!sectionPreferences(session).sectionCreationWritable}
         onClick={() => {
           if (current()) setCreatingProject(true);
         }}
       >
-        New workspace
+        New section
       </MenuItem>
     </>
   );
@@ -198,8 +212,8 @@ export function SoloInventory({
             <IconButton
               ref={trigger}
               size="compact"
-              aria-label="New chat or workspace"
-              title="New chat or workspace"
+              aria-label="New session or section"
+              title="New session or section"
               icon={<PlusIcon size={15} strokeWidth={2.5} />}
             />
           }
@@ -225,10 +239,10 @@ export function SoloInventory({
   );
   const content = (
     <>
-      {empty && (
+      {empty && !hideWorkspaces && (
         <NavigationItem
           variant="row"
-          label="New chat"
+          label="New session"
           icon={<PlusIcon size={16} />}
           onClick={() => newChat()}
         />
@@ -236,7 +250,9 @@ export function SoloInventory({
       {creatingProject && (
         <NewWorkspace
           session={session}
-          create={(section) => session.soloPreferences.createSection(section)}
+          create={(section) =>
+            sectionPreferences(session).createSection(section)
+          }
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
           onCreated={(id) => {
@@ -245,6 +261,11 @@ export function SoloInventory({
         />
       )}
       <SoloWorkspaces
+        filedTeamRows={filedTeamRows}
+        filedTeamReveal={filedTeamReveal}
+        revealSection={revealSection}
+        renderUngrouped={renderUngrouped}
+        hideWorkspaces={hideWorkspaces}
         renderChatMenu={(channelId) =>
           menus?.map(({ key, component: Menu }) => (
             <Menu key={key} session={session} channelId={channelId} />
@@ -257,16 +278,10 @@ export function SoloInventory({
                 projectId: draft.project,
                 content: (
                   <NavigationItem
-                    label="New chat"
+                    label="New session"
+                    inset={rowInset}
                     selected
-                    icon={
-                      <span
-                        className={styles.conversationIcon}
-                        aria-hidden="true"
-                      >
-                        <ChatCircleIcon size={16} />
-                      </span>
-                    }
+                    icon={<ChatCircleIcon size={16} />}
                     onClick={() => void navigator.open(target)}
                   />
                 ),
@@ -290,6 +305,7 @@ export function SoloInventory({
         chats={conversations.map((item) => ({
           id: item.id,
           title: item.name,
+          selected: selected === item.id,
           pinned:
             selected === item.id ||
             workingChannels.has(item.id) ||
@@ -332,7 +348,12 @@ export function SoloInventory({
   return (
     <nav
       className={styles.sidebarContents}
-      aria-label={`${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`}
+      data-combined={renderUngrouped ? "" : undefined}
+      aria-label={
+        renderUngrouped
+          ? "Conversations"
+          : `${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`
+      }
     >
       {renderContents ? (
         renderContents(content, creationItems, header, trigger, pendingClick)
@@ -377,6 +398,7 @@ function SoloConversationRow({
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
 >) {
+  const rowInset = useSidebarRowInset();
   const activation = useSoloRowActivation(
     navigation,
     pendingClick,
@@ -406,12 +428,19 @@ function SoloConversationRow({
           type="button"
           selected={selected}
           data-solo-channel-id={id}
+          inset={rowInset}
           aria-current={selected ? "page" : undefined}
           aria-describedby={shared ? soloSharedMarkId(id) : undefined}
           {...activation}
           icon={
             Icon ? (
               <Icon session={session} channelId={id} fallback={chatIcon} />
+            ) : channel ? (
+              <SidebarChatArtwork
+                channel={channel}
+                session={session}
+                icon={chatIcon}
+              />
             ) : (
               chatIcon
             )

@@ -1,3 +1,4 @@
+import { sectionPreferences } from "../../features/channel-navigation/section-preferences";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
 import {
   type ComponentProps,
@@ -66,7 +67,7 @@ export function SoloChatMenuItems({
 }) {
   const handoff = useChannelNavigation();
   const regions = useSoloNavigation(session);
-  const preferences = session.soloPreferences;
+  const preferences = sectionPreferences(session);
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,
@@ -129,14 +130,14 @@ export function SoloChatMenuItems({
               </MenuIcon>
               Move to
             </MenuSubmenuTrigger>
-            <MenuSubmenuPopup aria-label="Workspace">
+            <MenuSubmenuPopup aria-label="Section">
               {grouped && <MenuItem onClick={() => onMove()}>Chats</MenuItem>}
               {groups.map((group) => (
                 <MenuItem key={group.id} onClick={() => onMove(group.id)}>
                   {group.name}
                 </MenuItem>
               ))}
-              <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>
+              <MenuItem onClick={onNewWorkspace}>New section</MenuItem>
             </MenuSubmenuPopup>
           </MenuSubmenu>
         )}
@@ -200,8 +201,8 @@ export function NewWorkspaceDialog({
       onOpenChange={(open) => {
         if (!open) close();
       }}
-      title="Create new workspace"
-      description={`Move ${name} into a personal workspace that syncs across Buzz.`}
+      title="Create new section"
+      description={`Move ${name} into a personal section that syncs across Buzz.`}
       initialFocus={input}
       finalFocus={finalFocus}
       actions={
@@ -227,8 +228,8 @@ export function NewWorkspaceDialog({
       >
         <Input
           ref={input}
-          aria-label="Workspace name"
-          placeholder="Workspace name"
+          aria-label="Section name"
+          placeholder="Section name"
           required
           maxLength={80}
           value={value}

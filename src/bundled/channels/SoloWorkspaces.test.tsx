@@ -155,10 +155,10 @@ it("creates and moves through the relay service, then restores in a fresh store"
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "New workspace" }),
+    await screen.findByRole("menuitem", { name: "New section" }),
   );
   await user.type(
-    screen.getByRole("textbox", { name: "Workspace name" }),
+    screen.getByRole("textbox", { name: "Section name" }),
     "Projects",
   );
   await user.click(screen.getByRole("button", { name: "Create and move" }));
@@ -171,9 +171,7 @@ it("creates and moves through the relay service, then restores in a fresh store"
       expect.objectContaining({ aborted: false }),
     ),
   );
-  await waitFor(() =>
-    expect(screen.queryByText("Saving workspace…")).toBeNull(),
-  );
+  await waitFor(() => expect(screen.queryByText("Saving section…")).toBeNull());
   expect(h.saved().assignments.chat).toBe(h.saved().sections[1]?.id);
   mounted.unmount();
   first.dispose();
@@ -229,7 +227,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   h.remove.mockRejectedValueOnce(new Error("Deletion unavailable"));
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete workspace" }),
+    await screen.findByRole("menuitem", { name: "Delete section" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Deletion unavailable",
@@ -237,7 +235,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   expect(screen.getByRole("button", { name: "Work" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete workspace" }),
+    await screen.findByRole("menuitem", { name: "Delete section" }),
   );
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
@@ -301,7 +299,7 @@ it("only offers Chats as a destination from a project", async () => {
     );
     (await screen.findByRole("menuitem", { name: "Move to" })).focus();
     await user.keyboard("{ArrowRight}");
-    await screen.findByRole("menuitem", { name: "New workspace" });
+    await screen.findByRole("menuitem", { name: "New section" });
   };
   await openProjectMenu();
   expect(screen.queryByRole("menuitem", { name: "Chats" })).toBeNull();
@@ -325,7 +323,7 @@ it("starts a chat in a project from its heading plus", async () => {
     await user.click(
       within(header).getByRole("button", { name: "New chat in Work" }),
     );
-    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("section:solo:work");
   } finally {
     store.dispose();
   }
@@ -347,7 +345,7 @@ it("opens the exact project from an empty project's New chat row", async () => {
     if (!row) throw new Error("Missing empty project action");
     row.focus();
     await user.keyboard("{Enter}");
-    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("section:solo:work");
   } finally {
     store.dispose();
   }
@@ -432,7 +430,7 @@ it("toggles a deferred collapse intent and protects a failed rename from workspa
   await user.type(field, "Retained draft{Enter}");
   await screen.findByText("Save failed");
   const heading = screen.getByRole("button", { name: "Work" });
-  for (const intent of [["work"], [], ["work"], []]) {
+  for (const intent of [["section:solo:work"], [], ["section:solo:work"], []]) {
     await user.click(heading);
     expect(readView("viewer:community", "solo:collapsed-projects", [])).toEqual(
       intent,
@@ -441,7 +439,7 @@ it("toggles a deferred collapse intent and protects a failed rename from workspa
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   expect(
     await screen.findByRole("menuitem", {
-      name: "Delete workspace",
+      name: "Delete section",
     }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(h.remove).not.toHaveBeenCalled();
@@ -451,7 +449,7 @@ it("toggles a deferred collapse intent and protects a failed rename from workspa
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   expect(
     await screen.findByRole("menuitem", {
-      name: "Delete workspace",
+      name: "Delete section",
     }),
   ).not.toHaveAttribute("aria-disabled", "true");
 });
@@ -519,7 +517,7 @@ it("prevents rename in a deleting workspace while other workspaces remain editab
   try {
     await user.click(screen.getByRole("button", { name: "Actions for Work" }));
     await user.click(
-      await screen.findByRole("menuitem", { name: "Delete workspace" }),
+      await screen.findByRole("menuitem", { name: "Delete section" }),
     );
     await waitFor(() =>
       expect(h.remove).toHaveBeenCalledWith("work", expect.any(AbortSignal)),
@@ -548,7 +546,7 @@ it("prevents rename in a deleting workspace while other workspaces remain editab
   owner.dispose();
 });
 
-it("caps each workspace, keeps pinned chats, and remembers Show more", async () => {
+it("keeps pinned chats within five rows and remembers expansion", async () => {
   const h = fixture();
   const user = userEvent.setup();
   const total = SOLO_CHAT_CAP + SOLO_CHAT_STEP + 3;
@@ -565,16 +563,16 @@ it("caps each workspace, keeps pinned chats, and remembers Show more", async () 
   const mounted = render(
     h.view(h.store().queries, undefined, undefined, chats),
   );
-  await waitFor(() => expect(titles()).toHaveLength(SOLO_CHAT_CAP + 1));
-  // Newest first, with the pinned older chat kept in order after the cap.
+  await waitFor(() => expect(titles()).toHaveLength(SOLO_CHAT_CAP));
+  // A pinned older chat replaces one ordinary row instead of exceeding the cap.
   expect(titles()).toEqual([
-    ...chats.slice(0, SOLO_CHAT_CAP).map((chat) => chat.title),
+    ...chats.slice(0, SOLO_CHAT_CAP - 1).map((chat) => chat.title),
     `Chat ${total - 1}`,
   ]);
   await user.click(
     screen.getByRole("button", { name: "Show more chats in Chats" }),
   );
-  expect(titles()).toHaveLength(SOLO_CHAT_CAP + SOLO_CHAT_STEP + 1);
+  expect(titles()).toHaveLength(SOLO_CHAT_CAP + SOLO_CHAT_STEP);
   // The last step shows what remains, then only Show less is left.
   await user.click(
     screen.getByRole("button", { name: "Show more chats in Chats" }),
@@ -590,7 +588,7 @@ it("caps each workspace, keeps pinned chats, and remembers Show more", async () 
   await user.click(
     screen.getByRole("button", { name: "Show fewer chats in Chats" }),
   );
-  expect(titles()).toHaveLength(SOLO_CHAT_CAP + 1);
+  expect(titles()).toHaveLength(SOLO_CHAT_CAP);
 });
 
 it("offers Show less beside Show more and always folds back to the cap", async () => {
@@ -662,7 +660,7 @@ it("keeps keyboard focus on the row when Show more or Show less is spent", async
   ).toHaveFocus();
 });
 
-it("moves focus to the last chat when Show less leaves nothing to fold", async () => {
+it("folds to five including the pinned chat and restores focus to More", async () => {
   const h = fixture();
   const user = userEvent.setup();
   const chats = (pinned: boolean) =>
@@ -676,13 +674,18 @@ it("moves focus to the last chat when Show less leaves nothing to fold", async (
   await user.click(
     await screen.findByRole("button", { name: "Show more chats in Chats" }),
   );
-  // Opening the last chat pins it, so folding hides nothing.
+  // The open older chat takes one of the five slots when folded.
   mounted.rerender(h.view(queries, undefined, undefined, chats(true)));
   screen.getByRole("button", { name: "Show fewer chats in Chats" }).focus();
   await user.keyboard("{Enter}");
-  expect(document.querySelector("[data-solo-show-more]")).toBeNull();
+  expect(screen.getAllByRole("button", { name: /^Chat \d+$/ })).toHaveLength(
+    SOLO_CHAT_CAP,
+  );
   expect(
     screen.getByRole("button", { name: `Chat ${SOLO_CHAT_CAP}` }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Show more chats in Chats" }),
   ).toHaveFocus();
 });
 
@@ -859,4 +862,20 @@ it("rejects a late personal move through the same owner used by menu selections 
     preferences.dispose();
     await h.dispose();
   }
+});
+
+it("keeps the selected chat within five even when every chat requests retention", async () => {
+  const h = fixture();
+  const chats = Array.from({ length: 8 }, (_, index) => ({
+    id: `c${index}`,
+    title: `Chat ${index}`,
+    pinned: true,
+    selected: index === 7,
+  }));
+  render(h.view(h.store().queries, undefined, undefined, chats));
+  expect(await screen.findByRole("button", { name: "Chat 7" })).toBeVisible();
+  expect(screen.getAllByRole("button", { name: /^Chat \d+$/ })).toHaveLength(5);
+  expect(
+    screen.getByRole("button", { name: "Show more chats in Chats" }),
+  ).toHaveTextContent("More");
 });

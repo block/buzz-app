@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
+import { sectionKey } from "../../features/channel-navigation/section-preferences";
 import { contributedSidebarSectionKey } from "./sidebar-sections";
 
 type SidebarView = {
@@ -16,7 +17,13 @@ function restore(scope: string): SidebarView {
     raw && typeof raw === "object" ? (raw as Partial<SidebarView>) : {};
   return {
     collapsed: Array.isArray(saved.collapsed)
-      ? saved.collapsed.filter((key): key is string => typeof key === "string")
+      ? saved.collapsed
+          .filter((key): key is string => typeof key === "string")
+          .map((key) =>
+            key.startsWith("group:") && !key.startsWith("group:section:")
+              ? `group:${sectionKey("team", key.slice(6))}`
+              : key,
+          )
       : [],
     contributionOrder: Array.isArray(saved.contributionOrder)
       ? saved.contributionOrder

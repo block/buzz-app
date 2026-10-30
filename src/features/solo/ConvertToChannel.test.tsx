@@ -15,7 +15,7 @@ import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
 import { SOLO_LABEL } from "./labels";
 import { chatConversion } from "./conversion";
-import { ConvertToChannel, canConvertToChannel } from "./ConvertToChannel";
+import { ConvertToChannel } from "./ConvertToChannel";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const key = new Uint8Array(32).fill(2),
@@ -162,10 +162,10 @@ it.each(["private", "public"])(
     fireEvent.click(confirm());
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
     expect(h.publish).toHaveBeenCalledOnce();
-    expect(h.unfile).toHaveBeenCalledExactlyOnceWith(id, undefined);
+    expect(h.unfile).not.toHaveBeenCalled();
     expect(h.convertedCallback).toHaveBeenCalledOnce();
-    expect(h.publish.mock.invocationCallOrder[0]).toBeLessThan(
-      h.unfile.mock.invocationCallOrder[0] ?? 0,
+    expect(h.session.soloPreferences.snapshot().data?.assignments[id]).toBe(
+      "g",
     );
     expect(chatConversion(h.session, id)).toBeUndefined();
     const event = h.sign.mock.calls[0]?.[0];
@@ -369,63 +369,26 @@ it("an unrelated unconfirmed metadata change cannot be checked as conversion", a
   expect(h.publish).toHaveBeenCalledOnce();
 });
 
-it("retries only project unfiling after confirmed conversion and remount", async () => {
-  const h = setup();
-  h.unfile.mockRejectedValueOnce(new Error("Projects save unavailable"));
-  await ready();
-  fireEvent.click(screen.getByRole("radio", { name: "Public" }));
-  fireEvent.click(confirm());
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Projects save unavailable",
-  );
-  expect(chatConversion(h.session, id)?.converted).toBe(true);
-  expect(h.convertedCallback).not.toHaveBeenCalled();
-  expect(h.close).not.toHaveBeenCalled();
-  expect(
-    canConvertToChannel(h.session, {
-      id,
-      name: "Original",
-      channelType: "stream",
-    }),
-  ).toBe(true);
-  h.mounted.unmount();
-  render(
-    <ConvertToChannel
-      session={h.session}
-      id={id}
-      close={h.close}
-      onConverted={h.convertedCallback}
-    />,
-  );
-  expect(
-    screen.getByText(
-      "Channel converted. Finish removing it from its Solo workspace.",
-    ),
-  ).toBeVisible();
-  expect(screen.getByRole("radio", { name: "Public" })).toBeChecked();
-  fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
-  await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
-  expect(h.publish).toHaveBeenCalledOnce();
-  expect(h.sign).toHaveBeenCalledOnce();
-  expect(h.unfile).toHaveBeenCalledTimes(2);
-  expect(chatConversion(h.session, id)).toBeUndefined();
-});
+// Section-storage failure coverage now lives in ConvertToChannel.placement.test.tsx:
+// conversion preserves filing and no longer performs a section-removal write.
 it.each(["visit", "unmount"])(
-  "retains converted recovery but suppresses completion after %s during unfiling",
+  "retains conversion recovery but suppresses completion after %s during publication",
   async (retire) => {
     const h = setup();
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    h.unfile.mockImplementationOnce(async () => {
+    const publish = h.publish.getMockImplementation();
+    if (!publish) throw new Error("Missing fixture publisher");
+    h.publish.mockImplementationOnce(async (event) => {
       await held;
-      return { sections: [], assignments: {}, starred: [], muted: [] };
+      await publish(event);
     });
     await ready();
     fireEvent.click(confirm());
     try {
-      await waitFor(() => expect(h.unfile).toHaveBeenCalledOnce());
+      await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
       expect(h.publish).toHaveBeenCalledOnce();
       if (retire === "visit") h.visit.abort();
       else h.mounted.unmount();
@@ -437,11 +400,12 @@ it.each(["visit", "unmount"])(
     }
     expect(h.convertedCallback).not.toHaveBeenCalled();
     expect(h.close).not.toHaveBeenCalled();
-    expect(chatConversion(h.session, id)?.converted).toBe(true);
+    expect(chatConversion(h.session, id)).toBeDefined();
+    expect(h.unfile).not.toHaveBeenCalled();
   },
 );
 
-it("finishes removal when another details consumer confirmed the uncertain conversion", async () => {
+it("finishes when another details consumer confirmed the uncertain conversion", async () => {
   const h = setup();
   h.publish.mockRejectedValueOnce(new Error("lost acknowledgment"));
   await ready();
@@ -465,7 +429,7 @@ it("finishes removal when another details consumer confirmed the uncertain conve
   );
   await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
   expect(h.publish).toHaveBeenCalledOnce();
-  expect(h.unfile).toHaveBeenCalledOnce();
+  expect(h.unfile).not.toHaveBeenCalled();
 });
 it("serializes conversion completion across two mounted forms", async () => {
   const h = setup();
@@ -474,16 +438,18 @@ it("serializes conversion completion across two mounted forms", async () => {
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  h.unfile.mockImplementationOnce(async () => {
+  const publish = h.publish.getMockImplementation();
+  if (!publish) throw new Error("Missing fixture publisher");
+  h.publish.mockImplementationOnce(async (event) => {
     await held;
-    return { sections: [], assignments: {}, starred: [], muted: [] };
+    await publish(event);
   });
   fireEvent.click(confirm());
   try {
-    await waitFor(() => expect(h.unfile).toHaveBeenCalledOnce());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
     render(<ConvertToChannel session={h.session} id={id} close={vi.fn()} />);
     const finish = screen.getAllByRole("button", {
-      name: "Finish conversion",
+      name: /^(Convert to channel|Finish conversion|Check status)$/,
       hidden: true,
     });
     expect(finish).toHaveLength(2);
@@ -492,7 +458,7 @@ it("serializes conversion completion across two mounted forms", async () => {
       fireEvent.click(button);
     }
     expect(h.publish).toHaveBeenCalledOnce();
-    expect(h.unfile).toHaveBeenCalledOnce();
+    expect(h.unfile).not.toHaveBeenCalled();
   } finally {
     await act(async () => {
       release();

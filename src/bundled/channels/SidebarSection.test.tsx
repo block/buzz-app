@@ -241,7 +241,7 @@ it("offers confirmed removal for custom sections", async () => {
   );
   const confirmation = screen.getByRole("dialog", { name: "Remove Work?" });
   expect(confirmation).toHaveAccessibleDescription(
-    "1 channel will move back to Channels. This does not delete any channels.",
+    "1 conversation will move back to Sessions or Team messages. This does not delete any conversations.",
   );
   expect(remove).not.toHaveBeenCalled();
   await user.click(
@@ -408,7 +408,7 @@ it.each([0, 2])(
     expect(
       screen.getByRole("dialog", { name: "Remove Work?" }),
     ).toHaveAccessibleDescription(
-      `${count} channels will move back to Channels. This does not delete any channels.`,
+      `${count} conversations will move back to Sessions or Team messages. This does not delete any conversations.`,
     );
   },
 );

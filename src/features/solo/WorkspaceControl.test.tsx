@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -20,7 +21,18 @@ function fixture() {
     },
   };
   const session = {
+    sidebarPreferences: createSidebarPreferencesStore({
+      available: false,
+      read: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      }),
+    }).queries,
     soloPreferences: {
+      writable: true,
+      dismissMoveError: () => {},
       snapshot: () => snapshot,
       subscribe: () => () => {},
       assign,
@@ -34,11 +46,15 @@ it("moves a saved chat without changing project defaults", async () => {
   const { session, assign } = fixture();
   const user = userEvent.setup();
   render(<WorkspaceControl session={session} channelId="chat" />);
-  await user.click(screen.getByRole("button", { name: "Workspace: Buzz App" }));
+  await user.click(screen.getByRole("button", { name: "Section: Buzz App" }));
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "No workspace" }),
+    await screen.findByRole("menuitemradio", { name: "No section" }),
   );
-  expect(assign).toHaveBeenCalledWith("chat", undefined);
+  expect(assign).toHaveBeenCalledWith(
+    "chat",
+    undefined,
+    expect.any(AbortSignal),
+  );
 });
 
 it("changes a new-chat project locally instead of moving a saved channel", async () => {
@@ -46,18 +62,29 @@ it("changes a new-chat project locally instead of moving a saved channel", async
   const change = vi.fn();
   const user = userEvent.setup();
   render(<WorkspaceControl session={session} value="" onChange={change} />);
-  await user.click(screen.getByRole("button", { name: "Add workspace" }));
+  await user.click(screen.getByRole("button", { name: "Add to section" }));
   await user.click(
     await screen.findByRole("menuitemradio", { name: "Buzz App" }),
   );
-  expect(change).toHaveBeenCalledWith("buzz");
+  expect(change).toHaveBeenCalledWith("section:solo:buzz");
   expect(assign).not.toHaveBeenCalled();
 });
 
 it("keeps project recovery reachable after preferences fail", async () => {
   const refresh = vi.fn(async () => {});
   const session = {
+    sidebarPreferences: createSidebarPreferencesStore({
+      available: false,
+      read: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      }),
+    }).queries,
     soloPreferences: {
+      writable: true,
+      dismissMoveError: () => {},
       snapshot: () => ({ status: "error", error: "Projects unavailable" }),
       subscribe: () => () => {},
       assign: vi.fn(async () => {}),
@@ -66,9 +93,9 @@ it("keeps project recovery reachable after preferences fail", async () => {
   } as unknown as RelaySession;
   const user = userEvent.setup();
   render(<WorkspaceControl session={session} channelId="chat" />);
-  await user.click(screen.getByRole("button", { name: "Add workspace" }));
+  await user.click(screen.getByRole("button", { name: "Add to section" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Retry workspaces" }),
+    await screen.findByRole("menuitem", { name: "Retry sections" }),
   );
   expect(refresh).toHaveBeenCalledOnce();
 });

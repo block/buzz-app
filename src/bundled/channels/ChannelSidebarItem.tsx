@@ -1,3 +1,4 @@
+import { SidebarChatArtwork } from "./SidebarChatArtwork";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
 import {
   memo,
@@ -9,7 +10,6 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -28,7 +28,6 @@ import { UnreadBadge, ordinaryUnread } from "./UnreadBadge";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
-import { avatarMedia } from "../../shared/avatar-source";
 
 type ItemProps = {
   channel: ChannelSummary;
@@ -170,33 +169,21 @@ function ChannelSidebarItemCore({
             channelId={channel.id}
             agents={agents}
           >
-            {channel.participants?.length === 1 ? (
-              <span className={styles.dmAvatar} data-dm-identity="">
-                <Avatar
-                  src={avatarMedia(profile?.picture, session.media)}
-                  alt=""
-                  fallback={channel.name}
-                  size="fill"
-                  shape={profile?.isAgent ? "squircle" : "circle"}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />
-              </span>
-            ) : (channel.participants?.length ?? 0) > 1 ? (
-              <span
-                className={styles.dmCount}
-                data-dm-identity=""
-                data-dm-participant-count=""
-                title={`${channel.participants?.length} other participants`}
-                aria-hidden="true"
-              >
-                {channel.participants?.length}
-              </span>
-            ) : (
-              <Icon size={16} />
-            )}
+            <SidebarChatArtwork
+              channel={channel}
+              profile={profile}
+              session={session}
+              icon={<Icon size={16} />}
+              presence={presence === "unknown" ? undefined : presence}
+            />
           </DmTypingBadge>
         ) : (
-          <Icon size={16} />
+          <SidebarChatArtwork
+            channel={channel}
+            profile={profile}
+            session={session}
+            icon={<Icon size={16} />}
+          />
         )
       }
       nameAccessory={

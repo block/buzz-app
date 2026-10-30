@@ -1,3 +1,4 @@
+import { useSidebarRowInset } from "../../features/channel-navigation/sidebar-presentation";
 import { FadingLabel } from "./FadingLabel";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -37,14 +38,26 @@ export function ChannelSidebarRow({
   onPrepare: (id: string) => void;
   onHideDm?: (id: string) => void;
 }) {
+  const rowInset = useSidebarRowInset();
   const presenceId = useId();
+  const visibility = channel.private ? "private" : channel.visibility;
+  const description = [
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    visibility
+      ? `${visibility === "private" ? "Private" : "Public"} channel`
+      : undefined,
+    presenceDescription,
+  ]
+    .filter(Boolean)
+    .join(". ");
   const selectButton = (
     <NavigationItem
       type="button"
+      inset={rowInset}
       data-channel-id={channel.id}
       data-working={working || undefined}
       aria-current={selected === channel.id ? "page" : undefined}
-      aria-describedby={presenceDescription ? presenceId : undefined}
+      aria-describedby={description ? presenceId : undefined}
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
@@ -84,9 +97,9 @@ export function ChannelSidebarRow({
     >
       <div className={styles.select}>
         {wrapSelect ? wrapSelect(selectButton) : selectButton}
-        {presenceDescription && (
+        {description && (
           <span className="sr-only" id={presenceId}>
-            {presenceDescription}
+            {description}
           </span>
         )}
       </div>

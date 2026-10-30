@@ -1,4 +1,3 @@
-import { useState, type ReactNode } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, render } from "@testing-library/react";
@@ -121,12 +120,7 @@ export function fixture(
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
     channels: { ...base.channels, list: () => list, ensureList() {} },
-    sidebarPreferences: {
-      ...base.sidebarPreferences,
-      sectionCreationWritable: canCreate,
-      snapshot: () => preferences,
-      ensure: async () => {},
-    },
+    sidebarPreferences: { ...base.sidebarPreferences },
     soloPreferences: {
       ...base.soloPreferences,
       sectionCreationWritable: canCreate,
@@ -173,6 +167,7 @@ export function fixture(
   };
   let snapshot: RelaySnapshot = {
     status: "ready",
+    viewer,
     session,
     generation: 1,
     scope,
@@ -208,29 +203,24 @@ export function fixture(
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
         {combined ? (
-          <SidebarCreationHost
-            relay={relay}
-            navigator={navigator}
-            agents={agents}
-          >
-            {(creationAction) =>
-              sidebarVisible && (
-                <PrimarySidebar
-                  creationAction={creationAction}
-                  relay={relay}
-                  navigator={navigator}
-                  target={target}
-                  chatIcons={chatIcons}
-                  chatMenus={chatMenus}
-                  {...(host.federatedIdentity
-                    ? { federatedIdentity: host.federatedIdentity }
-                    : {})}
-                >
-                  <button type="button">Inbox</button>
-                </PrimarySidebar>
-              )
-            }
-          </SidebarCreationHost>
+          <>
+            <NewMenu relay={relay} navigator={navigator} agents={agents} />
+            {sidebarVisible && (
+              <PrimarySidebar
+                relay={relay}
+                navigator={navigator}
+                target={target}
+                chatIcons={chatIcons}
+                chatMenus={chatMenus}
+                {...(host.federatedIdentity
+                  ? { federatedIdentity: host.federatedIdentity }
+                  : {})}
+                teamNavigation={<button type="button">Inbox</button>}
+              >
+                {null}
+              </PrimarySidebar>
+            )}
+          </>
         ) : (
           <SoloInventory
             session={snapshot.session}
@@ -296,19 +286,4 @@ export function fixture(
     },
     activitySnapshot: activity,
   };
-}
-
-function SidebarCreationHost({
-  children,
-  ...props
-}: Parameters<typeof NewMenu>[0] & {
-  children: (action: ReactNode) => ReactNode;
-}) {
-  const [container, setContainer] = useState<HTMLDivElement | null>(null);
-  return (
-    <>
-      <NewMenu {...props} triggerContainer={container} />
-      {children(<div ref={setContainer} />)}
-    </>
-  );
 }

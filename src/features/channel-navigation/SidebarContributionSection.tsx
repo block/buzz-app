@@ -1,3 +1,4 @@
+import { SidebarItems } from "./SidebarItems";
 import {
   useCallback,
   useLayoutEffect,
@@ -235,35 +236,44 @@ function SectionContents({
         )
       }
     >
-      {rows.map((row) => {
-        const trailing = [
-          row.badge,
-          typeof row.count === "number" && Number.isFinite(row.count)
-            ? new Intl.NumberFormat().format(row.count)
-            : undefined,
-          row.status,
-        ]
-          .filter((value) => typeof value === "string" && value.trim())
-          .join(" · ");
-        const destination = entry.select(row);
-        return (
-          <div key={row.id} className={styles.contributionNavigationItem}>
-            <NavigationItem
-              label={row.label}
-              icon={row.icon}
-              trailing={
-                trailing ? (
-                  <span className={styles.contributionMetadata}>
-                    {trailing}
-                  </span>
-                ) : undefined
-              }
-              selected={isSelectedDestination(destination, target)}
-              onClick={() => select(destination)}
-            />
-          </div>
-        );
-      })}
+      <SidebarItems
+        items={rows}
+        label={entry.title}
+        selectedId={
+          rows.find((row) => isSelectedDestination(entry.select(row), target))
+            ?.id
+        }
+      >
+        {(row) => {
+          const trailing = [
+            row.badge,
+            typeof row.count === "number" && Number.isFinite(row.count)
+              ? new Intl.NumberFormat().format(row.count)
+              : undefined,
+            row.status,
+          ]
+            .filter((value) => typeof value === "string" && value.trim())
+            .join(" · ");
+          const destination = entry.select(row);
+          return (
+            <div key={row.id} className={styles.contributionNavigationItem}>
+              <NavigationItem
+                label={row.label}
+                icon={row.icon}
+                trailing={
+                  trailing ? (
+                    <span className={styles.contributionMetadata}>
+                      {trailing}
+                    </span>
+                  ) : undefined
+                }
+                selected={isSelectedDestination(destination, target)}
+                onClick={() => select(destination)}
+              />
+            </div>
+          );
+        }}
+      </SidebarItems>
     </DroppableSidebarSection>
   );
 }

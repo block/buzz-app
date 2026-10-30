@@ -1,3 +1,4 @@
+import { FolderSimpleIcon } from "../../shared/design-system/icons";
 import { RenameSidebarSection } from "./RenameSidebarSection";
 import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
@@ -55,6 +56,7 @@ export function SidebarSection({
   sectionKey,
   title,
   hideTitle = false,
+  hideIcon = false,
   icon,
   session,
   open,
@@ -76,6 +78,7 @@ export function SidebarSection({
   move,
   onRemove,
   onRename,
+  onSettings,
   channelCount,
   removalFocus,
   children,
@@ -91,7 +94,9 @@ export function SidebarSection({
   headerNotice?: ReactNode;
   onRemove?: (() => unknown) | undefined;
   onRename?: ((name: string) => unknown) | undefined;
+  onSettings?: (() => void) | undefined;
   hideMoreActions?: boolean;
+  hideIcon?: boolean;
   channelCount?: number | undefined;
   removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   createChannel?:
@@ -169,7 +174,7 @@ export function SidebarSection({
       <div className={`${styles.channelSection} ${styles.untitledSection}`}>
         <div
           id={id}
-          className={`${styles.sectionContent} ${styles.untitledSectionContent}`}
+          className={`${styles.sectionContent} ${newMessage ? styles.untitledSectionContent : ""}`}
         >
           <div>{children}</div>
         </div>
@@ -211,14 +216,22 @@ export function SidebarSection({
             }}
           >
             <span className={styles.sectionLabel}>
-              {sectionKey === "starred" ? (
+              {sectionKey !== "starred" ? (
+                <FolderSimpleIcon size={16} data-sidebar-group-icon="" />
+              ) : hideIcon ? null : sectionKey === "starred" ? (
                 <SidebarStarIcon />
               ) : typeof icon === "string" && session ? (
                 <SidebarGroupIcon icon={icon} session={session} />
               ) : (
                 icon
               )}
-              <FadingLabel className={styles.sectionTitle}>{title}</FadingLabel>
+              {sectionKey === "starred" ? (
+                <span className="text-label-sm text-primary">{title}</span>
+              ) : (
+                <FadingLabel className={styles.sectionTitle}>
+                  {title}
+                </FadingLabel>
+              )}
             </span>
             <span className={`${styles.sidebarIcon} ${styles.sectionChevron}`}>
               <CaretDownIcon strokeWidth={2.5} size={15} />
@@ -428,6 +441,16 @@ export function SidebarSection({
                   </MenuItem>
                 </>
               )}
+              {onSettings && (
+                <MenuItem
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onSettings();
+                  }}
+                >
+                  Section settings
+                </MenuItem>
+              )}
               {canRename && (
                 <MenuItem
                   onClick={() => {
@@ -505,7 +528,7 @@ export function SidebarSection({
                   : (removalFocus?.() ?? false)
               }
               title={`Remove ${title}?`}
-              description={`${channelCount === undefined ? "Assigned channels" : `${channelCount} ${channelCount === 1 ? "channel" : "channels"}`} will move back to Channels. This does not delete any channels.`}
+              description={`${channelCount === undefined ? "Assigned conversations" : `${channelCount} ${channelCount === 1 ? "conversation" : "conversations"}`} will move back to Sessions or Team messages. This does not delete any conversations.`}
               actions={
                 <>
                   <Button

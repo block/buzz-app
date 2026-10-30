@@ -515,3 +515,27 @@ durable account-owned intent survives without exposing revoked context projectio
   cancellation and explicit local-unread clearing with network content held.
   Only upstream relay policy is modeled, with ephemeral identities. This does not
   establish native GUI behavior or deployed relay compatibility.
+
+## Conversation sidebar
+
+The sidebar keeps Solo sessions and Team messages separate. Pinned includes Inbox
+and every pinned conversation, without a cap. Pinned conversations do not repeat
+in other lists or saved groups.
+
+Sessions shows unfiled Solo sessions by latest activity. Saved Sections follow,
+and can mix Solo sessions, channels and DMs. Team messages below them shows
+unfiled channels and DMs by latest activity. Filing remains owned by the existing
+Solo and Team preference stores.
+Unread and working indicators stay on their conversation rows; they do not change
+the ordering. Showing a list never marks its conversations read.
+
+The unfiled lists initially show five conversations, retaining the open conversation
+within that cap. More reveals the full list; Less returns to five. A list that
+shrinks to five or fewer resets its expansion, so later arrivals respect the cap.
+Pinned is always fully exposed.
+
+New and Search stay at the top of the sidebar across pages. Command-N opens New,
+revealing the sidebar first if needed. New session starts an unfiled Solo draft.
+The creation menu separates Solo (New session) from Team (New DM, New channel),
+with one shared New section action. Optional section instructions and folders
+apply only to new Solo sessions.

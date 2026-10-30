@@ -1,10 +1,3 @@
-import { createPortal } from "react-dom";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuItem,
-} from "../../shared/design-system/ui/Menu";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -20,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RegisteredPage } from "../../features/pages/service";
 import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { AppShell } from "./AppShell";
 import { createAppearance } from "../../shared/theme/service";
 
@@ -880,65 +874,66 @@ it.each([false, true])(
   },
 );
 
-it.each([true, false])(
-  "opens New with Mod+N without navigating (sidebar placement: %s)",
-  async (creationInSidebar) => {
-    const current = createServices();
-    services = current;
-    const select = vi.fn();
-    const create = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <ToastProvider>
-        <AppShell
-          pages={[]}
-          selected="buzz.channels/channels"
-          navigationAttempt="same-conversation"
-          onSelect={select}
-          tone="default"
-          communities={current.communities}
-          accountActions={current.accountActions}
-          appearance={testAppearance}
-          searchServices={current}
-          creationInSidebar={creationInSidebar}
-          sidebar={(_, action) => (
-            <aside aria-label="Sidebar">
-              {creationInSidebar
-                ? action
-                : "Contributed sidebar without children"}
-            </aside>
-          )}
-          creationAction={(open, onOpenChange, container) => (
-            <MenuRoot open={open} onOpenChange={onOpenChange}>
-              {container &&
-                createPortal(
-                  <MenuTrigger render={<button type="button">New</button>} />,
-                  container,
-                )}
-              <MenuPopup>
-                <MenuItem onClick={create}>New chat</MenuItem>
-              </MenuPopup>
-            </MenuRoot>
-          )}
-        >
-          Current conversation
-        </AppShell>
-      </ToastProvider>,
-    );
-    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
-    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+it("keeps New and Search in the sidebar across pages and reveals New with Mod-N", async () => {
+  const current = createServices();
+  services = current;
+  const create = vi.fn();
+  const pages: RegisteredPage[] = ["channels", "agents"].map((id) => ({
+    id,
+    key: `buzz.${id}/${id}`,
+    pluginId: `buzz.${id}`,
+    revision: "1",
+    title: id,
+    component: () => null,
+    primary: true,
+  }));
+  const shell = (selected: string) => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected={selected}
+        navigationAttempt={selected}
+        onSelect={() => {}}
+        tone="default"
+        sidebar={() => (
+          <SidebarFrame label="Sidebar">Conversations</SidebarFrame>
+        )}
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+        searchServices={current}
+        creationAction={
+          <button type="button" data-new-conversation-menu onClick={create}>
+            New
+          </button>
+        }
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const view = render(shell("buzz.channels/channels"));
+  for (const selected of ["buzz.channels/channels", "buzz.agents/agents"]) {
+    view.rerender(shell(selected));
+    const sidebar = screen.getByRole("complementary", { name: "Sidebar" });
+    expect(within(sidebar).getByRole("button", { name: "New" })).toBeVisible();
     expect(
-      await screen.findByRole("menuitem", { name: "New chat" }),
+      within(sidebar).getByRole("button", { name: "Search Buzz" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Hide sidebar" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(select).not.toHaveBeenCalled();
-    expect(create).not.toHaveBeenCalled();
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("menuitem", { name: "New chat" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "New" }));
-    await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
-    expect(create).toHaveBeenCalledOnce();
-  },
-);
+    expect(screen.getAllByRole("button", { name: "Search Buzz" })).toHaveLength(
+      1,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    expect(document.getElementById("shell-navigation")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+    expect(document.getElementById("shell-navigation")).toHaveAttribute(
+      "aria-hidden",
+      "false",
+    );
+    expect(within(sidebar).getByRole("button", { name: "New" })).toHaveFocus();
+  }
+  expect(create).toHaveBeenCalledTimes(2);
+});

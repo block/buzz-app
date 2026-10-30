@@ -1,3 +1,4 @@
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import { expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { parseKitRecord } from "../channel-templates/model";
@@ -84,6 +85,15 @@ it("preserves ordinary Canvas and refuses malformed or manually changed workspac
 function fixture() {
   const kit = { status: "ready", entries: [] as unknown[] };
   const session = {
+    sidebarPreferences: createSidebarPreferencesStore({
+      available: false,
+      read: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      }),
+    }).queries,
     soloPreferences: {
       writable: true,
       refresh: vi.fn(async () => {}),
@@ -113,7 +123,7 @@ it("loads exact project defaults and blocks when the catalog fails", async () =>
     },
   ];
   expect(await loadChatSetup(f.session, "work")).toEqual({
-    projectId: "work",
+    projectId: "section:solo:work",
     canvas: "Work here",
     agents: [],
     revision: "head",

@@ -15,6 +15,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
   type ComponentProps,
@@ -28,6 +29,16 @@ import styles from "../../bundled/channels/Channels.module.css";
 
 const Writable = createContext(false);
 const CREATE_SECTION = "create-section";
+const DragDomain = createContext("channels");
+const DragPermissions = createContext<Record<string, boolean>>({});
+type DragOwner = {
+  writable: boolean;
+  onMove(channelId: string, sectionKey: string): void;
+  onReorder(sectionKey: string, overKey: string): void;
+  onCreateSection?: ((channelId: string) => void) | undefined;
+  overlay(id: string, group: boolean): ReactNode;
+};
+const DragOwners = createContext<Map<string, DragOwner> | undefined>(undefined);
 
 // Group gaps target the neighbour whose insertion edge lies in that same gap.
 const sidebarCollisions: CollisionDetection = (args) => {
@@ -36,7 +47,9 @@ const sidebarCollisions: CollisionDetection = (args) => {
     return pointerWithin({
       ...args,
       droppableContainers: args.droppableContainers.filter(
-        ({ data }) => (data.current?.groupDomain ?? "channels") === domain,
+        ({ data }) =>
+          data.current?.mixedSection ||
+          (data.current?.groupDomain ?? "channels") === domain,
       ),
     });
   const groups = args.droppableContainers
@@ -92,7 +105,9 @@ export function ChannelSidebarDnd({
   onCreateSection,
   overlay,
   children,
+  domain = "channels",
 }: {
+  domain?: "channels" | "solo";
   writable: boolean;
   onMove: (channelId: string, sectionKey: string) => void;
   onReorder: (sectionKey: string, overKey: string) => void;
@@ -100,8 +115,36 @@ export function ChannelSidebarDnd({
   overlay: (id: string, group: boolean) => ReactNode;
   children: ReactNode;
 }) {
-  const [dragging, setDragging] = useState<{ id: string; group: boolean }>();
+  const inherited = useContext(DragOwners);
+  const permissions = useContext(DragPermissions);
+  const local = useRef(new Map<string, DragOwner>());
+  const owners = inherited ?? local.current;
+  useLayoutEffect(() => {
+    const owner = { writable, onMove, onReorder, onCreateSection, overlay };
+    owners.set(domain, owner);
+    return () => {
+      if (owners.get(domain) === owner) owners.delete(domain);
+    };
+  }, [owners, domain, writable, onMove, onReorder, onCreateSection, overlay]);
+  const [dragging, setDragging] = useState<{
+    id: string;
+    group: boolean;
+    domain: string;
+  }>();
   const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
+  const content = (
+    <DragOwners.Provider value={owners}>
+      <DragDomain.Provider value={domain}>
+        <DragPermissions.Provider
+          value={{ ...permissions, [domain]: writable }}
+        >
+          <Writable.Provider value={writable}>{children}</Writable.Provider>
+        </DragPermissions.Provider>
+      </DragDomain.Provider>
+    </DragOwners.Provider>
+  );
+  // Mixed inventories share one drag surface; each source keeps its own writer.
+  if (inherited) return content;
   return (
     <DndContext
       sensors={sensors}
@@ -112,26 +155,35 @@ export function ChannelSidebarDnd({
         setDragging({
           id: String(active.id),
           group: !!active.data.current?.group,
+          domain: active.data.current?.owner ?? domain,
         })
       }
       onDragCancel={() => setDragging(undefined)}
       onDragEnd={({ active, over }) => {
         setDragging(undefined);
         if (!over) return;
+        const owner = owners.get(
+          over.data.current?.mixedSection
+            ? over.data.current.groupDomain
+            : (active.data.current?.owner ?? domain),
+        );
+        if (!owner?.writable) return;
         if (active.data.current?.group) {
           if (over.id !== active.id)
-            onReorder(String(active.id), String(over.id));
+            owner.onReorder(String(active.id), String(over.id));
         } else if (over.id === CREATE_SECTION) {
-          if (writable) onCreateSection?.(String(active.id));
+          if (owner.writable) owner.onCreateSection?.(String(active.id));
         } else if (over.id !== active.data.current?.sectionKey)
-          onMove(String(active.id), String(over.id));
+          owner.onMove(String(active.id), String(over.id));
       }}
     >
-      <Writable.Provider value={writable}>{children}</Writable.Provider>
+      {content}
       {createPortal(
         // The optimistic move relocates the row, so nothing remains to settle back onto.
         <DragOverlay dropAnimation={null}>
-          {dragging ? overlay(dragging.id, dragging.group) : null}
+          {dragging
+            ? owners.get(dragging.domain)?.overlay(dragging.id, dragging.group)
+            : null}
         </DragOverlay>,
         document.body,
       )}
@@ -139,7 +191,7 @@ export function ChannelSidebarDnd({
   );
 }
 
-function CreateSectionDropTarget() {
+export function CreateSectionDropTarget() {
   const { active } = useDndContext();
   const enabled =
     useContext(Writable) && !!active && !active.data.current?.group;
@@ -205,15 +257,21 @@ export function DraggableChannel({
   channelId,
   sectionKey,
   children,
+  domain,
 }: {
+  domain?: "channels" | "solo";
   channelId: string;
   sectionKey: string;
   children: ReactNode;
 }) {
+  const inheritedDomain = useContext(DragDomain);
+  const owner = domain ?? inheritedDomain;
+  const permissions = useContext(DragPermissions);
+  const writable = useContext(Writable);
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: channelId,
-    data: { sectionKey, groupDomain: "channels" },
-    disabled: !useContext(Writable),
+    data: { sectionKey, groupDomain: owner, owner },
+    disabled: domain ? !permissions[domain] : !writable,
   });
   return (
     <div
@@ -243,7 +301,12 @@ export function DroppableSidebarSection({
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
-    data: { group: reorderable, groupIndex, groupDomain },
+    data: {
+      group: reorderable,
+      groupIndex,
+      groupDomain,
+      mixedSection: section.sectionKey.startsWith("group:"),
+    },
     disabled,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
     // that queue after each render, losing ids queued in between: a section
@@ -254,7 +317,7 @@ export function DroppableSidebarSection({
   });
   const drag = useDraggable({
     id: section.sectionKey,
-    data: { group: true, groupIndex, groupDomain },
+    data: { group: true, groupIndex, groupDomain, owner: "channels" },
     disabled: !reorderable,
   });
   const suppressClick = useRef(false);

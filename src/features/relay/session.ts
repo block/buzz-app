@@ -1,3 +1,7 @@
+import {
+  sectionPreferences,
+  sectionKey,
+} from "../channel-navigation/section-preferences";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
@@ -1707,7 +1711,7 @@ export function createRelaySession(
                 ? [agentChoices.refresh("templates")]
                 : []),
               ...(setup.groupId || setup.starred
-                ? [sidebarPreferences.queries.refresh()]
+                ? [sectionPreferences(session).refresh()]
                 : []),
             ]);
             lifetime.signal.throwIfAborted();
@@ -1741,10 +1745,16 @@ export function createRelaySession(
                 "Starred placement is unavailable; refresh your sidebar before creating the channel",
               );
             if (setup.groupId) {
-              const state = sidebarPreferences.queries.snapshot();
+              const state = sectionPreferences(session).snapshot();
               if (
-                !sidebarPreferences.queries.writable ||
-                !state.data?.sections.some((g) => g.id === setup.groupId)
+                !sectionPreferences(session).writable ||
+                !state.data?.sections.some(
+                  (g) =>
+                    g.id ===
+                    (setup.groupId.startsWith("section:")
+                      ? setup.groupId
+                      : sectionKey("team", setup.groupId)),
+                )
               )
                 throw new Error(
                   "The destination group is unavailable; refresh your sidebar before creating the channel",
@@ -1764,17 +1774,21 @@ export function createRelaySession(
             await sidebarPreferences.queries.setStar(id, true);
           },
           async place(id, groupId) {
-            await settledPreferences();
-            const state = sidebarPreferences.queries.snapshot();
+            const sections = sectionPreferences(session);
+            if (!sections.writable) await sections.refresh();
+            groupId = groupId.startsWith("section:")
+              ? groupId
+              : sectionKey("team", groupId);
+            const state = sections.snapshot();
             if (
-              !sidebarPreferences.queries.writable ||
+              !sections.writable ||
               !state.data?.sections.some((g) => g.id === groupId)
             )
               throw new Error(
                 "The destination group changed or is unavailable; keep the partial channel and choose its group separately",
               );
             if (state.data.assignments[id] === groupId) return;
-            await sidebarPreferences.queries.assign(id, groupId);
+            await sections.assign(id, groupId);
           },
         })
       : undefined;

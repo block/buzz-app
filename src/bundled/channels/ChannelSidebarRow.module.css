@@ -128,3 +128,7 @@
   width: max-content;
   max-width: var(--available-width);
 }
+
+.row .select [data-variant="row"][data-inset] {
+  padding-inline-start: calc(var(--space-2) + var(--space-6));
+}

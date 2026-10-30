@@ -213,6 +213,9 @@ it("starts Solo preferences empty and changes only the distinct Solo catalog coo
     ).toBe(false);
     await f.preferences.ensure();
     expect(f.preferences.snapshot().data?.sections[0]?.name).toBe("OG work");
+    await solo.queries.renameSection("work", "Shared work");
+    expect(solo.queries.snapshot().data?.sections[0]?.name).toBe("Shared work");
+    expect(solo.queries.snapshot().data?.assignments[channel]).toBe("work");
     await solo.queries.removeSection("work");
     expect(solo.queries.snapshot().data?.sections).toEqual([]);
     expect(f.star).not.toHaveBeenCalled();

@@ -197,20 +197,7 @@ export function ConvertToChannel({
           updateChatConversion(session, id, exact);
         }
         active.throwIfAborted();
-        // A channel is no longer filed in a Solo project.
-        const projects = session.soloPreferences;
-        if (projects.snapshot().status !== "unsupported") {
-          await projects.refresh();
-          active.throwIfAborted();
-          const filing = projects.snapshot();
-          if (filing.status !== "ready")
-            throw new Error(
-              filing.error ?? "Solo workspaces could not be read. Try again.",
-            );
-          if (filing.data?.assignments[id])
-            await projects.assign(id, undefined);
-          active.throwIfAborted();
-        }
+        // Conversion changes access, not the viewer’s section placement.
         updateChatConversion(session, id, undefined);
         if (!active.aborted) {
           notify("Converted to channel.", "success");
@@ -319,9 +306,7 @@ export function ConvertToChannel({
         </RadioGroup>
       </Field>
       {converted && (
-        <p role="status">
-          Channel converted. Finish removing it from its Solo workspace.
-        </p>
+        <p role="status">Channel converted. Finish confirming its settings.</p>
       )}
       {!base && !error && <p role="status">Loading chat details…</p>}
       {base && !base.canEdit && !canFinish && (

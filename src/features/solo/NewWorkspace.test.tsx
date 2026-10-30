@@ -67,6 +67,9 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "Work" },
   });
+  fireEvent.click(
+    screen.getByRole("switch", { name: "Add custom Solo instructions" }),
+  );
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Keep changes small" },
   });
@@ -81,7 +84,9 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
     expect(
       screen.getByRole("textbox", { name: /^Instructions/ }),
     ).toBeDisabled();
-    expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("switch", { name: "Add custom Solo instructions" }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("textbox", { name: /^Folders/ })).toBeDisabled();
   } finally {
     release();
@@ -124,6 +129,9 @@ it("rejects oversized defaults with their real community envelope before creatin
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "Work" },
   });
+  fireEvent.click(
+    screen.getByRole("switch", { name: "Add custom Solo instructions" }),
+  );
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "a".repeat(16_095) },
   });
@@ -174,6 +182,9 @@ it("offers only Close when the saved project defaults were changed elsewhere", a
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
     target: { value: "Work" },
   });
+  fireEvent.click(
+    screen.getByRole("switch", { name: "Add custom Solo instructions" }),
+  );
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Keep changes small" },
   });
@@ -184,7 +195,7 @@ it("offers only Close when the saved project defaults were changed elsewhere", a
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Workspace defaults changed",
+      "Section defaults changed",
     ),
   );
   expect(
@@ -193,4 +204,45 @@ it("offers only Close when the saved project defaults were changed elsewhere", a
   expect(save).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByText("Close", { selector: "button span" }));
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("preserves toggled-off defaults for reopening but omits them when creating", async () => {
+  const create = vi.fn(async () => {});
+  const save = vi.fn();
+  const close = vi.fn();
+  render(
+    <NewWorkspace
+      create={create}
+      close={close}
+      onCreated={vi.fn()}
+      session={
+        {
+          scope: "https://relay.example.test:viewer",
+          channelKit: { save },
+        } as unknown as RelaySession
+      }
+    />,
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+    target: { value: "Work" },
+  });
+  const toggle = screen.getByRole("switch", {
+    name: "Add custom Solo instructions",
+  });
+  expect(screen.queryByRole("textbox", { name: /^Instructions/ })).toBeNull();
+  fireEvent.click(toggle);
+  fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
+    target: { value: "Keep changes small" },
+  });
+  fireEvent.click(toggle);
+  expect(screen.queryByRole("textbox", { name: /^Instructions/ })).toBeNull();
+  fireEvent.click(toggle);
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "Keep changes small",
+  );
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(create).toHaveBeenCalledOnce();
+  expect(save).not.toHaveBeenCalled();
 });

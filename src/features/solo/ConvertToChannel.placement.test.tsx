@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -14,8 +13,6 @@ import { keypair, metadata, signed } from "../relay/testing";
 import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
 import { coordinate, kitTag, type KitRecord } from "../channel-templates/model";
-import { soloChat } from "../agents/solo-chat";
-import type { RelayData } from "../relay/service";
 import { ConvertToChannel } from "./ConvertToChannel";
 import { SOLO_LABEL } from "./labels";
 import { chatConversion } from "./conversion";
@@ -56,9 +53,7 @@ function fixture() {
   });
   const events: RelayEvent[] = [originalEvent];
   let failCatalog = false;
-  let hideRemoval = false;
   let failAfterConversion = false;
-  let loseRemovalAck = false;
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9002) {
       labels = event.tags.flatMap(([tag, value]) =>
@@ -68,10 +63,6 @@ function fixture() {
       failCatalog = failAfterConversion;
     } else if (event.kind === 30078) {
       events.push(event);
-      if (loseRemovalAck) {
-        hideRemoval = true;
-        throw new Error("Lost removal acknowledgment");
-      }
     }
   });
   const owner = createRelaySession(
@@ -114,9 +105,7 @@ function fixture() {
               ["p", viewer.pubkey, "", "owner"],
             ],
           }),
-          ...events.filter(
-            (event) => !hideRemoval || event.id === originalEvent.id,
-          ),
+          ...events,
         ].filter((event) =>
           filters.some((filter) => matchesEvent(event, filter)),
         );
@@ -173,13 +162,6 @@ function fixture() {
     failAfterConversion: () => {
       failAfterConversion = true;
     },
-    loseRemovalAck: () => {
-      loseRemovalAck = true;
-    },
-    recover: () => {
-      failCatalog = false;
-      hideRemoval = false;
-    },
   };
 }
 async function submit() {
@@ -187,91 +169,33 @@ async function submit() {
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
 }
-it("confirms the label change before removing only its project assignment", async () => {
-  const f = fixture();
-  await f.mount();
-  await submit();
-  await waitFor(() => expect(f.converted).toHaveBeenCalledOnce());
-  expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([
-    9002, 30078,
-  ]);
-  expect(f.publish.mock.calls[0]?.[0].tags).toEqual([
-    ["h", id],
-    ["name", "Work"],
-    ["about", "Notes"],
-    ["t", "label"],
-  ]);
-  const saved = JSON.parse(f.publish.mock.calls[1]?.[0].content ?? "null");
-  expect(saved.value).toEqual({
-    ...f.original.value,
-    assignments: { [other]: "work" },
-  });
-  const details = await f.session.channelDetails.load(id);
-  expect(details).toMatchObject({
-    name: "Work",
-    description: "Notes",
-    ttlSeconds: 86400,
-    labels: ["label"],
-  });
-  expect(chatConversion(f.session, id)).toBeUndefined();
-});
-it("retains recovery on a failed project read after conversion, reopens and unfiles without another metadata command", async () => {
-  const f = fixture();
-  f.failAfterConversion();
-  const view = await f.mount();
-  await submit();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Solo catalog unavailable",
-  );
-  expect(
-    screen.getByText(
-      "Channel converted. Finish removing it from its Solo workspace.",
-    ),
-  ).toBeVisible();
-  expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([9002]);
-  expect(f.converted).not.toHaveBeenCalled();
-  // The cleared label routes the channel even while its project filing remains.
-  const relay = {
-    snapshot: () => ({
-      status: "ready",
-      viewer: f.viewer.pubkey,
-      session: f.session,
-      scope: f.session.scope,
-    }),
-  } as unknown as RelayData;
-  await expect(
-    soloChat(() => relay, f.viewer.pubkey, id, new AbortController().signal),
-  ).resolves.toBe(false);
-  view.unmount();
-  f.recover();
-  await f.mount();
-  fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
-  await waitFor(() => expect(f.converted).toHaveBeenCalledOnce());
-  expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([
-    9002, 30078,
-  ]);
-});
-it("reconciles unknown removal from the fresh selected record without replaying either operation", async () => {
-  const f = fixture();
-  f.loseRemovalAck();
-  await f.mount();
-  await submit();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Lost removal acknowledgment",
-  );
-  expect(f.converted).not.toHaveBeenCalled();
-  const removal = f.publish.mock.calls.find(
-    ([event]) => event.kind === 30078,
-  )?.[0];
-  expect(removal).toBeDefined();
-  expect(chatConversion(f.session, id)?.converted).toBe(true);
-  act(() => f.recover());
-  fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
-  await waitFor(() => expect(f.converted).toHaveBeenCalledOnce());
-  expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([
-    9002, 30078,
-  ]);
-  expect(f.session.soloPreferences.snapshot().data?.assignments[id]).toBe(
-    undefined,
-  );
-});
+it.each([false, true])(
+  "keeps section filing and defaults when converting, even if catalog later fails (%s)",
+  async (failCatalog) => {
+    const f = fixture();
+    await f.session.soloPreferences.refresh();
+    if (failCatalog) f.failAfterConversion();
+    await f.mount();
+    await submit();
+    await waitFor(() => expect(f.converted).toHaveBeenCalledOnce());
+    expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([9002]);
+    expect(f.publish.mock.calls[0]?.[0].tags).toEqual([
+      ["h", id],
+      ["name", "Work"],
+      ["about", "Notes"],
+      ["t", "label"],
+    ]);
+    expect(f.session.soloPreferences.snapshot().data?.assignments).toEqual({
+      [id]: "work",
+      [other]: "work",
+    });
+    const details = await f.session.channelDetails.load(id);
+    expect(details).toMatchObject({
+      name: "Work",
+      description: "Notes",
+      ttlSeconds: 86400,
+      labels: ["label"],
+    });
+    expect(chatConversion(f.session, id)).toBeUndefined();
+  },
+);

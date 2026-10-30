@@ -1787,6 +1787,12 @@
       var(--space-half) var(--space-2);
     border-radius: var(--radius-row);
   }
+  .buzz-sidebar-navigation
+    .navigation-item[data-variant="row"][data-density="medium"] {
+    min-height: calc(var(--space-8) + var(--space-half));
+    height: auto;
+    padding-block: var(--space-1);
+  }
   .buzz-sidebar-navigation .navigation-item[data-multiline] {
     height: auto;
   }

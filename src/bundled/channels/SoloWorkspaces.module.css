@@ -80,15 +80,15 @@
   min-width: 0;
 }
 /* Show more and Show less are text actions sharing one row: Show more aligns
-   with the chat icons and titles; Show less ends on the row inset. */
+   with the chat icons and titles; both actions stay together at the leading edge. */
 .showMore {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: var(--space-2);
   margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
 }
 .showMore > [data-solo-show-more-expand] {
-  flex: 1;
+  flex: 0 0 auto;
   width: auto;
   min-width: 0;
   padding-inline-start: calc(
@@ -264,7 +264,7 @@
 .projectHeader:is(
     :hover,
     [data-context-menu-present],
-    :focus-within,
+    :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
   > [data-solo-overflow-action] {
@@ -398,4 +398,18 @@
     [data-solo-working-indicator] {
     display: none;
   }
+}
+
+/* Projects and conversation lists share one rhythm in the combined sidebar. */
+.sidebarContents[data-combined] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.sidebarContents[data-combined] > [data-project] {
+  margin-block-start: 0;
+}
+
+.showMore[data-inset] {
+  padding-inline-start: var(--space-6);
 }

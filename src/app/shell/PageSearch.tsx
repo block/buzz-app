@@ -59,10 +59,12 @@ export function PageSearch({
   pages,
   onSelect,
   services,
+  variant = "chrome",
 }: {
   pages: readonly RegisteredPage[];
   onSelect: (key: string) => void;
   services?: SearchServices | undefined;
+  variant?: "chrome" | "subtle";
 }) {
   const [open, setOpen] = useState(false);
   const [contentPresent, setContentPresent] = useState(false);
@@ -168,8 +170,7 @@ export function PageSearch({
       <IconButton
         hint="familiar"
         ref={trigger}
-        variant="inverted"
-        size="md"
+        variant={variant}
         shape="round"
         aria-label="Search Buzz"
         title={`Search Buzz (${shortcut})`}

@@ -21,6 +21,7 @@ import { ChannelSidebarItem } from "./ChannelSidebarItem";
 afterEach(cleanup);
 
 const noTyping = Object.freeze([]);
+const emptyChoices = { identities: [] };
 
 function owner(profiles = new Map<string, Profile>()) {
   const listeners = new Set<() => void>();
@@ -60,6 +61,7 @@ function owner(profiles = new Map<string, Profile>()) {
     },
     media: (url: string) => `media:${url}`,
     profiles: {
+      ensure: async () => {},
       snapshot: () => profiles,
       subscribe: () => () => {},
     },
@@ -271,8 +273,7 @@ it("keeps live unread updates and uses replacement session callbacks across row 
   );
   const activeRow = screen.getByRole("button", { name: /^Alpha/ });
   expect(activeRow).toHaveAttribute("aria-current", "page");
-  expect(activeRow.querySelector("svg")).toHaveAttribute("width", "1rem");
-  expect(activeRow.querySelector("svg")).toHaveAttribute("height", "1rem");
+  expect(activeRow.querySelector(".buzz-avatar")).toHaveTextContent("A");
   expect(
     screen.getByRole("img", { name: /working in Alpha/ }),
   ).toBeInTheDocument();
@@ -391,17 +392,25 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     view.rerender(
       <ChannelSidebarItem
         {...props}
+        session={
+          {
+            ...owner().session,
+            agentChoices: {
+              subscribe: () => () => {},
+              snapshot: () => emptyChoices,
+            },
+          } as unknown as RelaySession
+        }
         channel={{ ...props.channel, participants }}
       />,
     );
-    expect(row.querySelector(".buzz-avatar")).toBeNull();
+    expect(row.querySelectorAll(".buzz-avatar")).toHaveLength(
+      participants.length,
+    );
     expect(row).not.toHaveAccessibleDescription();
     expect(row).toHaveAccessibleName("Alice");
-    if (participants.length) {
-      expect(
-        row.querySelector("[title='2 other participants']"),
-      ).toHaveTextContent("2");
-    } else expect(row.querySelector("svg")).toBeInTheDocument();
+    if (!participants.length)
+      expect(row.querySelector("svg")).toBeInTheDocument();
   }
 });
 

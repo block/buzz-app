@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
+import { sectionPreferences } from "../channel-navigation/section-preferences";
 import { projectTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -161,6 +163,15 @@ function setup(available = true) {
   };
   const profileSnapshot = new Map();
   const session = {
+    sidebarPreferences: createSidebarPreferencesStore({
+      available: false,
+      read: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      }),
+    }).queries,
     viewer,
     channelWrites,
     messages,
@@ -381,6 +392,8 @@ it.each([false, true])(
           }),
         },
         soloPreferences: {
+          subscribe: () => () => {},
+          dismissMoveError: () => {},
           writable: true,
           refresh: async () => {},
           snapshot: () => ({
@@ -393,7 +406,12 @@ it.each([false, true])(
         },
         canvas: { read: async () => undefined, save: canvasSave },
       });
-      test.messages.send.mockImplementation(() => {
+      test.messages.send.mockImplementation((channelId) => {
+        expect(
+          sectionPreferences(test.session).snapshot().data?.assignments[
+            channelId
+          ],
+        ).toBe("section:solo:work");
         sequence.push("send");
         return "d".repeat(64);
       });
@@ -418,9 +436,9 @@ it.each([false, true])(
       await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
       expect(test.channelWrites.create).toHaveBeenCalledOnce();
       await waitFor(() =>
-        // The chat joins its workspace at once and its message goes out;
-        // the Canvas is saved behind them.
-        expect(sequence).toEqual(["placement", "send", "canvas"]),
+        // Filing is visible before send (asserted in the callback); its durable
+        // write may queue. Canvas still follows the first message.
+        expect(sequence).toEqual(["send", "placement", "canvas"]),
       );
     } finally {
       vi.unstubAllGlobals();
@@ -621,6 +639,8 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
       .mockRejectedValueOnce(new Error("Settings unavailable"));
     Object.assign(f.session, {
       soloPreferences: {
+        subscribe: () => () => {},
+        dismissMoveError: () => {},
         writable: true,
         refresh: refreshSolo,
         snapshot: () => ({
@@ -737,10 +757,11 @@ async function projectSetup() {
   const assign = vi.fn(async (_id: string, _sectionId?: string) => {});
   Object.assign(f.session, {
     soloPreferences: {
+      subscribe: () => () => {},
+      dismissMoveError: () => {},
       writable: true,
       refresh: async () => {},
       snapshot: () => preferences,
-      subscribe: () => () => {},
       assign,
     },
     channelKit: {
@@ -805,12 +826,10 @@ it("re-entering a mounted project clears changed defaults", async () => {
       onStarted={started}
     />,
   );
-  expect(
-    screen.getByRole("button", { name: "Workspace: Other" }),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Section: Other" })).toBeVisible();
   act(() => resetNewChatProject(scope, "work"));
   expect(
-    await screen.findByRole("button", { name: "Workspace: Work" }),
+    await screen.findByRole("button", { name: "Section: Work" }),
   ).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Chat settings" }));
   expect(
@@ -820,7 +839,11 @@ it("re-entering a mounted project clears changed defaults", async () => {
   await userEvent.type(screen.getByRole("textbox"), "Start in Work");
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(f.assign).toHaveBeenCalledWith(expect.any(String), "work");
+  expect(f.assign).toHaveBeenCalledWith(
+    expect.any(String),
+    "work",
+    expect.any(AbortSignal),
+  );
   expect(f.saveCanvas).toHaveBeenCalledWith(
     expect.any(String),
     "work instructions",
@@ -850,17 +873,21 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
         onStarted={started}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Workspace: Work" }));
+    await user.click(screen.getByRole("button", { name: "Section: Work" }));
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Other" }),
     );
     await user.type(screen.getByRole("textbox"), "Keep this project");
     expect(
-      screen.getByRole("button", { name: "Workspace: Other" }),
+      screen.getByRole("button", { name: "Section: Other" }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
+    expect(f.assign).toHaveBeenCalledWith(
+      expect.any(String),
+      "other",
+      expect.any(AbortSignal),
+    );
   } finally {
     storage.mockRestore();
   }
@@ -879,9 +906,7 @@ it("inherits the project's defaults for two consecutive new chats", async () => 
         onStarted={started}
       />,
     );
-    expect(
-      screen.getByRole("button", { name: "Workspace: Work" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Section: Work" })).toBeVisible();
     await user.type(screen.getByRole("textbox"), `Chat ${index}`);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledTimes(index + 1));
@@ -938,7 +963,7 @@ it.each([
     }
     await user.click(
       screen.getByRole("button", {
-        name: fromProject ? "Workspace: Work" : "Add workspace",
+        name: fromProject ? "Section: Work" : "Add to section",
       }),
     );
     await user.click(
@@ -966,7 +991,11 @@ it.each([
       ["a".repeat(64)],
     );
     await waitFor(() =>
-      expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other"),
+      expect(f.assign).toHaveBeenCalledWith(
+        expect.any(String),
+        "other",
+        expect.any(AbortSignal),
+      ),
     );
     expect(f.saveCanvas).toHaveBeenCalledWith(
       expect.any(String),
@@ -1040,6 +1069,8 @@ it.each([{ fields: { name: 7 } }, { fields: { name: "x".repeat(121) } }])(
     Object.assign(h.session, {
       channelKit: { refresh: refreshSetup },
       soloPreferences: {
+        subscribe: () => () => {},
+        dismissMoveError: () => {},
         refresh: refreshPreferences,
         snapshot: () => ({
           data: { sections: [{ id: "work", name: "Work" }] },

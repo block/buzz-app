@@ -31,3 +31,14 @@
   max-block-size: calc(3.5 * 4rem + 3 * var(--space-2));
   overflow-y: auto;
 }
+
+.newSectionForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+.sectionDefaults {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}

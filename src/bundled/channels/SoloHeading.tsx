@@ -1,3 +1,4 @@
+import { sectionPreferences } from "../../features/channel-navigation/section-preferences";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
 import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
@@ -94,7 +95,7 @@ export function SoloToolbar({
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const owner = useSoloOwner(session, channel);
   const [readError, setReadError] = useState<string>();
-  const preferences = session.soloPreferences;
+  const preferences = sectionPreferences(session);
   return (
     <>
       {region && (
@@ -232,7 +233,7 @@ export function SoloToolbar({
  * the store keeps a move record for it, pending or failed, and until its
  * failure is dismissed. */
 export function useSoloMoveRecovery(session: RelaySession) {
-  const preferences = session.soloPreferences;
+  const preferences = sectionPreferences(session);
   const placement = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,

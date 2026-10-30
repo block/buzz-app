@@ -811,6 +811,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "selected",
       "highlighted",
       "inside SidebarNavigation",
+      "medium navigation rows",
       "multiline stacked labels",
       "NavigationCard with independent details",
       "tonal and inset NavigationCard with nested branch interaction and one hovered surface per sidebar",

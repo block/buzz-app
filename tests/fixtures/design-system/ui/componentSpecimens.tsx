@@ -1279,6 +1279,18 @@ function NavigationItemSpecimen() {
   const [dropTarget, setDropTarget] = useState(false);
   return (
     <div className="component-specimen-stack">
+      <SpecimenGroup
+        label="Medium conversation rows"
+        code={`<NavigationItem density="medium" label="Design discussion" icon={<HashIcon size={20} />} />`}
+      >
+        <div className="component-navigation-section-demo">
+          <NavigationItem
+            density="medium"
+            label="Design discussion"
+            icon={<HashIcon size={20} aria-hidden="true" />}
+          />
+        </div>
+      </SpecimenGroup>
       {/* Interactive: clicking moves `selected`, so the selected fill and the
           unselected rest state are both visible at once and comparable. */}
       <SpecimenGroup

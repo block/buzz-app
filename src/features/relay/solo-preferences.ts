@@ -163,6 +163,22 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           active,
         );
       }),
+    renameSection: ({ sectionId, name }, signal) =>
+      serialize(async () => {
+        const { value, entry, active } = await current(signal);
+        if (!value.groups.some((group) => group.id === sectionId))
+          throw new Error("This section is unavailable.");
+        return save(
+          {
+            ...value,
+            groups: value.groups.map((group) =>
+              group.id === sectionId ? { ...group, name: name.trim() } : group,
+            ),
+          },
+          entry,
+          active,
+        );
+      }),
     groupsOnly: true,
     createSection: (section, signal) =>
       serialize(async () => {

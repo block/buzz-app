@@ -1,3 +1,8 @@
+import {
+  sectionPreferences,
+  sectionKey,
+  sectionOwner,
+} from "../channel-navigation/section-preferences";
 import { useSoloNavigation } from "../channel-navigation/solo-navigation-react";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import { useEffect, useState } from "react";
@@ -31,19 +36,22 @@ export function WorkspaceControl({
 }) {
   const regions = useSoloNavigation(session);
   const [snapshot, setSnapshot] = useState(() =>
-    session.soloPreferences.snapshot(),
+    sectionPreferences(session).snapshot(),
   );
   useEffect(() => {
-    const subscribe = session.soloPreferences.subscribe;
+    const subscribe = sectionPreferences(session).subscribe;
     if (typeof subscribe !== "function") return;
-    return subscribe(() => setSnapshot(session.soloPreferences.snapshot()));
+    return subscribe(() => setSnapshot(sectionPreferences(session).snapshot()));
   }, [session]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const projectId =
+  const selectedId =
     value ??
     (channelId ? snapshot.data?.assignments[channelId] : undefined) ??
     "";
+  const projectId = selectedId
+    ? sectionKey(sectionOwner(selectedId).owner, sectionOwner(selectedId).id)
+    : "";
   const project = snapshot.data?.sections.find((item) => item.id === projectId);
   const choose = (next: string) => {
     setError("");
@@ -58,14 +66,14 @@ export function WorkspaceControl({
       return;
     }
     setBusy(true);
-    void session.soloPreferences
+    void sectionPreferences(session)
       .assign(channelId, next || undefined)
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       )
       .finally(() => setBusy(false));
   };
-  const name = project ? `Workspace: ${project.name}` : "Add workspace";
+  const name = project ? `Section: ${project.name}` : "Add to section";
   if (channelId && regions.excluded.has(channelId)) return null;
   return (
     <span>
@@ -100,10 +108,10 @@ export function WorkspaceControl({
             </Button>
           )}
         />
-        <MenuPopup side="top" align="end" aria-label="Choose workspace">
+        <MenuPopup side="top" align="end" aria-label="Choose section">
           <MenuRadioGroup value={projectId} onValueChange={choose}>
             <MenuRadioItem value="" closeOnClick>
-              No workspace
+              No section
             </MenuRadioItem>
             {(snapshot.data?.sections ?? []).map((item) => (
               <MenuRadioItem key={item.id} value={item.id} closeOnClick>
@@ -112,8 +120,10 @@ export function WorkspaceControl({
             ))}
           </MenuRadioGroup>
           {snapshot.status === "error" && (
-            <MenuItem onClick={() => void session.soloPreferences.refresh()}>
-              Retry workspaces
+            <MenuItem
+              onClick={() => void sectionPreferences(session).refresh()}
+            >
+              Retry sections
             </MenuItem>
           )}
         </MenuPopup>

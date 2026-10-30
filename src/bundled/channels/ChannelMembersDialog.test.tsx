@@ -172,7 +172,12 @@ async function setup(
       missingNames &&
       filters.some(
         (filter) =>
-          filter.kinds?.includes(0) && filter.authors?.includes(viewer.pubkey),
+          filter.kinds?.includes(0) &&
+          filter.authors?.includes(
+            options.extraMembers
+              ? (members[1] ?? viewer.pubkey)
+              : viewer.pubkey,
+          ),
       )
     ) {
       await nameRetry;
@@ -3030,4 +3035,24 @@ it("pages a large roster without waiting for optional names or exceeding the pro
   } finally {
     await act(async () => release());
   }
+});
+
+it("continues member name enrichment after an earlier batch fails", async () => {
+  const t = await setup("stream", true, false, undefined, undefined, {
+    extraMembers: 749,
+  });
+  await vi.waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Refresh member data" }),
+    ).toHaveAttribute("aria-busy", "false"),
+  );
+  const last = (10748).toString(16).padStart(64, "0");
+  expect(
+    t.query.mock.calls.some(([filters]) =>
+      filters.some(
+        (filter) => filter.kinds?.includes(0) && filter.authors?.includes(last),
+      ),
+    ),
+  ).toBe(true);
+  expect(screen.getByText(/Some names could not load/)).toBeVisible();
 });

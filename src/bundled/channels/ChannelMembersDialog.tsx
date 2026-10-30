@@ -818,22 +818,23 @@ export function ChannelMembersDialog({
         let offset = 0;
         current && offset < keys.length;
         offset += MEMBER_PROFILE_BATCH
-      )
-        await session.profiles.ensure(
-          keys.slice(offset, offset + MEMBER_PROFILE_BATCH),
-          largeRoster ? "background" : "foreground",
-        );
-    };
-    void loadNames()
-      .catch(() => {
-        if (current)
-          setNameError(
-            "Some names could not load. Public keys still identify members. Try again.",
+      ) {
+        try {
+          await session.profiles.ensure(
+            keys.slice(offset, offset + MEMBER_PROFILE_BATCH),
+            largeRoster ? "background" : "foreground",
           );
-      })
-      .finally(() => {
-        if (current) setNamesSettledFor({ session, memberKey });
-      });
+        } catch {
+          if (current)
+            setNameError(
+              "Some names could not load. Public keys still identify members. Try again.",
+            );
+        }
+      }
+    };
+    void loadNames().finally(() => {
+      if (current) setNamesSettledFor({ session, memberKey });
+    });
     return () => {
       current = false;
     };

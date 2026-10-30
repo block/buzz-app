@@ -3880,6 +3880,40 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     );
     cleanup();
 
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "+changed",
+          edited: true,
+          diff: { filePath: "a.ts", truncated: false },
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").closest("pre")).toBeNull();
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Done", edited: true, audience: "agents" }}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: "Morgarita: Done (edited)",
+    });
+    expect(within(line).getByText("(edited)")).toBeInTheDocument();
+    cleanup();
+
     render("Hi how are ya.", false);
     expect(screen.queryByText("(edited)")).toBeNull();
   } finally {

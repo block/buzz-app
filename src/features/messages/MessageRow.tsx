@@ -450,6 +450,13 @@ function MessageRowContent({
     bodyShown && messageRenderer !== failedRenderer
       ? messageRenderer?.ownsAttachment
       : undefined;
+  // The host's Markdown marks an edit after the caption's last line. Diffs,
+  // plugin cards and captionless rows are marked after the payload instead.
+  const editedInBody =
+    bodyShown &&
+    !row.diff &&
+    !!displayRow.content.trim() &&
+    (!messageRenderer || messageRenderer === failedRenderer);
   const claimed = (attachment: ChannelMessage["attachments"][number]) => {
     try {
       return !!claims?.call(messageRenderer, row, attachment);
@@ -525,7 +532,7 @@ function MessageRowContent({
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
       largeEmoji={emojiOnly}
-      edited={displayRow.edited}
+      edited={editedInBody && displayRow.edited}
     />
   );
   const avatar = row.workflowOwnerId ? (
@@ -1266,8 +1273,7 @@ function MessageRowContent({
                   })}
                 </div>
               )}
-              {/* Without a caption, the edit is marked after the last content. */}
-              {!bodyShown && shown.edited && <EditedMarker />}
+              {!editedInBody && shown.edited && <EditedMarker />}
             </MessageTimestampHint>
           </div>
           {!reactionsInBubble && reactionContent}
@@ -1438,7 +1444,7 @@ function AgentsMessageRow(props: MessageRowProps) {
               ref={trigger}
               data-buzz-ui=""
               className={styles.audienceLine}
-              aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
+              aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
             >
               {avatar(author)}
               {to.length > 0 && (
@@ -1454,6 +1460,7 @@ function AgentsMessageRow(props: MessageRowProps) {
               {!open && (
                 <span className={styles.audiencePreview}>{preview}</span>
               )}
+              {!open && row.edited && <EditedMarker />}
             </Collapsible.Trigger>
             <Collapsible.Panel
               className={`${styles.audiencePanel} ${styles.activityExpansion} ${styles.audienceBody}`}

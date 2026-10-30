@@ -2738,23 +2738,28 @@ export const test = base.extend({
       const sidebarFailures = [
         ...(report.sidebarSortFailures ?? []),
         ...(report.sidebarMuteFailures ?? []),
-        ...(report.sidebarActivityFailures ?? []),
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarAssignmentFailures ?? []),
         ...(report.sidebarRemovalFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
         ...(report.startupFailures ?? []),
       ];
+      // Activity reads retry a 502 quietly, so their journeys inject a 403.
+      const activityFailures = [...(report.sidebarActivityFailures ?? [])];
       const injectedSidebarFailure = (message, index) => {
-        if (
-          !/^Failed to load resource: the server responded with a status of 502/.test(
+        const status =
+          /^Failed to load resource: the server responded with a status of (502|403)/.exec(
             message,
-          )
-        )
-          return false;
-        const match = sidebarFailures.indexOf(consoleLocations.get(index));
+          )?.[1];
+        const failures =
+          status === "502"
+            ? sidebarFailures
+            : status === "403"
+              ? activityFailures
+              : undefined;
+        const match = failures?.indexOf(consoleLocations.get(index)) ?? -1;
         if (match < 0) return false;
-        sidebarFailures.splice(match, 1);
+        failures?.splice(match, 1);
         return true;
       };
       // Edge 403 pages (e.g. a VPN reconnecting) injected on relay reads.

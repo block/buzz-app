@@ -16,6 +16,13 @@ import {
 const KEY = "solo:default-agent";
 type Account = NonNullable<RelaySession["mainAgent"]>;
 const adopted = new WeakMap<Account, Promise<void>>();
+const revisions = new WeakMap<Account, number>();
+const revision = (account: Account) => revisions.get(account) ?? 0;
+const advance = (account: Account) => {
+  const next = revision(account) + 1;
+  revisions.set(account, next);
+  return next;
+};
 // The account's saved choice once read: undefined only when a successful read
 // found no record. Read failures are tracked separately.
 const saved = new WeakMap<Account, string | undefined>();
@@ -68,7 +75,10 @@ export async function chooseDefaultAgent(
   pubkey: string,
 ) {
   const account = session.mainAgent;
-  if (account) explicit.add(account);
+  if (account) {
+    explicit.add(account);
+    advance(account);
+  }
   // A choice this device can't cache still applies here, so it is still saved
   // to the account.
   setDefaultAgent(scope, pubkey);
@@ -98,14 +108,17 @@ export function forgetDefaultAgent(pubkey: string) {
 function adopt(account: Account, scope: string) {
   let pending = adopted.get(account);
   if (!pending) {
+    const started = revision(account);
     pending = account.read().then(
       (agent) => {
+        if (started !== revision(account)) return;
         const adopts = !explicit.has(account);
         if (adopts && agent !== undefined) cache(scope, agent);
-        remember(account, adopts ? agent : saved.get(account));
+        remember(account, adopts ? agent : (saved.get(account) ?? agent));
       },
       (cause) => {
         adopted.delete(account);
+        if (started !== revision(account)) return;
         readErrors.set(
           account,
           cause instanceof Error
@@ -149,7 +162,9 @@ function useAdopted(session: RelaySession, scope: string) {
     retry: () => {
       if (!account) return;
       readErrors.delete(account);
-      saved.delete(account);
+      advance(account);
+      // Keep a newer confirmed choice visible while its account record is reread.
+      if (saved.get(account) === undefined) saved.delete(account);
       notifySaved();
       void adopt(account, scope);
     },

@@ -12,6 +12,7 @@ import {
   restoreDefaultAgent,
   setDefaultAgent,
   useDefaultAgent,
+  useSavedAgentState,
 } from "./default-agent";
 
 afterEach(() => {
@@ -574,6 +575,47 @@ it("keeps a live choice adopted on retry through later archive reads", async () 
   expect(screen.getByRole("status").textContent).toBe("Second");
   act(() => account.archive([], "loading"));
   expect(screen.getByRole("status").textContent).toBe("Second");
+});
+
+it("ignores an older read failure after a newer choice and preserves it through retry", async () => {
+  const pending = () => {
+    let resolve!: (value: string | undefined) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<string | undefined>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  };
+  const first = pending();
+  const second = pending();
+  let reads = 0;
+  const account = {
+    read: vi.fn(() => (reads++ ? second.promise : first.promise)),
+    write: vi.fn(async () => {}),
+  };
+  const session = { mainAgent: account } as unknown as RelaySession;
+  function Selection() {
+    const state = useSavedAgentState(session, "stale-failure");
+    return (
+      <>
+        <output aria-label="agent">{state.agent ?? "none"}</output>
+        <output aria-label="error">{state.error ?? "none"}</output>
+        <button type="button" onClick={state.retry}>
+          Retry
+        </button>
+      </>
+    );
+  }
+  render(<Selection />);
+  await act(() => chooseDefaultAgent(session, "stale-failure", "a".repeat(64)));
+  await act(async () => first.reject(new Error("old read failed")));
+  expect(screen.getByLabelText("agent")).toHaveTextContent("a".repeat(64));
+  expect(screen.getByLabelText("error")).toHaveTextContent("none");
+  await act(async () => screen.getByRole("button", { name: "Retry" }).click());
+  await act(async () => second.resolve("a".repeat(64)));
+  expect(screen.getByLabelText("agent")).toHaveTextContent("a".repeat(64));
+  expect(screen.getByLabelText("error")).toHaveTextContent("none");
 });
 
 it("a choice made while the account is read wins, even when already cached", async () => {

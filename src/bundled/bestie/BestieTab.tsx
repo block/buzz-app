@@ -1,15 +1,22 @@
-import { useState } from "react";
-import type { Agent, AgentAddedTab } from "../../features/agents/service";
+import { useRef, useState, useSyncExternalStore } from "react";
+import type {
+  Agent,
+  AgentAddedTab,
+  Agents,
+} from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import { clearDefaultAgent } from "../../features/solo/default-agent";
 import { BestieIcon } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
+  MenuNote,
   MenuPopup,
   MenuRoot,
   MenuTrigger,
@@ -17,7 +24,11 @@ import {
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
-import { bestieName, useBestieChoice } from "../agents/BestieChoice";
+import {
+  BESTIE_LOCAL_ONLY,
+  bestieName,
+  useBestieChoice,
+} from "../agents/BestieChoice";
 import {
   FEATURES,
   type Feature,
@@ -36,11 +47,11 @@ import {
 } from "./save";
 import { inCommunity, savedBestie } from "./saved";
 
+/** The agents a tab saves to, and reads to know which are on this device. */
+type TabAgents = FeatureAgents & Pick<Agents, "snapshot" | "subscribe">;
+
 /** The Bestie tab, on the agent saved as Bestie in its community. */
-export function bestieTab(
-  relay: RelayData,
-  agents: FeatureAgents,
-): AgentAddedTab {
+export function bestieTab(relay: RelayData, agents: TabAgents): AgentAddedTab {
   const bestie = savedBestie(relay);
   return {
     id: "bestie",
@@ -57,10 +68,11 @@ export function bestieTab(
 
 /** The Former Bestie tab, on an agent that was Bestie and still has
  * something on. It goes once the agent has nothing left on, and shows only
- * against a Bestie saved to the account and read, as check-ins stop. */
+ * against the account's choice once read, another Bestie or none, as
+ * check-ins stop. */
 export function formerBestieTab(
   relay: RelayData,
-  agents: FeatureAgents,
+  agents: TabAgents,
 ): AgentAddedTab {
   const bestie = savedBestie(relay);
   return {
@@ -70,7 +82,7 @@ export function formerBestieTab(
       const current = bestie.snapshot();
       const snapshot = relay.snapshot();
       return (
-        !!current &&
+        (!!current || bestie.known()) &&
         !!snapshot.session.mainAgent &&
         agent.pubkey !== current &&
         inCommunity(agent, snapshot) &&
@@ -98,7 +110,7 @@ function BestieTab({
   former = false,
 }: {
   relay: RelayData;
-  agents: FeatureAgents;
+  agents: TabAgents;
   agent: Agent;
   former?: boolean;
 }) {
@@ -106,8 +118,17 @@ function BestieTab({
   const bestie = useBestieChoice(session, scope ?? "");
   // One save at a time: each switch saves from the instructions it shows.
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const { agents: saved } = useSyncExternalStore(
+    agents.subscribe,
+    agents.snapshot,
+  );
+  // Only an agent on this device can be Bestie for now: a remote one isn't
+  // set up for it yet.
+  const here = (pubkey: string) =>
+    saved.some((each) => each.pubkey === pubkey && each.place === "here");
   const others = bestie.choices.selectable.filter(
-    (choice) => choice.pubkey !== agent.pubkey,
+    (choice) => choice.pubkey !== agent.pubkey && here(choice.pubkey),
   );
   const name = agent.name || "This agent";
   const switches = (features: readonly Feature[]) =>
@@ -132,10 +153,12 @@ function BestieTab({
           <PreferenceRow
             icon={<BestieIcon size="1rem" />}
             title={`${name} is no longer your Bestie. These are still on.`}
+            subtitle={here(agent.pubkey) ? undefined : BESTIE_LOCAL_ONLY}
             trailing={
               <Button
                 variant="outline"
                 disabled={
+                  !here(agent.pubkey) ||
                   !bestie.choices.selectable.some(
                     (choice) => choice.pubkey === agent.pubkey,
                   )
@@ -150,7 +173,12 @@ function BestieTab({
           <PreferenceRow
             icon={<BestieIcon size="1rem" />}
             title="This is your Bestie"
-            subtitle="It's pinned at the top of Buzz, with your DM as its home."
+            subtitle={
+              // With no agent to change to, the menu's note can't be read.
+              others.length
+                ? "It's pinned at the top of Buzz, with your DM as its home."
+                : `It's pinned at the top of Buzz, with your DM as its home. ${BESTIE_LOCAL_ONLY}`
+            }
             trailing={
               <MenuRoot>
                 <MenuTrigger
@@ -169,9 +197,27 @@ function BestieTab({
                       </MenuItem>
                     ))}
                   </MenuGroup>
+                  <MenuNote>{BESTIE_LOCAL_ONLY}</MenuNote>
                 </MenuPopup>
               </MenuRoot>
             }
+          />
+        )}
+        {/* Without an account to save none to, this device would pick
+            another agent at once. */}
+        {!former && session.mainAgent && (
+          <PreferenceRow
+            title="Remove as Bestie"
+            subtitle="Have no Bestie until you make one again."
+            trailing={(label) => (
+              <Button
+                variant="outline"
+                aria-describedby={label["aria-labelledby"]}
+                onClick={() => setRemoving(true)}
+              >
+                Remove
+              </Button>
+            )}
           />
         )}
       </SettingsGroup>
@@ -189,7 +235,65 @@ function BestieTab({
         {...(former && { former: name })}
       />
       {bestie.view}
+      {removing && (
+        <RemoveBestie
+          name={name}
+          remove={() => clearDefaultAgent(session, scope ?? "")}
+          onClose={() => setRemoving(false)}
+        />
+      )}
     </div>
+  );
+}
+
+/** Asks before the agent stops being Bestie, then saves no Bestie. The tab
+ * goes with it; the agent then shows Former Bestie while a setting is on. */
+function RemoveBestie({
+  name,
+  remove,
+  onClose,
+}: {
+  name: string;
+  remove(): Promise<void>;
+  onClose(): void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const keep = useRef<HTMLButtonElement>(null);
+  return (
+    <AlertDialog
+      title={`Remove ${name} as your Bestie?`}
+      description={`${name} stays in Agents, with your chats in your DMs. Its check-ins stop. Its memory rules and private channels stay; turn them off in its Former Bestie tab.`}
+      initialFocus={keep}
+      pending={pending}
+      onClose={onClose}
+      {...(error && { children: <p role="alert">{error}</p> })}
+      actions={
+        <>
+          <Button ref={keep} disabled={pending} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="prominent"
+            loading={pending}
+            onClick={() => {
+              setPending(true);
+              setError("");
+              remove()
+                .then(onClose)
+                .catch((cause: unknown) =>
+                  setError(
+                    cause instanceof Error ? cause.message : String(cause),
+                  ),
+                )
+                .finally(() => setPending(false));
+            }}
+          >
+            Remove as Bestie
+          </Button>
+        </>
+      }
+    />
   );
 }
 

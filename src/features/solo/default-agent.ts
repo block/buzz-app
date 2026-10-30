@@ -19,11 +19,31 @@ const adopted = new WeakMap<Account, Promise<void>>();
 // The account's saved choice once read: undefined when never saved or
 // unreadable.
 const saved = new WeakMap<Account, string | undefined>();
+// Accounts whose saved choice is known: read before any choice here, or
+// confirmed by a save here, and not while a save is pending.
+const known = new WeakSet<Account>();
+const saving = new WeakMap<Account, number>();
 const listeners = new Set<() => void>();
 function remember(account: Account, agent: string | undefined) {
   saved.set(account, agent);
   for (const listener of listeners) listener();
 }
+/** Saves `agent`, or none, to the account; its choice is known once saved. */
+async function save(account: Account, agent: string | null) {
+  saving.set(account, (saving.get(account) ?? 0) + 1);
+  for (const listener of listeners) listener();
+  try {
+    await account.write(agent);
+    // Known with its value, before it stops counting as pending.
+    saved.set(account, agent ?? undefined);
+    known.add(account);
+  } finally {
+    saving.set(account, (saving.get(account) ?? 1) - 1);
+  }
+}
+// Explicit choices on this device by scope, so a failed one gives way to a
+// newer one but not to an automatic pick.
+const turns = new Map<string, number>();
 function subscribeSaved(listener: () => void) {
   listeners.add(listener);
   return () => void listeners.delete(listener);
@@ -64,18 +84,46 @@ export async function chooseDefaultAgent(
 ) {
   const account = session.mainAgent;
   if (account) explicit.add(account);
+  turns.set(scope, (turns.get(scope) ?? 0) + 1);
   // A choice this device can't cache still applies here, so it is still saved
   // to the account.
   setDefaultAgent(scope, pubkey);
   if (!account) return;
   try {
-    await account.write(pubkey);
+    await save(account, pubkey);
   } catch {
+    // What was known before it is again.
+    remember(account, saved.get(account));
     throw new Error(
       "Your bestie couldn't be saved to your account. Try again.",
     );
   }
   remember(account, pubkey);
+}
+
+/** The viewer's choice of no main agent: cleared here, then saved to their
+ * account as none. If the account's save fails, this device's choice comes
+ * back, unless another was made meanwhile. This device may still pick one
+ * automatically, as without a choice. */
+export async function clearDefaultAgent(session: RelaySession, scope: string) {
+  const account = session.mainAgent;
+  if (account) explicit.add(account);
+  const turn = (turns.get(scope) ?? 0) + 1;
+  turns.set(scope, turn);
+  const previous = chosenAgent(scope);
+  cache(scope, null);
+  if (!account) return;
+  try {
+    await save(account, null);
+  } catch {
+    // Over an automatic pick made meanwhile, not a newer choice.
+    if (previous && turn === turns.get(scope)) setDefaultAgent(scope, previous);
+    remember(account, saved.get(account));
+    throw new Error(
+      "Removing your bestie couldn't be saved to your account. Try again.",
+    );
+  }
+  remember(account, undefined);
 }
 
 /** A deleted agent stops being the main agent everywhere it was chosen; the
@@ -97,6 +145,8 @@ function adopt(account: Account, scope: string) {
       (agent) => {
         const adopts = !explicit.has(account);
         if (adopts && agent !== undefined) cache(scope, agent);
+        // A choice made meanwhile is known only once it is saved.
+        if (adopts) known.add(account);
         remember(account, adopts ? agent : saved.get(account));
       },
       () => {
@@ -139,6 +189,9 @@ export function savedAgentStore(session: RelaySession, scope: string) {
   const account = session.mainAgent;
   return Object.freeze({
     snapshot: () => (account ? saved.get(account) : chosenAgent(scope)),
+    /** Whether the account's choice is known, so an undefined snapshot means
+     * none was saved rather than not read yet, or unreadable. */
+    known: () => !!account && known.has(account) && !saving.get(account),
     subscribe(listener: () => void) {
       if (account) void adopt(account, scope);
       // The device's choice is browser storage; without a window there is none

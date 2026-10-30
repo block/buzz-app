@@ -92,11 +92,12 @@ export function subscribePrivateMembers(
 
 /** Stops the check-ins of each agent here that isn't the community's Bestie,
  * whenever the saved Bestie or the agents change, wherever the change was
- * made. It acts only on a Bestie saved to the account and read: while the
- * choice is loading or unknown, or kept only on this device, where an
- * automatic pick looks the same, nobody counts as former. An agent also in
- * another community, where it may be Bestie, loses only its timer here, as
- * its instructions are shared. Memory and channels stay as they are. */
+ * made. It acts only on the account's choice once known: a Bestie, or none,
+ * when every agent here is stopped. While the choice is loading, unreadable
+ * or being saved, or kept only on this device, where an automatic pick looks
+ * the same, nobody counts as former. An agent also in another community,
+ * where it may be Bestie, loses only its timer here, as its instructions are
+ * shared. Memory and channels stay as they are. */
 export function stopFormerCheckIns(relay: RelayData, agents: ReconcileAgents) {
   const bestie = savedBestie(relay);
   const checkIns = FEATURES.filter(({ timer }) => timer);
@@ -112,9 +113,12 @@ export function stopFormerCheckIns(relay: RelayData, agents: ReconcileAgents) {
       session = relaySnapshot.session;
       tried.clear();
     }
-    const current = session.mainAgent ? bestie.snapshot() : undefined;
-    if (!current) return;
-    if (relaySnapshot.scope) rememberBestie(relaySnapshot.scope, current);
+    if (!session.mainAgent) return;
+    // Not while the account is read, can't be, or a choice here is saved.
+    if (!bestie.known()) return;
+    const current = bestie.snapshot();
+    if (current && relaySnapshot.scope)
+      rememberBestie(relaySnapshot.scope, current);
     const { agents: here, running = [] } = agents.snapshot();
     for (const agent of here) {
       const on = checkIns.filter((feature) => featurePresent(agent, feature));
@@ -140,11 +144,17 @@ export function stopFormerCheckIns(relay: RelayData, agents: ReconcileAgents) {
         .then(async () => {
           for (const feature of on) {
             // Each save starts from the agent as the last one left it, and
-            // stops if it was made Bestie again meanwhile.
+            // stops if the saved Bestie changed or stopped being known
+            // meanwhile, as when it is made Bestie again.
             const fresh = agents
               .snapshot()
               .agents.find((each) => each.key === agent.key);
-            if (!fresh || bestie.snapshot() === agent.pubkey) return;
+            if (!fresh) return;
+            if (!bestie.known() || bestie.snapshot() !== current) {
+              // Tried again once the saved Bestie is known.
+              tried.delete(agent.key);
+              return;
+            }
             await saveFeature(agents, fresh, feature, false, { timerOnly });
           }
         })

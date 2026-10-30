@@ -317,7 +317,6 @@ function ReactionEmoji({
             shape={grouped ? "capsule" : "icon"}
             data-reaction={reaction.content}
             data-reaction-url={reaction.emoji?.url}
-            data-reaction-author={grouped ? undefined : authorIds[0]}
             aria-label={`${reaction.content}: ${grouped ? `${authorIds.length} people` : user}`}
             aria-pressed={mine}
             aria-disabled={unavailable}

@@ -1479,6 +1479,9 @@ that cannot be rendered retain ordinary text selection.
 Custom emoji autocomplete adds no trailing space. The native caret uses the
 regular composer text size while the emoji preview remains large.
 
+Message and thread reactions use one bubble per emoji, counting unique people from
+the second reactor; custom emoji with different URLs stay separate.
+
 Message and thread reaction rows have a Lucide smile-plus button after existing
 reactions. Messages without reactions do not show it. The Emoji plugin supplies
 the emoji-only picker

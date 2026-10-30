@@ -635,11 +635,17 @@ function PreparedMessageMarkdown({
     return undefined;
   };
   const components: MessageComponents = {
-    p: ({ node: _node, ...props }) => (
+    p: ({ node, ...props }) => (
       <p
         {...props}
         className={largeEmoji ? styles.text : undefined}
         data-single-emoji={largeEmoji || undefined}
+        data-leading-mention={
+          (node?.children[0]?.type === "element" &&
+            typeof node.children[0].properties["data-profile-target"] ===
+              "string") ||
+          undefined
+        }
       />
     ),
     a: ({ href, children }) => {

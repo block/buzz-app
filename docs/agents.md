@@ -970,8 +970,10 @@ The Identity Naming plugin (`buzz.identity-naming`) registers its policy with th
 app-owned identity-name service (`features/identity-names`). Each relay session binds
 its own view. A ready local agent takes precedence only in its matching community;
 otherwise a signed public agent profile's name, then the library's saved name, then
-the public profile. With no policy registered, public-profile names and caller
-fallbacks apply. These labels never change identity keys, membership, credentials,
+the public profile. Synthetic profile-name placeholders are excluded from naming
+and collision checks; caller fallbacks apply when no meaningful name is available.
+With no policy registered, public-profile names and caller fallbacks apply.
+These labels never change identity keys, membership, credentials,
 or runtime admission. Messages, mention choices, activity, conversation labels and
 new notifications consume this view. Mention parsing still uses signed identity
 evidence before resolving its visible label. The portable policy is specified in

@@ -64,7 +64,7 @@ function mount(
     reject(error: Error): void;
   }[] = [];
   const owner = createWorkflows({
-    viewer: fixtureViewer,
+    viewer: author.pubkey,
     outbox: undefined,
     local: undefined,
     host: undefined,
@@ -99,7 +99,7 @@ function mount(
         channels={channels}
         refreshRequest={refresh}
         saveReadback={saveReadback}
-        viewer={fixtureViewer}
+        viewer={author.pubkey}
         detailTarget={null}
         selected={undefined}
         onSelect={() => {}}
@@ -1000,6 +1000,9 @@ for (const filter of ["Owner", "Status"] as const) {
   it(`closes a ${filter.toLowerCase()}-filtered selection while a read is still pending`, async () => {
     const { fixture, target, selections } = landing();
     try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Clear owner filter" }),
+      );
       act(() =>
         fixture.definitions.update({
           status: "ready",
@@ -1477,6 +1480,84 @@ function filterLanding(save = true) {
   };
 }
 
+it("starts with My workflows and offers All channel workflows explicitly", async () => {
+  const { fixture, choose, user, onCreate } = filterLanding();
+  expect(
+    screen.getByRole("button", { name: "Owner: My workflows" }),
+  ).toBeVisible();
+  await screen.findByRole("button", { name: /^Open Mine disabled:/ });
+  expect(
+    screen.queryByRole("button", { name: /^Open Other enabled:/ }),
+  ).toBeNull();
+  await choose("Owner", "All channel workflows");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Open Other enabled:/ }),
+    ).toBeVisible(),
+  );
+  await choose("Owner", "My workflows");
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [] },
+    }),
+  );
+  await user.click(await screen.findByRole("button", { name: "New workflow" }));
+  expect(onCreate).toHaveBeenCalledOnce();
+});
+
+it("explains an empty My workflows view and shows all channel workflows", async () => {
+  const { fixture, user } = filterLanding();
+  await screen.findByRole("button", { name: /^Open Mine disabled:/ });
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: {
+        partial: false,
+        items: [{ ...fixtureDefinition, owner: "b".repeat(64) }],
+      },
+    }),
+  );
+  expect(
+    await screen.findByText("You don’t have any workflows yet"),
+  ).toBeVisible();
+  expect(screen.queryByText("No matching workflows")).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Show all channel workflows" }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Owner: All channel workflows" }),
+  ).toHaveFocus();
+  expect(
+    await screen.findByRole("button", { name: /^Open Message helper:/ }),
+  ).toBeVisible();
+});
+
+it.each(["status", "trigger"] as const)(
+  "keeps the filtered empty state when My workflows plus %s hides the viewer's workflows",
+  async (extra) => {
+    const { fixture, choose, chooseTrigger, definition } = filterLanding();
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: {
+          partial: false,
+          items: [
+            definition("Mine disabled", fixtureViewer, fixtureChannel, false),
+            definition("Other enabled", "b".repeat(64), fixtureChannel, true),
+          ],
+        },
+      }),
+    );
+    await screen.findByRole("button", { name: /^Open Mine disabled:/ });
+    if (extra === "status") await choose("Status", "Enabled");
+    else await chooseTrigger("Schedule");
+    expect(await screen.findByText("No matching workflows")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+    expect(screen.queryByText("You don’t have any workflows yet")).toBeNull();
+  },
+);
+
 it.each([true, false])(
   "clears a filtered empty state with focus handoff when save is %s",
   async (save) => {
@@ -1712,7 +1793,13 @@ it("matches saved trigger types with OR and excludes unreadable status values", 
   await user.click(screen.getByRole("button", { name: "Clear owner filter" }));
   expect(
     screen.getByRole("button", { name: /^Owner(?::|$)/ }),
-  ).toHaveTextContent("Owner");
+  ).toHaveAccessibleName("Owner: All channel workflows");
+  expect(
+    screen.getByRole("button", { name: /^Owner(?::|$)/ }),
+  ).toHaveTextContent("All channel workflows");
+  expect(
+    screen.queryByRole("button", { name: "Clear owner filter" }),
+  ).toBeNull();
   expect(screen.getByRole("button", { name: /^Owner(?::|$)/ })).toHaveFocus();
 });
 

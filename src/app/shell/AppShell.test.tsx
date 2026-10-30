@@ -12,6 +12,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -942,3 +943,39 @@ it.each([true, false])(
     expect(create).toHaveBeenCalledOnce();
   },
 );
+
+it("opens global search from the sidebar and returns focus to its trigger", async () => {
+  const current = createServices();
+  services = current;
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[]}
+        selected="buzz.channels/channels"
+        navigationAttempt="initial"
+        onSelect={vi.fn()}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+        searchServices={current}
+        sidebar={(_, actions) => <aside aria-label="Sidebar">{actions}</aside>}
+      >
+        Current conversation
+      </AppShell>
+    </ToastProvider>,
+  );
+  const trigger = within(
+    screen.getByRole("complementary", { name: "Sidebar" }),
+  ).getByRole("button", { name: "Search" });
+  await user.click(trigger);
+  expect(
+    await screen.findByRole("dialog", { name: "Search Buzz" }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+  );
+  expect(trigger).toHaveFocus();
+});

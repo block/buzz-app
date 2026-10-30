@@ -1,4 +1,5 @@
 import { useSearchSettings } from "./SearchSettings";
+import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
@@ -59,10 +60,13 @@ export function PageSearch({
   pages,
   onSelect,
   services,
+  sidebarTrigger,
 }: {
   pages: readonly RegisteredPage[];
   onSelect: (key: string) => void;
   services?: SearchServices | undefined;
+  /** A second trigger in the primary sidebar's controls, when it renders them. */
+  sidebarTrigger?: HTMLElement | null;
 }) {
   const [open, setOpen] = useState(false);
   const [contentPresent, setContentPresent] = useState(false);
@@ -179,6 +183,24 @@ export function PageSearch({
         }}
         icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
       />
+      {sidebarTrigger &&
+        createPortal(
+          <IconButton
+            hint="familiar"
+            variant="inset"
+            shape="round"
+            size="sm"
+            aria-label="Search"
+            title={`Search Buzz (${shortcut})`}
+            onClick={(event) => {
+              // WebKit does not focus a clicked button; focus returns here.
+              event.currentTarget.focus();
+              begin();
+            }}
+            icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+          />,
+          sidebarTrigger,
+        )}
       <Dialog
         open={open}
         onOpenChange={setSearchOpen}

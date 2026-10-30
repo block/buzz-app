@@ -55,7 +55,7 @@ type Props = {
   sidebarSections?: SidebarSections | undefined;
   target: OpenTarget;
   children: ReactNode;
-  creationAction?: ReactNode;
+  actions?: ReactNode;
 };
 
 /** Filters the navigation inventory without replacing the current conversation. */
@@ -187,7 +187,7 @@ function ScopedSidebar({
             onValueChange={setFilter}
           />
         </div>
-        {props.creationAction}
+        {props.actions}
       </div>
       {props.children && (
         <div className={styles.destinations}>{props.children}</div>

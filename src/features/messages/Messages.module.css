@@ -3517,6 +3517,12 @@ html[data-keyboard-navigation]
   --reaction-surface: initial;
   --reaction-ink: initial;
 }
+/* Unboxed renderers have no inner gutter for the reaction strip to outdent. */
+.message .messageBubble[data-diff-only] > .reactions,
+.message .messageBubble:has(> .text > table:only-child) > .reactions {
+  margin-inline-start: 0;
+  max-width: 100%;
+}
 .messageBubble[data-diff-only]::after,
 .messageBubble:has(> .text > table:only-child)::after {
   display: none;

@@ -384,6 +384,44 @@ it("preserves a failed draft and refuses to save it through a different account"
   expect(h.request).toHaveBeenCalledTimes(before);
 });
 
+it.each(["save", "catalog"])(
+  "hides an earlier %s error and retry after signing out",
+  async (kind) => {
+    const h = await fixture({
+      modelId: "model-one",
+      reasoningEffort: "high",
+      modelSelectionStatus: "valid",
+      instructions: "Saved instructions.",
+    });
+    const user = userEvent.setup();
+    const field = screen.getByRole("textbox", { name: "Instructions" });
+    await user.type(field, " Draft");
+    h.offline(true);
+    if (kind === "save")
+      await user.click(screen.getByRole("button", { name: "Save" }));
+    else {
+      act(() => h.session.signOut());
+      await act(() => h.session.signIn());
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+    expect(
+      screen.getByRole("button", {
+        name: kind === "save" ? "Refresh models" : "Retry models",
+      }),
+    ).toBeVisible();
+    const before = h.request.mock.calls.length;
+    const signIn = vi.spyOn(h.session, "signIn");
+    act(() => h.session.signOut());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Retry|Refresh/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(field).toBeDisabled();
+    expect(field).toHaveValue("Saved instructions. Draft");
+    expect(h.request).toHaveBeenCalledTimes(before);
+    expect(signIn).not.toHaveBeenCalled();
+  },
+);
+
 it("retries a failed catalog refresh without retrying a failed save", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");

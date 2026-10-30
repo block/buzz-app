@@ -53,6 +53,7 @@ export function ModelSettings({
     | { pending: boolean; error: string; retry(): void };
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
+  const signedIn = login.status === "signed-in";
   const agent = "agent" in settings ? settings.agent : undefined;
   const subject = "subject" in settings ? settings.subject : undefined;
   const form = useId();
@@ -197,7 +198,7 @@ export function ModelSettings({
       label={agent ? "Loading models…" : "Loading settings…"}
       statusVisibility="screen-reader"
       feedback={
-        "error" in settings && settings.error ? (
+        !signedIn ? undefined : "error" in settings && settings.error ? (
           <div className="grid gap-2">
             <p role="alert" className="m-0 text-body-sm text-danger">
               {settings.error}
@@ -290,7 +291,7 @@ export function ModelSettings({
             onValueChange={setEffort}
           />
         </SettingsGroup>
-        {models?.length === 0 && (
+        {signedIn && models?.length === 0 && (
           <p className="m-0 text-body-sm text-secondary">
             No models are available. Retry when the catalog is available.
           </p>
@@ -319,12 +320,12 @@ export function ModelSettings({
           disabled={disabled}
           dirty={modelChanged || instructionsChanged}
         />
-        {(catalogError || error) && (
+        {signedIn && (catalogError || error) && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error || catalogError}
           </p>
         )}
-        {(catalogError || error || models?.length === 0) && (
+        {signedIn && (catalogError || error || models?.length === 0) && (
           <div>
             <Button
               disabled={busy}

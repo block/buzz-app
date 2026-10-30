@@ -315,6 +315,24 @@ it.each([false, true])(
     }
   },
 );
+it("hides a failed settings load and Retry while signed out, then loads after explicit sign-in", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValueOnce({ ...response(), status: 400 });
+  render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  const before = h.request.mock.calls.length;
+  const signIn = vi.spyOn(h.session, "signIn");
+  act(() => h.session.signOut());
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
+  expect(signIn).not.toHaveBeenCalled();
+  expect(h.request).toHaveBeenCalledTimes(before);
+  await act(() => h.session.signIn());
+  expect(await loadedInstructions()).toHaveValue("First instructions.");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
 it("retries a failed load and refuses to save a draft through another account", async () => {
   const h = await fixture();
   const user = userEvent.setup();

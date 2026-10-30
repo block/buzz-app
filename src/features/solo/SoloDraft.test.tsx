@@ -342,11 +342,7 @@ it("a refused start gives its prompt, files and settings back to a blank New cha
     user = userEvent.setup();
   const uploadForNewChat = vi.fn(async () => notes);
   Object.assign(test.session, { attachments: { uploadForNewChat } });
-  let refuse = () => {};
-  test.channelWrites.ready = new Promise<void>((_resolve, reject) => {
-    refuse = () => reject(new ChatNotStarted("Channel creation rejected"));
-  });
-  test.channelWrites.ready.catch(() => {});
+  const refuse = refusedStart(test);
   writeView("test", "solo:new-draft", taggedDraft("Audit the onboarding flow"));
   writeView("test", "solo:settings", { name: "Onboarding audit" });
   const view = () => (
@@ -370,10 +366,7 @@ it("a refused start gives its prompt, files and settings back to a blank New cha
   // New chat is open and still blank when the relay refuses the first.
   render(view());
   expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit");
-  await act(async () => {
-    refuse();
-    await test.channelWrites.ready.catch(() => {});
-  });
+  await refuse();
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       id,

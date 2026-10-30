@@ -167,12 +167,17 @@ export function createNativeSession(
       return publish(
         current.status === "signing-in" || current.status === "restoring"
           ? { status: "pending" }
-          : current.failure && current.status !== "unconfigured"
+          : current.status === "reauthentication-required"
             ? {
                 status: "signed-out",
-                error: "Builderlab sign-in did not finish. Try again.",
+                error: "Your Builderlab sign-in ended. Sign in again.",
               }
-            : { status: "signed-out" },
+            : current.failure && current.status !== "unconfigured"
+              ? {
+                  status: "signed-out",
+                  error: "Builderlab sign-in did not finish. Try again.",
+                }
+              : { status: "signed-out" },
       );
     }
     if (credential?.revision === current.revision)

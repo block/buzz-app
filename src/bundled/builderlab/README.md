@@ -136,7 +136,10 @@ agents are not migrated into this type.
   projects the native NIP-FI session: native holds the token in OS secure
   storage, so sign-in survives restart, and adds it as `Authorization: Bearer`
   to this plugin's granted routes. Each session revision reads its account from
-  `/v1/auth/me`; a 401 refuses only that call.
+  `/v1/auth/me`. A 401 refuses only that call; native then asks the adapter's
+  `GET /v1/session` once and ends the session only if the adapter refuses it.
+  Its sign-out lives in Identity → Organization sign-in, which `login/` links to,
+  because community sign-in shares the session.
 - `oauth/` owns browser handoff, code exchange, account verification, and the
   legacy plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,

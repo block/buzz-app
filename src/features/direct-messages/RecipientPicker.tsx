@@ -71,12 +71,14 @@ export function RecipientPicker({
   const selection = useRef(selected);
   selection.current = selected;
   const id = useId();
+  const errorId = useId();
   const directory = usePeople(session, query);
   const agents = useAgentChoices(session, false);
   const removal = useChipRemoval();
   const atLimit = selected.length >= 8;
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
+  const invalid = !open && !!needle && selected.length > 0;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
   const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
   const known = useRef(new Map<string, Recipient>());
@@ -404,6 +406,7 @@ export function RecipientPicker({
             aria-expanded={open && !disabled}
             aria-controls={listed ? highlight.listId : undefined}
             aria-autocomplete="list"
+            aria-describedby={invalid ? errorId : undefined}
             {...highlight.fieldProps}
             placeholder={
               selected.length
@@ -483,11 +486,16 @@ export function RecipientPicker({
         </div>
         {/* Text left in To holds Send, so say why once the list closes, not
             while a name is typed. Below the list's anchor, so the list keeps
-            its place. A polite status, read after whatever focus moved to:
-            any To edit opens the list and unmounts it, so its text never
-            changes while shown. */}
-        {!open && !!query.trim() && selected.length > 0 && (
-          <p role="status" className="mt-1 text-body-sm text-danger">
+            its place. A polite status, read after whatever focus moved to,
+            and To's description, as Escape leaves focus there: any To edit
+            opens the list and unmounts it, so its text never changes while
+            shown. */}
+        {invalid && (
+          <p
+            id={errorId}
+            role="status"
+            className="mt-1 text-body-sm text-danger"
+          >
             “{shortened(query.trim())}” is not a valid recipient
           </p>
         )}

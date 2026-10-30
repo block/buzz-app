@@ -890,10 +890,13 @@ it("holds Send while the To field has text that is not a recipient", async () =>
   expect(screen.queryByText(error)).not.toBeInTheDocument();
   await t.user.keyboard("{Escape}");
   expect(screen.getByRole("status")).toHaveTextContent(error);
+  // Focus stays in To, which the error describes while it shows.
+  expect(recipient()).toHaveAccessibleDescription(error);
   // Typing in To, where Escape left focus, removes it, so the status never
   // changes text while shown.
   await t.user.keyboard("z");
   expect(screen.queryByText(/is not a valid recipient/)).toBeNull();
+  expect(recipient()).not.toHaveAccessibleDescription();
   await t.user.clear(recipient());
   await t.user.click(screen.getByRole("textbox"));
   expect(screen.queryByText(error)).not.toBeInTheDocument();

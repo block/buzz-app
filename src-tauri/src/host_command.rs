@@ -630,8 +630,7 @@ mod tests {
 
     #[tokio::test]
     async fn larger_output_requires_a_bounded_manifest_opt_in() {
-        let (_directory, path) =
-            executable("/usr/bin/head -c 5000 /dev/zero | /usr/bin/tr '\\000' x");
+        let (_directory, path) = executable("head -c 5000 /dev/zero | tr '\\000' x");
         let mut command = super::HostCommand {
             id: "inventory".into(),
             program: "env".into(),

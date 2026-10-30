@@ -21,7 +21,8 @@ fn shell() -> CommandBuilder {
         .get_or_init(|| {
             let mut cmd = CommandBuilder::new("/bin/sh");
             cmd.env_clear();
-            cmd.env("PATH", "/usr/bin:/bin");
+            // The test's own PATH: tools aren't in /usr/bin or /bin everywhere.
+            cmd.env("PATH", std::env::var_os("PATH").unwrap_or_default());
             cmd.env("HOME", "/");
             cmd.env("SHELL", "/bin/sh");
             cmd

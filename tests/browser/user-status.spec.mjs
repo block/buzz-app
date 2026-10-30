@@ -252,6 +252,31 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       bobByline.getByRole("img", { name: ":party: Celebrating", exact: true }),
     ).toBeVisible();
+    // A code missing from the catalog keeps compact slots at emoji size and
+    // reads as status text where the full status is shown.
+    await page
+      .getByRole("button", { name: "Uncatalogued Bob", exact: true })
+      .click();
+    const unresolved = `[aria-label=":bee-intensifies: Buzzin'"]`;
+    await expect(dmName.locator(unresolved)).toHaveText("💬");
+    await expectStatusBesideName();
+    await expect(bobByline.locator(unresolved)).toHaveText("💬");
+    const expectTextSized = async (scope) => {
+      const size = (text) =>
+        scope
+          .getByText(text, { exact: true })
+          .evaluate((element) => getComputedStyle(element).fontSize);
+      expect(await size(":bee-intensifies:")).toBe(await size("Buzzin'"));
+    };
+    await expectTextSized(
+      page.getByRole("region", { name: "Profile", exact: true }),
+    );
+    const unresolvedTip = page.locator('[role="tooltip"][data-open]');
+    for (const status of [dmName, bobByline]) {
+      await status.locator(unresolved).hover();
+      await expect(unresolvedTip).toContainText(":bee-intensifies:");
+      await expectTextSized(unresolvedTip);
+    }
     await page
       .getByRole("button", { name: "Text-only Bob", exact: true })
       .click();

@@ -248,6 +248,12 @@ createRoot(root).render(
         <button type="button" onClick={() => remote("Celebrating", ":party:")}>
           Custom Bob
         </button>
+        <button
+          type="button"
+          onClick={() => remote("Buzzin'", ":bee-intensifies:")}
+        >
+          Uncatalogued Bob
+        </button>
         <button type="button" onClick={() => remote("Buzzy", "")}>
           Text-only Bob
         </button>

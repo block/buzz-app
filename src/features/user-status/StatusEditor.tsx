@@ -237,7 +237,16 @@ export function StatusEditor({
                 }}
                 icon={
                   effectiveEmoji ? (
-                    <StatusEmoji value={effectiveEmoji} session={session} />
+                    <StatusEmoji
+                      value={effectiveEmoji}
+                      url={
+                        effectiveEmoji === current?.emoji
+                          ? current.emojiUrl
+                          : undefined
+                      }
+                      fallback="💬"
+                      session={session}
+                    />
                   ) : (
                     <SmileyIcon size={22} />
                   )

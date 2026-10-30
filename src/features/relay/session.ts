@@ -808,6 +808,7 @@ export function createRelaySession(
     transport?.viewer,
     writer,
     notify,
+    emoji.tags,
   );
   let memoryConnected = !transport?.subscribe;
   const memories = createAgentMemories(

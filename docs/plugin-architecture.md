@@ -1243,9 +1243,10 @@ SSH uses the existing agent/known hosts, not user SSH config; password entry, HT
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
-A Git import records the commit it read in the saved source. A caller may also require
-a commit: the import then refuses a reference that resolves to anything else.
-[Managed plugin sources](managed-plugins.md) use both.
+A caller may require a commit: the import then refuses a reference that resolves to
+anything else, and records that commit in the saved source. An unpinned import records
+no commit, so its registry stays readable by older versions.
+[Managed plugin sources](managed-plugins.md) use this.
 
 Git acquisition has a 60-second deadline (including blob discovery), an observed
 256 MiB repository limit and bounded command output; transport processes are killed

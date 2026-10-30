@@ -899,6 +899,20 @@ impl Git {
     }
 }
 
+/// A full commit ID that a Git import must resolve to. A distinct type keeps it from being
+/// confused with the adjacent authorization strings.
+#[derive(Clone, Copy, Debug)]
+pub struct RequiredCommit<'a>(&'a str);
+impl<'a> RequiredCommit<'a> {
+    pub fn parse(commit: &'a str) -> Result<Self> {
+        if valid_commit(commit) {
+            Ok(Self(commit))
+        } else {
+            Err("Required commit must be a full 40 or 64 digit hexadecimal object ID".into())
+        }
+    }
+}
+
 /// `authorization` is a NIP-98 token that the caller signed for exactly this repository URL.
 pub fn prepare_git(
     repository: &str,
@@ -908,11 +922,12 @@ pub fn prepare_git(
     prepare_git_authorized(repository, reference, None, authorization, None, None)
 }
 /// Native FI remains native: headers are scoped to this repository through environment config.
-/// `commit` refuses a reference that no longer resolves to exactly that commit.
+/// `required` refuses a reference that no longer resolves to exactly that commit, and is the
+/// only case where the installed commit is recorded in the saved source.
 pub fn prepare_git_authorized(
     repository: &str,
     reference: &str,
-    commit: Option<&str>,
+    required: Option<RequiredCommit<'_>>,
     authorization: Option<&str>,
     federated_header: Option<&str>,
     retired: Option<Box<dyn Fn() -> bool + Send>>,
@@ -921,9 +936,6 @@ pub fn prepare_git_authorized(
     let reference = reference.trim();
     if !reference.is_empty() && !valid_reference(reference) {
         return Err("Enter a branch or tag name using letters, digits, dots, underscores, slashes or hyphens".into());
-    }
-    if commit.is_some_and(|commit| !valid_commit(commit)) {
-        return Err("Required commit must be a full 40 or 64 digit hexadecimal object ID".into());
     }
     let mut git = Git::new()?;
     if let Some(token) = authorization {
@@ -961,17 +973,32 @@ pub fn prepare_git_authorized(
     }
     args.extend(["--", &url, "repository"]);
     git.run(&args, LIMIT)?;
-    let mut prepared = git.read_plugins(url.clone(), commit)?;
+    let mut prepared = git.read_plugins(url.clone(), required.map(|required| required.0))?;
     if git.retired.as_ref().is_some_and(|retired| retired()) {
         return Err("Repository authorization retired".into());
     }
-    prepared.git_source = Some(GitSource {
-        repository: url,
+    prepared.git_source = Some(git_source(
+        url,
+        reference,
+        required,
+        prepared.preview.commit.as_deref(),
+    ));
+    Ok(prepared)
+}
+/// Only a pinned import records its commit: an unpinned source stays readable by older
+/// Buzz versions, which reject unknown registry fields.
+fn git_source(
+    repository: String,
+    reference: &str,
+    required: Option<RequiredCommit<'_>>,
+    read: Option<&str>,
+) -> GitSource {
+    GitSource {
+        repository,
         reference: reference.into(),
         path: ".".into(),
-        commit: prepared.preview.commit.clone(),
-    });
-    Ok(prepared)
+        commit: required.and(read).map(str::to_owned),
+    }
 }
 fn read_output(mut file: File, limit: u64) -> Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
@@ -1700,6 +1727,107 @@ mod tests {
             assert!(repository_url(input).is_err(), "{input}");
         }
         assert!(prepare_git("block/plugins", "--upload-pack=bad", None).is_err());
+    }
+    #[test]
+    fn required_commits_are_validated_before_any_git_work() {
+        for valid in ["a".repeat(40), "A".repeat(40), "0123456789abcdef".repeat(4)] {
+            assert!(RequiredCommit::parse(&valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "",
+            "main",
+            "abc123",
+            &"a".repeat(39),
+            &"a".repeat(41),
+            &"a".repeat(63),
+            &"a".repeat(65),
+            &"g".repeat(40),
+            " ".repeat(40).as_str(),
+        ] {
+            let error = RequiredCommit::parse(invalid).err().unwrap();
+            assert!(error.contains("40 or 64 digit"), "{invalid:?}");
+        }
+    }
+    #[test]
+    fn only_pinned_imports_record_the_installed_commit() {
+        let head = "a".repeat(40);
+        let url = "https://github.com/acme/plugins".to_owned();
+        let pinned = git_source(
+            url.clone(),
+            "v1",
+            Some(RequiredCommit::parse(&head).unwrap()),
+            Some(&head),
+        );
+        assert_eq!(pinned.commit.as_deref(), Some(head.as_str()));
+        let unpinned = git_source(url, "v1", None, Some(&head));
+        assert_eq!(unpinned.commit, None);
+        assert!(!serde_json::to_string(&unpinned).unwrap().contains("commit"));
+    }
+    #[test]
+    fn pins_match_full_object_ids_of_either_hash_length() {
+        let commit = |git: &Git| {
+            git.run(&["-C", "repository", "add", "."], LIMIT).unwrap();
+            git.run(
+                &[
+                    "-C",
+                    "repository",
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    "fixture",
+                ],
+                LIMIT,
+            )
+            .unwrap();
+        };
+        for (format, length) in [("sha1", 40), ("sha256", 64)] {
+            let git = Git::new().unwrap();
+            git.run(
+                &[
+                    "init",
+                    "--template=",
+                    &format!("--object-format={format}"),
+                    "repository",
+                ],
+                LIMIT,
+            )
+            .unwrap();
+            plugin(
+                &git.scratch.path().join("repository"),
+                "dist",
+                "example.one",
+            );
+            commit(&git);
+            let head = git
+                .read_plugins("fixture".into(), None)
+                .unwrap()
+                .preview
+                .commit
+                .unwrap();
+            assert_eq!(head.len(), length, "{format}");
+            assert!(git.read_plugins("fixture".into(), Some(&head)).is_ok());
+            assert!(git
+                .read_plugins("fixture".into(), Some(&head.to_uppercase()))
+                .is_ok());
+            let other = if length == 40 { 64 } else { 40 };
+            let lookalike = if length == 64 {
+                head[..40].to_owned()
+            } else {
+                format!("{head}{}", "0".repeat(24))
+            };
+            for wrong in [lookalike, "0".repeat(other)] {
+                let refused = git.read_plugins("fixture".into(), Some(&wrong));
+                assert!(
+                    refused.err().unwrap().contains("not the required commit"),
+                    "{format} {wrong}"
+                );
+            }
+        }
     }
     #[test]
     fn git_reads_committed_blobs_without_checkout_filters_symlinks_or_scripts() {

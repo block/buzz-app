@@ -44,7 +44,9 @@ app data folder, including this file, so a writer should restore it on its next 
 
 ### Writing the file safely
 
-- Write UTF-8 JSON, at most 256 KiB, as a regular file (not a directory).
+- Write UTF-8 JSON, at most 256 KiB, as a regular file. A symlink to a regular file is
+  followed; a directory, FIFO or other special file is reported as unusable and never
+  opened for reading.
 - Write a temporary file in the same folder and rename it over the target, so Buzz never
   reads a half-written file. A truncated file would be reported as unusable, then
   recovered on the next read.
@@ -72,13 +74,13 @@ app data folder, including this file, so a writer should restore it on its next 
 | Field | Required | Rules |
 | --- | --- | --- |
 | `version` | yes | The number `1`. Any other value makes the whole file unusable. |
-| `source` | yes | Display name of the managing organization or tool, shown as "Recommended by *source*" and "Managed by *source*". 1 to 80 characters after trimming, no control characters. |
+| `source` | yes | Display name of the managing organization or tool, shown as "Recommended by *source*" and "Managed by *source*". 1 to 80 characters after trimming. Only visible characters and ordinary spaces: no control characters, no Unicode format characters (such as bidirectional overrides or zero-width characters) and no non-ASCII space or line separators. |
 | `plugins` | yes | Array of at most 64 entries. Later entries beyond 64 are ignored. |
 | `plugins[].id` | yes | The plugin manifest ID: lowercase letters, digits, dots and hyphens, starting with a letter. Not a plugin included with Buzz. |
 | `plugins[].repository` | yes | An HTTPS or SSH Git URL, or GitHub `owner/repository`, as the Add dialog accepts. No credentials, query or fragment. Buzz stores the normalized HTTPS or SSH URL. |
 | `plugins[].reference` | yes | A branch or tag name: letters, digits, `.`, `_`, `/`, `-`, at most 200 characters, not starting with `-`. |
 | `plugins[].commit` | yes | The full 40 digit (SHA-1) or 64 digit (SHA-256) hexadecimal object ID the reference must resolve to. Matching ignores case. Abbreviated IDs are rejected. |
-| `plugins[].path` | no | Relative folder of the built plugin (containing `manifest.json` and `plugin.js`, or a signed release pair) inside the repository. Default `.`. No `..`, no absolute paths. |
+| `plugins[].path` | no | Relative folder of the built plugin (containing `manifest.json` and `plugin.js`, or a signed release pair) inside the repository. Default `.`. Written canonically: `.` alone, or plain segments joined by single `/` (`plugins/notes/dist`). No empty, `.` or `..` segments, so no leading or trailing `/`, `//` or `./`, and no `\`, `:` or control characters. A path that is not written this way is rejected, because it could never match the folder Buzz finds. |
 
 Unknown fields are errors, at the top level and inside entries, so a typo is reported
 instead of silently ignored. A new schema revision gets a new `version`.
@@ -97,9 +99,10 @@ Neither case crashes Buzz or blocks other plugin management.
 
 ## How Buzz compares entries with installed plugins
 
-The pinned `commit` identifies exactly what the organization means. Buzz records the
-commit it installed from a Git repository in the plugin's saved source. Plugins that
-were installed before this feature have no recorded commit.
+The pinned `commit` identifies exactly what the organization means. When a plugin is
+installed or updated from a recommendation, Buzz records that commit in the plugin's
+saved source. Plugins added any other way (the Add dialog, an earlier Buzz) have no
+recorded commit.
 
 | State | Meaning | Offered |
 | --- | --- | --- |
@@ -108,7 +111,11 @@ were installed before this feature have no recorded commit.
 | Outdated | Installed from the same repository, but at another or an unrecorded commit or path. | **Review update**; marked "Managed by *source*" |
 | Other | Installed from a folder, an unrecorded source, another repository, or included with Buzz. | A note only. Buzz does not replace it. Remove it to see the recommendation again. |
 
-Repositories match after normalization, ignoring a trailing `/` or `.git`.
+Repositories match when scheme, user, host, port and path agree after normalization. The
+host is compared without regard to case, and a trailing `/` or `.git` is ignored. The
+path is case-sensitive, and an SSH form and an HTTPS form of the same repository are
+different sources: a plugin installed over one is Outdated for an entry written with the
+other.
 
 ## What the person using Buzz sees
 
@@ -124,6 +131,9 @@ Repositories match after normalization, ignoring a trailing `/` or `.git`.
   update keeps the plugin's enabled state.
 - **Pending recommendations** show as a small count beside **Plugins** in the profile
   menu and beside **Manage plugins** in Settings. There is no startup prompt or modal.
+- **Details of a managed plugin** do not offer the generic update check, which would
+  install the reference's tip instead of the pinned commit. They show the same
+  **Review update** as the group above when the plugin is Outdated.
 - **Disable** works as for any plugin.
 - **Remove** works as for any plugin. The recommendation stays visible, so a removed
   plugin returns to the Recommended group and can be reinstalled. Buzz never removes a
@@ -134,14 +144,17 @@ Repositories match after normalization, ignoring a trailing `/` or `.git`.
 ## Pinned commit behavior
 
 The Git import resolves `reference` with a shallow clone, then requires `HEAD` to be
-exactly `commit`. If the reference has moved, the review shows the two commits and
-refuses to continue; there is no fallback to the new commit. Pin a tag, or rewrite the
+exactly `commit`, and the app checks again that the commit it received is the pinned one.
+If the reference has moved, the review shows the two commits and refuses to continue;
+there is no fallback to the new commit. If the policy entry changes while a review is
+open, the review reads the new entry again, and it closes if the entry is removed. Pin a tag, or rewrite the
 entry's `commit` when you intend a branch to advance. Because only the reference's tip is
 fetched, a commit that is no longer the tip of its reference cannot be installed.
 
-A Git install records `commit` in the plugin's saved source in the profile registry.
-Older Buzz versions reject that field and offer settings recovery, so downgrading after
-a Git install is not supported, as with other registry additions.
+Only an install or update from a recommendation records `commit` in the plugin's saved
+source in the profile registry. Older Buzz versions reject that field and offer settings
+recovery, so downgrading after installing from a recommendation is not supported, as
+with other registry additions. Plugins added through the Add dialog are unaffected.
 
 ## Refresh timing
 

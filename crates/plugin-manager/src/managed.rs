@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use std::{
     collections::HashSet,
     ffi::OsString,
-    fs::File,
+    fs,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -139,7 +139,22 @@ pub fn status(path: Result<PathBuf>, catalog: &Catalog) -> Managed {
 }
 
 fn read(path: &Path) -> Result<Option<String>> {
-    let file = match File::open(path) {
+    // A symlink is followed, as configuration managers commonly link files into place.
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => return Err("Managed plugin file must be a regular file".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(err(error)),
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Never block opening a FIFO that replaced the file after the check above.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(err(error)),
@@ -175,10 +190,11 @@ pub fn parse(text: &str) -> Result<Policy> {
     };
     if source.is_empty()
         || source.chars().count() > MAX_SOURCE_CHARS
-        || source.chars().any(char::is_control)
+        || source.chars().any(|c| c.is_control() || is_invisible(c))
+        || source.chars().any(|c| c.is_whitespace() && c != ' ')
     {
         return Err(format!(
-            "source must be 1 to {MAX_SOURCE_CHARS} characters without control characters"
+            "source must be 1 to {MAX_SOURCE_CHARS} characters, using only visible characters and ordinary spaces"
         ));
     }
     let Some(Value::Array(entries)) = root.remove("plugins") else {
@@ -240,7 +256,7 @@ fn entry_plugin(entry: Value) -> Result<ManagedPlugin> {
     let path = match entry.remove("path") {
         None => ".".to_owned(),
         Some(Value::String(path)) => {
-            validate_candidate_path(&path)?;
+            canonical_path(&path)?;
             path
         }
         Some(_) => return Err("path must be a string".into()),
@@ -255,6 +271,52 @@ fn entry_plugin(entry: Value) -> Result<ManagedPlugin> {
         commit,
         path,
     })
+}
+
+fn canonical_path(path: &str) -> Result<()> {
+    if path != "." {
+        let canonical = path.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && !segment.contains(['\\', ':'])
+                && !segment.chars().any(char::is_control)
+        });
+        if !canonical {
+            return Err(
+                "path must be a relative folder written as plain segments joined by /, with no empty, . or .. segments".into(),
+            );
+        }
+    }
+    validate_candidate_path(path).map(|_| ())
+}
+
+/// Unicode format characters (category Cf) and line or paragraph separators can make a
+/// display name read differently from what it is, for example bidirectional overrides.
+fn is_invisible(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 
 fn text(entry: &mut Map<String, Value>, key: &str) -> Result<String> {
@@ -277,10 +339,23 @@ pub fn valid_commit(commit: &str) -> bool {
     matches!(commit.len(), 40 | 64) && commit.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Compares scheme, user, host (ignoring case), port and path (ignoring a trailing `/` or
+/// `.git`). An SSH and an HTTPS form of one repository are different sources.
 fn same_repository(a: &str, b: &str) -> bool {
-    let canonical = |url: &str| {
-        let url = url.trim_end_matches('/');
-        url.strip_suffix(".git").unwrap_or(url).to_owned()
+    let canonical = |text: &str| {
+        let Ok(url) = url::Url::parse(text) else {
+            return text.to_owned();
+        };
+        let path = url.path().trim_end_matches('/');
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        format!(
+            "{}://{}@{}:{:?}{}",
+            url.scheme(),
+            url.username(),
+            url.host_str().unwrap_or_default().to_ascii_lowercase(),
+            url.port(),
+            path
+        )
     };
     canonical(a) == canonical(b)
 }
@@ -463,6 +538,107 @@ mod tests {
         assert_eq!(parsed.problems.len(), bad.len().min(MAX_PROBLEMS));
         assert!(parsed.problems[0].starts_with("Plugin 1: "));
         assert!(parsed.problems[3].contains("included with Buzz"));
+    }
+
+    #[test]
+    fn rejects_paths_that_could_never_match_a_candidate() {
+        for path in [
+            "dist/", "dist/./x", "a//b", "dist\\x", "./dist", "/dist", "", "a/..", "a:b",
+            "a/\u{7}b", "a/b/",
+        ] {
+            let text = entry("acme.one").replace(
+                r#""path":"dist/acme.one""#,
+                &format!(r#""path":{}"#, serde_json::to_string(path).unwrap()),
+            );
+            let parsed = parse(&policy(&[text])).unwrap();
+            assert!(parsed.plugins.is_empty(), "{path:?} was accepted");
+            assert_eq!(parsed.problems.len(), 1, "{path:?}");
+        }
+        for path in [".", "dist", "dist/acme.one", "my plugin/dist", "a/b.c/d-e"] {
+            let text = entry("acme.one").replace(
+                r#""path":"dist/acme.one""#,
+                &format!(r#""path":{}"#, serde_json::to_string(path).unwrap()),
+            );
+            let parsed = parse(&policy(&[text])).unwrap();
+            assert_eq!(parsed.plugins[0].path, path);
+        }
+    }
+
+    #[test]
+    fn source_must_be_plainly_displayable() {
+        for source in [
+            "Acme\u{202e}TI",
+            "Ac\u{200b}me",
+            "Acme\u{00a0}IT",
+            "Acme\u{2028}IT",
+            "Acme\u{feff}",
+            "Ac\u{00ad}me",
+            "Acme\tIT",
+        ] {
+            let text = format!(
+                r#"{{"version":1,"source":{},"plugins":[]}}"#,
+                serde_json::to_string(source).unwrap()
+            );
+            assert!(parse(&text).is_err(), "{source:?} was accepted");
+        }
+        for source in ["Société Générale", "東京 Org", "Acme IT"] {
+            let text = format!(
+                r#"{{"version":1,"source":{},"plugins":[]}}"#,
+                serde_json::to_string(source).unwrap()
+            );
+            assert_eq!(parse(&text).unwrap().source, source);
+        }
+    }
+
+    #[test]
+    fn compares_hosts_without_case_and_keeps_schemes_apart() {
+        assert!(same_repository(
+            "https://GitHub.com/acme/plugins",
+            "https://github.com/acme/plugins.git/"
+        ));
+        assert!(same_repository(
+            "ssh://git@Example.com/acme/plugins",
+            "ssh://git@example.com/acme/plugins.git"
+        ));
+        assert!(!same_repository(
+            "ssh://git@github.com/acme/plugins",
+            "https://github.com/acme/plugins"
+        ));
+        assert!(!same_repository(
+            "https://github.com/acme/plugins",
+            "https://github.com/Acme/plugins"
+        ));
+        assert!(!same_repository(
+            "https://github.com:8443/acme/plugins",
+            "https://github.com/acme/plugins"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn never_blocks_on_special_files_and_follows_symlinks() {
+        use std::{
+            ffi::CString,
+            os::unix::{ffi::OsStrExt, fs::symlink},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let empty = catalog(vec![]);
+        let fifo = dir.path().join("fifo.json");
+        let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let Managed::Invalid { reason, .. } = status(Ok(fifo.clone()), &empty) else {
+            panic!("a FIFO must not be read");
+        };
+        assert!(reason.contains("regular file"));
+
+        let real = dir.path().join("real.json");
+        fs::write(&real, policy(&[entry("acme.one")])).unwrap();
+        let link = dir.path().join("link.json");
+        symlink(&real, &link).unwrap();
+        assert!(matches!(status(Ok(link), &empty), Managed::Ready { .. }));
+        let dangling = dir.path().join("dangling.json");
+        symlink(dir.path().join("missing.json"), &dangling).unwrap();
+        assert_eq!(status(Ok(dangling), &empty), Managed::Absent);
     }
 
     #[test]

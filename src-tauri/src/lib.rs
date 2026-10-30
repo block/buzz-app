@@ -372,6 +372,9 @@ async fn plugin_import_git(
     check_only: Option<bool>,
     commit: Option<String>,
 ) -> Result<Option<Preview>, String> {
+    if let Some(commit) = &commit {
+        buzzodz_plugins::imports::RequiredCommit::parse(commit)?;
+    }
     let repository = buzzodz_plugins::imports::repository_url(&repository)?;
     let url = url::Url::parse(&repository).map_err(|_| "Invalid repository")?;
     let community = url.origin().ascii_serialization();
@@ -398,10 +401,14 @@ async fn plugin_import_git(
     let result = if check_only == Some(true) {
         // Checks own only their clone; they must never lock or replace Add's preview.
         tauri::async_runtime::spawn_blocking(move || {
+            let required = commit
+                .as_deref()
+                .map(buzzodz_plugins::imports::RequiredCommit::parse)
+                .transpose()?;
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
-                commit.as_deref(),
+                required,
                 authorization.as_deref(),
                 assertion
                     .as_ref()
@@ -421,10 +428,14 @@ async fn plugin_import_git(
                 Box::new(move || !guard.authorization_session_current(&authorization))
                     as Box<dyn Fn() -> bool + Send>
             });
+            let required = commit
+                .as_deref()
+                .map(buzzodz_plugins::imports::RequiredCommit::parse)
+                .transpose()?;
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
-                commit.as_deref(),
+                required,
                 authorization.as_deref(),
                 assertion
                     .as_ref()
@@ -1130,6 +1141,28 @@ mod tests {
         assert!(check(true).contains("branch or tag"));
         drop(pending);
         assert!(check(true).contains("branch or tag"));
+        let pinned = |commit: &str, check_only| {
+            tauri::async_runtime::block_on(super::plugin_import_git(
+                app.state(),
+                app.state(),
+                app.state(),
+                "https://example.invalid/plugins".into(),
+                "main".into(),
+                None,
+                Some(check_only),
+                Some(commit.into()),
+            ))
+            .err()
+            .unwrap()
+        };
+        for commit in ["main", "abc123", &"a".repeat(41), &"g".repeat(40)] {
+            for check_only in [false, true] {
+                assert!(
+                    pinned(commit, check_only).contains("Required commit"),
+                    "{commit}"
+                );
+            }
+        }
         assert_eq!(
             imports.0.lock().unwrap().as_ref().unwrap().preview.token,
             token

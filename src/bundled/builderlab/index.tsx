@@ -107,7 +107,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             ? { readiness: "ready" }
             : { readiness: "attention", attentionLabel: "Coming soon" }
           : state.status === "pending"
-            ? { readiness: "checking", blocking: true }
+            ? { readiness: "attention", attentionLabel: "Finish sign-in" }
             : {
                 readiness: "attention",
                 attentionLabel: "Log in to Builderlab",

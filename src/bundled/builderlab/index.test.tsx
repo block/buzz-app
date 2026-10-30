@@ -600,13 +600,14 @@ it.each([
         config: { instructions: "", modelId: "", reasoningEffort: "" },
       });
       const picker = render(<AgentDefaults agents={agents} />);
+      loginCallback = deferred<OAuthCallback>();
       const providerUser = userEvent.setup();
       await providerUser.click(
         await screen.findByRole("button", {
           name: "Log in to Builderlab, attention",
         }),
       );
-      const providerDialog = await screen.findByRole("dialog", {
+      let providerDialog = await screen.findByRole("dialog", {
         name: "Builderlab",
       });
       await providerUser.click(
@@ -614,11 +615,40 @@ it.each([
           name: "Sign in with Builderlab",
         }),
       );
+      try {
+        await waitFor(() => expect(loginWaits()).toHaveLength(1));
+        await providerUser.click(
+          within(providerDialog).getByRole("button", { name: "Close" }),
+        );
+        await waitFor(() =>
+          expect(
+            screen.queryByRole("dialog", { name: "Builderlab" }),
+          ).not.toBeInTheDocument(),
+        );
+        await providerUser.click(
+          screen.getByRole("button", { name: "Finish sign-in, attention" }),
+        );
+        providerDialog = await screen.findByRole("dialog", {
+          name: "Builderlab",
+        });
+        expect(
+          within(providerDialog).getByRole("button", {
+            name: "Cancel sign-in",
+          }),
+        ).toBeEnabled();
+      } finally {
+        await act(async () => {
+          loginCallback?.resolve({ parameters: [["code", "one-time"]] });
+          await loginCallback?.promise;
+        });
+        loginCallback = undefined;
+      }
       expect(
         await within(providerDialog).findByRole("button", {
           name: "Sign out",
         }),
       ).toBeEnabled();
+      expect(loginWaits()).toHaveLength(1);
       expect(native.invoke).toHaveBeenCalledWith("nsec_backup_session", {
         source: "builderlab",
         generation: expect.any(Number),

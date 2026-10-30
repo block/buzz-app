@@ -63,49 +63,90 @@ it("shows a signed-in confirmation when email is unavailable", async () => {
     "Signed in to Builderlab.",
   );
 });
-it.each(["cancel", "unmount"])(
-  "%s cancels a pending sign-in",
-  async (action) => {
-    const release = deferred<Credential>();
-    let signal: AbortSignal | undefined;
-    const acquire = vi.fn(async (current: AbortSignal) => {
-      signal = current;
-      return release.promise;
-    });
-    const session = createOAuthSession(acquire);
-    const mounted = render(
-      <StrictMode>
-        <Login session={session} available active={() => true} />
-      </StrictMode>,
+it("Cancel sign-in aborts a pending sign-in and rejects its late credential", async () => {
+  const release = deferred<Credential>();
+  let signal: AbortSignal | undefined;
+  const acquire = vi.fn(async (current: AbortSignal) => {
+    signal = current;
+    return release.promise;
+  });
+  const session = createOAuthSession(acquire);
+  render(
+    <StrictMode>
+      <Login session={session} available active={() => true} />
+    </StrictMode>,
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(
+      screen.getByRole("button", { name: "Sign in with Builderlab" }),
     );
-    const user = userEvent.setup();
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Finish sign-in in your browser",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Sign in with Builderlab" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+    expect(signal?.aborted).toBe(true);
+  } finally {
+    await act(async () => {
+      release.resolve(credential);
+      await release.promise;
+    });
+  }
+  expect(
+    screen.getByRole("button", { name: "Sign in with Builderlab" }),
+  ).toBeEnabled();
+  expect(() => session.credential()).toThrow("Sign in");
+});
+it.each(["before", "after"])(
+  "preserves sign-in when the view reopens %s browser completion",
+  async (reopen) => {
+    const release = deferred<Credential>();
+    const acquire = vi.fn(() => release.promise);
+    const session = createOAuthSession(acquire);
+    const showLogin = () =>
+      render(
+        <StrictMode>
+          <Login session={session} available active={() => true} />
+        </StrictMode>,
+      );
+    const mounted = showLogin();
     try {
-      await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
-      );
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Sign in with Builderlab" }));
       expect(acquire).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "Finish sign-in in your browser",
-      );
       expect(
-        screen.queryByRole("button", { name: "Sign in with Builderlab" }),
-      ).not.toBeInTheDocument();
-      if (action === "cancel")
-        await user.click(
+        screen.getByRole("button", { name: "Cancel sign-in" }),
+      ).toBeEnabled();
+      mounted.unmount();
+      if (reopen === "before") {
+        showLogin();
+        expect(
           screen.getByRole("button", { name: "Cancel sign-in" }),
-        );
-      else mounted.unmount();
-      expect(signal?.aborted).toBe(true);
-    } finally {
+        ).toBeEnabled();
+      }
       await act(async () => {
         release.resolve(credential);
         await release.promise;
       });
-    }
-    if (action === "cancel")
+      if (reopen === "after") showLogin();
       expect(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+        await screen.findByRole("button", { name: "Sign out" }),
       ).toBeEnabled();
+      expect(screen.getByRole("status")).toHaveTextContent("a@example.com");
+      expect(session.credential()).toBe(credential);
+      expect(acquire).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        release.resolve(credential);
+        await release.promise;
+        session.dispose();
+      });
+    }
   },
 );
 it("shows failures and permits retry; inactive contributions cannot start sign-in", async () => {

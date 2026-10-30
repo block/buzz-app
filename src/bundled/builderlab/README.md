@@ -73,6 +73,13 @@ the agent even while Buzz is closed. On desktop, Create agent and confirmed
 deletion start browser sign-in when needed, then continue the action. Both share
 an existing Settings sign-in attempt; a failed or canceled login leaves the
 action available for retry. Settings still provides sign-in and sign-out.
+Sign-in continues if you close Settings or the Builderlab connection dialog
+while Buzz stays open. Reopen either to see the pending attempt, cancel it, or
+see its result. Harness defaults offers **Finish sign-in** while it is pending.
+Explicit **Cancel sign-in**, disabling the plugin, or closing Buzz ends the
+attempt; the browser callback also expires after ten minutes. A browser message
+confirming receipt is only the handoff: Buzz still exchanges the code and verifies
+the account before showing it as signed in.
 While Create agent waits for the browser, its dialog offers Cancel sign-in, which
 cancels the shared login (as Settings' does) and leaves Create available for
 retry. Deletion's wait has no such control; disabling the plugin or closing Buzz

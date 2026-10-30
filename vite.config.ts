@@ -49,10 +49,10 @@ export default defineConfig(async ({ command, mode }) => {
         "BUZZ_DATABRICKS_HOST must be an https:// URL without credentials.",
       );
   }
-  // Opt-in seed: answers the first-run Builderlab account reads (linked key,
-  // owned communities) without kgoose, so the returning-user screens can be
-  // walked against a real account whose binding must not change. Builds never
-  // see it.
+  // Opt-in seed: replaces first run's Builderlab account requests, key backup
+  // and recovery, so the first-run screens can be walked against a real account
+  // whose binding must not change. Builds never see it. The full list is in
+  // docs/configuration.md#first-run-account-seed-development.
   const firstRunAccount =
     command === "serve" ? (env.BUZZ_DEV_FIRST_RUN_ACCOUNT ?? "") : "";
   parseFirstRunAccountSeed(firstRunAccount);

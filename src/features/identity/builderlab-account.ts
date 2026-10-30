@@ -55,13 +55,15 @@ export type FirstRunAccount = Readonly<{
   /**
    * Saves `url` to that list (`wss://host[:port]`), as the sync's outbox add
    * would at the next Settings sign-in; the add is idempotent, so that later
-   * send changes nothing. Rejects on any failure.
+   * send changes nothing. Rejects on any failure, including a 2xx that is not
+   * kgoose's JSON reply, which the outbox would count as saved.
    */
   saveCommunity(url: string): Promise<void>;
   /**
    * Binds `pubkey`, the key on this device, to the account: kgoose's challenge,
    * the native kind-24243 signer, then verify. Sends nothing more once the
-   * account already holds that key, so running it again is safe.
+   * account already holds that key, so running it again is safe, and never
+   * verifies a signature by any other key.
    */
   bind(pubkey: string): Promise<void>;
   /**
@@ -144,6 +146,9 @@ const SIGNED_OUT = "Your Builderlab sign-in is no longer valid.";
 const OTHER_KEY =
   "Your Builderlab account is linked to a different key, so your new key can’t be linked.";
 
+const KEY_CHANGED =
+  "The key on this device changed before it could be linked, so your Builderlab account wasn’t changed.";
+
 /**
  * A transport failure (no status), a rate limit or a 5xx may clear on its own,
  * as the native uploader reads them, so the failed page offers Try again; a
@@ -219,8 +224,12 @@ function checked(reply: Reply, fallback: string) {
 }
 
 /** The Builderlab communities native backend's reply rules, for a response that came through the bundled grant. */
-function parse(step: string, response: HostResponse): Reply {
-  if (new TextEncoder().encode(response.body).byteLength > MAX_RESPONSE_BYTES)
+function parse(
+  step: string,
+  response: HostResponse,
+  limit = MAX_RESPONSE_BYTES,
+): Reply {
+  if (new TextEncoder().encode(response.body).byteLength > limit)
     throw failure(step, response, "response too large");
   let value: unknown;
   try {
@@ -249,7 +258,12 @@ const backupFailure = (status: number): BackupFailureKind =>
         ? "refused"
         : "unreachable";
 
-/** `nsec-backups/status`'s `backup_nostr_pubkeys`, or undefined for any other reply. */
+/**
+ * `nsec-backups/status`'s `backup_nostr_pubkeys`, or undefined for any other
+ * reply. kgoose's Moshi response type always writes this list (`[]` for none)
+ * and drops a null `current_nostr_pubkey`, so unlike the Wire list routes, a
+ * missing list is not an empty one.
+ */
 function backedUpKeys(response: HostResponse) {
   if (new TextEncoder().encode(response.body).byteLength > MAX_RESPONSE_BYTES)
     return undefined;
@@ -336,6 +350,7 @@ export function builderlabAccount(
     fallback: string,
     read: (reply: Reply | null, response: HostResponse) => T,
     body: object = {},
+    limit?: number,
   ) => {
     const response = await post(path, body).catch((error: unknown) => {
       throw transient(asError(error));
@@ -343,7 +358,7 @@ export function builderlabAccount(
     let reply: Reply | undefined;
     try {
       if (response.status === 401) throw new Error(SIGNED_OUT);
-      reply = parse(step, response);
+      reply = parse(step, response, limit);
       return read(notLinked(reply) ? null : checked(reply, fallback), response);
     } catch (error) {
       const id = reply?.correlation_id;
@@ -396,12 +411,16 @@ export function builderlabAccount(
         { origin: portal },
       );
       // Native code signs only a well-formed challenge for production
-      // Builderlab or the build URL's origin.
-      const event = await invoke<object>("identity_sign_builderlab_binding", {
-        challenge,
-      }).catch((error: unknown) => {
+      // Builderlab or the build URL's origin, with whatever key secure storage
+      // holds now. Verify binds the signer, which linking again cannot undo,
+      // so only `pubkey`'s signature may reach kgoose.
+      const event = await invoke<{ pubkey?: unknown }>(
+        "identity_sign_builderlab_binding",
+        { challenge },
+      ).catch((error: unknown) => {
         throw asError(error);
       });
+      if (event.pubkey !== pubkey) throw new Error(KEY_CHANGED);
       // An account bound to another key is refused here, with 409
       // `identity_already_bound`.
       await call(
@@ -468,6 +487,11 @@ export function builderlabAccount(
             throw failure("known communities", response, "unreadable row");
           return listed.filter((address): address is string => !!address);
         },
+        {},
+        // Uncapped, as the plugin's own client reads it: kgoose holds about
+        // 1,000 destinations of at most 512 characters, far inside the host
+        // transport's cap.
+        Number.POSITIVE_INFINITY,
       ),
     async saveCommunity(url) {
       await call(

@@ -15,7 +15,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
-| `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: answers the first-run Builderlab account reads (linked key, owned communities, saved communities, backed-up keys) in place of kgoose, and fakes backup recovery. Builds define it empty. See [below](#first-run-account-seed-development). |
+| `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: replaces first run's kgoose reads and writes (including the key link, the unlink and the saved-community add), its key backup and backup recovery. Builds define it empty. See [below](#first-run-account-seed-development). |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Native release build, process environment only: two non-empty values register the updater plugin. The same public key and endpoint must reach `tauri build --config` as `plugins.updater`, and update archives must be signed by the matching private key. Desktop preview release runs supply both for every platform (see [releases](releases.md)); candidate-only and local builds report automatic updates as unavailable. |
 
@@ -135,7 +135,7 @@ on a dev server:
 BUZZ_DEV_FIRST_RUN_ACCOUNT=unlinked
 # A returning user: Welcome back for this npub, with these owned communities.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"npub":"npub1…","communities":["design.example.com"]}'
-# An account with these destinations saved to it (read with the account check; nothing restores them yet).
+# An account with these destinations saved to it (read with the account check).
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"known":["chat.example.com","wss://buzz.example.org:8443"]}'
 # A brand-new account whose every backup fails as if Builderlab were unreachable.
 BUZZ_DEV_FIRST_RUN_ACCOUNT='{"backup":"unreachable"}'

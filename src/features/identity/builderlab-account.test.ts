@@ -296,6 +296,28 @@ describe("knownCommunities", () => {
     ).toEqual([]);
   });
 
+  // kgoose holds about 1,000 destinations; the card's 64 KiB cap is not this list's.
+  it("reads a full account's list past the card's response cap", async () => {
+    const urls = Array.from(
+      { length: 1000 },
+      (_, index) =>
+        `wss://community-${String(index).padStart(4, "0")}.buzz.block.builderlab.example.com`,
+    );
+    const reply = answer(200, {
+      communities: urls.map((community_url) => ({ community_url })),
+    });
+    expect(new TextEncoder().encode(reply.body).byteLength).toBeGreaterThan(
+      64 * 1024,
+    );
+    expect(
+      await builderlabAccount(
+        credential,
+        kgoose(reply).request,
+        untouched,
+      ).knownCommunities(),
+    ).toEqual(urls);
+  });
+
   // The route's refusals are plain strings, not the card's error objects, and
   // a portal without the route answers a plain-text 404.
   it.each([
@@ -439,7 +461,12 @@ describe("bind", () => {
     origin: "https://t.example",
     expires_at: "2999-01-01T00:00:00Z",
   };
-  const event = { id: "e".repeat(64), kind: 24243, sig: "s".repeat(128) };
+  const event = {
+    id: "e".repeat(64),
+    pubkey,
+    kind: 24243,
+    sig: "s".repeat(128),
+  };
   const unbound = answer(200, {
     identity: null,
     correlation_id: correlationId,
@@ -712,6 +739,32 @@ describe("bind", () => {
       "Invalid Nostr identity challenge",
     );
     expect(sent).toHaveLength(2);
+  });
+
+  // Native code signs with whatever key secure storage holds when it runs.
+  it.each([
+    ["another key", { ...event, pubkey: "cd".repeat(32) }],
+    ["no key", { ...event, pubkey: undefined }],
+  ])("never verifies a signature by %s", async (_label, signed) => {
+    vi.mocked(invoke).mockResolvedValue(signed);
+    const { request, sent } = kgoose(unbound, answer(200, challenge));
+    const failed: unknown = await builderlabAccount(
+      credential,
+      request,
+      untouched,
+    )
+      .bind(pubkey)
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect((failed as Error).message).toBe(
+      "The key on this device changed before it could be linked, so your Builderlab account wasn’t changed.",
+    );
+    expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
+    expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
+      "current",
+      "challenge",
+    ]);
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it.each([

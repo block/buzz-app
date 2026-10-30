@@ -369,7 +369,7 @@ function ReactionEmoji({
           </span>
           {remaining > 0 && (
             <span className={styles.reactionPreviewNames}>
-              and {remaining} others
+              and {remaining} {remaining === 1 ? "other" : "others"}
             </span>
           )}
           <span className={styles.reactionPreviewName}>{name}</span>

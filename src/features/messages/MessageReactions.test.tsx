@@ -223,6 +223,25 @@ it("keeps one bubble and focus when the count crosses the former grouping thresh
   });
 });
 
+it.each([
+  [3, null],
+  [4, "and 1 other"],
+  [5, "and 2 others"],
+] as const)(
+  "pluralizes the preview remainder for %i reactors",
+  async (count, remainder) => {
+    const people = Array.from({ length: count }, () => keypair());
+    const h = harness(people.map((person) => react(person)));
+    render(<h.Controls />);
+    act(() =>
+      screen.getByRole("button", { name: `👍: ${count} people` }).focus(),
+    );
+    const preview = await screen.findByRole("tooltip");
+    if (remainder) expect(within(preview).getByText(remainder)).toBeTruthy();
+    else expect(within(preview).queryByText(/^and /)).toBeNull();
+  },
+);
+
 it("keeps custom emoji URLs separate and updates a grouped count when I join", async () => {
   const people = Array.from({ length: 9 }, () => keypair());
   const first = "https://a.test/first.gif";

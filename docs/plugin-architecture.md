@@ -1229,10 +1229,13 @@ requires deleting the plugin and adding it again. Git checks remain explicit in 
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
-usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
-known hosts, with interactive prompts and SSH config disabled. If normal Git uses
-an `IdentityAgent` from SSH config, launch the app with that socket in
-`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
+usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on
+port 22 use Block's agent when its socket exists at
+`~/Library/Application Support/block-ssh-agent/agent.sock`. Other SSH sources use
+the desktop process's inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with
+interactive prompts and SSH config disabled. For another agent selected by
+`IdentityAgent` in SSH config, launch the app with that socket in `SSH_AUTH_SOCK`.
+Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
@@ -1263,7 +1266,7 @@ Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
 submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
-SSH uses the existing agent/known hosts, not user SSH config; password entry, HTTPS
+SSH uses the selected agent and known hosts, not user SSH config; password entry, HTTPS
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.

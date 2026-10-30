@@ -29,33 +29,13 @@ export function windowFilter(
   };
 }
 /** The relay answers each served window with exactly one signed kind 39006 bounds event. Anything else is rejected;
- * an absent or malformed bound must never be mistaken for "no more history". A read continued past membership
- * notices holds one bound per page; the chain from `cursor` describes the whole read. */
+ * an absent or malformed bound must never be mistaken for "no more history". */
 export function parseWindow(
   channelId: string,
   cursor: WindowCursor | null,
   relayAuthor: string,
   events: readonly RelayEvent[],
 ): WindowPage {
-  let page = parseBound(channelId, cursor, relayAuthor, events);
-  if (!page)
-    throw new Error("Channel history response has invalid window bounds");
-  while (page.cursor) {
-    const next = parseBound(channelId, page.cursor, relayAuthor, events);
-    if (!next) break;
-    page = next;
-  }
-  return {
-    events: events.filter((event) => event.kind !== 39006),
-    ...page,
-  };
-}
-function parseBound(
-  channelId: string,
-  cursor: WindowCursor | null,
-  relayAuthor: string,
-  events: readonly RelayEvent[],
-): Omit<WindowPage, "events"> | undefined {
   const suffix = cursor
     ? `${channelId}:${cursor.createdAt}:${cursor.eventId}`
     : `${channelId}:head`;
@@ -67,8 +47,7 @@ function parseBound(
       hasTag(event, "d", suffix),
   );
   const [bound] = bounds;
-  if (!bound) return;
-  if (bounds.length !== 1)
+  if (bounds.length !== 1 || !bound)
     throw new Error("Channel history response has invalid window bounds");
   const body = objectBody(bound.content);
   if (!body) throw new Error("Channel history bounds are malformed");
@@ -99,5 +78,9 @@ function parseBound(
   }
   if (body.has_more !== (nextCursor !== null))
     throw new Error("Channel history bounds contradict their cursor");
-  return { hasMore: body.has_more, cursor: nextCursor };
+  return {
+    events: events.filter((event) => event.kind !== 39006),
+    hasMore: body.has_more,
+    cursor: nextCursor,
+  };
 }

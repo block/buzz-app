@@ -106,39 +106,6 @@ describe("channel window bounds", () => {
   });
 });
 
-it("follows one bound per continued page to the last, and still rejects bad links", () => {
-  const head = message(author, channel, "joined", 10),
-    older = message(author, channel, "older", 5);
-  const continued = bounds(relay, channel, `10:${head.id}`, {
-    has_more: true,
-    next_cursor: { created_at: 5, id: older.id },
-  });
-  const events = [
-    head,
-    bounds(relay, channel, "head", {
-      has_more: true,
-      next_cursor: { created_at: 10, id: head.id },
-    }),
-    older,
-    continued,
-  ];
-  expect(parseWindow(channel, null, relay.pubkey, events)).toEqual({
-    events: [head, older],
-    hasMore: true,
-    cursor: { createdAt: 5, eventId: older.id },
-  });
-  const link = bounds(relay, channel, `10:${head.id}`, {
-    has_more: true,
-    next_cursor: { created_at: 11, id: older.id },
-  });
-  expect(() =>
-    parseWindow(channel, null, relay.pubkey, [...events.slice(0, 2), link]),
-  ).toThrow(/does not advance/);
-  expect(() =>
-    parseWindow(channel, null, relay.pubkey, [...events, continued]),
-  ).toThrow(/invalid window bounds/);
-});
-
 it("advances valid equal-time composite history cursors deterministically", () => {
   const cursor = { createdAt: 10, eventId: "a".repeat(64) };
   const nextId = "b".repeat(64);

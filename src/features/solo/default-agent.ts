@@ -37,6 +37,9 @@ const saving = new WeakMap<Account, number>();
 // Accounts read this session, so a deleted agent can be cleared from them.
 const accounts = new Set<WeakRef<Account>>();
 const tracked = new WeakSet<Account>();
+// Agents deleted here while an account was unread, or its read had failed, so
+// a read that still finds one saves none instead of adopting it.
+const deleted = new WeakMap<Account, Set<string>>();
 const listeners = new Set<() => void>();
 function notifySaved() {
   for (const listener of listeners) listener();
@@ -59,6 +62,8 @@ async function save(account: Account, agent: string | null) {
     known.add(account);
   } finally {
     saving.set(account, (saving.get(account) ?? 1) - 1);
+    // Known again, or not, once it stops counting as pending.
+    notifySaved();
   }
 }
 // Explicit choices on this device by scope, so a failed one gives way to a
@@ -177,17 +182,18 @@ export function forgetDefaultAgent(pubkey: string) {
   for (const ref of accounts) {
     const account = ref.deref();
     if (!account) accounts.delete(ref);
-    else if (saved.get(account) === pubkey)
-      clearDeleted(account, pubkey).catch((error) =>
-        console.warn(
-          "The deleted Bestie wasn't cleared from your account",
-          error,
-        ),
-      );
+    else if (!saved.has(account) || readFailures.has(account))
+      deleted.set(account, (deleted.get(account) ?? new Set()).add(pubkey));
+    else if (saved.get(account) === pubkey) clearLater(account, pubkey);
   }
   notifySaved();
 }
 
+function clearLater(account: Account, pubkey: string) {
+  clearDeleted(account, pubkey).catch((error) =>
+    console.warn("The deleted Bestie wasn't cleared from your account", error),
+  );
+}
 /** Saves none to an account whose Bestie was deleted, only if the account
  * still holds that agent when read again: another device may have chosen
  * another since, and a choice made here meanwhile wins too. */
@@ -218,17 +224,22 @@ function adopt(account: Account, scope: string) {
     const started = revision(account);
     pending = account.read().then(
       (agent) => {
-        readValues.set(account, agent);
+        // A save that finished meanwhile is newer than this read.
+        if (started === revision(account) || !readValues.has(account))
+          readValues.set(account, agent);
         readFailures.delete(account);
         if (started !== revision(account)) {
           if (failedChoices.delete(account)) remember(account, agent);
           return;
         }
         const adopts = !explicit.has(account);
-        if (adopts && agent !== undefined) cache(scope, agent);
+        // An agent deleted here before the read finished is gone.
+        const gone = agent !== undefined && !!deleted.get(account)?.has(agent);
+        if (adopts && agent !== undefined && !gone) cache(scope, agent);
         // A choice made meanwhile is known only once it is saved.
         if (adopts) known.add(account);
         remember(account, adopts ? agent : (saved.get(account) ?? agent));
+        if (adopts && gone) clearLater(account, agent);
       },
       (cause) => {
         adopted.delete(account);

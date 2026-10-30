@@ -92,6 +92,7 @@ export function createSignInFooter(session: OAuthSession) {
                 size="lg"
                 loading={pending && !waiting}
                 disabled={(!available && !pending) || (pending && !waiting)}
+                focusableWhenDisabled={pending && !waiting}
                 style={{ width: "100%" }}
                 onClick={() => {
                   if (waiting) session.cancel();

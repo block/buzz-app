@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { createOAuthSession } from "../oauth/session";
 import {
@@ -88,6 +89,32 @@ it("shows account status with one footer sign-in action and restores profile con
   session.dispose();
 });
 
+it("keeps keyboard focus while sign-in is pending and blocks repeat activation", async () => {
+  const held = deferred<Credential>();
+  const acquire = vi.fn(() => held.promise);
+  const session = createOAuthSession(acquire);
+  const Footer = createSignInFooter(session);
+  render(<Footer />);
+  const user = userEvent.setup();
+  const signIn = screen.getByRole("button", { name: "Sign in to Builderlab" });
+  try {
+    await user.tab();
+    expect(signIn).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(signIn).toHaveAttribute("aria-busy", "true");
+    expect(signIn).toHaveAttribute("aria-disabled", "true");
+    expect(signIn).not.toHaveAttribute("disabled");
+    expect(signIn).toHaveFocus();
+    await user.keyboard("{Enter} ");
+    await user.click(signIn);
+    expect(signIn).toHaveFocus();
+    expect(acquire).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => held.resolve(credential));
+    session.dispose();
+  }
+});
+
 it("keeps early sign-in passive, then offers guidance and cancellation without accepting late results", async () => {
   // Control browser-guidance deadlines without replacing Motion's frame clock.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -108,7 +135,8 @@ it("keeps early sign-in passive, then offers guidance and cancellation without a
   fireEvent.click(signIn);
   expect(acquire).toHaveBeenCalledTimes(1);
   expect(signIn).toHaveAttribute("aria-busy", "true");
-  expect(signIn).toBeDisabled();
+  expect(signIn).toHaveAttribute("aria-disabled", "true");
+  expect(signIn).not.toHaveAttribute("disabled");
   expect(session.snapshot().status).toBe("pending");
   expect(acquire.mock.calls[0]?.[0].aborted).toBe(false);
   expect(subtitle).toHaveTextContent(
@@ -118,7 +146,7 @@ it("keeps early sign-in passive, then offers guidance and cancellation without a
   await act(() => vi.advanceTimersByTimeAsync(2999));
   expect(screen.queryByText(/Finish signing in/)).toBeNull();
   expect(signIn).toHaveAttribute("aria-busy", "true");
-  expect(signIn).toBeDisabled();
+  expect(signIn).toHaveAttribute("aria-disabled", "true");
   expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(subtitle).toHaveTextContent(

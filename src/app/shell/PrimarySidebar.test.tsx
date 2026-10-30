@@ -775,3 +775,27 @@ it("collapsing the contributed task section keeps ordinary chats visible", async
     await h.dispose();
   }
 });
+
+it("shows Try again beside a settled failure, and Connecting while the connection retries", async () => {
+  const f = fixture(true);
+  const retry = vi.spyOn(f.relay, "retry");
+  const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
+  const error = "ReadError: Relay read failed (502)";
+  f.connection({ status: "error", error });
+  expect(within(sidebar()).getByText("Couldn’t load channels.")).toBeVisible();
+  expect(within(sidebar()).queryByText(/ReadError/)).toBeNull();
+  await userEvent
+    .setup()
+    .click(within(sidebar()).getByRole("button", { name: "Try again" }));
+  expect(retry).toHaveBeenCalledOnce();
+  for (const working of [
+    { status: "connecting" },
+    { status: "error", error, retrying: true },
+  ] as const) {
+    f.connection(working);
+    expect(within(sidebar()).getByText("Connecting…")).toBeVisible();
+    expect(
+      within(sidebar()).queryByRole("button", { name: "Try again" }),
+    ).toBeNull();
+  }
+});

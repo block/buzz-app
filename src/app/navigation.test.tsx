@@ -209,7 +209,7 @@ it("reports a settled plugin's absent Settings provider as unavailable", async (
   });
 });
 
-it("offers Settings as the way out when Messages itself is unavailable", async () => {
+it("leaves the app's own navigation as the way out when Messages itself is unavailable", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -239,10 +239,7 @@ it("offers Settings as the way out when Messages itself is unavailable", async (
     await screen.findByRole("heading", { name: "This page isn’t available" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
-  await waitFor(() =>
-    expect(current.navigation.snapshot().entry.target.kind).toBe("settings"),
-  );
+  expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
 });
 
 it("opens Pair mobile in Personal space with no saved communities", async () => {

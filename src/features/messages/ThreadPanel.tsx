@@ -1413,6 +1413,9 @@ function ThreadMessages({
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  const targetUnavailable =
+    snapshot.targetStatus === "unavailable" && !selectionNotice;
+  const historyError = !!snapshot.error && !showOlderPageStatus;
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
@@ -1563,7 +1566,19 @@ function ThreadMessages({
                 : {})}
             />
           ) : snapshot.status !== "loading" ? (
-            <p className={styles.empty}>Original message unavailable.</p>
+            targetUnavailable ? (
+              // One notice, with its recovery beside it, when nothing loaded.
+              <div className={styles.threadNotice}>
+                <p role="status">This message isn’t available.</p>
+                {!historyError && (
+                  <Button type="button" onClick={() => void view.refresh()}>
+                    Try again
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className={styles.empty}>Original message unavailable.</p>
+            )
           ) : null}
           <ol>
             {showOlderPageStatus && snapshot.error && (
@@ -1588,12 +1603,6 @@ function ThreadMessages({
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <ThreadLoading />
         ) : null}
-        {snapshot.targetStatus === "unavailable" && !selectionNotice && (
-          <p role="status">Selected message unavailable.</p>
-        )}
-        {snapshot.error && !showOlderPageStatus && (
-          <p role="alert">{snapshot.error}</p>
-        )}
         {selectionNotice && (
           <p role="alert">
             {selectionNotice.unavailable
@@ -1604,9 +1613,12 @@ function ThreadMessages({
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {((snapshot.error && !showOlderPageStatus) ||
-          (snapshot.targetStatus === "unavailable" && !selectionNotice)) && (
-          <div className={styles.threadHistoryControls}>
+        {(historyError || (targetUnavailable && snapshot.root)) && (
+          <div className={styles.threadNotice}>
+            {targetUnavailable && snapshot.root && (
+              <p role="status">Selected message unavailable.</p>
+            )}
+            {historyError && <p role="alert">{snapshot.error}</p>}
             <Button type="button" onClick={() => void view.refresh()}>
               Try again
             </Button>

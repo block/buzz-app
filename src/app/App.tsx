@@ -374,12 +374,17 @@ function ConnectedApp({ services }: { services: AppServices }) {
     </Button>
   );
   // The way out must lead elsewhere: Messages itself may be what failed. A
-  // conversation link still leaves for Messages' own default.
-  const messagesButton = (variant: "primary" | "quiet") =>
-    (route.target.kind === "conversation" ||
+  // link or access failure, or a conversation, still leaves for Messages'
+  // own default. Without one, the app's navigation remains the way out.
+  const leaveForMessages =
+    (failureKind === "link" ||
+      failureKind === "denied" ||
+      route.target.kind === "conversation" ||
       (route.selected !== "buzz.channels/channels" &&
         route.selected !== "home")) &&
-    route.pages.some((page) => page.key === "buzz.channels/channels") ? (
+    route.pages.some((page) => page.key === "buzz.channels/channels");
+  const messagesButton = (variant: "primary" | "quiet") =>
+    leaveForMessages ? (
       <Button
         type="button"
         variant={variant}
@@ -387,15 +392,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
       >
         Go to Messages
       </Button>
-    ) : settings ? null : (
-      <Button
-        type="button"
-        variant={variant}
-        onClick={() => select("settings")}
-      >
-        Open Settings
-      </Button>
-    );
+    ) : null;
   const destinationFailure = (
     <div role="alert" className="page-status">
       {failureKind === "denied" ? (
@@ -437,7 +434,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             <>
               {messagesButton("primary")}
               {(!route.state.ingress || route.state.retryable) &&
-                retryButton("quiet")}
+                retryButton(leaveForMessages ? "quiet" : "primary")}
             </>
           }
         />

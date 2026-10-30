@@ -234,6 +234,7 @@ export function fixture(
   const rendered = render(tree());
   return {
     session,
+    relay,
     navigate(next: OpenTarget) {
       target = next;
       rendered.rerender(tree());

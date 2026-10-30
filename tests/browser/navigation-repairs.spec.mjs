@@ -92,8 +92,9 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   ).toBeVisible();
   expect(requests).toBe(1);
   const visit = await entry(page);
-  const retry = button(page, "Try again");
   const main = page.getByRole("main");
+  // The sidebar offers its own Try again for the channel list.
+  const retry = button(main, "Try again");
   try {
     await retry.focus();
     await retry.press("Enter");
@@ -207,5 +208,10 @@ launchTest(
     ).toBeVisible();
     await button(page, "Go forward").click();
     await expect(failed).toBeVisible();
+    // A broken link leads to Messages, which did not fail.
+    await button(page, "Go to Messages").click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeVisible();
   },
 );

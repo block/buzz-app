@@ -466,7 +466,7 @@ test("unknown target fails without channel-head success and retries in the same 
   });
   // The thread shows the failure in place; the conversation stays open.
   await expect(
-    thread(page).getByText("Selected message unavailable."),
+    thread(page).getByText("This message isn’t available."),
   ).toBeVisible();
   const visit = await page.evaluate(
     () => window.fixtureNavigation.snapshot().entry.id,
@@ -485,7 +485,7 @@ test("unknown target fails without channel-head success and retries in the same 
     .click();
   await expect.poll(targetReads).toBeGreaterThan(before);
   await expect(
-    thread(page).getByText("Selected message unavailable."),
+    thread(page).getByText("This message isn’t available."),
   ).toBeVisible();
   expect(await status(page)).toBe("failed");
   expect(

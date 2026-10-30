@@ -339,7 +339,10 @@ it("reopens a visit that timed out while connecting once the connection is live"
     ).toBeVisible();
     // Messages is what failed, so the way out leads elsewhere.
     expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Open Settings" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Try again" }).dataset.variant,
+    ).toBe("prominent");
     online();
     await act(() => vi.advanceTimersByTimeAsync(31_000));
     await waitFor(() =>
@@ -443,7 +446,7 @@ it("keeps Messages on screen when only the linked message fails to open", async 
   );
   // The failure stays beside the message; the conversation stays usable.
   expect(
-    await screen.findByText("Selected message unavailable."),
+    await screen.findByText("This message isn’t available."),
   ).toBeVisible();
   expect(screen.getByRole("region", { name: "Channels" })).toBeVisible();
   expect(screen.queryByText(pageFailure)).toBeNull();

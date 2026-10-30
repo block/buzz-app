@@ -1,4 +1,3 @@
-import { pauseClock } from "./clock.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { end, open, settle } from "./timeline.mjs";
@@ -254,7 +253,7 @@ test("keyboard permission check keeps focus and geometry while busy", async ({
     window.Notification.permission = "denied";
   });
   await button.focus();
-  await pauseClock(page, 1_000);
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
   await page.keyboard.press("Enter");
   await expect(button).toHaveAttribute("aria-busy", "true");
   await page.clock.runFor(100);
@@ -321,7 +320,8 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
     .toBe(true);
   // Controlled policy/dwell ordering, not evidence about native frame scheduling.
   // Exact-row navigation and reflow journeys below retain native rAF.
-  await pauseClock(page, 30_000);
+  const base = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(base + 30_000);
   const row = liveMessage(app, "Visible mention");
   await expect
     .poll(() =>

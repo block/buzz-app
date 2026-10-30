@@ -1,4 +1,3 @@
-import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey, verifyEvent } from "nostr-tools";
 import { newChat, openPage } from "./navigation.mjs";
@@ -520,7 +519,7 @@ test("Share grants access and posts a link without promoting or moving the Solo 
   await expect(hint).not.toBeVisible();
   await expect(dialog).toBeVisible();
   // Hold the page clock so the held readback cannot reach its read deadline.
-  await pauseClock(page, 100);
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
   try {
     await page.keyboard.press("Enter");
     await requestedReadback;

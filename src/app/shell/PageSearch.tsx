@@ -1,4 +1,5 @@
 import { useSearchSettings } from "./SearchSettings";
+import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
@@ -59,10 +60,13 @@ export function PageSearch({
   pages,
   onSelect,
   services,
+  sidebarTrigger,
 }: {
   pages: readonly RegisteredPage[];
   onSelect: (key: string) => void;
   services?: SearchServices | undefined;
+  /** A second trigger in the primary sidebar's controls, when it renders them. */
+  sidebarTrigger?: HTMLElement | null;
 }) {
   const [open, setOpen] = useState(false);
   const [contentPresent, setContentPresent] = useState(false);
@@ -76,6 +80,8 @@ export function PageSearch({
   const returnFocus = useRef<HTMLElement>(null);
   const composerChannel = useRef<string | undefined>(undefined);
   const trigger = useRef<HTMLElement>(null);
+  const sidebarButton = useRef<HTMLButtonElement>(null);
+  const fromSidebar = useRef(false);
   const openRef = useRef(false);
   const setSearchOpen = useCallback((next: boolean) => {
     openRef.current = next;
@@ -83,6 +89,7 @@ export function PageSearch({
     setOpen(next);
   }, []);
   const begin = useCallback(() => {
+    fromSidebar.current = false;
     composerChannel.current = undefined;
     returnFocus.current =
       document.activeElement instanceof HTMLElement
@@ -94,6 +101,7 @@ export function PageSearch({
   }, [setSearchOpen]);
   const beginScoped = useCallback(() => {
     if (currentTarget?.kind !== "conversation") return;
+    fromSidebar.current = false;
     composerChannel.current = undefined;
     returnFocus.current =
       document.activeElement instanceof HTMLElement
@@ -179,6 +187,26 @@ export function PageSearch({
         }}
         icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
       />
+      {sidebarTrigger &&
+        createPortal(
+          <IconButton
+            hint="familiar"
+            ref={sidebarButton}
+            variant="inset"
+            shape="round"
+            size="sm"
+            aria-label="Search"
+            title={`Search Buzz (${shortcut})`}
+            onClick={(event) => {
+              // WebKit does not focus a clicked button; focus returns here.
+              event.currentTarget.focus();
+              begin();
+              fromSidebar.current = true;
+            }}
+            icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+          />,
+          sidebarTrigger,
+        )}
       <Dialog
         open={open}
         onOpenChange={setSearchOpen}
@@ -193,7 +221,13 @@ export function PageSearch({
             ? (composerChannel.current &&
                 conversationComposerFocusTarget(composerChannel.current)) ||
               false
-            : returnFocus.current
+            : fromSidebar.current
+              ? // The sidebar may have remounted its trigger or collapsed meanwhile.
+                sidebarButton.current?.isConnected &&
+                !sidebarButton.current.closest("[inert]")
+                ? sidebarButton.current
+                : trigger.current
+              : returnFocus.current
         }
         onOpenChangeComplete={(open) => {
           if (!open && !openRef.current) setContentPresent(false);

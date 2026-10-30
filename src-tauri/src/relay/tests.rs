@@ -519,13 +519,13 @@ fn isolated_agent_ipc_probe() {
     }
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     use tauri::Manager;
+    // Declared before the app so it is removed after the app drops.
+    let spools = tempfile::tempdir().unwrap();
     let app = mock_builder()
         .manage(IdentityHost::fixture())
         .manage(FederatedIdentity::new().unwrap())
         .manage(Uploads::default())
-        .manage(Spools::new(Ok(
-            std::env::temp_dir().join(format!("buzz-spool-ipc-{}", uuid::Uuid::new_v4()))
-        )))
+        .manage(Spools::new(Ok(spools.path().to_owned())))
         .manage(crate::archive::ArchiveHost::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())

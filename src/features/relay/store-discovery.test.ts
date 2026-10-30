@@ -768,6 +768,35 @@ it("finds public channels by the joined-channel name rule, not only by substring
   expect(h.pending).toHaveLength(0);
 });
 
+it("orders public matches by the shared ranks, best first", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `12000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const page = [
+    open(0, "lobster-cat"),
+    open(1, "buzz-community"),
+    open(2, "abc-x"),
+    open(3, "bc-thing"),
+    open(4, "release-notes"),
+  ];
+  const done = h.channels.searchPublic?.("bc");
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  const resolve = await h.next(39000);
+  const ids = resolve.filters[0]?.["#d"] ?? [];
+  resolve.respond(page.filter((event) => ids.includes(tag(event, "d") ?? "")));
+  // Prefix, substring, word runs, then letters merely in order.
+  const order = ["bc-thing", "abc-x", "buzz-community", "lobster-cat"];
+  expect((await done)?.channels.map(({ name }) => name)).toEqual(order);
+  expect(h.channels.matchPublic?.("bc").map(({ name }) => name)).toEqual(order);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("names the completed public directory's open channels for references, without reading", async () => {
   const h = setup();
   h.channels.ensureList();

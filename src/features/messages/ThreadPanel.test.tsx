@@ -1478,8 +1478,9 @@ it.each([
     h.render();
     expect(
       screen.getByRole("region", {
-        name:
-          metadata.joinRole === "guest"
+        name: metadata.archived
+          ? "Archived channel"
+          : metadata.joinRole === "guest"
             ? "Read-only channel"
             : "Channel preview",
       }),
@@ -1488,6 +1489,45 @@ it.each([
     expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
   },
 );
+
+it("replaces an archived member thread composer and restores it on unarchive", () => {
+  const h = messagesHarness();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+  };
+  let list: ChannelList = { status: "ready", channels: [channel] };
+  const listeners = new Set<() => void>();
+  Object.assign(h.session, {
+    channels: {
+      list: () => list,
+      get: () => list.channels[0],
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    channelLifecycle: { available: true, run: vi.fn() },
+  });
+  h.render();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
+  act(() => {
+    list = { ...list, channels: [{ ...channel, archived: true }] };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getByRole("region", { name: "Archived channel" }),
+  ).toHaveTextContent("This channel is archived.");
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  act(() => {
+    list = { ...list, channels: [channel] };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("region", { name: "Composer" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Archived channel" })).toBeNull();
+});
 
 it("keeps guest threads readable without a reply composer or Join action across default changes", () => {
   const h = messagesHarness();

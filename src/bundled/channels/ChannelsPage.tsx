@@ -1669,6 +1669,11 @@ function ChannelWorkspace({
       )}
     </ChannelSettingsPanel>
   );
+  const channelNotice =
+    !!current &&
+    (current.archived ||
+      (current.readOnly &&
+        (!current.cached || current.viewerRole === "guest")));
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <>
@@ -1689,7 +1694,9 @@ function ChannelWorkspace({
             key={current.id}
             cached={cached}
             // The composer below mounts TypingIndicator for members of a live channel.
-            activityLane={!current.readOnly && !current.cached}
+            activityLane={
+              !current.archived && !current.readOnly && !current.cached
+            }
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
@@ -1710,24 +1717,24 @@ function ChannelWorkspace({
               : "Select a channel to read it."}
           </div>
         )}
-        {current?.readOnly &&
-          (!current.cached || current.viewerRole === "guest") && (
-            <ChannelJoinNotice
-              key={`join:${current.id}`}
-              ready={contentReadyChannel === current.id}
-              channelId={current.id}
-              guest={current.viewerRole === "guest"}
-              joinRole={current.joinRole}
-              lifecycle={queries.channelLifecycle}
-              joinable={
-                !current.archived &&
-                (current.channelType === "stream" ||
-                  current.channelType === "forum")
-              }
-              onJoin={() => setJoiningChannel(current.id)}
-              onHeightChange={setJoinNoticeHeight}
-            />
-          )}
+        {current && channelNotice && (
+          <ChannelJoinNotice
+            key={`join:${current.id}`}
+            ready={contentReadyChannel === current.id}
+            channelId={current.id}
+            archived={!!current.archived}
+            guest={current.viewerRole === "guest"}
+            joinRole={current.joinRole}
+            lifecycle={queries.channelLifecycle}
+            joinable={
+              !current.archived &&
+              (current.channelType === "stream" ||
+                current.channelType === "forum")
+            }
+            onJoin={() => setJoiningChannel(current.id)}
+            onHeightChange={setJoinNoticeHeight}
+          />
+        )}
       </section>
       {!cached && (
         <LiveStatus
@@ -1740,7 +1747,7 @@ function ChannelWorkspace({
           onRecovered={
             current
               ? () => {
-                  if (current.readOnly && !current.cached) {
+                  if (channelNotice) {
                     const history = historyContainer.current;
                     const target =
                       history?.querySelector<HTMLElement>(
@@ -1756,6 +1763,7 @@ function ChannelWorkspace({
         />
       )}
       {current &&
+        !current.archived &&
         current.viewerRole !== "guest" &&
         (!current.readOnly || current.cached) && (
           <ConversationComposer
@@ -1832,11 +1840,9 @@ function ChannelWorkspace({
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
           style={
             {
-              "--channel-preview-inset":
-                current?.readOnly &&
-                (!current.cached || current.viewerRole === "guest")
-                  ? `calc(${joinNoticeHeight}px + var(--space-3))`
-                  : "0px",
+              "--channel-preview-inset": channelNotice
+                ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                : "0px",
             } as React.CSSProperties
           }
           data-attachment-drop-zone=""

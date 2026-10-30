@@ -169,7 +169,7 @@ test("archive confirmation returns focus on cancel and retains the conversation 
       name: "Message #Lifecycle channel",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   expect(app.report.lifecyclePublications).toHaveLength(1);
   expect(app.report.lifecyclePublications[0].kind).toBe(9002);
   expect(app.report.unexpected).toEqual([]);
@@ -344,8 +344,12 @@ for (const action of ["archive", "hide"]) {
       await expect(destination).toBeVisible();
       if (action === "archive") await expect(page).toHaveURL(exactUrl);
       await expect(rows).toHaveCount(0);
-      if (action === "archive") await expect(composer).toBeDisabled();
-      else await expect(composer).toHaveCount(0);
+      if (action === "archive") {
+        await expect(composer).toHaveCount(0);
+        await expect(
+          page.getByRole("region", { name: "Archived channel", exact: true }),
+        ).toHaveText("This channel is archived.");
+      } else await expect(composer).toHaveCount(0);
       await page.reload();
       await expect(destination).toBeVisible();
       if (action === "archive") {
@@ -356,8 +360,12 @@ for (const action of ["archive", "hide"]) {
         ).toBeVisible();
       }
       await expect(rows).toHaveCount(0);
-      if (action === "archive") await expect(composer).toBeDisabled();
-      else await expect(composer).toHaveCount(0);
+      if (action === "archive") {
+        await expect(composer).toHaveCount(0);
+        await expect(
+          page.getByRole("region", { name: "Archived channel", exact: true }),
+        ).toHaveText("This channel is archived.");
+      } else await expect(composer).toHaveCount(0);
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
       ).toEqual([action === "archive" ? 9002 : 41012]);
@@ -505,12 +513,18 @@ test.describe("Solo chat lifecycle", () => {
     await expect(page).not.toHaveURL(url);
     // The retained address must still support archived-history recovery.
     await page.goto(url);
-    await expect(composer).toBeDisabled();
+    await expect(
+      page.getByRole("region", { name: "Archived channel", exact: true }),
+    ).toHaveText("This channel is archived.");
+    await expect(composer).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Share access", exact: true }),
     ).toHaveCount(0);
     await page.reload();
-    await expect(composer).toBeDisabled();
+    await expect(
+      page.getByRole("region", { name: "Archived channel", exact: true }),
+    ).toHaveText("This channel is archived.");
+    await expect(composer).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await page
       .getByRole("navigation", { name: "Subscribed channels" })
@@ -534,7 +548,10 @@ test.describe("Solo chat lifecycle", () => {
     await result.click();
     await expect(search).toHaveCount(0);
     await expect(page).toHaveURL(url);
-    await expect(composer).toBeDisabled();
+    await expect(
+      page.getByRole("region", { name: "Archived channel", exact: true }),
+    ).toHaveText("This channel is archived.");
+    await expect(composer).toHaveCount(0);
     await header.click();
     await expect(
       page.getByRole("button", { name: "View members" }),

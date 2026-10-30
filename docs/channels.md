@@ -508,7 +508,9 @@ Cancellation returns focus to the originating Settings button (or the sidebar
 fallback if that entry has gone away). Archive retains the current conversation,
 messages, membership and open Settings, replacing Archive with Unarchive after a
 fresh permission read. The conversation stays selected after reload; archived
-write restrictions still apply. When refreshed Settings actions remount, focus
+write restrictions still apply. Archived conversations and their threads replace the
+message composer with the lower archived-channel notice. Unarchiving restores the
+composer and its saved text draft. When refreshed Settings actions remount, focus
 returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
 joined archived channels, including session conversations, remain available by name
 in search, labeled **Archived channel**, but stay out of the sidebar and Recent

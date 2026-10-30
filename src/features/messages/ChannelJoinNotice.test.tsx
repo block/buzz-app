@@ -47,6 +47,27 @@ function lifecycle(
   return { available, run } as ChannelLifecycleCapability;
 }
 
+it.each([false, true])(
+  "prioritizes archived state over guest access %s and Join",
+  (guest) => {
+    render(
+      <ChannelJoinNotice
+        channelId="archived"
+        lifecycle={lifecycle(vi.fn())}
+        joinable
+        archived
+        guest={guest}
+        joinRole={guest ? "guest" : "member"}
+        onJoin={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "Archived channel" }),
+    ).toHaveTextContent("This channel is archived.");
+    expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  },
+);
+
 it("offers Join only for a joinable channel on a connection that can send it", () => {
   const run = vi.fn();
   const { rerender } = render(

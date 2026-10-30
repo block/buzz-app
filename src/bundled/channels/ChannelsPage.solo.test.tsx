@@ -345,6 +345,10 @@ function fixture({
     send,
     scope,
     session,
+    setArchived(archived: boolean) {
+      list = { ...list, channels: [{ ...channel, archived }] };
+      emitList();
+    },
     // Chat activity: a new summary object for the same chat.
     retitle(name: string) {
       list = { ...list, channels: [{ ...channel, name }] };
@@ -939,7 +943,39 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   await screen.findByRole("button", { name: "Chat actions" });
   expect(screen.getAllByText("Archived")).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
+  expect(
+    await screen.findByRole("region", { name: "Archived channel" }),
+  ).toHaveTextContent("This channel is archived.");
+  expect(screen.queryByRole("textbox")).toBeNull();
 });
+
+it.each(["solo", "stream"] as const)(
+  "replaces an archived %s composer with a notice and restores its draft on unarchive",
+  async (type) => {
+    const f = fixture({ type });
+    f.mount();
+    const editor = await screen.findByRole("textbox");
+    const user = userEvent.setup();
+    await user.click(editor);
+    await user.keyboard("Keep this draft");
+    await act(() => f.run("archive"));
+    expect(
+      await screen.findByRole("region", { name: "Archived channel" }),
+    ).toHaveTextContent("This channel is archived.");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+    // A refreshed, unarchived summary must restore composition and its draft.
+    act(() => f.setArchived(false));
+    expect(await screen.findByRole("textbox")).toHaveTextContent(
+      "Keep this draft",
+    );
+    expect(
+      screen.queryByRole("region", { name: "Archived channel" }),
+    ).toBeNull();
+    expect(f.send).not.toHaveBeenCalled();
+  },
+);
 
 it("does not recreate a consumed linked draft on history navigation", () => {
   const linked = "22222222-2222-4222-8222-222222222222";

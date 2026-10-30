@@ -506,6 +506,7 @@ function ThreadMessages({
     channelId,
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.archived) return "archived";
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
         return !channel.archived &&
@@ -521,6 +522,7 @@ function ThreadMessages({
   const preview =
     channelAccess === "joinable" ||
     channelAccess === "preview" ||
+    channelAccess === "archived" ||
     channelAccess === "guest";
   const joinRole = useListedChannel(
     session.channels,
@@ -1616,6 +1618,7 @@ function ThreadMessages({
               !!rows.length)
           }
           channelId={channelId}
+          archived={channelAccess === "archived"}
           guest={channelAccess === "guest"}
           joinRole={joinRole}
           lifecycle={session.channelLifecycle}

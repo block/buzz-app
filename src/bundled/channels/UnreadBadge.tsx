@@ -85,6 +85,7 @@ export function UnreadBadge({
   dm = false,
   label,
   labelUnread = "ordinary",
+  preserveUnread = false,
 }: {
   session: RelaySession;
   channelId: string;
@@ -92,6 +93,8 @@ export function UnreadBadge({
   label?: ReactNode;
   /** Solo labels emphasize every unread message, so attention adds no dot. */
   labelUnread?: "ordinary" | "all";
+  /** Preserve observed evidence for Solo destinations with their own labels. */
+  preserveUnread?: boolean;
 }) {
   const {
     snapshot,
@@ -103,7 +106,9 @@ export function UnreadBadge({
     threadCount,
   } = useUnreadState(session, channelId, dm);
   const unread =
-    labelUnread === "all" ? manual || (count ?? 0) > 0 : quietUnread;
+    labelUnread === "all" || preserveUnread
+      ? manual || (count ?? 0) > 0
+      : quietUnread;
   if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (snapshot.attentionCount ?? 0) > 0;
   const showUnreadDot =

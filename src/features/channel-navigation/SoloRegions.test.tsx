@@ -1344,14 +1344,10 @@ it.each(["priority", "activity"] as const)(
       screen.getByRole("img", { name: /^1 observed unread messages/ }),
     );
     const dot = row.querySelector(`[data-channel-${indicator}]`);
-    if (indicator === "priority") {
-      expect(dot).toBeNull();
-      expect(row.querySelector("[data-channel-unread]")).toHaveAttribute(
-        "data-priority",
-        "true",
-      );
-    } else
-      expect(screen.getByRole("img", { name: "1 unread thread" })).toBe(dot);
+    expect(dot).toBeInTheDocument();
+    if (indicator === "priority")
+      expect(dot).toHaveAttribute("aria-hidden", "true");
+    else expect(screen.getByRole("img", { name: "1 unread thread" })).toBe(dot);
   },
 );
 
@@ -1476,3 +1472,27 @@ it.each([false, true])(
     expect(row.querySelector("[data-channel-priority]")).toBeNull();
   },
 );
+
+it("keeps a visible priority cue on a muted Solo recovery destination", () => {
+  const h = fixture();
+  const unread = {
+    ...h.session.unread.snapshot({ kind: "channel", channelId: "owned" }),
+    manual: "none" as const,
+    observedCount: 1,
+    attentionCount: 1,
+  };
+  const preferences = h.session.sidebarPreferences.snapshot();
+  Object.assign(h.session, {
+    sidebarPreferences: {
+      ...h.session.sidebarPreferences,
+      snapshot: () => ({
+        ...preferences,
+        data: { ...preferences.data, muted: ["owned"] },
+      }),
+    },
+    unread: { ...h.session.unread, snapshot: () => unread },
+  });
+  mount(h);
+  const row = screen.getByRole("button", { name: /^Owned/ });
+  expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
+});

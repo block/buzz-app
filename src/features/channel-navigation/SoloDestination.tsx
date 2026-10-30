@@ -339,7 +339,7 @@ function ConversationUnread() {
     <UnreadBadge
       session={context.session}
       channelId={state.channel.id}
-      labelUnread="all"
+      preserveUnread
     />
   );
 }
@@ -381,7 +381,7 @@ export function RecoveryDestination({ channelId }: { channelId: string }) {
           <UnreadBadge
             session={context.session}
             channelId={channelId}
-            labelUnread="all"
+            preserveUnread
           />
         }
         onClick={() => {

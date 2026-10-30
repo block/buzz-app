@@ -237,6 +237,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
     "New workspace",
     "New DM",
     "New channel",
+    "Join channel",
     "New section",
   ]);
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
@@ -307,6 +308,18 @@ it("creates a sidebar section from New without moving or opening a conversation"
     name: "Projects",
   });
   expect(assign).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("opens search from Join channel without navigating", async () => {
+  const user = userEvent.setup();
+  const f = fixture(true, true);
+  const trigger = screen.getByRole("button", { name: "New" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Join channel" }),
+  );
+  expect(f.findChannel).toHaveBeenCalledExactlyOnceWith(trigger);
   expect(f.open).not.toHaveBeenCalled();
 });
 

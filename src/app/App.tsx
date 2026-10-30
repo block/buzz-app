@@ -508,9 +508,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
         <AgentsContext.Provider value={services.agents}>
           <AppShell
             creationInSidebar={!workspace.page?.sidebar}
-            creationAction={(open, onOpenChange, triggerContainer) => (
+            creationAction={(
+              open,
+              onOpenChange,
+              triggerContainer,
+              findChannel,
+            ) => (
               <NewMenu
                 triggerContainer={triggerContainer}
+                findChannel={findChannel}
                 open={open}
                 onOpenChange={onOpenChange}
                 relay={services.relay}

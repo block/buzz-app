@@ -2,9 +2,11 @@ import { useSearchSettings } from "./SearchSettings";
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   useSyncExternalStore,
+  type Ref,
 } from "react";
 import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -55,14 +57,19 @@ const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };
 const noSubscribe = () => () => {};
 const noOverrides = () => NO_OVERRIDES;
 
+/** Opens Search Buzz, returning focus to `returnTo` when it closes. */
+export type SearchOpener = (returnTo?: HTMLElement | null) => void;
+
 export function PageSearch({
   pages,
   onSelect,
   services,
+  ref,
 }: {
   pages: readonly RegisteredPage[];
   onSelect: (key: string) => void;
   services?: SearchServices | undefined;
+  ref?: Ref<SearchOpener>;
 }) {
   const [open, setOpen] = useState(false);
   const [contentPresent, setContentPresent] = useState(false);
@@ -82,16 +89,21 @@ export function PageSearch({
     if (next) setContentPresent(true);
     setOpen(next);
   }, []);
-  const begin = useCallback(() => {
-    composerChannel.current = undefined;
-    returnFocus.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : trigger.current;
-    setQuery("");
-    setScopedChannelId(undefined);
-    setSearchOpen(true);
-  }, [setSearchOpen]);
+  const begin = useCallback<SearchOpener>(
+    (returnTo) => {
+      composerChannel.current = undefined;
+      returnFocus.current =
+        returnTo ??
+        (document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : trigger.current);
+      setQuery("");
+      setScopedChannelId(undefined);
+      setSearchOpen(true);
+    },
+    [setSearchOpen],
+  );
+  useImperativeHandle(ref, () => begin, [begin]);
   const beginScoped = useCallback(() => {
     if (currentTarget?.kind !== "conversation") return;
     composerChannel.current = undefined;

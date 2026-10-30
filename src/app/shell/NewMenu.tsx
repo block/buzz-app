@@ -24,6 +24,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./NewMenu.module.css";
+import type { SearchOpener } from "./PageSearch";
 import { PlusIcon } from "../../shared/design-system/icons";
 
 type Props = {
@@ -33,6 +34,8 @@ type Props = {
   triggerContainer?: HTMLElement | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Opens search, where unjoined public channels can be found and joined. */
+  findChannel?: SearchOpener;
 };
 
 export function NewMenu(props: Props) {
@@ -56,6 +59,7 @@ function ReadyNewMenu({
   triggerContainer,
   open,
   onOpenChange,
+  findChannel,
 }: Props & { session: RelaySession; available: boolean }) {
   useSyncExternalStore(
     session.soloPreferences.subscribe,
@@ -137,6 +141,12 @@ function ReadyNewMenu({
               }}
             >
               New channel
+            </MenuItem>
+            <MenuItem
+              disabled={!findChannel}
+              onClick={() => findChannel?.(trigger.current)}
+            >
+              Join channel
             </MenuItem>
             <MenuItem
               disabled={!preferences.sectionCreationWritable}

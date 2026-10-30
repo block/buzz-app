@@ -56,12 +56,15 @@ install)
   darwin-arm64 | darwin-x64 | linux-arm64 | linux-x64) ;;
   *) echo "Unsupported platform" >&2; exit 2 ;;
   esac
+  # 64 hex digits, so a hash that failed and printed nothing can never match it.
+  case "$checksum" in *[!0-9a-f]*) echo "Invalid checksum" >&2; exit 2 ;; esac
+  [ "${#checksum}" = 64 ] || { echo "Invalid checksum" >&2; exit 2; }
   sha256() { (shasum -a 256 "$1" 2>/dev/null || sha256sum "$1") | cut -d" " -f1; }
   # A download whose switch never ran, such as one stopped before `use`, is
   # used again once its bytes match the checksum; anything else is replaced.
   binary="$dir/$version/claude"
-  if [ -f "$binary" ] && [ ! -h "$binary" ] && [ "$(sha256 "$binary")" = "$checksum" ]; then
-    chmod +x "$binary"
+  if [ -f "$binary" ] && [ ! -h "$binary" ] && [ "$(sha256 "$binary")" = "$checksum" ] &&
+    { [ -x "$binary" ] || chmod +x "$binary" 2>/dev/null; }; then
     echo "Claude $version is already downloaded."
     exit 0
   fi

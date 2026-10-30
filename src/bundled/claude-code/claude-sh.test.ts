@@ -232,9 +232,13 @@ const release = (version: string) => `#!/bin/sh\necho "${version}"\n`;
 // A build stopped between `install` and `use` leaves the release whole but none in use.
 it("uses a downloaded release that matches its checksum without downloading it again", async () => {
   const { home, dir, step, selected } = await disk(["0.2.0"]);
-  await chmod(join(dir, "0.2.0", "claude"), 0o644);
+  const binary = join(dir, "0.2.0", "claude");
+  await chmod(binary, 0o644);
   const { install, calls } = await downloads(home, "unused");
-  const { stdout } = await install("0.2.0", sha256(release("0.2.0")));
+  const { stdout } = await install(
+    "0.2.0",
+    sha256(await readFile(binary, "utf8")),
+  );
   expect(stdout).toContain("Claude 0.2.0 is already downloaded.");
   expect(await calls()).toBe(0);
   await expect(selected()).rejects.toThrow("Claude is not installed");
@@ -289,4 +293,24 @@ it("keeps a mismatched download from being used", async () => {
   await expect(readdir(join(dir, "0.2.0"))).resolves.toEqual([]);
   await expect(step("use", "0.2.0")).rejects.toThrow("no longer downloaded");
   expect(await selected()).toBe("0.1.0");
+});
+
+// An empty digest from a hash that failed must not match: the checksum itself is refused.
+it("refuses a checksum that is not 64 hex digits before reusing or downloading", async () => {
+  const { home, dir } = await disk(["0.2.0"]);
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  const digest = sha256(release("0.2.0"));
+  for (const checksum of [
+    "",
+    digest.slice(1),
+    digest.toUpperCase(),
+    `${digest.slice(1)}/`,
+  ])
+    await expect(install("0.2.0", checksum)).rejects.toThrow(
+      "Invalid checksum",
+    );
+  expect(await calls()).toBe(0);
+  expect(await readFile(join(dir, "0.2.0", "claude"), "utf8")).toBe(
+    release("0.2.0"),
+  );
 });

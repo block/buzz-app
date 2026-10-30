@@ -240,7 +240,11 @@ async function setup(
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Access" });
   await user.click(trigger);
-  if (options.pendingMemberNames)
+  if (
+    options.pendingMemberNames ||
+    options.extraMembers ||
+    options.memberProfiles
+  )
     await within(
       await screen.findByRole("region", { name: "Member list" }),
     ).findAllByRole("listitem");
@@ -3019,9 +3023,9 @@ it("pages a large roster without waiting for optional names or exceeding the pro
       .flatMap(([filters]) => filters)
       .filter((filter) => filter.kinds?.includes(0) && filter.authors?.length);
     expect(batches.length).toBeGreaterThan(1);
-    expect(
-      batches.every((filter) => (filter.authors?.length ?? 0) <= 500),
-    ).toBe(true);
+    expect(batches.every((filter) => (filter.authors?.length ?? 0) <= 50)).toBe(
+      true,
+    );
     expect(
       screen.queryByText(/Some names could not load/),
     ).not.toBeInTheDocument();
@@ -3040,24 +3044,33 @@ it("pages a large roster without waiting for optional names or exceeding the pro
   }
 });
 
-it("continues member name enrichment after an earlier batch fails", async () => {
-  const t = await setup("stream", true, false, undefined, undefined, {
+it("loads another member page after a previous page fails", async () => {
+  const t = await setup("stream", false, false, undefined, undefined, {
     extraMembers: 749,
   });
-  await vi.waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Refresh member data" }),
-    ).toHaveAttribute("aria-busy", "false"),
-  );
-  const last = (10748).toString(16).padStart(64, "0");
+  const refresh = screen.getByRole("button", { name: "Refresh member data" });
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  const original = t.query.getMockImplementation();
+  if (!original) throw new Error("Missing query fixture");
+  t.query.mockImplementation(async (filters) => {
+    if (filters.some((filter) => filter.kinds?.includes(0)))
+      throw new Error("Names unavailable");
+    return original(filters);
+  });
+  const next = within(
+    screen.getByRole("navigation", { name: "People member pages" }),
+  ).getByRole("button", { name: "Next" });
+  await t.user.click(next);
+  await screen.findByText(/Some names could not load/);
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  const before = t.query.mock.calls.length;
+  t.query.mockImplementation(original);
+  await t.user.click(next);
+  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  expect(t.query.mock.calls.length).toBeGreaterThan(before);
   expect(
-    t.query.mock.calls.some(([filters]) =>
-      filters.some(
-        (filter) => filter.kinds?.includes(0) && filter.authors?.includes(last),
-      ),
-    ),
-  ).toBe(true);
-  expect(screen.getByText(/Some names could not load/)).toBeVisible();
+    screen.queryByText(/Some names could not load/),
+  ).not.toBeInTheDocument();
 });
 
 it("keeps the visible member page and focus stable while names arrive", async () => {
@@ -3068,7 +3081,7 @@ it("keeps the visible member page and focus stable while names arrive", async ()
   const memberProfiles = Array.from({ length: 125 }, (_, i) =>
     profile(keypair(), {
       name: `Member ${String(i).padStart(3, "0")}`,
-      is_agent: i === 0,
+      is_agent: true,
     }),
   );
   try {
@@ -3094,8 +3107,8 @@ it("keeps the visible member page and focus stable while names arrive", async ()
       ).toHaveAttribute("aria-busy", "false"),
     );
     expect(
-      [...t.session.profiles.snapshot().values()].some(
-        (profile) => profile.name === "Member 000",
+      [...t.session.profiles.snapshot().values()].some((profile) =>
+        profile.name.startsWith("Member "),
       ),
     ).toBe(true);
     const loadedRows = within(list).getAllByRole("listitem");
@@ -3106,7 +3119,90 @@ it("keeps the visible member page and focus stable while names arrive", async ()
     await t.user.click(
       screen.getByRole("button", { name: "Refresh member data" }),
     );
-    await within(list).findByRole("heading", { name: "Agents · 1" });
+    await within(list).findByRole("heading", { name: /^Agents ·/ });
+  } finally {
+    await act(async () => release());
+  }
+});
+
+const retainedMemberProfiles = Array.from({ length: 1100 }, (_, i) =>
+  profile(keypair(), { name: `Member ${String(i).padStart(4, "0")}` }),
+);
+const retainedTimelineProfiles = Array.from({ length: 20 }, (_, i) =>
+  profile(keypair(), { name: `Timeline ${i}` }),
+);
+
+it("retains visible and unrelated profiles when opening a roster above directory capacity", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const memberProfiles = retainedMemberProfiles;
+  const timeline = retainedTimelineProfiles;
+  try {
+    const t = await setup("stream", false, false, undefined, undefined, {
+      memberProfiles,
+      pendingMemberNames: pending,
+    });
+    const original = t.query.getMockImplementation();
+    if (!original) throw new Error("Missing query fixture");
+    t.query.mockImplementation(async (filters) =>
+      filters.some((filter) =>
+        filter.authors?.includes(timeline[0]?.pubkey ?? ""),
+      )
+        ? timeline
+        : original(filters),
+    );
+    await act(async () => {
+      await t.session.profiles.ensure(timeline.map((event) => event.pubkey));
+    });
+    await act(async () => release());
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(
+      timeline.every((event) =>
+        t.session.profiles.snapshot().has(event.pubkey),
+      ),
+    ).toBe(true);
+    const list = screen.getByRole("region", { name: "Member list" });
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .every((row) => /Member |Carl/.test(row.textContent ?? "")),
+    ).toBe(true);
+    const pages = within(list).getByRole("navigation", {
+      name: "People member pages",
+    });
+    await t.user.click(within(pages).getByRole("button", { name: "Next" }));
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .every((row) => /Member |Carl/.test(row.textContent ?? "")),
+    ).toBe(true);
+    await t.user.click(within(pages).getByRole("button", { name: "Previous" }));
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .every((row) => /Member |Carl/.test(row.textContent ?? "")),
+    ).toBe(true);
+    expect(
+      timeline.every((event) =>
+        t.session.profiles.snapshot().has(event.pubkey),
+      ),
+    ).toBe(true);
   } finally {
     await act(async () => release());
   }

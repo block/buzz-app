@@ -101,7 +101,6 @@ import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
 const MEMBER_PAGE_SIZE = 50;
-const MEMBER_PROFILE_BATCH = 500;
 
 const additionRoles = [
   {
@@ -803,42 +802,6 @@ export function ChannelMembersDialog({
     administration.operation.status === "pending"
   )
     busy.add(administration.operation.change.pubkey);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
-  useEffect(() => {
-    setNameError("");
-    setNamesSettledFor(undefined);
-    if (!memberKey) {
-      setNamesSettledFor({ session, memberKey });
-      return;
-    }
-    let current = true;
-    const loadNames = async () => {
-      const keys = memberKey.split(":");
-      for (
-        let offset = 0;
-        current && offset < keys.length;
-        offset += MEMBER_PROFILE_BATCH
-      ) {
-        try {
-          await session.profiles.ensure(
-            keys.slice(offset, offset + MEMBER_PROFILE_BATCH),
-            largeRoster ? "background" : "foreground",
-          );
-        } catch {
-          if (current)
-            setNameError(
-              "Some names could not load. Public keys still identify members. Try again.",
-            );
-        }
-      }
-    };
-    void loadNames().finally(() => {
-      if (current) setNamesSettledFor({ session, memberKey });
-    });
-    return () => {
-      current = false;
-    };
-  }, [session, memberKey, refresh, largeRoster]);
   const namesBusy =
     namesSettledFor?.session !== session ||
     namesSettledFor?.memberKey !== memberKey;
@@ -998,6 +961,43 @@ export function ChannelMembersDialog({
       pages: { ...pages, [group]: page },
     });
   };
+  const profileKey = !largeRoster
+    ? memberKey
+    : filteredGroups
+        .flatMap((group) => {
+          const page = Math.min(
+            pages[group.name] ?? 0,
+            Math.ceil(group.keys.length / MEMBER_PAGE_SIZE) - 1,
+          );
+          return group.keys.slice(
+            page * MEMBER_PAGE_SIZE,
+            (page + 1) * MEMBER_PAGE_SIZE,
+          );
+        })
+        .join(":");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
+  useEffect(() => {
+    let current = true;
+    setNameError("");
+    setNamesSettledFor(undefined);
+    void session.profiles
+      .ensure(
+        profileKey ? profileKey.split(":") : [],
+        largeRoster ? "background" : "foreground",
+      )
+      .catch(() => {
+        if (current)
+          setNameError(
+            "Some names could not load. Public keys still identify members. Try again.",
+          );
+      })
+      .finally(() => {
+        if (current) setNamesSettledFor({ session, memberKey });
+      });
+    return () => {
+      current = false;
+    };
+  }, [session, memberKey, profileKey, refresh, largeRoster]);
   const search = useMemberSearch(session, query, canAddPeople);
   const relayKeys = new Set(search.people.map((person) => person.pubkey));
   const candidates = new Map(

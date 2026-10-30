@@ -168,7 +168,7 @@ export function PageSearch({
       <IconButton
         hint="familiar"
         ref={trigger}
-        variant="subtle"
+        variant="inverted"
         size="md"
         shape="round"
         aria-label="Search Buzz"

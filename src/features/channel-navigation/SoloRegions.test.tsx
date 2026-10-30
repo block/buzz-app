@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
@@ -1343,10 +1344,14 @@ it.each(["priority", "activity"] as const)(
       screen.getByRole("img", { name: /^1 observed unread messages/ }),
     );
     const dot = row.querySelector(`[data-channel-${indicator}]`);
-    expect(dot).toBeInTheDocument();
-    if (indicator === "priority")
-      expect(dot).toHaveAttribute("aria-hidden", "true");
-    else expect(screen.getByRole("img", { name: "1 unread thread" })).toBe(dot);
+    if (indicator === "priority") {
+      expect(dot).toBeNull();
+      expect(row.querySelector("[data-channel-unread]")).toHaveAttribute(
+        "data-priority",
+        "true",
+      );
+    } else
+      expect(screen.getByRole("img", { name: "1 unread thread" })).toBe(dot);
   },
 );
 
@@ -1437,3 +1442,37 @@ it("hands a header menu action the durable trigger as its dialog origin", async 
   );
   expect(selected).toHaveBeenCalledOnce();
 });
+
+it.each([false, true])(
+  "preserves muted Solo unread markers in source and recovery destinations (recovery=%s)",
+  async (recovery) => {
+    const h = fixture();
+    const unread = {
+      ...h.session.unread.snapshot({ kind: "channel", channelId: "owned" }),
+      manual: "none" as const,
+      observedCount: 1,
+      attentionCount: 0,
+    };
+    const preferences = h.session.sidebarPreferences.snapshot();
+    Object.assign(h.session, {
+      sidebarPreferences: {
+        ...h.session.sidebarPreferences,
+        snapshot: () => ({
+          ...preferences,
+          data: { ...preferences.data, muted: ["owned"] },
+        }),
+      },
+      unread: { ...h.session.unread, snapshot: () => unread },
+    });
+    if (!recovery)
+      await h.register({
+        component: ({ ui }) => <Row ui={ui} channelId="owned" />,
+      });
+    mount(h);
+    const row = screen.getByRole("button", { name: /^Owned/ });
+    expect(
+      within(row).getByRole("img", { name: /^1 observed unread messages/ }),
+    ).toBeInTheDocument();
+    expect(row.querySelector("[data-channel-priority]")).toBeNull();
+  },
+);

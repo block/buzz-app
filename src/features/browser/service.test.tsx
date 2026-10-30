@@ -57,6 +57,7 @@ it("exposes execution but keeps grant and revoke in the host UI", () => {
   new BrowserService(context, native);
   expect(Object.keys(context.browser.control ?? {})).toEqual([
     "available",
+    "Page",
     "View",
     "open",
     "execute",

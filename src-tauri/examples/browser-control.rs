@@ -1,15 +1,15 @@
 //! Disposable native acceptance: no Buzz frontend, identity, relay, or Keychain.
-//! Run: bin/cargo run --locked -p Buzz --features experimental-browser-control --example browser-control
+//! Run: bin/cargo run --locked -p Buzz --example browser-control
 #[path = "../src/browser/mod.rs"]
 #[allow(dead_code)]
 mod browser;
 
-#[cfg(not(all(feature = "experimental-browser-control", target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn main() {
-    panic!("This fixture requires macOS and experimental-browser-control");
+    panic!("This fixture requires macOS");
 }
 
-#[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn main() {
     use browser::{control::*, *};
     macro_rules! verify {

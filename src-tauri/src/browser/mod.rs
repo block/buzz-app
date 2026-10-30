@@ -1,6 +1,6 @@
 //! Remote website content embedded in the main window without a Tauri bridge.
 
-#[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub(crate) mod control;
 mod platform;
 mod policy;
@@ -93,14 +93,14 @@ struct BrowserSession {
     snapshot: Rc<RefCell<BrowserSnapshot>>,
     policy: NavigationPolicy,
     visible: std::cell::Cell<bool>,
-    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     control: RefCell<Option<String>>,
-    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     control_revision: std::cell::Cell<u64>,
 }
 
 impl BrowserSession {
-    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     fn revoke_control(&self) {
         if self.control.borrow_mut().take().is_some() {
             self.control_revision.set(self.control_revision.get() + 1);
@@ -128,7 +128,7 @@ impl BrowserSession {
         {
             snapshot.loading = platform::loading(&self.guest);
         }
-        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             snapshot.control_granted = self.control.borrow().is_some();
             snapshot.control_revision = self.control_revision.get();
@@ -142,7 +142,7 @@ impl BrowserSession {
             .map_err(|error| error.to_string())?;
         self.visible.set(false);
         if !visible {
-            #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             self.revoke_control();
             return Ok(());
         }
@@ -151,7 +151,7 @@ impl BrowserSession {
                 .set_visible(true)
                 .map_err(|error| error.to_string())
         });
-        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         if shown.is_err() {
             self.revoke_control();
         }
@@ -216,7 +216,7 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             BROWSERS.with(|browsers| {
                 for browser in browsers.borrow().iter() {
                     browser.visible.set(false);
-                    #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+                    #[cfg(target_os = "macos")]
                     browser.revoke_control();
                     if let Err(error) = browser.guest.set_visible(false) {
                         browser.snapshot.borrow_mut().error = Some(error.to_string());
@@ -304,9 +304,9 @@ fn build_contents(
         snapshot,
         policy,
         visible: std::cell::Cell::new(false),
-        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         control: RefCell::new(None),
-        #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         control_revision: std::cell::Cell::new(0),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
@@ -521,8 +521,5 @@ mod lifecycle_tests {
 
 #[tauri::command]
 pub fn browser_control_available() -> bool {
-    cfg!(all(
-        feature = "experimental-browser-control",
-        target_os = "macos"
-    ))
+    cfg!(target_os = "macos")
 }

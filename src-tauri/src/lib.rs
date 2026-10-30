@@ -873,7 +873,7 @@ pub fn run() {
             ];
             // Browser embeds a real native view; existing commands also support MockRuntime.
             move |request: tauri::ipc::Invoke<tauri::Wry>| {
-                #[cfg(all(feature = "experimental-browser-control", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 if request.message.command().starts_with("browser_control_")
                     && request.message.command() != "browser_control_available"
                 {

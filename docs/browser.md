@@ -93,13 +93,19 @@ In Settings → Plugins → Manage plugins → Load from folder, select that fol
 
 Check address entry, Back/Forward/Reload, resizing, opening an account menu, closing/reopening the panel, and disabling the plugin. Web, Windows and Linux keep their existing link handling. The example requires a host that provides `browser`; older hosts cannot activate it.
 
-## Internal agent-control experiment
+## Plugin browser control
 
-An optional macOS Cargo feature, `experimental-browser-control`, adds explicit
-per-view grants and a **Take control** action. Default builds do not compile its
-native implementation or register its action handlers. The website guest keeps
-its existing IPC isolation. A manually loaded example plugin registers the agent
-tool. Its `open` action creates a new page beside the current conversation and
+Normal macOS builds provide a native capability for bounded observation, clicks,
+text entry and navigation of website guests. The guest keeps its existing IPC
+isolation. Native grants are revocable and actions require a visible guest;
+hiding, covering or closing the guest revokes access. Arbitrary agent-supplied
+JavaScript is not accepted.
+
+The optional browser-control plugin registers the agent tool and selects
+`ctx.browser.control.Page` for website panels with sharing controls. Ordinary
+`ctx.browser.View` panels have no sharing controls. Installing the native
+capability does not register an agent tool or enable access to any page.
+The plugin's `open` action creates a new page beside the current conversation and
 assigns it to the authenticated local agent, without an owner Share click.
 Existing user-opened pages still require Share. Take control revokes the page's
 access, and reopening that tab cannot renew it. See

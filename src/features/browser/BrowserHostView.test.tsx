@@ -841,6 +841,29 @@ it("ignores status from a replaced session", async () => {
   expect(screen.queryByText("Old page")).not.toBeInTheDocument();
 });
 
+it("keeps sharing controls off for ordinary browser views on a capable host", async () => {
+  const platform = fakePlatform();
+  platform.control = {
+    available: vi.fn(async () => true),
+    grant: vi.fn(),
+    revoke: vi.fn(async () => {}),
+    execute: vi.fn(),
+  };
+  render(
+    <BrowserHostView
+      url="https://example.org"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  expect(platform.control.available).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: /Share/ }),
+  ).not.toBeInTheDocument();
+  expect(platform.control.grant).not.toHaveBeenCalled();
+});
+
 it("requires conversation context in the lazy preview controls", async () => {
   const platform = fakePlatform();
   const control = {
@@ -852,6 +875,7 @@ it("requires conversation context in the lazy preview controls", async () => {
   platform.control = control;
   const view = render(
     <BrowserHostView
+      allowAgentControl
       url="https://example.org"
       platform={platform}
       sessions={new BrowserSessions(platform)}

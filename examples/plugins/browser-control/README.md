@@ -1,14 +1,17 @@
 # Browser control preview
 
-A local macOS experiment on top of Buzz's existing embedded website browser.
-Normal builds have no native automation implementation. Build explicitly with:
+An optional plugin on top of Buzz's existing embedded website browser.
+The native capability ships in normal macOS builds. Start the app with:
 
 ```sh
-bin/just desktop --features experimental-browser-control
+bin/just desktop
 ```
 
 Use Settings → Plugins → Manage plugins → Load from folder to load this folder,
-then enable **Browser control preview**. Click an HTTP(S) link in a conversation.
+then enable **Browser control preview**. No special build flag is required.
+The plugin registers the agent tool and selects `ctx.browser.control.Page` for
+website panels. Ordinary `ctx.browser.View` panels have no sharing controls.
+Click an HTTP(S) link in a conversation.
 The panel uses the existing Browser controls and a dedicated named website store
 (`browser-control-preview`). Sign in manually; named persistent stores require
 macOS 14 or later, as described in [the browser documentation](../../../docs/browser.md).
@@ -62,7 +65,7 @@ The fixture below creates only a plain host window and local HTTP test website.
 It does not load Buzz's frontend, identity, relay services or Keychain:
 
 ```sh
-bin/cargo run --locked -p Buzz --features experimental-browser-control --example browser-control
+bin/cargo run --locked -p Buzz --example browser-control
 ```
 
 It exercises the actual Wry guest, observation, fill/click, invalid targets,

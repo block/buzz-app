@@ -7,8 +7,6 @@ edition = "2021"
 rust-version = "1.90"
 
 [features]
-# Internal opt-in; normal builds contain no website automation implementation.
-experimental-browser-control = []
 native-mcp = ["dep:tauri-plugin-mcp-bridge"]
 
 [lib]

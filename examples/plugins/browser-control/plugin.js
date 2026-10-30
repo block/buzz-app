@@ -3,7 +3,7 @@ export const inject = ["react", "panels", "browser", "agents"];
 export async function apply(ctx) {
   if (!ctx.browser.available || !(await ctx.browser.control?.available()))
     return;
-  const View = ctx.browser.View;
+  const View = ctx.browser.control.Page;
   ctx.panels.register({
     id: "website",
     title: "Browser",

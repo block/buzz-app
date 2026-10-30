@@ -20,10 +20,12 @@ export type BrowserViewProps = Readonly<{
 export interface Browser {
   readonly available: boolean;
   readonly View: ComponentType<BrowserViewProps>;
-  /** Internal preview. Caller identity/context come from the host's tool call. */
+  /** Optional browser control. Caller identity/context come from the host's tool call. */
   readonly control?:
     | Readonly<{
         available(): Promise<boolean>;
+        /** Plugin-selected website view with explicit sharing controls. */
+        readonly Page: ComponentType<BrowserViewProps>;
         readonly View: ComponentType<{
           target: string;
           conversation?: BrowserViewProps["conversation"];

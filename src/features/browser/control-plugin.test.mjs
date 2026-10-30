@@ -9,6 +9,7 @@ function fixture(enabled) {
       View: () => null,
       control: {
         available: async () => enabled,
+        Page: () => null,
         open: vi.fn(async () => ({ opened: true })),
         execute: vi.fn(async () => ({ ok: true })),
       },
@@ -23,7 +24,7 @@ function fixture(enabled) {
   return { context, tool: () => tool };
 }
 
-it("registers no panel or tool without the native build opt-in", async () => {
+it("registers no panel or tool on an unsupported host", async () => {
   const test = fixture(false);
   await apply(test.context);
   expect(test.context.panels.register).not.toHaveBeenCalled();
@@ -81,4 +82,19 @@ it("opens a page using host-provided identity and conversation, without requesti
     { url: "https://example.org/", storage: "browser-control-preview" },
   );
   expect(test.context.browser.control.execute).not.toHaveBeenCalled();
+});
+
+it("selects the control view only for the enabled plugin's website panel", async () => {
+  const test = fixture(true);
+  test.context.react = { createElement: vi.fn() };
+  await apply(test.context);
+  const panel = test.context.panels.register.mock.calls[0][0];
+  panel.component({
+    target: "https://example.org/",
+    context: { channelId: "chat" },
+  });
+  expect(test.context.react.createElement).toHaveBeenCalledWith(
+    test.context.browser.control.Page,
+    expect.objectContaining({ url: "https://example.org/" }),
+  );
 });

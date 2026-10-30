@@ -58,11 +58,13 @@ export class BrowserService extends Service implements Browser {
       props: BrowserViewProps,
       initialShare?: BrowserInitialShare,
       sessionKey?: string,
+      allowAgentControl = false,
     ) =>
       createElement(BrowserHostView, {
         ...props,
         initialShare,
         sessionKey,
+        allowAgentControl,
         platform: this.platform,
         sessions,
         ...(access && {
@@ -95,6 +97,7 @@ export class BrowserService extends Service implements Browser {
       control && access
         ? Object.freeze({
             available: () => control.available(),
+            Page: (props) => render(props, undefined, undefined, true),
             View: ({ target, conversation }) => {
               const page = openingUrl(target);
               if (!page) return null;
@@ -107,6 +110,7 @@ export class BrowserService extends Service implements Browser {
                 { ...page, conversation },
                 sameConversation ? opening.initial : undefined,
                 target,
+                true,
               );
             },
             open: async (agentKey, context, options) => {

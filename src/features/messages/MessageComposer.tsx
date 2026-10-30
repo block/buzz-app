@@ -1033,6 +1033,9 @@ function Composer({
     !!submission?.attachments,
   );
   const picker = useRef<HTMLInputElement>(null);
+  const pickerFocus = useRef<
+    { ids: readonly string[]; owner: Element | null } | undefined
+  >(undefined);
   const form = useRef<HTMLFormElement>(null);
   const canAttach = submission
     ? !!submission.attachments && !!session.attachments?.uploadForNewChat
@@ -1046,6 +1049,34 @@ function Composer({
     if (disabled) attachments.store.cancel();
     else attachments.store.resume();
   }, [disabled, attachments.store]);
+  useEffect(() => {
+    const pending = pickerFocus.current;
+    if (!pending) return;
+    const selected = pending.ids.map((id) =>
+      attachments.items.find((item) => item.id === id),
+    );
+    if (
+      !presented ||
+      editingDisabled ||
+      editing.target ||
+      document.activeElement !== pending.owner ||
+      selected.some((item) => !item || item.status === "error")
+    ) {
+      pickerFocus.current = undefined;
+      return;
+    }
+    if (selected.every((item) => item?.status === "ready")) {
+      pickerFocus.current = undefined;
+      input.current?.focus();
+      return;
+    }
+    // A later upload must not undo a deliberate focus move, even a round trip.
+    const moved = (event: FocusEvent) => {
+      if (event.target !== pending.owner) pickerFocus.current = undefined;
+    };
+    document.addEventListener("focusin", moved, true);
+    return () => document.removeEventListener("focusin", moved, true);
+  }, [attachments.items, presented, editingDisabled, editing.target]);
   const dragging = useFileDrop(
     form,
     active &&
@@ -1078,6 +1109,10 @@ function Composer({
     try {
       attachments.store.add(files);
       setAttachmentError(undefined);
+      return attachments.store
+        .snapshot()
+        .slice(-files.length)
+        .map((item) => item.id);
     } catch (reason) {
       setAttachmentError(
         reason instanceof Error ? reason.message : "Could not attach files.",
@@ -2770,7 +2805,11 @@ function Composer({
             hidden
             aria-label="Choose attachments"
             onChange={(event) => {
-              attachFiles(Array.from(event.currentTarget.files ?? []));
+              const ids = attachFiles(
+                Array.from(event.currentTarget.files ?? []),
+              );
+              if (ids?.length)
+                pickerFocus.current = { ids, owner: document.activeElement };
               event.currentTarget.value = "";
             }}
           />

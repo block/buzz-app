@@ -1460,26 +1460,32 @@ async function mountUploadComposer(
     ]),
   );
   const scope = `https://relay.example.test:${viewer.pubkey}`;
-  const view = render(
+  const composer = (presented = true, shown = true) => (
     <AgentsContext.Provider value={options.agents}>
-      <MessageComposer
-        session={owner.session}
-        scope={scope}
-        channelId="channel"
-        channelName="General"
-        defaultMention={options.defaultMention}
-        requireMention={options.requireMention}
-        {...(options.extensions ? { extensions: options.extensions } : {})}
-        {...(options.threadRootId
-          ? { threadRootId: options.threadRootId }
-          : {})}
-        {...(options.replyParentId
-          ? { replyParentId: options.replyParentId }
-          : {})}
-      />
-    </AgentsContext.Provider>,
-    { reactStrictMode: true, wrapper: ToastProvider },
+      <ConversationPresentation value={presented}>
+        <MessageComposer
+          shown={shown}
+          session={owner.session}
+          scope={scope}
+          channelId="channel"
+          channelName="General"
+          defaultMention={options.defaultMention}
+          requireMention={options.requireMention}
+          {...(options.extensions ? { extensions: options.extensions } : {})}
+          {...(options.threadRootId
+            ? { threadRootId: options.threadRootId }
+            : {})}
+          {...(options.replyParentId
+            ? { replyParentId: options.replyParentId }
+            : {})}
+        />
+      </ConversationPresentation>
+    </AgentsContext.Provider>
   );
+  const view = render(composer(), {
+    reactStrictMode: true,
+    wrapper: ToastProvider,
+  });
   const input = () => within(view.container).getByRole("textbox");
   const form = () => within(view.container).getByRole("form");
   const send = () =>
@@ -1496,8 +1502,136 @@ async function mountUploadComposer(
     sign,
     publish,
     otherMembership,
+    present: (presented: boolean, shown = true) =>
+      view.rerender(composer(presented, shown)),
   };
 }
+
+function pickAttachments(container: HTMLElement, files: readonly File[]) {
+  const picker =
+    container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!picker) throw new Error("Missing attachment picker");
+  fireEvent.change(picker, { target: { files } });
+}
+
+it("focuses the composer only after the whole picker batch succeeds", async () => {
+  const h = await mountUploadComposer();
+  const trigger = screen.getByRole("button", { name: "Attach files" });
+  trigger.focus();
+  pickAttachments(h.container, [
+    attachmentFile("one.txt"),
+    attachmentFile("two.txt"),
+  ]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(trigger).toHaveFocus();
+  await act(() =>
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("one.txt")),
+  );
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(trigger).toHaveFocus();
+  await act(() =>
+    h.uploadCalls[1]?.result.resolve(uploadDescriptor("two.txt")),
+  );
+  expect(h.input()).toHaveFocus();
+});
+
+it.each(["before", "after"])(
+  "keeps the picker handoff when focus returns to Attach %s change",
+  async (order) => {
+    const h = await mountUploadComposer();
+    const trigger = screen.getByRole("button", { name: "Attach files" });
+    trigger.focus();
+    if (order === "before") fireEvent.focusIn(trigger);
+    pickAttachments(h.container, [attachmentFile()]);
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    if (order === "after") fireEvent.focusIn(trigger);
+    await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+    expect(h.input()).toHaveFocus();
+  },
+);
+
+it("leaves focus alone on picker cancellation or rejected files", async () => {
+  const h = await mountUploadComposer();
+  const trigger = screen.getByRole("button", { name: "Attach files" });
+  trigger.focus();
+  pickAttachments(h.container, []);
+  pickAttachments(h.container, [attachmentFile("empty.txt", "")]);
+  expect(
+    await screen.findByText("Could not attach file", { exact: true }),
+  ).toBeVisible();
+  expect(h.uploadCalls).toHaveLength(0);
+  expect(trigger).toHaveFocus();
+});
+
+it("does not focus after a picker upload fails or is later retried", async () => {
+  const h = await mountUploadComposer();
+  const trigger = screen.getByRole("button", { name: "Attach files" });
+  trigger.focus();
+  pickAttachments(h.container, [attachmentFile()]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(() => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(trigger).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Retry notes.txt" }));
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  await act(() => h.uploadCalls[1]?.result.resolve(uploadDescriptor()));
+  expect(trigger).toHaveFocus();
+});
+
+it.each(["inactive", "hidden"])(
+  "cancels picker focus when the conversation becomes %s, including a warm return",
+  async (state) => {
+    const h = await mountUploadComposer();
+    const trigger = screen.getByRole("button", { name: "Attach files" });
+    trigger.focus();
+    pickAttachments(h.container, [attachmentFile()]);
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    h.present(state !== "inactive", state !== "hidden");
+    h.present(true);
+    screen.getByRole("button", { name: "Attach files" }).focus();
+    await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+    expect(screen.getByRole("button", { name: "Attach files" })).toHaveFocus();
+  },
+);
+
+it("preserves deliberate focus changes even when focus returns to the picker trigger", async () => {
+  const h = await mountUploadComposer();
+  const trigger = screen.getByRole("button", { name: "Attach files" });
+  trigger.focus();
+  pickAttachments(h.container, [attachmentFile()]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.input().focus();
+  trigger.focus();
+  await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+  expect(trigger).toHaveFocus();
+});
+
+it("does not focus a replacement composer after a late picker completion", async () => {
+  const h = await mountUploadComposer();
+  screen.getByRole("button", { name: "Attach files" }).focus();
+  pickAttachments(h.container, [attachmentFile()]);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  h.unmount();
+  const next = await mountUploadComposer();
+  const trigger = within(next.container).getByRole("button", {
+    name: "Attach files",
+  });
+  trigger.focus();
+  await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+  expect(trigger).toHaveFocus();
+});
+
+it.each([attachByPaste, attachByDrop])(
+  "keeps existing focus behavior for %s uploads",
+  async (attach) => {
+    const h = await mountUploadComposer();
+    const trigger = screen.getByRole("button", { name: "Attach files" });
+    trigger.focus();
+    attach(h.form());
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+    expect(trigger).toHaveFocus();
+  },
+);
 
 it("pauses while disabled and resumes attachment Send without Retry when re-enabled", async () => {
   const h = await mountUploadComposer();

@@ -107,8 +107,9 @@ test("Up and Cmd+Up edit in the existing composer and restore native focus, draf
     await page.getByRole("button", { name: "Retry edit", exact: true }).click();
     await expect(input).toBeFocused();
     await expect(input).toHaveJSProperty("value", "");
+    // The applied edit replaces the caption and marks it as edited.
     await expect(
-      page.getByText("Revised caption reject", { exact: true }),
+      page.getByText("Revised caption reject (edited)", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Download report.txt", exact: true }),

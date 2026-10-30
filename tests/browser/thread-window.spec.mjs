@@ -53,7 +53,8 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
     await page.evaluate(() => window.messagesFixture.releaseReconnectRepair());
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Try again" });
-    await expect(error).toContainText("Retained range repair failed");
+    // The notice says what happened; the read error stays a diagnostic.
+    await expect(error).toHaveText("This thread didn’t load.");
     await expect(retry).toBeInViewport();
     await expect(replies).toHaveCount(10);
     await retry.click();
@@ -175,7 +176,7 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
     await expect(replies).toHaveCount(50);
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Try again" });
-    await expect(error).toContainText("Legacy continuation failed");
+    await expect(error).toHaveText("This thread didn’t load.");
     await expect(retry).toBeVisible();
     await retry.click();
     await expect(replies).toHaveCount(61);

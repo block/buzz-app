@@ -477,3 +477,19 @@ it.each([
     catalog.dispose();
   },
 );
+
+it("prefers the catalog's current URL over the one a re-save carries forward", async () => {
+  const newer = "https://emoji.test/bee-v2.png";
+  const catalog = createEmojiDirectory({
+    read: async () => [memberSet("", [["emoji", "bee", newer]])],
+  });
+  await catalog.queries.refresh();
+  const { queries, publish } = setup(
+    { read: async () => [emojiStatus(["emoji", ":bee:", beeUrl])] },
+    undefined,
+    catalog.tags,
+  );
+  await queries.save({ text: "Still buzzin'", emoji: ":bee:" });
+  expect(publish.mock.calls[0]?.[0].tags[1]).toEqual(["emoji", ":bee:", newer]);
+  catalog.dispose();
+});

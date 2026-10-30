@@ -132,15 +132,12 @@ const communities = {
   subscribe: () => () => {},
   relay: { snapshot: () => connection, subscribe: () => () => {} },
 } as unknown as Communities;
-function remote(text: string, emoji = "🏠") {
+function remote(text: string, emoji = "🏠", url?: string) {
   const event = signed(other, {
     kind: 30315,
     created_at: ++remoteTime,
     content: text,
-    tags: [
-      ["d", "general"],
-      ["emoji", emoji],
-    ],
+    tags: [["d", "general"], url ? ["emoji", emoji, url] : ["emoji", emoji]],
   });
   events.set(other.pubkey, event);
   for (const listener of listeners) listener.receive([event]);
@@ -250,9 +247,26 @@ createRoot(root).render(
         </button>
         <button
           type="button"
-          onClick={() => remote("Buzzin'", ":bee-intensifies:")}
+          onClick={() =>
+            remote(
+              "Buzzin' between hives all afternoon, so replies may wait until the honey run is done",
+              ":bee-intensifies:",
+            )
+          }
         >
           Uncatalogued Bob
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            remote(
+              "Buzzin'",
+              ":bee-intensifies:",
+              "https://emoji.test/bee-intensifies.svg",
+            )
+          }
+        >
+          Uncatalogued Bob with image
         </button>
         <button type="button" onClick={() => remote("Buzzy", "")}>
           Text-only Bob

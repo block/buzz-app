@@ -240,7 +240,7 @@ function fixture(
       value?.onStdout?.("/home/test/.buzz\n");
       return { ...process, exited: Promise.resolve(0) };
     }
-    if (_id === "read") {
+    if (_id === "read" || _id === "read-protected") {
       fileReads.push({
         ...(value?.cwd ? { cwd: value.cwd } : {}),
         path: value?.args?.[0] ?? "",
@@ -1147,6 +1147,53 @@ function protectedPreview() {
     },
   };
 }
+
+it("contains Codex file-tool reads with its captured policy and reviews the captured text", async () => {
+  const f = protectedPreview();
+  const handle = f.handle;
+  if (!handle?.protection) throw new Error("Missing protected handle");
+  const check = vi.spyOn(handle.protection, "check");
+  try {
+    await f.runtime.run({
+      ...f.delivery("post a file"),
+      agent: handle,
+      config: f.agent.config,
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    expect(
+      (
+        await f.worker.tool("send", {
+          audience: "everyone",
+          path: "answer.txt",
+        })
+      )?.result,
+    ).toMatchObject({ success: true });
+    expect(f.spawn).toHaveBeenCalledWith(
+      "read-protected",
+      expect.objectContaining({
+        cwd: "/tmp/codex-test",
+        args: ["answer.txt"],
+        protection: handle.protection.processProtection,
+      }),
+    );
+    expect(f.spawn.mock.calls.some(([id]) => id === "read")).toBe(false);
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: "FILE CONTENT",
+    });
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "tool",
+        content: expect.objectContaining({
+          arguments: { audience: "everyone", text: "FILE CONTENT" },
+        }),
+      }),
+      expect.anything(),
+    );
+    await f.worker.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+  }
+});
 
 it("discovers protected models from the same engine that runs the selected model", async () => {
   const f = protectedPreview();

@@ -1379,7 +1379,14 @@ export class CodexRuntime {
       },
       relayAuthor: this.reads(agent.key)?.relayAuthor?.(),
       signingAuthority: this.reads(agent.key)?.workflowAuthority(),
-      read: (path) => readFile(this.spawn, turn.workspace, path, turn.signal),
+      read: (path) =>
+        readFile(
+          this.spawn,
+          turn.workspace,
+          path,
+          turn.signal,
+          agent.protection?.processProtection,
+        ),
       check,
       signal: turn.signal,
       memories: async (slug) => {

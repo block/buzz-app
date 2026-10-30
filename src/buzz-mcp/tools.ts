@@ -46,6 +46,11 @@ const final = {
   type: "boolean",
   description: "Your last message this turn; ends the turn.",
 } as const;
+// Shared by send, reply_in_subthread and edit.
+const summary = {
+  type: "string",
+  description: "One-line tl;dr, at most 160 characters.",
+} as const;
 /** The channel types a channel list can ask for, as NIP-CL names them. */
 const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const ttl = {
@@ -104,13 +109,14 @@ export const TOOLS: readonly Tool[] = [
       files: strs,
       mentions: strs,
       audience,
+      summary,
       final,
     },
     ["audience"],
   ),
   tool(
     "reply_in_subthread",
-    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience and final; the channel is the parent's.",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience, summary and final; the channel is the parent's.",
     {
       parent: { ...str, description: "Id of the message to reply under" },
       text: str,
@@ -118,6 +124,7 @@ export const TOOLS: readonly Tool[] = [
       files: strs,
       mentions: strs,
       audience,
+      summary,
       final,
     },
     ["parent", "audience"],
@@ -128,7 +135,10 @@ export const TOOLS: readonly Tool[] = [
     { channel: str, thread: str, text: str },
     ["channel", "text"],
   ),
-  tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
+  tool("edit", "Edit your message.", { id: str, text: str, summary }, [
+    "id",
+    "text",
+  ]),
   tool(
     "react",
     "React to a message.",
@@ -442,9 +452,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    const audienceTags = audienceOf(args);
+    const extra = [...audienceOf(args), ...summaryOf(args)];
     const thread = reply ? await tools.threadTags(reply) : [];
-    return post(tools, channel, args, thread, audienceTags);
+    return post(tools, channel, args, thread, extra);
   },
 
   async reply_in_subthread(tools, args) {
@@ -457,7 +467,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!channel) throw new Error("No channel for that message.");
     if (context.topLevel && channel === context.channel)
       throw new Error("This chat stays at the top level: use send instead.");
-    const audienceTags = audienceOf(args);
+    const extra = [...audienceOf(args), ...summaryOf(args)];
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
@@ -472,12 +482,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             ["e", root, "", "root"],
             ["e", parent, "", "reply"],
           ],
-      audienceTags,
+      extra,
     );
   },
 
   async edit(tools, args) {
     const id = required(args, "id");
+    const summaryTags = summaryOf(args);
     const target = await tools.event(id);
     const channel = tag(target, "h");
     if (!channel) throw new Error(`${id} is not a channel message.`);
@@ -489,6 +500,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ["h", channel],
         ["e", id],
         ...target.tags.filter((t) => t[0] === "imeta"),
+        ...summaryTags,
       ],
     });
     return "edited";
@@ -1250,6 +1262,24 @@ function audienceOf(args: Args): string[][] {
   if (args.audience !== "everyone" && args.audience !== "agents")
     throw new Error("audience must be everyone or agents.");
   return args.audience === "agents" ? [["audience", "agents"]] : [];
+}
+
+const SUMMARY_MAX = 160;
+/** The tags for a message's optional one-line summary. Rejects, never
+ * trims to fit, a summary that is empty, spans lines or runs long. */
+function summaryOf(args: Args): string[][] {
+  if (args.summary === undefined) return [];
+  if (typeof args.summary !== "string")
+    throw new Error("summary must be a string.");
+  const value = args.summary.trim();
+  if (!value) throw new Error("summary must not be empty.");
+  // Control characters (including tab and NEL) and the Unicode line and
+  // paragraph separators.
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value) || [...value].length > SUMMARY_MAX)
+    throw new Error(
+      `summary must be one line of at most ${SUMMARY_MAX} characters.`,
+    );
+  return [["summary", value]];
 }
 
 /** Publishes `args`' text, files and mentions as a message in `channel`,

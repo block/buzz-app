@@ -945,7 +945,7 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
   expect(
     await screen.findByRole("region", { name: "Archived channel" }),
-  ).toHaveTextContent("This channel is archived.");
+  ).toHaveTextContent("This channel is archived");
   expect(screen.queryByRole("textbox")).toBeNull();
 });
 
@@ -961,7 +961,7 @@ it.each(["solo", "stream"] as const)(
     await act(() => f.run("archive"));
     expect(
       await screen.findByRole("region", { name: "Archived channel" }),
-    ).toHaveTextContent("This channel is archived.");
+    ).toHaveTextContent("This channel is archived");
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();

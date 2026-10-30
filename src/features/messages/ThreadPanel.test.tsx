@@ -1518,7 +1518,7 @@ it("replaces an archived member thread composer and restores it on unarchive", (
   });
   expect(
     screen.getByRole("region", { name: "Archived channel" }),
-  ).toHaveTextContent("This channel is archived.");
+  ).toHaveTextContent("This channel is archived");
   expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
   act(() => {
@@ -1555,7 +1555,7 @@ it("keeps guest threads readable without a reply composer or Join action across 
   h.render();
   expect(
     screen.getByRole("region", { name: "Read-only channel" }),
-  ).toHaveTextContent("This channel is read-only.");
+  ).toHaveTextContent("This channel is read-only");
   expect(
     screen.getByRole("region", { name: "Thread messages" }),
   ).toBeInTheDocument();

@@ -33,7 +33,7 @@ it.each([false, true])(
     );
     expect(
       screen.getByRole("region", { name: "Read-only channel" }),
-    ).toHaveTextContent("This channel is read-only.");
+    ).toHaveTextContent(/^This channel is read-only$/);
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
     expect(run).not.toHaveBeenCalled();
     expect(started).not.toHaveBeenCalled();
@@ -63,7 +63,7 @@ it.each([false, true])(
     );
     expect(
       screen.getByRole("region", { name: "Archived channel" }),
-    ).toHaveTextContent("This channel is archived.");
+    ).toHaveTextContent(/^This channel is archived$/);
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
   },
 );
@@ -78,7 +78,9 @@ it("offers Join only for a joinable channel on a connection that can send it", (
       onJoin={() => {}}
     />,
   );
-  expect(screen.getByText(/You’re previewing this channel/)).toBeVisible();
+  expect(
+    screen.getByText("You’re previewing this channel", { exact: true }),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
   rerender(
     <ChannelJoinNotice

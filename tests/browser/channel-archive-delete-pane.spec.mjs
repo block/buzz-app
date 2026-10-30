@@ -223,7 +223,7 @@ for (const action of ["archive", "delete"]) {
         await expect(composer).toHaveCount(0);
         await expect(
           page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived.");
+        ).toHaveText("This channel is archived");
         await expect(
           page.getByRole("button", { name: "Send message", exact: true }),
         ).toHaveCount(0);
@@ -247,7 +247,7 @@ for (const action of ["archive", "delete"]) {
         await expect(composer).toHaveCount(0);
         await expect(
           page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived.");
+        ).toHaveText("This channel is archived");
         await expect(
           page.getByRole("button", { name: "Send message", exact: true }),
         ).toHaveCount(0);
@@ -297,7 +297,7 @@ for (const action of ["archive", "delete"]) {
         await expect(composer).toHaveCount(0);
         await expect(
           page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived.");
+        ).toHaveText("This channel is archived");
         await expect(
           panel.getByRole("button", { name: "Archive channel", exact: true }),
         ).toHaveCount(0);

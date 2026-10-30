@@ -348,7 +348,7 @@ for (const action of ["archive", "hide"]) {
         await expect(composer).toHaveCount(0);
         await expect(
           page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived.");
+        ).toHaveText("This channel is archived");
       } else await expect(composer).toHaveCount(0);
       await page.reload();
       await expect(destination).toBeVisible();
@@ -364,7 +364,7 @@ for (const action of ["archive", "hide"]) {
         await expect(composer).toHaveCount(0);
         await expect(
           page.getByRole("region", { name: "Archived channel", exact: true }),
-        ).toHaveText("This channel is archived.");
+        ).toHaveText("This channel is archived");
       } else await expect(composer).toHaveCount(0);
       expect(
         app.report.lifecyclePublications.map((event) => event.kind),
@@ -515,7 +515,7 @@ test.describe("Solo chat lifecycle", () => {
     await page.goto(url);
     await expect(
       page.getByRole("region", { name: "Archived channel", exact: true }),
-    ).toHaveText("This channel is archived.");
+    ).toHaveText("This channel is archived");
     await expect(composer).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Share access", exact: true }),
@@ -523,7 +523,7 @@ test.describe("Solo chat lifecycle", () => {
     await page.reload();
     await expect(
       page.getByRole("region", { name: "Archived channel", exact: true }),
-    ).toHaveText("This channel is archived.");
+    ).toHaveText("This channel is archived");
     await expect(composer).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await page
@@ -550,7 +550,7 @@ test.describe("Solo chat lifecycle", () => {
     await expect(page).toHaveURL(url);
     await expect(
       page.getByRole("region", { name: "Archived channel", exact: true }),
-    ).toHaveText("This channel is archived.");
+    ).toHaveText("This channel is archived");
     await expect(composer).toHaveCount(0);
     await header.click();
     await expect(

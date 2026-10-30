@@ -98,14 +98,14 @@ export function ChannelJoinNotice({
       >
         <p className="max-w-md px-2 text-center text-body-sm text-subtle">
           {archived
-            ? "This channel is archived."
+            ? "This channel is archived"
             : readOnly
               ? joinRole === "guest"
-                ? "This channel is read-only."
+                ? "This channel is read-only"
                 : "Read-only access"
               : canJoin
                 ? "Join channel to send messages"
-                : "You’re previewing this channel."}
+                : "You’re previewing this channel"}
         </p>
         {canJoin && (
           <Button

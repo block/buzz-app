@@ -102,6 +102,7 @@ import {
   browserOutboxStorage,
   createOutbox,
   type OutboxStorage,
+  type OutgoingEvent,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
 import { browserThreadFollows } from "./thread-follows";
@@ -431,6 +432,14 @@ export function createRelaySession(
       }
     }
   }
+  /** The channel of a failed or running send that membership decides. A
+   * create or membership command can target a channel the viewer is not on
+   * (an owner removes their agent from any channel), so it is never stranded. */
+  const contribution = (item: OutgoingEvent) =>
+    (item.delivery === "failed" || item.delivery === "sending") &&
+    ![9000, 9001, 9007, 9022].includes(item.event.kind)
+      ? item.event.tags.find(([name]) => name === "h")?.[1]
+      : undefined;
   /** Leaving or removal strands a channel's failed sends: nothing can retry
    * or reach them. Drop them, and any attempt still running that fails,
    * unless the viewer is back. Unconfirmed intent stays for a regrant. */
@@ -446,14 +455,8 @@ export function createRelaySession(
       .ready()
       .then(() => {
         for (const item of outbox.snapshot()) {
-          const channelId = item.event.tags.find(
-            ([name, value]) => name === "h" && ids.includes(value ?? ""),
-          )?.[1];
-          if (
-            !channelId ||
-            (item.delivery !== "failed" && item.delivery !== "sending")
-          )
-            continue;
+          const channelId = contribution(item);
+          if (!channelId || !ids.includes(channelId)) continue;
           const { id } = item.event;
           void attemptEnded(outbox, id)
             .then(() =>
@@ -463,6 +466,29 @@ export function createRelaySession(
             )
             .catch(() => {});
         }
+      })
+      .catch(() => {});
+  }
+  /** After a complete roster read, sends to channels the viewer is not on are
+   * stranded, including ones an earlier session left. The writer confirms
+   * each first: a replica's omission can be lag, and a local denial (a 401)
+   * outlasts a later read that lists the viewer again. */
+  function dropStrandedSends() {
+    const outbox = writes?.outbox;
+    if (!outbox) return;
+    void outbox
+      .ready()
+      .then(async () => {
+        const ids = [
+          ...new Set(
+            outbox.snapshot().flatMap((item) => {
+              const id = contribution(item);
+              return id && !channels.canParticipate(id) ? [id] : [];
+            }),
+          ),
+        ];
+        if (!ids.length) return;
+        dropFailedSends(await channels.unlisted(ids, lifetime.signal));
       })
       .catch(() => {});
   }
@@ -935,6 +961,7 @@ export function createRelaySession(
           media: (url, size) => transport.media(url, size),
           revokeAccess,
           membershipEnded: dropFailedSends,
+          rosterComplete: dropStrandedSends,
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),
@@ -983,7 +1010,11 @@ export function createRelaySession(
     canAccess: (id) => !closed && channels.canParticipate(id),
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
     removed: (id) =>
-      channels.denyChannel(id, new Error("Channel is no longer available")),
+      channels.denyChannel(
+        id,
+        new Error("Channel is no longer available"),
+        true,
+      ),
   });
   const memberAdministration = createMemberAdministration({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
@@ -3313,8 +3344,9 @@ export function createRelaySession(
       refreshRoster();
       unread.reconnect();
     },
+    // Live reports only `restricted: not a channel member` as a denial.
     denied(channelId, reason) {
-      if (!closed) channels.denyChannel(channelId, new Error(reason));
+      if (!closed) channels.denyChannel(channelId, new Error(reason), true);
     },
   });
   let activityRosterKey: string | undefined;

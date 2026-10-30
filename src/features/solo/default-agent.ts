@@ -49,6 +49,10 @@ async function save(account: Account, agent: string | null) {
   for (const listener of listeners) listener();
   try {
     await account.write(agent);
+    // Known with its value, before it stops counting as pending.
+    saved.set(account, agent ?? undefined);
+    // A failed choice after this falls back to it, not to an older read.
+    readValues.set(account, agent ?? undefined);
     known.add(account);
   } finally {
     saving.set(account, (saving.get(account) ?? 1) - 1);

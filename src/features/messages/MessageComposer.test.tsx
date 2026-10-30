@@ -1612,9 +1612,12 @@ it("does not focus a replacement composer after a late picker completion", async
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   h.unmount();
   const next = await mountUploadComposer();
-  next.input().focus();
+  const trigger = within(next.container).getByRole("button", {
+    name: "Attach files",
+  });
+  trigger.focus();
   await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
-  expect(next.input()).toHaveFocus();
+  expect(trigger).toHaveFocus();
 });
 
 it.each([attachByPaste, attachByDrop])(

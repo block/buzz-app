@@ -7,7 +7,7 @@
 // Buzz tools, signed by the agent's native-held key. The runtime reports a
 // turn that fails; what Pi writes without `send` stays in local activity.
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import type { Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
 import {
@@ -782,7 +782,16 @@ export class PiRuntime {
           }),
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
-        read: (path) => this.readFile(path, { cwd: entry.config.workspace }),
+        read: (path) =>
+          entry.handle?.protection
+            ? readFile(
+                this.spawn,
+                entry.config.workspace,
+                path,
+                undefined,
+                entry.handle.protection.processProtection,
+              )
+            : this.readFile(path, { cwd: entry.config.workspace }),
         memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
       });

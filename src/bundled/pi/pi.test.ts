@@ -8,6 +8,21 @@ import { deferred, fakeHost } from "./pi-testing";
 
 const handlers = () => ({ tool: vi.fn(), event: vi.fn() });
 
+it("declares file reads through the bundled helper with a positional path", () => {
+  expect(
+    manifest.host.processes.find((process) => process.id === "read-protected"),
+  ).toEqual({
+    id: "read-protected",
+    program: "buzz-agent-command",
+    bundled: true,
+    args: [
+      "--shell",
+      `case "$1" in "~/"*) set -- "$HOME/\${1:2}";; esac; exec /usr/bin/base64 -i "$1"`,
+      "buzz-read",
+    ],
+  });
+});
+
 it("starts the host once, with the install script, and pairs each answer with its request", async () => {
   const slow = deferred<object>();
   const host = fakeHost({

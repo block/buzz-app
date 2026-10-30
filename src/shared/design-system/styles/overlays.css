@@ -60,6 +60,9 @@
   .buzz-dialog-step[inert] {
     pointer-events: none;
   }
+  .buzz-dialog:where([data-size="compact"]) {
+    --dialog-padding: var(--space-6);
+  }
   .buzz-dialog[data-size="compact"] {
     --dialog-available-height: calc(100dvh - 2rem);
     top: 50%;
@@ -684,6 +687,11 @@ html[data-keyboard-navigation]
     }
 
     > :is(.buzz-dialog-header, .buzz-dialog-actions) {
+      --scroll-edge-fill: linear-gradient(
+        to bottom,
+        var(--surface-popover) calc(100% - var(--dialog-padding)),
+        transparent
+      );
       position: sticky;
       z-index: 2;
       margin-inline: calc(-1 * var(--dialog-padding));
@@ -703,10 +711,51 @@ html[data-keyboard-navigation]
       top: calc(-1 * var(--dialog-padding));
       margin-top: calc(-1 * var(--dialog-padding));
       padding-top: var(--dialog-padding);
-      padding-bottom: var(--space-6);
+      padding-bottom: 0;
+    }
+
+    > .buzz-dialog-header:has(+ :where(.buzz-dialog-body:not(:empty))) {
+      padding-bottom: var(--dialog-padding);
+    }
+
+    > .buzz-dialog-header:has(
+        + :where(.buzz-dialog-body[data-header-gap="compact"])
+      ),
+    > .buzz-dialog-header[data-chrome-spacing="padded"] {
+      padding-bottom: var(--space-3);
+    }
+
+    > .buzz-dialog-body {
+      padding-top: 0;
+    }
+
+    /* Conditional notices must not leave an empty padded body behind. */
+    > .buzz-dialog-body:empty {
+      display: none;
+    }
+
+    > .buzz-dialog-body:has(+ .buzz-dialog-actions) {
+      padding-bottom: 0;
+    }
+
+    > .buzz-dialog-body + .buzz-dialog-actions[data-chrome-spacing="default"] {
+      /* Keep the content-to-action gap on the sticky bar, including while
+         content scrolls beneath it. The body must not duplicate this gutter. */
+      padding-top: calc(var(--dialog-padding) + var(--space-1));
+    }
+
+    > .buzz-dialog-body[data-footer-gap="compact"]
+      + .buzz-dialog-actions[data-chrome-spacing="default"] {
+      padding-top: calc(var(--space-2) + var(--space-4) + var(--space-1));
     }
 
     > .buzz-dialog-actions {
+      /* The transparent gutter can overlap focused body controls. Only the
+         actual footer controls should intercept pointer input. */
+      pointer-events: none;
+      > :not(.buzz-dialog-bar-material) {
+        pointer-events: auto;
+      }
       /* Preserve access to oversized actions at narrow widths/enlarged text. */
       overflow-x: auto;
       bottom: calc(-1 * var(--dialog-padding));

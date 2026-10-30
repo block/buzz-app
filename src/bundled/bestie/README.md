@@ -35,8 +35,17 @@ all my private channels** add it to the private channels you are in, most
 recently active first; each channel's members see that you added it. Each
 action has a row of its own, so in a narrow panel its button wraps under it.
 Public channels
-need nothing: agents read them already. Check-ins and adding Bestie to new
-channels you create are not set up yet.
+need nothing: agents read them already. Adding Bestie to new channels you
+create is not set up yet.
+
+**Check-ins → Every hour** needs Remembers you, and turning memory off turns it
+off too. On adds the `buzz:bestie/checkin.hourly` Hourly upkeep section to the
+instructions and an hourly Attention timer, `watch/bestie-hourly-check-in`,
+that wakes Bestie in your DM with it; it also turns on the agent's Attention,
+which the Watching tab shows. Off removes the section and the timer and leaves
+Attention on, since the agent's other watches may need it. The timer runs while
+Buzz is open; after a sleep it runs once, not once for each missed hour. Each
+check-in is a feature in `features.ts`, so another kind is one more entry.
 
 ---
 

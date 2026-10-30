@@ -1625,7 +1625,12 @@ function fixture(
     ),
     metadata(relayKey, "room", "Design", 10, [
       ...(options.soloChannel
-        ? [["t", "stream"], ["private"], ["t", "buzz.solo"]]
+        ? [
+            ["t", "stream"],
+            ["private"],
+            ["t", "buzz.solo"],
+            ["P", viewer.pubkey],
+          ]
         : [
             ["t", "stream"],
             ...(options.archivedChannel ? [["archived", "true"]] : []),

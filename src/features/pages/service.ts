@@ -56,6 +56,11 @@ export type Page = Readonly<{
    * compact corner badge; prefer a short count or dot there.
    */
   badge?: ComponentType;
+  /** Plugin-owned rows nested beneath a sidebar page's navigation entry, such
+   * as conversations that need attention. Render inset NavigationItems; other
+   * placements do not show them.
+   */
+  rows?: ComponentType;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -93,7 +98,8 @@ export class PagesService extends Service implements Pages {
         page.layout !== "workspace") ||
       (page.companion !== undefined && typeof page.companion !== "boolean") ||
       (page.primary !== undefined && typeof page.primary !== "boolean") ||
-      (page.badge !== undefined && typeof page.badge !== "function")
+      (page.badge !== undefined && typeof page.badge !== "function") ||
+      (page.rows !== undefined && typeof page.rows !== "function")
     ) {
       throw new Error(
         "A page needs an id, a title, and a React component function",

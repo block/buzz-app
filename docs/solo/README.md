@@ -18,12 +18,12 @@ channel membership remains access authority.
   conversation scope (`features/conversation/Conversation.tsx`), so every view
   of a chat (the main reader or a secondary tab) composes under the same rules.
   Other channels are threaded. Conversion to a channel clears the label.
-- **The label decides the sidebar.** Every Solo chat the viewer is a member of
-  lists under Solo: their own and any shared with them, whether added directly or
-  through a shared link's access grant. A shared chat starts in Chats and the
-  viewer may file it in one of their own workspaces; it never lists under Team.
-  Ordinary channels list under Team. Opening a chat without membership adds
-  nothing to the sidebar.
+- **The label decides the sidebar.** Only the viewer's own Solo chats list under
+  Solo. A chat shared with them, whether added directly or through a shared
+  link's access grant, never lists under Solo or Team and stays quiet: no unread
+  bolding, Inbox row or alert unless it tags them (see
+  [Sharing](sharing.md#what-shared-people-see)). Ordinary channels list under
+  Team. Opening a chat without membership adds nothing to the sidebar.
 - **Tags follow company.** Alone with agents, a send must tag one. Once another
   person is a member, people can talk without a tag; agents still answer only
   when tagged. The composer reads "Message your agents" alone and "Message this

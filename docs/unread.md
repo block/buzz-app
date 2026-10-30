@@ -246,6 +246,12 @@ quiet, apart from mentions and broadcasts. Explicit per-message unread intent st
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
+**Someone else's Solo chat.** In a Solo chat the viewer did not create (or whose
+creator is not yet known), only messages that mention the viewer count;
+top-level messages, replies, conversations and broadcasts stay quiet. Inbox
+groups all of that chat's mentions into one row keyed by the chat, previewing the
+newest. Explicit per-message unread intent still applies.
+
 **Quiet agent messages.** A message whose signed `audience` tag is `agents` is
 coordination between agents, which people see quietly: the agent harness sends
 progress and agent-to-agent detail with it and the completion message to

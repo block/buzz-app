@@ -89,9 +89,21 @@ leaving the composer stops further grants and sending, not already dispatched
 writes. **Send link only** leaves access unchanged. Solo destinations keep their
 ordinary behavior and don't ask.
 
-Consent covers the full chat history and future messages. Sharing never
-unarchives anyone or removes them from a channel, and future joins or departures
-in the destination channel are not synchronized.
+Consent covers the full chat history and future messages, and says shared chats
+stay out of the recipients' sidebar. Sharing never unarchives anyone or removes
+them from a channel, and future joins or departures in the destination channel
+are not synchronized.
+
+## What shared people see
+
+Sharing gives access, not attention. Someone else's chat never lists in the
+viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
+just because the viewer can open it; they reach it from the card, a link or
+search. Only a tag pulls them in: it alerts like any mention and adds one Inbox
+row per chat, however many tags it holds. While that chat has an unread tag, or
+the viewer has it open, it also shows as a row under Inbox in the sidebar; once
+read and left, the row goes until the next tag. Replies and ordinary messages
+there never count. See [Relevant replies](../unread.md#relevant-replies).
 
 ## Explicit conversion, separate from Share
 

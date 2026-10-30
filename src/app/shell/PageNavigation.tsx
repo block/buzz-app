@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
@@ -8,7 +9,7 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PageIcon } from "./PageIcon";
-import { pagePresentation } from "./presentation";
+import { pagePlacement, pagePresentation } from "./presentation";
 
 export function PageNavigation({
   pages,
@@ -61,6 +62,7 @@ export function PageNavigation({
         <Badge />
       </ContributionBoundary>
     );
+    const Rows = pagePlacement(page) === "sidebar" ? page.rows : undefined;
     const select = () => {
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
@@ -87,23 +89,29 @@ export function PageNavigation({
         {badge && <span className="shell-toolbar-badge">{badge}</span>}
       </span>
     ) : (
-      <NavigationItem
-        key={page.key}
-        onClick={select}
-        selected={selected === page.key}
-        aria-current={
-          selected === page.key && currentPage !== selected ? true : undefined
-        }
-        label={label}
-        title={label}
-        variant="row"
-        trailing={badge}
-        icon={
-          placement === "sidebar" ? (
-            <span className="shell-page-icon">{pageIcon}</span>
-          ) : undefined
-        }
-      />
+      <Fragment key={page.key}>
+        <NavigationItem
+          onClick={select}
+          selected={selected === page.key}
+          aria-current={
+            selected === page.key && currentPage !== selected ? true : undefined
+          }
+          label={label}
+          title={label}
+          variant="row"
+          trailing={badge}
+          icon={
+            placement === "sidebar" ? (
+              <span className="shell-page-icon">{pageIcon}</span>
+            ) : undefined
+          }
+        />
+        {Rows && (
+          <ContributionBoundary key={contributionKey(page)} fallback={null}>
+            <Rows />
+          </ContributionBoundary>
+        )}
+      </Fragment>
     );
   });
 }

@@ -1,6 +1,7 @@
 import type { PluginModule } from "../../plugins/api";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
+import { SharedChatRows } from "./SharedChatRows";
 export const inject = [
   "pages",
   "relay",
@@ -40,5 +41,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
       />
     ),
+    rows: () => <SharedChatRows relay={relay} navigator={navigator} />,
   });
 };

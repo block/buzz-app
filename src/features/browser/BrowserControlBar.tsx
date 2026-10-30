@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { ShareIcon, StopIcon } from "../../shared/design-system/icons/index";
 import {
   MenuRoot,
   MenuTrigger,
@@ -42,6 +44,14 @@ export function BrowserControlBar({
   prepare(): Promise<void>;
   onError(error: string | undefined): void;
 }) {
+  const button = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (restoreFocus.current) {
+      button.current?.focus();
+      restoreFocus.current = false;
+    }
+  });
   const [grant, setGrant] = useState<BrowserControlGrant>();
   const [recipient, setRecipient] = useState<BrowserControlRecipient>();
   const active = useRef<BrowserControlRecipient | undefined>(undefined);
@@ -140,6 +150,7 @@ export function BrowserControlBar({
       );
       initial.current = undefined;
     }
+    restoreFocus.current ||= document.activeElement === button.current;
     const current = ++generation.current;
     active.current = next;
     setRecipient(next);
@@ -173,6 +184,7 @@ export function BrowserControlBar({
   }
 
   async function takeControl() {
+    restoreFocus.current = document.activeElement === button.current;
     initial.current?.complete(new Error("Browser opening was cancelled."));
     const current = ++generation.current;
     queued.current = undefined;
@@ -209,44 +221,25 @@ export function BrowserControlBar({
       }}
     >
       <div className={styles.control} data-browser-control="">
-        {grant && recipient ? (
+        {(grant || pending) && recipient ? (
           <Button
+            ref={button}
             size="sm"
             variant="ghost"
             shape="control"
             aria-label={`Take control from ${recipient.name}`}
-            title={`${recipient.name} can read and interact with this browser. Click to take control.`}
+            aria-busy={pending || undefined}
+            title={`${pending ? "Sharing with" : "Shared with"} ${recipient.name}. Take control`}
             onClick={() => void takeControl()}
           >
             <span className={styles.controlContent} role="status">
               <span className={styles.controlName}>{recipient.name}</span>
-              <span className={styles.controlAction}>
-                <span className={styles.controlSeparator}> · </span>Take control
-              </span>
+              <StopIcon size={16} />
             </span>
           </Button>
-        ) : pending ? (
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              shape="control"
-              loading
-              aria-label="Sharing browser"
-            >
-              <span className={styles.controlName}>Sharing…</span>
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              shape="control"
-              onClick={() => void takeControl()}
-            >
-              Take control
-            </Button>
-          </>
         ) : !menuOpen && (direct || !eligible.length) ? (
           <Button
+            ref={button}
             size="sm"
             variant="ghost"
             shape="control"
@@ -262,24 +255,19 @@ export function BrowserControlBar({
               if (direct) void share(direct);
             }}
           >
-            <span className={styles.controlContent}>
-              <span className={styles.controlAction}>
-                Share
-                <span className={styles.controlName}>
-                  {direct ? " with " : ""}
-                </span>
-              </span>
-              {direct ? (
-                <span className={styles.controlName}>{direct.name}</span>
-              ) : null}
-            </span>
+            <ShareIcon size={16} />
           </Button>
         ) : (
           <MenuTrigger
             render={
-              <Button size="sm" variant="ghost" shape="control">
-                Share…
-              </Button>
+              <IconButton
+                ref={button}
+                size="toolbar"
+                variant="ghost"
+                aria-label="Share browser"
+                title="Share browser with an agent"
+                icon={<ShareIcon size={16} />}
+              />
             }
           />
         )}
@@ -293,6 +281,7 @@ export function BrowserControlBar({
               disabled={!item.eligible}
               title={item.eligible ? undefined : item.unavailable}
               onClick={() => {
+                restoreFocus.current = true;
                 queued.current = item;
                 setMenuOpen(false);
               }}

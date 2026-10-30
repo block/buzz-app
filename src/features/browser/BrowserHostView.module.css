@@ -59,7 +59,7 @@
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  max-width: 50%;
+  max-width: 33%;
 }
 
 .control button {
@@ -72,6 +72,11 @@
   align-items: center;
   min-width: 0;
   max-width: 100%;
+  gap: var(--space-1);
+}
+
+.controlContent svg {
+  flex: none;
 }
 
 .controlName {
@@ -79,16 +84,4 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.controlAction {
-  flex: none;
-  white-space: pre;
-}
-
-@media (max-width: 26.25rem) {
-  .controlName,
-  .controlSeparator {
-    display: none;
-  }
 }

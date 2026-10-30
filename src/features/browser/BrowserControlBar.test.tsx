@@ -97,7 +97,7 @@ it("keeps takeover available during a pending grant and keeps a late grant hidde
   );
   await user.click(screen.getByRole("button", { name: /^Share/ }));
   expect(
-    screen.getByRole("button", { name: "Sharing browser" }),
+    screen.getByRole("button", { name: "Take control from Tester" }),
   ).toHaveAttribute("aria-busy", "true");
   await user.click(screen.getByRole("button", { name: /^Take control/ }));
   expect(api.revoke).toHaveBeenCalledTimes(1);
@@ -304,12 +304,66 @@ it("cancels a menu selection while the native guest is still being restored", as
   await user.click(await screen.findByRole("menuitem", { name: "Alice" }));
   await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
   expect(api.grant).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Take control" }));
+  await user.click(
+    screen.getByRole("button", { name: "Take control from Alice" }),
+  );
   await act(async () => {
     restore();
     await restored;
   });
   expect(api.grant).not.toHaveBeenCalled();
   expect(api.revoke).toHaveBeenCalledWith("website");
-  expect(screen.getByRole("button", { name: "Share…" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Share browser" })).toBeVisible();
+});
+
+it("keeps keyboard focus on takeover while sharing and returns it to Share", async () => {
+  const api = control();
+  let finish!: (value: { token: string; revision: number }) => void;
+  vi.mocked(api.grant).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const user = userEvent.setup();
+  render(<BrowserControlBar control={api} sessionId="website" eligible />);
+  await user.tab();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.getByRole("button", { name: "Take control from Tester" }),
+  ).toHaveFocus();
+  await act(async () => finish({ token: "grant", revision: 1 }));
+  expect(
+    screen.getByRole("button", { name: "Take control from Tester" }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.getByRole("button", { name: "Share with Tester" }),
+  ).toHaveFocus();
+});
+
+it("returns menu selection focus to takeover", async () => {
+  const api = control();
+  render(
+    <SharingControl
+      recipients={["Alice", "Bob"].map((name) => ({
+        id: name,
+        name,
+        control: api,
+        eligible: true,
+        unavailable: "",
+      }))}
+      sessionId="website"
+      prepare={async () => {}}
+      onError={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.tab();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Alice" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Take control from Alice" }),
+    ).toHaveFocus(),
+  );
 });

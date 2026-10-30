@@ -319,9 +319,11 @@ it("cancels an opening during a pending native grant and suppresses its late com
   );
   const opening = f.open();
   const rejected = expect(opening).rejects.toThrow("cancelled");
-  await screen.findByRole("button", { name: "Sharing browser" });
+  await screen.findByRole("button", { name: "Take control from Tester" });
   await waitFor(() => expect(f.native.control?.grant).toHaveBeenCalledTimes(1));
-  await userEvent.click(screen.getByRole("button", { name: /^Take control$/ }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Take control from Tester" }),
+  );
   await rejected;
   await act(async () => {
     finish({ token: "late", revision: 1 });
@@ -442,7 +444,9 @@ it("preserves an explicit owner recipient choice while the agent-created page is
   }));
   const opening = f.open();
   const rejected = expect(opening).rejects.toThrow("manual sharing choice");
-  await userEvent.click(await screen.findByRole("button", { name: "Share…" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Share browser" }),
+  );
   await userEvent.click(
     await screen.findByRole("menuitem", { name: "Second" }),
   );

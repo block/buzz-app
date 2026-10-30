@@ -122,6 +122,7 @@ it("offers Edit profile only on the viewer's own profile in a community and open
   });
   // A scope for another identity names no community for this viewer.
   f.reconnect(`${origin}:${other}`);
+  expect(screen.getByRole("region", { name: "Profile details" })).toBeTruthy();
   expect(editProfile()).toBeNull();
   f.owner.dispose();
 });

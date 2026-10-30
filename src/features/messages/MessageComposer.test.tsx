@@ -10404,6 +10404,68 @@ it("a Solo chat with a person tags the agent the viewer last tagged in the text,
   setRememberAgentsPreference(true);
 });
 
+it("a Solo chat with a person that opens on ready history tags the agent at mount", () => {
+  const person = "f".repeat(64);
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setHistory("ready");
+  h.setLibrary([first, second]);
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [person, { name: "Pat" }],
+    ]),
+  );
+  h.setRows([editableMessage({ authorId: viewer, mentions: [first.pubkey] })]);
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo" as const,
+        members: [first.pubkey, person],
+      },
+    ],
+  };
+  // Switching to an own Solo chat mounts its composer afresh.
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => list },
+    } as unknown as RelaySession,
+  });
+  expect(h.input()).toHaveValue("@Ada ");
+});
+
+it("a hidden tab keeps the pill of a draft with prose when the history changes", () => {
+  const viewer = "e".repeat(64);
+  const { h } = mountSoloChat([first.pubkey, second.pubkey], {
+    viewer,
+    history: "loading",
+  });
+  h.setRows([editableMessage({ authorId: viewer, mentions: [first.pubkey] })]);
+  h.setHistory("ready");
+  const pill = (name: string) =>
+    screen.getByRole("status", { name: `Sending to ${name}. Change agents` });
+  expect(pill("Ada")).toBeInTheDocument();
+  h.fill("for Ada");
+  // Another device sends to Bea while this tab is hidden.
+  h.retarget({ shown: false });
+  h.setRows([
+    editableMessage({ authorId: viewer, mentions: [first.pubkey] }),
+    editableMessage({
+      id: "2".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  h.retarget({ shown: true });
+  expect(h.input()).toHaveValue("for Ada");
+  expect(pill("Ada")).toBeInTheDocument();
+});
+
 it("the pill waits for the chat's history before any stand-in seeds it", () => {
   const { h, viewer } = mountSoloChat([first.pubkey, second.pubkey], {
     history: "loading",

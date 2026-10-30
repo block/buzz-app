@@ -595,11 +595,12 @@ function Composer({
       legacyFollowupDraft(stored) ? mentionDraft("") : stored,
       list.channels,
     );
-    // An own Solo chat waits for the seed effect, which knows whether the
-    // chat is alone with agents and the toolbar holds them instead.
+    // An own Solo chat alone with agents seeds its toolbar, not the text.
     const source =
       threadSeed ??
-      (seedsFromWindow && !ownSoloConversation ? windowSeed() : undefined);
+      (seedsFromWindow && !(ownSoloConversation && agentsOnly && !withPeople)
+        ? windowSeed()
+        : undefined);
     if (!source || submission || !untouchedDraft(saved))
       return { value: saved, applied: undefined, automatic: false };
     // A seed from settled evidence is final; one taken while agent evidence
@@ -928,6 +929,7 @@ function Composer({
     if (pillKey) writeView(scope, pillKey, people?.length ? people : null);
   };
   const choose = (people: readonly MentionRecipient[]) => {
+    seededRoute.current = undefined;
     setReplacedKey(undefined);
     setRouted(people);
     keepPick(people);
@@ -1840,7 +1842,12 @@ function Composer({
     if (!presented) {
       autoTagged.current = undefined;
       // Hidden untouched, the pill refills for the current default when shown.
-      if (seededRoute.current === routedKey(routed)) setRouted([]);
+      if (
+        seededRoute.current === routedKey(routed) &&
+        untouchedDraft(valueRef.current) &&
+        !attachments.store.snapshot().length
+      )
+        setRouted([]);
       seededRoute.current = undefined;
     }
     if (

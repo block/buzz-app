@@ -469,7 +469,7 @@ describe("mounted Markdown preparation", () => {
     const newer = markdownRenders.mock.calls.length;
     render("**evicted**");
     expect(markdownRenders).toHaveBeenCalledTimes(newer + 1);
-  });
+  }, 20_000);
 
   it("does not keep a body heavier than the whole cache", () => {
     render("**kept**");

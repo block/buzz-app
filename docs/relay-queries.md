@@ -367,8 +367,10 @@ failures show a retry.
 The search waits for a ready channel list.
 
 Private/deleted channels may disappear from delta results without a tombstone.
-Contradicted exact matches are pruned and force full reconciliation; one local
-invalidation restarts the search immediately. Further invalidations use the
+Contradicted exact matches repair or prune the saved candidates. A delta answer
+that finds a contradiction forces full reconciliation; other verified answers
+can finish, and repaired full reads remain reusable. One local invalidation
+restarts the search immediately. Further invalidations use the
 existing bounded read retry policy. Caller cancellation, cache clearing and
 disposal never trigger this restart. Periodic full reads also repair omissions
 caused by clock skew or replica lag beyond the overlap. The directory remains

@@ -67,3 +67,15 @@ export function liveRecoveryStatus(view: LiveRecoveryView): RecoveryStatus {
     ? "busy"
     : "settled";
 }
+
+type LiveRead = Readonly<{ state: string; transient?: true }>;
+/** True while session recovery retries the roster read (failed or busy in
+ * liveRecoveryStatus), so recovery reports a list error. A denial is not. */
+export const rosterRecovering = (roster: LiveRead) =>
+  roster.state === "deferred" ||
+  roster.state === "pending" ||
+  (roster.state === "error" && !!roster.transient);
+/** The same for one channel's head read, which fills its timeline. */
+export const headRecovering = (head: LiveRead | undefined) =>
+  !!head &&
+  (head.state === "pending" || (head.state === "error" && !!head.transient));

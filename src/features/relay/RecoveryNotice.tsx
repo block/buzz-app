@@ -2,6 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { isSignInRefusal, type RelayRecovery } from "./recovery";
+import type { RelaySession } from "./session";
 
 const NONE = Object.freeze({
   recovering: false,
@@ -96,11 +97,20 @@ export function useReauthorizedRetry(
   }).current;
 }
 
-/** True from recovery's first failure, including the quiet delay before its
- * notice. Surfaces whose failure recovery owns hide their own copy, so the
- * quiet window stays quiet and the notice is the one report after it. */
-export function useRecovering(recovery: RelayRecovery | undefined) {
-  return useRecovery(recovery).recovering;
+/** True while recovery retries this surface's own read, from its first
+ * failure and through the quiet delay before the notice. The surface then
+ * hides its own copy of the failure; the notice is the one report. `owns`
+ * picks the read from the live view (rosterRecovering, headRecovering). A
+ * failure recovery does not retry, such as a denial, stays visible even while
+ * another source recovers. */
+export function useRecoveryOwns(
+  session: Pick<RelaySession, "recovery" | "live">,
+  owns: (live: ReturnType<RelaySession["live"]["snapshot"]>) => boolean,
+) {
+  const { recovering } = useRecovery(session.recovery);
+  const read = () => owns(session.live.snapshot());
+  const owned = useSyncExternalStore(session.live.subscribe, read, read);
+  return recovering && owned;
 }
 
 /** Claim the notice for an inline surface while it is mounted. */

@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 import { isTransientFailure, ReadError } from "./errors";
-import { liveRecoveryStatus, type LiveRecoveryView } from "./live-recovery";
+import {
+  headRecovering,
+  liveRecoveryStatus,
+  rosterRecovering,
+  type LiveRecoveryView,
+} from "./live-recovery";
 
 const healthy: LiveRecoveryView = {
   status: "connected",
@@ -138,4 +143,23 @@ it("lets recovery own transient live failures and leaves the rest visible", () =
   expect(liveRecoveryStatus({ ...healthy, heads: [{ state: "error" }] })).toBe(
     "settled",
   );
+});
+
+it("owns a surface's read exactly when recovery counts it failed or busy", () => {
+  const reads = [
+    { state: "verified" },
+    { state: "pending" },
+    { state: "deferred" },
+    { state: "error", transient: true },
+    { state: "error" },
+  ] as const;
+  for (const roster of reads)
+    expect(rosterRecovering(roster)).toBe(
+      liveRecoveryStatus({ ...healthy, roster }) !== "settled",
+    );
+  for (const head of reads)
+    expect(headRecovering(head)).toBe(
+      liveRecoveryStatus({ ...healthy, heads: [head] }) !== "settled",
+    );
+  expect(headRecovering(undefined)).toBe(false);
 });

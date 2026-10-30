@@ -1865,7 +1865,7 @@ it("creates an announce channel after adding its template's agents", async () =>
   expect(roster()).toContainEqual(["p", alice, "", "member"]);
   // Now anyone added with no role is a guest, and the answer says so.
   await expect(
-    callTool(client, { channel: id }, "members", { add: [bob] }),
+    callTool(client, { channel: id }, "member_add", { pubkeys: [bob] }),
   ).resolves.toBe(`added ${bob} as guest`);
   expect(roster()).toContainEqual(["p", bob, "", "guest"]);
 });

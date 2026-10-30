@@ -755,10 +755,11 @@ Each selection opens a consequence confirmation. Cancel/Escape returns focus to
 the unchanged Select. **Change access** saves immediately through the existing
 channel-details capability, then reloads signed metadata. Loading, pending and
 unconfirmed saves disable both controls. A pending save shows an inline spinner
-in the leading icon slot instead of a separate saving message. Rejections offer
-**Reload access**.
-failures before publication identify the initial access check, signing, or final
-access check that failed, retaining the underlying error. No request is retried.
+in the leading icon slot instead of a separate visible saving message. A persistent
+live region outside the busy controls announces saving and confirmed completion.
+Rejections offer **Reload access**. Failures before publication identify the initial
+access check, signing, or final access check that failed, retaining the underlying
+error. No request is retried.
 Uncertain results survive closing the dialog and offer **Check save status**,
 which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
@@ -773,9 +774,12 @@ preserved so it reappears when the channel becomes public and the experiment can
 be reverted without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. Its audience description is followed by
-“Viewing only. Ask an owner or admin to participate.” The private-channel summary
-describes what new members can do; existing participants keep their roles. The compact timeline
+without calling the editing capability. Guests and readers of Guest-default channels
+see “Viewing only. Ask an owner or admin to participate.” A nonmember previewing a
+Member-default channel instead sees “New people can participate. People already in
+the channel keep their access.” Other previews identify defaults that could not be
+confirmed. The private-channel summary identifies member-only reading; existing
+participants keep their roles. The compact timeline
 label says “This channel is read-only.” for Guest-default channels; a Guest in a
 Member-default channel sees “Read-only access.” Guest-default previews never suggest
 joining to add people or agents.
@@ -1052,8 +1056,8 @@ another non-owner member:
 
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
-The menu includes **Make guest** through the existing deliberate confirmation
-flow. Participating and Viewing only captions represent each participant's
+The menu offers **Viewing only** through a deliberate **Set to viewing only**
+confirmation. Participating and Viewing only captions represent each participant's
 verified Member and Guest role; changing the admission default never changes those roles.
 Agent Bot roles retain the contributing presentation.
 

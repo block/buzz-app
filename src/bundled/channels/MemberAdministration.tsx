@@ -27,6 +27,19 @@ import {
 import { DotsThreeIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
 
+export function memberAccessLabel(role: MemberChange["expectedRole"]) {
+  return {
+    owner: "Owner",
+    admin: "Admin",
+    member: "Participating",
+    bot: "Participating",
+    guest: "Viewing only",
+    unknown: "Unconfirmed access",
+    none: "No access",
+    absent: "No access",
+  }[role];
+}
+
 export function useMemberAdministration(
   session: RelaySession,
   channelId: string,
@@ -128,16 +141,7 @@ export function MemberRow({
       pubkey,
       verifiedOwner,
     );
-  const roleCaption =
-    role === "member" || role === "bot"
-      ? "Participating"
-      : role === "guest"
-        ? "Viewing only"
-        : role === "owner"
-          ? "Owner"
-          : role === "admin"
-            ? "Admin"
-            : undefined;
+  const roleCaption = role === "unknown" ? undefined : memberAccessLabel(role);
   const locked =
     state.operation?.status === "pending" ||
     state.operation?.status === "uncertain";
@@ -190,11 +194,7 @@ export function MemberRow({
             >
               {editableMemberRoles.map((next) => (
                 <MenuRadioItem key={next} value={next}>
-                  {next === "member"
-                    ? "Participating"
-                    : next === "guest"
-                      ? "Viewing only"
-                      : "Admin"}
+                  {memberAccessLabel(next)}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>

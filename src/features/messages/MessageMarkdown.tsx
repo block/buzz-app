@@ -62,6 +62,7 @@ import {
   type LiteralRange,
   type PreparedMarkdown,
 } from "./markdown-preparation";
+import { writeClipboardText } from "../../shared/clipboard";
 
 type MarkdownNode = {
   type: string;
@@ -932,7 +933,7 @@ function CodeActions({
         onClick={() => {
           setCopying(true);
           void Promise.resolve()
-            .then(() => navigator.clipboard.writeText(code))
+            .then(() => writeClipboardText(code))
             .then(
               () => notify("Copied code to clipboard", "success"),
               () => notify("Failed to copy code", "error"),

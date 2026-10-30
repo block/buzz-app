@@ -134,7 +134,9 @@ for those separate requirements.
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
 member sets. `snapshot()` / `subscribe()` provide an immutable catalog; `ensure()`
 is lazy and background-priority, and `refresh()` explicitly retries. The shared
-composer warms it on mount. Each author's newest complete set replaces their old
+composer warms it on mount. Opening autocomplete or a picker uses foreground
+demand to promote a pending cold load or retry a failed passive load, without reloading
+a ready catalog. A failed foreground attempt keeps its error and explicit Retry action across autocomplete edits. Budget overflow still waits for explicit Retry. Each author's newest complete set replaces their old
 one (including empty removal sets); the union picks newer sets, then smaller URLs,
 for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB.
 A read that reaches the 500-set cap stays usable with an incompleteness error;

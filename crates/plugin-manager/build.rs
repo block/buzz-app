@@ -28,8 +28,11 @@ fn builderlab_target(
     {
         return Err("Builderlab build URL must use HTTPS without credentials, query, or fragment");
     }
-    // Native backup handoff trusts Builderlab credentials only for this API path.
-    let api_base_path = format!("{}/api/goose/", url.path().trim_end_matches('/'));
+    // Native backup handoff trusts Builderlab credentials only for this API
+    // path, and decisions call under it. Drop one terminal slash, exactly as
+    // sign-in's `oauthTarget` does, so all three share the same path.
+    let path = url.path();
+    let api_base_path = format!("{}/api/goose/", path.strip_suffix('/').unwrap_or(path));
     Ok((url.origin().ascii_serialization(), api_base_path))
 }
 
@@ -204,6 +207,18 @@ mod tests {
             (
                 "https://login.example:8443".into(),
                 "/path/api/goose/".into()
+            )
+        );
+        // Only one slash goes, as in sign-in, so an empty segment is kept.
+        assert_eq!(
+            builderlab_target(
+                &local,
+                Some("https://login.example:8443/deployment//".into())
+            )
+            .unwrap(),
+            (
+                "https://login.example:8443".into(),
+                "/deployment//api/goose/".into()
             )
         );
         assert_eq!(

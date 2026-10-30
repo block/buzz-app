@@ -17,6 +17,7 @@ import { SettingsCardsService } from "../../features/settings/service";
 import { PanelsService } from "../../features/panels/service";
 import { BrowserService } from "../../features/browser/service";
 import type { BrowserPlatform } from "../../features/browser/platform";
+import { DecisionsService } from "../../features/decisions/service";
 import {
   AgentsService,
   type AgentCommunities,
@@ -129,6 +130,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     new HostService(root);
     provideApps(root);
     const cards = new SettingsCardsService(root);
+    const decisions = new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     const knownCommunities = provideKnownCommunities(root, community.viewer);
@@ -163,6 +165,8 @@ it.each([undefined, "", "http://builderlab.example"])(
       expect(agents.types()).toHaveLength(0);
       // No sign-in is possible, so no sync owner runs.
       expect(knownCommunities.subscribe).not.toHaveBeenCalled();
+      // Nor a decision provider.
+      expect(decisions.providers()).toEqual([]);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
       // With no agent type to create, the empty page's Create tile is off.
@@ -213,6 +217,7 @@ it.each([undefined, false, true])(
     new HostService(root);
     provideApps(root);
     const cards = new SettingsCardsService(root);
+    new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     provideKnownCommunities(root, community.viewer);
@@ -363,6 +368,7 @@ it.each([
     new HostService(root);
     provideApps(root);
     const cards = new SettingsCardsService(root);
+    new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     provideKnownCommunities(root, community.viewer);
@@ -509,7 +515,10 @@ it.each([
         subject: "user",
         email: "a@example.com",
         expires_at: "2030",
-        capabilities: { can_use_remote_agents: true },
+        capabilities: {
+          can_use_remote_agents: true,
+          can_use_builderlab_decisions: true,
+        },
       };
     } else if (url.endsWith("/list-agents")) {
       result = {
@@ -576,6 +585,7 @@ it.each([
   new HostService(root);
   provideApps(root);
   const cards = new SettingsCardsService(root);
+  const decisions = new DecisionsService(root, localStorage);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
   const knownCommunities = provideKnownCommunities(root, community.viewer);
@@ -593,6 +603,7 @@ it.each([
     runtime.reconcile([plugin]);
     if (flow === "shared login and re-enable") {
       await waitFor(() => expect(cards.snapshot()).toHaveLength(1));
+      expect(decisions.providers()).toEqual([]);
       expect(agents.types()).toMatchObject([
         { key: "block.builderlab/builderlab", title: "Builderlab" },
       ]);
@@ -640,6 +651,13 @@ it.each([
         "status",
       );
       expect(document.body).not.toHaveTextContent("private-token");
+      // A sign-in Builderlab allows decisions for offers Builderlab as a
+      // decision provider. It answers, since the user chose no other.
+      const [provider] = decisions.providers();
+      expect(provider?.key).toBe("block.builderlab/builderlab");
+      expect(provider?.status()).toBe("ready");
+      expect(decisions.backend()).toBe("block.builderlab/builderlab");
+      expect(decisions.status()).toBe("ready");
       expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
         id: "native-attempt-id",
       });

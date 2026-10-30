@@ -310,15 +310,15 @@ surface belongs to exactly one bucket, and the timings live in
 timing, change the bucket for everyone.
 
 Inside an open menu, submenus open immediately. A side explanation for grouped
-unavailable choices uses `PopoverTrigger openOnHover="control"` (0.1s). Keep
+unavailable choices uses `PopoverTrigger openOnHover="control"` (0.05s). Keep
 each disabled choice keyboard reachable and connected to the shared description.
 
 | Bucket | Use for | Timing | API |
 | --- | --- | --- | --- |
-| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
-| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled (use Hover control for side explanations of grouped unavailable choices in an open menu), an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
-| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.6s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
-| Hover control | A control that expands in place under the pointer: video volume, playback speed; side explanations for grouped unavailable choices in an open menu | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 0.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled (use Hover control for side explanations of grouped unavailable choices in an open menu), an error, a truncated value | Rests 0.25s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.3s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed; side explanations for grouped unavailable choices in an open menu | Rests 0.05s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
 | No hover | A control whose visible text already says what it does | None | Omit `title` |
 
 Hints share the app's `TooltipProvider`: once one is showing, its neighbors open
@@ -687,16 +687,21 @@ panel fill. Use it over artwork, not on ordinary neutral profile headers.
 
 ### Match controls to their surface
 
-The shell groups creation, page tabs, and search in one `chrome-navigation`
-track. Nested chrome tabs retain their selected fill without a second track.
+The shell groups page tabs in one `chrome-navigation` track, with Search as a
+separate adjacent button. Creation sits beside the sidebar scope filters.
+Nested chrome tabs retain their selected fill without a second track.
 Layout and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
+Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px
+control step, paired with `IconButton size="sm"` for adjacent actions.
 Proposed: `Tabs variant="segmented-icons"` uses the same track for icon-only
 avatar choices, retaining accessible labels and titles. Each item supplies an icon.
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
+Use `IconButton variant="inset"` for a secondary action beside segmented filters;
+it shares their `surface-inset` fill and retains secondary interaction states.
 Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule
 (neutral 3 in light mode, distinct from the app background),
 with `affordance-chrome-hover` for an inactive item and `text-chrome-subtle` labels. Selection uses the pane color
@@ -1794,10 +1799,10 @@ the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
 they keep the standard ink and overlay of the panel they sit on.
 
-Hovering your own message lays a quieter overlay across the whole bubble
-(`affordance-message-own-hover`: black 4% or white 8%), in the same direction as
-its chips, so a bright bubble never takes a white wash in dark mode. Received
-bubbles keep the quiet surface their reaction strip shares and take no hover.
+When message actions show, both received and own bubbles use their
+`surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in
+light mode and 5% toward white in dark mode. This changes only the background,
+without a stroke or an overlay on text and media. Emoji-only messages stay clear.
 
 These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

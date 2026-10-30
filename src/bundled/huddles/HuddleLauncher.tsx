@@ -22,6 +22,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import styles from "./Huddles.module.css";
+import { writeClipboardText } from "../../shared/clipboard";
 
 type Props = Pick<
   ChannelLauncherProps,
@@ -189,7 +190,7 @@ function ActiveHuddle({
                 if (!current()) return;
                 setError(false);
                 try {
-                  await navigator.clipboard.writeText(link);
+                  await writeClipboardText(link);
                   setCopied(true);
                 } catch {
                   setError(true);

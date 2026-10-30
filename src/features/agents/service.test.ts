@@ -1,4 +1,6 @@
 import { registerAttention } from "./attention-command";
+import { canMessageAgent, createAgentChoices } from "./choices";
+import { createAgentLibrary } from "./library";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -7843,6 +7845,21 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(hostedKey);
+  const choices = createAgentChoices({
+    scope: `https://relay.example.test:${viewer}`,
+    library: createAgentLibrary(undefined).queries,
+    native: {
+      snapshot: service.local,
+      subscribe: service.subscribe,
+      refresh: () => service.refresh(),
+    },
+    signal: new AbortController().signal,
+  });
+  expect(service.local().agents).toEqual([]);
+  expect(choices.snapshot().identities).toEqual([
+    { pubkey: hostedKey, name: "Sky", managed: false, messageable: true },
+  ]);
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
   expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');
 });
 
@@ -7860,6 +7877,7 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
     unfinished: true,
     name: "Sky",
   });
+  expect(service.local().hosted).toBeUndefined();
   expect(records.publish).not.toHaveBeenCalled();
   await expect(service.save(hostedKey, { name: "Sea" })).rejects.toThrow(
     /Finish the agent's setup/,

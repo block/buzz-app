@@ -1,4 +1,5 @@
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import { canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
@@ -247,7 +248,7 @@ export function NewMessage({
     const controlled = new Set(
       session.agentChoices
         .snapshot()
-        .identities.filter((agent) => agent.managed)
+        .identities.filter(canMessageAgent)
         .map((agent) => agent.pubkey),
     );
     if (

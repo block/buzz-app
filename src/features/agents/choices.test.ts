@@ -2,7 +2,11 @@ import { expect, it } from "vitest";
 import { createLocalAgents } from "./local";
 import { localAgentsFixture } from "./local-testing";
 import { createAgentLibrary } from "./library";
-import { createAgentChoices, templateAgentChoices } from "./choices";
+import {
+  canMessageAgent,
+  createAgentChoices,
+  templateAgentChoices,
+} from "./choices";
 import { soloRecipients } from "../solo/recipients";
 import type { IdentityArchiveSnapshot } from "../relay/identity-archives";
 
@@ -14,6 +18,53 @@ const agent = {
   relayUrl: "wss://relay.example.test",
   owner: viewer,
 };
+
+it("allows hosted DMs only with current owned source evidence, without local management", async () => {
+  const source = localAgentsFixture();
+  const lifetime = new AbortController();
+  const library = createAgentLibrary(undefined);
+  const archived = ["cd".repeat(32)];
+  const archives = archiveFixture(archived);
+  source.set({
+    hosted: [
+      agent,
+      { ...agent, pubkey: "bc".repeat(32), owner: "ee".repeat(32) },
+      { ...agent, pubkey: "de".repeat(32), relayUrl: "https://elsewhere.test" },
+      { ...agent, pubkey: "cd".repeat(32) },
+    ],
+  });
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: source,
+    archives,
+    signal: lifetime.signal,
+  });
+  expect(choices.snapshot().identities).toEqual([
+    {
+      pubkey: agent.pubkey,
+      name: agent.name,
+      managed: false,
+      messageable: true,
+    },
+  ]);
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
+  expect(choices.snapshot().templates.identities).toEqual([]);
+  archived.push(agent.pubkey);
+  await archives.refresh();
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toEqual([]);
+  archived.pop();
+  await archives.refresh();
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
+  source.set({ status: "error", error: "Cannot read agents" });
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toEqual([]);
+  source.set({ status: "ready", hosted: [] });
+  expect(choices.snapshot().identities).toEqual([]);
+  source.set({ hosted: [agent] });
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
+  lifetime.abort();
+  expect(choices.snapshot().identities).toEqual([]);
+});
 
 /** Finite archive evidence with the real lazy-read lifecycle. */
 function archiveFixture(

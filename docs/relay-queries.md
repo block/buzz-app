@@ -341,8 +341,9 @@ or `#` completion query, `channels.searchPublic(query)` reads relay-authored
 It matches names locally and keeps only explicit active public channels the
 viewer has not joined. Every query in the same session epoch shares one read:
 a query that stops waiting leaves it running for the next, and a finished read
-is reused for 30 seconds, so typing reads the directory once. Matches are ranked exact, prefix, word start, then substring,
-and the best eight are resolved through the same exact `resolve` path as
+is reused for 30 seconds, so typing reads the directory once. Names match by
+the joined-channel rule (`matchRank`), so `buzz community` finds
+`buzz-community`; matches are ranked best first, and the best eight are resolved through the same exact `resolve` path as
 message hits; the page itself never grants access. So
 `channels.get(id)` returns a `readOnly` summary and `channels.list()` stays
 joined-only. Reaching the 20,000-event bound reports partial coverage; read

@@ -979,3 +979,51 @@ it("opens global search from the sidebar and returns focus to its trigger", asyn
   );
   expect(trigger).toHaveFocus();
 });
+
+it("returns sidebar search focus to a usable trigger after the sidebar changes", async () => {
+  const current = createServices();
+  services = current;
+  const user = userEvent.setup();
+  const shell = (key: string, inert = false) => (
+    <ToastProvider>
+      <AppShell
+        pages={[]}
+        selected="buzz.channels/channels"
+        navigationAttempt="initial"
+        onSelect={vi.fn()}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+        searchServices={current}
+        sidebar={(_, actions) => (
+          <aside key={key} aria-label="Sidebar" inert={inert}>
+            {actions}
+          </aside>
+        )}
+      >
+        Current conversation
+      </AppShell>
+    </ToastProvider>
+  );
+  const { rerender } = render(shell("first"));
+  const close = async () => {
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+    );
+  };
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("dialog", { name: "Search Buzz" });
+  // A reconnect remounts the sidebar header, replacing the trigger.
+  rerender(shell("second"));
+  await close();
+  expect(screen.getByRole("button", { name: "Search" })).toHaveFocus();
+
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByRole("dialog", { name: "Search Buzz" });
+  // A narrow window collapses the sidebar behind inert.
+  rerender(shell("second", true));
+  await close();
+  expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
+});

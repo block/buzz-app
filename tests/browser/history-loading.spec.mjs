@@ -350,109 +350,61 @@ test.describe("pages inside one second", () => {
         .toBeGreaterThan(height);
       await settle(page);
       await expectAnchor(page, held);
-      const heldTop = await history(page).evaluate(
-        (e, id) =>
-          e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
-            .top -
-          e.getBoundingClientRect().top +
-          e.scrollTop,
-        held.id,
-      );
-      expect(
-        await history(page).evaluate((e) => e.scrollTop - e.clientHeight - 150),
-        "the drag has enough loaded history to avoid the top clamp",
-      ).toBeGreaterThan(0);
-      // Over a viewport at once, Virtua renders upward synchronously: the held
-      // row is gone from the scroll event until Virtua's idle timer buffers
-      // below again, too briefly for polling, so record its removal in page.
+      // Leave the old reader beyond even the idle buffer, so its absence does
+      // not depend on observing Virtua's brief directional scrolling range.
       const row = history(page).locator(`[data-message-id="${held.id}"]`);
-      const seen = await history(page).evaluateHandle((e, id) => {
-        const seen = { unmounted: false };
-        const heldRow = e.querySelector(`[data-message-id="${id}"]`);
-        const observer = new MutationObserver((records) => {
-          // Read the removals themselves: the row may already be remounted
-          // when the observer delivers a batch of mutations.
-          if (
-            records.some((record) =>
-              Array.from(record.removedNodes).some((node) =>
-                node.contains(heldRow),
-              ),
-            )
-          ) {
-            seen.unmounted = true;
-            observer.disconnect();
-          }
-        });
-        observer.observe(e, { childList: true, subtree: true });
-        e.scrollTop -= e.clientHeight + 150;
-        return seen;
-      }, held.id);
-      await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);
-      // Use the old offset only to mount it; the drag's rows can measure and
-      // move it. Idle overscan alone need not reach it.
-      await history(page).evaluate((e, top) => {
-        e.scrollTop = top - e.clientHeight - 50;
-      }, heldTop);
-      await expect(row).toHaveCount(1);
+      await history(page).evaluate((e) => {
+        e.scrollTop = 0;
+      });
+      await expect(row).toHaveCount(0);
       await settle(page);
-      // Wait for the mounted rows' sizes to reach Virtua before placing it
-      // from its current geometry. A pause between frames is not that boundary.
+      // Wait for idle overscan below the viewport and applied row measurements
+      // before taking an independent growth baseline.
       await expect
         .poll(() =>
           history(page).evaluate((e) => {
             const items = Array.from(e.querySelector("ol").children);
-            return items.every((item, index) => {
-              const next = items[index + 1];
-              return (
-                !next ||
-                Math.abs(
-                  next.getBoundingClientRect().top -
-                    item.getBoundingClientRect().bottom,
-                ) < 1
-              );
-            });
+            return (
+              items.some(
+                (item) =>
+                  item.getBoundingClientRect().top >
+                  e.getBoundingClientRect().bottom,
+              ) &&
+              items.every((item, index) => {
+                const next = items[index + 1];
+                return (
+                  !next ||
+                  Math.abs(
+                    next.getBoundingClientRect().top -
+                      item.getBoundingClientRect().bottom,
+                  ) < 1
+                );
+              })
+            );
           }),
         )
         .toBe(true);
-      await history(page).evaluate((e, id) => {
-        const row = e.querySelector(`[data-message-id="${id}"]`);
-        e.scrollTop +=
-          row.getBoundingClientRect().top -
-          e.getBoundingClientRect().bottom -
-          50;
-      }, held.id);
-      await settle(page);
-      await expect(row).toHaveCount(1);
-      // It remounts below the viewport, where the reader no longer reads.
-      expect(
-        await history(page).evaluate(
-          (e, id) =>
-            e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
-              .top > e.getBoundingClientRect().bottom,
-          held.id,
-        ),
-      ).toBe(true);
       const before = await anchor(page);
       const measuredHeight = await history(page).evaluate(
         (e) => e.scrollHeight,
       );
-      // The row above it finishes measuring taller (an image loading). Rows
-      // below the reader grow away from them; nothing in view moves.
-      // Re-resolve the virtualized row at mutation time: an idle render may
-      // have unmounted it again since the position assertion above.
-      await row.evaluate((element) => {
+      // A buffered row below the viewport grows while the original held row is
+      // still absent. Growth below the current reader must not move them.
+      await history(page).evaluate((e) => {
         const extra = document.createElement("div");
         extra.style.height = "300px";
-        element
-          .closest("li")
-          .previousElementSibling.querySelector("[data-message-id] p")
-          .after(extra);
+        const row = [...e.querySelectorAll("[data-message-id]")].find(
+          (row) =>
+            row.getBoundingClientRect().top > e.getBoundingClientRect().bottom,
+        );
+        row.querySelector("p").after(extra);
       });
       await settle(page);
       await expect
         .poll(() => history(page).evaluate((e) => e.scrollHeight))
         .toBeGreaterThan(measuredHeight);
       await expectAnchor(page, before);
+      await expect(row).toHaveCount(0);
     } finally {
       await page.mouse.up();
     }

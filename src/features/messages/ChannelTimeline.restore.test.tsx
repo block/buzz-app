@@ -333,6 +333,43 @@ it("keeps a held reader when measured row offsets change without total height", 
   expect(region.scrollTop).toBe(350);
 });
 
+it("retargets a held reader when its former row is below the viewport", async () => {
+  const h = mount(true);
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  let formerY = 120;
+  let olderY = -200;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const row = this.closest<HTMLElement>("[data-message-id]");
+      const y = row?.dataset.messageId === "older" ? olderY : row ? formerY : 0;
+      return new DOMRect(0, y, 800, 100);
+    },
+  );
+  region.scrollTop = 1400;
+  fireEvent.scroll(region);
+  fireEvent.keyDown(region, { key: "Home", ctrlKey: true });
+  region.scrollTop = 400;
+  fireEvent.scroll(region);
+  fireEvent.pointerDown(region);
+  h.pageAroundAnchor();
+  await h.measured();
+
+  // Scrolling away selects the newly visible older row. The former reader's
+  // DOM can return below the viewport without reclaiming the active hold.
+  formerY = 900;
+  olderY = 100;
+  region.scrollTop = 0;
+  fireEvent.scroll(region);
+  formerY += 300;
+  await act(async () => {
+    screen.getByRole("list").style.height = "2420px";
+  });
+  expect(region.scrollTop).toBe(0);
+});
+
 it("retains the saved anchor correction when cached rows are promoted before its frame", async () => {
   const h = mount();
   await frame();

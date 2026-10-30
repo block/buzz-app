@@ -785,7 +785,8 @@ function Composer({
         (previous !== document.activeElement &&
           (document.activeElement !== document.body ||
             (previous.isConnected &&
-              (!focusFromControl.current || previous.checkVisibility()))))
+              (!focusFromControl.current ||
+                previous.getClientRects().length > 0))))
       )
         return;
       const editor = input.current;

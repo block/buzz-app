@@ -447,6 +447,10 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
   page,
   app,
 }, testInfo) => {
+  // Older native WebKit lacks this newer visibility API; layout still owns entry.
+  await page.addInitScript(() => {
+    delete Element.prototype.checkVisibility;
+  });
   const root = app.histories.get("primary/alpha")[0].id;
   const scope = `https://primary.example:${app.viewer}`;
   await page.addInitScript(

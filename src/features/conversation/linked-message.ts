@@ -1,9 +1,9 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useChannelIdentityNames } from "../identity-names/react";
+import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
-import { workflowLabel } from "../relay/workflow-attribution";
 
 /** The linked message in an exact thread view. Only reconciled content is
  * ready: a ready exact target is independent of its thread root, while an
@@ -28,8 +28,19 @@ export function linkedMessage(snapshot: ThreadSnapshot, messageId: string) {
   return { message, ready, stopped };
 }
 
-/** Who a message is shown under: its author, or the owner a workflow ran for. */
+/** Who a message's row header names: its author, or "Workflow" for a message
+ * a workflow sent. */
 type Author = Readonly<{ id: string; workflow: boolean }>;
+const authorOf = (row: ChannelMessage): Author => ({
+  id: row.authorId,
+  workflow: !!row.workflowOwnerId,
+});
+type Want = {
+  channelId: string;
+  messageId: string;
+  links: number;
+  failed: boolean;
+};
 
 // Link lookups share the session's bounded thread readers with open threads
 // and previews, so only a few run at once.
@@ -37,18 +48,24 @@ const concurrent = 4;
 const authors = new WeakMap<RelaySession, ReturnType<typeof lookups>>();
 const noop = () => () => {};
 
-/** One session's linked-message authors. An author never changes, so a found
- * one is kept for the session; a failed lookup is retried only once every
+/** One session's linked-message authors. An author never changes, and a
+ * deleted or unavailable message stays that way, so both are kept for the
+ * session. A message its channel's timeline already holds needs no read. A
+ * failed read is retried once the live stream connects again, or once every
  * link that wanted it has unmounted. */
 function lookups(session: RelaySession) {
   const found = new Map<string, Author>();
-  const wanted = new Map<
-    string,
-    { channelId: string; messageId: string; links: number; failed: boolean }
-  >();
+  const missing = new Set<string>();
+  const wanted = new Map<string, Want>();
   const running = new Map<string, () => void>();
   const listeners = new Set<() => void>();
   let scheduled = false;
+  let reconnect: (() => void) | undefined;
+  function resolve(key: string, author: Author) {
+    found.set(key, author);
+    wanted.delete(key);
+    for (const listener of listeners) listener();
+  }
   // After the commit that mounted or released links, so links that unmount
   // together never start each other's lookups on the way out.
   function pump() {
@@ -57,26 +74,47 @@ function lookups(session: RelaySession) {
     queueMicrotask(() => {
       scheduled = false;
       for (const [key, want] of wanted) {
-        if (running.size >= concurrent) break;
-        if (!want.failed && !running.has(key)) start(key, want);
+        if (want.failed || running.has(key)) continue;
+        const row = session.channels
+          .window(want.channelId)
+          .rows.find((row) => row.id === want.messageId);
+        if (row) resolve(key, authorOf(row));
+        else if (running.size < concurrent) start(key, want);
       }
     });
   }
-  function start(
-    key: string,
-    want: { channelId: string; messageId: string; failed: boolean },
-  ) {
+  // A live stream that connects again proves the relay answers; the session
+  // retries its own failed reads then too.
+  function retryOnReconnect() {
+    if (reconnect) return;
+    let connected = session.live.snapshot().status === "connected";
+    reconnect = session.live.subscribe(() => {
+      const now = session.live.snapshot().status === "connected";
+      if (now && !connected) {
+        reconnect?.();
+        reconnect = undefined;
+        for (const want of wanted.values()) want.failed = false;
+        pump();
+      }
+      connected = now;
+    });
+  }
+  function start(key: string, want: Want) {
     let view: ThreadView | undefined;
     let unsubscribe = () => {};
-    const settle = (author?: Author) => {
+    const settle = (outcome?: Author | "missing") => {
       if (!running.delete(key)) return;
       unsubscribe();
       view?.dispose();
-      if (author) {
-        found.set(key, author);
+      if (outcome === "missing") {
+        missing.add(key);
         wanted.delete(key);
-        for (const listener of listeners) listener();
-      } else want.failed = true;
+      } else if (outcome) resolve(key, outcome);
+      // A lookup its last link cancelled has not failed.
+      else if (wanted.get(key) === want) {
+        want.failed = true;
+        retryOnReconnect();
+      }
       pump();
     };
     running.set(key, settle);
@@ -88,15 +126,13 @@ function lookups(session: RelaySession) {
     }
     const owned = view;
     const check = () => {
+      const snapshot = owned.snapshot();
       const { message, ready, stopped } = linkedMessage(
-        owned.snapshot(),
+        snapshot,
         want.messageId,
       );
-      if (ready && message)
-        settle({
-          id: message.workflowOwnerId ?? message.authorId,
-          workflow: !!message.workflowOwnerId,
-        });
+      if (ready && message) settle(authorOf(message));
+      else if (snapshot.targetStatus === "unavailable") settle("missing");
       else if (stopped) settle();
     };
     unsubscribe = owned.subscribe(check);
@@ -112,7 +148,7 @@ function lookups(session: RelaySession) {
     /** Held by a mounted link; the last release cancels its lookup. */
     want(channelId: string, messageId: string) {
       const key = `${channelId}:${messageId}`;
-      if (found.has(key)) return () => {};
+      if (found.has(key) || missing.has(key)) return () => {};
       const want = wanted.get(key) ?? {
         channelId,
         messageId,
@@ -132,8 +168,9 @@ function lookups(session: RelaySession) {
 }
 
 /** "<author> in #<channel>" for a link to a message in a listed channel, once
- * the session has read who wrote it. Undefined while that is unknown, and for
- * DMs and Solo chats, which keep their existing presentation. */
+ * the session knows who wrote it and that author has a name. Undefined while
+ * that is unknown, while the channel's membership awaits relay confirmation,
+ * and for DMs and Solo chats, which keep their existing presentation. */
 export function useLinkedMessageByline(
   session: RelaySession | undefined,
   channelId: string | undefined,
@@ -143,7 +180,10 @@ export function useLinkedMessageByline(
     messageId ? session?.channels : undefined,
     channelId,
     (channel) =>
-      channel && channel.channelType !== "dm" && channel.channelType !== "solo"
+      channel &&
+      !channel.cached &&
+      channel.channelType !== "dm" &&
+      channel.channelType !== "solo"
         ? channel.name
         : "",
   );
@@ -158,23 +198,32 @@ export function useLinkedMessageByline(
     if (owner && channelId && messageId && !author)
       return owner.want(channelId, messageId);
   }, [owner, channelId, messageId, author]);
-  const resolveName = useChannelIdentityNames(author && session, channelId);
-  const profileName = useSyncExternalStore(
-    (author && session?.profiles.subscribe) || noop,
+  const id = author && !author.workflow ? author.id : undefined;
+  const resolveName = useChannelIdentityNames(
+    id ? session : undefined,
+    channelId,
+  );
+  // A fallback profile name is a key fragment, whichever resolver returns it.
+  const fragment = useSyncExternalStore(
+    (id && session?.profiles.subscribe) || noop,
     () => {
-      const profile = author && session?.profiles.snapshot().get(author.id);
-      return profile && !profile.nameIsFallback ? profile.name : "";
+      const profile = id ? session?.profiles.snapshot().get(id) : undefined;
+      return profile?.nameIsFallback ? profile.name : "";
     },
     () => "",
   );
   useEffect(() => {
-    if (author && session)
-      void session.profiles.ensure([author.id], "background").catch(() => {});
-  }, [session, author]);
+    if (id && session)
+      void session.profiles.ensure([id], "background").catch(() => {});
+  }, [session, id]);
   // An author with no name yet keeps the channel presentation, never a key.
-  const name = author ? resolveName(author.id, profileName) : "";
-  if (!channel || !name) return undefined;
-  return `${author?.workflow ? workflowLabel(name) : name} in #${channel}`;
+  const resolved = id ? resolveName(id, "") : "";
+  const name = author?.workflow
+    ? "Workflow"
+    : resolved === fragment
+      ? ""
+      : resolved;
+  return channel && name ? `${name} in #${channel}` : undefined;
 }
 
 function authorsFor(session: RelaySession) {

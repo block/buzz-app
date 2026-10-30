@@ -56,7 +56,7 @@ export const ChannelBody = memo(function ChannelBody({
     return () => clientMetrics.channelUnmounted(channelId);
   }, [channelId]);
   const headRecovers = useRecoveryOwns(queries, (live) =>
-    headRecovering(live.heads.find((head) => head.channelId === channelId)),
+    headRecovering(live, channelId),
   );
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";

@@ -157,9 +157,28 @@ it("owns a surface's read exactly when recovery counts it failed or busy", () =>
     expect(rosterRecovering(roster)).toBe(
       liveRecoveryStatus({ ...healthy, roster }) !== "settled",
     );
-  for (const head of reads)
-    expect(headRecovering(head)).toBe(
-      liveRecoveryStatus({ ...healthy, heads: [head] }) !== "settled",
+  // A dropped stream clears catch-up entries; establishment reads every open
+  // head again, so recovery still owns the head with none listed.
+  for (const status of ["connected", "connecting", "retrying"] as const) {
+    for (const head of reads)
+      expect(
+        headRecovering({ status, heads: [{ ...head, channelId: "a" }] }, "a"),
+      ).toBe(
+        liveRecoveryStatus({
+          ...healthy,
+          status,
+          routes: [],
+          heads: [head],
+        }) !== "settled",
+      );
+    expect(headRecovering({ status, heads: [] }, "a")).toBe(
+      status !== "connected",
     );
-  expect(headRecovering(undefined)).toBe(false);
+  }
+  expect(
+    headRecovering(
+      { status: "connected", heads: [{ channelId: "b", state: "pending" }] },
+      "a",
+    ),
+  ).toBe(false);
 });

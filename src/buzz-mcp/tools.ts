@@ -56,7 +56,7 @@ const joinRole = {
   type: "string",
   enum: ["member", "guest"],
   description:
-    "The role people get when they join. guest on an open channel makes an announce channel: anyone can read, only members can post.",
+    "Role for people who join or are added without one. guest on an open channel: anyone reads, only members post.",
 } as const;
 const tool = (
   name: string,
@@ -1386,7 +1386,9 @@ class Tools {
     const type = args.type ?? "stream";
     if (type !== "stream" && type !== "forum" && type !== "system")
       throw new Error("type must be stream, forum or system.");
-    const role = join(args);
+    const role = joinRoleArg(args);
+    if (role === "guest" && args.visibility === "private")
+      throw new Error("join_role guest is for open channels.");
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined
@@ -1488,7 +1490,13 @@ class Tools {
     }
     if (args.ttl !== undefined)
       wanted.push(["ttl", String(seconds(args.ttl) ?? "")]);
-    const role = join(args);
+    const role = joinRoleArg(args);
+    if (
+      role === "guest" &&
+      (args.visibility ?? (has(metadata, "private") ? "private" : "open")) ===
+        "private"
+    )
+      throw new Error("join_role guest is for open channels.");
     if (role) wanted.push(["join_role", role]);
     if (!wanted.length)
       throw new Error(
@@ -1562,13 +1570,20 @@ class Tools {
     );
     const who = (key: string) =>
       names.has(key) ? `${key} ${names.get(key)}` : key;
+    // With no role asked for, the relay gives a new member the channel's
+    // join_role, which is guest on an announce channel.
+    const shown = (key: string) =>
+      role ??
+      (roster instanceof Error
+        ? undefined
+        : roster.find((m) => m.pubkey === key)?.role);
     const report = (key: string, verb: string, done?: typeof added) =>
       refused.has(key)
         ? `not ${verb} ${who(key)}: ${refused.get(key)}`
         : roster instanceof Error
           ? `${who(key)}: the community accepted it but ${roster.message}`
           : done?.(roster, key)
-            ? `${verb} ${who(key)}${verb === "added" && role ? ` as ${role}` : ""}`
+            ? `${verb} ${who(key)}${verb === "added" && (role || shown(key) !== "member") ? ` as ${shown(key)}` : ""}`
             : `${who(key)}: the community accepted it but does not show it yet`;
     return {
       changed: refused.size < add.length + remove.length,
@@ -2150,7 +2165,7 @@ function seconds(value: unknown) {
 }
 
 /** A `join_role` argument: undefined when absent. */
-function join(args: Args) {
+function joinRoleArg(args: Args) {
   const value = args.join_role;
   if (value === undefined) return undefined;
   if (value !== "member" && value !== "guest")

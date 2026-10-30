@@ -26,7 +26,10 @@
         "program": "base64",
         "args": ["-i"]
       },
-      { "id": "workspace", "program": "pwd" },
+      {
+        "id": "workspace",
+        "program": "pwd"
+      },
       {
         "id": "starts",
         "program": "grep",
@@ -48,6 +51,12 @@
         "id": "list",
         "program": "find",
         "args": [".", "-type", "f", "-name", "*.jsonl"]
+      },
+      {
+        "id": "claude-protected-sh",
+        "program": "buzz-agent-command",
+        "bundled": true,
+        "args": ["--shell"]
       }
     ]
   }

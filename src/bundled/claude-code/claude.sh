@@ -8,7 +8,7 @@
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
-if [ "$(uname)" = Darwin ]; then
+if [ "$(/usr/bin/uname)" = Darwin ]; then
   dir="$HOME/Library/Application Support/Buzz/claude-code"
 else
   dir="${XDG_DATA_HOME:-$HOME/.local/share}/buzz/claude-code"
@@ -32,14 +32,14 @@ newer() {
 # Recheck cached bytes both during discovery and immediately before protected exec.
 verify_protected() {
   [ "$1" = "2.1.305" ] || { echo "Unsupported protected Claude release" >&2; exit 1; }
-  case "$(uname -sm)" in
+  case "$(/usr/bin/uname -sm)" in
   "Darwin arm64") checksum=ea3ea3c08d2a9634a4651e687fcf900d410c489bce2b00f22bd7352b91ba704f ;;
   "Darwin x86_64") checksum=af7ad8d6d8b1e49059988f6657d91bb8b9feac127bf8bec005c4c27d0093f153 ;;
   "Linux aarch64") checksum=5265a60217e667b75e126e887b49ac0f168ad8bb13c605c3e3df528519876dc0 ;;
   "Linux x86_64") checksum=86cb722ab68348877dba7971e4d0c659919e05e6228c05e006e83da320e656ef ;;
   *) echo "Unsupported protected Claude platform" >&2; exit 1 ;;
   esac
-  actual=$( (shasum -a 256 "$dir/$1/claude" 2>/dev/null || sha256sum "$dir/$1/claude") | cut -d" " -f1)
+  actual=$( (/usr/bin/shasum -a 256 "$dir/$1/claude" 2>/dev/null || /usr/bin/sha256sum "$dir/$1/claude") | /usr/bin/cut -d" " -f1)
   [ "$actual" = "$checksum" ] || { echo "The protected Claude executable did not match its checksum" >&2; exit 1; }
 }
 

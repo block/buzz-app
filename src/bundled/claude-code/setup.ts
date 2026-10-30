@@ -50,7 +50,7 @@ export const withScript =
   (id, options) => {
     const step = STEPS[id];
     return step
-      ? spawn("claude-sh", {
+      ? spawn(options?.protection ? "claude-protected-sh" : "claude-sh", {
           ...options,
           args: [script, "claude.sh", step, ...(options?.args ?? [])],
         })

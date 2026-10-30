@@ -6,6 +6,7 @@ import type {
 import type { Spawn } from "./claude";
 import { fakeSpawn, sessionState } from "./claude-testing";
 import script from "./claude.sh?raw";
+import manifest from "./manifest.json";
 import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
 
 it.each([true, false])(
@@ -415,10 +416,27 @@ it("starts Claude and its install steps as steps of claude.sh", async () => {
   await run("claude", { args: ["--version"] });
   await run("use", { args: ["2.1.300"] });
   await run("platform");
+  await run("claude", {
+    args: ["--protected"],
+    protection: { readOnlyPaths: [], hiddenPaths: [] },
+  });
+  expect(
+    manifest.host.processes.find(
+      (process) => process.id === "claude-protected-sh",
+    ),
+  ).toMatchObject({
+    program: "buzz-agent-command",
+    bundled: true,
+    args: ["--shell"],
+  });
   expect(calls).toEqual([
     { id: "claude-sh", args: [script, "claude.sh", "run", "--version"] },
     { id: "claude-sh", args: [script, "claude.sh", "use", "2.1.300"] },
     { id: "platform", args: [] },
+    {
+      id: "claude-protected-sh",
+      args: [script, "claude.sh", "run", "--protected"],
+    },
   ]);
 });
 

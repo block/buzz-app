@@ -46,6 +46,28 @@ it("rejects executable cached bytes that do not match the trusted protected pin"
   await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it("does not execute a checksum utility planted on PATH", async () => {
+  const { home } = await disk(["2.1.305"]);
+  const bin = join(home, "bin"),
+    marker = join(home, "checksum-executed");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "shasum"),
+    `#!/bin/sh\n/usr/bin/touch '${marker}'\nprintf planted\n`,
+  );
+  await chmod(join(bin, "shasum"), 0o755);
+  await expect(
+    run("/bin/bash", ["-p", "-c", script, "claude.sh", "run"], {
+      env: {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        HOME: home,
+        BUZZ_CLAUDE_VERSION: "2.1.305",
+      },
+    }),
+  ).rejects.toThrow("did not match its checksum");
+  await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it("reverifies protected bytes at execution after a successful discovery", async () => {
   const { home, dir } = await disk(["2.1.305"]);
   const binary = join(dir, "2.1.305", "claude");

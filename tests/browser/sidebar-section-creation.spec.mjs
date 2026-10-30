@@ -197,15 +197,41 @@ test("Channels offers empty-section creation with keyboard focus and confirmed p
   ).toHaveCount(1);
 });
 
-async function startDrag(page, locator) {
+async function startDrag(page, locator, position = { x: 0.5, y: 0.5 }) {
   await expect(locator).toBeVisible();
   const box = await locator.boundingBox();
   if (!box) throw new Error("Drag source missing");
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // dnd-kit rounds its transforms to whole pixels; use whole-pixel gestures.
+  const x = Math.round(box.x + box.width * position.x);
+  const y = Math.round(box.y + box.height * position.y);
+  await page.mouse.move(x, y);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2, {
+  await page.mouse.move(x + 12, y, {
     steps: 3,
   });
+  return { x: x + 12, y };
+}
+
+// Only a layout engine can verify that the chip follows the actual hit point,
+// rather than the row's origin or the former upward CSS translation.
+async function expectPreviewCenteredOnPointer(page, pointer) {
+  const preview = page.locator("[data-section-creation-preview]");
+  await expect(preview).toBeVisible();
+  // WebKit resolves percentage translations at subpixel precision. Compare on
+  // the same whole-pixel grid that dnd-kit uses for its pointer transforms.
+  await expect
+    .poll(async () => {
+      const box = await preview.boundingBox();
+      return box && Math.round(box.x + box.width / 2);
+    })
+    .toBe(pointer.x);
+  await expect
+    .poll(async () => {
+      const box = await preview.boundingBox();
+      return box && Math.round(box.y + box.height / 2);
+    })
+    .toBe(pointer.y);
+  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
 }
 
 async function dropOnCreate(page) {
@@ -216,6 +242,7 @@ async function dropOnCreate(page) {
   await target.hover();
   await expect(page.locator('[class*="channelDragOverlay"]')).toBeHidden();
   await page.mouse.up();
+  await expect(page.locator("body")).not.toHaveCSS("cursor", "grabbing");
 }
 
 async function revealCreate(page) {
@@ -245,26 +272,27 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   const target = page.locator("[data-create-section-drop]");
   const row = page.locator('[data-channel-id="alpha"]');
   await expect(target).toHaveCount(0);
-  await startDrag(page, row);
+  const pointer = await startDrag(page, row);
+  await expectPreviewCenteredOnPointer(page, pointer);
+  await expect(row).toHaveCSS("cursor", "grabbing");
+  await page.screenshot({
+    path: testInfo.outputPath("channel-drag-preview.png"),
+  });
   await expect(page.locator("[data-section-creation-preview]")).toBeVisible();
-  await expect(page.locator("[data-section-creation-preview]")).not.toHaveCSS(
-    "translate",
-    "none",
-  );
   await expect(target).toHaveCount(0);
   // Channels is not first when Work exists: its old gap is an ordinary move area.
   const channels = page.locator('[data-sidebar-section="channels"]');
   const channelsBox = await channels.boundingBox();
   if (!channelsBox) throw new Error("Channels destination missing");
-  await page.mouse.move(
-    channelsBox.x + channelsBox.width / 2,
-    channelsBox.y - 8,
-  );
-  await page.mouse.move(
-    channelsBox.x + channelsBox.width / 2,
-    channelsBox.y + 12,
-  );
+  const channelsPointer = {
+    x: Math.round(channelsBox.x + channelsBox.width / 2),
+    y: Math.round(channelsBox.y + 12),
+  };
+  await page.mouse.move(channelsPointer.x, channelsBox.y - 8);
+  await page.mouse.move(channelsPointer.x, channelsPointer.y);
   await expect(channels).toHaveAttribute("data-drop-target", "true");
+  await expectPreviewCenteredOnPointer(page, channelsPointer);
+  await expect(channels.locator("summary")).toHaveCSS("cursor", "grabbing");
   await expect(target).toHaveCount(0);
   await expect(
     page.locator("[data-create-section-slot] + [data-sidebar-section]"),
@@ -301,6 +329,7 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   ).toHaveAttribute("data-drop-target", "true");
   await page.keyboard.press("Escape");
   await page.mouse.up();
+  await expect(page.locator("body")).not.toHaveCSS("cursor", "grabbing");
   await expect(target).toHaveCount(0);
   // The cue retires before its height finishes collapsing. Wait for the layout
   // boundary before sampling Work's header for the next pointer gesture.
@@ -317,7 +346,8 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   await page.mouse.up();
   // Release as soon as the original gap accepts the drop, without waiting for
   // expansion. dnd-kit drops on its rendered target, not the last mouse event.
-  await startDrag(page, row);
+  const edgePointer = await startDrag(page, row, { x: 0.9, y: 0.8 });
+  await expectPreviewCenteredOnPointer(page, edgePointer);
   const gap = await page.locator("[data-create-section-trigger]").boundingBox();
   if (!gap) throw new Error("Create boundary missing");
   await page.mouse.move(gap.x + gap.width / 2, gap.y + gap.height / 2);
@@ -403,7 +433,11 @@ test.describe("without saved sections", () => {
     await expect(page.locator('[data-sidebar-section^="group:"]')).toHaveCount(
       0,
     );
-    await startDrag(page, page.locator('[data-channel-id="alpha"]'));
+    const pointer = await startDrag(
+      page,
+      page.locator('[data-channel-id="alpha"]'),
+    );
+    await expectPreviewCenteredOnPointer(page, pointer);
     await dropOnCreate(page);
     const dialog = page.getByRole("dialog", { name: "Move to new section" });
     await expect(

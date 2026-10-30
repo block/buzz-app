@@ -2315,6 +2315,13 @@ test("status signing and publication preserve scoped replacements and explicit c
           ["expiration", "1700086400"],
         ],
       },
+      {
+        content: "Celebrating",
+        tags: [
+          ["d", "general"],
+          ["emoji", ":party:", "https://emoji.test/party.svg"],
+        ],
+      },
       { content: "", tags: [["d", "general"]] },
     ]) {
       const response = await h.post("sign", {
@@ -2387,7 +2394,7 @@ test("status signing and publication preserve scoped replacements and explicit c
         (await h.post("publish", finalizeEvent(template, secret))).status,
       ).toBe(400);
     }
-    expect(h.publications).toHaveLength(2);
+    expect(h.publications).toHaveLength(3);
   } finally {
     await h.close();
   }

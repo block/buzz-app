@@ -415,6 +415,7 @@ test.describe("pages inside one second", () => {
     }, before.id);
     await settle(page);
     await expectAnchor(page, before);
+    return before;
   }
   for (const distance of [600, 1200])
     test(`a row in view grows downward ${distance}px above the page's reader`, async ({
@@ -496,8 +497,33 @@ test.describe("pages inside one second", () => {
     } finally {
       await page.evaluate(() => window.releaseFrames());
     }
+    // A pause in geometry is not completion of the deferred page measurements.
+    // Wait for Virtua's offsets to reflect the mounted rows' actual heights
+    // before taking an independent baseline for the growth below the reader.
+    await expect
+      .poll(() =>
+        history(page).evaluate((element) => {
+          const items = Array.from(element.querySelector("ol").children);
+          return items.every((item, index) => {
+            const next = items[index + 1];
+            return (
+              !next ||
+              Math.abs(
+                next.getBoundingClientRect().top -
+                  item.getBoundingClientRect().bottom,
+              ) < 1
+            );
+          });
+        }),
+      )
+      .toBe(true);
     await settle(page);
-    await grow(page);
+    const measuredHeight = await history(page).evaluate((e) => e.scrollHeight);
+    const beforeGrowth = await grow(page);
+    await expect
+      .poll(() => history(page).evaluate((e) => e.scrollHeight))
+      .toBeGreaterThan(measuredHeight);
+    await expectAnchor(page, beforeGrowth);
   });
 
   test("a cancelled drag ends the hold", async ({ page, app }) => {

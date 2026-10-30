@@ -3,6 +3,7 @@
 // and delivery.
 import type { Context } from "@deepseek-ai/cordis";
 import { callAttentionTool } from "../../buzz-mcp/attention";
+import type { AttentionSource } from "../../features/agents/attention-sources";
 import type { GitHubCli } from "./gh";
 import type { Feedback, PullStates } from "./pull-states";
 import {
@@ -91,6 +92,7 @@ export function watchPulls(
   ctx: Context,
   states: PullStates,
   gh: GitHubCli | undefined,
+  present?: AttentionSource["present"],
 ) {
   localStorage.removeItem(RETIRED_STORAGE_KEY);
   const cursors = load();
@@ -227,6 +229,7 @@ export function watchPulls(
     id: "github-pr",
     description: "Follow GitHub pull request feedback and CI",
     configExample: { pr: "https://github.com/OWNER/REPO/pull/NUMBER" },
+    ...(present && { present }),
     async run({ id, agent, watch: source, signal, emit }) {
       const pull =
         typeof source.config.pr === "string"

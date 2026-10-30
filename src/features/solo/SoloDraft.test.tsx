@@ -1761,3 +1761,24 @@ it("tags an agent whose name was typed with Space while a retry after a failed i
     draft.dispose();
   }
 });
+
+it("does not start a named Solo chat from a file alone", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
+  await user.clear(screen.getByRole("textbox"));
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  // The pill addresses the main agent, so only the missing text disables Send.
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  const form = screen.getByRole("textbox").closest("form");
+  if (!form) throw new Error("Expected composer form");
+  fireEvent.submit(form);
+  expect(test.channelWrites.create).not.toHaveBeenCalled();
+  expect(test.messages.send).not.toHaveBeenCalled();
+});

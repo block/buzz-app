@@ -67,6 +67,7 @@ import styles from "./AgentsPage.module.css";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import hero from "../../features/profiles/ProfileHero.module.css";
+import { writeClipboardText } from "../../shared/clipboard";
 
 export function AgentDetails({
   agents,
@@ -407,7 +408,7 @@ export function AgentDetails({
                             if (!npub) return;
                             setCopyError("");
                             void Promise.resolve()
-                              .then(() => navigator.clipboard.writeText(npub))
+                              .then(() => writeClipboardText(npub))
                               .then(() => setCopied(true))
                               .catch(() =>
                                 setCopyError(

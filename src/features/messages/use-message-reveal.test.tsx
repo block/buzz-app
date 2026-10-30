@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import styles from "./Messages.module.css";
 import { useMessageReveal } from "./use-message-reveal";
 
 // Control frame/mutation ordering; browser journeys own real layout and inert focus.
@@ -110,6 +111,24 @@ it("notifies reading after the revealed row is verified", async () => {
   await frame();
   expect(positioned).toHaveBeenCalledOnce();
   expect(complete).toHaveBeenCalledOnce();
+});
+
+it("marks the arrival once the revealed row is verified", async () => {
+  const { row, request, unmount } = mount();
+  const message = document.createElement("div");
+  message.dataset.layout = "timeline";
+  row.append(message);
+  const highlighted = () =>
+    message.classList.contains(styles.messageHighlight ?? "");
+  await frame(); // Attach observers.
+  await frame(); // Reveal, but do not verify yet.
+  expect(highlighted()).toBe(false);
+  await frame();
+  expect(highlighted()).toBe(true);
+  request.abort();
+  expect(highlighted()).toBe(true);
+  unmount();
+  expect(highlighted()).toBe(false);
 });
 
 it.each([false, true])(

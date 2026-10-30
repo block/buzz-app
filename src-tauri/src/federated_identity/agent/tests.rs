@@ -121,6 +121,8 @@ pub(crate) fn fixture(base: String) -> Fixture {
         deleting: false,
         home: None,
         joining: false,
+        protection: None,
+        protection_revision: 0,
     };
     Fixture {
         tokens: AgentTokens::with_store(identity, grants.clone()),

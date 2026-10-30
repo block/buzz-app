@@ -75,6 +75,34 @@ const tool = (
 });
 
 export type Tool = ReturnType<typeof tool>;
+
+/** Capture built-in outgoing text before review. Dispatch receives these same
+ * arguments, so an approved path cannot supply different bytes afterward. */
+export async function captureToolBody(
+  client: BuzzClient,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const message = name === "send" || name === "reply_in_subthread";
+  if (
+    !message &&
+    name !== "mem_set" &&
+    name !== "notes_set" &&
+    name !== "canvas_set"
+  )
+    return;
+  if (message && list(args.files).length)
+    throw new Error(
+      "Protected attachment uploads are not supported; send reviewable text instead.",
+    );
+  const path = text(args.path);
+  if (!path) return;
+  args[name === "canvas_set" ? "content" : "text"] = new TextDecoder().decode(
+    await client.read(path),
+  );
+  delete args.path;
+}
+
 export const TOOLS: readonly Tool[] = [
   tool(
     "agent_types",

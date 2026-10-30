@@ -101,6 +101,17 @@ export function useSearchHighlight({
   // Compare viewport coordinates: Linux WebKit reports screen coordinates
   // that do not change as the pointer moves.
   const pointer = useRef<{ x: number; y: number }>(undefined);
+  /** Focus this hook moves to follow the highlight is not the keyboard's. */
+  const following = useRef(false);
+  const follow = (key: string) => {
+    if (!document.activeElement?.id.startsWith(`${id}-`)) return;
+    following.current = true;
+    try {
+      document.getElementById(rowId(key))?.focus({ preventScroll: true });
+    } finally {
+      following.current = false;
+    }
+  };
   const pointerMoved = (event: PointerEvent) => {
     const last = pointer.current;
     pointer.current = { x: event.clientX, y: event.clientY };
@@ -140,14 +151,17 @@ export function useSearchHighlight({
       // returns to the row highlighted before, else to the list's own first
       // highlight, else to none.
       onPointerLeave(event: PointerEvent) {
-        if (event.pointerType === "touch") return;
-        setSelection((previous) => {
-          if (!previous.pointer) return previous;
-          const key = keys.includes(previous.resting)
-            ? previous.resting
-            : fallback;
-          return { ...previous, key, pointer: false, cleared: !key };
-        });
+        if (event.pointerType === "touch" || !selection.pointer) return;
+        const key = keys.includes(selection.resting)
+          ? selection.resting
+          : fallback;
+        setSelection((previous) =>
+          previous.pointer
+            ? { ...previous, key, pointer: false, cleared: !key }
+            : previous,
+        );
+        // Focus returns with the highlight, so Enter still chooses it.
+        if (key) follow(key);
       },
     },
     /** Spread on each row. */
@@ -156,7 +170,7 @@ export function useSearchHighlight({
       // Tab can focus a row. Enter then chooses that row, so highlight it
       // and announce it. The row is already in view, so do not scroll.
       onFocus() {
-        if (active !== key)
+        if (!following.current && active !== key)
           setSelection((previous) => ({
             ...previous,
             query,
@@ -208,8 +222,7 @@ export function useSearchHighlight({
           }));
           // While a row has focus, Enter activates that row, so focus must
           // follow the highlight. The row is under the pointer; do not scroll.
-          if (document.activeElement?.id.startsWith(`${id}-`))
-            document.getElementById(rowId(key))?.focus({ preventScroll: true });
+          follow(key);
         }
       },
     }),

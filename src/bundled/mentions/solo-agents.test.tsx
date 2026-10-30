@@ -789,9 +789,17 @@ it("keeps focus on the highlighted row after Tab, for arrows and pointer", async
   fireEvent.pointerMove(first, { clientX: 2, clientY: 2 });
   expect(first).toHaveAttribute("data-selected");
   expect(first).toHaveFocus();
+  // Leaving returns the highlight and focus to the keyboard's row together.
+  const list = document.getElementById(
+    first.id.slice(0, first.id.lastIndexOf("-")),
+  );
+  if (!list) throw new Error("Missing mention list");
+  fireEvent.pointerLeave(list, { pointerType: "mouse" });
+  expect(last).toHaveAttribute("data-selected");
+  expect(last).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith({
-    pubkey: test.member,
+    pubkey: test.key,
     name: "Outside agent",
   });
   test.library.dispose();

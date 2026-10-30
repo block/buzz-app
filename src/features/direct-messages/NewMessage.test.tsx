@@ -610,6 +610,30 @@ it("Space does not pick while the rest of the list failed to load", async () => 
   ).not.toBeInTheDocument();
 });
 
+it("a pointer passing over the people returns Enter to the keyboard's choice when it leaves", async () => {
+  const t = setup();
+  t.directMessages.people.mockResolvedValue({ people, hasMore: false });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  await t.user.keyboard("{ArrowDown}");
+  const chosen = screen.getByRole("option", { name: "Person 1" });
+  const hovered = screen.getByRole("option", { name: "Person 3" });
+  await waitFor(() => expect(chosen).toHaveAttribute("aria-selected", "true"));
+  for (const clientX of [10, 12])
+    fireEvent.pointerMove(hovered, {
+      pointerType: "mouse",
+      clientX,
+      clientY: 10,
+    });
+  expect(hovered).toHaveAttribute("aria-selected", "true");
+  fireEvent.pointerLeave(screen.getByRole("listbox", { name: "People" }), {
+    pointerType: "mouse",
+  });
+  expect(chosen).toHaveAttribute("aria-selected", "true");
+  await t.user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
+});
+
 it("reveals the highlighted person on every arrow key and when the list reopens", async () => {
   const t = setup();
   const scrolled = vi.mocked(Element.prototype.scrollIntoView);

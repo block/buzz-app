@@ -1058,6 +1058,60 @@ test.describe("Solo composer caret", () => {
     await pick(honey);
     await expect(composer).toHaveText("alpha draft");
   });
+
+  test("menu picks that edit typed tags keep keyboard focus in the menu, and Tab leaves it", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const [honey, brain] = app.soloAgents;
+    await composer.click();
+    await page.keyboard.type(`@${honey.name}`);
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText("hello");
+    await expect(composer).toHaveText(`@${honey.name} hello`);
+    await page.getByRole("button", { name: /Change agents$/ }).click();
+    const menu = page.getByRole("dialog", {
+      name: "Mention a member or agent",
+    });
+    const search = menu.getByRole("searchbox");
+    await expect(search).toBeFocused();
+    await page.keyboard.insertText(brain.name);
+    await page.keyboard.press("Enter");
+    // The tag joins the text while focus and typing stay in the search.
+    await expect(composer).toHaveText(`@${honey.name} @${brain.name} hello`);
+    await expect(search).toBeFocused();
+    await page.keyboard.insertText("x");
+    await expect(search).toHaveValue(`${brain.name}x`);
+    await expect(composer).toHaveText(`@${honey.name} @${brain.name} hello`);
+    // Tab out closes the menu and leaves focus where Tab put it.
+    await search.focus();
+    const outside = () =>
+      page.evaluate(() => {
+        const active = document.activeElement;
+        return active?.closest('[role="dialog"]')
+          ? ""
+          : (active?.getAttribute("aria-label") ?? "");
+      });
+    for (let i = 0; i < 20 && !(await outside()); i++)
+      await page.keyboard.press("Tab");
+    const destination = await outside();
+    expect(destination).not.toBe("");
+    await expect(menu).toBeHidden();
+    // Base UI settles final focus a frame or two after the popup hides.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    expect(await outside()).toBe(destination);
+  });
 });
 
 // Real :focus-visible matching on a focused, briefly non-editable editor needs a

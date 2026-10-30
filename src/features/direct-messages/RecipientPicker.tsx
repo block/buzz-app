@@ -494,6 +494,7 @@ export function RecipientPicker({
                     if (key) highlight.rowProps(key).onPointerMove(event);
                     highlight.listProps.onPointerMove(event);
                   }}
+                  onPointerLeave={highlight.listProps.onPointerLeave}
                   onFocus={(event) => {
                     const key = optionKey(event.target);
                     if (key) highlight.rowProps(key).onFocus();

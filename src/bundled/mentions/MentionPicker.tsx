@@ -179,9 +179,10 @@ export function MentionPicker({
       open={open && !disabled}
       onOpenChange={(next, details) => {
         setOpen(next);
+        // Focus that left by a click or Tab keeps its new destination.
         closedBy.current = next
           ? undefined
-          : details.reason === "outside-press"
+          : details.reason === "outside-press" || details.reason === "focus-out"
             ? "outside"
             : "inside";
         if (next) {
@@ -273,7 +274,7 @@ export function MentionPicker({
           aria-label="Mention a member or agent"
           finalFocus={
             // The agent menu stays open across picks; closing it resumes
-            // typing in the draft, unless the click went somewhere else. The
+            // typing in the draft, unless focus went somewhere else. The
             // popup also asks while open, when the trigger changes shape.
             audience && focusDraft
               ? () => {

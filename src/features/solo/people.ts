@@ -25,13 +25,17 @@ export function soloHasPeople(
 
 /** Whether every member besides the viewer is a known agent. Stricter than
  * `!soloHasPeople`: a member whose profile hasn't loaded is not known to be an
- * agent, so it counts as a person until it is. */
+ * agent, so it counts as a person until it is, and a roster that hasn't
+ * loaded (absent, or empty before discovery fills it) is not known at all. */
 export function soloAgentsOnly(
   members: readonly string[] | undefined,
   viewer: string | undefined,
   agents: ReadonlySet<string>,
 ): boolean {
-  return !members?.some((key) => key !== viewer && !agents.has(key));
+  return (
+    !!members?.length &&
+    members.every((key) => key === viewer || agents.has(key))
+  );
 }
 
 /** Who a saved Solo chat's composer may tag: its people (never the viewer,

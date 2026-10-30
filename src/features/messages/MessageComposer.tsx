@@ -920,50 +920,65 @@ function Composer({
   const addressedKeys = sessionTargets(addressed.map((item) => item.pubkey));
   const sessionState = useSessionState(agents, addressedKeys, sessionPlace);
   const compacting = sessionState === "compacting";
+  // In a saved chat, the viewer's own pick outlives a remount until the next
+  // send, which the chat's history then seeds from. A new chat always starts
+  // from the main agent.
+  const pillKey = submission ? undefined : `${draftKey}:agents`;
+  const keepPick = (people: readonly MentionRecipient[] | null) => {
+    if (pillKey) writeView(scope, pillKey, people?.length ? people : null);
+  };
+  const choose = (people: readonly MentionRecipient[]) => {
+    setReplacedKey(undefined);
+    setRouted(people);
+    keepPick(people);
+  };
   const audience = routing
     ? {
         recipients: addressed,
         named: recipients.length > 0,
         only(people: readonly MentionRecipient[]) {
           if (!people.length) return;
-          setReplacedKey(undefined);
-          setRouted(people.map(({ pubkey, name }) => ({ pubkey, name })));
+          choose(people.map(({ pubkey, name }) => ({ pubkey, name })));
           // Typing resumes in the draft, at its caret.
           input.current?.focus();
         },
         toggle({ pubkey, name }: MentionRecipient) {
-          // While tags in the text decide, a pick edits those tags, so
-          // it always changes who gets the message.
+          // While tags in the text decide, a pick edits those tags, so it
+          // always changes who gets the message. Focus and the caret stay
+          // put, and only an added agent must be admissible.
           if (recipients.length) {
-            if (recipients.some((person) => person.pubkey === pubkey))
-              replaceRecipients(
-                recipients.filter((person) => person.pubkey !== pubkey),
+            if (!recipients.some((person) => person.pubkey === pubkey))
+              keepProseCaret(
+                (at) =>
+                  insert(`@${name} `, { pubkey, name }, at, undefined, false),
+                false,
               );
-            else insertMention({ pubkey, name });
+            else if (
+              input.current?.replaceRecipients(
+                recipients.filter((person) => person.pubkey !== pubkey),
+              )
+            )
+              completion.invalidate();
             return;
           }
-          setReplacedKey(undefined);
-          setRouted((current) =>
-            !current.some((person) => person.pubkey === pubkey)
-              ? current.length < 32
-                ? [...current, { pubkey, name }]
-                : current
-              : current.length > 1
-                ? current.filter((person) => person.pubkey !== pubkey)
-                : current,
-          );
+          if (!routed.some((person) => person.pubkey === pubkey)) {
+            if (routed.length < 32) choose([...routed, { pubkey, name }]);
+          } else if (routed.length > 1)
+            choose(routed.filter((person) => person.pubkey !== pubkey));
         },
       }
     : undefined;
   // The moment a mention is typed into a draft without any, the remembered
-  // agents are set aside for good; a restored draft with mentions starts so.
+  // agents are set aside for good; a draft that already has mentions when the
+  // pill takes over (restored, or before its agents were known) starts so.
   useEffect(() => {
     const before = mentionCount.current;
-    mentionCount.current = recipients.length;
+    mentionCount.current = routing ? recipients.length : 0;
     if (!routing || !recipients.length || before) return;
     setReplacedKey(draftKey);
     setRouted([]);
-  }, [routing, recipients.length, draftKey]);
+    if (pillKey) writeView(scope, pillKey, null);
+  }, [routing, recipients.length, draftKey, scope, pillKey]);
   const editDisabled =
     disabled ||
     !!list.channels.find((channel) => channel.id === channelId)?.archived ||
@@ -1547,7 +1562,7 @@ function Composer({
   /** Solo chats address agents up front: a picked tag joins the leading tags,
    * wherever the caret is. The insertion maps the caret, so the caret and its
    * Undo both stay in the prose it was in. */
-  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
+  function keepProseCaret(add: (at: CompletionQuery) => boolean, focus = true) {
     const before = valueRef.current;
     let start = 0;
     for (const tag of [...before.recipients].sort(
@@ -1566,7 +1581,7 @@ function Composer({
         valueRef.current.text.length,
         valueRef.current.text.length,
       );
-    input.current?.focus();
+    if (focus) input.current?.focus();
     return true;
   }
   function insertMentions(
@@ -1838,7 +1853,25 @@ function Composer({
     // Alone with agents, the agent joins the toolbar, never the text. An empty
     // pill is always refilled, even after a send, so removed mentions fall back.
     if (routing) {
-      if (!routed.length && !recipients.length && seededAgents.length) {
+      if (routed.length || recipients.length) return;
+      const admitted = mentionAdmission(
+        session,
+        channelId,
+        agentChoices,
+        mentionRoster,
+      );
+      const chosen = pillKey ? readView<unknown>(scope, pillKey, null) : null;
+      const kept = Array.isArray(chosen)
+        ? chosen
+            .filter(wellFormedRecipient)
+            .filter((person) => admitted(person.pubkey))
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [];
+      if (kept.length) {
+        setRouted(kept);
+        return;
+      }
+      if (seededAgents.length) {
         setRouted(seededAgents.map(({ pubkey, name }) => ({ pubkey, name })));
         seededRoute.current = routedKey(seededAgents);
       }
@@ -1973,10 +2006,27 @@ function Composer({
     !editing.target &&
     !addressed.length &&
     !value.pending?.length;
-  async function prepareRecipients(explicit: readonly string[]) {
+  async function prepareRecipients(
+    explicit: readonly string[],
+    fromPill = false,
+  ) {
     const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
+    // The pill stands in only while the chat is the viewer and agents; a
+    // person who joined since needs the agents tagged by name.
+    if (fromPill) {
+      const profiles = session.profiles.snapshot();
+      if (
+        soloHasPeople(
+          channel.members,
+          session.viewer,
+          profiles,
+          knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+        )
+      )
+        throw new Error("Someone joined this chat. Tag an agent to send.");
+    }
     const recipients = [...explicit];
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
@@ -2224,7 +2274,10 @@ function Composer({
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(recipients);
+        recipients = await prepareRecipients(
+          recipients,
+          routing && !captured.recipients.length,
+        );
       } else if (recipients.length) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
         const lookup = oldAgents.find(captured.recipients);
@@ -2567,6 +2620,7 @@ function Composer({
       if (routing) {
         setRouted(capturedRecipients);
         setReplacedKey(undefined);
+        keepPick(null);
       }
       setPicks({});
       // An unchanged prefill may not render. Do not leave a caret command for
@@ -2663,7 +2717,10 @@ function Composer({
             disabled={editingDisabled}
             remove={(pubkey) => {
               const person = addressed.find((item) => item.pubkey === pubkey);
-              if (person) audience?.toggle(person);
+              if (!person) return;
+              audience?.toggle(person);
+              // The removed avatar took focus with it; typing resumes in the draft.
+              input.current?.focus();
             }}
           />
         )}

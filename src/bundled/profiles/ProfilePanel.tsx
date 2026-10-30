@@ -360,6 +360,11 @@ function ProfileDetails({
     [picture, name, knownAgent],
   );
   usePanelTabTitle(name, tabAvatar);
+  // Targets opened from this panel stay in its community.
+  const scoped =
+    navigation && viewer && communityOrigin
+      ? { navigation, scope: { viewer, communityOrigin } }
+      : undefined;
   const {
     available: canMessage,
     opening: openingMessage,
@@ -370,28 +375,25 @@ function ProfileDetails({
     pubkey,
     viewer,
     agent: displayAgent,
-    enabled: !!navigation && !!communityOrigin,
+    enabled: !!scoped,
     onOpened(channelId) {
-      if (navigation && viewer && communityOrigin)
-        void navigation.open({
-          version: 1,
-          kind: "conversation",
-          channelId,
-          scope: { viewer, communityOrigin },
-        });
+      void scoped?.navigation.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        scope: scoped.scope,
+      });
     },
   });
-  const canEdit = !!navigation && !!communityOrigin && viewer === pubkey;
-  const editProfile = () => {
-    // Settings edits the selected community's profile, so bind it to this one.
-    if (navigation && viewer && communityOrigin)
-      void navigation.open({
-        version: 1,
-        kind: "settings",
-        section: "profile",
-        scope: { viewer, communityOrigin },
-      });
-  };
+  const canEdit = !!scoped && viewer === pubkey;
+  // Settings edits the selected community's profile, so bind it to this one.
+  const editProfile = () =>
+    void scoped?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+      scope: scoped.scope,
+    });
 
   return (
     <section

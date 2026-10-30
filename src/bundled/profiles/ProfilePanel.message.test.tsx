@@ -106,7 +106,7 @@ const message = () => screen.queryByRole("button", { name: "Message" });
 const editProfile = () =>
   screen.queryByRole("button", { name: "Edit profile" });
 
-it("offers Edit profile only on the viewer's own profile and opens its Settings in this community", () => {
+it("offers Edit profile only on the viewer's own profile in a community and opens its Settings there", () => {
   const f = fixture();
   const view = render(f.panel(person));
   expect(message()).toBeTruthy();
@@ -120,6 +120,9 @@ it("offers Edit profile only on the viewer's own profile and opens its Settings 
     section: "profile",
     scope: { viewer, communityOrigin: origin },
   });
+  // A scope for another identity names no community for this viewer.
+  f.reconnect(`${origin}:${other}`);
+  expect(editProfile()).toBeNull();
   f.owner.dispose();
 });
 

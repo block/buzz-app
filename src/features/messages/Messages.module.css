@@ -2921,19 +2921,22 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: var(--text-standard);
   overflow-wrap: anywhere;
 }
-/* Own bubbles retain their toolbar hover treatment; received bubbles stay
-   on the same quiet surface as their reaction strip. */
 @media (hover: hover) and (pointer: fine) {
+  .message[data-actions-revealed]
+    > .messageBody
+    > .messageContent
+    .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+      :has(> .text > table:only-child)
+    ) {
+    background: var(--surface-message-hover);
+  }
   .message[data-own][data-actions-revealed]
     > .messageBody
     > .messageContent
-    .messageBubble:not([data-emoji-only])::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: var(--affordance-message-own-hover);
-    pointer-events: none;
+    .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+      :has(> .text > table:only-child)
+    ) {
+    background: var(--surface-message-own-hover);
   }
 }
 .message[data-layout="continuation"] .messageBubble {
@@ -3522,10 +3525,6 @@ html[data-keyboard-navigation]
 .message .messageBubble:has(> .text > table:only-child) > .reactions {
   margin-inline-start: 0;
   max-width: 100%;
-}
-.messageBubble[data-diff-only]::after,
-.messageBubble:has(> .text > table:only-child)::after {
-  display: none;
 }
 .workflowAttribution {
   display: inline-flex;

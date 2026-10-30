@@ -949,14 +949,23 @@ export function ChannelMembersDialog({
       : {};
   if (pages !== memberPages.pages)
     setMemberPages({ memberKey, text, roleFilter, pages: {} });
+  const pendingMemberPage = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const group = pendingMemberPage.current;
+    pendingMemberPage.current = null;
+    if (group === null) return;
+    const heading = document.getElementById(`${presenceId}-${group}-page`);
+    heading?.focus({ preventScroll: true });
+    heading?.parentElement?.scrollIntoView({ block: "start" });
+  });
   const changeMemberPage = (group: string, page: number) => {
+    pendingMemberPage.current = group;
     setMemberPages({
       memberKey,
       text,
       roleFilter,
       pages: { ...pages, [group]: page },
     });
-    document.getElementById(`${presenceId}-${group}-page`)?.focus();
   };
   const search = useMemberSearch(session, query, canAddPeople);
   const relayKeys = new Set(search.people.map((person) => person.pubkey));

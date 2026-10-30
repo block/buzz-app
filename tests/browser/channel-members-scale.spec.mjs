@@ -41,6 +41,13 @@ test("large channel members stays usable while browsing and searching the roster
   await expect(
     list.getByRole("heading", { name: "People · 2526" }),
   ).toBeFocused();
+  await expect(list.getByRole("listitem").first()).toBeInViewport();
+  await pages.getByRole("button", { name: "Previous" }).click();
+  await expect(pages.getByText("1 of 51")).toBeVisible();
+  await expect(list.getByRole("listitem").first()).toBeInViewport();
+  await pages.getByRole("button", { name: "Next" }).click();
+  await expect(pages.getByText("2 of 51")).toBeVisible();
+  await expect(list.getByRole("listitem").first()).toBeInViewport();
   await pages.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath("large-members-light.png"),

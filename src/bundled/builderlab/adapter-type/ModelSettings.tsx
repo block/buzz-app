@@ -38,6 +38,8 @@ const statuses = {
 };
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : "Could not load model settings.";
+const accountMismatchMessage =
+  "Sign in to the Builderlab account that loaded these settings.";
 
 export function ModelSettings({
   client,
@@ -56,6 +58,9 @@ export function ModelSettings({
   const signedIn = login.status === "signed-in";
   const agent = "agent" in settings ? settings.agent : undefined;
   const subject = "subject" in settings ? settings.subject : undefined;
+  const mismatch =
+    signedIn && subject !== undefined && login.account?.subject !== subject;
+  const hasAccess = signedIn && !mismatch;
   const form = useId();
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
@@ -65,7 +70,7 @@ export function ModelSettings({
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const busy = !saved || loading || saving || login.status !== "signed-in";
+  const busy = !saved || loading || saving || !hasAccess;
   const [error, setError] = useState("");
   const [catalogError, setCatalogError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -117,7 +122,7 @@ export function ModelSettings({
     modelChanged ||
     (!instructionsChanged && saved?.modelSelectionStatus !== "valid");
   const disabled =
-    login.status !== "signed-in" ||
+    !hasAccess ||
     !saved ||
     saving ||
     !validInstructions(instructions) ||
@@ -131,9 +136,7 @@ export function ModelSettings({
     setError("");
     try {
       if (session.credential().account.subject !== subject)
-        throw new Error(
-          "Sign in to the Builderlab account that loaded these settings.",
-        );
+        throw new Error(accountMismatchMessage);
       if (saved.status !== "Active")
         throw new Error("Only Active agents can have their settings edited.");
       if (saveModel && instructionsChanged)
@@ -174,8 +177,7 @@ export function ModelSettings({
     }
   };
   const pending =
-    login.status === "signed-in" &&
-    ("pending" in settings ? settings.pending : loading);
+    hasAccess && ("pending" in settings ? settings.pending : loading);
   const [slow, setSlow] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each agent/catalog retry starts a new loading phase, even if pending stays true.
   useEffect(() => {
@@ -198,7 +200,11 @@ export function ModelSettings({
       label={agent ? "Loading models…" : "Loading settings…"}
       statusVisibility="screen-reader"
       feedback={
-        !signedIn ? undefined : "error" in settings && settings.error ? (
+        mismatch ? (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            {accountMismatchMessage}
+          </p>
+        ) : !hasAccess ? undefined : "error" in settings && settings.error ? (
           <div className="grid gap-2">
             <p role="alert" className="m-0 text-body-sm text-danger">
               {settings.error}
@@ -234,7 +240,7 @@ export function ModelSettings({
           void save();
         }}
       >
-        {saved && saved.modelSelectionStatus !== "valid" && (
+        {hasAccess && saved && saved.modelSelectionStatus !== "valid" && (
           <p role="status" className="m-0 text-body-sm text-warning">
             {statuses[saved.modelSelectionStatus ?? "unknown"]}
             {saved.modelId &&
@@ -291,7 +297,7 @@ export function ModelSettings({
             onValueChange={setEffort}
           />
         </SettingsGroup>
-        {signedIn && models?.length === 0 && (
+        {hasAccess && models?.length === 0 && (
           <p className="m-0 text-body-sm text-secondary">
             No models are available. Retry when the catalog is available.
           </p>
@@ -299,7 +305,7 @@ export function ModelSettings({
         <Field
           label="Instructions"
           error={
-            !validInstructions(instructions)
+            hasAccess && !validInstructions(instructions)
               ? "Use text or leave this empty."
               : undefined
           }
@@ -308,7 +314,7 @@ export function ModelSettings({
             appearance="outlined"
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
-            disabled={!saved || saving || login.status !== "signed-in"}
+            disabled={!saved || saving || !hasAccess}
             placeholder={!saved ? placeholder : undefined}
             rows={8}
             maxLength={MAX_INSTRUCTIONS_LENGTH}
@@ -320,12 +326,12 @@ export function ModelSettings({
           disabled={disabled}
           dirty={modelChanged || instructionsChanged}
         />
-        {signedIn && (catalogError || error) && (
+        {hasAccess && (catalogError || error) && (
           <p role="alert" className="m-0 text-body-sm text-danger">
             {error || catalogError}
           </p>
         )}
-        {signedIn && (catalogError || error || models?.length === 0) && (
+        {hasAccess && (catalogError || error || models?.length === 0) && (
           <div>
             <Button
               disabled={busy}

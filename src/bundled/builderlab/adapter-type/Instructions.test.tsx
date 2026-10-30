@@ -354,10 +354,14 @@ it("retries a failed load and refuses to save a draft through another account", 
   await user.type(field, "Changed.");
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "account that loaded these settings",
   );
+  expect(field).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  const form = field.closest("form");
+  if (!form) throw new Error("Missing settings form");
+  fireEvent.submit(form);
   expect(h.request).toHaveBeenCalledTimes(before);
   expect(field).toHaveValue("First instructions.Changed.");
 });
@@ -394,10 +398,14 @@ it("settles an aborted catalog read after switching accounts without losing the 
     ).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
     const before = h.request.mock.calls.length;
-    await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "account that loaded these settings",
     );
+    expect(field).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    const form = field.closest("form");
+    if (!form) throw new Error("Missing settings form");
+    fireEvent.submit(form);
     expect(h.request).toHaveBeenCalledTimes(before);
     expect(field).toHaveValue("First instructions. Draft");
   } finally {

@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -119,8 +126,8 @@ async function fixture(
     offline: (value: boolean) => {
       offline = value;
     },
-    changeAccount: async () => {
-      subject = "other";
+    changeAccount: async (next = "other") => {
+      subject = next;
       session.signOut();
       await session.signIn();
     },
@@ -377,11 +384,97 @@ it("preserves a failed draft and refuses to save it through a different account"
   h.offline(false);
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "account that loaded these settings",
   );
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  expect(field).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Model:/ })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
+    "Low",
+  );
+  expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(
+    "Friendly One",
+  );
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Retry|Refresh/ })).toBeNull();
+  expect(screen.queryByText(/HTTP 400/)).toBeNull();
+  const form = field.closest("form");
+  if (!form) throw new Error("Missing settings form");
+  fireEvent.submit(form);
   expect(h.request).toHaveBeenCalledTimes(before);
+});
+
+it("checks the live credential before saving even when the displayed session has not changed", async () => {
+  const h = await fixture({
+    modelId: "model-one",
+    reasoningEffort: "high",
+    modelSelectionStatus: "valid",
+    instructions: "Saved instructions.",
+  });
+  const user = userEvent.setup();
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(field, " Draft");
+  const before = h.request.mock.calls.length;
+  const credential = h.session.credential();
+  const read = vi.spyOn(h.session, "credential").mockReturnValue({
+    ...credential,
+    account: { ...credential.account, subject: "other" },
+  });
+  try {
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Sign in to the Builderlab account that loaded these settings.",
+    );
+    expect(h.request).toHaveBeenCalledTimes(before);
+    expect(field).toHaveValue("Saved instructions. Draft");
+  } finally {
+    read.mockRestore();
+  }
+});
+
+it("replaces a previous account's catalog error with mismatch guidance and recovers on the original account", async () => {
+  const h = await fixture({
+    modelId: "model-one",
+    reasoningEffort: "high",
+    modelSelectionStatus: "valid",
+    instructions: "Saved instructions.",
+  });
+  const user = userEvent.setup();
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(field, " Draft");
+  h.offline(true);
+  act(() => h.session.signOut());
+  await act(() => h.session.signIn());
+  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(screen.getByRole("button", { name: "Retry models" })).toBeVisible();
+  await act(() => h.changeAccount());
+  const before = h.request.mock.calls.length;
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Sign in to the Builderlab account that loaded these settings.",
+  );
+  expect(screen.queryByText(/HTTP 400/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /Retry|Refresh|Save/ }),
+  ).toBeNull();
+  expect(field).toBeDisabled();
+  expect(field).toHaveValue("Saved instructions. Draft");
+  await user.type(field, " Ignored");
+  const form = field.closest("form");
+  if (!form) throw new Error("Missing settings form");
+  fireEvent.submit(form);
+  expect(h.request).toHaveBeenCalledTimes(before);
+  h.offline(false);
+  await act(() => h.changeAccount("account"));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
+  );
+  expect(field).toBeEnabled();
+  expect(field).toHaveValue("Saved instructions. Draft");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
 
 it.each(["save", "catalog"])(

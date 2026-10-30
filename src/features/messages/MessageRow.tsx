@@ -525,6 +525,7 @@ function MessageRowContent({
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
       largeEmoji={emojiOnly}
+      edited={displayRow.edited}
     />
   );
   const avatar = row.workflowOwnerId ? (

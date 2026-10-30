@@ -407,6 +407,24 @@ export const groups: Group[] = [
         "I reviewed the changes. **Two details** still need attention:\n\n- Align the labels.\n- Check the narrow layout.",
         { authorId: agent, agentEnvelope: true },
       ),
+      {
+        id: "edited",
+        title: "Edited messages",
+        description:
+          "An author's edit is marked after the last line, or below a closing block.",
+        rows: [
+          message("edited-own", "Hi how are ya.", { edited: true }),
+          message("edited-teammate", "Moved the review to Thursday.", {
+            authorId: teammate,
+            edited: true,
+          }),
+          message(
+            "edited-block",
+            "Use this command instead:\n\n```sh\njust iterate\n```",
+            { authorId: teammate, edited: true },
+          ),
+        ],
+      },
       single(
         "fallback",
         "Unknown author",

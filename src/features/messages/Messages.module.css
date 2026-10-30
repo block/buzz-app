@@ -1765,6 +1765,19 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   font-style: italic;
 }
 
+/* Metadata after the body's last line; on its own line after a closing block. */
+.edited {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.text > .edited {
+  display: block;
+}
+.text > :has(+ .edited:last-child) {
+  margin-bottom: var(--space-1);
+}
+
 .mention {
   display: inline;
   padding: 0 var(--space-half);
@@ -2939,7 +2952,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only], [data-diff-only]):not(
-      :has(> .text > table:only-child)
+      :has(> .text > table:only-child),
+      :has(> .text > table:first-child + .edited:last-child)
     ) {
     background: var(--surface-message-hover);
   }
@@ -2947,7 +2961,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only], [data-diff-only]):not(
-      :has(> .text > table:only-child)
+      :has(> .text > table:only-child),
+      :has(> .text > table:first-child + .edited:last-child)
     ) {
     background: var(--surface-message-own-hover);
   }
@@ -3094,6 +3109,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
+}
+.messageBubble[data-own] .edited {
+  color: inherit;
 }
 .messageBubble[data-own] .spoilerMask {
   color: inherit;
@@ -3523,7 +3541,8 @@ html[data-keyboard-navigation]
 
 /* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */
 .messageBubble[data-diff-only],
-.messageBubble:has(> .text > table:only-child) {
+.messageBubble:has(> .text > table:only-child),
+.messageBubble:has(> .text > table:first-child + .edited:last-child) {
   padding: 0;
   background: transparent;
   color: var(--text-standard);
@@ -3535,7 +3554,10 @@ html[data-keyboard-navigation]
 }
 /* Unboxed renderers have no inner gutter for the reaction strip to outdent. */
 .message .messageBubble[data-diff-only] > .reactions,
-.message .messageBubble:has(> .text > table:only-child) > .reactions {
+.message .messageBubble:has(> .text > table:only-child) > .reactions,
+.message
+  .messageBubble:has(> .text > table:first-child + .edited:last-child)
+  > .reactions {
   margin-inline-start: 0;
   max-width: 100%;
 }

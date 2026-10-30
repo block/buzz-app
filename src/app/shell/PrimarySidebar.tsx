@@ -17,6 +17,7 @@ import { ResizableSidebar } from "../../features/channel-navigation/ResizableSid
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RelayData } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
 import type { Agents } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
@@ -32,6 +33,8 @@ import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
+import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 
 const noSubscription = () => () => {};
 
@@ -43,6 +46,7 @@ const filters = [
 ] as const;
 
 type Props = {
+  federatedIdentity?: FederatedIdentity;
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
@@ -234,6 +238,10 @@ function ScopedSidebar({
                 {!connection.cached && (
                   <RecoveryNotice recovery={connection.session.recovery} />
                 )}
+                <LiveSignIn
+                  session={connection.session}
+                  identity={props.federatedIdentity}
+                />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
                   <section
@@ -310,13 +318,45 @@ function ScopedSidebar({
                   : (connection.error ?? "Choose a community to see channels.")}
               </p>
               {connection.status === "error" && (
-                <Button onClick={props.relay.retry}>Retry channels</Button>
+                <>
+                  <CommunitySignIn
+                    identity={props.federatedIdentity}
+                    error={connection.error}
+                    retry={props.relay.retry}
+                  />
+                  <Button onClick={props.relay.retry}>Retry channels</Button>
+                </>
               )}
             </SidebarList>
           </SidebarFrame>
         </div>
       )}
     </SidebarBoundary>
+  );
+}
+
+/** A protected community can refuse after its channel list is shown: native
+ * discovery hands back the transport before NIP-FI admission, so the refusal
+ * arrives on the live socket. Its recovery reconnects only that socket. */
+function LiveSignIn({
+  session,
+  identity,
+}: {
+  session: RelaySession;
+  identity: FederatedIdentity | undefined;
+}) {
+  const live = useSyncExternalStore(
+    session.live.subscribe,
+    session.live.snapshot,
+    session.live.snapshot,
+  );
+  if (live.status !== "error") return null;
+  return (
+    <CommunitySignIn
+      identity={identity}
+      error={live.error}
+      retry={session.live.retry}
+    />
   );
 }
 

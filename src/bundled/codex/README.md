@@ -90,7 +90,7 @@ Threads live in Buzz's own Codex home; see [Conversation storage](#conversation-
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
-`send`, `edit`, `react`, `read`, `channels`, `channel`, `members`, `users`, `dm`, `mem_get`,
+`send`, `edit`, `react`, `read`, `channel_list`, `channel_get`, `channel_create`, `channel_update`, `channel_join`, `channel_leave`, `channel_archive`, `channel_unarchive`, `channel_delete`, `members`, `users`, `dm`, `mem_get`,
 `mem_set`, `mem_rm`, `notes_get`, `notes_set`, `notes_rm`, `canvas_get`, `canvas_set`, and `media_get`, which saves the file and gives its path, and answers with an image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory

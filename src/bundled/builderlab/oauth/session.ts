@@ -7,6 +7,19 @@ export type LoginSnapshot = Readonly<{
   error?: string;
 }>;
 
+/** One website store per account: the Settings credential is memory-only, so
+ * an app's own browser login must outlive sign-ins without crossing accounts. */
+async function accountStorage(subject: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(subject),
+  );
+  const hex = [...new Uint8Array(digest, 0, 16)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `builderlab-${hex}`;
+}
+
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
 export function createOAuthSession(
   acquire: (signal: AbortSignal) => Promise<Credential>,
@@ -85,13 +98,14 @@ export function createOAuthSession(
       publish({ status: "pending" });
       try {
         const result = await acquire(current.signal);
+        const storage = await accountStorage(result.account.subject);
         current.signal.throwIfAborted();
         if (attempt !== current || disposed) return;
         credential = result;
         viewerLifetime = new AbortController();
         viewer = {
           credential: result.value,
-          storage: `builderlab-${crypto.randomUUID()}`,
+          storage,
           signal: viewerLifetime.signal,
         };
         publish({ status: "signed-in", account: result.account });

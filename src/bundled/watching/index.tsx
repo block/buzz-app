@@ -7,7 +7,7 @@ export const apply: PluginModule["apply"] = ({ agents, relay, navigation }) => {
   agents.controlAttention();
   agents.registerTab({
     id: "watching",
-    title: "Watching",
+    title: "Attention",
     component: createTab({ agents, relay, navigation }),
   });
 };

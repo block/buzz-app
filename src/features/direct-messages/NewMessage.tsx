@@ -146,6 +146,9 @@ export function NewMessage({
   );
   const recipientNames = recipients.map((person) => person.name).join(", ");
   const roster = useMemo(() => ({ recipients }), [recipients]);
+  // Text still in the To field may be a recipient not chosen yet, so Send
+  // waits for it to become one or be cleared.
+  const [typed, setTyped] = useState(false);
   const [legacy, setLegacy] = useState(() =>
     savedLegacy(scope, session.viewer),
   );
@@ -401,6 +404,7 @@ export function NewMessage({
         disabled={locked}
         onChange={change}
         onComplete={focusComposer}
+        onTyped={setTyped}
       />
       <div className={styles.blank} data-new-message-body="">
         {existing ? (
@@ -482,6 +486,7 @@ export function NewMessage({
               !ready ||
               !!busy ||
               !recipients.length ||
+              typed ||
               !session.directMessages.available,
             submit: (draft) => void send(draft),
           }}

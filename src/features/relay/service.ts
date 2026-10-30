@@ -178,7 +178,10 @@ export function provideRelay(
       }
     }
   }
-  const service: RelayData = {
+  const service: RelayData & {
+    /** The federated session changed to signed in: retry what it refused. */
+    reauthorize(): void;
+  } = {
     snapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -328,6 +331,11 @@ export function provideRelay(
           if (current === generation && signal === controller?.signal)
             connecting = false;
         });
+    },
+    reauthorize() {
+      if (disposed) return;
+      if (snapshot.status === "error") service.retry();
+      else store.session.recovery?.retryAll();
     },
     disconnect() {
       if (disposed) return;

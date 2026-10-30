@@ -13,6 +13,8 @@ import { nativeIdentityEnabled } from "../identity/service";
 import { readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
 import { admitCommunity, completeJoin, type Current } from "./join";
+import { CommunitySignIn } from "../federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../federated-identity/service";
 import styles from "./Communities.module.css";
 
 export function CommunityDialog({
@@ -22,8 +24,11 @@ export function CommunityDialog({
   onJoined,
   invite,
   connectionFrom,
+  federatedIdentity,
 }: {
   communities: Communities;
+  /** Offers protected-community sign-in when admission refuses for it. */
+  federatedIdentity?: FederatedIdentity | undefined;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
@@ -387,6 +392,15 @@ export function CommunityDialog({
               <p role="alert" className={styles.error}>
                 {error}
               </p>
+            )}
+            {error && (
+              <CommunitySignIn
+                identity={federatedIdentity}
+                error={error}
+                // Sign-in only clears the refusal: Continue then runs the current
+                // step with current input, never one captured before the login.
+                retry={() => setError("")}
+              />
             )}
           </>
         )}

@@ -245,11 +245,11 @@ async function setup(
         screen.getByRole("button", { name: /^Actions for Morgan$/ }),
       );
       const roleChoice =
-        name === "Make admin"
+        name === "Set as admin"
           ? "Admin"
-          : name === "Make member"
+          : name === "Set to participating"
             ? "Participating"
-            : name === "Make guest"
+            : name === "Set to viewing only"
               ? "Viewing only"
               : undefined;
       await user.click(
@@ -262,7 +262,7 @@ async function setup(
         name:
           name === "Remove from channel"
             ? `Remove ${targetAgent ? "agent" : "member"} from channel`
-            : "Change member role?",
+            : `Change access to ${name === "Set to viewing only" ? "Viewing only" : name === "Set to participating" ? "Participating" : "Admin"}?`,
       });
     },
   };
@@ -288,7 +288,7 @@ it.each([
           role === "guest"
             ? "View only Read messages and threads."
             : role === "member"
-              ? "Participant Send messages, reply, and react."
+              ? "Participate Send messages, reply, and react."
               : "Admin Manage this channel and its members.",
       }),
     );
@@ -306,7 +306,7 @@ it.each([
           role === "guest"
             ? "Add with view-only access"
             : role === "member"
-              ? "Add as participant"
+              ? "Add to participate"
               : "Add as admin",
       }),
     );
@@ -698,7 +698,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   await expectProfileOnly(t.user, "Owner");
   const row = required(screen.getByText("Morgan").closest("li"));
   expect(row.closest("section")).toHaveAttribute("aria-label", "People");
-  let dialog = await t.choose("Make admin");
+  let dialog = await t.choose("Set as admin");
   await vi.waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: "Cancel" }),
@@ -708,14 +708,14 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
     within(dialog).getByRole("button", { name: "Cancel" }),
   ).toHaveAttribute("data-variant", "subtle");
   expect(
-    within(dialog).getByRole("button", { name: "Make admin" }),
+    within(dialog).getByRole("button", { name: "Set as admin" }),
   ).toHaveAttribute("data-variant", "prominent");
   expect(t.publish).not.toHaveBeenCalled();
   await t.user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(t.publish).not.toHaveBeenCalled();
-  dialog = await t.choose("Make admin");
+  dialog = await t.choose("Set as admin");
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make admin" }),
+    within(dialog).getByRole("button", { name: "Set as admin" }),
   );
   await vi.waitFor(() =>
     expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
@@ -862,11 +862,11 @@ it.each(["member", "admin", "guest"] as const)(
 
 it("makes a member a guest only after explicit confirmation", async () => {
   const t = await setup("owner", "member");
-  const dialog = await t.choose("Make guest");
-  expect(dialog).toHaveTextContent("from member to guest");
+  const dialog = await t.choose("Set to viewing only");
+  expect(dialog).toHaveTextContent("from Participating to Viewing only");
   expect(t.publish).not.toHaveBeenCalled();
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make guest" }),
+    within(dialog).getByRole("button", { name: "Set to viewing only" }),
   );
   await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
   expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "guest"]);
@@ -874,11 +874,11 @@ it("makes a member a guest only after explicit confirmation", async () => {
 
 it("changes an existing Guest to Member only after explicit confirmation", async () => {
   const t = await setup("owner", "guest");
-  const dialog = await t.choose("Make member");
-  expect(dialog).toHaveTextContent("from guest to member");
+  const dialog = await t.choose("Set to participating");
+  expect(dialog).toHaveTextContent("from Viewing only to Participating");
   expect(t.publish).not.toHaveBeenCalled();
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make member" }),
+    within(dialog).getByRole("button", { name: "Set to participating" }),
   );
   await vi.waitFor(() =>
     expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
@@ -1027,9 +1027,9 @@ it("reads roles on hosts without the narrow writer", async () => {
 it("keeps unconfirmed roles and session recovery across close/reopen without replay", async () => {
   const t = await setup();
   t.lag();
-  const dialog = await t.choose("Make admin");
+  const dialog = await t.choose("Set as admin");
   await t.user.click(
-    within(dialog).getByRole("button", { name: "Make admin" }),
+    within(dialog).getByRole("button", { name: "Set as admin" }),
   );
   await screen.findByText(/This request may have taken effect/);
   expect(
@@ -1075,9 +1075,9 @@ it("pending operations survive closing while suppressing duplicate actions", asy
     await publish(event);
   });
   try {
-    const dialog = await t.choose("Make admin");
+    const dialog = await t.choose("Set as admin");
     await t.user.click(
-      within(dialog).getByRole("button", { name: "Make admin" }),
+      within(dialog).getByRole("button", { name: "Set as admin" }),
     );
     await vi.waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
     await expectProfileOnly(t.user, "Morgan");
@@ -1943,11 +1943,11 @@ it.each(["owner", "admin"])(
       await screen.findByRole("menuitemradio", { name: "Participating" }),
     ).toHaveAttribute("aria-checked", "true");
     await t.user.keyboard("{Escape}");
-    const dialog = await t.choose("Make admin");
-    expect(dialog).toHaveTextContent("from bot to admin");
+    const dialog = await t.choose("Set as admin");
+    expect(dialog).toHaveTextContent("from Participating to Admin");
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(
-      within(dialog).getByRole("button", { name: "Make admin" }),
+      within(dialog).getByRole("button", { name: "Set as admin" }),
     );
     await vi.waitFor(() =>
       expect(

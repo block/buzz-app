@@ -7,6 +7,7 @@ import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { createHuddles } from "../../features/huddle/service";
 import { MenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
+import { HuddleCapsule } from "./HuddleCapsule";
 import { HuddleLauncher, SoloHuddleMenu } from "./HuddleLauncher";
 
 afterEach(cleanup);
@@ -86,6 +87,32 @@ it("moves idle Solo huddles to the menu while preserving Team's header action", 
     };
     vi.spyOn(huddles, "snapshot").mockReturnValue(connecting);
     const leave = vi.spyOn(huddles, "leave").mockResolvedValue();
+    const presentation = { visible: false, failed: false };
+    view.rerender(
+      <>
+        <HuddleCapsule
+          relay={relay}
+          huddles={huddles}
+          companion={{
+            snapshot: () => presentation,
+            subscribe: () => () => {},
+            open: async () => {},
+            dispose: async () => {},
+            dismissError: () => {},
+          }}
+        />
+        <MenuRoot open>
+          <MenuPopup>
+            <SoloHuddleMenu {...props} session={session} channelId="chat" />
+          </MenuPopup>
+        </MenuRoot>
+      </>,
+    );
+    // Sidebar starts must remain cancellable without any channel header.
+    expect(screen.queryByRole("menuitem")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(leave).toHaveBeenCalledOnce();
+    leave.mockClear();
     view.rerender(<HuddleLauncher {...props} />);
     await userEvent.click(
       screen.getByRole("button", { name: "Cancel Huddle connection" }),

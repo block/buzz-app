@@ -103,6 +103,25 @@ function deferred() {
   return { promise, resolve, reject };
 }
 const message = () => screen.queryByRole("button", { name: "Message" });
+const editProfile = () =>
+  screen.queryByRole("button", { name: "Edit profile" });
+
+it("offers Edit profile only on the viewer's own profile and opens its Settings in this community", () => {
+  const f = fixture();
+  const view = render(f.panel(person));
+  expect(message()).toBeTruthy();
+  expect(editProfile()).toBeNull();
+  view.rerender(f.panel(viewer));
+  expect(message()).toBeNull();
+  fireEvent.click(editProfile() as HTMLElement);
+  expect(f.navigate).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "profile",
+    scope: { viewer, communityOrigin: origin },
+  });
+  f.owner.dispose();
+});
 
 it("offers Message only for a foreign profile on a DM-capable connection", () => {
   const unavailable = fixture(false);

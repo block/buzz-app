@@ -381,6 +381,17 @@ function ProfileDetails({
         });
     },
   });
+  const canEdit = !!navigation && !!communityOrigin && viewer === pubkey;
+  const editProfile = () => {
+    // Settings edits the selected community's profile, so bind it to this one.
+    if (navigation && viewer && communityOrigin)
+      void navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "profile",
+        scope: { viewer, communityOrigin },
+      });
+  };
 
   return (
     <section
@@ -419,16 +430,27 @@ function ProfileDetails({
             )}
             <UserStatusDisplay session={session} userId={pubkey} />
           </div>
-          {canMessage && (
+          {(canMessage || canEdit) && (
             <div className={hero.actions}>
-              <Button
-                size="sm"
-                variant={picture ? "glass" : "subtle"}
-                loading={openingMessage}
-                onClick={() => void openMessage()}
-              >
-                Message
-              </Button>
+              {canMessage && (
+                <Button
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  loading={openingMessage}
+                  onClick={() => void openMessage()}
+                >
+                  Message
+                </Button>
+              )}
+              {canEdit && (
+                <Button
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  onClick={editProfile}
+                >
+                  Edit profile
+                </Button>
+              )}
             </div>
           )}
           {messageError && (

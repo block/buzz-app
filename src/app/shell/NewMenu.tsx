@@ -19,6 +19,9 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./NewMenu.module.css";
 import { PlusIcon } from "../../shared/design-system/icons";
@@ -89,54 +92,61 @@ function ReadyNewMenu({
           ? menuTrigger
           : triggerContainer && createPortal(menuTrigger, triggerContainer)}
         <MenuPopup>
-          <MenuItem
-            onClick={() => {
-              if (current())
-                void navigator.open(soloDraftTarget(session.scope));
-            }}
-          >
-            New chat
-          </MenuItem>
-          <MenuItem
-            disabled={!session.soloPreferences.sectionCreationWritable}
-            onClick={() => {
-              if (current()) setCreatingProject(true);
-            }}
-          >
-            New workspace
-          </MenuItem>
-          <MenuItem
-            disabled={!scope}
-            onClick={() => {
-              if (scope && current())
-                void navigator.open({
-                  version: 1,
-                  kind: "page",
-                  pluginId: "buzz.channels",
-                  pageId: "channels",
-                  scope,
-                  route: { version: 1, params: "new-message" },
-                });
-            }}
-          >
-            New DM
-          </MenuItem>
-          <MenuItem
-            disabled={!session.channelCreation.available}
-            onClick={() => {
-              if (current()) setCreatingChannel(true);
-            }}
-          >
-            New channel
-          </MenuItem>
-          <MenuItem
-            disabled={!preferences.sectionCreationWritable}
-            onClick={() => {
-              if (current()) setCreatingSection(true);
-            }}
-          >
-            New section
-          </MenuItem>
+          <MenuGroup>
+            <MenuGroupLabel emphasis="quiet">Solo</MenuGroupLabel>
+            <MenuItem
+              onClick={() => {
+                if (current())
+                  void navigator.open(soloDraftTarget(session.scope));
+              }}
+            >
+              New chat
+            </MenuItem>
+            <MenuItem
+              disabled={!session.soloPreferences.sectionCreationWritable}
+              onClick={() => {
+                if (current()) setCreatingProject(true);
+              }}
+            >
+              New workspace
+            </MenuItem>
+          </MenuGroup>
+          <MenuSeparator />
+          <MenuGroup>
+            <MenuGroupLabel emphasis="quiet">Team</MenuGroupLabel>
+            <MenuItem
+              disabled={!scope}
+              onClick={() => {
+                if (scope && current())
+                  void navigator.open({
+                    version: 1,
+                    kind: "page",
+                    pluginId: "buzz.channels",
+                    pageId: "channels",
+                    scope,
+                    route: { version: 1, params: "new-message" },
+                  });
+              }}
+            >
+              New DM
+            </MenuItem>
+            <MenuItem
+              disabled={!session.channelCreation.available}
+              onClick={() => {
+                if (current()) setCreatingChannel(true);
+              }}
+            >
+              New channel
+            </MenuItem>
+            <MenuItem
+              disabled={!preferences.sectionCreationWritable}
+              onClick={() => {
+                if (current()) setCreatingSection(true);
+              }}
+            >
+              New section
+            </MenuItem>
+          </MenuGroup>
         </MenuPopup>
       </MenuRoot>
       <CreateChannelDialog

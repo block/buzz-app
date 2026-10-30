@@ -610,10 +610,20 @@ test.describe("Solo chat lifecycle", () => {
 test.describe("remote archive focus", () => {
   test.use({ readState: true, threadUnread: true });
   for (const surface of ["channel", "thread"]) {
-    test(`remote archive keeps keyboard focus in the ${surface} history only when its composer owns it`, async ({
+    test(`remote archive preserves ${surface} focus and offers active unsent text for copying`, async ({
       page,
       app,
-    }) => {
+    }, testInfo) => {
+      // Intercept only the OS clipboard boundary; the app uses its shared owner.
+      await page.addInitScript(() => {
+        window.copiedArchiveText = [];
+        Object.defineProperty(navigator, "clipboard", {
+          configurable: true,
+          value: {
+            writeText: async (text) => window.copiedArchiveText.push(text),
+          },
+        });
+      });
       await page.goto(app.origin);
       await openPage(page, "Messages");
       await page
@@ -660,8 +670,12 @@ test.describe("remote archive focus", () => {
         await expect(history).toHaveAttribute("aria-busy", "false");
       }
       let timestamp = Math.floor(Date.now() / 1000);
-      for (const focus of ["editor", "toolbar", "elsewhere"]) {
+      for (const focus of ["editor", "toolbar", "empty", "elsewhere"]) {
         await expect(editor).toBeVisible();
+        const draft =
+          focus === "empty" ? "" : `Unsent ${surface} **${focus}** text`;
+        await editor.fill(draft);
+        await expect(editor).toHaveJSProperty("value", draft);
         const target =
           focus === "elsewhere"
             ? elsewhere
@@ -688,6 +702,47 @@ test.describe("remote archive focus", () => {
         await expect(editor).toHaveCount(0);
         await frames(page);
         await expect(focus === "elsewhere" ? elsewhere : history).toBeFocused();
+        const copy = page.getByRole("button", {
+          name: "Copy text",
+          exact: true,
+        });
+        if (draft && focus !== "elsewhere") {
+          await expect(copy).toBeInViewport({ ratio: 1 });
+          if (focus === "editor") {
+            const toast = page
+              .locator("[data-sonner-toast]")
+              .filter({ has: copy });
+            await expect(toast).toHaveAttribute("data-mounted", "true");
+            await toast.evaluate((node) =>
+              Promise.all(
+                node
+                  .getAnimations({ subtree: true })
+                  .map((animation) => animation.finished.catch(() => {})),
+              ),
+            );
+            await page.screenshot({
+              path: testInfo.outputPath(`${surface}-archive-copy.png`),
+            });
+            // The toast action remains reachable with the keyboard after handoff.
+            await copy.focus();
+            await copy.press("Enter");
+          } else {
+            await copy.click();
+          }
+          await expect
+            .poll(() => page.evaluate(() => window.copiedArchiveText.at(-1)))
+            .toBe(draft);
+          const success = page.getByRole("dialog", {
+            name: "Text copied",
+            exact: true,
+          });
+          await expect(success).toBeVisible();
+          await success
+            .getByRole("button", { name: "Dismiss notification", exact: true })
+            .click();
+        } else {
+          await expect(copy).toHaveCount(0);
+        }
         app.relay.publish(
           "primary",
           app.signRelay({
@@ -702,6 +757,7 @@ test.describe("remote archive focus", () => {
           }),
         );
         await expect(notice).toHaveCount(0);
+        await expect(editor).toHaveJSProperty("value", draft);
       }
       expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
       expect(app.report.unexpected).toEqual([]);

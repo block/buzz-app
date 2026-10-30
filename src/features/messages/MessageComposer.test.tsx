@@ -651,6 +651,140 @@ it.each([true, false])(
   },
 );
 
+function archiveToastFixture() {
+  const base = mount({}, undefined, first.pubkey);
+  base.unmount();
+  const summary = (archived = false): ChannelSummary => ({
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    members: [first.pubkey, second.pubkey],
+    ...(archived ? { archived: true } : {}),
+  });
+  let channel = summary();
+  let list = { status: "ready" as const, channels: [channel] };
+  const session = {
+    ...base.session,
+    channels: {
+      ...base.session.channels,
+      get: () => channel,
+      list: () => list,
+    },
+  };
+  const row = editableMessage();
+  let editScope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    editScope = useMessageEditScope();
+    return null;
+  }
+  const tree = (shown = true) => (
+    <ToastProvider>
+      <MessageEditScope>
+        <Probe />
+        <button type="button">Outside composer</button>
+        {shown && (
+          <MessageComposer
+            session={session}
+            scope="archive-toast"
+            channelId="channel"
+            channelName="General"
+            editMessages={[row]}
+          />
+        )}
+      </MessageEditScope>
+    </ToastProvider>
+  );
+  userEvent.setup();
+  const view = render(tree(), { reactStrictMode: true });
+  const input = () => screen.getByRole("textbox") as ComposerInputElement;
+  return {
+    input,
+    edit() {
+      act(() => editScope?.current?.(row));
+    },
+    fill(text: string) {
+      act(() => {
+        input().focus();
+        input().value = text;
+      });
+      fireEvent.input(input());
+    },
+    remove(archived = true) {
+      channel = summary(archived);
+      list = { ...list, channels: [channel] };
+      view.rerender(tree(false));
+    },
+    restore() {
+      channel = summary();
+      list = { ...list, channels: [channel] };
+      view.rerender(tree());
+    },
+  };
+}
+
+it.each(["draft", "edit"])(
+  "offers the focused archived %s text for copying and restores the saved draft",
+  async (mode) => {
+    const h = archiveToastFixture();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue(undefined);
+    onTestFinished(() => write.mockRestore());
+    h.fill("Saved draft");
+    if (mode === "edit") {
+      h.edit();
+      expect(h.input()).toHaveAccessibleName("Edit message");
+      h.fill("Unsent **edit**");
+    }
+    const text = h.input().value;
+    h.remove();
+    fireEvent.click(await screen.findByRole("button", { name: "Copy text" }));
+    await waitFor(() => expect(write).toHaveBeenCalledWith(text));
+    expect(
+      await screen.findByText("Text copied", { exact: true }),
+    ).toBeVisible();
+    h.restore();
+    expect(h.input()).toHaveValue("Saved draft");
+  },
+);
+
+it.each([
+  { text: "", focused: true, archived: true },
+  { text: "  \n ", focused: true, archived: true },
+  { text: "Saved draft", focused: false, archived: true },
+  { text: "Saved draft", focused: true, archived: false },
+])(
+  "does not offer text for unrelated or empty removal: %j",
+  async ({ text, focused, archived }) => {
+    const h = archiveToastFixture();
+    h.fill(text);
+    if (!focused)
+      screen.getByRole("button", { name: "Outside composer" }).focus();
+    h.remove(archived);
+    await act(async () => {});
+    expect(screen.queryByRole("button", { name: "Copy text" })).toBeNull();
+  },
+);
+
+it("keeps the captured text retryable when clipboard copying fails", async () => {
+  const h = archiveToastFixture();
+  const write = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockRejectedValueOnce(new Error("Clipboard unavailable"))
+    .mockResolvedValue(undefined);
+  onTestFinished(() => write.mockRestore());
+  h.fill("Keep this text");
+  h.remove();
+  fireEvent.click(await screen.findByRole("button", { name: "Copy text" }));
+  expect(
+    await screen.findByText("Couldn’t copy text", { exact: true }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(2));
+  expect(write).toHaveBeenLastCalledWith("Keep this text");
+  expect(await screen.findByText("Text copied", { exact: true })).toBeVisible();
+});
+
 it("an explicit focus request resumes after the draft's retained mention", () => {
   writeView("scope", "draft:channel", {
     text: "@Honey existing prose",

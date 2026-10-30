@@ -14,7 +14,11 @@ import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import {
+  ToastNotice,
+  useToastNotification,
+} from "../../shared/design-system/ui/Toast";
+import { writeClipboardText } from "../../shared/clipboard";
 import { SelectedMentionContext } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
@@ -1037,8 +1041,29 @@ function Composer({
   );
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const notify = useToastNotification();
   const handOffFocus = useEffectEvent(() => {
-    if (form.current?.contains(document.activeElement)) onFocusedRemoval?.();
+    if (!form.current?.contains(document.activeElement)) return;
+    const text = input.current?.value ?? "";
+    onFocusedRemoval?.();
+    if (!text.trim() || !session.channels?.get?.(channelId)?.archived) return;
+    const copy = async () => {
+      try {
+        await writeClipboardText(text);
+        notify("Text copied", "success");
+      } catch {
+        notify("Couldn’t copy text", "error", {
+          label: "Try again",
+          onClick: () => void copy(),
+          timeout: Infinity,
+        });
+      }
+    };
+    notify(`${solo ? "Chat" : "Channel"} archived: ${channelName}`, "info", {
+      label: "Copy text",
+      onClick: () => void copy(),
+      timeout: Infinity,
+    });
   });
   useLayoutEffect(() => () => handOffFocus(), []);
   const canAttach = submission

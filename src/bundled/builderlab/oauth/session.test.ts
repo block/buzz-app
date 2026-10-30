@@ -107,6 +107,24 @@ it("creation joins an existing Settings login and aborts its wait without cancel
   expect(acquire).toHaveBeenCalledTimes(1);
 });
 
+it("keeps one website store per account across sign-ins and restarts", async () => {
+  const first = createOAuthSession(async () => credential);
+  await first.signIn();
+  const storage = first.viewerSession().storage;
+  expect(storage).toMatch(/^builderlab-[0-9a-f]{32}$/);
+  first.dispose();
+  // A new plugin lifetime is a Buzz restart: the memory-only credential is gone.
+  const restarted = createOAuthSession(async () => credential);
+  await restarted.signIn();
+  expect(restarted.viewerSession().storage).toBe(storage);
+  const other = createOAuthSession(async () => ({
+    ...credential,
+    account: { ...credential.account, subject: "other" },
+  }));
+  await other.signIn();
+  expect(other.viewerSession().storage).not.toBe(storage);
+});
+
 it("gives each sign-in a separate viewer lifetime and revokes only deliberate sign-out or replacement", async () => {
   const revoke = vi.fn();
   const session = createOAuthSession(async () => credential, revoke);
@@ -119,7 +137,8 @@ it("gives each sign-in a separate viewer lifetime and revokes only deliberate si
   expect(revoke).not.toHaveBeenCalled();
   await session.signIn();
   const second = session.viewerSession();
-  expect(second.storage).not.toBe(first.storage);
+  expect(second.signal).not.toBe(first.signal);
+  expect(second.signal.aborted).toBe(false);
   session.signOut();
   expect(second.signal.aborted).toBe(true);
   expect(revoke).toHaveBeenCalledExactlyOnceWith(credential);

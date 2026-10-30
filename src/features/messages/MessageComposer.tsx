@@ -54,7 +54,12 @@ import { rememberAgentsPreference } from "./mention-preferences";
 import { useChosenAgent } from "../solo/default-agent";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
-import { soloHasPeople, soloRoster, useSoloMembers } from "../solo/people";
+import {
+  soloAgentsOnly,
+  soloHasPeople,
+  soloRoster,
+  useSoloMembers,
+} from "../solo/people";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -415,11 +420,11 @@ function PersonalComposer(props: MessageComposerProps) {
   );
 }
 
-/** No text, mention, chat card or GIF: nothing the user has put in yet. */
 function routedKey(agents: readonly MentionRecipient[]) {
   return agents.map((agent) => agent.pubkey).join(",");
 }
 
+/** No text, mention, chat card or GIF: nothing the user has put in yet. */
 function untouchedDraft(draft: MentionDraft) {
   return (
     !draft.text &&
@@ -940,7 +945,11 @@ function Composer({
         named: recipients.length > 0,
         only(people: readonly MentionRecipient[]) {
           if (!people.length) return;
-          choose(people.map(({ pubkey, name }) => ({ pubkey, name })));
+          const team = people.map(({ pubkey, name }) => ({ pubkey, name }));
+          // While tags in the text decide, a team replaces those tags, as a
+          // pick edits them.
+          if (!recipients.length) choose(team);
+          else if (!replaceRecipients(team)) return;
           // Typing resumes in the draft, at its caret.
           input.current?.focus();
         },
@@ -1796,17 +1805,18 @@ function Composer({
       (history?.status === "idle" || history?.status === "loading")
     )
       return undefined;
+    // Once typed mentions replaced the remembered agents, the history is
+    // skipped.
     return seedAgents(
       session,
       channelId,
-      history?.rows ?? [],
+      replaced ? [] : (history?.rows ?? []),
       mentionAdmission(session, channelId, agentChoices, mentionRoster),
       session.agentChoices
         .snapshot()
         .selectable.some((choice) => choice.pubkey === chosenAgent)
         ? chosenAgent
         : undefined,
-      replaced,
     ).join(",");
   });
   const seededAgents: readonly MentionRecipient[] = !routing
@@ -2022,18 +2032,18 @@ function Composer({
       throw new Error("The session changed. Review its channel and retry.");
     // The pill stands in only while the chat is the viewer and agents; a
     // person who joined since needs the agents tagged by name.
-    if (fromPill) {
-      const profiles = session.profiles.snapshot();
-      if (
-        soloHasPeople(
-          channel.members,
-          session.viewer,
-          profiles,
-          knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
-        )
+    if (
+      fromPill &&
+      !soloAgentsOnly(
+        channel.members,
+        session.viewer,
+        knownAgentPubkeys(
+          session.profiles.snapshot(),
+          session.agentChoices.snapshot(),
+        ),
       )
-        throw new Error("Someone joined this chat. Tag an agent to send.");
-    }
+    )
+      throw new Error("Someone joined this chat. Tag an agent to send.");
     const recipients = [...explicit];
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against

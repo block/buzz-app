@@ -91,23 +91,19 @@ export function latestOwnMessage(
  * Every agent the viewer's latest top-level message in the loaded window
  * tagged that can still be tagged. Without one: the main agent if it is a
  * member; else the first member agent that runs on this computer; else all the
- * chat's usable agent members; else the main agent. Once typed mentions have
- * replaced the remembered agents (`replaced`), the history is skipped. */
+ * chat's usable agent members; else the main agent. */
 export function seedAgents(
   session: ComposerSession,
   channelId: string,
   rows: readonly ChannelMessage[],
   admits: (pubkey: string) => boolean,
   main?: string,
-  replaced = false,
 ): readonly string[] {
   const choices = session.agentChoices.snapshot();
   if (!choices.complete) return [];
   const agents = knownAgentPubkeys(session.profiles.snapshot(), choices);
   const usable = (key: string) => agents.has(key) && admits(key);
-  // After typed mentions replaced the remembered agents, the history is
-  // skipped and the chat's own agents follow, the main agent first.
-  for (let index = replaced ? -1 : rows.length - 1; index >= 0; index--) {
+  for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
     if (!row || row.authorId !== session.viewer || row.threadRootId) continue;
     const tagged = [...new Set(row.mentions.filter(usable))];

@@ -9996,6 +9996,18 @@ it("a person who joined since the pill was shown stops its untagged send", async
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("a member who joined with no loaded profile also stops the untagged send", async () => {
+  const { h } = mountSoloAgents({
+    refreshed: [first.pubkey, second.pubkey, "f".repeat(64)],
+  });
+  h.fill("hello");
+  h.submit();
+  expect(
+    await screen.findByText("Someone joined this chat. Tag an agent to send."),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("removing an avatar resumes typing in the draft", async () => {
   const { h, ada, bea } = mountSoloAgents();
   act(() => h.commands().audience?.only([ada, bea]));
@@ -10180,6 +10192,23 @@ it("while a typed tag decides, a Solo menu toggle edits the tags, not a hidden l
   ]);
   expect(h.input()).toHaveValue("@Bea hello");
   // Deleting the last tag falls back to the main agent, untouched by picks.
+  h.fill("hello");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+});
+
+it("while a typed tag decides, a Solo team pick replaces the tags", () => {
+  const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
+  act(() => {
+    h.commands().insertMention(ada);
+    h.commands().insertText("hello");
+  });
+  act(() => h.commands().audience?.only([bea]));
+  expect(h.commands().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    bea.pubkey,
+  ]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.input()).toHaveValue("@Bea hello");
+  // Deleting the tag falls back to the main agent, not a hidden pick.
   h.fill("hello");
   expect(sendingTo("Ada")).toBeInTheDocument();
 });

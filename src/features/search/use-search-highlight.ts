@@ -117,7 +117,8 @@ export function useSearchHighlight({
     pointer.current = { x: event.clientX, y: event.clientY };
     return !!last && (last.x !== event.clientX || last.y !== event.clientY);
   };
-  // The pointer is already on a row it highlights; keep the list still.
+  // The pointer is on a row it highlights, or just left the list; keep the
+  // list still.
   const scroll = open && !(valid && selection.pointer) ? active : "";
   const moves = selection.moves;
   // biome-ignore lint/correctness/useExhaustiveDependencies: each keyboard move reveals its row again.
@@ -149,16 +150,14 @@ export function useSearchHighlight({
       },
       // A highlight the pointer made does not outlive it: leaving the list
       // returns to the row highlighted before, else to the list's own first
-      // highlight, else to none.
+      // highlight, else to none. The list stays where the pointer left it.
       onPointerLeave(event: PointerEvent) {
         if (event.pointerType === "touch" || !selection.pointer) return;
         const key = keys.includes(selection.resting)
           ? selection.resting
           : fallback;
         setSelection((previous) =>
-          previous.pointer
-            ? { ...previous, key, pointer: false, cleared: !key }
-            : previous,
+          previous.pointer ? { ...previous, key, cleared: !key } : previous,
         );
         // Focus returns with the highlight, so Enter still chooses it.
         if (key) follow(key);

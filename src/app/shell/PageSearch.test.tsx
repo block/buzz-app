@@ -275,11 +275,15 @@ it("selects the first typed result and keeps it as results change", async () => 
   expect(other).toHaveAttribute("aria-selected", "true");
   const palette = document.querySelector("[data-search-palette]");
   if (!palette) throw new Error("Missing search palette");
+  const scroll = vi.mocked(HTMLElement.prototype.scrollIntoView);
+  scroll.mockClear();
   fireEvent.pointerLeave(palette, { pointerType: "mouse" });
   expect(input).toHaveAttribute(
     "aria-activedescendant",
     screen.getByRole("option", { name: "Target ahead" }).id,
   );
+  // The list stays where the pointer left it.
+  expect(scroll).not.toHaveBeenCalled();
   await user.keyboard("{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith("test/second");
 });

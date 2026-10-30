@@ -352,9 +352,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
       : failureReason === "invalid-target" ||
           (route.state.ingress && !route.state.retryable)
         ? "link"
-        : route.reconnecting
+        : route.offline
           ? "offline"
           : "unavailable";
+  // Only a timed-out or unavailable visit reopens by itself, and only while
+  // the connection is still being retried.
+  const keepTrying =
+    route.reconnecting &&
+    !route.state.ingress &&
+    (failureReason === "timeout" || failureReason === "unavailable");
   const retryButton = (variant: "primary" | "quiet") => (
     <Button
       type="button"
@@ -363,6 +369,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
         const focused = event.currentTarget === document.activeElement;
         const before = services.navigation.snapshot().attempt.id;
         setRetriedEntry(route.state.entry.id);
+        // Reopening against a refused connection would fail again at once.
+        if (services.relay.snapshot().status === "error")
+          services.relay.retry();
         route.retry();
         // Retry can remove this control and briefly unmount the
         // shell; hand focus to main only once it has fallen away.
@@ -435,8 +444,12 @@ function ConnectedApp({ services }: { services: AppServices }) {
           title="Can’t connect"
           description={
             retriedEntry === route.state.entry.id
-              ? "Still can’t connect. We’ll keep trying."
-              : "Check your connection. We’ll keep trying."
+              ? keepTrying
+                ? "Still can’t connect. We’ll keep trying."
+                : "Still can’t connect. Check your connection, then try again."
+              : keepTrying
+                ? "Check your connection. We’ll keep trying."
+                : "Check your connection, then try again."
           }
           action={
             <>
@@ -453,8 +466,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           action={
             <>
               {messagesButton("primary")}
-              {(!route.state.ingress || route.state.retryable) &&
-                retryButton(leaveForMessages ? "quiet" : "primary")}
+              {retryButton(leaveForMessages ? "quiet" : "primary")}
             </>
           }
         />
@@ -465,8 +477,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           description="It didn’t load this time. Try again in a moment."
           action={
             <>
-              {(!route.state.ingress || route.state.retryable) &&
-                retryButton("primary")}
+              {retryButton("primary")}
               {messagesButton("quiet")}
             </>
           }

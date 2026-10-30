@@ -332,8 +332,8 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
-  // A visit that failed while its connection was down reopens by itself, once,
-  // when that connection is live again. A live connection alone does not prove
+  // A visit that failed while its connection was down, or whose connection has
+  // dropped since, reopens by itself, once, when that connection is live again. A live connection alone does not prove
   // a failed read recovered. Host-decided, denied and invalid visits keep their
   // error; a page presenting its failure in place owns that Retry.
   const offline =
@@ -415,6 +415,8 @@ export function useAppNavigation(
     waiting,
     failure,
     selected: pageKey ?? target.kind,
+    /** The connection is down, including a settled refusal. */
+    offline: !failure && offline,
     /** The connection is still being made or retried, and the visit reopens
      * once it is live; not a refused or misconfigured connection. */
     reconnecting:

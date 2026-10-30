@@ -87,8 +87,12 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   const messages = page.getByRole("tab", { name: "Messages", exact: true });
   await messages.focus();
   await messages.press("Enter");
+  // A refused connection is a connection failure, whatever the visit was.
   await expect(
-    page.getByRole("heading", { name: "This page isn’t available" }),
+    page.getByRole("heading", { name: "Can’t connect" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Check your connection, then try again."),
   ).toBeVisible();
   expect(requests).toBe(1);
   const visit = await entry(page);

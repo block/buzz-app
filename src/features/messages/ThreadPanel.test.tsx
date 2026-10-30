@@ -353,7 +353,9 @@ it("allocation failure exposes an effective retry rather than leaving a spinner"
     })
     .mockReturnValue(h.view);
   h.render();
-  expect(screen.getByRole("alert")).toHaveTextContent("capacity");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This thread didn’t load.",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(screen.getByText("root")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
@@ -758,7 +760,7 @@ it("keeps retained-range repair quiet and retry after the replies", () => {
   const reply = screen.getByText("retained reply").closest("article");
   if (!reply) throw new Error("Missing retained reply");
   const alert = within(section).getByRole("alert");
-  expect(alert).toHaveTextContent("repair failed");
+  expect(alert).toHaveTextContent("This thread didn’t load.");
   expect(
     reply.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
@@ -1347,7 +1349,9 @@ it("without close, the embedded thread keeps its reader but has no close header 
   expect(
     screen.queryByRole("button", { name: "Close thread" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("alert")).toHaveTextContent("fixture unavailable");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This thread didn’t load.",
+  );
   fireEvent.keyDown(screen.getByRole("complementary", { name: "Thread" }), {
     key: "Escape",
   });
@@ -1909,7 +1913,9 @@ it("an unrouted retained opening retries allocation locally", () => {
       onRetryNavigation={navigationRetry}
     />,
   );
-  expect(screen.getByRole("alert")).toHaveTextContent("capacity");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This thread didn’t load.",
+  );
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
   expect(navigationRetry).not.toHaveBeenCalled();

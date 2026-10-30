@@ -96,6 +96,9 @@ export type ThreadPanelProps = {
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
 
+// Read errors are diagnostics, not copy; the notice says what happened.
+const THREAD_FAILED = "This thread didn’t load.";
+
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   useMessageSelectionCopy();
@@ -335,7 +338,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     <>
       {error && !opening && (
         <div role="alert" className={styles.empty}>
-          <p>{error}</p>
+          <p>{THREAD_FAILED}</p>
           <Button loading={pending} onClick={retryNavigation}>
             Try again
           </Button>
@@ -427,7 +430,7 @@ function OwnedThreadPanel({
   ]);
   return error ? (
     <div className={styles.empty} role="alert">
-      <p>{error}</p>
+      <p>{THREAD_FAILED}</p>
       <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
         Try again
       </Button>
@@ -1618,7 +1621,7 @@ function ThreadMessages({
             {targetUnavailable && snapshot.root && (
               <p role="status">Selected message unavailable.</p>
             )}
-            {historyError && <p role="alert">{snapshot.error}</p>}
+            {historyError && <p role="alert">{THREAD_FAILED}</p>}
             <Button type="button" onClick={() => void view.refresh()}>
               Try again
             </Button>

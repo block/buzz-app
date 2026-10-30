@@ -256,6 +256,7 @@ it("the actual workspace receives session-bound authority, never the page's reus
 it("animates Connecting only while a connection is actually under way", async () => {
   const { render, screen } = await import("@testing-library/react");
   const retry = vi.fn();
+  const controller = createNavigationController(createMemoryHistory());
   const page = (snapshot: Partial<RelaySnapshot>) => {
     const relay = {
       snapshot: () => ({ scope: "s", generation: 0, ...snapshot }),
@@ -265,7 +266,7 @@ it("animates Connecting only while a connection is actually under way", async ()
       <ChannelsPage
         relay={relay}
         panels={{} as Panels}
-        navigator={createNavigationController(createMemoryHistory()).navigation}
+        navigator={controller.navigation}
       />
     );
   };
@@ -287,6 +288,22 @@ it("animates Connecting only while a connection is actually under way", async ()
       expect(screen.getByRole("status").textContent).toContain("Connecting…");
       expect(screen.queryByRole("alert")).toBeNull();
     }
+    // Once the visit has settled no deadline ends the wait: between retries,
+    // say it can't connect and keeps trying instead of animating forever.
+    act(() => {
+      controller.complete(controller.navigation.snapshot().attempt, {
+        status: "opened",
+      });
+    });
+    view.rerender(page({ status: "error", retrying: true }));
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.getByRole("alert").textContent).toContain(
+      "We’ll keep trying.",
+    );
+    expect(screen.queryByText("Connecting…")).toBeNull();
+    view.rerender(page({ status: "connecting" }));
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(screen.getByRole("status").textContent).toContain("Connecting…");
   } finally {
     vi.useRealTimers();
   }

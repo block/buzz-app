@@ -142,6 +142,10 @@ export function ChannelsPage({
 }) {
   const session = useRelayConnection(relay);
   const sessionNavigation = navigation?.forSession(relay, session);
+  // An opening visit's deadline bounds Connecting; once it has settled, a
+  // retrying connection is a failure that keeps trying, not a connection.
+  // Each attempt republishes the connection, so reading it here stays current.
+  const visitSettled = navigator.snapshot().status !== "opening";
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;
@@ -199,14 +203,19 @@ export function ChannelsPage({
                 community. Your profile and settings work without a community.
               </p>
             </div>
-          ) : session.status === "error" && !session.retrying ? (
+          ) : session.status === "error" &&
+            (!session.retrying || visitSettled) ? (
             // Usually a failed visit's card covers this page, but a visit that
             // already opened from cached content keeps it: say so plainly.
             <div role="alert" className={styles.failed}>
               <EmptyState
                 icon={<CloudOffIcon />}
                 title="Can’t connect"
-                description="Check your connection, then try again."
+                description={
+                  session.retrying
+                    ? "Check your connection. We’ll keep trying."
+                    : "Check your connection, then try again."
+                }
                 action={
                   <Button
                     type="button"

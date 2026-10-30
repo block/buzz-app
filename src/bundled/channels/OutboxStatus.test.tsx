@@ -44,11 +44,13 @@ const invitation = {
 function show(item: OutgoingEvent) {
   const retry = vi.fn();
   const add = vi.fn(async () => {});
+  const acknowledge = vi.fn(async () => {});
   const items = [item];
   const outbox = {
     snapshot: () => items,
     subscribe: () => () => {},
     retry,
+    acknowledge,
     dismiss: vi.fn(),
   } as unknown as Outbox;
   render(
@@ -59,7 +61,7 @@ function show(item: OutgoingEvent) {
     />,
   );
   fireEvent.click(screen.getByText("Outbox · 1 items"));
-  return { retry, add };
+  return { retry, add, acknowledge };
 }
 
 it("does not offer generic retry for guarded invitations from either profile or composer", () => {
@@ -128,6 +130,34 @@ it("routes an ordinary addition retry through fresh membership checks", async ()
   await waitFor(() =>
     expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person"),
   );
+  expect(retry).not.toHaveBeenCalled();
+});
+
+it("retries a batch addition per person, then settles it rather than resending it", async () => {
+  const { retry, add, acknowledge } = show({
+    ...invitation,
+    event: {
+      ...invitation.event,
+      tags: [
+        ["h", "channel"],
+        ["p", "one"],
+        ["p", "two"],
+        ["role", "member"],
+      ],
+    },
+    recovery: { key: "member-add:batch:operation", value: "1" },
+  });
+  add.mockImplementation(async (...args: unknown[]) => {
+    if (args[1] === "two") throw new Error("Could not add two");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  // Settled even when someone fails: they keep their own addition and error.
+  await waitFor(() => expect(acknowledge).toHaveBeenCalledWith("invite"));
+  expect(add.mock.calls).toEqual([
+    ["channel", "one"],
+    ["channel", "two"],
+  ]);
+  expect(await screen.findByText(/Could not add two/)).toBeVisible();
   expect(retry).not.toHaveBeenCalled();
 });
 

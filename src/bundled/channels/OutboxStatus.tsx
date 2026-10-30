@@ -6,6 +6,7 @@ import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
 import type { Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
+import { isBatchAddition } from "../../features/channel-members/members";
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
 export function OutboxStatus({
@@ -66,15 +67,28 @@ export function OutboxStatus({
                         const channelId = item.event.tags.find(
                           ([tag]) => tag === "h",
                         )?.[1];
-                        const pubkey = item.event.tags.find(
-                          ([tag]) => tag === "p",
-                        )?.[1];
-                        if (!channelId || !pubkey)
+                        const pubkeys = item.event.tags.flatMap(
+                          ([tag, value]) =>
+                            tag === "p" && value ? [value] : [],
+                        );
+                        if (!channelId || !pubkeys.length)
                           throw new Error(
                             "Reopen Members to check this addition.",
                           );
-                        // A stale explicit role must never overwrite a newer admission.
-                        await memberAdditions.add(channelId, pubkey);
+                        // A stale explicit role must never overwrite a newer
+                        // admission, so each person is checked again.
+                        const results = await Promise.allSettled(
+                          pubkeys.map((pubkey) =>
+                            memberAdditions.add(channelId, pubkey),
+                          ),
+                        );
+                        // Never resumed: each person now has their own addition.
+                        if (isBatchAddition(item))
+                          await outbox.acknowledge(item.event.id);
+                        const failed = results.find(
+                          (result) => result.status === "rejected",
+                        );
+                        if (failed) throw failed.reason;
                       } else outbox.retry(item.event.id);
                       setError(undefined);
                     } catch (reason) {

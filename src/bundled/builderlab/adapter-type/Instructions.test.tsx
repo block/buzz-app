@@ -122,6 +122,7 @@ async function fixture(signedIn = true) {
   if (!Tab) throw new Error("Missing Builderlab settings");
   return {
     Tab,
+    client,
     type,
     request,
     session,
@@ -317,6 +318,59 @@ it("retries a failed load and refuses to save a draft through another account", 
   );
   expect(h.request).toHaveBeenCalledTimes(before);
   expect(field).toHaveValue("First instructions.Changed.");
+});
+it("settles an aborted catalog read after switching accounts without losing the draft", async () => {
+  const h = await fixture();
+  const held = deferred<HostResponse>();
+  const request = h.request.getMockImplementation();
+  if (!request) throw new Error("Missing request fixture");
+  const catalog = vi.spyOn(h.client, "modelCatalog");
+  h.request.mockImplementation((input) => {
+    if (input.url.endsWith("/get-model-catalog")) {
+      return held.promise;
+    }
+    return request(input);
+  });
+  render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
+  try {
+    const field = await loadedInstructions();
+    await waitFor(() => expect(catalog).toHaveBeenCalled());
+    expect(field.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+    const user = userEvent.setup();
+    await user.type(field, " Draft");
+    act(() => h.session.signOut());
+    expect(catalog.mock.calls.at(-1)?.[0].aborted).toBe(true);
+    await act(() => h.changeAccount());
+    await waitFor(() =>
+      expect(field.closest("[aria-busy]")).toHaveAttribute(
+        "aria-busy",
+        "false",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Model: Unavailable" }),
+    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+    const before = h.request.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "account that loaded these settings",
+    );
+    expect(h.request).toHaveBeenCalledTimes(before);
+    expect(field).toHaveValue("First instructions. Draft");
+  } finally {
+    await act(async () => {
+      held.resolve({ status: 200, headers: {}, body: '{"models":[]}' });
+    });
+  }
+  expect(
+    screen.queryByText(
+      "No models are available. Retry when the catalog is available.",
+    ),
+  ).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "First instructions. Draft",
+  );
 });
 it("switching agents hides the old draft and ignores the switched-away read", async () => {
   const h = await fixture();

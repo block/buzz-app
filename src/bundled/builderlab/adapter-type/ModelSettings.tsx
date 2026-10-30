@@ -88,12 +88,11 @@ export function ModelSettings({
   }, [agent]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision retries a failed catalog request while keeping the draft.
   useEffect(() => {
-    if (
-      !agent ||
-      login.status !== "signed-in" ||
-      login.account?.subject !== subject
-    )
+    if (!agent || login.status !== "signed-in") return;
+    if (login.account?.subject !== subject) {
+      setLoading(false);
       return;
+    }
     const current = new AbortController();
     setLoading(true);
     setCatalogError("");

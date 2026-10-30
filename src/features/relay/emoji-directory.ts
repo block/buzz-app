@@ -173,8 +173,13 @@ export function createEmojiDirectory(
     return pending;
   }
   const refresh = () => load("foreground");
-  function ensure() {
-    if (snapshot.status === "idle") return load("background");
+  function ensure(priority: Priority = "background") {
+    if (
+      !limited &&
+      (snapshot.status === "idle" ||
+        (priority === "foreground" && snapshot.status !== "ready"))
+    )
+      return load(priority);
     return pending ?? Promise.resolve();
   }
   /** Read-modify-write of the viewer's own set; an absent URL removes the shortcode. */
@@ -339,7 +344,7 @@ export function createEmojiDirectory(
       if (!codes.length) return [];
       if (closed) throw new Error("Community session is closed");
       if (snapshot.status !== "ready") {
-        // Only a send retries a cold failure, so passive mounts cannot repeat
+        // A send retries a cold failure, but passive mounts cannot repeat
         // reads; refresh() shares a pending one. Overflow would repeat on every
         // read, so it waits for an explicit retry. The composer keeps this text
         // after the read settles, so it must not claim the read is still running.

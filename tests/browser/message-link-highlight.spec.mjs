@@ -58,13 +58,19 @@ for (const destination of ["thread", "channel", "agents"]) {
       await page.evaluate(
         ({ id, capture }) => {
           window.targetCues = [];
-          document.addEventListener("animationstart", (event) => {
+          window.targetCueEvents = [];
+          const observe = (event) => {
             if (
               event.pseudoElement !== "::after" ||
               event.target.closest("[data-message-id]")?.dataset.messageId !==
                 id
             )
               return;
+            window.targetCueEvents.push({
+              type: event.type,
+              elapsedTime: event.elapsedTime,
+            });
+            if (event.type !== "animationstart") return;
             const style = getComputedStyle(event.target, "::after");
             window.targetCues.push({
               background: style.backgroundColor,
@@ -73,7 +79,13 @@ for (const destination of ["thread", "channel", "agents"]) {
             if (capture)
               for (const animation of event.target.getAnimations())
                 animation.pause();
-          });
+          };
+          for (const type of [
+            "animationstart",
+            "animationend",
+            "animationcancel",
+          ])
+            document.addEventListener(type, observe);
         },
         { id: target.id, capture: !!process.env.BUZZ_CAPTURE_HIGHLIGHT },
       );
@@ -102,6 +114,12 @@ for (const destination of ["thread", "channel", "agents"]) {
         });
       }
       await expect
+        .poll(() => page.evaluate(() => window.targetCueEvents))
+        .toEqual([
+          { type: "animationstart", elapsedTime: 0 },
+          { type: "animationend", elapsedTime: 1.1 },
+        ]);
+      await expect
         .poll(() =>
           (destination === "agents"
             ? row
@@ -120,6 +138,14 @@ for (const destination of ["thread", "channel", "agents"]) {
         await expect
           .poll(() => page.evaluate(() => window.targetCues.length))
           .toBe(2);
+        await expect
+          .poll(() => page.evaluate(() => window.targetCueEvents))
+          .toEqual([
+            { type: "animationstart", elapsedTime: 0 },
+            { type: "animationend", elapsedTime: 1.1 },
+            { type: "animationstart", elapsedTime: 0 },
+            { type: "animationend", elapsedTime: 1.1 },
+          ]);
       }
     });
   }

@@ -231,6 +231,9 @@ for (const scope of ["channel", "thread"]) {
         );
       }),
     ).toBe(true);
+    // Each keyboard gesture targets history explicitly; the reply composer
+    // now owns focus on open and retains its native editing selection.
+    await history.focus();
     await keyScroll(page, "End", history);
     await expect.poll(gap).toBeLessThan(2);
     await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);

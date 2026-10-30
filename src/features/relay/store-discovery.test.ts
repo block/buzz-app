@@ -7,6 +7,7 @@ import { tag, type RelayEvent } from "./events";
 import { createRelaySession } from "./session";
 import type { ChannelSummary } from "./contracts";
 import type { ChannelStoreOptions } from "./store";
+import { isRetryableRead } from "./read-retry";
 import {
   flush,
   keypair,
@@ -829,6 +830,115 @@ it.each(["renamed", "private", "archived", "missing"])(
     expect(progress).toHaveBeenLastCalledWith({ channels: [], partial: false });
     refresh.respond([]);
     expect(await result).toEqual({ channels: [], partial: false });
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
+it.each(["private", "missing"])(
+  "makes an expired search retryable when a previously admitted preview becomes %s",
+  async (change) => {
+    let clock = 1_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const old = metadata(relay, "old", "release-old", 10, [["public"]]);
+    const warm = h.channels.searchPublic?.("release");
+    (await h.next(39000)).respond([old]);
+    (await h.next(39000)).respond([old]);
+    await warm;
+    expect(h.channels.get?.("old")?.readOnly).toBe(true);
+    clock += 30_000;
+    const search = h.channels.searchPublic?.("release", { progress() {} });
+    assert.exists(search);
+    const result = search.catch((error: unknown) => error);
+    const refresh = await h.next(39000);
+    (await h.next(39000)).respond(
+      change === "missing"
+        ? []
+        : [metadata(relay, "old", "release-old", 11, [["private"]])],
+    );
+    expect(isRetryableRead(await result)).toBe(true);
+    expect(refresh.signal?.aborted).toBe(true);
+    expect(h.channels.get?.("old")?.readOnly).not.toBe(true);
+    // The existing retry owner can now finish from fresh evidence.
+    const current = metadata(relay, "new", "release-new", 12, [["public"]]);
+    const retry = h.channels.searchPublic?.("release", { progress() {} });
+    (await h.next(39000)).respond([current]);
+    (await h.next(39000)).respond([current]);
+    expect((await retry)?.channels.map(({ id }) => id)).toEqual(["new"]);
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
+it.each(["stalls", "fails"])(
+  "finishes from the fresh directory when a saved-candidate read %s",
+  async (failure) => {
+    let clock = 1_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const old = metadata(relay, "old", "release-old", 10, [["public"]]);
+    const warm = h.channels.searchPublic?.("zzz");
+    (await h.next(39000)).respond([old]);
+    await warm;
+    clock += 30_000;
+    const progress = vi.fn();
+    const search = h.channels.searchPublic?.("release", { progress });
+    assert.exists(search);
+    const result = search.catch((error: unknown) => error);
+    const refresh = await h.next(39000);
+    const provisional = await h.next(39000);
+    if (failure === "fails") provisional.fail(new Error("exact read failed"));
+    const current = metadata(relay, "new", "release-new", 12, [["public"]]);
+    refresh.respond([current]);
+    const exact = await h.next(39000);
+    expect(exact.filters[0]?.["#d"]).toEqual(["new"]);
+    expect(provisional.signal?.aborted).toBe(true);
+    exact.respond([current]);
+    const found = await result;
+    expect(found).toMatchObject({ channels: [{ id: "new" }], partial: false });
+    // A late response cannot admit the superseded candidate or emit progress.
+    provisional.respond([old]);
+    expect(h.channels.get?.("old")).toBeUndefined();
+    expect(progress).not.toHaveBeenCalled();
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
+it.each(["caller", "cache clear", "disposal"])(
+  "does not retry a provisional search cancelled by %s",
+  async (action) => {
+    let clock = 1_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const old = metadata(relay, "old", "release-old", 10, [["public"]]);
+    const warm = h.channels.searchPublic?.("zzz");
+    (await h.next(39000)).respond([old]);
+    await warm;
+    clock += 30_000;
+    const caller = new AbortController();
+    const progress = vi.fn();
+    const search = h.channels.searchPublic?.("release", {
+      progress,
+      signal: caller.signal,
+    });
+    assert.exists(search);
+    const result = search.catch((error: unknown) => error);
+    const refresh = await h.next(39000);
+    const provisional = await h.next(39000);
+    if (action === "caller") caller.abort();
+    else if (action === "cache clear") await h.clearCache();
+    else h.dispose();
+    expect(isRetryableRead(await result)).toBe(false);
+    expect(provisional.signal?.aborted).toBe(true);
+    // A caller cancellation keeps the shared directory read for other queries.
+    if (action === "caller") refresh.respond([]);
+    else expect(refresh.signal?.aborted).toBe(true);
+    expect(progress).not.toHaveBeenCalled();
     expect(h.pending).toHaveLength(0);
   },
 );

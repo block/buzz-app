@@ -2041,7 +2041,7 @@ export function createChannelStore(
     // search in flight, and one that joins later (`in:team data` runs two),
     // `limit` free discovery slots for its final answer, so a long read
     // cannot fill discovery or crowd out a better match on a later page.
-    const answer = async (final: boolean) => {
+    const answer = async (final: boolean, readSignal?: AbortSignal) => {
       const latest = new Map<string, RelayEvent>();
       // Saved names are candidates only: each match still resolves freshly.
       // Only the new scan contributes to the final answer.
@@ -2090,7 +2090,10 @@ export function createChannelStore(
               ),
             );
       if (unresolved.length) {
-        await resolve(unresolved, settings);
+        await resolve(
+          unresolved,
+          readSignal ? { ...settings, signal: readSignal } : settings,
+        );
         for (const id of unresolved) resolved.add(id);
       }
       // A better match past the budget does not hide the rows already shown.
@@ -2134,15 +2137,43 @@ export function createChannelStore(
         // A page that lands while this one is ranked wakes the next turn at once.
         page = entry.page;
         if (settings?.progress) {
-          const channels = await answer(false);
-          // Kept for the next keystroke too: its fallback would otherwise lose
-          // these rows until its own first page resolves.
-          if (generation === epoch)
-            recentPublic = { generation, ids: channels.map(({ id }) => id) };
-          signal?.throwIfAborted();
-          settings.progress({ channels, partial: false });
+          const provisional = new AbortController();
+          try {
+            const channels = await Promise.race([
+              answer(false, provisional.signal).catch(() =>
+                entry.read.then(() => undefined),
+              ),
+              entry.read.then(() => undefined),
+              aborted,
+            ]);
+            // A completed directory supersedes provisional work and its errors.
+            if (!channels) continue;
+            // Kept for the next keystroke too: its fallback would otherwise lose
+            // these rows until its own first page resolves.
+            if (generation === epoch)
+              recentPublic = { generation, ids: channels.map(({ id }) => id) };
+            signal?.throwIfAborted();
+            settings.progress({ channels, partial: false });
+          } finally {
+            provisional.abort();
+          }
         }
       }
+    } catch (error) {
+      if (
+        isAbort(error) &&
+        !disposed &&
+        !signal?.aborted &&
+        generation !== epoch &&
+        revokedEpoch === epoch
+      )
+        // The existing retry owner recovers an access purge, but never a
+        // caller cancellation, cache clear or disposal.
+        throw new ReadError(
+          "unavailable",
+          "Channel access changed during search",
+        );
+      throw error;
     } finally {
       publicSearchReserve -= limit;
     }

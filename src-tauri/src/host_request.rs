@@ -70,7 +70,7 @@ struct UploadFile {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct HostResponse {
-    status: u16,
+    pub(crate) status: u16,
     headers: BTreeMap<String, String>,
     body: String,
 }

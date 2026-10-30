@@ -91,3 +91,21 @@ it("joins the shared native sign-in and leaves it running when a view closes", a
   expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
   session.dispose();
 });
+
+it("shows a session the adapter ended as signed out, asking to sign in again", async () => {
+  const h = federatedFixture();
+  h.request.mockResolvedValueOnce(me("user"));
+  h.publish({ status: "signed-in", revision: "user:1" });
+  const session = createNativeSession(h.service);
+  await expect.poll(() => session.snapshot().status).toBe("signed-in");
+  h.publish({
+    status: "reauthentication-required",
+    revision: "user:2",
+    failure: "reauthentication-required",
+  });
+  expect(session.snapshot()).toEqual({
+    status: "signed-out",
+    error: "Your Builderlab sign-in ended. Sign in again.",
+  });
+  session.dispose();
+});

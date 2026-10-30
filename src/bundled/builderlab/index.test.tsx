@@ -492,6 +492,8 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   root.provide("federatedIdentity", identity.service);
+  const navigation = { open: vi.fn(async () => ({ status: "opened" })) };
+  root.provide("navigation", navigation as never);
   provideKnownCommunities(root, community.viewer);
   provideAgents(root, community);
   try {
@@ -535,8 +537,17 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
           command.startsWith("oauth_") || command === "plugin_host_request",
       ),
     ).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
-    expect(identity.service.signOut).toHaveBeenCalledOnce();
+    // The shared session ends only from Identity → Organization sign-in.
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Identity → Organization sign-in" }),
+    );
+    expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "identity",
+    });
+    await act(() => identity.service.signOut());
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();

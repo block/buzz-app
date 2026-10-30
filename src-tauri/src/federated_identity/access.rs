@@ -154,8 +154,13 @@ pub(crate) async fn federated_identity_request(
         .ok_or("Sign in to your community first")?
         .ok_or("Federated session changed")?;
     // A refusal here (including 401) belongs to this call only. Only the
-    // adapter's session and assertion routes decide that the session ended.
-    forward(destination, &token, request).await
+    // adapter's session and assertion routes decide that the session ended,
+    // so a 401 asks the session route once.
+    let response = forward(destination, &token, request).await?;
+    if response.status == 401 {
+        host.recheck(&session).await;
+    }
+    Ok(response)
 }
 async fn forward(
     destination: url::Url,
@@ -364,6 +369,93 @@ mod tests {
         register(revision.clone(), token.clone()).await.unwrap();
         manager.change("disable", "example.fi").unwrap();
         assert!(request("/api/list", BTreeMap::new()).await.is_err());
+    }
+    #[tokio::test]
+    async fn a_granted_401_asks_the_session_route_once_before_answering() {
+        use super::super::tests::{adapter_with_status, at_adapter, record, Memory};
+        let temp = tempfile::tempdir().unwrap();
+        let manager =
+            buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        std::fs::write(source.join("manifest.json"), r#"{"id":"example.fi","name":"Example","apiVersion":1,"host":{"federatedIdentity":{"authority":"test","operations":[{"method":"GET","path":"/api/list"}]}}}"#).unwrap();
+        let revision = manager
+            .install(&source)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.fi")
+            .unwrap()
+            .revision;
+        manager.change("enable", "example.fi").unwrap();
+        let (base, server) = adapter_with_status(vec![
+            (401, serde_json::json!({})),
+            (401, serde_json::json!({"error":"session_expired"})),
+        ])
+        .await;
+        let store = std::sync::Arc::new(Memory::default());
+        let mut host = at_adapter(store.clone(), base.clone());
+        // Plain loopback wire fixture only, as `at_adapter` is.
+        std::sync::Arc::get_mut(&mut host.0)
+            .unwrap()
+            .config
+            .as_mut()
+            .unwrap()
+            .identity_origin = url::Url::parse(&base)
+            .unwrap()
+            .origin()
+            .ascii_serialization();
+        let session = record();
+        *store.raw.lock().unwrap() = Some(session.raw.clone());
+        {
+            let mut state = host.state();
+            state.snapshot.revision = session.record.revision.clone();
+            state.snapshot.status = super::super::Status::SignedIn;
+            state.session = Some(session.clone());
+        }
+        let app = tauri::test::mock_builder()
+            .manage(crate::PluginManager(Ok(manager)))
+            .manage(host)
+            .manage(Registrations::default())
+            .build(crate::app_context())
+            .unwrap();
+        let token = uuid::Uuid::new_v4().to_string();
+        federated_identity_register(
+            app.state(),
+            app.state(),
+            app.state(),
+            "example.fi".into(),
+            revision.clone(),
+            token.clone(),
+        )
+        .await
+        .unwrap();
+        let response = federated_identity_request(
+            app.state(),
+            app.state(),
+            app.state(),
+            "example.fi".into(),
+            revision,
+            token,
+            session.record.revision.clone(),
+            Request {
+                path: "/api/list".into(),
+                method: "GET".into(),
+                headers: BTreeMap::new(),
+                body: None,
+            },
+        )
+        .await
+        .unwrap();
+        // The caller still gets its own 401; the adapter ended the session.
+        assert_eq!(response.status, 401);
+        let host = app.state::<FederatedIdentity>();
+        assert!(!host.current(&session.record.revision));
+        assert!(host.snapshot().status == super::super::Status::ReauthenticationRequired);
+        let seen = server.await.unwrap();
+        assert_eq!(seen[0].target, "GET /api/list HTTP/1.1");
+        assert_eq!(seen[1].target, "GET /mount/v1/session HTTP/1.1");
     }
     #[tokio::test]
     async fn forwarding_adds_only_the_native_bearer_and_returns_refusals() {

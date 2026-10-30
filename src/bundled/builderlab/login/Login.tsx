@@ -15,6 +15,7 @@ export function Login({
   showHeading = true,
   cancelOnUnmount = true,
   unavailableReason = "Open the Buzz desktop app to sign in with Builderlab.",
+  openIdentity,
 }: {
   session: BuilderlabSession;
   available: boolean;
@@ -23,6 +24,8 @@ export function Login({
   /** Settings owns its pending login; shared app panels only observe it. */
   cancelOnUnmount?: boolean;
   unavailableReason?: string;
+  /** Opens Identity, where an FI build's shared organization sign-in ends. */
+  openIdentity?: (() => void) | undefined;
 }) {
   const state = useSyncExternalStore(
     session.subscribe,
@@ -63,21 +66,43 @@ export function Login({
               {state.error}
             </p>
           )}
-          <Button
-            variant={state.status === "signed-out" ? "prominent" : "outline"}
-            onClick={() => {
-              if (!active()) return;
-              if (state.status === "pending") session.cancel();
-              else if (state.status === "signed-in") session.signOut();
-              else void session.signIn();
-            }}
-          >
-            {state.status === "pending"
-              ? "Cancel sign-in"
-              : state.status === "signed-in"
-                ? "Sign out"
-                : "Sign in with Builderlab"}
-          </Button>
+          {nativeBuilderlab() && state.status === "signed-in" ? (
+            // The native session is shared with community sign-in, so it
+            // ends only where that sign-in is managed.
+            <p className="m-0 text-body-sm text-secondary">
+              Builderlab uses your organization sign-in. To sign out, go to{" "}
+              {openIdentity ? (
+                <Button
+                  variant="link"
+                  size="inline"
+                  onClick={() => {
+                    if (active()) openIdentity();
+                  }}
+                >
+                  Identity → Organization sign-in
+                </Button>
+              ) : (
+                "Identity → Organization sign-in"
+              )}
+              .
+            </p>
+          ) : (
+            <Button
+              variant={state.status === "signed-out" ? "prominent" : "outline"}
+              onClick={() => {
+                if (!active()) return;
+                if (state.status === "pending") session.cancel();
+                else if (state.status === "signed-in") session.signOut();
+                else void session.signIn();
+              }}
+            >
+              {state.status === "pending"
+                ? "Cancel sign-in"
+                : state.status === "signed-in"
+                  ? "Sign out"
+                  : "Sign in with Builderlab"}
+            </Button>
+          )}
         </>
       )}
     </div>

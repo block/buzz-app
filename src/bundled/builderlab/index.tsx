@@ -36,7 +36,7 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
-  ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
+  ...(nativeBuilderlab() ? ["federatedIdentity", "navigation"] : []),
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -75,6 +75,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const session = legacy ?? createNativeSession(ctx.federatedIdentity);
   ctx.effect(() => () => session.dispose());
   const loginAvailable = browserLoginAvailable() && !unavailable;
+  // An FI build signs out where its shared organization sign-in is managed.
+  const openIdentity = legacy
+    ? undefined
+    : () =>
+        void ctx.navigation.open({
+          version: 1,
+          kind: "settings",
+          section: "identity",
+        });
   applyApps(ctx, session, loginAvailable, legacy);
   const handoff = (signedIn: boolean) =>
     legacy
@@ -141,6 +150,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             available={loginAvailable}
             active={() => true}
             showHeading={false}
+            openIdentity={openIdentity}
           />
           {state.status === "signed-in" &&
             !state.account?.canUseRemoteAgents && (
@@ -224,6 +234,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 : "Open the Buzz desktop app to sign in with Builderlab."
             }
             active={active}
+            openIdentity={openIdentity}
           />
         </SettingsGroup>
         <Communities active={active} />

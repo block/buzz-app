@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import * as React from "react";
 import { createElement, StrictMode } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -14,6 +15,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import { BrowserService } from "./service";
 import type { BrowserPlatform } from "./platform";
+import { apply as applyBrowserControl } from "../../../examples/plugins/browser-control/src/index";
 
 const contexts: Context[] = [];
 afterEach(async () => {
@@ -44,7 +46,7 @@ it("exposes availability and a host View", () => {
   expect(typeof context.browser.View).toBe("function");
 });
 
-it("exposes execution but keeps grant and revoke in the host UI", () => {
+it("exposes authorization primitives without host-owned UI or an opening workflow", () => {
   const context = new Context();
   contexts.push(context);
   const native = platform(true);
@@ -57,14 +59,14 @@ it("exposes execution but keeps grant and revoke in the host UI", () => {
   new BrowserService(context, native);
   expect(Object.keys(context.browser.control ?? {})).toEqual([
     "available",
-    "Page",
-    "View",
-    "open",
+    "eligible",
+    "forRecipient",
+    "revokeRecipient",
     "execute",
   ]);
 });
 
-async function openingFixture() {
+async function openingFixture(applyPlugin = applyBrowserControl) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -161,16 +163,18 @@ async function openingFixture() {
   };
   new BrowserService(context, native);
   context.provide("pluginStatus", { isActive: () => true, subscribe });
-  context.provide("react", {
-    createElement,
-  } as unknown as typeof context.react);
+  context.provide("react", React);
   context.agents.addTool = vi.fn();
   const panels = new PanelsService(context);
-  const pluginPath = "../../../examples/plugins/browser-control/plugin.js";
-  const { apply } = await import(pluginPath);
-  await apply(
-    context.extend({ pluginOwner: { id: "test.browser", revision: "one" } }),
-  );
+  const plugin = context.plugin({
+    apply: (pluginContext) =>
+      applyPlugin(
+        pluginContext.extend({
+          pluginOwner: { id: "test.browser", revision: "one" },
+        }),
+      ),
+  });
+  await plugin.await();
   let lastProps!: PanelProps;
   let lastView!: ReturnType<typeof render>;
   const handleOpen = vi.fn((request: PanelOpenRequest) => {
@@ -197,6 +201,7 @@ async function openingFixture() {
   if (!browserControl) throw new Error("Missing browser control");
   return {
     context,
+    disable: () => plugin.dispose(),
     native,
     panels,
     connection,
@@ -208,12 +213,17 @@ async function openingFixture() {
     dispose,
     view: () => lastView,
     props: () => lastProps,
-    open: () =>
-      browserControl.open(
-        "membership",
-        { channel: "chat", root: "thread" },
-        { url: "https://example.org/", storage: "fixture-store" },
-      ),
+    open: async (url = "https://example.org/") => {
+      const tool = vi.mocked(context.agents.addTool).mock.calls[0]?.[0];
+      if (!tool) throw new Error("Missing plugin tool");
+      return JSON.parse(
+        (await tool.call(
+          { key: "membership" } as never,
+          { channel: "chat", root: "thread" },
+          { action: "open", url },
+        )) as string,
+      );
+    },
   };
 }
 
@@ -289,13 +299,7 @@ it("rejects remote agents, archived conversations and invalid URLs before openin
   f.channel.archived = true;
   await expect(f.open()).rejects.toThrow("cannot open");
   f.channel.archived = false;
-  await expect(
-    f.context.browser.control?.open(
-      "membership",
-      { channel: "chat" },
-      { url: "file:///tmp/example" },
-    ),
-  ).rejects.toThrow();
+  await expect(f.open("file:///tmp/example")).rejects.toThrow();
   expect(f.handleOpen).not.toHaveBeenCalled();
   expect(f.native.attach).not.toHaveBeenCalled();
 });
@@ -352,7 +356,7 @@ it("opens a fresh page after takeover and close, without reclaiming the parked s
   expect(f.native.attach).toHaveBeenLastCalledWith(
     "https://example.org/",
     expect.anything(),
-    "fixture-store",
+    "browser-control-preview",
   );
   await expect(
     f.context.browser.control?.execute(
@@ -471,4 +475,56 @@ it("preserves an explicit owner recipient choice while the agent-created page is
       { action: "observe" },
     ),
   ).resolves.toEqual({ text: "Example page" });
+});
+
+it("opens, observes and revokes through the installable plugin artifact", async () => {
+  const artifact = "../../../examples/plugins/browser-control/plugin.js";
+  const f = await openingFixture((await import(artifact)).apply);
+  await f.open();
+  await expect(
+    f.context.browser.control?.execute(
+      "membership",
+      { channel: "chat", root: "thread" },
+      { action: "observe" },
+    ),
+  ).resolves.toEqual({ text: "Example page" });
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Take control from Tester" }),
+  );
+  await expect(
+    f.context.browser.control?.execute(
+      "membership",
+      { channel: "chat", root: "thread" },
+      { action: "observe" },
+    ),
+  ).rejects.toThrow("No browser");
+});
+
+it("cancels a pending opening when the plugin is disabled and revokes a late grant", async () => {
+  const f = await openingFixture();
+  let finish!: (grant: { token: string; revision: number }) => void;
+  if (!f.native.control) throw new Error("Missing native control");
+  vi.mocked(f.native.control.grant).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const opening = f.open();
+  const rejected = expect(opening).rejects.toThrow("plugin was disabled");
+  await waitFor(() => expect(f.native.control?.grant).toHaveBeenCalled());
+  await f.disable();
+  await rejected;
+  await act(async () => {
+    finish({ token: "late", revision: 1 });
+  });
+  await waitFor(() =>
+    expect(f.native.control?.revoke).toHaveBeenCalledWith("session-1"),
+  );
+  await expect(
+    f.context.browser.control?.execute(
+      "membership",
+      { channel: "chat", root: "thread" },
+      { action: "observe" },
+    ),
+  ).rejects.toThrow("No browser");
 });

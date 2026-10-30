@@ -4,7 +4,10 @@ import { StrictMode, useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { BrowserControlBar as SharingControl } from "./BrowserControlBar";
+import * as React from "react";
+import { createControlBar } from "../../../examples/plugins/browser-control/src/ControlBar";
+import { browserToolbarUi } from "./toolbar-ui";
+const SharingControl = createControlBar(React, browserToolbarUi);
 import type { BrowserStatus, BrowserControl } from "./platform";
 
 function BrowserControlBar({

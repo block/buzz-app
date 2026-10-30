@@ -101,10 +101,13 @@ isolation. Native grants are revocable and actions require a visible guest;
 hiding, covering or closing the guest revokes access. Arbitrary agent-supplied
 JavaScript is not accepted.
 
-The optional browser-control plugin registers the agent tool and selects
-`ctx.browser.control.Page` for website panels with sharing controls. Ordinary
-`ctx.browser.View` panels have no sharing controls. Installing the native
-capability does not register an agent tool or enable access to any page.
+The optional browser-control plugin owns its agent tool, sharing UI, recipient
+selection, and page-opening workflow. It contributes a toolbar to
+`ctx.browser.View`; ordinary views have no sharing controls. The host provides the
+active session and status, a native presentation barrier, shared UI primitives,
+and authenticated grant/execute/revoke operations. It does not open agent pages
+or choose recipients. Plugin interactions can be updated without rebuilding Buzz.
+Installing the native capability does not register an agent tool or enable access to any page.
 The plugin's `open` action creates a new page beside the current conversation and
 assigns it to the authenticated local agent, without an owner Share click.
 Existing user-opened pages still require Share. Take control revokes the page's

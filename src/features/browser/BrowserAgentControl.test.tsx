@@ -3,10 +3,13 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import * as React from "react";
 import {
-  BrowserAgentControl,
+  createAgentControl,
   type BrowserAgentHost,
-} from "./BrowserAgentControl";
+} from "../../../examples/plugins/browser-control/src/AgentControl";
+import { browserToolbarUi } from "./toolbar-ui";
+const BrowserAgentControl = createAgentControl(React, browserToolbarUi);
 import { BrowserAccess } from "./control-access";
 import type { BrowserControl } from "./platform";
 

@@ -4,18 +4,22 @@ import { apply } from "../../../examples/plugins/browser-control/plugin.js";
 function fixture(enabled) {
   let tool;
   const context = {
+    effect: vi.fn(),
+    relay: { snapshot: () => ({ scope: "fixture:owner" }) },
     browser: {
       available: true,
       View: () => null,
       control: {
         available: async () => enabled,
-        Page: () => null,
-        open: vi.fn(async () => ({ opened: true })),
+        eligible: vi.fn(() => false),
+        forRecipient: vi.fn(),
+        revokeRecipient: vi.fn(),
         execute: vi.fn(async () => ({ ok: true })),
       },
     },
     panels: { register: vi.fn() },
     agents: {
+      snapshot: () => ({ running: [{ key: "agent", pubkey: "agent" }] }),
       addTool: (added) => {
         tool = added;
       },
@@ -64,37 +68,30 @@ it("passes only validated action fields and authenticated caller context to the 
   expect(test.context.browser.control.execute).toHaveBeenCalledTimes(1);
 });
 
-it("opens a page using host-provided identity and conversation, without requesting a UI share", async () => {
+it("rejects an unauthorized open before requesting a panel", async () => {
   const test = fixture(true);
+  test.context.panels.requestOpen = vi.fn();
   await apply(test.context);
   await expect(
     test
       .tool()
       .call(
         { key: "agent" },
-        { channel: "chat", root: "thread" },
+        { channel: "chat" },
         { action: "open", url: "https://example.org/" },
       ),
-  ).resolves.toBe('{"opened":true}');
-  expect(test.context.browser.control.open).toHaveBeenCalledWith(
-    "agent",
-    { channel: "chat", root: "thread" },
-    { url: "https://example.org/", storage: "browser-control-preview" },
-  );
+  ).rejects.toThrow("cannot open");
+  expect(test.context.panels.requestOpen).not.toHaveBeenCalled();
   expect(test.context.browser.control.execute).not.toHaveBeenCalled();
 });
 
-it("selects the control view only for the enabled plugin's website panel", async () => {
+it("registers plugin-owned panels without requiring host-owned control views", async () => {
   const test = fixture(true);
-  test.context.react = { createElement: vi.fn() };
   await apply(test.context);
-  const panel = test.context.panels.register.mock.calls[0][0];
-  panel.component({
-    target: "https://example.org/",
-    context: { channelId: "chat" },
-  });
-  expect(test.context.react.createElement).toHaveBeenCalledWith(
-    test.context.browser.control.Page,
-    expect.objectContaining({ url: "https://example.org/" }),
+  expect(test.context.browser.control.Page).toBeUndefined();
+  expect(test.context.browser.control.View).toBeUndefined();
+  expect(test.context.panels.register).toHaveBeenCalledTimes(2);
+  expect(test.context.panels.register.mock.calls[0][0].component).toBe(
+    test.context.panels.register.mock.calls[1][0].component,
   );
 });

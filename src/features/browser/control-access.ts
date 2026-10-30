@@ -8,15 +8,6 @@ export type BrowserRecipient = Readonly<{
   root?: string | undefined;
 }>;
 
-/** One-time assignment minted by the host only for an agent-created page. */
-export type BrowserInitialShare = Readonly<{
-  agent: string;
-  claim(): boolean;
-  valid(): boolean;
-  prepare(): Promise<void>;
-  complete(error?: unknown): void;
-}>;
-
 /** Tokens stay in this app, never in agent arguments or conversation messages. */
 export class BrowserAccess {
   private readonly pending = new Map<string, Promise<unknown>>();
@@ -87,7 +78,7 @@ export class BrowserAccess {
     };
   }
 
-  /** An agent-created page becomes that caller's browser for this conversation. */
+  /** Revoke this recipient's current grants in the conversation. */
   async revokeRecipient(recipient: BrowserRecipient): Promise<void> {
     await Promise.all(
       [...this.grants]
@@ -122,8 +113,8 @@ export class BrowserAccess {
     if (matches.length !== 1 || !entry?.token)
       throw new Error(
         matches.length
-          ? "More than one browser is shared. Take control of the other browser first."
-          : "No browser is shared with you in this conversation. Use action open with a URL to create a new page, or ask the owner to share an existing page.",
+          ? "More than one browser is shared with this agent in this conversation."
+          : "No browser is shared with you in this conversation.",
       );
     const result = await this.native.execute(entry.token, request);
     if (

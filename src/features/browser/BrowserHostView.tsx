@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -24,16 +22,9 @@ import type {
   BrowserStatus,
 } from "./platform";
 import type { BrowserSessions } from "./sessions";
-import type { BrowserInitialShare } from "./control-access";
-import type { BrowserAgentHost } from "./BrowserAgentControl";
 import styles from "./BrowserHostView.module.css";
 
-// The preview UI loads only after the native build explicitly enables it.
-const BrowserAgentControl = lazy(() =>
-  import("./BrowserAgentControl").then(({ BrowserAgentControl }) => ({
-    default: BrowserAgentControl,
-  })),
-);
+import { browserToolbarUi } from "./toolbar-ui";
 
 const EMPTY_STATUS: BrowserStatus = {
   url: "",
@@ -109,19 +100,12 @@ export function BrowserHostView({
   platform,
   sessions,
   pollInterval = 300,
-  conversation,
-  agentControl,
-  allowAgentControl = false,
-  initialShare,
+  toolbar: Toolbar,
   sessionKey,
 }: BrowserViewProps & {
   platform: BrowserPlatform;
   sessions: BrowserSessions;
   pollInterval?: number;
-  agentControl?: BrowserAgentHost;
-  allowAgentControl?: boolean;
-  initialShare?: BrowserInitialShare | undefined;
-  sessionKey?: string | undefined;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
@@ -137,24 +121,7 @@ export function BrowserHostView({
   useLayoutEffect(() => {
     if (addressEditing) address.current?.select();
   }, [addressEditing]);
-  const [controlAvailable, setControlAvailable] = useState(false);
   const [controlSession, setControlSession] = useState<string>();
-  useEffect(() => {
-    let current = true;
-    if (!allowAgentControl) {
-      setControlAvailable(false);
-      return;
-    }
-    void platform.control
-      ?.available()
-      .then((value) => {
-        if (current) setControlAvailable(value);
-      })
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [platform, allowAgentControl]);
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [draft, setDraft] = useState(url);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -503,26 +470,19 @@ export function BrowserHostView({
             onChange={(event) => setDraft(event.target.value)}
           />
         </form>
-        {allowAgentControl &&
-        controlAvailable &&
-        controlSession &&
-        platform.control ? (
-          <Suspense fallback={null}>
-            <BrowserAgentControl
-              key={controlSession}
-              initialShare={initialShare}
-              host={agentControl}
-              conversation={conversation}
-              sessionId={controlSession}
-              status={status}
-              onError={setControlError}
-              prepare={async () => {
-                if (!prepareControl.current)
-                  throw new Error("Browser is not ready yet.");
-                await prepareControl.current();
-              }}
-            />
-          </Suspense>
+        {Toolbar && controlSession ? (
+          <Toolbar
+            key={controlSession}
+            sessionId={controlSession}
+            status={status}
+            ui={browserToolbarUi}
+            onError={setControlError}
+            prepare={async () => {
+              if (!prepareControl.current)
+                throw new Error("Browser is not ready yet.");
+              await prepareControl.current();
+            }}
+          />
         ) : null}
       </div>
       {error ? (

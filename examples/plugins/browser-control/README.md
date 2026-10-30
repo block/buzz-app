@@ -9,8 +9,9 @@ bin/just desktop
 
 Use Settings → Plugins → Manage plugins → Load from folder to load this folder,
 then enable **Browser control preview**. No special build flag is required.
-The plugin registers the agent tool and selects `ctx.browser.control.Page` for
-website panels. Ordinary `ctx.browser.View` panels have no sharing controls.
+The plugin owns the agent tool, sharing toolbar, recipient selection, and page-opening
+workflow. It contributes a toolbar to `ctx.browser.View`; ordinary browser views
+have no sharing controls.
 Click an HTTP(S) link in a conversation.
 The panel uses the existing Browser controls and a dedicated named website store
 (`browser-control-preview`). Sign in manually; named persistent stores require
@@ -72,3 +73,19 @@ It exercises the actual Wry guest, observation, fill/click, invalid targets,
 revocation, hide, and detach. It prints a PASS line and exits successfully only
 when those checks pass. This does not establish real-account login persistence,
 full-app plugin installation, live agent conversation, or other-platform support.
+
+## Change the plugin independently
+
+Edit `src/index.ts`, `src/AgentControl.tsx`, or `src/ControlBar.tsx`, then rebuild
+from the repository root using the pinned tools:
+
+```sh
+bin/node examples/plugins/browser-control/build.mjs
+```
+
+This produces the checked-in, self-contained `plugin.js` beside `manifest.json`.
+Update the installed plugin from this folder. No app rebuild is needed for changes
+to sharing interactions or the opening workflow once the host capability is installed.
+React and the shared toolbar primitives are provided by the host; the artifact
+bundles no React runtime or host feature code. Native actions, visibility revocation,
+and authenticated grant enforcement remain in Buzz.

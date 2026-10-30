@@ -864,29 +864,19 @@ it("keeps sharing controls off for ordinary browser views on a capable host", as
   expect(platform.control.grant).not.toHaveBeenCalled();
 });
 
-it("requires conversation context in the lazy preview controls", async () => {
+it("mounts a plugin toolbar for the active session", async () => {
   const platform = fakePlatform();
-  const control = {
-    available: vi.fn(async () => true),
-    grant: vi.fn(async () => ({ token: "native-grant", revision: 1 })),
-    revoke: vi.fn(async () => {}),
-    execute: vi.fn(),
-  };
-  platform.control = control;
-  const view = render(
+  render(
     <BrowserHostView
-      allowAgentControl
       url="https://example.org"
       platform={platform}
       sessions={new BrowserSessions(platform)}
+      toolbar={({ sessionId }) => <button type="button">{sessionId}</button>}
     />,
   );
   expect(
-    await screen.findByRole("button", { name: "Share browser" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(control.grant).not.toHaveBeenCalled();
-  view.unmount();
-  expect(control.revoke).toHaveBeenCalledWith("session-1");
+    await screen.findByRole("button", { name: "session-1" }),
+  ).toBeVisible();
 });
 
 it("shows a readable address and selects the complete URL for editing", async () => {

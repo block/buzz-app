@@ -9,7 +9,11 @@ export type {
   NamingPolicy,
 } from "../features/identity-names/service";
 export type { NamingIdentity } from "../features/identity-names/policy";
-export type { Browser, BrowserViewProps } from "../features/browser/api";
+export type {
+  Browser,
+  BrowserViewProps,
+  BrowserToolbarProps,
+} from "../features/browser/api";
 export type { Page, PageSidebarProps, Pages } from "../features/pages/service";
 export type {
   SidebarSectionAction,

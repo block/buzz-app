@@ -52,10 +52,12 @@ launch; provider replacement/unload kills its processes, including a launch that
 finishes after revocation. Adapters keep ownership of sessions and credentials.
 
 Manifest processes may declare `artifact: {path, sha256, siblings?}` instead of
-`bundled`. Native launch verifies the absolute executable and named sibling hashes,
-rejects symbolic links, and stages the verified files into an immutable generation
-beneath the shared protected Agents artifact root before execution. These paths
-come from the installed plugin manifest, never from model input or PATH.
+`bundled`. Contained launches require one of these declarations; PATH-only
+entrypoints are refused. Native launch hashes while copying the executable and
+named siblings into a generation under the storage owner's shared Agents folder,
+then executes that worker-read-only copy. Corrupt generations fail closed;
+verification/copying runs off the async runtime. Symbolic links remain rejected.
+These paths come from the installed plugin manifest, never from model input or PATH.
 
 `processProtection` contains absolute existing `readOnlyPaths` and `hiddenPaths`.
 The native process launcher adds agent controls, installed plugin storage and the
@@ -63,7 +65,11 @@ application bundle. macOS denies worker writes to these roots and replacement of
 their ancestors, reads of private approval state, and Apple Events. Workspace
 writes remain possible. Mutable development frontends and other operating
 systems refuse protected processes. This is approval-authority containment, not
-a general network/filesystem policy.
+a general network/filesystem policy. Declared-file verification does not establish
+integrity of every dependency an interpreter loads. Unsandboxed same-user processes,
+including code planted for later execution, are outside this boundary; broader
+isolation belongs to Sandpit. Protected Claude/Pi use the app-bundled command helper
+and the OS shell; ordinary launch IDs and runtime PATH retain their prior behavior.
 
 `check` receives an immutable action (`kind`, `session`, `content`, optional
 `command`) plus host-captured `agent`, `relay`, `runtime` and `policy`. `kind` is

@@ -74,6 +74,7 @@ for (const destination of ["thread", "channel", "agents"]) {
           return {
             background: style.backgroundColor,
             outline: style.outlineStyle,
+            inset: style.insetInline,
             width: style.outlineWidth,
             animation: style.animationName,
             content: style.content,
@@ -81,6 +82,7 @@ for (const destination of ["thread", "channel", "agents"]) {
         });
       await expect.poll(paint).toMatchObject({
         outline: "solid",
+        inset: "0px",
         width: "2px",
         animation: "none",
       });

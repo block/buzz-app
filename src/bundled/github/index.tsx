@@ -51,7 +51,6 @@ import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 import { AuthorSettings } from "./AuthorSettings";
-import { createUnfurlComponent, unfurlMatches } from "./unfurl";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
@@ -63,14 +62,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
   const states = createPullStates(gh);
-  ctx.conversation.registerLink({
-    id: "unfurl",
-    title: "GitHub",
-    matches: unfurlMatches,
-    order: -10,
-    className: inlineStyles.link,
-    component: createUnfurlComponent(gh),
-  });
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);

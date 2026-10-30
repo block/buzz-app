@@ -114,6 +114,47 @@ it("keeps the state object, and tells no one, when a poll reads the same state",
   expect(changed).toHaveBeenCalledTimes(2);
 });
 
+it("reads the title with the state, so a poll renames a renamed pull request in the read it already makes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let title = "Fix the lab";
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", { title }) }));
+  const states = createPullStates(gh);
+  const changed = vi.fn();
+  states.watch(pull, changed);
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  expect(states.get(pull)).toEqual({
+    state: "open",
+    title: "Fix the lab",
+    conflicts: false,
+  });
+  expect(gh).toHaveBeenCalledOnce();
+  expect(gh.mock.calls[0]?.[0]).toMatch(
+    /pullRequest\(number:\$p0\)\{state title /,
+  );
+  const before = states.get(pull);
+  title = "Fix the lab, renamed";
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(states.get(pull)).not.toBe(before);
+  expect(states.get(pull)).toMatchObject({ title: "Fix the lab, renamed" });
+  expect(changed).toHaveBeenCalledTimes(2);
+
+  // From the public API too: the title is in the pull request it reads.
+  const fetch = vi.fn(
+    async () => new Response(JSON.stringify({ title, state: "open" })),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const publicly = createPullStates(undefined);
+  publicly.watch(second, changed);
+  await vi.waitFor(() =>
+    expect(publicly.get(second)).toEqual({ state: "open", title }),
+  );
+  title = "Fix the lab, renamed again";
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect(publicly.get(second)).toEqual({ state: "open", title });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
 it("keys a pull request by its canonical URL, so pasted variants share one entry and read", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const gh = mockGh(async () => ({
@@ -373,16 +414,22 @@ it("reads public data without gh every few minutes until it is merged", async ()
       new Response(JSON.stringify({ title: "A", state: "open" })),
     )
     .mockResolvedValueOnce(
-      new Response(JSON.stringify({ state: "open", draft: true })),
+      new Response(JSON.stringify({ title: "A", state: "open", draft: true })),
     )
-    .mockResolvedValueOnce(new Response(JSON.stringify({ state: "closed" })))
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ title: "A", state: "closed" })),
+    )
     .mockResolvedValue(
-      new Response(JSON.stringify({ state: "closed", merged: true })),
+      new Response(
+        JSON.stringify({ title: "A", state: "closed", merged: true }),
+      ),
     );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
   states.watch(pull, () => {});
-  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toEqual({ state: "open", title: "A" }),
+  );
   expect(fetch).toHaveBeenCalledWith(
     "https://api.github.com/repos/block/buzz-app/pulls/7",
     expect.anything(),
@@ -392,7 +439,9 @@ it("reads public data without gh every few minutes until it is merged", async ()
   // Open, draft and closed can each still change.
   for (const state of ["draft", "closed", "merged"]) {
     await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-    await vi.waitFor(() => expect(states.get(pull)).toEqual({ state }));
+    await vi.waitFor(() =>
+      expect(states.get(pull)).toEqual({ state, title: "A" }),
+    );
     await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
   }
   await vi.advanceTimersByTimeAsync(3 * PULL_SLOW_REFRESH_MS);
@@ -404,7 +453,9 @@ it("tries a public read that failed again every few minutes", async () => {
   const fetch = vi
     .fn()
     .mockResolvedValueOnce(new Response(null, { status: 502 }))
-    .mockResolvedValue(new Response(JSON.stringify({ state: "closed" })));
+    .mockResolvedValue(
+      new Response(JSON.stringify({ title: "A", state: "closed" })),
+    );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
   states.watch(pull, () => {});
@@ -413,7 +464,9 @@ it("tries a public read that failed again every few minutes", async () => {
   await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
   expect(fetch).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "closed" }));
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toEqual({ state: "closed", title: "A" }),
+  );
 });
 
 const pulls = Array.from(
@@ -429,7 +482,8 @@ const limited = (resetAt?: number) =>
 it("spends a few public reads at once, then only its share of each hour's", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const fetch = vi.fn(
-    async (_url: string) => new Response(JSON.stringify({ state: "open" })),
+    async (_url: string) =>
+      new Response(JSON.stringify({ title: "A", state: "open" })),
   );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
@@ -446,7 +500,7 @@ it("spends a few public reads at once, then only its share of each hour's", asyn
   expect(fetch).toHaveBeenCalledTimes(
     PUBLIC_READS_PER_POLL + PUBLIC_READS_PER_HOUR,
   );
-  expect(states.get(pulls.at(-1) ?? "")).toEqual({ state: "open" });
+  expect(states.get(pulls.at(-1) ?? "")).toEqual({ state: "open", title: "A" });
   await vi.advanceTimersByTimeAsync(60 * 60_000);
   expect(fetch).toHaveBeenCalledTimes(
     PUBLIC_READS_PER_POLL + 2 * PUBLIC_READS_PER_HOUR,
@@ -459,7 +513,7 @@ it("spends a few public reads at once, then only its share of each hour's", asyn
 it("spends nothing, rather than everything, when the clock is set back", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const fetch = vi.fn(
-    async () => new Response(JSON.stringify({ state: "open" })),
+    async () => new Response(JSON.stringify({ title: "A", state: "open" })),
   );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
@@ -475,13 +529,14 @@ it("spends nothing, rather than everything, when the clock is set back", async (
   expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL);
   await vi.advanceTimersByTimeAsync(11 * PULL_REFRESH_MS);
   expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL + 5);
-  expect(states.get(pull)).toEqual({ state: "open" });
+  expect(states.get(pull)).toEqual({ state: "open", title: "A" });
 });
 
 it("reads links shown while the budget is spent in turn with those left before them", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const fetch = vi.fn(
-    async (_url: string) => new Response(JSON.stringify({ state: "open" })),
+    async (_url: string) =>
+      new Response(JSON.stringify({ title: "A", state: "open" })),
   );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
@@ -496,7 +551,7 @@ it("reads links shown while the budget is spent in turn with those left before t
   for (const url of later) states.watch(url, () => {});
   await vi.advanceTimersByTimeAsync(10 * PULL_REFRESH_MS);
   for (const url of [...pulls, ...later])
-    expect(states.get(url)).toEqual({ state: "open" });
+    expect(states.get(url)).toEqual({ state: "open", title: "A" });
   expect(fetch).toHaveBeenCalledTimes(PUBLIC_READS_PER_POLL + 5);
 });
 
@@ -511,13 +566,15 @@ it("reads a public pull request never read before those that keep failing", asyn
   const fetch = vi.fn(async (url: string) =>
     url.includes("/private-")
       ? new Response(null, { status: 404 })
-      : new Response(JSON.stringify({ state: "open" })),
+      : new Response(JSON.stringify({ title: "A", state: "open" })),
   );
   vi.stubGlobal("fetch", fetch);
   const states = createPullStates(undefined);
   for (const url of [...failing, pull]) states.watch(url, () => {});
   await vi.advanceTimersByTimeAsync(2 * PULL_SLOW_REFRESH_MS);
-  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toEqual({ state: "open", title: "A" }),
+  );
   expect(states.get(failing[0] ?? "")).toBe("failed");
 });
 
@@ -534,7 +591,7 @@ it.each([
     const fetch = vi.fn(async () =>
       refusals-- > 0
         ? limited(resetAt)
-        : new Response(JSON.stringify({ state: "open" })),
+        : new Response(JSON.stringify({ title: "A", state: "open" })),
     );
     vi.stubGlobal("fetch", fetch);
     const states = createPullStates(undefined);
@@ -553,7 +610,7 @@ it.each([
     await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
     expect(fetch).toHaveBeenCalledTimes(5);
     for (const url of [pull, second, third])
-      expect(states.get(url)).toEqual({ state: "open" });
+      expect(states.get(url)).toEqual({ state: "open", title: "A" });
   },
 );
 
@@ -585,7 +642,9 @@ it("holds public reads for GitHub's limit while gh is unavailable too", async ()
   const fetch = vi
     .fn()
     .mockResolvedValueOnce(limited(Date.now() + 60 * 60_000))
-    .mockResolvedValue(new Response(JSON.stringify({ state: "open" })));
+    .mockResolvedValue(
+      new Response(JSON.stringify({ title: "A", state: "open" })),
+    );
   vi.stubGlobal("fetch", fetch);
   // The desktop host always supplies gh; without a sign-in every read throws.
   const gh = mockGh(async () => {
@@ -603,7 +662,9 @@ it("holds public reads for GitHub's limit while gh is unavailable too", async ()
   expect(changed).not.toHaveBeenCalled();
   expect(states.get(pull)).toBeUndefined();
   await vi.advanceTimersByTimeAsync(30 * 60_000);
-  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toEqual({ state: "open", title: "A" }),
+  );
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
@@ -611,7 +672,9 @@ it("reads public data while gh is unavailable, and goes back to gh once it is av
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ state: "open" }))),
+    vi.fn(
+      async () => new Response(JSON.stringify({ title: "A", state: "open" })),
+    ),
   );
   let signedIn = false;
   const gh = mockGh(async () => {
@@ -620,7 +683,9 @@ it("reads public data while gh is unavailable, and goes back to gh once it is av
   });
   const states = createPullStates(gh);
   states.watch(pull, () => {});
-  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toEqual({ state: "open", title: "A" }),
+  );
   // Public reads are sparse: the next one, with gh back, is in five minutes.
   signedIn = true;
   await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
@@ -664,7 +729,7 @@ it("keeps what a timed-out refresh read, and marks what it could not", async () 
     vi.fn(async (input: string, init?: RequestInit) => {
       started++;
       if (input.includes("/buzz-app/"))
-        return new Response(JSON.stringify({ state: "open" }));
+        return new Response(JSON.stringify({ title: "A", state: "open" }));
       // The other never answers before the deadline.
       return new Promise<Response>((_, reject) =>
         init?.signal?.addEventListener("abort", () =>
@@ -679,7 +744,7 @@ it("keeps what a timed-out refresh read, and marks what it could not", async () 
   try {
     deadline.abort(new DOMException("Timed out", "TimeoutError"));
     await vi.waitFor(() => expect(states.get(second)).toBe("failed"));
-    expect(states.get(pull)).toEqual({ state: "open" });
+    expect(states.get(pull)).toEqual({ state: "open", title: "A" });
   } finally {
     for (const unwatch of stop) unwatch();
   }
@@ -1139,7 +1204,9 @@ it("tries gh again for a read someone waits for, while polls still wait for it",
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ state: "open" }))),
+    vi.fn(
+      async () => new Response(JSON.stringify({ title: "A", state: "open" })),
+    ),
   );
   let signedIn = false;
   const gh = mockGh(async () => {
@@ -1148,12 +1215,16 @@ it("tries gh again for a read someone waits for, while polls still wait for it",
   });
   const states = createPullStates(gh);
   states.watch(pull, () => {});
-  await vi.waitFor(() => expect(states.get(pull)).toEqual({ state: "open" }));
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toEqual({ state: "open", title: "A" }),
+  );
   expect(gh).toHaveBeenCalledOnce();
   // Back online within the minute: a link shown now is read without gh, ...
   signedIn = true;
   states.watch(second, () => {});
-  await vi.waitFor(() => expect(states.get(second)).toEqual({ state: "open" }));
+  await vi.waitFor(() =>
+    expect(states.get(second)).toEqual({ state: "open", title: "A" }),
+  );
   expect(gh).toHaveBeenCalledOnce();
   // ... but a read someone waits for uses gh at once.
   const { state } = await states.read(pull, { maxAge: 0 });

@@ -7,6 +7,7 @@ import {
 import {
   LinkDescriptionContext,
   LinkInteractiveContext,
+  LinkLabelContext,
 } from "../../features/conversation/LinkLabelContext";
 import { LinkLabel } from "../links/InlineLink";
 import inlineStyles from "../../shared/InlineReference.module.css";
@@ -16,7 +17,8 @@ import { parseGitHubReference } from "./references";
 import styles from "./GitHub.module.css";
 
 /** A pull request link in a message: the Links label with the pull request's
- * state as its icon, in place of the GitHub logo. */
+ * state as its icon, in place of the GitHub logo, and a pasted link named by
+ * its repository, number and title. */
 export function PullLink({ url, states }: { url: string; states: PullStates }) {
   const identity =
     parseGitHubReference(url, { pullSubtargets: true })?.url ?? url;
@@ -35,15 +37,22 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   const Icon = stateIcons[state?.state ?? "open"];
   const words = describePull({ state, failed: read === "failed" });
   // The state describes the link rather than joining its name, which stays
-  // the authored label or the URL as the state changes.
+  // the authored label as the state changes.
   const describe = useContext(LinkDescriptionContext);
   useEffect(() => {
     describe?.(words);
     return () => describe?.(undefined);
   }, [describe, words]);
+  // A pasted link is named `owner/repo#7`, then with its title, which is
+  // read with the state.
+  const authored = useContext(LinkLabelContext) !== undefined;
+  const reference = parseGitHubReference(url);
+  const name = reference && `${reference.repository}${reference.label}`;
+  const label = name && state?.title ? `${name} · ${state.title}` : name;
   return (
     <LinkLabel
       href={url}
+      {...(!authored && label && { label })}
       icon={
         <span
           className={styles.pullState}

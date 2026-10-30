@@ -45,7 +45,8 @@ export const FEEDBACK_READ = 100;
 export const BODY_CHARS = 1_000;
 
 /** What a reader wants of a pull request. Every level has its state:
- * - `state`: draft, merged or closed, checks and conflicts, as links show;
+ * - `state`: its title, draft, merged or closed, checks and conflicts, as
+ *   links show;
  * - `feedback`: its reviews and comments with their text, for agents'
  *   watches, read whether or not the window is visible;
  * - `details`: everything the panel shows and acts on: details, review,
@@ -83,6 +84,8 @@ export type PullDetails = Readonly<{
 
 export type PullState = Readonly<{
   state: "open" | "draft" | "merged" | "closed";
+  /** Read with the state, so a renamed one is renamed where it is shown. */
+  title?: string | undefined;
   /** The head commit's combined checks, when read with `gh`. */
   checks?: "success" | "failure" | "pending" | undefined;
   conflicts?: boolean | undefined;
@@ -213,6 +216,7 @@ type Node = Record<string, unknown>;
 type Ids = { nodes?: ({ id?: string } | null)[] };
 type StateData = {
   state: "OPEN" | "CLOSED" | "MERGED";
+  title?: string;
   isDraft: boolean;
   mergeStateStatus?: string;
   headRefOid?: string;
@@ -255,7 +259,7 @@ const FAILED = new Set([
   "STALE",
 ]);
 
-const STATE = `state isDraft mergeStateStatus headRefOid
+const STATE = `state title isDraft mergeStateStatus headRefOid
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
 ... on CheckRun{name status conclusion}
@@ -314,6 +318,7 @@ function stateOf(pull: StateData): PullState {
           : pull.isDraft
             ? "draft"
             : "open",
+    title: pull.title,
     checks: checksOf(rollup?.state),
     conflicts: pull.mergeStateStatus === "DIRTY",
     ...(pull.headRefOid && {
@@ -534,6 +539,7 @@ async function readPublicState(
           : details.state === "Draft"
             ? "draft"
             : "open",
+    title: details.title,
     ...(withDetails && {
       details: {
         details,
@@ -562,6 +568,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
   (typeof a === "object" &&
     typeof b === "object" &&
     a.state === b.state &&
+    a.title === b.title &&
     a.checks === b.checks &&
     a.conflicts === b.conflicts &&
     a.head === b.head &&

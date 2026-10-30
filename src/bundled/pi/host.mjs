@@ -64,6 +64,13 @@ const Replies = defineDoc({
   initial: () => ({}),
   checkpointWhen,
 });
+/** Why a request in a conversation Pi parked a task of is unanswered. */
+const PARKED = {
+  status: "unanswered",
+  reason: "restart_limit",
+  detail:
+    "Pi stopped this turn because it crashed partway through it several times in a row.",
+};
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
 /** Pi's own default thinking level, for a model that thinks. */
@@ -472,6 +479,8 @@ export function serve({
       // Loads the Buzz tools that are deferred when the model asks for them.
       registry.install(createToolSearchExtension());
       for (const extension of packages.extensions) registry.install(extension);
+      /** Conversations with a task Pi parked, which the next wait stops. */
+      const parked = new Set();
       const harness = await Harness.open(
         await openNodeSqliteStorage(path),
         {
@@ -479,8 +488,13 @@ export function serve({
           registry,
           settings: SETTINGS,
           env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
-          onReport: (error, { type }) =>
-            console.error(`Pi reported ${type}`, error),
+          onReport: (error, info) => {
+            console.error(`Pi reported ${info.type}`, error);
+            // Cut off by crashes too often, a task waits for a retry that
+            // Buzz has no way to ask for, and its run would never end.
+            if (info.type === "task_parked")
+              parked.add(info.task.conversationId);
+          },
         },
         context,
       );
@@ -502,6 +516,7 @@ export function serve({
         queues: new Map(),
         /** Why each request withdrawn with a failed run is unanswered. */
         failed: new Map(),
+        parked,
         closing: false,
       };
       const places = (await harness.snapshot(Places, context)) ?? {};
@@ -685,6 +700,7 @@ export function serve({
   async function settle(opened, id) {
     let record;
     try {
+      await unpark(opened);
       const submission = await opened.harness.submission(id, context);
       if (!submission) throw new Error("Pi has no record of this request");
       record = await submission.wait(context);
@@ -721,6 +737,27 @@ export function serve({
       answer: record.answer,
       text: textOf(entry?.model?.at(-1)),
     };
+  }
+
+  /** Stops the conversations Pi parked a task of: each of their requests
+   * fails, saying why. Not waited for, as their tasks run only once a wait
+   * asks Pi for progress. */
+  async function unpark(opened) {
+    if (!opened.parked.size) return;
+    const conversations = [...opened.parked];
+    opened.parked.clear();
+    const { submissions } = await opened.harness.inspect(context);
+    for (const { id, conversationId } of submissions)
+      if (conversations.includes(conversationId)) opened.failed.set(id, PARKED);
+    for (const id of conversations)
+      void opened.harness
+        .conversation(id, context)
+        .then((conversation) =>
+          conversation?.abort(context, { background: true }),
+        )
+        .catch((error) =>
+          console.error("Pi could not stop a parked run", error),
+        );
   }
 
   /** A failed run leaves what was queued for it waiting for a later request:

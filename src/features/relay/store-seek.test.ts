@@ -34,7 +34,7 @@ function harness({
   );
   const ordered = [...history].sort(newestFirst);
   const reads: ReadFilter[] = [];
-  const gate: { hold?: Promise<void> } = {};
+  const gate: { hold?: Promise<void> | undefined; failHead?: boolean } = {};
   let live!: LiveCallbacks;
   const base = scriptedTransport(viewer.pubkey, relay.pubkey);
   const owner = createRelaySession(
@@ -46,6 +46,8 @@ function harness({
         reads.push(filter);
         await gate.hold;
         signal?.throwIfAborted();
+        if (gate.failHead && filter.until === undefined)
+          throw new Error("offline");
         const cursor =
           filter.until !== undefined && filter.before_id
             ? { createdAt: filter.until, eventId: filter.before_id }
@@ -265,6 +267,80 @@ it("catchUp returns a detached window to its head", async () => {
   await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
   await vi.waitFor(() => expect(h.times().at(-1)).toBe(T0 + 299 * HOUR));
   expect(h.times()[0]).toBeGreaterThan(T0 + 3 * DAY);
+});
+
+it("a failed catch-up keeps the detached segment", async () => {
+  const h = setup();
+  await h.open();
+  await h.seek(T0 + 3 * DAY);
+  const segment = h.times();
+  h.gate.failHead = true;
+  const reads = h.reads.length;
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  await vi.waitFor(() =>
+    expect(h.reads.slice(reads).some((read) => read.until === undefined)).toBe(
+      true,
+    ),
+  );
+  await vi.waitFor(() => expect(h.window().error).toBeDefined());
+  expect(h.times()).toEqual(segment);
+  expect(h.window().hasNewer).toBe(true);
+});
+
+it("catch-up cancels a detached window's newer page", async () => {
+  const h = setup();
+  await h.open();
+  await h.seek(T0 + 3 * DAY);
+  let release!: () => void;
+  h.gate.hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  h.channels.loadNewer?.("c");
+  expect(h.window().loadingNewer).toBe(true);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established("c");
+  release();
+  h.gate.hold = undefined;
+  await vi.waitFor(() => expect(h.times().at(-1)).toBe(T0 + 299 * HOUR));
+  await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(h.times().at(-1)).toBe(T0 + 299 * HOUR);
+});
+
+it("a detached segment does not become the channel preview", async () => {
+  const h = setup();
+  await h.open();
+  const preview = () =>
+    h.channels.list().channels.find((channel) => channel.id === "c")?.preview;
+  await vi.waitFor(() => expect(preview()).toBe("m299"));
+  await h.seek(T0 + 3 * DAY);
+  expect(preview()).toBe("m299");
+  h.channels.attach?.("c");
+  await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
+  expect(preview()).toBe("m299");
+});
+
+it("a live row that lands while the last newer page loads is kept", async () => {
+  const h = setup();
+  await h.open();
+  await h.seek(T0 + 3 * DAY);
+  const fresh = message(h.alice, "c", "fresh", T0 + 299 * HOUR + 1800);
+  for (let page = 0; page < 10 && h.window().hasNewer; page++) {
+    let release!: () => void;
+    h.gate.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    h.channels.loadNewer?.("c");
+    // The relay answered before `fresh` was published; it arrives live.
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(0));
+    h.live.receive([fresh]);
+    release();
+    h.gate.hold = undefined;
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  expect(h.window().rows.map((row) => row.id)).toContain(fresh.id);
 });
 
 it("attach replaces the segment with the head", async () => {

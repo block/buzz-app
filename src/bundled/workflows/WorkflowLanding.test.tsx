@@ -1533,6 +1533,31 @@ it("explains an empty My workflows view and shows all channel workflows", async 
   ).toBeVisible();
 });
 
+it.each(["status", "trigger"] as const)(
+  "keeps the filtered empty state when My workflows plus %s hides the viewer's workflows",
+  async (extra) => {
+    const { fixture, choose, chooseTrigger, definition } = filterLanding();
+    act(() =>
+      fixture.definitions.update({
+        status: "ready",
+        data: {
+          partial: false,
+          items: [
+            definition("Mine disabled", fixtureViewer, fixtureChannel, false),
+            definition("Other enabled", "b".repeat(64), fixtureChannel, true),
+          ],
+        },
+      }),
+    );
+    await screen.findByRole("button", { name: /^Open Mine disabled:/ });
+    if (extra === "status") await choose("Status", "Enabled");
+    else await chooseTrigger("Schedule");
+    expect(await screen.findByText("No matching workflows")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+    expect(screen.queryByText("You don’t have any workflows yet")).toBeNull();
+  },
+);
+
 it.each([true, false])(
   "clears a filtered empty state with focus handoff when save is %s",
   async (save) => {

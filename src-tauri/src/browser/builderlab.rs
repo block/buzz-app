@@ -7,6 +7,8 @@ use url::Url;
 use zeroize::Zeroizing;
 
 const VIEWER_COOKIE: &str = "__Secure-bbidentity_hosted_site_session";
+/// FI builds have no Builderlab sign-in; the shared session is renewed here.
+const FI_SIGN_IN_AGAIN: &str = "Sign in again in Settings → Identity → Organization sign-in";
 
 /// Exactly one of a legacy Builderlab credential or the public revision of the
 /// native FI session whose token authorizes the exchange.
@@ -90,7 +92,7 @@ fn cookie(
 }
 
 /// Only feature absence permits browser-login fallback. All authorization and transport failures stay closed.
-fn exchange_available(status: reqwest::StatusCode) -> Result<bool, String> {
+fn exchange_available(status: reqwest::StatusCode, federated: bool) -> Result<bool, String> {
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(false);
     }
@@ -98,6 +100,9 @@ fn exchange_available(status: reqwest::StatusCode) -> Result<bool, String> {
         return Ok(true);
     }
     Err(match status.as_u16() {
+        401 if federated => {
+            "Sign in again in Settings → Identity → Organization sign-in, then reopen this app"
+        }
         401 => "Sign out and sign in to Builderlab again in Settings, then reopen this app",
         403 => "Your Builderlab account cannot open this app",
         _ => "Builderlab viewer sign-in is unavailable. Try reopening this app",
@@ -144,7 +149,7 @@ fn exchange_request(
                 ))
             })
             .flatten()
-            .ok_or_else(|| SIGN_IN_AGAIN.into()),
+            .ok_or_else(|| FI_SIGN_IN_AGAIN.into()),
     }
 }
 
@@ -158,6 +163,7 @@ pub(super) async fn prepare(
         return Ok(None);
     }
     let root = app_root(domain, target)?;
+    let federated = matches!(auth, ViewerAuth::Federated(_));
     let (url, header, credential) = exchange_request(auth, fi)?;
     let client = reqwest::Client::builder()
         .https_only(true)
@@ -174,7 +180,7 @@ pub(super) async fn prepare(
         .send()
         .await
         .map_err(|_| "Builderlab sign-in request failed")?;
-    if !exchange_available(response.status())? {
+    if !exchange_available(response.status(), federated)? {
         return Ok(None);
     }
     let mut bytes = Zeroizing::new(Vec::new());
@@ -272,7 +278,7 @@ mod tests {
         for stale in [revision(&fi) + "x", String::new()] {
             assert_eq!(
                 exchange_request(ViewerAuth::Federated(stale), &fi).unwrap_err(),
-                "Sign in to Builderlab again in Settings"
+                FI_SIGN_IN_AGAIN
             );
         }
         let current = revision(&fi);
@@ -307,17 +313,31 @@ mod tests {
             "C".repeat(513),
             format!("{credential}!"),
         ] {
-            assert!(exchange_request(ViewerAuth::Credential(bad), &fi).is_err());
+            assert_eq!(
+                exchange_request(ViewerAuth::Credential(bad), &fi).unwrap_err(),
+                "Sign in to Builderlab again in Settings"
+            );
         }
     }
 
     #[test]
     fn browser_login_fallback_is_only_for_an_unavailable_feature() {
-        assert!(!exchange_available(reqwest::StatusCode::NOT_FOUND).unwrap());
-        assert!(exchange_available(reqwest::StatusCode::OK).unwrap());
-        for code in [400, 401, 403, 429, 500, 503, 302] {
-            assert!(exchange_available(reqwest::StatusCode::from_u16(code).unwrap()).is_err());
+        for federated in [false, true] {
+            assert!(!exchange_available(reqwest::StatusCode::NOT_FOUND, federated).unwrap());
+            assert!(exchange_available(reqwest::StatusCode::OK, federated).unwrap());
+            for code in [400, 401, 403, 429, 500, 503, 302] {
+                let status = reqwest::StatusCode::from_u16(code).unwrap();
+                assert!(exchange_available(status, federated).is_err());
+            }
         }
+        // A refused session is renewed where each build signs in.
+        let unauthorized = reqwest::StatusCode::UNAUTHORIZED;
+        assert!(exchange_available(unauthorized, true)
+            .unwrap_err()
+            .contains("Identity → Organization sign-in"));
+        assert!(exchange_available(unauthorized, false)
+            .unwrap_err()
+            .contains("sign in to Builderlab again"));
     }
 
     #[test]

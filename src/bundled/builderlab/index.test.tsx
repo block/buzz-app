@@ -1010,7 +1010,7 @@ it.each([
     await user.click(
       within(
         screen.getByRole("complementary", { name: / identity$/ }),
-      ).getByRole("button", { name: "Sign in" }),
+      ).getByRole("button", { name: "Sign in to Builderlab" }),
     );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled(),

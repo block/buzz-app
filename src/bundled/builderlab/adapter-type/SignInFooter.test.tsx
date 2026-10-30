@@ -61,7 +61,9 @@ it("shares profile sign-in with the footer and restores editing only after authe
   expect(screen.queryByRole("button", { name: "Edit profile" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
   expect(acquire).not.toHaveBeenCalled();
-  const profileSignIn = screen.getAllByRole("button", { name: "Sign in" })[0];
+  const profileSignIn = screen.getAllByRole("button", {
+    name: "Sign in to Builderlab",
+  })[0];
   if (!profileSignIn) throw new Error("Missing profile sign-in");
   fireEvent.click(profileSignIn);
   expect(acquire).toHaveBeenCalledTimes(1);
@@ -78,11 +80,15 @@ it("shares profile sign-in with the footer and restores editing only after authe
     await screen.findByRole("button", { name: "Edit profile" }),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Message" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Sign in to Builderlab" }),
+  ).toBeNull();
   act(() => session.signOut());
   expect(screen.queryByRole("button", { name: "Edit profile" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
-  expect(screen.getAllByRole("button", { name: "Sign in" })).toHaveLength(2);
+  expect(
+    screen.getAllByRole("button", { name: "Sign in to Builderlab" }),
+  ).toHaveLength(2);
   session.dispose();
 });
 
@@ -100,9 +106,13 @@ it("waits for a click, exposes delayed guidance, cancels and retries without acc
   render(<Footer />, { wrapper: StrictMode });
   expect(acquire).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in to Builderlab" }),
+  );
   expect(acquire).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Signing in to Builderlab…",
+  );
   await act(() => vi.advanceTimersByTimeAsync(2999));
   expect(screen.queryByText(/Finish sign-in/)).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(1));
@@ -113,9 +123,13 @@ it("waits for a click, exposes delayed guidance, cancels and retries without acc
   expect(acquire.mock.calls[0]?.[0].aborted).toBe(true);
   expect(session.snapshot().status).toBe("signed-out");
   expect(acquire).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in to Builderlab" }),
+  );
   expect(acquire).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Signing in to Builderlab…",
+  );
   vi.useRealTimers();
   await act(async () => {
     old.resolve(credential);
@@ -136,14 +150,18 @@ it("shows failure inline and leaves retry user-started", async () => {
   const session = createOAuthSession(acquire);
   const Footer = createSignInFooter(session);
   render(<Footer />);
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in to Builderlab" }),
+  );
   await act(async () => {
     held.reject(new Error("Sign-in timed out. Try again."));
   });
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Sign-in timed out",
   );
-  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Sign in to Builderlab" }),
+  ).toBeEnabled();
   expect(acquire).toHaveBeenCalledTimes(1);
   session.dispose();
 });
@@ -173,7 +191,9 @@ it("stays absent for an existing account and returns on explicit sign-out", asyn
   expect(screen.queryByRole("button")).toBeNull();
   act(() => session.signOut());
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible(),
+    expect(
+      screen.getByRole("button", { name: "Sign in to Builderlab" }),
+    ).toBeVisible(),
   );
   session.dispose();
 });
@@ -243,7 +263,9 @@ it("loads the pane after a late browser callback and verified exchange without w
     </>,
   );
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sign in to Builderlab" }),
+    );
     await callbackStarted.promise;
   });
   await act(() => vi.advanceTimersByTimeAsync(30_000));

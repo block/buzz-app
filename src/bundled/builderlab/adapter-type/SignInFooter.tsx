@@ -25,7 +25,7 @@ export function createProfileActions(session: OAuthSession) {
         disabled={!browserLoginAvailable()}
         onClick={() => void session.signIn()}
       >
-        Sign in
+        Sign in to Builderlab
       </Button>
     );
   };
@@ -68,8 +68,8 @@ export function createSignInFooter(session: OAuthSession) {
           <div className="p-5">
             <Header
               id={title}
-              title="Sign in to access this agent"
-              subtitle="Continue with your Builderlab account."
+              title="Sign in to Builderlab"
+              subtitle="Use your Builderlab account to access this agent."
             />
             <div className="grid gap-3">
               {(!available || pending) && (
@@ -78,7 +78,7 @@ export function createSignInFooter(session: OAuthSession) {
                     ? "Open the Buzz desktop app to sign in with Builderlab."
                     : slow
                       ? "Finish sign-in in your browser, then return to Buzz."
-                      : "Signing in…"}
+                      : "Signing in to Builderlab…"}
                 </p>
               )}
               {login.error && (
@@ -96,7 +96,7 @@ export function createSignInFooter(session: OAuthSession) {
                   else void session.signIn();
                 }}
               >
-                {pending ? "Cancel sign-in" : "Sign in"}
+                {pending ? "Cancel sign-in" : "Sign in to Builderlab"}
               </Button>
             </div>
           </div>

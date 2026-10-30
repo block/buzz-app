@@ -23,7 +23,7 @@ import {
   type RemoteAgent,
   type RemoteAgentModel,
 } from "../agents/client";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 import { effortLabel, modelChoice } from "./models";
 
 const statuses = {
@@ -44,7 +44,7 @@ export function ModelSettings({
   settings,
 }: {
   client: AgentClient;
-  session: OAuthSession;
+  session: BuilderlabSession;
   settings:
     | { agent: RemoteAgent; subject: string }
     | { pending: boolean; error: string; retry(): void };

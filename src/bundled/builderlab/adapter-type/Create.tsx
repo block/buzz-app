@@ -8,7 +8,7 @@ import {
   type RemoteAgentModel,
   validInstructions,
 } from "../agents/client";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 import { effortLabel } from "./models";
 
 export type CreationConfig = {
@@ -42,7 +42,7 @@ export function creationConfig(value: unknown): CreationConfig {
 
 export function createCreationFields(
   client: AgentClient,
-  session: OAuthSession,
+  session: BuilderlabSession,
 ) {
   return function Create({ config, onChange, disabled }: AgentCreateProps) {
     const draft = config as CreationConfig;

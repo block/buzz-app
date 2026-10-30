@@ -1,4 +1,6 @@
 //! Native-only viewer exchange. Credentials never enter a URL or website JavaScript.
+use crate::federated_identity::FederatedIdentity;
+use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
@@ -6,9 +8,29 @@ use zeroize::Zeroizing;
 
 const VIEWER_COOKIE: &str = "__Secure-bbidentity_hosted_site_session";
 
+/// Exactly one of a legacy Builderlab credential or the public revision of the
+/// native FI session whose token authorizes the exchange.
 #[derive(Deserialize)]
-pub struct ViewerAuth {
-    credential: String,
+#[serde(try_from = "RawViewerAuth")]
+pub enum ViewerAuth {
+    Credential(String),
+    Federated(String),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawViewerAuth {
+    credential: Option<String>,
+    federated: Option<String>,
+}
+impl TryFrom<RawViewerAuth> for ViewerAuth {
+    type Error = &'static str;
+    fn try_from(raw: RawViewerAuth) -> Result<Self, Self::Error> {
+        match (raw.credential, raw.federated) {
+            (Some(credential), None) => Ok(Self::Credential(credential)),
+            (None, Some(revision)) => Ok(Self::Federated(revision)),
+            _ => Err("expected exactly one of credential or federated"),
+        }
+    }
 }
 
 pub(super) struct Bootstrap {
@@ -83,21 +105,60 @@ fn exchange_available(status: reqwest::StatusCode) -> Result<bool, String> {
     .into())
 }
 
-pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Option<Bootstrap>, String> {
-    let origin = buzzodz_plugins::BUILDERLAB_ORIGIN;
+/// The exchange endpoint and the header authorizing it. A federated token is
+/// selected only while its revision is still the current FI session's.
+fn exchange_request(
+    auth: ViewerAuth,
+    fi: &FederatedIdentity,
+) -> Result<(String, HeaderName, HeaderValue), String> {
+    const SIGN_IN_AGAIN: &str = "Sign in to Builderlab again in Settings";
+    const PATH: &str = "v1/auth/hosted-site/native-session";
+    match auth {
+        ViewerAuth::Credential(credential) => {
+            let credential = Zeroizing::new(credential);
+            if !(32..=512).contains(&credential.len())
+                || !credential
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+            {
+                return Err(SIGN_IN_AGAIN.into());
+            }
+            Ok((
+                format!("{}/api/goose/{PATH}", buzzodz_plugins::BUILDERLAB_ORIGIN),
+                HeaderName::from_static("x-bb-session-credential"),
+                HeaderValue::from_str(&credential).map_err(|_| SIGN_IN_AGAIN)?,
+            ))
+        }
+        ViewerAuth::Federated(revision) => fi
+            .with_session(|token, current, config| {
+                if current != revision {
+                    return None;
+                }
+                let mut value =
+                    HeaderValue::from_str(&Zeroizing::new(format!("Bearer {}", **token))).ok()?;
+                value.set_sensitive(true);
+                Some((
+                    format!("{}{}{PATH}", config.identity_origin, config.api_base_path),
+                    AUTHORIZATION,
+                    value,
+                ))
+            })
+            .flatten()
+            .ok_or_else(|| SIGN_IN_AGAIN.into()),
+    }
+}
+
+pub(super) async fn prepare(
+    target: &str,
+    auth: ViewerAuth,
+    fi: &FederatedIdentity,
+) -> Result<Option<Bootstrap>, String> {
     let domain = buzzodz_plugins::BUILDERLAB_APPS_DOMAIN;
-    let credential = Zeroizing::new(auth.credential);
     if domain.is_empty() {
         return Ok(None);
     }
     let root = app_root(domain, target)?;
-    if !(32..=512).contains(&credential.len())
-        || !credential
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
-    {
-        return Err("Sign in to Builderlab again in Settings".into());
-    }
+    let (url, header, credential) = exchange_request(auth, fi)?;
     let client = reqwest::Client::builder()
         .https_only(true)
         .redirect(reqwest::redirect::Policy::none())
@@ -106,10 +167,8 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Option<Boo
         .map_err(|_| "Builderlab sign-in is unavailable")?;
     let body = Zeroizing::new(serde_json::json!({ "return_to": root }).to_string());
     let mut response = client
-        .post(format!(
-            "{origin}/api/goose/v1/auth/hosted-site/native-session"
-        ))
-        .header("X-BB-Session-Credential", &*credential)
+        .post(url)
+        .header(header, credential)
         .header("Content-Type", "application/json")
         .body(body.to_string())
         .send()
@@ -158,6 +217,99 @@ pub(super) async fn prepare(target: &str, auth: ViewerAuth) -> Result<Option<Boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn signed_in() -> FederatedIdentity {
+        crate::federated_identity::testing::signed_in(
+            "http://127.0.0.1:1".into(),
+            "wss://relay.example",
+            false,
+        )
+    }
+    fn revision(fi: &FederatedIdentity) -> String {
+        fi.with_session(|_, revision, _| revision.to_owned())
+            .unwrap()
+    }
+
+    #[test]
+    fn viewer_auth_accepts_exactly_one_known_field() {
+        let parse = |json: &str| serde_json::from_str::<ViewerAuth>(json);
+        assert!(matches!(
+            parse(r#"{"credential":"c"}"#),
+            Ok(ViewerAuth::Credential(value)) if value == "c"
+        ));
+        assert!(matches!(
+            parse(r#"{"federated":"r"}"#),
+            Ok(ViewerAuth::Federated(value)) if value == "r"
+        ));
+        assert!(matches!(
+            parse(r#"{"credential":"c","federated":null}"#),
+            Ok(ViewerAuth::Credential(_))
+        ));
+        for json in [
+            "{}",
+            r#"{"credential":null,"federated":null}"#,
+            r#"{"credential":"c","federated":"r"}"#,
+            r#"{"credential":"c","extra":1}"#,
+            r#"{"federated":"r","extra":1}"#,
+            r#"{"federated":1}"#,
+        ] {
+            assert!(parse(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn federated_exchange_sends_the_bearer_only_for_the_current_revision() {
+        let fi = signed_in();
+        let (url, name, value) =
+            exchange_request(ViewerAuth::Federated(revision(&fi)), &fi).unwrap();
+        assert_eq!(
+            url,
+            "https://identity.example/api/v1/auth/hosted-site/native-session"
+        );
+        assert_eq!(name, AUTHORIZATION);
+        assert_eq!(value.to_str().unwrap(), "Bearer fixture-session-token");
+        assert!(value.is_sensitive());
+        for stale in [revision(&fi) + "x", String::new()] {
+            assert_eq!(
+                exchange_request(ViewerAuth::Federated(stale), &fi).unwrap_err(),
+                "Sign in to Builderlab again in Settings"
+            );
+        }
+        let current = revision(&fi);
+        fi.sign_out_for_test();
+        assert!(exchange_request(ViewerAuth::Federated(current), &fi).is_err());
+    }
+
+    #[test]
+    fn federated_exchange_fails_closed_when_federated_identity_is_unconfigured() {
+        let fi = FederatedIdentity::unconfigured();
+        assert!(exchange_request(ViewerAuth::Federated("any".into()), &fi).is_err());
+    }
+
+    #[test]
+    fn legacy_exchange_keeps_the_credential_header_and_fixed_path() {
+        let fi = signed_in();
+        let credential = "C".repeat(43);
+        let (url, name, value) =
+            exchange_request(ViewerAuth::Credential(credential.clone()), &fi).unwrap();
+        assert_eq!(
+            url,
+            format!(
+                "{}/api/goose/v1/auth/hosted-site/native-session",
+                buzzodz_plugins::BUILDERLAB_ORIGIN
+            )
+        );
+        assert_eq!(name.as_str(), "x-bb-session-credential");
+        assert_eq!(value.to_str().unwrap(), credential);
+        assert!(!value.is_sensitive());
+        for bad in [
+            "short".to_string(),
+            "C".repeat(513),
+            format!("{credential}!"),
+        ] {
+            assert!(exchange_request(ViewerAuth::Credential(bad), &fi).is_err());
+        }
+    }
 
     #[test]
     fn browser_login_fallback_is_only_for_an_unavailable_feature() {

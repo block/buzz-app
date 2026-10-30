@@ -11,7 +11,7 @@ const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 8192;
 const MAX_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
-const DEADLINE: Duration = Duration::from_secs(30);
+pub(crate) const DEADLINE: Duration = Duration::from_secs(30);
 /// An uploaded file, such as an app artifact.
 const MAX_UPLOAD_BYTES: u64 = 100 * 1024 * 1024;
 /// A deploy can wait for its rollout before it answers.
@@ -68,7 +68,7 @@ struct UploadFile {
     content_type: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub(crate) struct HostResponse {
     status: u16,
     headers: BTreeMap<String, String>,
@@ -293,7 +293,7 @@ fn validate_request(
     Ok((url, method, headers))
 }
 
-async fn send_request(
+pub(crate) async fn send_request(
     url: reqwest::Url,
     method: reqwest::Method,
     headers: HeaderMap,

@@ -35,10 +35,14 @@ async function fixture(
   };
   let subject = "account";
   let offline = false;
-  const session = createOAuthSession(async () => ({
-    value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
-  }));
+  const session = createOAuthSession(
+    async () => ({
+      value: "credential",
+      account: { subject, email: "a@example.com", canUseRemoteAgents: true },
+    }),
+    undefined,
+    { request: (input) => request(input) },
+  );
   await session.signIn();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {
     if (offline) return { status: 400, headers: {}, body: "{}" };
@@ -88,11 +92,7 @@ async function fixture(
       };
     return { status: 200, headers: {}, body: JSON.stringify(result) };
   });
-  const client = createAgentClient(
-    { request, runCommand: vi.fn() },
-    session,
-    null,
-  );
+  const client = createAgentClient(session, null);
   render(
     <ModelSettings
       {...{ client, session }}

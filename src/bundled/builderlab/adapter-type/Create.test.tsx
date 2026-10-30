@@ -39,7 +39,9 @@ async function fixture(signedIn = true) {
       canUseRemoteAgents: true,
     },
   }));
-  const session = createOAuthSession(acquire);
+  const session = createOAuthSession(acquire, undefined, {
+    request: (input) => request(input),
+  });
   if (signedIn) await session.signIn();
   let fail = false;
   const pending = deferred<void>();
@@ -52,11 +54,7 @@ async function fixture(signedIn = true) {
       body: JSON.stringify({ models: catalog }),
     };
   });
-  const client = createAgentClient(
-    { request, runCommand: vi.fn() },
-    session,
-    null,
-  );
+  const client = createAgentClient(session, null);
   const Fields = createCreationFields(client, session);
   let draft = { ...EMPTY_CREATION };
   function Form() {
@@ -155,16 +153,16 @@ it("waits for explicit sign-in before loading the creation catalog", async () =>
 it("can cancel a pending shared sign-in even while the creation form is disabled", async () => {
   const login = deferred<Credential>();
   let aborted = false;
-  const session = createOAuthSession((signal) => {
-    signal.addEventListener("abort", () => (aborted = true));
-    return login.promise;
-  });
-  const request = vi.fn<Host["request"]>();
-  const client = createAgentClient(
-    { request, runCommand: vi.fn() },
-    session,
-    null,
+  const session = createOAuthSession(
+    (signal) => {
+      signal.addEventListener("abort", () => (aborted = true));
+      return login.promise;
+    },
+    undefined,
+    { request: (input) => request(input) },
   );
+  const request = vi.fn<Host["request"]>();
+  const client = createAgentClient(session, null);
   const Create = createCreationFields(client, session);
   render(
     <Create config={{ ...EMPTY_CREATION }} disabled onChange={() => {}} />,

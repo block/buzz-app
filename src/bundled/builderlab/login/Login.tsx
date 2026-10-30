@@ -1,7 +1,12 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { Button } from "../../../shared/design-system/ui/Button";
-import type { OAuthSession } from "../oauth/session";
+import { nativeBuilderlab, type BuilderlabSession } from "../session";
+
+const kept = () =>
+  nativeBuilderlab()
+    ? "Connect your Builderlab account. Buzz keeps your sign-in in your system keychain until you sign out."
+    : "Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz.";
 
 export function Login({
   session,
@@ -11,7 +16,7 @@ export function Login({
   cancelOnUnmount = true,
   unavailableReason = "Open the Buzz desktop app to sign in with Builderlab.",
 }: {
-  session: OAuthSession;
+  session: BuilderlabSession;
   available: boolean;
   active(): boolean;
   showHeading?: boolean;
@@ -27,22 +32,16 @@ export function Login({
   useEffect(
     () => () => {
       if (cancelOnUnmount && session.snapshot().status === "pending")
-        session.cancel();
+        session.abandon();
     },
     [cancelOnUnmount, session],
   );
   return (
     <div data-buzz-ui="" className="flex flex-col items-start gap-4">
       {showHeading ? (
-        <Header
-          title="Builderlab"
-          subtitle="Connect your Builderlab account. Your credential stays in memory until you sign out or close Buzz."
-        />
+        <Header title="Builderlab" subtitle={kept()} />
       ) : (
-        <p className="m-0 text-body-sm text-secondary">
-          Connect your Builderlab account. Your credential stays in memory until
-          you sign out or close Buzz.
-        </p>
+        <p className="m-0 text-body-sm text-secondary">{kept()}</p>
       )}
       {!available ? (
         <p role="status" className="text-body-sm text-secondary">

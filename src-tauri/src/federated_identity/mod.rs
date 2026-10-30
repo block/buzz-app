@@ -1,4 +1,5 @@
 //! One native authority session owner. Secrets and adapter responses never cross IPC.
+pub(crate) mod access;
 pub(crate) mod agent;
 pub(crate) mod assertion;
 pub(crate) mod config;

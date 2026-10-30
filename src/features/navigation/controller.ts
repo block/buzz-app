@@ -55,7 +55,7 @@ export type OpenAttempt = Readonly<{
   entry: NavigationEntry;
   signal: AbortSignal;
   focus?: NavigationFocus;
-  /** History traversal returned to this visit; it was not opened again. */
+  /** History traversal returned to a visit it already held; not opened again. */
   traversal?: true;
 }>;
 export type NavigationSnapshot = Readonly<{
@@ -331,8 +331,13 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
-        // Only open() publishes while opening; anything else revisits a visit.
-        start(focus, !opening);
+        // A return lands on a visit history already held. open() publishes
+        // while opening, and a driver mints a new visit for an edited address
+        // or a dismissal's fallback; none of those returns.
+        start(
+          focus,
+          !opening && !!snapshot.retainedVisits?.includes(state.current.id),
+        );
       }
     });
   });

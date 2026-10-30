@@ -672,6 +672,7 @@ function ChannelWorkspace({
     currentId: string | undefined;
     queries: RelaySession;
     channelType: string | undefined;
+    archived: boolean;
   }>(undefined);
   const continuingVisit =
     committedVisit.current?.currentId === currentId &&
@@ -681,8 +682,9 @@ function ChannelWorkspace({
       currentId,
       queries,
       channelType: current?.channelType,
+      archived: !!current?.archived,
     };
-  }, [currentId, queries, current?.channelType]);
+  }, [currentId, queries, current?.channelType, current?.archived]);
   const tabState = useChannelTabState(
     queries,
     currentId,
@@ -1748,6 +1750,24 @@ function ChannelWorkspace({
       )}
     </ChannelSettingsPanel>
   );
+  const focusArchivedHistory = useCallback(() => {
+    const history = historyContainer.current;
+    if (
+      !currentId ||
+      !queries.channels.get?.(currentId)?.archived ||
+      !history?.isConnected ||
+      history.closest("[inert]")
+    )
+      return;
+    (
+      history.querySelector<HTMLElement>("[data-message-scroller]") ?? history
+    ).focus({ preventScroll: true });
+  }, [currentId, queries.channels]);
+  const channelNotice =
+    !!current &&
+    (current.archived ||
+      (current.readOnly &&
+        (!current.cached || current.viewerRole === "guest")));
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <>
@@ -1768,7 +1788,9 @@ function ChannelWorkspace({
             key={current.id}
             cached={cached}
             // The composer below mounts TypingIndicator for members of a live channel.
-            activityLane={!current.readOnly && !current.cached}
+            activityLane={
+              !current.archived && !current.readOnly && !current.cached
+            }
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
@@ -1789,24 +1811,25 @@ function ChannelWorkspace({
               : "Select a channel to read it."}
           </div>
         )}
-        {current?.readOnly &&
-          (!current.cached || current.viewerRole === "guest") && (
-            <ChannelJoinNotice
-              key={`join:${current.id}`}
-              ready={contentReadyChannel === current.id}
-              channelId={current.id}
-              guest={current.viewerRole === "guest"}
-              joinRole={current.joinRole}
-              lifecycle={queries.channelLifecycle}
-              joinable={
-                !current.archived &&
-                (current.channelType === "stream" ||
-                  current.channelType === "forum")
-              }
-              onJoin={() => setJoiningChannel(current.id)}
-              onHeightChange={setJoinNoticeHeight}
-            />
-          )}
+        {current && channelNotice && (
+          <ChannelJoinNotice
+            key={`join:${current.id}`}
+            ready={contentReadyChannel === current.id}
+            channelId={current.id}
+            archived={!!current.archived}
+            place={solo ? "chat" : "channel"}
+            guest={current.viewerRole === "guest"}
+            joinRole={current.joinRole}
+            lifecycle={queries.channelLifecycle}
+            joinable={
+              !current.archived &&
+              (current.channelType === "stream" ||
+                current.channelType === "forum")
+            }
+            onJoin={() => setJoiningChannel(current.id)}
+            onHeightChange={setJoinNoticeHeight}
+          />
+        )}
       </section>
       {!cached && (
         <LiveStatus
@@ -1819,7 +1842,7 @@ function ChannelWorkspace({
           onRecovered={
             current
               ? () => {
-                  if (current.readOnly && !current.cached) {
+                  if (channelNotice) {
                     const history = historyContainer.current;
                     const target =
                       history?.querySelector<HTMLElement>(
@@ -1835,11 +1858,15 @@ function ChannelWorkspace({
         />
       )}
       {current &&
+        !current.archived &&
         current.viewerRole !== "guest" &&
         (!current.readOnly || current.cached) && (
           <ConversationComposer
             key={`composer:${current.id}`}
+            onFocusedRemoval={focusArchivedHistory}
             autoFocus={
+              // Remote unarchive restores controls within the reader's current visit.
+              !(continuingVisit && committedVisit.current?.archived) &&
               // Conversion remounts the body, but isn't a new conversation opening.
               // Its dialog hands off focus after closing and releasing modality.
               !(
@@ -1857,11 +1884,7 @@ function ChannelWorkspace({
             }
             trailingTool={
               solo ? (
-                <WorkspaceControl
-                  session={queries}
-                  channelId={current.id}
-                  disabled={!!current.archived}
-                />
+                <WorkspaceControl session={queries} channelId={current.id} />
               ) : undefined
             }
             onSend={onComposerSend}
@@ -1911,11 +1934,9 @@ function ChannelWorkspace({
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
           style={
             {
-              "--channel-preview-inset":
-                current?.readOnly &&
-                (!current.cached || current.viewerRole === "guest")
-                  ? `calc(${joinNoticeHeight}px + var(--space-3))`
-                  : "0px",
+              "--channel-preview-inset": channelNotice
+                ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                : "0px",
             } as React.CSSProperties
           }
           data-attachment-drop-zone=""

@@ -455,6 +455,38 @@ it("opens the conversation's transcript when opened from its activity, once", as
   expect(screen.queryByText("Two files.")).toBeNull();
 });
 
+it("opens a channel's session transcript when opened from one of its threads' activity", async () => {
+  // A Solo chat, DM or channel-scoped agent keeps one session per channel, so
+  // the thread's own lookup finds it only after the profile is shown.
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().key]: { channel: { id: "kept", seen: 0, at: 2 } },
+    }),
+  );
+  const transcript = JSON.stringify({
+    type: "assistant",
+    uuid: "u1",
+    timestamp: "2026-10-09T10:00:05Z",
+    message: { content: [{ type: "text", text: "Two files." }] },
+  });
+  const Activity = tab(
+    installed({ files: { "./-Users-me--buzz/kept.jsonl": transcript } }).type,
+    1,
+  );
+  const done = vi.fn();
+  render(
+    <Activity
+      agent={agent()}
+      save={vi.fn()}
+      conversation={{ channelId: "channel", rootId: "e".repeat(64) }}
+      initialTranscript={{ opening: 1, done }}
+    />,
+  );
+  expect(await screen.findByText("Two files.")).toBeVisible();
+  expect(done).toHaveBeenCalledTimes(1);
+});
+
 it("shows the transcript and that sessions may be missing when some history cannot be read", async () => {
   localStorage.setItem(
     "buzz.claude-code.sessions.v1",

@@ -151,8 +151,10 @@
   scroll-padding-block-end: calc(var(--space-5) + var(--agent-footer-height));
 }
 .panelFooter {
+  box-sizing: border-box;
   position: absolute;
-  inset-inline: 0;
+  left: 0;
+  width: 100%;
   bottom: 0;
   z-index: 2;
   /* Give the floating surface its own inset, inside the content's border line. */

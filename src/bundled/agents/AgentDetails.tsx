@@ -127,6 +127,9 @@ export function AgentDetails({
     const scroll = content.current;
     if (!type?.PanelFooter || !footer || !scroll) return;
     const measure = () => {
+      // Share the fields' usable width, excluding either side's scrollbar gutter.
+      footer.style.width = `${scroll.clientWidth}px`;
+      footer.style.left = `${scroll.offsetLeft + scroll.clientLeft}px`;
       scroll.style.setProperty(
         "--agent-footer-height",
         `${footer.getBoundingClientRect().height}px`,
@@ -134,10 +137,17 @@ export function AgentDetails({
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      // Updating the scroll inset also resizes its content box; settle outside delivery.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
     observer.observe(footer);
+    observer.observe(scroll);
     return () => {
       observer.disconnect();
+      cancelAnimationFrame(frame);
       scroll.style.removeProperty("--agent-footer-height");
     };
   }, [type?.PanelFooter]);

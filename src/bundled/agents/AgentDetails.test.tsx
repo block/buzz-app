@@ -108,10 +108,18 @@ it("keeps one provider footer across tabs and measures its changing height for t
   const footer = card.parentElement;
   if (!footer) throw new Error("Missing pane footer");
   const scroll = footer.previousElementSibling as HTMLElement;
+  const width = vi.spyOn(scroll, "clientWidth", "get").mockReturnValue(420);
+  const left = vi.spyOn(scroll, "clientLeft", "get").mockReturnValue(0);
   const box = vi.spyOn(footer, "getBoundingClientRect");
   box.mockReturnValue({ height: 240 } as DOMRect);
   act(() => callbacks.get(footer)?.());
-  expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("240px");
+  await waitFor(() =>
+    expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe(
+      "240px",
+    ),
+  );
+  expect(footer.style.width).toBe("420px");
+  expect(footer.style.left).toBe("0px");
   const user = userEvent.setup();
   for (const name of ["Memory", "Activity", "Settings", "Identity"]) {
     await user.click(screen.getByRole("tab", { name }));
@@ -119,13 +127,27 @@ it("keeps one provider footer across tabs and measures its changing height for t
   }
   box.mockReturnValue({ height: 320 } as DOMRect);
   act(() => callbacks.get(footer)?.());
-  expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("320px");
+  await waitFor(() =>
+    expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe(
+      "320px",
+    ),
+  );
+  // Resize/removal of a scrollbar and a left-side scrollbar use the same inset.
+  width.mockReturnValue(460);
+  left.mockReturnValue(12);
+  act(() => callbacks.get(scroll)?.());
+  await waitFor(() => expect(footer.style.width).toBe("460px"));
+  expect(footer.style.left).toBe("12px");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
   box.mockReturnValue({ height: 0 } as DOMRect);
   act(() => callbacks.get(footer)?.());
   expect(screen.queryByRole("region", { name: "Account access" })).toBeNull();
-  expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("0px");
+  await waitFor(() =>
+    expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("0px"),
+  );
   box.mockRestore();
+  width.mockRestore();
+  left.mockRestore();
 });
 
 function Settings({ agent, save }: AgentViewProps<{ reply: string }>) {

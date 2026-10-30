@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { readView } from "../../shared/view-state";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
@@ -406,6 +406,107 @@ it("unmount attaches and saves a bottom position", () => {
     expect(
       readView<{ bottom: boolean } | null>("date-jump", "scroll:alpha", null),
     ).toMatchObject({ bottom: true });
+  } finally {
+    owner.dispose();
+  }
+});
+
+/** Lays rows out from `tops` (viewport-relative, scroller top 0), each 300px
+ * tall with its day divider in its first 20px. */
+function layout(tops: Record<string, number>) {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const rect = (top: number, height: number) =>
+        ({
+          top,
+          bottom: top + height,
+          left: 0,
+          right: 800,
+          width: 800,
+          height,
+          x: 0,
+          y: top,
+          toJSON() {},
+        }) as DOMRect;
+      if (this.getAttribute("aria-label") === "Channel message history")
+        return rect(0, 600);
+      const row = this.closest<HTMLElement>("[data-message-id]");
+      const top = row ? tops[row.dataset.messageId ?? ""] : undefined;
+      if (top === undefined) return rect(0, 0);
+      return this === row ? rect(top, 300) : rect(top, 20);
+    },
+  );
+}
+const pinned = () => document.querySelector<HTMLElement>("[data-pinned-day]");
+
+it("the pinned day shows the top message's day once its divider scrolls away", () => {
+  const { owner, content } = fixture();
+  try {
+    render(content());
+    layout({ "oct-20": -400, "oct-29": -100, "oct-30": 200 });
+    fireEvent.scroll(screen.getByLabelText("Channel message history"));
+    expect(pinned()).toHaveTextContent("Yesterday");
+    // Mouse only: the dividers carry the same menu for keyboard and screen readers.
+    expect(pinned()).toHaveAttribute("aria-hidden", "true");
+    expect(pinned()?.querySelector("button")).toHaveAttribute("tabindex", "-1");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("the pinned day hides while the top message's divider is in view", () => {
+  const { owner, content } = fixture();
+  try {
+    render(content());
+    layout({ "oct-20": -400, "oct-29": -100, "oct-30": 200 });
+    fireEvent.scroll(screen.getByLabelText("Channel message history"));
+    expect(pinned()).not.toBeNull();
+    layout({ "oct-20": -300, "oct-29": 0, "oct-30": 300 });
+    fireEvent.scroll(screen.getByLabelText("Channel message history"));
+    expect(pinned()).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("the pinned day is off without dateJump", () => {
+  const { owner, content } = fixture({ dateJump: false });
+  try {
+    render(content());
+    layout({ "oct-20": -400, "oct-29": -100, "oct-30": 200 });
+    fireEvent.scroll(screen.getByLabelText("Channel message history"));
+    expect(pinned()).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("the pinned day opens the jump menu and returns focus to the timeline", async () => {
+  const { owner, seek, content } = fixture();
+  try {
+    seek.mockReturnValue(new Promise(() => {}));
+    render(content());
+    layout({ "oct-20": -400, "oct-29": -100, "oct-30": 200 });
+    const history = screen.getByLabelText("Channel message history");
+    fireEvent.scroll(history);
+    const user = userEvent.setup();
+    const trigger = pinned()?.querySelector("button");
+    assert.exists(trigger);
+    await user.click(trigger);
+    await screen.findByRole("menuitem", { name: "Last week" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(history).toHaveFocus());
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Last week" }),
+    );
+    expect(seek).toHaveBeenCalledWith(
+      "alpha",
+      jumpStart("lastWeek", NOW),
+      expect.any(AbortSignal),
+    );
+    // The loading status takes its place while the jump loads.
+    expect(pinned()).toBeNull();
   } finally {
     owner.dispose();
   }

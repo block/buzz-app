@@ -159,12 +159,12 @@ export function AgentDetails({
     };
   }, [type?.PanelFooter]);
   useEffect(() => {
-    // Completing setup removes its focused button; continue in Identity.
-    if (document.activeElement === document.body)
+    // Setup or sign-in removes its focused button; continue in the selected tab.
+    if (!signInVisible && document.activeElement === document.body)
       content.current
         ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
         ?.focus();
-  }, []);
+  }, [signInVisible]);
   const [copied, setCopied] = useState(false);
   const [editingIdentity, setEditingIdentity] = useState(false);
   const identityMenu = useRef<HTMLButtonElement>(null);

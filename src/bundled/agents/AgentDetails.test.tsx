@@ -29,10 +29,12 @@ import {
   createProfileActions,
   createSignInFooter,
 } from "../builderlab/adapter-type/SignInFooter";
+import { deferred } from "../builderlab/test-helpers";
 
 afterEach(cleanup);
 
 it("keeps one provider footer across tabs and measures its changing height for the scroll area", async () => {
+  const signedIn = deferred<void>();
   const callbacks = new Map<Element, () => void>();
   vi.stubGlobal(
     "ResizeObserver",
@@ -49,7 +51,14 @@ it("keeps one provider footer across tabs and measures its changing height for t
     const [connected, setConnected] = useState(false);
     return connected ? null : (
       <section aria-label="Account access">
-        <Button onClick={() => setConnected(true)}>Sign in</Button>
+        <Button
+          onClick={async () => {
+            await signedIn.promise;
+            setConnected(true);
+          }}
+        >
+          Sign in
+        </Button>
       </section>
     );
   }
@@ -158,13 +167,23 @@ it("keeps one provider footer across tabs and measures its changing height for t
   act(() => callbacks.get(scroll)?.());
   await waitFor(() => expect(footer.style.width).toBe("460px"));
   expect(footer.style.left).toBe("12px");
-  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  const selected = screen.getByRole("tab", { name: "Settings" });
+  await user.click(selected);
+  const signIn = screen.getByRole("button", { name: "Sign in" });
+  act(() => signIn.focus());
+  try {
+    await user.keyboard("{Enter}");
+    expect(signIn).toHaveFocus();
+  } finally {
+    await act(async () => signedIn.resolve());
+  }
   box.mockReturnValue({ height: 0 } as DOMRect);
   act(() => callbacks.get(footer)?.());
   expect(screen.queryByRole("region", { name: "Account access" })).toBeNull();
   await waitFor(() =>
     expect(scroll.style.getPropertyValue("--agent-footer-height")).toBe("0px"),
   );
+  await waitFor(() => expect(selected).toHaveFocus());
   box.mockRestore();
   width.mockRestore();
   left.mockRestore();

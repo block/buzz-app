@@ -209,26 +209,31 @@ function createQueue(session: RelaySession) {
         if (roster.channels.some((row) => row.id === entry.channelId))
           entry.admitted = true;
       const retired = new Set(
-        [...waits.keys(), ...entries.map((entry) => entry.channelId)].filter(
-          (id) => {
-            const channel = roster.channels.find((row) => row.id === id);
-            return (
-              (!channel &&
-                (roster.status === "ready" ||
-                  entries.some(
-                    (entry) => entry.channelId === id && entry.admitted,
-                  ))) ||
-              (channel?.readOnly && !channel.cached)
-            );
-          },
-        ),
+        [
+          ...waits.keys(),
+          ...handoffs.keys(),
+          ...entries.map((entry) => entry.channelId),
+        ].filter((id) => {
+          const channel = roster.channels.find((row) => row.id === id);
+          return (
+            (!channel &&
+              (roster.status === "ready" ||
+                entries.some(
+                  (entry) => entry.channelId === id && entry.admitted,
+                ))) ||
+            (channel?.readOnly && !channel.cached)
+          );
+        }),
       );
       if (!retired.size) return;
       for (const entry of entries.filter((entry) =>
         retired.has(entry.channelId),
       ))
         remove(entry.id);
-      for (const id of retired) waits.delete(id);
+      for (const id of retired) {
+        waits.delete(id);
+        handoffs.delete(id);
+      }
       emit();
       pump();
     });
@@ -258,6 +263,7 @@ function createQueue(session: RelaySession) {
       ))
         remove(entry.id);
       waits.delete(channelId);
+      handoffs.delete(channelId);
       emit();
       pump();
     });
@@ -323,8 +329,8 @@ function createQueue(session: RelaySession) {
   async function release(entry: Entry, locked = false): Promise<void> {
     if (storage && entry.message && !locked) {
       try {
-        await storage.lock(entry.id, () =>
-          storage.lockChat(entry.channelId, () => release(entry, true)),
+        await storage.lockChat(entry.channelId, () =>
+          storage.lock(entry.id, () => release(entry, true)),
         );
       } catch (error) {
         entries = entries.map((item) =>
@@ -414,10 +420,17 @@ function createQueue(session: RelaySession) {
               !handoffFinished(predecessor) &&
               predecessor.id !== handoffs.get(entry.channelId)?.id))
         ) {
-          entry.restored = true;
-          entry.resumeCancelled = true;
-          entry.error =
-            "Another window may be handling an earlier queued message. Check the conversation, then Send when ready.";
+          entries = entries.map((item) =>
+            item === entry
+              ? {
+                  ...item,
+                  restored: true,
+                  resumeCancelled: true,
+                  error:
+                    "Another window may be handling an earlier queued message. Check the conversation, then Send when ready.",
+                }
+              : item,
+          );
           return;
         }
         // Retain the claim after removing the row: storage events and agent
@@ -492,7 +505,16 @@ function createQueue(session: RelaySession) {
       !!activity &&
       !!message &&
       handoff.recipients.every((agent) =>
-        finished({ agent, message }, activity),
+        finished(
+          {
+            agent,
+            message,
+            ...(resumedRequests.has(`${agent}:${message}`)
+              ? { resumed: true as const }
+              : {}),
+          },
+          activity,
+        ),
       )
     );
   }
@@ -508,6 +530,7 @@ function createQueue(session: RelaySession) {
       settlingHandoffs.add(channelId);
       void storage
         .lockChat(channelId, async () => {
+          if (handoffs.get(channelId) !== handoff) return;
           if (storage.handoff(channelId)?.id === handoff.id)
             storage.claim(channelId, { ...handoff, complete: true });
           if (handoffs.get(channelId) === handoff) handoffs.delete(channelId);
@@ -518,8 +541,7 @@ function createQueue(session: RelaySession) {
         })
         .finally(() => {
           settlingHandoffs.delete(channelId);
-          if (handoffs.has(channelId) && handoffs.get(channelId) !== handoff)
-            pump();
+          if (handoffs.get(channelId) !== handoff) pump();
         });
     }
     for (const channelId of new Set([
@@ -550,6 +572,7 @@ function createQueue(session: RelaySession) {
     if (
       !entries.length &&
       !waits.size &&
+      !handoffs.size &&
       !session.outbox
         ?.snapshot()
         .some(
@@ -712,8 +735,21 @@ function createQueue(session: RelaySession) {
       restore();
       const channels = new Set(Object.values(turns).filter(Boolean));
       for (const [message, channelId] of Object.entries(turns)) {
+        if (!channelId) continue;
+        let handoff: FollowUpHandoff | null | undefined;
+        try {
+          handoff = storage?.handoff(channelId);
+        } catch (error) {
+          storageError = error instanceof Error ? error.message : String(error);
+        }
+        const resumedHandoff =
+          handoff &&
+          !handoff.complete &&
+          handoff.message === message &&
+          handoff.recipients.includes(agent);
+        if (resumedHandoff) handoffs.set(channelId, handoff);
         if (
-          !channelId ||
+          !resumedHandoff &&
           !entries.some((entry) => entry.channelId === channelId)
         )
           continue;
@@ -738,7 +774,7 @@ function createQueue(session: RelaySession) {
         }
         return entry;
       });
-      if (entries.length) watch();
+      if (entries.length || handoffs.size) watch();
       emit();
       // Other agents in the same Resume decision seed their barriers first.
       queueMicrotask(pump);
@@ -748,6 +784,13 @@ function createQueue(session: RelaySession) {
       const abandoned = Object.keys(turns).map(
         (request) => `${agent}:${request}`,
       );
+      for (const [channelId, handoff] of handoffs)
+        if (
+          handoff.message &&
+          handoff.message in turns &&
+          handoff.recipients.includes(agent)
+        )
+          handoffs.delete(channelId);
       for (const [channelId, current] of waits) {
         const remaining = current.filter(
           (wait) =>

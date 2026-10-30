@@ -861,8 +861,8 @@ it("retains a manual Send through partial discovery even while another turn work
   restarted.choices(false, []);
   const guard = vi.fn();
   restarted.queue.sendNow(id, guard);
-  // Taking the row lock proves the prior release has finished deferring.
-  await followUpStorage(scope).lock(id, async () => {});
+  // The chat lock surrounds the release, including its row-lock acquisition.
+  await followUpStorage(scope).lockChat("chat", async () => {});
   expect(restarted.send).not.toHaveBeenCalled();
   expect(guard).not.toHaveBeenCalled();
   restarted.choices(true, [agent]);
@@ -876,10 +876,10 @@ it("cancels a deferred manual Send when its row is removed", async () => {
   const restarted = fixture();
   restarted.choices(false, []);
   restarted.queue.sendNow(id);
-  await followUpStorage(scope).lock(id, async () => {});
+  await followUpStorage(scope).lockChat("chat", async () => {});
   restarted.queue.remove(id);
   restarted.choices(true, [agent]);
-  await followUpStorage(scope).lock(id, async () => {});
+  await followUpStorage(scope).lockChat("chat", async () => {});
   expect(restarted.queue.snapshot()).toEqual([]);
   expect(restarted.send).not.toHaveBeenCalled();
 });
@@ -1330,3 +1330,137 @@ it("settles a newer completed handoff after an older completion write waits for 
     }),
   );
 });
+
+it("removes a manual send while another row holds the chat lock", async () => {
+  const h = fixture();
+  const first = h.enqueue({ ...message, text: "First" });
+  const second = h.enqueue({ ...message, text: "Second" });
+  const channel = await h.refresh();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.refresh.mockImplementationOnce(async () => {
+    await gate;
+    return channel;
+  });
+  h.refresh.mockClear();
+  const locks = vi.spyOn(navigator.locks, "request");
+  try {
+    h.queue.sendNow(first);
+    await vi.waitFor(() => expect(h.refresh).toHaveBeenCalledOnce());
+    h.queue.sendNow(second);
+    await vi.waitFor(() =>
+      expect(
+        locks.mock.calls.filter(([name]) =>
+          name.startsWith("buzz-follow-up-chat:"),
+        ),
+      ).toHaveLength(2),
+    );
+    h.queue.remove(second);
+    await vi.waitFor(() =>
+      expect(followUpStorage(scope).has(second)).toBe(false),
+    );
+  } finally {
+    release();
+    await followUpStorage(scope).lockChat("chat", async () => {});
+    await followUpStorage(scope).lock(second, async () => {});
+  }
+  await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+  expect(h.send).toHaveBeenCalledOnce();
+  expect(h.send.mock.calls[0]?.[1]).toBe("First");
+});
+
+it("renders the automatic predecessor pause without another store update", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const h = fixture();
+  await h.owner.ready;
+  const id = h.enqueue();
+  followUpStorage(scope).claim("chat", {
+    id: "other-row",
+    message: "other-message",
+    recipients: [agent],
+  });
+  render(
+    createElement(QueuedFollowUps, {
+      session: h.session,
+      channelId: "chat",
+      disabled: false,
+      focusComposer() {},
+    }),
+  );
+  h.finish();
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Another window may be handling an earlier queued message",
+  );
+  await followUpStorage(scope).lock(id, async () => {});
+  expect(h.send).not.toHaveBeenCalled();
+});
+
+it("settles a resumed handoff without a saved successor before reopening", async () => {
+  const event = "e".repeat(64);
+  followUpStorage(scope).claim("chat", {
+    id: "sent-row",
+    message: event,
+    recipients: [agent],
+  });
+  const h = fixture();
+  // The old observer's replayed completion cannot finish the resumed request.
+  h.observe(event);
+  h.finish();
+  h.queue.resumeAfter(agent, { [event]: "chat" });
+  await Promise.resolve();
+  await followUpStorage(scope).lockChat("chat", async () => {});
+  expect(followUpStorage(scope).handoff("chat")?.complete).not.toBe(true);
+  h.work(event, "done");
+  await vi.waitFor(() =>
+    expect(followUpStorage(scope).handoff("chat")?.complete).toBe(true),
+  );
+  h.owner.dispose();
+  // A later session has no local or observer evidence for the old event.
+  const reopened = fixture();
+  reopened.enqueue({ ...message, text: "Fresh follow-up" });
+  reopened.finish();
+  await vi.waitFor(() => expect(reopened.queue.snapshot()).toEqual([]));
+  expect(reopened.send).toHaveBeenCalledOnce();
+});
+
+it.each(["abandoned", "removed", "revoked"])(
+  "retires resumed handoff tracking without a successor when %s",
+  async (reason) => {
+    const event = "e".repeat(64);
+    followUpStorage(scope).claim("chat", {
+      id: "sent-row",
+      message: event,
+      recipients: [agent],
+    });
+    const h = fixture();
+    let removed!: (id: string) => void;
+    Object.assign(h.session, {
+      channelLifecycle: {
+        observeRemoval(listener: (id: string) => void) {
+          removed = listener;
+          return () => {};
+        },
+      },
+    });
+    const deactivate = vi.fn();
+    vi.spyOn(h.session.agentActivity, "activate").mockReturnValue(deactivate);
+    h.finish();
+    h.queue.resumeAfter(agent, { [event]: "chat" });
+    await Promise.resolve();
+    expect(deactivate).not.toHaveBeenCalled();
+    if (reason === "abandoned") h.queue.pauseAfter(agent, { [event]: "chat" });
+    else if (reason === "removed") removed("chat");
+    else h.roster("ready", false);
+    expect(deactivate).toHaveBeenCalledOnce();
+    await followUpStorage(scope).lockChat("chat", async () => {});
+    expect(followUpStorage(scope).handoff("chat")?.complete).not.toBe(true);
+  },
+);

@@ -103,6 +103,15 @@ function blankNewChat(session: RelaySession, scope: string, key: string) {
  * composer reads it only as it mounts. */
 const restoreListeners = new Set<(scope: string, key: string) => void>();
 
+function focusPrompt(prompt: HTMLElement | null) {
+  const input = prompt?.querySelector<
+    HTMLTextAreaElement | ComposerInputElement
+  >('textarea, [contenteditable="true"]');
+  input?.focus();
+  // A returning draft resumes at its end, not before its first tag.
+  input?.setSelectionRange(input.value.length, input.value.length);
+}
+
 export function SoloDraft({
   session,
   scope,
@@ -124,8 +133,9 @@ export function SoloDraft({
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
-  /** The started chat `id` was never made; `message` says why. What was sent
-   * in it goes back to New chat, unless a draft was begun there since. */
+  /** The started chat `id` was never made; `message` says why, and whether
+   * what was sent in it went back to New chat. It does unless a draft was
+   * begun there since. */
   onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
@@ -178,27 +188,30 @@ export function SoloDraft({
       }
     });
   }, [scope, draftKey, projectId]);
+  const prompt = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusRequest) focusPrompt(prompt.current);
+  }, [focusRequest]);
   const [restored, setRestored] = useState(0);
+  // The remount replaces the editor; one that had the caret keeps it.
+  const refocus = useRef(false);
   useEffect(() => {
     const listener = (restoredScope: string, key: string) => {
-      if (restoredScope === scope && key === draftKey)
-        setRestored((count) => count + 1);
+      if (restoredScope !== scope || key !== draftKey) return;
+      refocus.current = !!prompt.current?.contains(document.activeElement);
+      setRestored((count) => count + 1);
     };
     restoreListeners.add(listener);
     return () => {
       restoreListeners.delete(listener);
     };
   }, [scope, draftKey]);
-  const prompt = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The remounted composer commits with the new count.
   useEffect(() => {
-    if (!focusRequest) return;
-    const input = prompt.current?.querySelector<
-      HTMLTextAreaElement | ComposerInputElement
-    >('textarea, [contenteditable="true"]');
-    input?.focus();
-    // A returning draft resumes at its end, not before its first tag.
-    input?.setSelectionRange(input.value.length, input.value.length);
-  }, [focusRequest]);
+    if (!refocus.current) return;
+    refocus.current = false;
+    focusPrompt(prompt.current);
+  }, [restored]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
@@ -371,11 +384,15 @@ export function SoloDraft({
         if (!(reason instanceof ChatNotStarted)) return;
         writeView(scope, `draft:${channelId}`, null);
         clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
-        if (blankNewChat(session, scope, draftKey)) {
+        const blank = blankNewChat(session, scope, draftKey);
+        // The text first: when it can't be saved, an open New chat may hold
+        // unsaved text of its own, so nothing else is given back.
+        const returned =
+          blank && writeView(scope, `${draftKey}:new-draft`, draft);
+        if (returned) {
           if (source) writeView(scope, draftKey, source);
           writeView(scope, `${draftKey}:settings`, draftSettings);
           writeView(scope, `${draftKey}:new-project`, project);
-          writeView(scope, `${draftKey}:new-draft`, draft);
           attachmentDraft(
             session,
             `${scope}:${draftKey}:new-draft`,
@@ -384,7 +401,19 @@ export function SoloDraft({
           ).adopt(attached);
           for (const listener of restoreListeners) listener(scope, draftKey);
         }
-        onFailed?.(channelId, `Couldn't start "${name}": ${reason.message}`);
+        const why = /[.!?]$/.test(reason.message)
+          ? reason.message
+          : `${reason.message}.`;
+        onFailed?.(
+          channelId,
+          `Couldn't start "${name}": ${why} ${
+            returned
+              ? "Your message is back in New chat."
+              : blank
+                ? "Your message could not be saved on this device."
+                : "New chat has a newer draft, so your message was not restored."
+          }`,
+        );
       });
     } catch (reason) {
       if (mounted.current)

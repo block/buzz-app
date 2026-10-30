@@ -19,6 +19,7 @@ test("large channel members stays usable while browsing and searching the roster
 }, testInfo) => {
   await page.goto(app.origin);
   await openPage(page, "Messages");
+  await page.locator(`button[data-channel-id="${channelId}"]`).click();
   const trigger = page
     .getByRole("article", { name: "Conversation" })
     .getByRole("button", { name: "Manage members", exact: true });
@@ -30,6 +31,7 @@ test("large channel members stays usable while browsing and searching the roster
   const list = dialog.getByRole("region", { name: "Member list", exact: true });
   await expect(dialog.getByText("Loading members…")).toHaveCount(0);
   await expect(list.getByRole("listitem").first()).toBeVisible();
+  await expect(list.getByRole("heading", { name: "People · 2526" })).toBeVisible();
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
   const pages = list.getByRole("navigation", { name: "People member pages" });
   await pages.getByRole("button", { name: "Next" }).click();

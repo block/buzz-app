@@ -547,7 +547,7 @@ it.each([
   ["Win32", { ctrlKey: true }],
   ["MacIntel", { metaKey: true }],
 ])(
-  "%s Mod+/ and Mod+Shift+? open Settings at Shortcuts, even while typing",
+  "%s Mod+/ opens Settings at Shortcuts while typing; Mod+Shift+? stays with the OS",
   async (platform, mod) => {
     const h = harness(platform);
     const controller = createNavigationController(createMemoryHistory());
@@ -558,24 +558,23 @@ it.each([
     document.body.append(composer);
     composer.focus();
     try {
+      expect(
+        press(composer, { ctrlKey: false, key: "/", ...mod }).defaultPrevented,
+      ).toBe(true);
+      expect(target()).toEqual({
+        version: 1,
+        kind: "settings",
+        section: "shortcuts",
+      });
+      void navigation.open({ version: 1, kind: "home" });
       for (const chord of [
-        { key: "/", ...mod },
         { key: "?", shiftKey: true, ...mod },
+        { key: "/" },
       ]) {
-        void navigation.open({ version: 1, kind: "home" });
         expect(
           press(composer, { ctrlKey: false, ...chord }).defaultPrevented,
-        ).toBe(true);
-        expect(target()).toEqual({
-          version: 1,
-          kind: "settings",
-          section: "shortcuts",
-        });
+        ).toBe(false);
       }
-      void navigation.open({ version: 1, kind: "home" });
-      expect(
-        press(composer, { ctrlKey: false, key: "/" }).defaultPrevented,
-      ).toBe(false);
       expect(target()).toEqual({ version: 1, kind: "home" });
     } finally {
       remove();

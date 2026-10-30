@@ -193,10 +193,8 @@ export function registerNavigationShortcuts(
       id: "shortcuts-help",
       title: "Show keyboard shortcuts",
       order: HOST_SHORTCUT_ORDER.shortcutsHelp,
-      binding: [
-        { key: "/", mod: true },
-        { key: "?", mod: true, shift: true },
-      ],
+      // Not Mod+Shift+? too: macOS reserves it for Help menu search.
+      binding: { key: "/", mod: true },
       allowInEditable: true,
       run: () =>
         navigation

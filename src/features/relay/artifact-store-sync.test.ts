@@ -24,10 +24,12 @@ afterEach(async () => {
   vi.mocked(reconcileArtifactDelta).mockReset().mockResolvedValue(undefined);
   vi.mocked(reconcileArtifactCurrent).mockReset().mockResolvedValue(undefined);
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 function setup() {
   vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0);
   vi.stubGlobal("navigator", {
     locks: { request: vi.fn(async (_key, _options, callback) => callback()) },
   });
@@ -284,6 +286,64 @@ it("keeps capture admission failures on the repair interval despite live traffic
   expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(60_000);
   expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+});
+it.each([
+  [0, 60_000],
+  [0.5, 75_000],
+  [0.99999, 89_999],
+])(
+  "keeps random draw %s behind its %s ms retry deadline",
+  async (draw, delay) => {
+    const h = setup();
+    vi.spyOn(Math, "random").mockReturnValueOnce(draw).mockReturnValue(0);
+    vi.mocked(reconcileArtifactDelta).mockRejectedValue(
+      new ArtifactIncrementalError("incremental_limit", "Capture limit"),
+    );
+    h.add();
+    await vi.advanceTimersByTimeAsync(0);
+    const event = eventDto(
+      signed(keypair(), {
+        kind: 45010,
+        content: "{}",
+        tags: [
+          ["type", "test.task"],
+          ["d", "task"],
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(delay - 1);
+    h.confirmed(event);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reconcileArtifactDelta).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(reconcileArtifactDelta).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reconcileArtifactDelta).toHaveBeenCalledTimes(3);
+  },
+);
+it("spreads retries across owners after simultaneous capture refusals", async () => {
+  const owners = Array.from({ length: 32 }, () => setup());
+  const random = vi.spyOn(Math, "random");
+  for (let index = 0; index < owners.length; index++)
+    random.mockReturnValueOnce(index / owners.length);
+  vi.mocked(reconcileArtifactDelta).mockRejectedValue(
+    new ArtifactIncrementalError("incremental_unavailable", "Capture busy"),
+  );
+  for (const owner of owners) owner.add();
+  await vi.advanceTimersByTimeAsync(7000);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(128);
+  vi.mocked(reconcileArtifactDelta).mockResolvedValue(undefined);
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(reconcileArtifactDelta).toHaveBeenCalledTimes(128);
+  let elapsed = 59_999;
+  for (let index = 0; index < owners.length; index++) {
+    const deadline = 60_000 + Math.floor((index / owners.length) * 30_000);
+    await vi.advanceTimersByTimeAsync(deadline - elapsed);
+    expect(reconcileArtifactDelta).toHaveBeenCalledTimes(129 + index);
+    elapsed = deadline;
+  }
 });
 it("keeps a current handle when an older in-flight version fails", async () => {
   const h = setup();

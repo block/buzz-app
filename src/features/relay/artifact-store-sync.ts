@@ -239,7 +239,7 @@ export function provideArtifactStoreSync(
             const delay =
               !permanent && retry <= 3
                 ? (RECOVERY_DELAYS_MS[retry - 1] ?? REPAIR_MS)
-                : REPAIR_MS;
+                : REPAIR_MS + Math.floor(Math.random() * 30_000);
             notBefore = Date.now() + delay;
             schedule(delay);
           }

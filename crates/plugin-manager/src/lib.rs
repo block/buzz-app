@@ -102,6 +102,52 @@ pub struct HostProcess {
     /// Run the copy the app ships in its `bin` resources, never one on PATH.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bundled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ProcessArtifact>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessArtifact {
+    pub path: String,
+    pub sha256: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub siblings: Vec<ProcessArtifactSibling>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessArtifactSibling {
+    pub name: String,
+    pub sha256: String,
+}
+fn valid_sha256(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+fn valid_artifact(artifact: &ProcessArtifact) -> bool {
+    let path = Path::new(&artifact.path);
+    if !path.is_absolute()
+        || artifact.path.len() > 4096
+        || artifact.path.contains('\0')
+        || !valid_sha256(&artifact.sha256)
+        || artifact.siblings.len() > 16
+    {
+        return false;
+    }
+    let mut names = std::collections::HashSet::new();
+    artifact.siblings.iter().all(|sibling| {
+        let name = &sibling.name;
+        !name.is_empty()
+            && name.len() <= 80
+            && name != "."
+            && name != ".."
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && valid_sha256(&sibling.sha256)
+            && names.insert(name)
+    })
 }
 fn valid_program(program: &str, args: &[String]) -> bool {
     !program.is_empty()
@@ -192,6 +238,11 @@ impl Manifest {
                 valid_id(&process.id)?;
                 if !process_ids.insert(&process.id)
                     || !valid_program(&process.program, &process.args)
+                    || (process.bundled && process.artifact.is_some())
+                    || process
+                        .artifact
+                        .as_ref()
+                        .is_some_and(|artifact| !valid_artifact(artifact))
                 {
                     return Err("Invalid host process declaration".into());
                 }
@@ -1922,6 +1973,77 @@ mod tests {
         bundled["host"]["processes"][0]["bundled"] = serde_json::json!(true);
         let parsed: Manifest = serde_json::from_value(bundled).unwrap();
         assert!(parsed.host.as_ref().unwrap().processes[0].bundled);
+        let hash = "a".repeat(64);
+        let mut artifact = processes.clone();
+        artifact["host"]["processes"][0]["artifact"] = serde_json::json!({
+            "path": std::env::temp_dir().join("example-cli"), "sha256": hash,
+            "siblings": [{"name": "runtime.js", "sha256": "b".repeat(64)}]
+        });
+        assert!(artifact_from_text(&artifact.to_string(), "export const x = 1".into()).is_ok());
+        for (field, value) in [
+            ("path", serde_json::json!("relative/agent")),
+            ("sha256", serde_json::json!("A".repeat(64))),
+            ("sha256", serde_json::json!("a".repeat(63))),
+            (
+                "siblings",
+                serde_json::json!([{"name": "../other", "sha256": "b".repeat(64)}]),
+            ),
+        ] {
+            let mut invalid = artifact.clone();
+            invalid["host"]["processes"][0]["artifact"][field] = value;
+            assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
+        }
+        let sibling = |name: String| serde_json::json!({"name":name,"sha256":"b".repeat(64)});
+        for (siblings, valid) in [
+            (
+                (0..16)
+                    .map(|i| sibling(format!("file-{i}")))
+                    .collect::<Vec<_>>(),
+                true,
+            ),
+            (
+                (0..17).map(|i| sibling(format!("file-{i}"))).collect(),
+                false,
+            ),
+            (
+                vec![sibling("duplicate".into()), sibling("duplicate".into())],
+                false,
+            ),
+            (vec![sibling("a".repeat(80))], true),
+            (vec![sibling("a".repeat(81))], false),
+        ]
+        .into_iter()
+        .chain(["", ".", "..", "nul\0name"].map(|name| (vec![sibling(name.into())], false)))
+        {
+            let mut candidate = artifact.clone();
+            candidate["host"]["processes"][0]["artifact"]["siblings"] = serde_json::json!(siblings);
+            assert_eq!(
+                artifact_from_text(&candidate.to_string(), "export const x = 1".into()).is_ok(),
+                valid
+            );
+        }
+        let prefix = std::env::temp_dir()
+            .join("artifact-")
+            .to_string_lossy()
+            .into_owned();
+        for (path, valid) in [
+            (format!("{prefix}{}", "x".repeat(4096 - prefix.len())), true),
+            (
+                format!("{prefix}{}", "x".repeat(4097 - prefix.len())),
+                false,
+            ),
+            (format!("{prefix}\0name"), false),
+        ] {
+            let mut candidate = artifact.clone();
+            candidate["host"]["processes"][0]["artifact"]["path"] = serde_json::json!(path);
+            assert_eq!(
+                artifact_from_text(&candidate.to_string(), "export const x = 1".into()).is_ok(),
+                valid
+            );
+        }
+        let mut invalid = artifact.clone();
+        invalid["host"]["processes"][0]["bundled"] = serde_json::json!(true);
+        assert!(artifact_from_text(&invalid.to_string(), "export const x = 1".into()).is_err());
         for (field, value) in [
             ("program", serde_json::json!("/bin/sh")),
             ("program", serde_json::json!("")),

@@ -621,6 +621,9 @@ it("reopens profile settings from the same session cache while refreshing", asyn
       await read;
       return inspect(...args);
     });
+  // Reopening uses the cached value immediately. Control delayed loading
+  // feedback so a busy runner cannot cross its one-second boundary first.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
     await openProfile();
     expect(refresh).toHaveBeenCalledWith(
@@ -632,8 +635,16 @@ it("reopens profile settings from the same session cache while refreshing", asyn
       within(reopened).getByRole("textbox", { name: "Display name" }),
     ).toHaveValue("Community name");
     expect(within(reopened).queryByText(/Loading your profile/)).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(within(reopened).getByText(/Loading your profile/)).toBeVisible();
+    expect(
+      within(reopened).getByRole("textbox", { name: "Display name" }),
+    ).toHaveValue("Community name");
   } finally {
     await act(async () => release());
+    vi.useRealTimers();
   }
 });
 

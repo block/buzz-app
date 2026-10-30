@@ -1,4 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
@@ -23,16 +28,23 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
     retry(): void;
     harnessControl: ReactNode;
   }) {
+    const login = useSyncExternalStore(session.subscribe, session.snapshot);
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;
       subject: string;
+      email: string;
     }>();
     const [busy, setBusy] = useState(true);
     const [error, setError] = useState("");
     useEffect(() => {
+      if (loaded || login.status !== "signed-in") return;
+      setBusy(true);
+      setError("");
       const current = new AbortController();
       const load = async () => {
-        await session.ensureSignedIn(current.signal);
+        // Retire a discarded mount before starting host I/O.
+        await Promise.resolve();
+        current.signal.throwIfAborted();
         const credential = session.credential();
         const remote = (await client.list(current.signal)).find(
           (row) => row.pubkey === pubkey,
@@ -44,7 +56,11 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
           throw new Error("Agent not found in this Builderlab account.");
         if (remote.status !== "Active")
           throw new Error("Only Active agents can have their settings edited.");
-        setLoaded({ agent: remote, subject: credential.account.subject });
+        setLoaded({
+          agent: remote,
+          subject: credential.account.subject,
+          email: credential.account.email,
+        });
       };
       void load()
         .catch((reason: unknown) => {
@@ -54,12 +70,18 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
           if (!current.signal.aborted) setBusy(false);
         });
       return () => current.abort();
-    }, [pubkey]);
+    }, [pubkey, login, loaded]);
     return (
       <ModelSettings
         client={client}
         session={session}
-        settings={loaded ?? { pending: busy, error, retry }}
+        settings={
+          loaded ?? {
+            pending: busy && login.status === "signed-in",
+            error,
+            retry,
+          }
+        }
         harnessControl={harnessControl}
       />
     );

@@ -314,6 +314,16 @@ ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
 other watches keep no such record, so they still match them. The bundled Agent
 Attention UI plugin calls it.
 
+Protection plugins inject `ctx.agentProtection` to register checks and review
+models and save native owner defaults or per-agent policies. An `AgentType`
+declares `protection` / `protectionUnavailable` and retires native sessions with
+`retire(key)`, where `key` is the membership key. Protected runs receive
+`AgentHandle.protection`; missing providers or enforcement stop them. This
+service shares the trusted-plugin authority described above, not a separate
+plugin permission boundary. The [protection contract](agent-protection.md)
+documents payload capture, missing-provider recovery and the explicit one-way
+storage upgrade, which also affects agents shared with older installed builds.
+
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
 gets the agent's Buzz client and where it is working, so the tool acts as the
@@ -1013,7 +1023,7 @@ JSON protocol on stdin and stdout, declares it under `host.processes`:
 }
 ```
 
-`ctx.host.spawn(id, { args, cwd, env, agent, onStdout, onStderr })` starts it
+`ctx.host.spawn(id, { args, cwd, env, mcp, protection, onStdout, onStderr })` starts it
 with the caller's `args` after the declared ones, so the declaration names the
 program but not every argument. It returns `{ write, end, kill, exited }`.
 stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
@@ -1024,19 +1034,36 @@ which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and
 never searches PATH; the Goose plugin runs `goose-acp` this way.
 
-`agent` names an agent whose type the calling plugin registered. The
-process then runs as that agent, as harness agents do: native puts its key in
-`BUZZ_PRIVATE_KEY` (and `NOSTR_PRIVATE_KEY`), its community in `BUZZ_RELAY_URL`
-and its owner attestation in `BUZZ_AUTH_TAG`, and puts the bundled agent tools,
-including the `buzz` CLI, first on its PATH. The key never enters the WebView,
-but the process can sign any event as the agent; the kind allowlist on
-`publish` does not bound it.
+`mcp` supplies an app-held MCP session URL and headers. The bundled command
+helper initializes that session and supplies an agent-scoped `buzz` tool command
+to the worker. Agent identity, signing authority and tool authorization stay in
+the app; this option does not transfer private identity keys to the worker.
 
 A process lives until it exits, the plugin kills it, the plugin unloads, the
 page reloads or the app exits. `kill` sends SIGTERM to its process group and
 SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
-run with the user's full access and no sandbox; the import preview says so.
+run with the user's full access by default; the import preview says so.
+`protection: { readOnlyPaths, hiddenPaths }` adds macOS containment for the worker
+and descendants. Both arrays contain absolute existing paths. Read-only paths
+reject writes; hidden paths reject reads and writes. The host adds its application,
+plugin storage and actual Agents folder, blocks Apple Events, and refuses mutable
+development frontends or unsupported operating systems.
+
+Contained launches require an app-bundled executable or an `artifact` descriptor;
+PATH-only entrypoints are refused. Artifact descriptors name an absolute executable,
+its SHA-256, and optional flat sibling files with their hashes. Native launch hashes
+while copying those declared files into a content-addressed generation beneath the
+actual shared Agents folder, then launches that copy. All contained workers are
+prevented from writing this store. Corrupt generations fail closed and are never
+repaired in place. Equivalent Windows path forms are accepted; symlinks remain
+rejected. Control characters in containment paths refuse launch.
+
+This is approval-authority containment, covering the application, controls, private
+approval state, and declared launch files. It does not verify every dependency an
+interpreter loads. Unsandboxed processes running as the same user, including code
+planted for later execution, are outside this boundary; broader isolation belongs
+to Sandpit. Ordinary launches retain their existing PATH and access behavior.
 
 A plugin that declares `"files": true` under `host` reads files and resolves
 directories natively, the same on every platform, rather than starting a
@@ -1202,10 +1229,13 @@ requires deleting the plugin and adding it again. Git checks remain explicit in 
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
-usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
-known hosts, with interactive prompts and SSH config disabled. If normal Git uses
-an `IdentityAgent` from SSH config, launch the app with that socket in
-`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
+usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on
+port 22 use Block's agent when its socket exists at
+`~/Library/Application Support/block-ssh-agent/agent.sock`. Other SSH sources use
+the desktop process's inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with
+interactive prompts and SSH config disabled. For another agent selected by
+`IdentityAgent` in SSH config, launch the app with that socket in `SSH_AUTH_SOCK`.
+Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
@@ -1236,7 +1266,7 @@ Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
 submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
-SSH uses the existing agent/known hosts, not user SSH config; password entry, HTTPS
+SSH uses the selected agent and known hosts, not user SSH config; password entry, HTTPS
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.

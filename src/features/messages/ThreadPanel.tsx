@@ -518,21 +518,21 @@ function ThreadMessages({
     channelId,
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.archived) return "archived";
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
-        return !channel.archived &&
-          (channel.channelType === "stream" || channel.channelType === "forum")
+        return channel.channelType === "stream" ||
+          channel.channelType === "forum"
           ? "joinable"
           : "preview";
       }
-      return listed && !listed.readOnly && !listed.archived
-        ? "member"
-        : "other";
+      return listed && !listed.readOnly ? "member" : "other";
     },
   );
   const preview =
     channelAccess === "joinable" ||
     channelAccess === "preview" ||
+    channelAccess === "archived" ||
     channelAccess === "guest";
   const joinRole = useListedChannel(
     session.channels,
@@ -805,9 +805,9 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
-  // Opening a thread that is already shown selects nothing new, so no tab
-  // hands focus to it. Without focus inside, reading never starts. A first
-  // opening (not yet positioned) is focused by its tab and must be left alone.
+  // Reopening an already-shown thread selects nothing new, so its reader needs
+  // a focus handoff to start reading. First positioning leaves the opening's
+  // tab/composer focus handoff alone.
   // The signal identifies one request; the navigation object is re-bound per
   // relay snapshot, so a re-render of the same request must not refocus.
   const handledRequest = useRef(navigation?.signal);
@@ -1419,6 +1419,15 @@ function ThreadMessages({
   const targetUnavailable =
     snapshot.targetStatus === "unavailable" && !selectionNotice;
   const historyError = !!snapshot.error && !showOlderPageStatus;
+  const focusArchivedHistory = useCallback(() => {
+    const history = scroller.current;
+    if (
+      session.channels?.get?.(channelId)?.archived &&
+      history?.isConnected &&
+      !history.closest("[inert]")
+    )
+      history.focus({ preventScroll: true });
+  }, [session.channels, channelId]);
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
@@ -1653,6 +1662,8 @@ function ThreadMessages({
               !!rows.length)
           }
           channelId={channelId}
+          archived={channelAccess === "archived"}
+          place={soloConversation ? "chat" : "channel"}
           guest={channelAccess === "guest"}
           joinRole={joinRole}
           lifecycle={session.channelLifecycle}
@@ -1664,6 +1675,7 @@ function ThreadMessages({
       {composerRoot && (
         <MessageComposer
           activityClickOpensPanel={activityClickOpensPanel}
+          onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
           session={session}

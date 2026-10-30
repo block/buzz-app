@@ -86,15 +86,24 @@ bound to another key is reported and never unbound.
 The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
-account before saving. Empty instructions can be saved to clear them.
+account before saving. A different signed-in account locks the fields and shows
+that requirement instead of the previous account's errors and retries. Signed-out
+panes hide stale settings errors and retries while retaining the draft.
+Empty instructions can be saved to clear them.
+Signed-out agent panes show a pinned sign-in card across every tab, including
+relay-backed Memory and Activity. Opening the pane does not start browser login;
+Sign in starts it, and Cancel sign-in cancels the shared account attempt.
+The card reserves its measured height for scrolling and clears once sign-in is
+verified. Slow settings/catalog reads offer a scoped retry after three seconds.
 The Identity tab also loads a separate model catalog from Builderlab. Choose a
 model and one of that model's thinking levels, then save the pair for new tasks.
 There is no default or fallback selection. Missing or unavailable saved choices
 show the server's setup status and require a supported pair. Changing the model
 clears the effort choice. One shared Save action sits in the agent pane's bottom
 footer and saves the Identity draft. When model settings and instructions both
-change, they are sent in one update. Instructions alone remain editable when the
-model catalog is unavailable; a changed model requires a supported effort before
+change, they are sent in one update. While signed in to the original account,
+Instructions alone remain editable when the model catalog is unavailable;
+a changed model requires a supported effort before
 the draft can be saved.
 The model control uses the same family submenus as Goose. Builderlab's catalog
 aliases are mapped to families in `adapter-type/models.ts`; update that mapping

@@ -7,6 +7,18 @@ import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
 import { createHash } from "node:crypto";
 import { callTool, memoryVersion, TOOLS } from "./tools";
+import { callSessionTool } from "./session-tools";
+import { Context } from "@deepseek-ai/cordis";
+import { AgentProtectionService } from "../features/agent-protection/service";
+import type { Agent } from "../features/agents/service";
+
+function gate<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
 
 const me = "c".repeat(64);
 const alice = "a".repeat(64);
@@ -143,6 +155,185 @@ const community = [
     ],
   }),
 ];
+
+it.each([
+  ["send", { audience: "everyone" }, "text"],
+  ["reply_in_subthread", { audience: "everyone", parent: root }, "text"],
+  ["mem_set", { slug: "captured" }, "text"],
+  ["notes_set", { name: "captured", title: "Captured" }, "text"],
+  ["canvas_set", {}, "content"],
+] as const)(
+  "reviews and writes the same captured file text for %s",
+  async (name, input, field) => {
+    const { client, published } = fake(
+      [
+        ...community,
+        event({
+          kind: 39000,
+          tags: [
+            ["d", "chan"],
+            ["t", "stream"],
+          ],
+        }),
+      ],
+      { keep: true },
+    );
+    let source = "reviewed text";
+    client.read = vi.fn(async () => new TextEncoder().encode(source));
+    const entered = gate<void>();
+    const approval = gate<void>();
+    client.protect = vi.fn(async (action) => {
+      if (action.kind !== "tool") return;
+      entered.resolve(undefined);
+      await approval.promise;
+    });
+    const args: Record<string, unknown> = {
+      ...input,
+      path: " body.md ",
+      [field]: "ignored",
+    };
+    const result = callSessionTool(
+      client,
+      { channel: "chan", root },
+      name,
+      args,
+    );
+    try {
+      await entered.promise;
+      expect(client.protect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "tool",
+          content: { title: name, arguments: { ...input, [field]: source } },
+        }),
+      );
+      expect(published).toEqual([]);
+      expect(client.upload).not.toHaveBeenCalled();
+      expect(client.remember).not.toHaveBeenCalled();
+      source = "changed after review";
+      args.path = "changed.md";
+      args[field] = "changed caller text";
+      approval.resolve(undefined);
+      await result;
+      expect(client.read).toHaveBeenCalledExactlyOnceWith("body.md");
+      if (name === "mem_set")
+        expect(client.remember).toHaveBeenCalledExactlyOnceWith(
+          "mem/captured",
+          "reviewed text",
+          0,
+        );
+      else
+        expect(published.map((event) => event.content)).toEqual([
+          "reviewed text",
+        ]);
+    } finally {
+      approval.resolve(undefined);
+      await result.catch(() => undefined);
+    }
+  },
+);
+
+it.each(["read", "review"])(
+  "does not write when file-backed %s fails",
+  async (failure) => {
+    const { client, published } = fake(community);
+    client.protect = vi.fn(async () => {
+      if (failure === "review") throw new Error("denied");
+    });
+    if (failure === "read")
+      client.read = vi.fn(async () => {
+        throw new Error("unreadable");
+      });
+    await expect(
+      callSessionTool(client, { channel: "chan" }, "send", {
+        audience: "everyone",
+        path: "body.md",
+      }),
+    ).rejects.toThrow(failure === "read" ? "unreadable" : "denied");
+    expect(published).toEqual([]);
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(client.remember).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["send", "reply_in_subthread"])(
+  "refuses protected %s attachments before reads or side effects",
+  async (name) => {
+    const { client, published } = fake(community);
+    client.protect = vi.fn(async () => {});
+    await expect(
+      callSessionTool(client, { channel: "chan", root }, name, {
+        audience: "everyone",
+        parent: root,
+        text: "hello",
+        path: "body.md",
+        files: ["shot.png"],
+      }),
+    ).rejects.toThrow("Protected attachment uploads are not supported");
+    expect(client.read).not.toHaveBeenCalled();
+    expect(client.protect).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        kind: "tool-result",
+        content: {
+          error: expect.stringContaining(
+            "Protected attachment uploads are not supported",
+          ),
+        },
+      }),
+    );
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(published).toEqual([]);
+  },
+);
+
+it("refuses an oversized captured file before review or publication", async () => {
+  const { client, published } = fake(community);
+  const ctx = new Context();
+  const agent = {
+    owner: alice,
+    pubkey: me,
+    name: "Worker",
+    type: "test/worker",
+    relay: "wss://relay.example",
+    protection: { provider: "security.test", policy: {} },
+  } as Agent;
+  const service = new AgentProtectionService(
+    ctx,
+    () => ({ owner: alice, agents: [agent] }),
+    {
+      read: async () => ({ revision: 0, defaults: null }),
+      save: async () => {},
+      update: async () => {},
+    },
+  );
+  const check = vi.fn(async () => true);
+  ctx
+    .extend({ pluginOwner: { id: "security.test", revision: "one" } })
+    .agentProtection.register({
+      processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+      check,
+    });
+  const protection = service.bind(agent);
+  if (!protection) throw new Error("Expected protected handle");
+  client.protect = (action) =>
+    protection.check(action, new AbortController().signal);
+  client.read = vi.fn(async () =>
+    new TextEncoder().encode("x".repeat(256 * 1024)),
+  );
+  try {
+    await expect(
+      callSessionTool(client, { channel: "chan" }, "send", {
+        audience: "everyone",
+        path: "large.md",
+      }),
+    ).rejects.toThrow("too large");
+    expect(client.read).toHaveBeenCalledExactlyOnceWith("large.md");
+    expect(check).not.toHaveBeenCalled();
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(published).toEqual([]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
 
 it("replies in the current thread and notifies the members it names", async () => {
   const { client, published } = fake(community);

@@ -285,7 +285,7 @@ it("a retired Messages visit receives no late conversion completion", async () =
   expect(t.publish).toHaveBeenCalledOnce();
 });
 
-it("Messages header reopens unfiling recovery after confirmed metadata and a failed project save", async () => {
+it("Messages header completes conversion without removing section placement", async () => {
   const t = fixture();
   t.unfile.mockRejectedValueOnce(new Error("Project save failed"));
   const { user, confirm, dialog } = await openConversion();
@@ -299,26 +299,9 @@ it("Messages header reopens unfiling recovery after confirmed metadata and a fai
       t.release();
     });
   }
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "Project save failed",
-  );
-  const closeButton = within(dialog)
-    .getAllByRole("button", { name: "Close" })
-    .at(-1);
-  if (!closeButton) throw new Error("Close missing");
-  await user.click(closeButton);
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Finish conversion" }),
-  );
-  const reopened = await screen.findByRole("dialog", {
-    name: "Convert to channel",
-  });
-  await user.click(
-    within(reopened).getByRole("button", { name: "Finish conversion" }),
-  );
-  await waitFor(() => expect(reopened).not.toBeInTheDocument());
-  expect(t.unfile).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(t.unfile).not.toHaveBeenCalled();
+  expect(t.session.soloPreferences.snapshot().data?.assignments[id]).toBe("g");
   expect(t.publish).toHaveBeenCalledOnce();
   await waitFor(() =>
     expect(

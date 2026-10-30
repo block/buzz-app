@@ -658,7 +658,8 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const user = await setup();
   if (!services) throw new Error("Missing app services");
   const current = services;
-  await user.click(await screen.findByRole("button", { name: "New message" }));
+  await user.click(await screen.findByRole("button", { name: "New" }));
+  await user.click(await screen.findByRole("menuitem", { name: "New DM" }));
   const composing = await screen.findByRole("region", { name: "New message" });
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
@@ -730,7 +731,8 @@ it("keeps the same unsent conversation and companion panel through Settings sect
 
 it("returns keyboard-opened Settings to the same focused draft", async () => {
   const user = await setup();
-  await user.click(await screen.findByRole("button", { name: "New message" }));
+  await user.click(await screen.findByRole("button", { name: "New" }));
+  await user.click(await screen.findByRole("menuitem", { name: "New DM" }));
   const composing = await screen.findByRole("region", { name: "New message" });
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),

@@ -479,7 +479,7 @@ it("starts a Solo draft route in its project, with that project's saved draft", 
   ).toHaveTextContent("Plan the week");
   await waitFor(() =>
     expect(
-      within(region).getByRole("button", { name: "Workspace: Work" }),
+      within(region).getByRole("button", { name: "Section: Work" }),
     ).toBeEnabled(),
   );
 });
@@ -492,7 +492,7 @@ it("addresses a Solo draft route's agent in the new chat without tagging the tex
     name: "Message your agents",
   });
   expect(
-    within(region).getByRole("button", { name: "Add workspace" }),
+    within(region).getByRole("button", { name: "Add to section" }),
   ).toBeVisible();
   // The routed agent is the recipient, held outside the text.
   const user = userEvent.setup();
@@ -548,7 +548,9 @@ it("sends the owner's Solo chat to its only agent without a tag, and gives it it
     name: "Message your agents",
   });
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Add workspace" })).toBeEnabled(),
+    expect(
+      screen.getByRole("button", { name: "Add to section" }),
+    ).toBeEnabled(),
   );
   const user = userEvent.setup();
   await user.click(input);
@@ -569,7 +571,9 @@ it("sends a guest alone with agents to the chat's only agent, who can still file
   });
   // A shared chat is the guest's to file in their own workspaces.
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Add workspace" })).toBeEnabled(),
+    expect(
+      screen.getByRole("button", { name: "Add to section" }),
+    ).toBeEnabled(),
   );
   const user = userEvent.setup();
   await user.click(input);
@@ -800,7 +804,11 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Work" }));
-  expect(assign).toHaveBeenCalledExactlyOnceWith(id, "work");
+  expect(assign).toHaveBeenCalledExactlyOnceWith(
+    id,
+    "work",
+    expect.any(AbortSignal),
+  );
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await user.click(trigger);
   await user.click(
@@ -833,7 +841,10 @@ it("reports a failed header move beside the header and retries it", async () => 
       },
     ],
   } as unknown as typeof current;
-  const retryMove = vi.fn(async () => {});
+  const assign = vi.fn(async () => {
+    publish(failed);
+    throw new Error("Relay unavailable");
+  });
   Object.assign(f.session.soloPreferences, {
     writable: true,
     snapshot: () => current,
@@ -841,11 +852,7 @@ it("reports a failed header move beside the header and retries it", async () => 
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    assign: vi.fn(async () => {
-      publish(failed);
-      throw new Error("Relay unavailable");
-    }),
-    retryMove,
+    assign,
     dismissMoveError: () => publish(base),
   });
   f.mountWithToasts();
@@ -861,7 +868,7 @@ it("reports a failed header move beside the header and retries it", async () => 
   expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
   // Toasts own swipe gestures, so press their buttons without a pointer.
   fireEvent.click(screen.getByRole("button", { name: "Retry move" }));
-  expect(retryMove).toHaveBeenCalledExactlyOnceWith(id);
+  await waitFor(() => expect(assign).toHaveBeenCalledTimes(2));
   fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
   await waitFor(() =>
     expect(screen.queryByText("Chat wasn’t moved")).toBeNull(),

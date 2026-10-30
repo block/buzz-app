@@ -168,7 +168,7 @@ it("keeps the submitted name and identity through a failed save, blocking dismis
   );
   const input = screen.getByRole("textbox", { name: "Section name" });
   expect(
-    screen.getByRole("dialog", { name: "Create new section" }),
+    screen.getByRole("dialog", { name: "New section" }),
   ).toBeInTheDocument();
   await waitFor(() => expect(input).toHaveFocus());
   fireEvent.change(input, { target: { value: " Launch " } });

@@ -2,6 +2,7 @@ import { createNavigationController } from "../../features/navigation/controller
 import { createMemoryHistory } from "../../features/navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { sectionPreferences } from "../../features/channel-navigation/section-preferences";
 import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import {
   act,
@@ -690,7 +691,10 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
       },
     ],
   } as unknown as typeof current;
-  const retryMove = vi.fn(() => new Promise<never>(() => {}));
+  const assign = vi.fn(async () => {
+    publish(failed);
+    throw new Error("Relay unavailable");
+  });
   const h = await page(
     "stream",
     {
@@ -706,11 +710,8 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      assign: vi.fn(async () => {
-        publish(failed);
-        throw new Error("Relay unavailable");
-      }),
-      retryMove,
+      assign,
+      dismissMoveError: () => publish(base),
     } as unknown as RelaySession["soloPreferences"],
   );
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
@@ -735,10 +736,15 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
   expect(screen.getByText("Chat wasn’t moved")).toBeVisible();
   // Toasts own swipe gestures, so press their buttons without a pointer.
   fireEvent.click(screen.getByRole("button", { name: "Retry move" }));
-  expect(retryMove).toHaveBeenCalledExactlyOnceWith("gamma");
+  await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() =>
+    expect(sectionPreferences(h.session).snapshot().moves?.[0]?.pending).toBe(
+      false,
+    ),
+  );
   // Settled elsewhere, as by the sidebar's Dismiss, the move is no longer the
   // header's: a later failure it did not start raises no toast.
-  act(() => publish(base));
+  act(() => sectionPreferences(h.session).dismissMoveError("gamma"));
   await vi.waitFor(() =>
     expect(screen.queryByText("Chat wasn’t moved")).toBeNull(),
   );
@@ -823,12 +829,13 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
   };
   await moveTo("Work");
   await moveTo("Home");
-  expect(settle).toHaveLength(2);
+  expect(settle).toHaveLength(1);
   // The earlier move succeeds while the newer one is still queued.
   await act(async () => {
     publish(withMoves(move(2, "home", { pending: true })));
     settle[0]?.resolve();
   });
+  await vi.waitFor(() => expect(settle).toHaveLength(2));
   await act(async () => {
     publish(
       withMoves(

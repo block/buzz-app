@@ -534,7 +534,7 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
     </ToastProvider>,
   );
   expect(
-    screen.queryByRole("button", { name: "Workspace: Personal" }),
+    screen.queryByRole("button", { name: "Section: Personal" }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Chat actions" }));
   expect(
@@ -555,9 +555,9 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
   expect(
     screen.queryByRole("button", { name: "In Work" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Workspace: Personal" }));
+  fireEvent.click(screen.getByRole("button", { name: "Section: Personal" }));
   const move = await screen.findByRole("menuitemradio", {
-    name: "No workspace",
+    name: "No section",
   });
   act(() => {
     h.roster([channel]);

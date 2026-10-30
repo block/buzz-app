@@ -183,7 +183,7 @@ it("opens a typing-only agent's profile activity in its Solo chat", async () => 
   expect(f.open).toHaveBeenLastCalledWith(conversationTarget(scope, id));
 });
 
-it("shows a plugin's chat icon in place of the chat bubble, from when it registers", () => {
+it("shows a plugin's chat icon in place of conversation artwork, from when it registers", () => {
   let icons: readonly Contribution<ChatIcon>[] = [];
   const listeners = new Set<() => void>();
   fixture(false, false, undefined, undefined, 0, {
@@ -194,7 +194,7 @@ it("shows a plugin's chat icon in place of the chat bubble, from when it registe
     },
   });
   const planning = screen.getByRole("button", { name: /^Planning/ });
-  expect(planning.querySelector("[aria-hidden] svg")).not.toBeNull();
+  expect(planning.querySelector('[role="img"]')).not.toBeNull();
   act(() => {
     icons = [
       {
@@ -236,7 +236,7 @@ it.each([
 );
 
 it.each(["new", "linked", "agent"])(
-  "shows and selects the ordinary New chat draft row for %s",
+  "shows and selects the ordinary New session draft row for %s",
   async (route) => {
     const f = fixture();
     writeView(scope, "solo:collapsed-projects", [""]);
@@ -249,7 +249,7 @@ it.each(["new", "linked", "agent"])(
           : {},
     );
     act(() => f.navigate(target));
-    const draft = await screen.findByRole("button", { name: "New chat" });
+    const draft = await screen.findByRole("button", { name: "New session" });
     expect(draft).toHaveAttribute("aria-current", "page");
     expect(draft).toHaveAttribute("data-selected", "true");
     expect(screen.getByRole("button", { name: /^Other/ })).not.toHaveAttribute(
@@ -258,7 +258,7 @@ it.each(["new", "linked", "agent"])(
     await userEvent.click(draft);
     expect(f.open).toHaveBeenLastCalledWith(target);
     act(() => f.navigate(conversationTarget(scope, id)));
-    expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Planning/ })).toHaveAttribute(
       "aria-current",
       "page",
@@ -266,16 +266,16 @@ it.each(["new", "linked", "agent"])(
   },
 );
 
-it("keeps the open, unread and working chats listed past a workspace's cap", () => {
+it("keeps open, unread and working chats within the five-row section cap", () => {
   const f = fixture(false, false, undefined, undefined, 10);
   const listed = () =>
     screen
       .getAllByRole("button")
       .map((button) => button.getAttribute("data-solo-channel-id"))
       .filter(Boolean);
-  // Seven newest, then unread Planning and open Other past the cap, in order.
+  // Three newest plus unread Planning and open Other, within the cap.
   expect(listed()).toEqual([
-    ...Array.from({ length: 7 }, (_, index) => `newer-${index}`),
+    ...Array.from({ length: 3 }, (_, index) => `newer-${index}`),
     id,
     other,
   ]);
@@ -295,6 +295,7 @@ it("keeps the open, unread and working chats listed past a workspace's cap", () 
       },
     ],
   });
+  expect(listed()).toHaveLength(5);
   expect(listed()).toContain("newer-9");
   expect(listed()).not.toContain("newer-8");
 });

@@ -13,6 +13,7 @@ export type VerifiedProfileAuthority = Readonly<{
 export type VerifiedProfile = Readonly<{
   displayName: string;
   username: string;
+  fullName?: string;
   issuerLabel: string;
   verifiedAt: number;
   /** Observed on a completed current subscription, or retained while unreconciled. */
@@ -91,12 +92,19 @@ export function verifiedProfile(
   checked: boolean,
 ): VerifiedProfile | undefined {
   const subject = verifiedProfileSubject(event, authority);
-  if (!subject || event.content !== "" || event.tags.length !== 7) return;
+  if (
+    !subject ||
+    event.content !== "" ||
+    (event.tags.length !== 7 && event.tags.length !== 8)
+  )
+    return;
   const tags = new Map<string, string>();
   for (const entry of event.tags) {
     if (entry.length !== 2 || tags.has(entry[0] as string)) return;
     tags.set(entry[0] as string, entry[1] as string);
   }
+  if (tags.size !== 7 + Number(tags.has("full_name"))) return;
+  const fullName = tags.get("full_name");
   const displayName = tags.get("display_name");
   const username = tags.get("username");
   const issuerLabel = tags.get("issuer_label");
@@ -105,6 +113,7 @@ export function verifiedProfile(
   if (
     tags.get("p") !== subject ||
     tags.get("active") !== "true" ||
+    (fullName !== undefined && !validVerifiedName(fullName)) ||
     !displayName ||
     !validVerifiedName(displayName) ||
     !username ||
@@ -120,6 +129,7 @@ export function verifiedProfile(
   return Object.freeze({
     displayName,
     username,
+    ...(fullName !== undefined ? { fullName } : {}),
     issuerLabel,
     verifiedAt,
     status: checked ? "checked" : "cached",

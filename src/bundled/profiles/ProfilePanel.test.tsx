@@ -647,6 +647,7 @@ it("shows historical verification time and issuer, discloses cache, and hides di
               ["username", "alice"],
               ["issuer_label", "Example"],
               ["verified_at", "1000000"],
+              ["full_name", "Alice Example"],
             ],
           }),
         ),
@@ -657,6 +658,7 @@ it("shows historical verification time and issuer, discloses cache, and hides di
       await screen.findByRole("heading", { name: "Alice · Example" }),
     ).toBeVisible();
     expect(screen.getByText(/Name verified.*@alice/)).toBeVisible();
+    expect(screen.getByText("Alice Example")).toBeVisible();
     await userEvent.setup().click(screen.getByRole("tab", { name: "Info" }));
     expect(screen.getByText("Name verified by Example")).toBeVisible();
     expect(screen.getByText(/Last verified/)).toHaveTextContent(/1970/);
@@ -666,6 +668,7 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     expect(screen.getByText(/Cached evidence/)).toBeVisible();
     await act(async () => live.state({ status: "connected", routes: [] }));
     expect(screen.queryByText("Name verified by Example")).toBeNull();
+    expect(screen.queryByText("Alice Example")).toBeNull();
     expect(screen.queryByText(/Cached verification/)).toBeNull();
   } finally {
     cleanup();

@@ -431,6 +431,11 @@ function ProfileDetails({
           </div>
           <div className={styles.identity}>
             <h2 className="text-body-lg">{name}</h2>
+            {profile?.verified?.fullName && (
+              <p className="text-body-sm text-secondary">
+                {profile.verified.fullName}
+              </p>
+            )}
             {profile?.verified && (
               <p className="text-body-sm text-secondary">
                 {profile.verified.status === "checked" && (

@@ -121,6 +121,38 @@ it.each([
   expect(verifiedProfile(modified, authority, true)).toBeUndefined();
 });
 
+it("accepts a Relay-signed optional full name and validates it with the same name rules", () => {
+  expect(
+    verifiedProfile(
+      projection(10, alice.pubkey, [["full_name", "Alice Example"]]),
+      authority,
+      true,
+    )?.fullName,
+  ).toBe("Alice Example");
+  expect(
+    verifiedProfile(projection(), authority, true)?.fullName,
+  ).toBeUndefined();
+  for (const name of ["", " Alice", "A\nB", "A\u200dB", "a".repeat(65)]) {
+    expect(
+      verifiedProfile(
+        projection(10, alice.pubkey, [["full_name", name]]),
+        authority,
+        true,
+      ),
+    ).toBeUndefined();
+  }
+  expect(
+    verifiedProfile(
+      projection(10, alice.pubkey, [
+        ["full_name", "Alice"],
+        ["full_name", "Other"],
+      ]),
+      authority,
+      true,
+    ),
+  ).toBeUndefined();
+});
+
 function harness(
   refresh?: (signal: AbortSignal) => Promise<VerifiedProfileAuthority | null>,
   initial: VerifiedProfileAuthority | undefined = authority,

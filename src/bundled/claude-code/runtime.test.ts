@@ -80,7 +80,7 @@ function setup(
     await options.starting;
     if (options.nativeHistory && id === "runtime")
       spawnOptions?.onStdout?.('{"version":"2.1.305","root":"/runtime"}\n');
-    if (options.nativeHistory && id === "read")
+    if (options.nativeHistory && id === "read-protected")
       spawnOptions?.onStdout?.(
         Buffer.from(
           options.nativeHistory.map((row) => JSON.stringify(row)).join("\n"),
@@ -469,6 +469,18 @@ it("shares projected native history with incoming and combined action reviews", 
     expect(
       Buffer.byteLength(JSON.stringify(check.mock.lastCall?.[0])),
     ).toBeLessThan(256 * 1024);
+    const readers = f.fake.processes.filter(
+      (process) => process.id === "read-protected",
+    );
+    expect(readers.length).toBeGreaterThan(0);
+    for (const reader of readers)
+      expect(reader.options).toMatchObject({
+        args: ["/native/transcript"],
+        protection: protection.processProtection,
+      });
+    expect(f.fake.processes.some((process) => process.id === "read")).toBe(
+      false,
+    );
   } finally {
     worker.finish();
     await f.runtime.retire(self);

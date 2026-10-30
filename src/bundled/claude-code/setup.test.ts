@@ -9,6 +9,21 @@ import script from "./claude.sh?raw";
 import manifest from "./manifest.json";
 import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
 
+it("declares protected file reads through the bundled helper with a positional path", () => {
+  expect(
+    manifest.host.processes.find((process) => process.id === "read-protected"),
+  ).toEqual({
+    id: "read-protected",
+    program: "buzz-agent-command",
+    bundled: true,
+    args: [
+      "--shell",
+      `case "$1" in "~/"*) set -- "$HOME/\${1:2}";; esac; exec /usr/bin/base64 -i "$1"`,
+      "buzz-read",
+    ],
+  });
+});
+
 it.each([true, false])(
   "requires the native structured review result when present: %s",
   async (present) => {

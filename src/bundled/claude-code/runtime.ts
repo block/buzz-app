@@ -929,7 +929,14 @@ export class ClaudeRuntime {
             },
             relayAuthor: this.reads(agent)?.relayAuthor?.(),
             signingAuthority: this.reads(agent)?.workflowAuthority(),
-            read: (path) => readFile(this.spawn, cwd, path),
+            read: (path) =>
+              readFile(
+                this.spawn,
+                cwd,
+                path,
+                undefined,
+                handle.protection?.processProtection,
+              ),
             memories: (slug) => this.memories(agent, slug),
             remembered: () => this.forget(agent),
           });
@@ -996,6 +1003,7 @@ export class ClaudeRuntime {
                       workspace,
                       path,
                       signal,
+                      gate.processProtection,
                     );
                     const text = new TextDecoder().decode(bytes);
                     return text

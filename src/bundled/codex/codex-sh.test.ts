@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import script from "./codex.sh?raw";
+import { withScript } from "./setup";
 
 const run = promisify(execFile);
 const homes: string[] = [];
@@ -209,6 +210,41 @@ async function echoing() {
   );
   return { ...f, own: `${f.dir}-home`, codex: join(f.home, ".codex") };
 }
+
+it("disables completion notifications for Buzz without changing shared settings", async () => {
+  const f = await echoing();
+  await mkdir(f.codex, { recursive: true });
+  const config = 'notify = ["terminal-notifier"]\n';
+  await writeFile(join(f.codex, "config.toml"), config);
+  let output = "";
+  const launch = withScript(async (_id, options) => {
+    const result = await run("bash", ["-c", ...(options?.args ?? [])], {
+      env: { PATH: process.env.PATH ?? "", HOME: f.home },
+    });
+    output = result.stdout;
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  await launch("app-server", { args: ["--listen", "stdio://"] });
+  expect(output.trim().split("\n")).toEqual([
+    f.own,
+    "-c",
+    `sqlite_home=${f.own}`,
+    "app-server",
+    "-c",
+    "notify=[]",
+    "--listen",
+    "stdio://",
+  ]);
+  expect(await readFile(join(f.codex, "config.toml"), "utf8")).toBe(config);
+  expect(await readlink(join(f.own, "config.toml"))).toBe(
+    join(f.codex, "config.toml"),
+  );
+});
 
 it("runs Codex in Buzz's own home, linked to the shared settings and sign-in", async () => {
   const f = await echoing();

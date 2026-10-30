@@ -8,6 +8,7 @@ import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import { localAgentsFixture } from "../../features/agents/local-testing";
+import type { Agents } from "../../features/agents/service";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import {
   createNavigationController,
@@ -280,6 +281,11 @@ async function fixture({
     },
     navigation: { open: vi.fn() },
   } as unknown as ConversationHostServices;
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => undefined,
+    types: () => empty,
+  } as unknown as Agents;
   return {
     viewer: viewer.pubkey,
     scope,
@@ -322,6 +328,7 @@ async function fixture({
           host={host}
           extensions={extensions}
           navigator={renderedNavigator}
+          agents={agents}
           navigation={navigation}
         />
       </ToastProvider>
@@ -335,6 +342,7 @@ async function fixture({
             host={host}
             extensions={extensions}
             navigator={navigator}
+            agents={agents}
           />
         </ToastProvider>,
         { reactStrictMode: true },
@@ -758,6 +766,23 @@ it("does not use a known-archived identity's DM during partial discovery", async
   );
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("replaces a missing saved Bestie from the chooser in place", async () => {
+  const f = await fixture();
+  f.choose(pollen);
+  f.makePollenIneligible();
+  f.mount();
+  expect(
+    await screen.findByRole("heading", { name: "Pollen is no longer here" }),
+  ).toBeVisible();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Your agents" }));
+  await user.click(screen.getByRole("option", { name: "Fizz" }));
+  expect(
+    await screen.findByRole("textbox", { name: "Message Fizz" }),
+  ).toBeVisible();
+  expect(f.open).toHaveBeenCalledWith([fizz], expect.any(AbortSignal));
 });
 
 it("rechecks eligibility before retrying a failed DM open", async () => {

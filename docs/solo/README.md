@@ -129,9 +129,10 @@ behavior on the label, so a rename touches copy only.
   the default agent for this account/community. **Agents → right-click or "..." →
   Make my bestie** explicitly saves that agent as the bestie; its card then shows
   **Bestie**. That choice is saved to the account as a private `main-agent` record,
-  so every install adopts it once per session. Only this explicit choice writes
-  the record; a deleted agent left on it is stood in for until the next choice.
-  The choice stays until it is changed or the agent is deleted, and it is still
+  so every install adopts it once per session. Explicit choices write the
+  record. A finished deletion also writes no Bestie when the deleted agent is
+  still its saved choice; it never clears another choice. The choice stays until
+  it is changed or the agent is deleted, and it is still
   tagged when its runtime is signed out or broken. Without a choice, or after the
   chosen agent is deleted, the first managed agent, then the first selectable
   agent, becomes the default agent and is saved on this device only, after the

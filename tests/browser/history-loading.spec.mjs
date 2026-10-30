@@ -378,14 +378,16 @@ test.describe("pages inside one second", () => {
       const before = await anchor(page);
       // The row above it finishes measuring taller (an image loading). Rows
       // below the reader grow away from them; nothing in view moves.
-      await history(page).evaluate((e, id) => {
+      // Re-resolve the virtualized row at mutation time: an idle render may
+      // have unmounted it again since the position assertion above.
+      await row.evaluate((element) => {
         const extra = document.createElement("div");
         extra.style.height = "300px";
-        e.querySelector(`[data-message-id="${id}"]`)
+        element
           .closest("li")
           .previousElementSibling.querySelector("[data-message-id] p")
           .after(extra);
-      }, held.id);
+      });
       await settle(page);
       await expectAnchor(page, before);
     } finally {

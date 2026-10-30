@@ -196,6 +196,15 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   expect(
     screen.queryByRole("button", { name: "Try again" }),
   ).not.toBeInTheDocument();
+  // Followed from a working page, the way out returns there.
+  const failed = current.navigation.snapshot().entry.id;
+  await userEvent.click(
+    within(screen.getByRole("alert")).getByRole("button", { name: "Go back" }),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.id).not.toBe(failed),
+  );
+  expect(screen.queryByText("This link doesn’t work")).toBeNull();
 });
 
 const elsewhere = "https://elsewhere.example";

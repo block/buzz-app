@@ -393,6 +393,19 @@ function ConnectedApp({ services }: { services: AppServices }) {
         Go to Messages
       </Button>
     ) : null;
+  // A link or access failure returns to where the person came from; opened
+  // cold, Messages is the nearest useful place.
+  const leaveFailure = route.state.canGoBack ? (
+    <Button
+      type="button"
+      variant="primary"
+      onClick={() => services.navigation.back()}
+    >
+      Go back
+    </Button>
+  ) : (
+    messagesButton("primary")
+  );
   const destinationFailure = (
     <div role="alert" className="page-status">
       {failureKind === "denied" ? (
@@ -400,14 +413,14 @@ function ConnectedApp({ services }: { services: AppServices }) {
           icon={<LockIcon />}
           title="You don’t have access to this"
           description="It belongs to another account or a community you haven’t joined."
-          action={messagesButton("primary")}
+          action={leaveFailure}
         />
       ) : failureKind === "link" ? (
         <EmptyState
           icon={<LinkBreakIcon />}
           title="This link doesn’t work"
-          description="It may be incomplete or out of date."
-          action={messagesButton("primary")}
+          description="It may be incomplete or out of date. Ask whoever shared it for a new link."
+          action={leaveFailure}
         />
       ) : failureKind === "offline" ? (
         <EmptyState

@@ -192,6 +192,10 @@ launchTest(
     });
     await expect(page.locator("#buzz-launch")).toHaveCount(0);
     await expect(failed).toBeVisible();
+    const card = page.locator('.page-status[role="alert"]');
+    // Opened cold, there is nowhere to go back to: Messages did not fail.
+    await expect(button(card, "Go back")).toHaveCount(0);
+    await expect(button(card, "Go to Messages")).toBeVisible();
     await openPage(page, "Workflows");
     await expect(failed).toBeHidden();
     await page.getByRole("tab", { name: "Agents", exact: true }).click();
@@ -202,16 +206,21 @@ launchTest(
     await page.reload();
     await expect(page.locator("#buzz-launch")).toHaveCount(0);
     await expect(failed).toBeVisible();
-    await button(page, "Go back").click();
+    const history = page.getByRole("navigation", {
+      name: "Navigation history",
+      exact: true,
+    });
+    await button(history, "Go back").click();
     await expect(
       page.getByRole("region", { name: "Agents", exact: true }),
     ).toBeVisible();
-    await button(page, "Go forward").click();
+    await button(history, "Go forward").click();
     await expect(failed).toBeVisible();
-    // A broken link leads to Messages, which did not fail.
-    await button(page, "Go to Messages").click();
+    // Followed from elsewhere in the app, the card returns there.
+    await button(card, "Go back").click();
     await expect(
-      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      page.getByRole("region", { name: "Agents", exact: true }),
     ).toBeVisible();
+    await expect(failed).toBeHidden();
   },
 );

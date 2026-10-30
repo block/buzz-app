@@ -626,7 +626,7 @@ it("shows a local draft in the cached composer without completion, typing or tra
   }
 });
 
-it("an explicit focus request resumes after the draft's retained mention", () => {
+it("a first focus request starts after the retained mention and later requests preserve selection", () => {
   writeView("scope", "draft:channel", {
     text: "@Honey existing prose",
     recipients: [{ ...first, start: 0, end: 6 }],
@@ -640,7 +640,10 @@ it("an explicit focus request resumes after the draft's retained mention", () =>
   h.retarget({ channelName: "Renamed" });
   expect(h.input().selectionStart).toBe(7);
   h.retarget({ focusRequest: 2 });
-  expect(h.input().selectionStart).toBe(21);
+  expect(h.input().selectionStart).toBe(7);
+  act(() => h.input().setSelectionRange(0, 6));
+  h.retarget({ focusRequest: 3 });
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([0, 6]);
 });
 
 it("autofocuses each selected conversation once without stealing focus on updates", () => {

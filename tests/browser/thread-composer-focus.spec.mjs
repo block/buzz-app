@@ -49,12 +49,17 @@ for (const pane of ["side", "main"]) {
     await openThread(roots[0]);
     await page.keyboard.type("First thread draft");
     await expect(reply).toHaveText("First thread draft");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
+    const selection = () =>
+      reply.evaluate((editor) => [editor.selectionStart, editor.selectionEnd]);
+    await expect.poll(selection).toEqual([12, 12]);
     await openThread(roots[1], true);
     await page.keyboard.type("Second thread draft");
     await expect(reply).toHaveText("Second thread draft");
     await tab(roots[0]).click();
     await expect(reply).toBeFocused();
     await expect(reply).toHaveText("First thread draft");
+    await expect.poll(selection).toEqual([12, 12]);
     await openThread(roots[1]);
     await expect(reply).toHaveText("Second thread draft");
     // Reopen the selected thread too, without relying on a selection change.
@@ -63,6 +68,13 @@ for (const pane of ["side", "main"]) {
     await expect(
       host.locator('[role="tab"][data-tab-value^="thread:"]'),
     ).toHaveCount(2);
+    await openThread(roots[0]);
+    await expect.poll(selection).toEqual([12, 12]);
+    await page.keyboard.type("X");
+    await expect(reply).toHaveText("First threadX draft");
+    // Reopening the selected thread also keeps its existing caret.
+    await openThread(roots[0], true);
+    await expect.poll(selection).toEqual([13, 13]);
   });
 }
 

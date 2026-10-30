@@ -14,7 +14,7 @@ import {
 } from "../../features/agent-harness/core-memory";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { respond } from "../../buzz-mcp/rpc";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   type AddedTool,
   addedKey,
@@ -790,8 +790,16 @@ export class GooseRuntime {
           relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
           signingAuthority:
             this.relay(agent)?.snapshot().session.workflowAuthority,
-          read: async (path) =>
-            this.desktop.readFile(path, { cwd: entry.config.workspace }),
+          read: (path) =>
+            handle.protection
+              ? readFile(
+                  this.desktop.spawn,
+                  entry.config.workspace,
+                  path,
+                  undefined,
+                  handle.protection.processProtection,
+                )
+              : this.desktop.readFile(path, { cwd: entry.config.workspace }),
           memories: (slug) => this.memories(agent, slug),
           remembered: () => this.forget(agent),
         });

@@ -2,6 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import type { Spawn } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
 import { GooseSetup, keyLabel, modelFilter } from "./setup";
+import manifest from "./manifest.json";
+
+it("declares protected file reads through the bundled helper with a positional path", () => {
+  expect(
+    manifest.host.processes.find((process) => process.id === "read-protected"),
+  ).toEqual({
+    id: "read-protected",
+    program: "buzz-agent-command",
+    bundled: true,
+    args: [
+      "--shell",
+      `case "$1" in "~/"*) set -- "$HOME/\${1:2}";; esac; exec /usr/bin/base64 -i "$1"`,
+      "buzz-read",
+    ],
+  });
+});
 
 const ANTHROPIC = {
   providerId: "anthropic",

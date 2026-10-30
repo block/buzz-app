@@ -96,8 +96,18 @@ function setup(
     ...(options.reply ? { reply: options.reply } : {}),
   });
   const readFile = vi.fn<NonNullable<Host["readFile"]>>();
+  const spawn = vi.fn<NonNullable<Host["spawn"]>>(async (id, options) => {
+    if (id !== "read-protected") return fake.spawn(id, options);
+    options?.onStdout?.(btoa("Private notes"));
+    return {
+      write: vi.fn(),
+      end: vi.fn(),
+      kill: vi.fn(),
+      exited: Promise.resolve(0),
+    };
+  });
   const host = {
-    spawn: fake.spawn,
+    spawn,
     resolveDirectory: fake.resolveDirectory,
     readFile,
     serveMcp: fake.serve,
@@ -226,12 +236,65 @@ function setup(
     read,
     readFile,
     runtime,
+    spawn,
     memoryOpen: session.agentMemories.open,
     reconnect: () => {
       connected = { ...session };
     },
   };
 }
+
+it("reads a protected Goose file under containment and reviews the captured text before sending", async () => {
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection: AgentProtection = {
+    key: "policy",
+    stateKey: "revision",
+    assertAvailable() {},
+    check,
+    processProtection: {
+      readOnlyPaths: ["/controls"],
+      hiddenPaths: ["/approval"],
+    },
+    spawn: (options) => f.fake.spawn("goose", options),
+  };
+  const f = setup({ hold: true, protection });
+  try {
+    await f.deliver(message("1", "Post my notes"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    const sessionId = process?.turns[0]?.sessionId;
+    if (!process || !sessionId) throw new Error("Goose turn did not start");
+    expect(
+      (
+        await process.mcp(sessionId, "tools/call", {
+          name: "send",
+          arguments: { audience: "everyone", path: "notes.md" },
+        })
+      ).result,
+    ).not.toMatchObject({ isError: true });
+    expect(f.spawn).toHaveBeenCalledExactlyOnceWith(
+      "read-protected",
+      expect.objectContaining({
+        cwd: DEFAULT_CONFIG.workspace,
+        args: ["notes.md"],
+        protection: protection.processProtection,
+      }),
+    );
+    expect(f.readFile).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "tool",
+        content: expect.objectContaining({
+          arguments: { audience: "everyone", text: "Private notes" },
+        }),
+      }),
+      expect.anything(),
+    );
+    expect(f.published.at(-1)?.content).toBe("Private notes");
+  } finally {
+    f.runtime.dispose();
+  }
+});
 
 it.each(["retire", "dispose"] as const)(
   "cancels a pending protected tool before %s completes",
@@ -251,7 +314,11 @@ it.each(["retire", "dispose"] as const)(
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
       assertAvailable: () => {},
       spawn: (options) => f.fake.spawn("goose", options),
-      check: async (_action, signal) => {
+      check: async (action, signal) => {
+        if (action.kind !== "tool") return;
+        expect(action.content).toMatchObject({
+          arguments: { text: "Private notes" },
+        });
         reviewSignal = signal;
         entered();
         // A late reviewer may ignore cancellation and still approve.
@@ -259,7 +326,6 @@ it.each(["retire", "dispose"] as const)(
       },
     };
     const f = setup({ hold: true, protection });
-    f.readFile.mockResolvedValue(new TextEncoder().encode("Private notes"));
     let pending:
       | ReturnType<NonNullable<ReturnType<typeof f.goose>>["mcp"]>
       | undefined;
@@ -281,6 +347,14 @@ it.each(["retire", "dispose"] as const)(
           );
         }),
       ]);
+      expect(f.spawn).toHaveBeenCalledWith(
+        "read-protected",
+        expect.objectContaining({
+          args: ["notes.md"],
+          protection: protection.processProtection,
+        }),
+      );
+      expect(f.published).toEqual([]);
       if (end === "retire") await f.runtime.retire(f.agent.key);
       else f.runtime.dispose();
       release();

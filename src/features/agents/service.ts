@@ -724,8 +724,11 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
-  /** Provider-owned account/recovery notice, pinned across the agent's tabs.
-   * The panel host owns placement and reserves its measured height for scrolling. */
+  /** Provider-owned sign-in notice, pinned across the agent's tabs.
+   * The host treats any rendered content as signed out: it dims identity artwork
+   * and closes name/avatar editors. Return null while signed in; this slot is
+   * not for general provider notices. The host owns placement and reserves the
+   * measured height for scrolling. */
   PanelFooter?: ComponentType;
   /** Provider-owned sign-in gate for messaging and name/avatar editing actions. */
   ProfileActions?: ComponentType<{ children: ReactNode }>;

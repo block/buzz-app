@@ -4,20 +4,15 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
 import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
-import { CaretDownIcon } from "../../../shared/design-system/icons";
+import { BuilderlabLogoIcon } from "../../../shared/design-system/icons";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { LoadingRegion } from "../../../shared/design-system/ui/LoadingRegion";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
-import {
-  PopoverRoot,
-  PopoverTrigger,
-  PopoverPopup,
-  PopoverDescription,
-} from "../../../shared/design-system/ui/Popover";
 import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
@@ -48,9 +43,11 @@ export function ModelSettings({
   client,
   session,
   settings,
+  harnessControl,
 }: {
   client: AgentClient;
   session: OAuthSession;
+  harnessControl?: ReactNode;
   settings:
     | { agent: RemoteAgent; subject: string }
     | { pending: boolean; error: string; retry(): void };
@@ -59,8 +56,6 @@ export function ModelSettings({
   const agent = "agent" in settings ? settings.agent : undefined;
   const subject = "subject" in settings ? settings.subject : undefined;
   const form = useId();
-  const harnessHelp = useId();
-  const [harnessHelpOpen, setHarnessHelpOpen] = useState(false);
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
   const [models, setModels] = useState<readonly RemoteAgentModel[]>();
@@ -248,73 +243,17 @@ export function ModelSettings({
           </p>
         )}
         <SettingsGroup>
-          <PreferenceRow
-            title="Harness"
-            trailing={
-              <div className="buzz-select" data-variant="compact">
-                <PopoverRoot
-                  open={harnessHelpOpen}
-                  onOpenChange={(open, details) => {
-                    if (!open && details.reason === "trigger-press") {
-                      details.cancel();
-                      return;
-                    }
-                    setHarnessHelpOpen(open);
-                  }}
-                >
-                  <PopoverTrigger
-                    openOnHover="preview"
-                    nativeButton={false}
-                    role="presentation"
-                    tabIndex={-1}
-                    aria-haspopup={false}
-                    aria-expanded={undefined}
-                    aria-controls={undefined}
-                    onKeyDownCapture={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setHarnessHelpOpen(true);
-                      }
-                    }}
-                    render={
-                      <span className="inline-flex">
-                        <Button
-                          variant="outline"
-                          shape="control"
-                          size="sm"
-                          disabled
-                          focusableWhenDisabled
-                          aria-label="Harness: Builderlab"
-                          aria-haspopup="dialog"
-                          aria-expanded={harnessHelpOpen}
-                          aria-describedby={
-                            harnessHelpOpen ? harnessHelp : undefined
-                          }
-                          onFocus={() => setHarnessHelpOpen(true)}
-                        >
-                          Builderlab
-                          <CaretDownIcon size={14} aria-hidden="true" />
-                        </Button>
-                      </span>
-                    }
-                  />
-                  <PopoverPopup
-                    side="top"
-                    align="end"
-                    aria-label="Builderlab harness"
-                    initialFocus={false}
-                    finalFocus={false}
-                  >
-                    <PopoverDescription id={harnessHelp}>
-                      Builderlab holds this agent’s signing key. Buzz can’t move
-                      that identity to a local harness yet. To run locally,
-                      create a new agent.
-                    </PopoverDescription>
-                  </PopoverPopup>
-                </PopoverRoot>
-              </div>
-            }
-          />
+          {harnessControl ?? (
+            <PreferenceRow
+              title="Harness"
+              trailing={
+                <span className="flex min-w-0 items-center gap-2">
+                  <BuilderlabLogoIcon size={20} aria-hidden="true" />
+                  Builderlab
+                </span>
+              }
+            />
+          )}
           <ModelFamilyMenu
             label="Model"
             align="end"

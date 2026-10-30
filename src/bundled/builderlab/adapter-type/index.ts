@@ -1,3 +1,4 @@
+import { BuilderlabLogoIcon } from "../../../shared/design-system/icons";
 import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
 import { createProfileActions, createSignInFooter } from "./SignInFooter";
@@ -95,6 +96,7 @@ export function builderlabType(
   return {
     id: "builderlab",
     title: "Builderlab",
+    icon: BuilderlabLogoIcon,
     description: "Sign in to Builderlab when creating an agent.",
     defaults: () => ({ config: { ...EMPTY_CREATION } }),
     Create: createCreationFields(client, session),

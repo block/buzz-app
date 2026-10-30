@@ -1644,24 +1644,22 @@ export function ChannelInventory({
             Saved groups and stars aren’t supported by this host yet.
           </p>
         ) : null}
-        {list.activityStatus === "error" &&
-          !list.activityTransient &&
-          !activityErrorDismissed && (
-            <ToastNotice
-              title="Couldn’t refresh recent activity"
-              description="Activity filters and Recent sorting may be out of date."
-              tone="warning"
-              onDismiss={() => setActivityErrorDismissed(true)}
+        {list.activityStatus === "error" && !activityErrorDismissed && (
+          <ToastNotice
+            title="Couldn’t refresh recent activity"
+            description="Activity filters and Recent sorting may be out of date."
+            tone="warning"
+            onDismiss={() => setActivityErrorDismissed(true)}
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => queries.channels.refreshList?.()}
             >
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => queries.channels.refreshList?.()}
-              >
-                Retry
-              </Button>
-            </ToastNotice>
-          )}
+              Retry
+            </Button>
+          </ToastNotice>
+        )}
       </>
     ),
     dialogs: (

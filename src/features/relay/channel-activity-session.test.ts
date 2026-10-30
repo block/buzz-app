@@ -336,47 +336,40 @@ it("retries failed Recent activity after an explicit roster refresh", async () =
     h.owner.dispose();
   }
 });
-it("hands a transient activity failure to session recovery instead of the sidebar", async () => {
+it("retries a transient activity failure quietly and reports a lasting one at once", async () => {
   const h = setup();
   try {
     await h.initial();
-    await h.preferences.setSort("channels", "recent", []);
+    vi.useFakeTimers();
+    void h.preferences.setSort("channels", "recent", []);
+    await vi.advanceTimersByTimeAsync(0);
     take(h.pending).reject(
       new ReadError("unavailable", "Relay read failed (502)"),
     );
-    await flush();
-    expect(h.channels.list()).toMatchObject({
-      activityStatus: "error",
-      activityTransient: true,
-    });
-    expect(h.owner.session.recovery?.snapshot().recovering).toBe(true);
-
-    h.owner.session.recovery?.retryNow();
-    expect(h.activity).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(0);
+    // No error while the quiet retry waits (at most the first 1 s delay).
     expect(h.channels.list().activityStatus).toBe("loading");
-    expect(h.channels.list().activityTransient).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.activity).toHaveBeenCalledTimes(2);
     take(h.pending).resolve([message(h.peer, "beta", "recovered", 100)]);
-    await flush();
+    await vi.advanceTimersByTimeAsync(0);
     expect(h.channels.list().activityStatus).toBe("ready");
-    expect(h.owner.session.recovery?.snapshot().recovering).toBe(false);
+    expect(
+      h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
+    ).toBe(100);
 
-    // A failure no retry can fix stays with the sidebar notice.
-    h.channels.refreshList?.();
-    h.wire
-      .next()
-      .respond([
-        roster(h.relay, "alpha", [h.viewer.pubkey]),
-        roster(h.relay, "gamma", [h.viewer.pubkey]),
-        metadata(h.relay, "alpha", "Alpha"),
-        metadata(h.relay, "gamma", "Gamma"),
-      ]);
-    await flush();
+    // A denial cannot clear on retry: the sidebar reports it without a retry.
+    void h.preferences.setSort("channels", "alpha", []);
+    await vi.advanceTimersByTimeAsync(0);
+    void h.preferences.setSort("channels", "recent", []);
+    await vi.advanceTimersByTimeAsync(0);
     take(h.pending).reject(new ReadError("denied", "Relay read failed (403)"));
-    await flush();
+    await vi.advanceTimersByTimeAsync(0);
     expect(h.channels.list().activityStatus).toBe("error");
-    expect(h.channels.list().activityTransient).toBeUndefined();
-    expect(h.owner.session.recovery?.snapshot().recovering).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.activity).toHaveBeenCalledTimes(3);
   } finally {
+    vi.useRealTimers();
     h.owner.dispose();
   }
 });

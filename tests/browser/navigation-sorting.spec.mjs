@@ -253,7 +253,7 @@ test("retires Recent failures on A–Z and recovers selected ordering on retry",
       await failureGate;
       app.report.sidebarActivityFailures ??= [];
       app.report.sidebarActivityFailures.push(route.request().url());
-      // A denial: a transient failure belongs to session relay recovery.
+      // A denial: a transient failure would retry quietly first.
       await route.fulfill({
         status: 403,
         contentType: "application/json",

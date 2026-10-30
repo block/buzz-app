@@ -862,8 +862,14 @@ export function createRelaySession(
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
-      ? (ids, signal) =>
-          transport.channelActivity?.(ids, signal) ?? Promise.resolve([])
+      ? // A transient failure retries quietly before Recent shows its notice.
+        (ids, signal) =>
+          retryRead(
+            (retrySignal) =>
+              transport.channelActivity?.(ids, retrySignal) ??
+              Promise.resolve([]),
+            signal,
+          )
       : undefined,
     notify,
   );
@@ -947,15 +953,9 @@ export function createRelaySession(
     notify,
   });
   let sourceChannelList = channels.queries.list();
-  const activityState = () => ({
-    activityStatus: channelActivity.status(),
-    ...(channelActivity.transient()
-      ? { activityTransient: true as const }
-      : {}),
-  });
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
-    ...activityState(),
+    activityStatus: channelActivity.status(),
   });
   let channelActivityRevision = channelActivity.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
@@ -987,7 +987,7 @@ export function createRelaySession(
       });
       activityChannelList = Object.freeze({
         ...snapshot,
-        ...activityState(),
+        activityStatus: channelActivity.status(),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -1959,15 +1959,6 @@ export function createRelaySession(
           sidebarPreferences.queries.subscribe,
           () => loadState(sidebarPreferences.queries.snapshot()),
           () => void sidebarPreferences.queries.refresh(),
-        ),
-        recoverable(
-          channelActivity.subscribe,
-          () =>
-            loadState({
-              status: channelActivity.status(),
-              ...(channelActivity.transient() ? { transient: true } : {}),
-            }),
-          () => refreshChannelActivity(),
         ),
         // Visibility owns its quiet retries and exhausts without `transient`,
         // so this source only reports `busy`; its retry is not reached.

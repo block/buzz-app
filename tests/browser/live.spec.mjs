@@ -141,7 +141,9 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     "Delivered by authoritative catch-up",
     false,
   );
-  app.relay.quotaNextHead("alpha", 2);
+  // The cooldown outlasts the 3 s recovery notice delay, so the notice shows
+  // and the ignored clicks below land before the cooldown ends.
+  app.relay.quotaNextHead("alpha", 6);
   // A sidebar preview may reach the shared broker before the selected head.
   // It must not consume the failure injected specifically for head catch-up.
   const previewStatus = await page.evaluate(async () => {
@@ -243,7 +245,7 @@ test("automatic recovery restores an empty paused roster without restarting heal
   // Empty is a valid authoritative result: recovery must not depend on a
   // selected channel or on an interest change replacing the global stream.
   app.relay.emptyRoster();
-  app.relay.quotaNextRoster(2);
+  app.relay.quotaNextRoster(6);
   // The app arms its cooldown when it consumes the refusal, and the ignored
   // clicks below must land before that deadline. Navigation needs a running
   // page clock, so hold the first roster read until it is done, then pause the
@@ -272,10 +274,10 @@ test("automatic recovery restores an empty paused roster without restarting heal
     roster.resolve();
   }
   await expect.poll(() => app.relay.rejected.length).toBe(1);
-  // The notice appears with the first automatic retry, 1 s after the refusal
-  // (RECOVERY_DELAYS_MS[0]). Run the paused clock only that far: the 2 s
-  // cooldown still holds, so the ignored clicks below land before it ends.
-  await page.clock.runFor(1_000);
+  // The notice appears once recovery lasts 3 s (RECOVERY_NOTICE_DELAY_MS).
+  // Run the paused clock only that far: the 6 s cooldown still holds, so the
+  // ignored clicks below land before it ends.
+  await page.clock.runFor(3_000);
   await expect(notice(page)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),

@@ -50,14 +50,11 @@ export function AgentMessageButton({
       navigation?.signal.aborted
     )
       return;
-    if (
-      !connection.session.agentChoices
+    const { agentChoices } = connection.session;
+    const controlled = () =>
+      agentChoices
         .snapshot()
-        .identities.some((agent) => agent.managed && agent.pubkey === pubkey)
-    ) {
-      setError("This agent is not ready to message in this community.");
-      return;
-    }
+        .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
     const controller = new AbortController();
     attempt.current = controller;
     const abort = () => controller.abort();
@@ -65,6 +62,15 @@ export function AgentMessageButton({
     setOpening(true);
     setError("");
     try {
+      if (!controlled()) {
+        // Agents still loading are not missing: wait for the list first.
+        if (agentChoices.snapshot().managedPending)
+          await agentChoices.refresh(false);
+        if (!controlled())
+          throw new Error(
+            "This agent is not ready to message in this community.",
+          );
+      }
       const channelId = await connection.session.directMessages.open(
         [pubkey],
         controller.signal,

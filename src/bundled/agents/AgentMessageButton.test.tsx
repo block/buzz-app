@@ -7,7 +7,11 @@ import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { AgentMessageButton } from "./AgentMessageButton";
 afterEach(cleanup);
-function setup() {
+function setup(
+  agentChoices: object = {
+    snapshot: () => ({ identities: [{ pubkey: "agent", managed: true }] }),
+  },
+) {
   const open = vi.fn(
     async (_keys: string[], _signal: AbortSignal) => "dm-agent",
   );
@@ -19,9 +23,7 @@ function setup() {
     origin: "https://community.example",
     session: {
       directMessages: { available: true, open },
-      agentChoices: {
-        snapshot: () => ({ identities: [{ pubkey: "agent", managed: true }] }),
-      },
+      agentChoices,
     },
   };
   const relay = {
@@ -47,6 +49,58 @@ it("opens the agent conversation in the current community without sending a mess
     channelId: "dm-agent",
     scope: { viewer: "owner", communityOrigin: "https://community.example" },
   });
+});
+it.each([true, false])(
+  "waits for agents still loading before deciding: managed=%s",
+  async (managed) => {
+    const user = userEvent.setup();
+    let loaded = false;
+    let finish!: () => void;
+    const refresh = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            loaded = true;
+            resolve();
+          };
+        }),
+    );
+    const f = setup({
+      snapshot: () => ({
+        identities: loaded && managed ? [{ pubkey: "agent", managed }] : [],
+        managedPending: !loaded,
+      }),
+      refresh,
+    });
+    render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+    await user.click(screen.getByRole("button", { name: "Message" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledExactlyOnceWith(false));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(f.open).not.toHaveBeenCalled();
+    await act(async () => finish());
+    if (managed) await waitFor(() => expect(f.navigate).toHaveBeenCalledOnce());
+    else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This agent is not ready to message in this community.",
+      );
+      expect(f.open).not.toHaveBeenCalled();
+    }
+  },
+);
+it("does not wait for the agent library, which cannot control an agent", async () => {
+  const user = userEvent.setup();
+  const refresh = vi.fn(async () => {});
+  const f = setup({
+    snapshot: () => ({ identities: [], pending: true, managedPending: false }),
+    refresh,
+  });
+  render(<AgentMessageButton {...f} pubkey="agent" navigation={undefined} />);
+  await user.click(screen.getByRole("button", { name: "Message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This agent is not ready to message in this community.",
+  );
+  expect(refresh).not.toHaveBeenCalled();
+  expect(f.open).not.toHaveBeenCalled();
 });
 it("shows an opening error and allows retry", async () => {
   const user = userEvent.setup();

@@ -258,3 +258,22 @@ it("keeps explicit Personal space distinct from an unspecified page scope", () =
   expect(targetKey(personal)).not.toBe(targetKey(page));
   expect(() => parseOpenTarget({ ...conversation, scope: null })).toThrow();
 });
+
+it("retains copied Git source fields only on the Plugins settings destination", () => {
+  const source = {
+    repository: "https://github.com/example/plugin",
+    reference: "release",
+  };
+  const target = parseOpenTarget({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginImport: source,
+  });
+  source.reference = "changed";
+  expect(target).toMatchObject({ pluginImport: { reference: "release" } });
+  expect(() => parseOpenTarget({ ...target, section: "profile" })).toThrow();
+  expect(() =>
+    parseOpenTarget({ ...target, pluginImport: { ...source, enable: true } }),
+  ).toThrow();
+});

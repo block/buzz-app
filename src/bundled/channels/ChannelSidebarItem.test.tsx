@@ -17,6 +17,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
+import { UnreadBadge } from "./UnreadBadge";
 
 afterEach(cleanup);
 
@@ -24,6 +25,8 @@ const noTyping = Object.freeze([]);
 
 function owner(profiles = new Map<string, Profile>()) {
   const listeners = new Set<() => void>();
+  const preferenceListeners = new Set<() => void>();
+  let muted: string[] = [];
   let snapshot: UnreadSnapshot = {
     target: { kind: "channel", channelId: "alpha" },
     observedCount: 0,
@@ -40,6 +43,13 @@ function owner(profiles = new Map<string, Profile>()) {
   };
   const session = {
     channels: { prepare: vi.fn() },
+    sidebarPreferences: {
+      snapshot: () => ({ data: { muted } }),
+      subscribe: (listener: () => void) => {
+        preferenceListeners.add(listener);
+        return () => preferenceListeners.delete(listener);
+      },
+    },
     agentActivity: {
       subscribe: () => () => {},
       snapshot: () => ({
@@ -78,6 +88,14 @@ function owner(profiles = new Map<string, Profile>()) {
     session,
     profiles,
     listeners,
+    mute(value: boolean) {
+      muted = value ? ["alpha"] : [];
+      for (const listener of preferenceListeners) listener();
+    },
+    manual() {
+      snapshot = { ...snapshot, manual: "local-only" };
+      for (const listener of listeners) listener();
+    },
     unread(count: number, attentionCount = 0) {
       snapshot = { ...snapshot, observedCount: count, attentionCount };
       for (const listener of listeners) listener();
@@ -513,4 +531,59 @@ it("marks a temporary channel with its lifetime and yields the slot to working a
   expect(document.querySelector("[data-channel-temporary]")).toBeNull();
   view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
   expect(document.querySelector("[data-channel-temporary]")).toBeNull();
+});
+
+it("keeps Solo unread labels and markers independent of mute", () => {
+  const state = owner();
+  const view = render(
+    <UnreadBadge
+      session={state.session}
+      channelId="alpha"
+      label="Solo"
+      labelUnread="all"
+    />,
+  );
+  const label = () =>
+    view.container.querySelector("[data-channel-unread-title]");
+  act(() => state.unread(2));
+  expect(label()).toBeInTheDocument();
+  act(() => state.mute(true));
+  expect(label()).toBeInTheDocument();
+  expect(
+    screen.getByRole("img", { name: /2 observed unread/ }),
+  ).toBeInTheDocument();
+  act(() => state.unread(3, 1));
+  expect(label()).toBeInTheDocument();
+  expect(view.container.querySelector("[data-channel-priority]")).toBeNull();
+  act(() => state.unread(0));
+  expect(label()).toBeNull();
+  expect(view.container.querySelector("[data-channel-unread]")).toBeNull();
+});
+
+it("quiets confirmed muted backlog, restores it on unmute, and preserves directed and manual attention", () => {
+  const state = owner();
+  const view = render(
+    <ChannelSidebarItem {...itemProps(state.session, false)} />,
+  );
+  const row = () => view.container.querySelector("[data-channel-sidebar-row]");
+  act(() => state.unread(2));
+  expect(row()).toHaveAttribute("data-ordinary");
+  act(() => state.mute(true));
+  expect(row()).not.toHaveAttribute("data-ordinary");
+  expect(view.container.querySelector("[data-channel-unread]")).toBeNull();
+  act(() => state.unread(3));
+  expect(row()).not.toHaveAttribute("data-ordinary");
+  act(() => state.mute(false));
+  expect(row()).toHaveAttribute("data-ordinary");
+  act(() => state.mute(true));
+  act(() => state.unread(4, 1));
+  expect(row()).not.toHaveAttribute("data-ordinary");
+  expect(
+    view.container.querySelector("[data-channel-priority]"),
+  ).not.toBeNull();
+  act(() => state.manual());
+  expect(row()).toHaveAttribute("data-ordinary");
+  expect(
+    screen.getByRole("img", { name: "Marked unread on this device only" }),
+  ).toBeInTheDocument();
 });

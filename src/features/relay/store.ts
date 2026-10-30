@@ -1872,6 +1872,8 @@ export function createChannelStore(
         at?: number;
         /** The pages read so far, newest first. */
         events: RelayEvent[];
+        /** Prior candidates remain searchable while the directory refreshes. */
+        previous?: readonly RelayEvent[];
         /** Settles when the next page lands or the read ends. */
         page: Promise<void>;
         read: Promise<{ partial: boolean }>;
@@ -1992,6 +1994,7 @@ export function createChannelStore(
       const entry: NonNullable<typeof publicDirectory> = {
         generation,
         events,
+        ...(prior ? { previous: prior.events } : {}),
         page: next(),
         read: readPublicDirectory(
           transport,
@@ -2013,6 +2016,7 @@ export function createChannelStore(
         () => {
           controllers.delete(controller);
           entry.at = now();
+          delete entry.previous;
           // Name references in mounted rows read the directory through the
           // list subscription; the list itself is unchanged.
           entry.open = openDirectoryChannels(entry.events);
@@ -2039,7 +2043,12 @@ export function createChannelStore(
     // cannot fill discovery or crowd out a better match on a later page.
     const answer = async (final: boolean) => {
       const latest = new Map<string, RelayEvent>();
-      for (const event of entry.events) {
+      // Saved names are candidates only: each match still resolves freshly.
+      // Only the new scan contributes to the final answer.
+      for (const event of [
+        ...(!final ? (entry.previous ?? []) : []),
+        ...entry.events,
+      ]) {
         const id = tag(event, "d");
         if (id) latest.set(id, newer(latest.get(id), event));
       }
@@ -2088,7 +2097,10 @@ export function createChannelStore(
       return (final ? ids : candidates.map(({ id }) => id))
         .flatMap((id) => {
           const channel = resolved.has(id) && previewable(id);
-          return channel ? [channel] : [];
+          return channel &&
+            publicRank(channel.name, needle, settings?.exact) !== undefined
+            ? [channel]
+            : [];
         })
         .slice(0, limit);
     };
@@ -2099,7 +2111,10 @@ export function createChannelStore(
       }),
     );
     // A search that joins a read in flight ranks its landed pages at once.
-    let page = entry.events.length ? Promise.resolve() : entry.page;
+    let page =
+      entry.events.length || entry.previous?.length
+        ? Promise.resolve()
+        : entry.page;
     publicSearchReserve += limit;
     try {
       for (;;) {

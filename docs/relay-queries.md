@@ -341,7 +341,10 @@ or `#` completion query, `channels.searchPublic(query)` reads relay-authored
 It matches names locally and keeps only explicit active public channels the
 viewer has not joined. Every query in the same session epoch shares one read:
 a query that stops waiting leaves it running for the next, and a finished read
-is reused for 30 seconds, so typing reads the directory once. Names match by
+is reused for 30 seconds, so typing reads the directory once. After expiry,
+the prior directory also supplies candidates while fresh pages arrive. Each
+candidate still needs fresh exact resolution, including a name-match check;
+only the new scan supplies the final answer. Names match by
 the joined-channel rule (`matchRank`: exact, prefix, word start, substring,
 word runs, then letters in order), so `buzz community` finds `buzz-community`.
 The best eight are resolved through the same exact `resolve` path as message

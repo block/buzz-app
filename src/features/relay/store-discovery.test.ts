@@ -739,6 +739,100 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });
 
+it.each(["complete", "fail"])(
+  "resolves saved candidates before an expired directory refresh can %s",
+  async (outcome) => {
+    let clock = 1_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const open = metadata(relay, "saved", "release-notes", 10, [["public"]]);
+    // The earlier query returned nothing: matchPublic cannot supply the row.
+    const warm = h.channels.searchPublic?.("zzz");
+    (await h.next(39000)).respond([open]);
+    await warm;
+    clock += 30_000;
+    const progress = vi.fn();
+    const search = h.channels.searchPublic?.("release", { progress });
+    assert.exists(search);
+    const result = search.then(
+      (found) => found,
+      (error: unknown) => error,
+    );
+    const refresh = await h.next(39000);
+    expect(refresh.filters[0]?.["#d"]).toBeUndefined();
+    // The full directory remains gated. Only a fresh exact read admits a row.
+    const exact = await h.next(39000);
+    expect(exact.filters[0]?.["#d"]).toEqual(["saved"]);
+    expect(progress).not.toHaveBeenCalled();
+    exact.respond([open]);
+    await vi.waitFor(() =>
+      expect(progress).toHaveBeenCalledWith({
+        channels: [expect.objectContaining({ id: "saved", readOnly: true })],
+        partial: false,
+      }),
+    );
+    expect(h.channels.list().channels).toEqual([]);
+    if (outcome === "fail") {
+      refresh.fail(new Error("offline"));
+      expect(await result).toEqual(new Error("offline"));
+      expect(h.channels.matchPublic?.("release")).toHaveLength(1);
+    } else {
+      // An omitted candidate does not survive in the authoritative final answer.
+      refresh.respond([]);
+      expect(await result).toEqual({ channels: [], partial: false });
+      expect(h.channels.matchPublic?.("release")).toEqual([]);
+    }
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
+it.each(["renamed", "private", "archived", "missing"])(
+  "withholds a saved candidate that is now %s during directory refresh",
+  async (change) => {
+    let clock = 1_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const old = metadata(relay, "saved", "release-notes", 10, [["public"]]);
+    const warm = h.channels.searchPublic?.("zzz");
+    (await h.next(39000)).respond([old]);
+    await warm;
+    clock += 30_000;
+    const progress = vi.fn();
+    const search = h.channels.searchPublic?.("release", { progress });
+    assert.exists(search);
+    const result = search.catch((error: unknown) => error);
+    const refresh = await h.next(39000);
+    const exact = await h.next(39000);
+    exact.respond(
+      change === "missing"
+        ? []
+        : [
+            metadata(
+              relay,
+              "saved",
+              change === "renamed" ? "other-name" : "release-notes",
+              11,
+              change === "private"
+                ? [["private"]]
+                : [
+                    ["public"],
+                    ...(change === "archived" ? [["archived", "true"]] : []),
+                  ],
+            ),
+          ],
+    );
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled());
+    expect(progress).toHaveBeenLastCalledWith({ channels: [], partial: false });
+    refresh.respond([]);
+    expect(await result).toEqual({ channels: [], partial: false });
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
 it("finds public channels by the joined-channel name rule, not only by substring", async () => {
   const h = setup();
   h.channels.ensureList();

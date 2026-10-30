@@ -166,6 +166,25 @@ export function parseAttachments(
   return result;
 }
 
+/** Longest tl;dr a client shows, in code points, whatever the event carries. */
+const TLDR_LIMIT = 160;
+
+/** An event's author-written one-line `summary` tag as untrusted plain text:
+ * one line, at most TLDR_LIMIT code points; absent when nothing is left. */
+function messageTldr(event: EventData) {
+  const value = event.tags.find(([name]) => name === "summary")?.[1];
+  const points = Array.from(
+    (value ?? "")
+      .replace(/[\p{Cc}\p{Bidi_Control}]/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim(),
+  );
+  if (!points.length) return undefined;
+  return points.length > TLDR_LIMIT
+    ? `${points.slice(0, TLDR_LIMIT - 1).join("")}…`
+    : points.join("");
+}
+
 function parseSummary(
   event: EventData | undefined,
 ): Pick<ChannelMessage, "replyCount" | "participants"> {
@@ -388,6 +407,10 @@ export function foldMessages(
       edits.find((edit) => edit.tags.some(([name]) => name === "imeta")) ??
       event;
     const imetaUrls = imetaAttachmentUrls(attachmentEvent);
+    // The newest edit that supplies a tl;dr replaces it; others keep the last one.
+    const tldr = [...edits, event]
+      .map(messageTldr)
+      .find((text) => text !== undefined);
     // Every CommonMark image begins with `![`, and every attachment title link
     // needs an imeta URL match; avoid parsing ordinary messages.
     const projected =
@@ -462,6 +485,7 @@ export function foldMessages(
             }
           : {}),
         ...(edits.length ? { edited: true as const } : {}),
+        ...(tldr ? { tldr } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(

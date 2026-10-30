@@ -453,6 +453,29 @@ function Timeline({
     setShowJumpToLatest(!bottom);
     if (bottom) setNewMessageCount(0);
   }, []);
+  const collapseRows = useRef(rows);
+  collapseRows.current = rows;
+  // A message toggled while its top is in view stays put: Virtua moves only
+  // the rows below it. One whose top had scrolled away, as when collapsing from
+  // the end of a long message, returns to the top of the viewport. A following
+  // reader stays at the latest message.
+  const keepCollapsePlace = useCallback((id: string) => {
+    const element = scroller.current;
+    const row = element?.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+    if (
+      !element ||
+      !row ||
+      follow.current ||
+      row.getBoundingClientRect().top >= element.getBoundingClientRect().top
+    )
+      return;
+    intent.current++;
+    restoredAnchor.current = undefined;
+    requestAnimationFrame(() => {
+      const index = collapseRows.current.findIndex((item) => item.id === id);
+      if (index >= 0) handle.current?.scrollToIndex(index, { align: "start" });
+    });
+  }, []);
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
     intent.current++;
@@ -1285,6 +1308,7 @@ function Timeline({
                       {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                       retry={queries.outbox?.retry}
                       keepMounted={keepRowMounted}
+                      onCollapseToggle={keepCollapsePlace}
                       day={day && !disclosure}
                     />
                   )}

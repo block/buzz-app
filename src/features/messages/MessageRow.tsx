@@ -86,6 +86,12 @@ import {
   MessageReadStateItem,
 } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
+import {
+  CollapsedMessageLine,
+  MessageCollapseButton,
+  MessageCollapseItem,
+} from "./MessageCollapse";
+import { setMessageCollapsed, useMessageCollapsed } from "./collapsed-messages";
 import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
 import {
   MenuIcon,
@@ -122,6 +128,9 @@ export type MessageRowProps = {
   onReply?: ((messageId: string) => void) | undefined;
   /** False: existing threads open, but the row offers none to start or reply in. */
   startsThreads?: boolean;
+  /** Offered by hosts whose readers can collapse agent messages. Called just
+   * before a toggle, so the host can keep the row in place. */
+  onCollapseToggle?: ((messageId: string) => void) | undefined;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -184,6 +193,7 @@ function MessageRowContent({
   onOpenThread,
   onReply,
   startsThreads = true,
+  onCollapseToggle,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -325,6 +335,27 @@ function MessageRowContent({
       ? `${resolveName(owner.id, owner.profile.name)}’s agent`
       : undefined;
   const presenceId = useId();
+  // Only agent messages fold; a stored choice for anything else is ignored.
+  const canCollapse =
+    !!onCollapseToggle &&
+    !!scope &&
+    agentAuthor &&
+    !renderMessage &&
+    !row.membership &&
+    !row.huddle;
+  const collapsed =
+    useMessageCollapsed(canCollapse ? scope : undefined, row.id) && canCollapse;
+  const [collapseFailed, setCollapseFailed] = useState(false);
+  const toggleCollapsed = () => {
+    if (!scope || !onCollapseToggle) return;
+    setCollapseFailed(false);
+    onCollapseToggle(row.id);
+    try {
+      setMessageCollapsed(scope, row.id, !collapsed);
+    } catch {
+      setCollapseFailed(true);
+    }
+  };
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
   const sourceRow = timeReply
@@ -663,6 +694,12 @@ function MessageRowContent({
                 }
               />
             ) : undefined)}
+          {canCollapse && (
+            <MessageCollapseButton
+              collapsed={collapsed}
+              onToggle={toggleCollapsed}
+            />
+          )}
         </>
       }
       leadingItems={
@@ -672,6 +709,12 @@ function MessageRowContent({
       }
       overflowItems={
         <>
+          {canCollapse && (
+            <MessageCollapseItem
+              collapsed={collapsed}
+              onToggle={toggleCollapsed}
+            />
+          )}
           {overflowItems ??
             (session ? (
               <MessageManagementItems row={row} session={session} />
@@ -706,6 +749,13 @@ function MessageRowContent({
           report={(type, note) => report(row.id, type, note)}
           close={(submitted) => setReporting(submitted ? "sent" : undefined)}
           finalFocus={menuTrigger}
+        />
+      )}
+      {active && collapseFailed && (
+        <ToastNotice
+          title={`Couldn't save. The message stays ${collapsed ? "collapsed" : "expanded"}.`}
+          timeout={5000}
+          onDismiss={() => setCollapseFailed(false)}
         />
       )}
       {active && reporting === "sent" && (
@@ -970,7 +1020,7 @@ function MessageRowContent({
                   )}
               </div>
             </div>
-            {row.sentFromThread && (
+            {row.sentFromThread && !collapsed && (
               <div className={styles.sentFromThread}>
                 Sent from{" "}
                 <MessageLink
@@ -993,7 +1043,14 @@ function MessageRowContent({
               }
               attachments={attachmentGroups.length > 0}
             >
-              {chatCards.length > 0 && (
+              {collapsed && (
+                <CollapsedMessageLine
+                  row={row}
+                  author={name}
+                  onExpand={toggleCollapsed}
+                />
+              )}
+              {chatCards.length > 0 && !collapsed && (
                 <div
                   className={styles.messageAttachments}
                   data-solo-cards
@@ -1019,7 +1076,7 @@ function MessageRowContent({
                   ))}
                 </div>
               )}
-              {bodyShown && (
+              {bodyShown && !collapsed && (
                 <div
                   className={
                     shownRow || row.huddle ? undefined : styles.messageBubble
@@ -1073,7 +1130,7 @@ function MessageRowContent({
                   {reactionsInBubble && reactionContent}
                 </div>
               )}
-              {attachmentGroups.length > 0 && (
+              {attachmentGroups.length > 0 && !collapsed && (
                 <div
                   className={styles.messageAttachments}
                   data-message-attachments
@@ -1267,7 +1324,7 @@ function MessageRowContent({
               )}
             </MessageTimestampHint>
           </div>
-          {!reactionsInBubble && reactionContent}
+          {!collapsed && !reactionsInBubble && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories

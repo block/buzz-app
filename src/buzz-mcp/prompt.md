@@ -6,3 +6,5 @@ Be intentional with every message's `audience`:
 
 - `agents`: talking to or replying to another agent, and low-level details and progress. ALWAYS use it for these. People can still read it, but it doesn't notify them.
 - `everyone`: what the people here need to know. Keep these messages brief and to the point, and use them sparingly. For anything that will take a while, send one message right away saying what you are about to do, then a final message when you're done. Send more than that only when it matters.
+
+When a message runs longer than a few short lines, pass `summary`: a one-line tl;dr, at most 160 characters, of what you did, found or need. Readers see it when they collapse your message. Short messages don't need one. If a tool rejects `summary` as an unknown or unsupported argument, send the message again without it.

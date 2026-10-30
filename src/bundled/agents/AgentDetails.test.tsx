@@ -212,6 +212,7 @@ it.each(["name", "avatar"])(
         subject: "account",
         email: "a@example.com",
         canUseRemoteAgents: true,
+        canUseBuilderlabDecisions: false,
       },
     }));
     await session.signIn();

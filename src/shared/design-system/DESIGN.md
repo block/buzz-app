@@ -886,7 +886,8 @@ Small buttons use 16px
 side padding and 16px icons; medium and large use 24px side padding and 24px icons.
 Proposed: medium labelled buttons with a leading icon use 12px leading and 16px
 trailing padding for optical balance. Text-only and icon-only buttons retain their
-existing insets.
+existing insets. Small buttons that lead with an `AvatarStack`, such as the composer's
+agent pill, use 6px leading padding (matching the vertical inset) and 12px trailing.
 Standard Button labels use the complete `text-label-sm` role with an 8px icon gap; the
 extra-small capsule uses `text-caption`. For a caption-sized inline choice such as
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
@@ -1768,6 +1769,7 @@ level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
 
 Mentions are people, not destinations, so they are chips rather than links.
+Mention chips use `radius-pill` for capsule ends in messages and composers.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.

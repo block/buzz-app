@@ -35,6 +35,7 @@ const credential: Credential = {
     subject: "account",
     email: "a@example.com",
     canUseRemoteAgents: true,
+    canUseBuilderlabDecisions: false,
   },
 };
 afterEach(() => {

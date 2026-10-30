@@ -74,7 +74,12 @@ async function fixture(signedIn = true) {
   let subject = "account-a";
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
+    account: {
+      subject,
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   if (signedIn) await session.signIn();
   let stored = response();

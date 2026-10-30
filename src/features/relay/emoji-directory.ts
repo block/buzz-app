@@ -13,7 +13,7 @@ import {
   type CustomEmoji,
 } from "./emoji";
 import { eventDto, newer, type RelayEvent } from "./events";
-import type { RelayReader } from "./reader";
+import type { Priority, RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
 export type EmojiSnapshot = Readonly<{
@@ -45,6 +45,7 @@ export function createEmojiDirectory(
     limited = false;
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
+  let pendingPriority: Priority = "background";
   const lifetime = new AbortController();
   let editing: Promise<unknown> = Promise.resolve();
   let snapshot: EmojiSnapshot = Object.freeze({
@@ -109,10 +110,16 @@ export function createEmojiDirectory(
         : snapshot.mine,
     });
   }
-  function refresh(): Promise<void> {
+  /** Passive demand yields to other reads. An explicit retry runs in the
+   * foreground and supersedes a passive load, which can spend its whole deadline
+   * queued behind background profile reads without reaching the relay. */
+  function load(priority: Priority): Promise<void> {
     if (closed) return Promise.resolve();
     requested = true;
-    if (pending) return pending;
+    if (pending && (priority === "background" || pendingPriority === priority))
+      return pending;
+    controller?.abort();
+    pendingPriority = priority;
     // Explicit recovery starts a new bounded read after overflow. Never expose a
     // partially retained set as ready; live replacements during this read still win.
     if (limited) {
@@ -133,7 +140,7 @@ export function createEmojiDirectory(
           (signal) =>
             reader.read([{ kinds: [30030], "#d": [EMOJI_SET], limit: LIMIT }], {
               signal,
-              priority: "background",
+              priority,
             }),
           owned.signal,
         );
@@ -165,8 +172,9 @@ export function createEmojiDirectory(
     })();
     return pending;
   }
+  const refresh = () => load("foreground");
   function ensure() {
-    if (snapshot.status === "idle") return refresh();
+    if (snapshot.status === "idle") return load("background");
     return pending ?? Promise.resolve();
   }
   /** Read-modify-write of the viewer's own set; an absent URL removes the shortcode. */
@@ -324,7 +332,7 @@ export function createEmojiDirectory(
       controller?.abort();
       controller = undefined;
       pending = undefined;
-      void refresh();
+      void load("background");
     },
     tags(content: string): string[][] {
       const codes = referencedEmoji(content);

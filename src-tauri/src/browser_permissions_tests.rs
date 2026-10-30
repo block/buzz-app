@@ -131,6 +131,7 @@ fn native_command_permissions_isolate_webviews() {
         "media_download",
         "file_download",
         "media_copy_image",
+        "clipboard_write_text",
         "media_stream_base",
         "get_os_idle_seconds",
         "plugin_import_folder",
@@ -312,8 +313,8 @@ fn native_command_permissions_isolate_webviews() {
         );
         assert_eq!(
             invoke(huddle.as_ref(), command, local_origin).is_ok(),
-            command == "media_download",
-            "huddle must only acquire the bounded download command: {command}"
+            matches!(command, "media_download" | "clipboard_write_text"),
+            "huddle must only acquire bounded download and text copy: {command}"
         );
         assert!(invoke(huddle.as_ref(), command, "https://example.org").is_err());
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

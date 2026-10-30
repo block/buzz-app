@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { nativeBuilderlab, type BuilderlabSession } from "../session";
@@ -39,6 +39,16 @@ export function Login({
     },
     [cancelOnUnmount, session],
   );
+  // A successful FI retry replaces the focused sign-in button with the
+  // Identity link; focus follows only if the button still had it.
+  const action = useRef(false);
+  const identityLink = useRef<HTMLButtonElement>(null);
+  const showsIdentity = nativeBuilderlab() && state.status === "signed-in";
+  useEffect(() => {
+    if (!showsIdentity || !action.current) return;
+    action.current = false;
+    identityLink.current?.focus();
+  }, [showsIdentity]);
   const intro =
     state.status === "signed-in"
       ? kept()
@@ -57,26 +67,29 @@ export function Login({
       ) : (
         <>
           <p role="status" className="text-body-sm text-secondary">
-            {state.status === "pending"
-              ? "Finish sign-in in your browser, then return to Buzz."
-              : state.account
-                ? state.account.email
-                  ? `Signed in as ${state.account.email}.`
-                  : "Signed in to Builderlab."
-                : "Sign in securely in your browser."}
+            {state.checking
+              ? "Checking your Builderlab sign-in…"
+              : state.status === "pending"
+                ? "Finish sign-in in your browser, then return to Buzz."
+                : state.account
+                  ? state.account.email
+                    ? `Signed in as ${state.account.email}.`
+                    : "Signed in to Builderlab."
+                  : "Sign in securely in your browser."}
           </p>
           {state.error && (
             <p role="alert" className="text-body-sm text-danger">
               {state.error}
             </p>
           )}
-          {nativeBuilderlab() && state.status === "signed-in" ? (
+          {showsIdentity ? (
             // The native session is shared with community sign-in, so it
             // ends only where that sign-in is managed.
             <p className="m-0 text-body-sm text-secondary">
               Builderlab uses your organization sign-in. To sign out, go to{" "}
               {openIdentity ? (
                 <Button
+                  ref={identityLink}
                   variant="link"
                   size="inline"
                   onClick={() => {
@@ -93,6 +106,14 @@ export function Login({
           ) : (
             <Button
               variant={state.status === "signed-out" ? "prominent" : "outline"}
+              loading={state.checking === true}
+              ref={(node) => {
+                if (!node) return;
+                // React detaches the ref before removing the node.
+                return () => {
+                  action.current = document.activeElement === node;
+                };
+              }}
               onClick={() => {
                 if (!active()) return;
                 if (state.status === "pending") session.cancel();
@@ -100,11 +121,13 @@ export function Login({
                 else void session.signIn();
               }}
             >
-              {state.status === "pending"
-                ? "Cancel sign-in"
-                : state.status === "signed-in"
-                  ? "Sign out"
-                  : "Sign in with Builderlab"}
+              {state.checking
+                ? "Checking sign-in"
+                : state.status === "pending"
+                  ? "Cancel sign-in"
+                  : state.status === "signed-in"
+                    ? "Sign out"
+                    : "Sign in with Builderlab"}
             </Button>
           )}
         </>

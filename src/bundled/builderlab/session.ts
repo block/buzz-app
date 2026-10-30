@@ -14,6 +14,9 @@ export type LoginSnapshot = Readonly<{
   status: "signed-out" | "pending" | "signed-in";
   account?: Account;
   error?: string;
+  /** Pending with no browser step, such as restoring a saved sign-in or
+   * reading its account; it cannot be cancelled. */
+  checking?: boolean;
 }>;
 /** A call under the Builderlab API root; `path` starts with `/`. */
 export type BuilderlabRequest = Readonly<{
@@ -94,7 +97,8 @@ export function createNativeSession(
     if (
       next.status === state.status &&
       next.account === state.account &&
-      next.error === state.error
+      next.error === state.error &&
+      next.checking === state.checking
     )
       return;
     state = Object.freeze(next);
@@ -165,19 +169,21 @@ export function createNativeSession(
       replace(undefined);
       loading = failed = undefined;
       return publish(
-        current.status === "signing-in" || current.status === "restoring"
+        current.status === "signing-in"
           ? { status: "pending" }
-          : current.status === "reauthentication-required"
-            ? {
-                status: "signed-out",
-                error: "Your Builderlab sign-in ended. Sign in again.",
-              }
-            : current.failure && current.status !== "unconfigured"
+          : current.status === "restoring"
+            ? { status: "pending", checking: true }
+            : current.status === "reauthentication-required"
               ? {
                   status: "signed-out",
-                  error: "Builderlab sign-in did not finish. Try again.",
+                  error: "Your Builderlab sign-in ended. Sign in again.",
                 }
-              : { status: "signed-out" },
+              : current.failure && current.status !== "unconfigured"
+                ? {
+                    status: "signed-out",
+                    error: "Builderlab sign-in did not finish. Try again.",
+                  }
+                : { status: "signed-out" },
       );
     }
     if (credential?.revision === current.revision)
@@ -187,7 +193,7 @@ export function createNativeSession(
       return publish({ status: "signed-out", error: ACCOUNT_FAILED });
     failed = undefined;
     if (loading !== current.revision) void load(current.revision);
-    publish({ status: "pending" });
+    publish({ status: "pending", checking: true });
   }
   const stop = identity.subscribe(project);
   project();

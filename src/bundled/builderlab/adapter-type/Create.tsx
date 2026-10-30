@@ -82,9 +82,11 @@ export function createCreationFields(
         {login.status !== "signed-in" ? (
           <div className="grid justify-items-start gap-3">
             <p role="status" className="m-0 text-body-sm text-secondary">
-              {login.status === "pending"
-                ? "Finish sign-in in your browser, then choose a model."
-                : "Sign in to choose a model and thinking level."}
+              {login.checking
+                ? "Checking your Builderlab sign-in…"
+                : login.status === "pending"
+                  ? "Finish sign-in in your browser, then choose a model."
+                  : "Sign in to choose a model and thinking level."}
             </p>
             {login.error && (
               <p role="alert" className="m-0 text-body-sm text-danger">
@@ -93,14 +95,17 @@ export function createCreationFields(
             )}
             <Button
               disabled={disabled && login.status !== "pending"}
+              loading={login.checking === true}
               onClick={() => {
                 if (login.status === "pending") session.cancel();
                 else void session.signIn();
               }}
             >
-              {login.status === "pending"
-                ? "Cancel sign-in"
-                : "Sign in with Builderlab"}
+              {login.checking
+                ? "Checking sign-in"
+                : login.status === "pending"
+                  ? "Cancel sign-in"
+                  : "Sign in with Builderlab"}
             </Button>
           </div>
         ) : models?.length ? (

@@ -216,6 +216,7 @@ for (const scope of ["channel", "thread"]) {
     await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
     await history.focus();
     await keyScroll(page, "PageUp", history);
+    await expect(history).toBeFocused();
     expect(await gap()).toBeGreaterThan(100);
     expect(await history.boundingBox()).toEqual(idle);
     expect(await composer.boundingBox()).toEqual(idleComposer);
@@ -231,10 +232,10 @@ for (const scope of ["channel", "thread"]) {
         );
       }),
     ).toBe(true);
-    // Each keyboard gesture targets history explicitly; the reply composer
-    // now owns focus on open and retains its native editing selection.
-    await history.focus();
+    // End must keep the reader's focus, even after the reply editor has held
+    // a native caret. WebKit must not route it back into that blurred editor.
     await keyScroll(page, "End", history);
+    await expect(history).toBeFocused();
     await expect.poll(gap).toBeLessThan(2);
     await expect.poll(tailGap).toBeGreaterThanOrEqual(endPadding - 1);
     await page.screenshot({

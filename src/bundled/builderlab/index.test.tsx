@@ -1007,7 +1007,11 @@ it.each([
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     // Sign-in stays user-started and the failed instructions draft survives it.
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(
+      within(
+        screen.getByRole("complementary", { name: / identity$/ }),
+      ).getByRole("button", { name: "Sign in" }),
+    );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled(),
     );

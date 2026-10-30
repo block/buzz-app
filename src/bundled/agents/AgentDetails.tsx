@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -99,6 +100,7 @@ export function AgentDetails({
   close?: () => void;
   communities?: CommunityReader | undefined;
 }) {
+  const ProfileActions = type?.ProfileActions ?? Fragment;
   const { pack, src: backdrop } = useAgentPortraitSource(agent, agent.relay);
   const tabbed = !!usePanelTabHost();
   const reducedMotion = useReducedMotion();
@@ -310,42 +312,42 @@ export function AgentDetails({
               )}
             </motion.div>
             <div className={hero.actions}>
-              {editingName ? (
-                <motion.div
-                  className={styles.nameActions}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{
-                    duration:
-                      reducedMotion ||
-                      document.documentElement.hasAttribute(
-                        "data-keyboard-navigation",
-                      )
-                        ? 0
-                        : 0.15,
-                  }}
-                >
-                  <Button
-                    size="sm"
-                    shape="control"
-                    disabled={namePending}
-                    onClick={finishName}
+              <ProfileActions>
+                {!editingName && messageAction(backdrop ? "glass" : "subtle")}
+                {editingName ? (
+                  <motion.div
+                    className={styles.nameActions}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{
+                      duration:
+                        reducedMotion ||
+                        document.documentElement.hasAttribute(
+                          "data-keyboard-navigation",
+                        )
+                          ? 0
+                          : 0.15,
+                    }}
                   >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    shape="control"
-                    variant="prominent"
-                    loading={namePending}
-                    onClick={() => void saveName()}
-                  >
-                    Save
-                  </Button>
-                </motion.div>
-              ) : (
-                <>
-                  {messageAction(backdrop ? "glass" : "subtle")}
+                    <Button
+                      size="sm"
+                      shape="control"
+                      disabled={namePending}
+                      onClick={finishName}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      shape="control"
+                      variant="prominent"
+                      loading={namePending}
+                      onClick={() => void saveName()}
+                    >
+                      Save
+                    </Button>
+                  </motion.div>
+                ) : (
                   <MenuRoot>
                     <MenuTrigger
                       render={
@@ -372,8 +374,8 @@ export function AgentDetails({
                       </MenuItem>
                     </MenuPopup>
                   </MenuRoot>
-                </>
-              )}
+                )}
+              </ProfileActions>
             </div>
             {editingName && nameMessage && (
               <p

@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import type {
   Agent,
   Agents,
@@ -70,6 +70,9 @@ it("keeps one provider footer across tabs and measures its changing height for t
     title: "Hosted",
     defaults: () => ({ config: {} }),
     PanelFooter: Footer,
+    ProfileActions: ({ children }: { children: ReactNode }) => (
+      <section aria-label="Profile editing">{children}</section>
+    ),
     tabs: [
       {
         id: "settings",
@@ -101,10 +104,22 @@ it("keeps one provider footer across tabs and measures its changing height for t
       channels={[]}
       memories={undefined}
       onRemoved={vi.fn()}
-      messageAction={() => null}
+      messageAction={() => <Button>Message</Button>}
     />,
   );
   const card = screen.getByRole("region", { name: "Account access" });
+  expect(
+    within(screen.getByRole("region", { name: "Profile editing" })).getByRole(
+      "button",
+      { name: "Message" },
+    ),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole("region", { name: "Profile editing" })).getByRole(
+      "button",
+      { name: "Agent profile actions" },
+    ),
+  ).toBeVisible();
   const footer = card.parentElement;
   if (!footer) throw new Error("Missing pane footer");
   const scroll = footer.previousElementSibling as HTMLElement;

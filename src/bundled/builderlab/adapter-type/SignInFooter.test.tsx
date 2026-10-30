@@ -22,7 +22,7 @@ import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
 import { createSettingsTab } from "./Instructions";
 import { deferred } from "../test-helpers";
-import { createSignInFooter } from "./SignInFooter";
+import { createProfileActions, createSignInFooter } from "./SignInFooter";
 
 vi.mock("../oauth/browser", async (original) => ({
   ...(await original<typeof import("../oauth/browser")>()),
@@ -42,8 +42,53 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+it("shares profile sign-in with the footer and restores editing only after authentication", async () => {
+  const held = deferred<Credential>();
+  const acquire = vi.fn(() => held.promise);
+  const session = createOAuthSession(acquire);
+  const ProfileActions = createProfileActions(session);
+  const Footer = createSignInFooter(session);
+  render(
+    <>
+      <ProfileActions>
+        <button type="button">Message</button>
+        <button type="button">Edit profile</button>
+      </ProfileActions>
+      <Footer />
+    </>,
+    { wrapper: StrictMode },
+  );
+  expect(screen.queryByRole("button", { name: "Edit profile" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
+  expect(acquire).not.toHaveBeenCalled();
+  const profileSignIn = screen.getAllByRole("button", { name: "Sign in" })[0];
+  if (!profileSignIn) throw new Error("Missing profile sign-in");
+  fireEvent.click(profileSignIn);
+  expect(acquire).toHaveBeenCalledTimes(1);
+  expect(profileSignIn).toHaveAttribute("aria-busy", "true");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Cancel sign-in" }),
+    ).toBeVisible(),
+  );
+  fireEvent.click(profileSignIn);
+  expect(acquire).toHaveBeenCalledTimes(1);
+  await act(async () => held.resolve(credential));
+  expect(
+    await screen.findByRole("button", { name: "Edit profile" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Message" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  act(() => session.signOut());
+  expect(screen.queryByRole("button", { name: "Edit profile" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
+  expect(screen.getAllByRole("button", { name: "Sign in" })).toHaveLength(2);
+  session.dispose();
+});
+
 it("waits for a click, exposes delayed guidance, cancels and retries without accepting late results", async () => {
-  vi.useFakeTimers();
+  // Control browser-guidance deadlines without replacing Motion's frame clock.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const old = deferred<Credential>();
   const next = deferred<Credential>();
   const acquire = vi
@@ -190,7 +235,7 @@ it("loads the pane after a late browser callback and verified exchange without w
     session,
   );
   const agent = { pubkey, name: "Helper" } as Agent;
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   render(
     <>
       <Footer />

@@ -727,6 +727,8 @@ export type AgentType<Config = unknown> = {
   /** Provider-owned account/recovery notice, pinned across the agent's tabs.
    * The panel host owns placement and reserves its measured height for scrolling. */
   PanelFooter?: ComponentType;
+  /** Provider-owned sign-in gate for messaging and name/avatar editing actions. */
+  ProfileActions?: ComponentType<{ children: ReactNode }>;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,

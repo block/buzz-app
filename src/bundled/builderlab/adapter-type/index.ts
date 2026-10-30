@@ -1,6 +1,6 @@
 import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
-import { createSignInFooter } from "./SignInFooter";
+import { createProfileActions, createSignInFooter } from "./SignInFooter";
 import { creationConfig, createCreationFields, EMPTY_CREATION } from "./Create";
 import type { AgentType } from "../../../features/agents/service";
 import type { RelayData } from "../../../features/relay/service";
@@ -99,6 +99,7 @@ export function builderlabType(
     defaults: () => ({ config: { ...EMPTY_CREATION } }),
     Create: createCreationFields(client, session),
     PanelFooter: createSignInFooter(session),
+    ProfileActions: createProfileActions(session),
     tabs: [
       {
         id: "settings",

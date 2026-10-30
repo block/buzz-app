@@ -4,12 +4,32 @@ import {
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Header } from "../../../shared/design-system/ui/Header";
 import { browserLoginAvailable } from "../oauth/browser";
 import type { OAuthSession } from "../oauth/session";
+
+/** Profile actions share the same explicit sign-in entry point as the pane footer. */
+export function createProfileActions(session: OAuthSession) {
+  return function ProfileActions({ children }: { children: ReactNode }) {
+    const login = useSyncExternalStore(session.subscribe, session.snapshot);
+    if (login.status === "signed-in") return children;
+    return (
+      <Button
+        variant="prominent"
+        size="sm"
+        loading={login.status === "pending"}
+        disabled={!browserLoginAvailable()}
+        onClick={() => void session.signIn()}
+      >
+        Sign in
+      </Button>
+    );
+  };
+}
 
 /** One account prompt for the whole hosted agent, independent of its active tab. */
 export function createSignInFooter(session: OAuthSession) {

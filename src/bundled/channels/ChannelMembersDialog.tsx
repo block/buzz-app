@@ -97,6 +97,7 @@ import {
   channelIcon,
   channelText,
 } from "../../features/channels/channel-icon";
+import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
 
@@ -1272,8 +1273,7 @@ export function ChannelMembersDialog({
   );
   const copy = async () => {
     try {
-      // The `navigator` prop is app navigation; the clipboard is the browser's.
-      await globalThis.navigator.clipboard.writeText(soloChatLink(channelId));
+      await writeClipboardText(soloChatLink(channelId));
       setCopyStatus("Link copied");
     } catch {
       setCopyStatus("Couldn’t copy the link.");

@@ -52,7 +52,7 @@ use nsec_backup::{
     nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
-mod image_clipboard;
+mod clipboard;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -649,6 +649,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         file_download,
         media_download,
         media_copy_image,
+        clipboard::clipboard_write_text,
         media_stream_base,
         get_os_idle_seconds,
         workspace_pick_folder,
@@ -966,7 +967,7 @@ pub fn run() {
         None => builder,
     };
     builder
-        .manage(image_clipboard::ImageClipboard::default())
+        .manage(clipboard::Clipboard::default())
         .manage(keep_awake::KeepAwake::default())
         .manage(identity)
         .manage(archive::ArchiveHost::default())
@@ -1066,7 +1067,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<federated_identity::socket::Sockets>().clear();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
-    app.state::<image_clipboard::ImageClipboard>().release();
+    app.state::<clipboard::Clipboard>().release();
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();

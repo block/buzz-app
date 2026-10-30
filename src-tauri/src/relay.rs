@@ -1846,7 +1846,7 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     let pixels = tauri::async_runtime::spawn_blocking(move || clipboard_pixels(response.body()))
         .await
         .map_err(|_| "Could not decode image".to_owned())??;
-    crate::image_clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
+    crate::clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
 }
 
 /// Persist an authenticated bounded response without replacing an existing file.

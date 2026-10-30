@@ -18,6 +18,12 @@
         "id": "node",
         "program": "node",
         "args": ["--input-type=module", "-e"]
+      },
+      {
+        "id": "pi-protected-sh",
+        "program": "buzz-agent-command",
+        "bundled": true,
+        "args": ["--shell"]
       }
     ],
     "files": true

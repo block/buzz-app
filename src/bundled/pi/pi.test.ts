@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { AGENT_KEY } from "../../features/agents/membership";
 import hostSource from "./host.mjs?raw";
+import manifest from "./manifest.json";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { Pi, PiStopped } from "./pi";
 import { deferred, fakeHost } from "./pi-testing";
@@ -297,6 +298,14 @@ it("isolates protected agents, contains their runtime code and rejects crossed n
       process.options.args?.at(-1)?.includes(a),
     );
     if (!worker) throw new Error("Missing protected worker");
+    expect(worker.id).toBe("pi-protected-sh");
+    expect(
+      manifest.host.processes.find((process) => process.id === worker.id),
+    ).toMatchObject({
+      program: "buzz-agent-command",
+      bundled: true,
+      args: ["--shell"],
+    });
     expect(worker.options.args?.[0]).toContain("--disable-sigusr1");
     expect(worker.options.env).toMatchObject({
       BASH_ENV: null,

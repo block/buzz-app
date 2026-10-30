@@ -287,7 +287,8 @@ export class Pi {
       process.on('SIGTERM',stop);
     `
         : undefined;
-    const starting = this.spawn()(windows ? "node" : "pi-sh", {
+    const processId = boot ? "pi-protected-sh" : windows ? "node" : "pi-sh";
+    const starting = this.spawn()(processId, {
       args:
         boot && runtime
           ? [

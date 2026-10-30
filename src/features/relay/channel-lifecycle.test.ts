@@ -1826,6 +1826,126 @@ describe("join from a public preview", () => {
   });
 });
 
+describe("background actions yield to foreground ones", () => {
+  /** A join whose publish is held until `gate` opens, so one action stays in flight. */
+  function held() {
+    const h = harness("member");
+    const metadata = h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["name", "fixture"],
+      ["public"],
+    ]);
+    const roster = (...members: string[]) =>
+      h.record(39002, [["d", id], ...members.map((member) => ["p", member])]);
+    h.setEvents([metadata, roster(other)]);
+    h.deny();
+    const gate = deferred<void>();
+    h.publish.mockImplementation(async (event: RelayEvent) => {
+      await gate.promise;
+      if (event.kind === 9021) h.setEvents([metadata, roster(other, viewer)]);
+    });
+    const started = () =>
+      vi.waitFor(() => expect(h.publish).toHaveBeenCalled());
+    // Lets anything that could wrongly proceed run before a negative assertion.
+    const settle = () => new Promise<void>((done) => setImmediate(done));
+    return { ...h, gate, started, settle };
+  }
+  const background = { background: true };
+
+  it("makes a foreground join wait for a background one, then succeed", async () => {
+    const h = held();
+    const order: string[] = [];
+    try {
+      const first = h.owner.capability
+        .run("join", id, undefined, undefined, background)
+        .then(() => order.push("background"));
+      await h.started();
+      const second = h.owner.capability
+        .run("join", id)
+        .then(() => order.push("foreground"));
+      await h.settle();
+      expect(order).toEqual([]);
+      expect(h.sign).toHaveBeenCalledOnce();
+      h.gate.resolve();
+      await Promise.all([first, second]);
+      expect(order).toEqual(["background", "foreground"]);
+      // The foreground join found the roster the background one confirmed.
+      expect(h.publish).toHaveBeenCalledOnce();
+    } finally {
+      h.gate.resolve();
+      h.owner.dispose();
+    }
+  });
+
+  it("makes a background join wait for a foreground action, then succeed", async () => {
+    const h = held();
+    const order: string[] = [];
+    try {
+      const first = h.owner.capability
+        .run("join", id)
+        .then(() => order.push("foreground"));
+      await h.started();
+      const second = h.owner.capability
+        .run("join", id, undefined, undefined, background)
+        .then(() => order.push("background"));
+      await h.settle();
+      expect(order).toEqual([]);
+      h.gate.resolve();
+      await Promise.all([first, second]);
+      expect(order).toEqual(["foreground", "background"]);
+      expect(h.publish).toHaveBeenCalledOnce();
+    } finally {
+      h.gate.resolve();
+      h.owner.dispose();
+    }
+  });
+
+  it("still refuses a foreground action while another foreground one runs", async () => {
+    const h = held();
+    try {
+      const first = h.owner.capability.run("join", id);
+      await h.started();
+      await expect(h.owner.capability.run("join", id)).rejects.toThrow(
+        "Another channel action is still in progress",
+      );
+      h.gate.resolve();
+      await first;
+    } finally {
+      h.gate.resolve();
+      h.owner.dispose();
+    }
+  });
+
+  it("rejects an aborted foreground wait without publishing for it", async () => {
+    const h = held();
+    const caller = new AbortController();
+    try {
+      const first = h.owner.capability.run(
+        "join",
+        id,
+        undefined,
+        undefined,
+        background,
+      );
+      await h.started();
+      const waiting = h.owner.capability.run("join", id, caller.signal);
+      const rejected = expect(waiting).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      caller.abort(new DOMException("Cancelled", "AbortError"));
+      await rejected;
+      h.gate.resolve();
+      await first;
+      expect(h.publish).toHaveBeenCalledOnce();
+      expect(h.sign).toHaveBeenCalledOnce();
+    } finally {
+      h.gate.resolve();
+      h.owner.dispose();
+    }
+  });
+});
+
 it("retires queued entries and waits only after confirmed removal, including pending validation", async () => {
   const h = harness();
   const deactivate = vi.fn();

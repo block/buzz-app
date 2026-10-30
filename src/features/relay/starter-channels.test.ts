@@ -30,7 +30,15 @@ function session(
     ),
     partial: false,
   }));
-  const join = vi.fn((action: string, id: string) => run(action, id));
+  const join = vi.fn(
+    (
+      action: string,
+      id: string,
+      _signal?: AbortSignal,
+      _active?: () => boolean,
+      _options?: object,
+    ) => run(action, id),
+  );
   const fake = {
     channels: {
       list: () => ({ status: state.status, channels: [] }),
@@ -93,6 +101,40 @@ describe("ensureStarterChannels", () => {
     expect(joined(join)).toEqual(["id-general"]);
     // Missing starters are not a failure, so the pass is complete.
     expect(marker()).toBe(true);
+  });
+
+  it("leaves no marker after a partial lookup, but joins what it found", async () => {
+    const first = session([stream("general"), stream("announcements")]);
+    first.searchPublic.mockImplementation(async (query: string) => ({
+      channels: query === "welcome-everyone" ? [] : [stream(query)],
+      partial: query === "welcome-everyone",
+    }));
+    await ensureStarterChannels(
+      first.fake,
+      scope,
+      new AbortController().signal,
+    );
+    expect(joined(first.join)).toEqual(["id-general", "id-announcements"]);
+    expect(marker()).toBe(false);
+    // A missing starter is absent only when the whole directory was read.
+    const second = session([stream("welcome-everyone")]);
+    await ensureStarterChannels(
+      second.fake,
+      scope,
+      new AbortController().signal,
+    );
+    expect(second.searchPublic).toHaveBeenCalledWith(
+      "welcome-everyone",
+      expect.anything(),
+    );
+    expect(joined(second.join)).toEqual(["id-welcome-everyone"]);
+    expect(marker()).toBe(true);
+  });
+
+  it("joins in the background so a viewer's own action wins", async () => {
+    const { fake, join } = session([stream("general")]);
+    await ensureStarterChannels(fake, scope, new AbortController().signal);
+    expect(join.mock.calls[0]?.[4]).toEqual({ background: true });
   });
 
   it("does nothing once the marker is set", async () => {

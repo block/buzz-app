@@ -30,8 +30,11 @@ function listReady(channels: RelaySession["channels"], signal: AbortSignal) {
  * starter channels that exist, are open and active, and that the viewer has
  * not joined. A bare join takes the channel's own join role, so an announce
  * channel makes the viewer a read-only guest. Best effort and silent: the
- * marker is saved only after a pass without failure, so a failed one retries
- * next session. `signal` ends with the relay session; nothing is navigated. */
+ * marker is saved only after a complete pass (no failed join, no partial
+ * directory read), so an incomplete one retries next session. Joins run as
+ * background lifecycle actions: a viewer's own channel action waits for the
+ * one in flight instead of failing as busy. `signal` ends with the relay
+ * session; nothing is navigated. */
 export async function ensureStarterChannels(
   session: Pick<RelaySession, "channels" | "channelLifecycle">,
   scope: string,
@@ -42,13 +45,15 @@ export async function ensureStarterChannels(
   if (readView<boolean>(scope, DONE_KEY, false)) return;
   try {
     await listReady(channels, signal);
-    let failed = false;
-    // The lifecycle owner allows one action at a time, so joins are sequential.
+    let incomplete = false;
+    // The lifecycle owner runs one action at a time, so joins are sequential.
     for (const name of STARTER_CHANNELS) {
-      const { channels: found } = await channels.searchPublic(name, {
+      const { channels: found, partial } = await channels.searchPublic(name, {
         exact: true,
         signal,
       });
+      // A directory read that hit its bound cannot say the starter is absent.
+      if (partial) incomplete = true;
       for (const channel of found) {
         if (
           channel.channelType !== "stream" ||
@@ -62,15 +67,16 @@ export async function ensureStarterChannels(
             channel.id,
             signal,
             () => !signal.aborted,
+            { background: true },
           );
         } catch {
           signal.throwIfAborted();
-          failed = true;
+          incomplete = true;
         }
       }
     }
     signal.throwIfAborted();
-    if (!failed) writeView(scope, DONE_KEY, true);
+    if (!incomplete) writeView(scope, DONE_KEY, true);
   } catch {
     /* Aborted with the session, or the relay was unavailable: retry next session. */
   }

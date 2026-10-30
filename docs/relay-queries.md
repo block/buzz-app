@@ -391,8 +391,12 @@ Names match case-insensitively (the query is trimmed). The pass is silent and be
 effort, skipped without a lifecycle writer (including cache-only sessions),
 and ends with the connection. A `starter-channels-done` view-state marker per
 viewer and community (`origin:viewer`) is saved only after a pass with no
-failed join, so a failed pass retries next session; leaving the community
-clears it with the rest of its view state.
+failed join and no partial directory read (a lookup that hit the 20,000-event
+bound cannot call a starter absent), so an incomplete pass retries next
+session; leaving the community clears it with the rest of its view state. Starter
+joins run as `background` lifecycle actions: the one-action-at-a-time rule makes
+them wait for a viewer's own Join, Leave or Archive, and a viewer's action waits
+for a background join already in flight, instead of failing as busy.
 
 ### Finite read recovery
 

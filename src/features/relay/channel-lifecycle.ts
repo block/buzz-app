@@ -45,6 +45,9 @@ export interface ChannelLifecycleCapability {
     signal?: AbortSignal,
     /** Checked synchronously right before publishing; false publishes nothing. */
     active?: () => boolean,
+    /** Background work yields to every other action and waits its turn. A
+     * foreground action waits only for a background one. */
+    options?: { background?: boolean },
   ): Promise<void>;
   snapshot(): DmVisibility;
   subscribe(listener: () => void): () => void;
@@ -70,7 +73,8 @@ export function createChannelLifecycle({
   removed(id: string): void;
 }) {
   let closed = false;
-  let busy = false;
+  // The one action in flight; `done` settles when it ends, however it ends.
+  let inflight: { background: boolean; done: Promise<void> } | undefined;
   let epoch = 0;
   // Each in-flight operation and the channel it concerns; visibility reads have none.
   const controllers = new Map<AbortController, string | undefined>();
@@ -357,12 +361,38 @@ export function createChannelLifecycle({
       value: string,
       caller?: AbortSignal,
       active?: () => boolean,
+      options?: { background?: boolean },
     ) {
       if (!available || !writer)
         throw new Error("Channel actions are unavailable on this connection");
-      if (busy) throw new Error("Another channel action is still in progress");
       const id = lifecycleChannelId(value);
-      busy = true;
+      const background = options?.background === true;
+      // Wait out what yields, then look again: another caller may have started.
+      for (;;) {
+        const held = inflight;
+        if (!held) break;
+        if (!background && !held.background)
+          throw new Error("Another channel action is still in progress");
+        caller?.throwIfAborted();
+        let abort = () => {};
+        try {
+          await Promise.race([
+            held.done,
+            new Promise<never>((_, reject) => {
+              abort = () => reject(caller?.reason);
+              caller?.addEventListener("abort", abort, { once: true });
+            }),
+          ]);
+        } finally {
+          caller?.removeEventListener("abort", abort);
+        }
+      }
+      let release = () => {};
+      const mine = {
+        background,
+        done: new Promise<void>((resolve) => (release = resolve)),
+      };
+      inflight = mine;
       let publicationStarted = false;
       try {
         await owned({ id, caller }, async (signal) => {
@@ -501,7 +531,8 @@ export function createChannelLifecycle({
           throw new ChannelLifecycleUnconfirmed(error);
         throw error;
       } finally {
-        busy = false;
+        inflight = undefined;
+        release();
       }
     },
   });

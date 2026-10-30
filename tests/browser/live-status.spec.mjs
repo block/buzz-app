@@ -201,6 +201,10 @@ for (const target of ["alpha", "profiles"]) {
     await page.clock.pauseAt(pausedAt);
     await page.clock.setSystemTime(pausedAt);
     try {
+      // Layout work can outlast the broker's real-time setup deadline. Retry
+      // first so either a busy request or an expired request has an active REQ.
+      await retryNow(page).press("Enter");
+      await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
       const reason = "error: Fixture manual retry failure";
       app.relay.failRoute("primary", target, reason);
       await expect(

@@ -48,14 +48,14 @@ const concurrent = 4;
 const authors = new WeakMap<RelaySession, ReturnType<typeof lookups>>();
 const noop = () => () => {};
 
-/** One session's linked-message authors. An author never changes, and a
- * deleted or unavailable message stays that way, so both are kept for the
- * session. A message its channel's timeline already holds needs no read. A
- * failed read is retried once the live stream connects again, or once every
- * link that wanted it has unmounted. */
+/** One session's linked-message authors. An author never changes, so a found
+ * author stays shown for the session, even once its message is deleted. A
+ * message its channel's revalidated timeline already holds needs no read. A
+ * read that fails or finds no message, which a lagging replica can report for
+ * one just posted, is retried once the live stream connects again, or once
+ * every link that wanted it has unmounted. */
 function lookups(session: RelaySession) {
   const found = new Map<string, Author>();
-  const missing = new Set<string>();
   const wanted = new Map<string, Want>();
   const running = new Map<string, () => void>();
   const listeners = new Set<() => void>();
@@ -75,9 +75,16 @@ function lookups(session: RelaySession) {
       scheduled = false;
       for (const [key, want] of wanted) {
         if (want.failed || running.has(key)) continue;
-        const row = session.channels
-          .window(want.channelId)
-          .rows.find((row) => row.id === want.messageId);
+        // A window restored from disk waits until it is revalidated; like the
+        // exact reader, only messages count, never system rows.
+        const window = session.channels.window(want.channelId);
+        const row =
+          window.freshness === "cached"
+            ? undefined
+            : window.rows.find(
+                (row) =>
+                  row.id === want.messageId && !row.membership && !row.huddle,
+              );
         if (row) resolve(key, authorOf(row));
         else if (running.size < concurrent) start(key, want);
       }
@@ -102,14 +109,12 @@ function lookups(session: RelaySession) {
   function start(key: string, want: Want) {
     let view: ThreadView | undefined;
     let unsubscribe = () => {};
-    const settle = (outcome?: Author | "missing") => {
-      if (!running.delete(key)) return;
+    const settle = (author?: Author) => {
+      if (running.get(key) !== settle) return;
+      running.delete(key);
       unsubscribe();
       view?.dispose();
-      if (outcome === "missing") {
-        missing.add(key);
-        wanted.delete(key);
-      } else if (outcome) resolve(key, outcome);
+      if (author) resolve(key, author);
       // A lookup its last link cancelled has not failed.
       else if (wanted.get(key) === want) {
         want.failed = true;
@@ -126,18 +131,16 @@ function lookups(session: RelaySession) {
     }
     const owned = view;
     const check = () => {
-      const snapshot = owned.snapshot();
       const { message, ready, stopped } = linkedMessage(
-        snapshot,
+        owned.snapshot(),
         want.messageId,
       );
       if (ready && message) settle(authorOf(message));
-      else if (snapshot.targetStatus === "unavailable") settle("missing");
       else if (stopped) settle();
     };
     unsubscribe = owned.subscribe(check);
     check();
-    if (running.has(key)) void owned.refresh();
+    if (running.get(key) === settle) void owned.refresh();
   }
   return {
     subscribe(listener: () => void) {
@@ -148,7 +151,7 @@ function lookups(session: RelaySession) {
     /** Held by a mounted link; the last release cancels its lookup. */
     want(channelId: string, messageId: string) {
       const key = `${channelId}:${messageId}`;
-      if (found.has(key) || missing.has(key)) return () => {};
+      if (found.has(key)) return () => {};
       const want = wanted.get(key) ?? {
         channelId,
         messageId,

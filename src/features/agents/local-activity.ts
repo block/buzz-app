@@ -27,6 +27,8 @@ export type LocalWork = Readonly<{
   conversationName?: string;
   state: LocalWorkState;
   startedAt: number;
+  /** Latest message this run published; its relay echo is not a separate alert. */
+  replyMessageId?: string;
   error?: string;
   /** Latest live step, as the harness named it; display only. */
   step?: WorkStep;
@@ -134,6 +136,7 @@ export function createLocalAgentActivity() {
         LocalWork,
         | "state"
         | "startedAt"
+        | "replyMessageId"
         | "error"
         | "dismissed"
         | "stoppable"
@@ -207,6 +210,30 @@ export function createLocalAgentActivity() {
       };
       return {
         started: () => update("working"),
+        confirmSolo: (conversationName?: string) => {
+          const current = entries.get(id);
+          if (!current || current.soloChat) return;
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              soloChat: true,
+              ...(conversationName?.trim()
+                ? { conversationName: conversationName.trim() }
+                : {}),
+            }),
+          );
+          publish();
+        },
+        reply: (messageId: string) => {
+          const current = entries.get(id);
+          if (!current || current.replyMessageId === messageId) return;
+          entries.set(
+            id,
+            Object.freeze({ ...current, replyMessageId: messageId }),
+          );
+          publish();
+        },
         // Keep the exact request outcome after the harness acknowledges a
         // newer message, without presenting the earlier work as successful.
         supersede: () => update("superseded"),

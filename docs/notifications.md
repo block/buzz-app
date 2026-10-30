@@ -54,11 +54,13 @@ checks, not that an OS banner was displayed or read.
   [workflow mention classifier](unread.md#workflow-mentions) preserves explicit
   template mentions and other recipients; DM and relevant-reply policies still
   apply. This does not change notification settings or suppress all workflows.
-- Local agent completions alert only for relay-verified Solo chats. When Buzz is
-  focused elsewhere, the existing app toast names the agent and Solo chat and
-  offers **View**; when another app is focused, the native banner names both. A
-  focused, visibly active matching Solo chat stays quiet. Ordinary DMs keep their
-  message alerts and do not receive an additional agent-completion alert.
+- Local agent completions alert only for relay-verified Solo chats. Their agent
+  replies do not also produce a mention alert. When Buzz is focused elsewhere,
+  the existing app toast says the agent is done, names the Solo chat, and offers
+  **View**; when another app is focused, the native banner uses the same completion
+  framing: “Agent is done” and “View in Chat.” A focused, visibly active matching
+  Solo chat stays quiet. Ordinary DMs keep their message alerts and do not receive
+  an additional agent-completion alert.
 - Messages signed `audience=agents` (coordination between agents) never alert,
   even when they mention the viewer. The unread engine applies the same rule
   ([quiet agent messages](unread.md#relevant-replies)), so badges, Inbox, thread

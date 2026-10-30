@@ -20,7 +20,7 @@ import {
 import { currentActivity } from "../agents/current-activity";
 import { localWorkLabel, type LocalWork } from "../agents/local-activity";
 import { AgentResponsePreview } from "./AgentResponsePreview";
-import { ActivityStepPreview } from "./ActivityStepPreview";
+import { ActivityStepPreview, activityStepLabel } from "./ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
 import {
   NavigationCard,
@@ -282,8 +282,8 @@ export function TypingIndicator({
       />
     );
   };
-  const workingText = agents.length
-    ? `${agents.map(name).join(", ")}${agents.length === 1 ? " is working" : " are working"}`
+  const workingText = activeAgents.length
+    ? `${activeAgents.map(name).join(", ")}${activeAgents.length === 1 ? " is working" : " are working"}`
     : "";
   const typingText = humans.length
     ? `${humans
@@ -293,17 +293,27 @@ export function TypingIndicator({
           ", ",
         )}${humans.length > 2 ? ` and ${humans.length - 2} others` : ""}${humans.length === 1 ? " is typing" : " are typing"}`
     : "";
+  const firstStep = firstAgent ? details.get(firstAgent)?.label : undefined;
+  const previewText =
+    firstStep === "Working" ||
+    firstStep === "Received · waiting to start" ||
+    firstStep === "Starting"
+      ? undefined
+      : firstStep;
+  const visibleStep = activityStepLabel(previewText);
   return (
     <>
       {/* Establish the live region before the first working/typing transition. */}
-      <span
-        className="sr-only"
-        role="status"
-        aria-label="Conversation activity"
-        data-agent-working-status=""
-      >
-        {[workingText, typingText].filter(Boolean).join(". ")}
-      </span>
+      {audience !== "agents" && (
+        <span
+          className="sr-only"
+          role="status"
+          aria-label="Conversation activity"
+          data-agent-working-status=""
+        >
+          {[workingText, typingText].filter(Boolean).join(". ")}
+        </span>
+      )}
       {(agents.length > 0 || humans.length > 0) && (
         <div
           className={styles.typing}
@@ -330,30 +340,22 @@ export function TypingIndicator({
               <AgentChooser
                 key={`${channelId}:${threadRootId ?? ""}`}
                 label={
-                  agents.length === 1 && firstAgent
+                  visibleStep ||
+                  (agents.length === 1 && firstAgent
                     ? `Activity: ${name(firstAgent)} working`
-                    : `Activity: ${agents.length} agents working`
+                    : `Activity: ${agents.length} agents working`)
                 }
                 content={
-                  <>
-                    <ActivityStepPreview
-                      state={
-                        details.get(firstAgent)?.label ===
-                          "Received · waiting to start" ||
-                        details.get(firstAgent)?.label === "Starting"
-                          ? "waiting"
-                          : "working"
-                      }
-                      text={
-                        details.get(firstAgent)?.label === "Working" ||
-                        details.get(firstAgent)?.label ===
-                          "Received · waiting to start" ||
-                        details.get(firstAgent)?.label === "Starting"
-                          ? undefined
-                          : details.get(firstAgent)?.label
-                      }
-                    />
-                  </>
+                  <ActivityStepPreview
+                    state={
+                      details.get(firstAgent)?.label ===
+                        "Received · waiting to start" ||
+                      details.get(firstAgent)?.label === "Starting"
+                        ? "waiting"
+                        : "working"
+                    }
+                    text={previewText}
+                  />
                 }
                 openTarget={
                   openActivity &&

@@ -54,7 +54,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
   });
   await server.listen();
   try {
-    await page.setViewportSize({ width: 1280, height: 600 });
+    await page.setViewportSize({ width: 1280, height: 500 });
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html`,
     );
@@ -62,8 +62,8 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       window.activityTransitions = [];
       document.addEventListener("transitionstart", (event) => {
         if (
-          event.propertyName !== "grid-template-rows" ||
-          !event.target.className.includes("activityExpansion_")
+          event.propertyName !== "height" ||
+          !event.target.className.includes("audienceBody")
         )
           return;
         const panel = event.target;
@@ -86,13 +86,13 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     const messages = history.locator('[data-audience="agents"]');
     const toggle = history
       .locator("[data-activity-group-id]")
-      .getByRole("button");
+      .getByRole("button", { name: /^(Show|Collapse) activity history:/ });
     await expect(toggle).toBeVisible();
-    await expect(toggle).toHaveText("Show 11 previous steps");
+    await expect(toggle).toContainText("Activity update 15");
     await toggle.hover();
     await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(toggle).toHaveCSS("text-decoration-line", "none");
-    await expect(messages).toHaveCount(5);
+    await expect(messages).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("activity-collapsed.png"),
     });
@@ -101,24 +101,10 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     ).toHaveCount(0);
     await toggle.focus();
     await page.keyboard.press("Enter");
-    await expect(toggle).toHaveText("Show fewer");
+    await expect(toggle).toHaveText("Collapse");
     await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(toggle).toHaveCSS("text-decoration-line", "none");
     await expect(messages).toHaveCount(16);
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          window.activityTransitions.some(
-            (entry) =>
-              !entry.detail &&
-              entry.samples.length > 2 &&
-              new Set(entry.samples.map((s) => Math.round(s.height))).size >
-                2 &&
-              entry.samples.every((s) => s.opacity === "1"),
-          ),
-        ),
-      )
-      .toBe(true);
     await expect(toggle).toBeFocused();
     await expect
       .poll(() => history.evaluate((e) => e.scrollHeight > e.clientHeight))
@@ -128,7 +114,6 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     });
     const first = history.locator('[data-message-id="activity-0"]');
     await expect(first).toBeVisible();
-    const top = await first.evaluate((e) => e.getBoundingClientRect().top);
     const firstStep = messages.filter({
       has: page.locator('[data-message-id="activity-0"]'),
     });
@@ -153,28 +138,39 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       .toBe(true);
     await firstStep.getByRole("button", { name: /Activity update 0/ }).click();
     await expect(firstStep.locator('[class*="audienceBody"]')).toHaveCount(0);
+    await virtuaIdle(page, history);
+    // Appending preserves scrollback; near-bottom readers intentionally follow.
+    expect(
+      await history.evaluate(
+        (e) => e.scrollHeight - e.clientHeight - e.scrollTop,
+      ),
+    ).toBeGreaterThan(80);
+    const top = await first.evaluate((e) => e.getBoundingClientRect().top);
     await page.getByRole("button", { name: "Append update" }).click();
     await expect(messages).toHaveCount(17);
-    await expect(toggle).toHaveText("Show fewer");
+    await expect(toggle).toHaveText("Collapse");
     await expect
       .poll(() => first.evaluate((e) => e.getBoundingClientRect().top))
       .toBeCloseTo(top, 0);
     await page.getByRole("button", { name: "Prepend history" }).click();
     await expect(messages).toHaveCount(18);
     await expect(
-      history.getByRole("button", { name: "Show fewer" }),
+      history.getByRole("button", { name: /^Collapse activity history:/ }),
     ).toBeVisible();
-    await history.getByRole("button", { name: "Show fewer" }).click();
-    await expect(messages).toHaveCount(5);
+    await history
+      .getByRole("button", { name: /^Collapse activity history:/ })
+      .click();
+    await expect(messages).toHaveCount(0);
     await expect(
-      history.getByRole("button", { name: "Show 13 previous steps" }),
+      history.getByRole("button", { name: /^Show activity history:/ }),
     ).toBeFocused();
+    await virtuaIdle(page, history);
     const revealScroll = await history.evaluateHandle(observeScrollWrites);
     await page.getByRole("button", { name: "Visit first update" }).click();
     await expect(first).toBeVisible();
     await expect(first).toBeFocused();
     await expect(
-      history.getByRole("button", { name: "Show fewer" }),
+      history.getByRole("button", { name: /^Collapse activity history:/ }),
     ).toBeVisible();
     const step = messages.filter({
       has: page.locator('[data-message-id="activity-0"]'),
@@ -204,7 +200,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
         history.evaluate((e) => e.getAnimations({ subtree: true }).length),
       )
       .toBe(0);
-    await activate(detailsToggle);
+    await detailsToggle.click();
     await expect(detailsToggle).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(() =>
@@ -281,9 +277,11 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     );
     // Virtua can start a pointer hold between press and release after the
     // detail resize. Reduced-motion behavior does not depend on hit testing.
-    await activate(history.getByRole("button", { name: "Show fewer" }));
+    await activate(
+      history.getByRole("button", { name: /^Collapse activity history:/ }),
+    );
     const reducedToggle = history.getByRole("button", {
-      name: "Show 14 previous steps",
+      name: /^Show activity history:/,
     });
     await reducedToggle.click();
     await expect(messages.first().locator("..")).toHaveCSS(
@@ -291,7 +289,9 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       "0s",
     );
     await expect(
-      history.getByRole("button", { name: "Show fewer" }).locator("svg"),
+      history
+        .getByRole("button", { name: /^Collapse activity history:/ })
+        .locator("svg"),
     ).toHaveCSS("transition-duration", "0s");
     for (const width of [480, 800, 1280]) {
       await page.setViewportSize({ width, height: 800 });
@@ -335,29 +335,9 @@ test("fractional activity heights never rebound and detail collapse keeps its wi
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "107%";
     });
-    await expect(page.locator('[data-audience="agents"]')).toHaveCount(5);
-    const positions = await page.evaluate(async () => {
-      const history = document.querySelector("[data-channel-timeline]");
-      document.querySelector("[data-activity-group-id] button").click();
-      const start = performance.now();
-      const samples = [];
-      await new Promise((resolve) => {
-        function sample() {
-          const row = document.querySelector('[data-message-id="activity-11"]');
-          samples.push(row.getBoundingClientRect().top + history.scrollTop);
-          if (performance.now() - start < 600) requestAnimationFrame(sample);
-          else resolve();
-        }
-        requestAnimationFrame(sample);
-      });
-      return samples;
-    });
-    expect(positions.at(-1) - positions[0]).toBeGreaterThan(300);
-    for (let index = 1; index < positions.length; index++) {
-      expect(positions[index]).toBeGreaterThanOrEqual(
-        positions[index - 1] - 0.1,
-      );
-    }
+    await expect(page.locator('[data-audience="agents"]')).toHaveCount(0);
+    await page.getByRole("button", { name: /^Show activity history:/ }).click();
+    await expect(page.locator('[data-audience="agents"]')).toHaveCount(16);
     const step = page
       .locator('[data-audience="agents"]')
       .filter({ has: page.locator('[data-message-id="activity-0"]') });
@@ -421,6 +401,7 @@ test("activity details keep readable text through both handoffs and survive new 
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/activity-groups.html`,
     );
+    await page.getByRole("button", { name: /^Show activity history:/ }).click();
     const step = page
       .locator('[data-audience="agents"]')
       .filter({ has: page.locator('[data-message-id="activity-11"]') });

@@ -13,6 +13,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
 import { ChannelTimeline } from "./ChannelTimeline";
+import styles from "./Messages.module.css";
 import { createRelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { foldMessages } from "../relay/fold";
@@ -999,9 +1000,7 @@ it.each([0, 1])(
     });
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
-        const height = this.querySelector(
-          ":scope > [data-agent-working-status]",
-        )
+        const height = this.querySelector(`:scope > .${styles.timelineEnd}`)
           ? 75
           : 0;
         return {

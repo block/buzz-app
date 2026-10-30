@@ -151,9 +151,7 @@ it.each([
       ],
     });
     render(<TypingIndicator session={f.session} channelId="channel" />);
-    await user.click(
-      screen.getByRole("button", { name: "Activity: Agent working" }),
-    );
+    await user.click(screen.getByRole("button", { name: label }));
     const dialog = await screen.findByRole("dialog", { name: "Working now" });
     expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
     expect(
@@ -195,13 +193,13 @@ it("shows stable agent ordering, scopes humans exactly, and clears after work st
   view.rerender(
     <TypingIndicator {...props} threadRootId={root} audience="agents" inFlow />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent(/^Agent is working$/);
+  expect(screen.queryByRole("status")).toBeNull();
   expect(screen.queryByText("Human is typing")).toBeNull();
   expect(
     screen.getByRole("button", { name: "Activity: Agent working" }),
   ).toBeVisible();
   f.update([]);
-  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  expect(screen.queryByRole("status")).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
@@ -844,3 +842,29 @@ it.each(["done", "error", "stopped", "superseded"] as const)(
     expect(screen.getByRole("status")).not.toHaveTextContent("Sam’s assistant");
   },
 );
+
+it("announces split human and agent activity once from the composer", () => {
+  const f = fixture();
+  f.update([entry(), entry(human)]);
+  render(
+    <>
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        threadRootId={root}
+        audience="agents"
+        inFlow
+      />
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        threadRootId={root}
+        audience="humans"
+      />
+    </>,
+  );
+  expect(screen.getAllByRole("status")).toHaveLength(1);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Agent is working. Human is typing",
+  );
+});

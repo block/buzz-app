@@ -10,14 +10,10 @@ export function ActivityStepPreview({
   text?: string | undefined;
   state: "waiting" | "working";
 }) {
-  const characters = Array.from(text?.replace(/\s+/g, " ").trim() ?? "");
-  const label =
-    characters.length > 280
-      ? `${characters.slice(0, 279).join("")}…`
-      : characters.join("");
+  const label = activityStepLabel(text);
   return (
     <span className={styles.stepPreview}>
-      {!label || label === "Sending a message" ? (
+      {!label ? (
         <TypingDots size="message" state={state} />
       ) : (
         <span className={styles.stepText}>
@@ -26,4 +22,14 @@ export function ActivityStepPreview({
       )}
     </span>
   );
+}
+
+/** The same readable step names both the preview and its trigger. */
+export function activityStepLabel(text?: string): string {
+  const characters = Array.from(text?.replace(/\s+/g, " ").trim() ?? "");
+  const label =
+    characters.length > 280
+      ? `${characters.slice(0, 279).join("")}…`
+      : characters.join("");
+  return label === "Sending a message" ? "" : label;
 }

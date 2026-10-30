@@ -1367,7 +1367,7 @@ button.mediaPreview {
 }
 /* Media comments have frame controls above the composer, not scrollback to
    float over. Give active typing/agents their own row; idle still takes no space. */
-.mediaReviewComposer [data-conversation-activity] {
+.mediaReviewComposer [data-conversation-activity][data-audience="humans"] {
   position: static;
   margin: var(--space-2) var(--space-4);
 }

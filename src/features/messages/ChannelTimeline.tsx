@@ -419,10 +419,17 @@ function Timeline({
   );
   const edges = useRef<{
     order: readonly string[];
+    containedOwners: ReadonlyMap<string, string | undefined>;
     ids: ReadonlySet<string>;
     floor: number;
     paging: boolean;
-  }>({ order: [], ids: new Set(), floor: 0, paging: false });
+  }>({
+    order: [],
+    containedOwners: new Map(),
+    ids: new Set(),
+    floor: 0,
+    paging: false,
+  });
   // The reader's anchor row and its offset before this render's rows.
   const reader = useRef<{ id: string | undefined; top: number; y: number }>({
     id: undefined,
@@ -657,11 +664,14 @@ function Timeline({
     heldReader.current?.intent === intent.current
       ? heldReader.current
       : undefined;
+  const heldId = retained?.id ?? savedPosition.current?.anchor?.id;
+  // Nested activity is measured by its disclosure, in both snapshots. Keep
+  // the inner ID/Y for the exact reading anchor, but compare owner offsets.
   const held = previous.indexOf(
-    retained?.id ?? savedPosition.current?.anchor?.id ?? "",
+    edges.current.containedOwners.get(heldId ?? "") ?? heldId ?? "",
   );
   reader.current = {
-    id: previous[held],
+    id: held < 0 ? undefined : heldId,
     top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
     y: retained?.y ?? savedPosition.current?.anchor?.y ?? 0,
   };
@@ -885,6 +895,7 @@ function Timeline({
     ).length;
     edges.current = {
       order: rows.map((row) => row.id),
+      containedOwners,
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,

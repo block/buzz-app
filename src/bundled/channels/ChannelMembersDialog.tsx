@@ -850,8 +850,9 @@ export function ChannelMembersDialog({
         formatPublicKey(key) ??
         "Unknown member",
     );
-  // Filters the fully loaded member list.
+  // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
+    !text ||
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
@@ -865,9 +866,10 @@ export function ChannelMembersDialog({
       typed === npubEncode(key)
     );
   };
-  const currentMembers = [...members].sort(
-    (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
-  );
+  const currentMembers = [...members]
+    .map((key) => ({ key, name: label(key) }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key))
+    .map(({ key }) => key);
   const currentGroups = ["People", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
       const group =

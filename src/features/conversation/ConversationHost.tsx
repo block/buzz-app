@@ -13,6 +13,10 @@ import { PanelView } from "../panels/PanelView";
 import { panelOpening, type PanelOpening } from "../panels/service";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import { useConversationPresentation } from "./ConversationPresentation";
+import {
+  githubLinksOpenInBrowserPreference,
+  isGitHubLink,
+} from "./github-link-preference";
 import type { MediaReview } from "./Conversation";
 
 export type ConversationHostServices = Pick<
@@ -107,6 +111,7 @@ export function ConversationHost({
   /** Replacements stay in the opening message's thread, like Channels. */
   const open = (url: string, rootId?: string) => {
     if (!active()) return false;
+    if (githubLinksOpenInBrowserPreference() && isGitHubLink(url)) return false;
     const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
       setOverlay(undefined);

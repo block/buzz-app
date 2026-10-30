@@ -900,7 +900,7 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         exit_fenced(app.clone())
     })
     .await?;
-    app.request_restart();
+    crate::relaunch::request(&app);
     Ok(())
 }
 

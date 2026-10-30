@@ -1,4 +1,6 @@
 import { registerAttention } from "./attention-command";
+import { canMessageAgent, createAgentChoices } from "./choices";
+import { createAgentLibrary } from "./library";
 import type { AttentionSource } from "./attention-sources";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callAttentionTool } from "../../buzz-mcp/attention";
@@ -4982,6 +4984,21 @@ it("reads the list again on refresh and clears the error a failed read left", as
   expect(service.snapshot().error).toBeUndefined();
 });
 
+it("keeps local selection evidence stable across unrelated agent attention changes", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const local = service.local();
+  const agents = service.snapshot().agents;
+  await service.save(bot, { attentionEnabled: true });
+  expect(service.snapshot().agents).not.toBe(agents);
+  expect(service.local()).toBe(local);
+  await service.save(hostedKey, { name: "Sea" });
+  expect(service.local()).not.toBe(local);
+  expect(service.local().hosted?.map((agent) => agent.name)).toEqual(["Sea"]);
+});
+
 it("fires a due timer once, then again an interval after it ran", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, storage } = await setup();
@@ -5673,6 +5690,10 @@ it("runs a watch's classifier after its selectors and passes the event with each
   });
   expect(questions.deploy?.instructions).toContain("\nNo means: ");
   expect(questions.deploy?.instructions).toContain("untrusted data");
+  // The agent's community, which a provider such as Builderlab bills.
+  expect(jev.decide.mock.calls[0]?.[0].community).toBe(
+    "wss://relay.example.test",
+  );
 });
 
 it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {
@@ -8108,6 +8129,21 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(hostedKey, 0);
+  const choices = createAgentChoices({
+    scope: `https://relay.example.test:${viewer}`,
+    library: createAgentLibrary(undefined).queries,
+    native: {
+      snapshot: service.local,
+      subscribe: service.subscribe,
+      refresh: () => service.refresh(),
+    },
+    signal: new AbortController().signal,
+  });
+  expect(service.local().agents).toEqual([]);
+  expect(choices.snapshot().identities).toEqual([
+    { pubkey: hostedKey, name: "Sky", managed: false, messageable: true },
+  ]);
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
   expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');
 });
 
@@ -8125,6 +8161,7 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
     unfinished: true,
     name: "Sky",
   });
+  expect(service.local().hosted).toBeUndefined();
   expect(records.publish).not.toHaveBeenCalled();
   await expect(service.save(hostedKey, { name: "Sea" })).rejects.toThrow(
     /Finish the agent's setup/,

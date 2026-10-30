@@ -101,6 +101,14 @@
     },
     {
       "includes": [
+        "src/**/*.{ts,tsx}",
+        "!src/**/*.test.{ts,tsx}",
+        "!src/shared/clipboard.ts"
+      ],
+      "plugins": ["./src/shared/clipboard.grit"]
+    },
+    {
+      "includes": [
         "tests/browser/**",
         "src/**",
         "!tests/browser/playwright-test.mjs"

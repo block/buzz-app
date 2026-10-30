@@ -253,6 +253,47 @@ const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
 
+it("finds a hosted agent by its owned name and sends without local custody", async () => {
+  const t = setup();
+  const [owned] = t.control.snapshot().agents;
+  assert(owned);
+  const hosted = { ...owned, name: "Hosted helper" };
+  t.updateControl({ status: "ready", agents: [], hosted: [hosted] });
+  t.mount();
+  await t.user.type(recipient(), "Hosted helper");
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+  await t.user.type(screen.getByRole("textbox"), "Hello hosted helper");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).toHaveBeenCalledWith(
+    [hosted.pubkey],
+    expect.any(AbortSignal),
+  );
+  expect(t.messages.send).toHaveBeenCalledOnce();
+});
+
+it("revalidates a hosted recipient when its owned evidence disappears", async () => {
+  const t = setup();
+  const hosted = t.control.snapshot().agents;
+  t.updateControl({ status: "ready", agents: [], hosted });
+  t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  t.updateControl({ status: "ready", agents: [], hosted: [] });
+  await t.user.click(send());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+});
+
 it("offers only local agents in this community, including cached searches after their list changes", async () => {
   const t = setup();
   const foreign = {
@@ -609,6 +650,30 @@ it("Space does not pick while the rest of the list failed to load", async () => 
   expect(
     screen.queryByRole("button", { name: "Remove Kim" }),
   ).not.toBeInTheDocument();
+});
+
+it("a pointer passing over the people returns Enter to the keyboard's choice when it leaves", async () => {
+  const t = setup();
+  t.directMessages.people.mockResolvedValue({ people, hasMore: false });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  await t.user.keyboard("{ArrowDown}");
+  const chosen = screen.getByRole("option", { name: "Person 1" });
+  const hovered = screen.getByRole("option", { name: "Person 3" });
+  await waitFor(() => expect(chosen).toHaveAttribute("aria-selected", "true"));
+  for (const clientX of [10, 12])
+    fireEvent.pointerMove(hovered, {
+      pointerType: "mouse",
+      clientX,
+      clientY: 10,
+    });
+  expect(hovered).toHaveAttribute("aria-selected", "true");
+  fireEvent.pointerLeave(screen.getByRole("listbox", { name: "People" }), {
+    pointerType: "mouse",
+  });
+  expect(chosen).toHaveAttribute("aria-selected", "true");
+  await t.user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
 });
 
 it("reveals the highlighted person on every arrow key and when the list reopens", async () => {

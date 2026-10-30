@@ -62,6 +62,7 @@ import {
   type LiteralRange,
   type PreparedMarkdown,
 } from "./markdown-preparation";
+import { writeClipboardText } from "../../shared/clipboard";
 
 type MarkdownNode = {
   type: string;
@@ -640,13 +641,26 @@ function PreparedMessageMarkdown({
     return undefined;
   };
   const components: MessageComponents = {
-    p: ({ node: _node, ...props }) => (
-      <p
-        {...props}
-        className={largeEmoji ? styles.text : undefined}
-        data-single-emoji={largeEmoji || undefined}
-      />
-    ),
+    p: ({ node, ...props }) => {
+      const first = node?.children[0];
+      const element = first?.type === "element" ? first : undefined;
+      const href = element?.properties.href;
+      const leadingMention =
+        typeof element?.properties["data-profile-target"] === "string" ||
+        (element?.tagName === "a" &&
+          typeof href === "string" &&
+          !!profileKey(href) &&
+          interactive &&
+          !!canOpenLink?.(href));
+      return (
+        <p
+          {...props}
+          className={largeEmoji ? styles.text : undefined}
+          data-single-emoji={largeEmoji || undefined}
+          data-leading-mention={leadingMention || undefined}
+        />
+      );
+    },
     a: ({ href, children }) => {
       if (href && profileKey(href)) {
         const label = labelText(children);
@@ -919,7 +933,7 @@ function CodeActions({
         onClick={() => {
           setCopying(true);
           void Promise.resolve()
-            .then(() => navigator.clipboard.writeText(code))
+            .then(() => writeClipboardText(code))
             .then(
               () => notify("Copied code to clipboard", "success"),
               () => notify("Failed to copy code", "error"),

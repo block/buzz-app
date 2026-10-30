@@ -14,6 +14,7 @@ import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { CopyIcon } from "../shared/design-system/icons";
 import styles from "./IdentitySettings.module.css";
+import { writeClipboardText } from "../shared/clipboard";
 
 export function IdentitySettings({
   viewer,
@@ -35,7 +36,7 @@ export function IdentitySettings({
     const attempt = ++copyAttempt.current;
     setCopyStatus(null);
     try {
-      await navigator.clipboard.writeText(value);
+      await writeClipboardText(value);
       if (attempt === copyAttempt.current)
         setCopyStatus({ message: `${label} copied.`, failed: false });
     } catch {

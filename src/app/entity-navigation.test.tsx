@@ -21,7 +21,12 @@ import {
 } from "../features/navigation/targets";
 import { bindDeepLinks } from "../features/navigation/deep-links";
 import { matchesEvent } from "../features/relay/projection";
+import { bounds, message, metadata, roster } from "../features/relay/testing";
 import type { ReadFilter } from "../features/relay/events";
+
+/** Any variant of the App-owned "page couldn't open" card. */
+const pageFailure =
+  /^(This page isn’t available|Can’t connect|You don’t have access to this|This link doesn’t work)$/;
 
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
@@ -156,7 +161,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     },
   });
   render(<App services={current} />);
-  await screen.findByRole("button", { name: "Retry navigation" });
+  await screen.findByRole("button", { name: "Try again" });
   expect(current.navigation.snapshot()).toMatchObject({
     ingress: true,
     retryable: true,
@@ -169,9 +174,7 @@ it("keeps an OS entity intent through real community selection and Retry in App"
   );
   expect(current.navigation.snapshot().ingress).toBe(true);
   await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Retry navigation" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
   await screen.findByText("Actual recovered destination");
   expect(current.navigation.snapshot()).toMatchObject({
     status: "opened",
@@ -188,11 +191,24 @@ it("keeps an OS entity intent through real community selection and Retry in App"
     ping();
   });
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "invalid or unsupported",
+    "This link doesn’t work",
   );
   expect(
-    screen.queryByRole("button", { name: "Retry navigation" }),
+    screen.queryByRole("button", { name: "Try again" }),
   ).not.toBeInTheDocument();
+  // The rejected link never became a visit, so Go back returns to the
+  // page underneath it rather than the one before that.
+  const recovered = current.navigation.snapshot().entry.id;
+  await userEvent.click(
+    within(screen.getByRole("alert")).getByRole("button", { name: "Go back" }),
+  );
+  await screen.findByText("Actual recovered destination");
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "opened",
+    entry: { id: recovered },
+  });
+  expect(current.navigation.snapshot().ingress).toBeUndefined();
+  expect(screen.queryByText("This link doesn’t work")).toBeNull();
 });
 
 const elsewhere = "https://elsewhere.example";
@@ -249,6 +265,308 @@ function bindCommunityLinks(
   return { current, ping: () => ping() };
 }
 
+function offlineMessagesFixture() {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: origin,
+    }),
+  );
+  let offline = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return offline
+          ? Response.json({ error: "offline" }, { status: 503 })
+          : Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) return Response.json([]);
+      return Response.json({});
+    }),
+  );
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope: { viewer, communityOrigin: origin },
+      }),
+    )}`,
+  );
+  services = createServices();
+  render(<App services={services} />);
+  return {
+    current: services,
+    online() {
+      offline = false;
+    },
+  };
+}
+it("waits through a connection that retries by itself, then opens Messages without Retry", async () => {
+  const { current, online } = offlineMessagesFixture();
+  await waitFor(() =>
+    expect(current.relay.snapshot()).toMatchObject({
+      status: "error",
+      retrying: true,
+    }),
+  );
+  // The relay's own reconnect owns this wait; the visit stays pending.
+  expect(current.navigation.snapshot().status).toBe("opening");
+  expect(screen.queryByText(pageFailure)).toBeNull();
+  online();
+  await waitFor(
+    () => expect(current.navigation.snapshot().status).toBe("opened"),
+    { timeout: 5_000 },
+  );
+  expect(screen.queryByText(pageFailure)).toBeNull();
+});
+it("reopens a visit that timed out while connecting once the connection is live", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { current, online } = offlineMessagesFixture();
+    await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
+    // The visit deadline ends the wait with an honest, recoverable card.
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "failed",
+      reason: "timeout",
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Can’t connect" }),
+    ).toBeVisible();
+    // Messages is what failed, so the way out leads elsewhere.
+    expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Try again" }).dataset.variant,
+    ).toBe("prominent");
+    online();
+    await act(() => vi.advanceTimersByTimeAsync(31_000));
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    expect(screen.queryByText(pageFailure)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("does not reopen a failed visit after the user has left it", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { current, online } = offlineMessagesFixture();
+    await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    await screen.findByRole("heading", { name: "Can’t connect" });
+    const failed = current.navigation.snapshot().entry.id;
+    act(() => {
+      void current.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "appearance",
+        scope: { viewer, communityOrigin: origin },
+      });
+    });
+    await waitFor(() =>
+      expect(current.navigation.snapshot().entry.id).not.toBe(failed),
+    );
+    const left = current.navigation.snapshot().entry.id;
+    online();
+    await act(() => vi.advanceTimersByTimeAsync(31_000));
+    await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
+    expect(current.navigation.snapshot().entry.id).toBe(left);
+    expect(current.navigation.snapshot().entry.target.kind).toBe("settings");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("keeps Messages on screen when only the linked message fails to open", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: origin,
+    }),
+  );
+  const author = { secret: key, pubkey: viewer };
+  const events = [
+    roster(author, "alpha", [viewer]),
+    metadata(author, "alpha", "Alpha"),
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) {
+        const filters = JSON.parse(String(options?.body)) as ReadFilter[];
+        return Response.json(
+          events.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        );
+      }
+      return Response.json({});
+    }),
+  );
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "conversation",
+        scope: { viewer, communityOrigin: origin },
+        channelId: "alpha",
+        messageId: "e".repeat(64),
+      }),
+    )}`,
+  );
+  services = createServices();
+  const current = services;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "failed",
+      presented: true,
+    }),
+  );
+  // The failure stays beside the message; the conversation stays usable.
+  expect(
+    await screen.findByText("This message isn’t available."),
+  ).toBeVisible();
+  expect(screen.getByRole("region", { name: "Channels" })).toBeVisible();
+  expect(screen.queryByText(pageFailure)).toBeNull();
+});
+it("keeps a failed message read in place until its own Retry succeeds", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: origin,
+    }),
+  );
+  const author = { secret: key, pubkey: viewer };
+  const channel = [
+    roster(author, "alpha", [viewer]),
+    metadata(author, "alpha", "Alpha"),
+  ];
+  const history = [
+    message(author, "alpha", "Back again", 1_700_000_100),
+    bounds(author, "alpha", "head", { has_more: false, next_cursor: null }),
+  ];
+  // Two failed history reads within one live connection, then recovery.
+  let failures = 2;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith("/identity")) return Response.json({ viewer });
+      if (url.endsWith("/session"))
+        return Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
+      if (url.endsWith("/query")) {
+        const filters = JSON.parse(String(options?.body)) as ReadFilter[];
+        if (filters.some((filter) => filter.kinds?.includes(9))) {
+          if (failures > 0) {
+            failures--;
+            return Response.json({ error: "offline" }, { status: 503 });
+          }
+          return Response.json(history);
+        }
+        return Response.json(
+          channel.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        );
+      }
+      return Response.json({});
+    }),
+  );
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "conversation",
+        scope: { viewer, communityOrigin: origin },
+        channelId: "alpha",
+      }),
+    )}`,
+  );
+  services = createServices();
+  const current = services;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "failed",
+      presented: true,
+    }),
+  );
+  const generation = current.relay.snapshot().generation;
+  expect(screen.queryByText(pageFailure)).toBeNull();
+  // The page keeps its visit's authority, so the timeline's own Retry works.
+  expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
+  const timeline = () =>
+    document.querySelector('[data-channel-timeline="alpha"]');
+  while (!timeline()) {
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Retry messages" }),
+    );
+    await waitFor(() =>
+      expect(
+        timeline() ?? screen.queryByRole("button", { name: "Retry messages" }),
+      ).not.toBeNull(),
+    );
+  }
+  // Rows need real layout to paint; the recovered window is the observable here.
+  expect(
+    current.relay
+      .snapshot()
+      .session.channels.window("alpha")
+      .rows.map((row) => row.content),
+  ).toEqual(["Back again"]);
+  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
+  expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
+  expect(failures).toBe(0);
+  expect(current.relay.snapshot().generation).toBe(generation);
+  expect(screen.queryByText(pageFailure)).toBeNull();
+});
 it("offers to join a code-less link's community, or opens it once joined", async () => {
   const queue = [
     "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",
@@ -642,9 +960,7 @@ it("cold Settings Close uses required Messages when Inbox is disabled", async ()
       },
     }),
   );
-  expect(
-    screen.queryByText("This destination couldn’t open"),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText(pageFailure)).not.toBeInTheDocument();
 });
 
 it("Close returns to the immediately preceding failed destination, not an older retained workspace", async () => {
@@ -670,7 +986,7 @@ it("Close returns to the immediately preceding failed destination, not an older 
   await act(async () => {
     void current.navigation.open(failed);
   });
-  await screen.findByText("This destination couldn’t open");
+  await screen.findByText(pageFailure);
   const visit = current.navigation.snapshot().entry.id;
   await act(async () => {
     void current.navigation.open({

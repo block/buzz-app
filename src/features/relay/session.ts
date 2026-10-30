@@ -862,8 +862,14 @@ export function createRelaySession(
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
-      ? (ids, signal) =>
-          transport.channelActivity?.(ids, signal) ?? Promise.resolve([])
+      ? // A transient failure retries quietly before Recent shows its notice.
+        (ids, signal) =>
+          retryRead(
+            (retrySignal) =>
+              transport.channelActivity?.(ids, retrySignal) ??
+              Promise.resolve([]),
+            signal,
+          )
       : undefined,
     notify,
   );

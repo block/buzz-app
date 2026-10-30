@@ -132,6 +132,7 @@ fn main() {
             "media_download",
             "file_download",
             "media_copy_image",
+            "clipboard_write_text",
             "media_stream_base",
             "get_os_idle_seconds",
             "workspace_pick_folder",

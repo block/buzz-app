@@ -8,6 +8,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ComposerSession } from "../../features/messages/composer-session";
+import type { MentionRecipient } from "../../features/messages/mention-draft";
+import type { Agent } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -16,6 +18,7 @@ import { SelectedMentionContext } from "../../features/messages/selected-mention
 import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import { directoryChanges, mentionCandidates } from "./mention-candidates";
+import { useListedChannel } from "../../features/relay/listed-channel";
 import {
   exactMention,
   matchingMentions,
@@ -45,6 +48,10 @@ const byKey = <T extends { recipient: { pubkey: string } }>(
 // settled page and each carried merge is a new array with the same people.
 // Their order changes no choice (ranking and naming sort by key), so it is
 // not part of the content.
+// Directory people that change the choice set, interned by content: each
+// settled page and each carried merge is a new array with the same people.
+// Their order changes no choice (ranking and naming sort by key), so it is
+// not part of the content.
 const pages = new WeakMap<ComposerSession, Map<string, readonly Person[]>>();
 function page(session: ComposerSession, people: readonly Person[]) {
   const key = JSON.stringify(
@@ -60,6 +67,107 @@ function page(session: ComposerSession, people: readonly Person[]) {
   if (seen.size > 8) seen.delete(seen.keys().next().value ?? "");
   return kept;
 }
+/** The choice set under the labels users see: one naming scope per set, so
+ * namesakes are qualified. Directory people name only keys no other source knows. */
+export function namedCandidates(
+  session: ComposerSession,
+  channelId: string,
+  invite: boolean | undefined,
+  roster: readonly MentionRecipient[] | undefined,
+  selected: readonly MentionRecipient[],
+  people: readonly Person[],
+  elsewhere?: readonly Pick<Agent, "pubkey" | "name" | "relay">[],
+): readonly MentionChoice[] {
+  const local = mentionCandidates(
+    session,
+    channelId,
+    invite,
+    roster,
+    undefined,
+    elsewhere,
+  );
+  // Only directory people that change the choice set; a page of members rebuilds nothing.
+  const known = session.names?.scope();
+  const changed = directoryChanges(
+    byKey(local),
+    people,
+    session.profiles.snapshot(),
+    (key) => !!known?.(key),
+  );
+  const outside = changed.length ? page(session, changed) : none;
+  const candidates = outside.length
+    ? mentionCandidates(session, channelId, invite, roster, outside, elsewhere)
+    : local;
+  // Drafts recreate their recipient array on every edit; its names and keys
+  // are the naming fact, not its identity or positions.
+  const sources = [
+    JSON.stringify(selected.map(({ pubkey, name }) => [pubkey, name])),
+    outside,
+    session.names?.snapshot(),
+  ];
+  const hit = labeled.get(candidates);
+  if (hit?.sources.every((source, i) => source === sources[i]))
+    return hit.choices;
+  const keys = [
+    ...new Set([
+      ...candidates.map((c) => c.recipient.pubkey),
+      ...selected.map((p) => p.pubkey),
+    ]),
+  ];
+  // Directory pages are menu-local, not cached profiles. Name them only when no
+  // other source knows the key, so namesakes in this choice set are qualified.
+  const facts = [
+    ...outside
+      .filter((person) => !known?.(person.pubkey))
+      .map(({ pubkey, name, isAgent }) => ({
+        pubkey,
+        name,
+        ...(isAgent ? { isAgent } : {}),
+      })),
+    ...selected,
+  ];
+  // One naming scope per choice set, not one normalization per row.
+  const name = session.names?.scope(keys, facts);
+  const choices: readonly MentionChoice[] = candidates.map((choice) => {
+    const named = name?.(choice.recipient.pubkey);
+    return {
+      ...choice,
+      label: named?.name ?? choice.recipient.name,
+      qualifier: named?.qualifier,
+    };
+  });
+  labeled.set(candidates, { sources, choices });
+  return choices;
+}
+/** What the chooser knows about the choice set's completeness. */
+export type SpaceEvidence = {
+  /** Members or offered agents are still loading. */
+  pending: boolean;
+  /** A member's name is neither known nor known to be absent. */
+  missingNames: boolean | undefined;
+  /** The directory search for this query settled with no more pages. */
+  complete: boolean;
+};
+/**
+ * Space (README section 5): once every member is named, an exact local name
+ * selects at once. Any other exact name needs the full choice set: while the
+ * directory search runs, failed, or has more pages, a namesake may be missing.
+ */
+export function spaceMention(
+  all: readonly MentionChoice[],
+  local: ReadonlySet<string>,
+  query: string,
+  { pending, missingNames, complete }: SpaceEvidence,
+) {
+  if (pending) return undefined;
+  const choices = matchingMentions(all, query);
+  return (
+    (missingNames
+      ? undefined
+      : exactMention(choices, query, (c) => local.has(c.recipient.pubkey))) ??
+    (complete ? exactMention(choices, query) : undefined)
+  );
+}
 /**
  * One installed key list per opening/query. Evidence stays live, order does not.
  * Local rows install first; directory rows only append after them.
@@ -73,7 +181,8 @@ export function useMentionChoices(
   lifetime: string,
   open = true,
 ) {
-  const roster = useContext(DraftMentionRoster);
+  const draft = useContext(DraftMentionRoster);
+  const roster = draft?.recipients;
   const selected = useContext(SelectedMentionContext);
   const agents = useAgentChoices(session, !!invite && open);
   // The owner's agents in their other communities; the snapshot is the revision.
@@ -84,12 +193,28 @@ export function useMentionChoices(
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
+  const unnamed = useSyncExternalStore(
+    session.profiles.subscribe,
+    () => session.profiles.unnamed?.(),
+    () => session.profiles.unnamed?.(),
   );
-  const channel = list.channels.find((c) => c.id === channelId);
+  // Previews replace the list on every message; read this channel and the
+  // roster's state, not the whole list.
+  const channel = useListedChannel(session.channels, channelId, (c) => c);
+  const listStatus = useSyncExternalStore(
+    session.channels.subscribeList,
+    () => session.channels.list().status,
+    () => session.channels.list().status,
+  );
+  const listError = useSyncExternalStore(
+    session.channels.subscribeList,
+    () => session.channels.list().error,
+    () => session.channels.list().error,
+  );
+  const list = useMemo(
+    () => ({ status: listStatus, error: listError }),
+    [listStatus, listError],
+  );
   const directory = useMentionDirectory(
     session,
     channel,
@@ -117,76 +242,19 @@ export function useMentionChoices(
       ...carried.filter((person) => !known.has(person.pubkey)),
     ];
   }, [directory.people, carried]);
-  const current = useCallback(() => {
-    const elsewhere = community?.joinable();
-    const local = mentionCandidates(
-      session,
-      channelId,
-      invite,
-      roster,
-      undefined,
-      elsewhere,
-    );
-    // Only directory people that change the choice set; a page of members rebuilds nothing.
-    const known = session.names?.scope();
-    const changed = directoryChanges(
-      byKey(local),
-      people,
-      session.profiles.snapshot(),
-      (key) => !!known?.(key),
-    );
-    const outside = changed.length ? page(session, changed) : none;
-    const candidates = outside.length
-      ? mentionCandidates(
-          session,
-          channelId,
-          invite,
-          roster,
-          outside,
-          elsewhere,
-        )
-      : local;
-    // Drafts recreate their recipient array on every edit; its names and keys
-    // are the naming fact, not its identity or positions.
-    const sources = [
-      JSON.stringify(selected.map(({ pubkey, name }) => [pubkey, name])),
-      outside,
-      session.names?.snapshot(),
-    ];
-    const hit = labeled.get(candidates);
-    if (hit?.sources.every((source, i) => source === sources[i]))
-      return hit.choices;
-    const keys = [
-      ...new Set([
-        ...candidates.map((c) => c.recipient.pubkey),
-        ...selected.map((p) => p.pubkey),
-      ]),
-    ];
-    // Directory pages are menu-local, not cached profiles. Name them only when no
-    // other source knows the key, so namesakes in this choice set are qualified.
-    const facts = [
-      ...outside
-        .filter((person) => !known?.(person.pubkey))
-        .map(({ pubkey, name, isAgent }) => ({
-          pubkey,
-          name,
-          ...(isAgent ? { isAgent } : {}),
-        })),
-      ...selected,
-    ];
-    // One naming scope per choice set, not one normalization per row.
-    const name = session.names?.scope(keys, facts);
-    const choices: readonly MentionChoice[] = candidates.map((choice) => {
-      const named = name?.(choice.recipient.pubkey);
-      return {
-        ...choice,
-        label: named?.name ?? choice.recipient.name,
-        qualifier: named?.qualifier,
-      };
-    });
-    labeled.set(candidates, { sources, choices });
-    return choices;
-  }, [session, channelId, invite, roster, selected, people, community]);
+  const current = useCallback(
+    () =>
+      namedCandidates(
+        session,
+        channelId,
+        invite,
+        roster,
+        selected,
+        people,
+        community?.joinable(),
+      ),
+    [session, channelId, invite, roster, selected, people, community],
+  );
   // Keys known without the directory search: members and agent choices.
   const localKeys = useCallback(() => {
     const local = mentionCandidates(
@@ -207,6 +275,7 @@ export function useMentionChoices(
     // Source revisions invalidate the projection; selection reads them again synchronously.
     void profiles;
     void list;
+    void channel;
     void agents;
     void archives;
     void resolve;
@@ -224,6 +293,7 @@ export function useMentionChoices(
     localKeys,
     profiles,
     list,
+    channel,
     agents,
     archives,
     resolve,
@@ -236,6 +306,7 @@ export function useMentionChoices(
     !channel?.members;
   const pending =
     membersPending ||
+    !!draft?.pending ||
     (!roster && !!invite && agents.pending && agents.status !== "ready");
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
@@ -251,8 +322,10 @@ export function useMentionChoices(
   const outside = open
     ? rank(matches.filter((c) => !local.has(c.recipient.pubkey)))
     : [];
+  // A member a completed read found no profile for has no name to be a namesake.
   const missingNames =
-    open && channel?.members?.some((key) => !profiles.has(key));
+    open &&
+    channel?.members?.some((key) => !profiles.has(key) && !unnamed?.has(key));
   if (open && !rows && !membersPending) {
     const ranked = rank(
       matches.filter((c) => local.has(c.recipient.pubkey)),
@@ -296,25 +369,9 @@ export function useMentionChoices(
       });
     }
   }
-  // Space (README section 5): once every member is named, an exact local name
-  // selects at once. Any other exact name needs the full choice set: while the
-  // directory search runs, failed, or has more pages, a namesake may be missing.
   const complete = !directory.loading && !directory.error && !directory.more;
   return useMemo(() => {
-    const spaceMention = (
-      all: readonly MentionChoice[],
-      keys: ReadonlySet<string>,
-    ) => {
-      if (pending) return undefined;
-      const choices = matchingMentions(all, query);
-      return (
-        (missingNames
-          ? undefined
-          : exactMention(choices, query, (c) =>
-              keys.has(c.recipient.pubkey),
-            )) ?? (complete ? exactMention(choices, query) : undefined)
-      );
-    };
+    const evidence = { pending, missingNames, complete };
     const live = byKey(candidates);
     const choices = (rows ?? []).map((row) => {
       const now = live.get(row.recipient.pubkey);
@@ -342,7 +399,7 @@ export function useMentionChoices(
       candidates,
       pending,
       archives,
-      spaceId: spaceMention(candidates, local),
+      spaceId: spaceMention(candidates, local, query, evidence),
       canSelect: (pubkey: string, space = false) => {
         const fresh = current();
         return (
@@ -352,7 +409,8 @@ export function useMentionChoices(
               (!rows?.find((row) => row.recipient.pubkey === pubkey)?.member ||
                 c.member),
           ) &&
-          (!space || spaceMention(fresh, localKeys()) === pubkey)
+          (!space ||
+            spaceMention(fresh, localKeys(), query, evidence) === pubkey)
         );
       },
       truncated:

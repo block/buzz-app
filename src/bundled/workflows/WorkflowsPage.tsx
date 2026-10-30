@@ -250,6 +250,7 @@ export function WorkflowCommunity({
               )}
               {eligible.length > 0 && (
                 <WorkflowLanding
+                  session={session}
                   capability={capability}
                   channels={eligible}
                   filter={filter}

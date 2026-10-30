@@ -118,7 +118,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Keep read feedback quiet when fast and content stable while pending.",
     behavior:
       "One-second delayed status, immediate ready content and aria-busy. The caller owns stable child geometry, scope and errors.",
-    variants: ["initial read", "refresh"],
+    variants: ["initial read", "refresh", "screen-reader status"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/LoadingRegion.tsx",
@@ -484,14 +484,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "split-button",
     name: "SplitButton",
     purpose:
-      "Run an action with a chosen option, and change the option from the attached menu. The label names the current choice, so what the action does is always visible.",
+      "Run a primary action and open its options or related actions from an attached menu.",
     behavior:
-      "Composes Buzz Button and Menu as one joined capsule, including while the menu is open. Choosing in the menu changes the option without running the action; the menu is unavailable while the action loads.",
+      "Composes Buzz Button and Menu as one joined capsule, including while the menu is open. The caller owns option changes and related actions; the menu is unavailable while the action loads.",
     variants: [
       "subtle (default)",
       "outline: halves share one stroke",
       "prominent",
-      "size: sm | md (default)",
+      "size: xs | sm | md (default)",
       "loading",
       "disabled",
     ],
@@ -923,6 +923,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "button size: xs | sm | md",
       "disabled",
       "align: start | center | end",
+      "compact link",
       "compact glass-ghost (proposed)",
       "compact value suffix",
       "20px leading accessory: icon, avatar, or custom UI",

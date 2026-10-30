@@ -627,6 +627,46 @@ it("replaces memory only at the version it was shown, newer than the entry it re
   );
 });
 
+it("deletes memory only at the version it was shown, and never core", async () => {
+  const { client } = fake();
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "notes", expected: "0".repeat(16) }),
+  ).rejects.toThrow(
+    "mem/notes changed since version 0000000000000000. Read it again with mem_get before you delete it.",
+  );
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "core", expected: "0".repeat(16) }),
+  ).rejects.toThrow("core cannot be deleted; replace it with mem_set.");
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "notes" }),
+  ).rejects.toThrow("expected is required.");
+  expect(client.remember).not.toHaveBeenCalled();
+  await expect(
+    callTool(client, {}, "mem_rm", {
+      slug: "notes",
+      expected: await memoryVersion("old"),
+    }),
+  ).resolves.toBe("deleted mem/notes");
+  // A tombstone, dated after the entry it deletes.
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", null, 50);
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: true });
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),
+  ).rejects.toThrow("Memory mem/gone could not be read; try again.");
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(
+    callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),
+  ).rejects.toThrow("No memory mem/gone.");
+  // Recreating a deleted entry is dated after its tombstone.
+  vi.mocked(client.memories).mockResolvedValue({
+    entries: [],
+    deleted: [{ slug: "mem/gone", createdAt: 70 }],
+    partial: false,
+  });
+  await callTool(client, {}, "mem_set", { slug: "gone", text: "back" });
+  expect(client.remember).toHaveBeenLastCalledWith("mem/gone", "back", 70);
+});
+
 it("refuses to overwrite core that another session changed since this one read it", async () => {
   const { client } = fake();
   let core = "I am Gander.";
@@ -1003,10 +1043,10 @@ it("lists channels it can join as well as its own", async () => {
       tags: [["d", "other"], ["name", "lobby"], ["t", "forum"], ["private"]],
     }),
   );
-  await expect(callTool(client, {}, "channels", { all: true })).resolves.toBe(
-    `${room} plans\nother lobby (forum, private, not joined)`,
-  );
-  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+  await expect(
+    callTool(client, {}, "channel_list", { all: true }),
+  ).resolves.toBe(`${room} plans\nother lobby (forum, private, not joined)`);
+  await expect(callTool(client, {}, "channel_list", {})).resolves.toBe(
     `${room} plans`,
   );
 });
@@ -1036,22 +1076,24 @@ it("lists only the channel types asked for", async () => {
       tags: [["d", "other"], ["name", "lobby"], ["t", "forum"], ["private"]],
     }),
   );
-  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+  await expect(callTool(client, {}, "channel_list", {})).resolves.toBe(
     `${room} plans\n${forum} ideas (forum)`,
   );
   await expect(
-    callTool(client, {}, "channels", { types: ["forum"] }),
+    callTool(client, {}, "channel_list", { types: ["forum"] }),
   ).resolves.toBe(`${forum} ideas (forum)`);
   await expect(
-    callTool(client, {}, "channels", { types: ["stream"], all: true }),
+    callTool(client, {}, "channel_list", { types: ["stream"], all: true }),
   ).resolves.toBe(`${room} plans`);
   await expect(
-    callTool(client, {}, "channels", { types: ["forum"], all: true }),
+    callTool(client, {}, "channel_list", { types: ["forum"], all: true }),
   ).resolves.toBe(
     `${forum} ideas (forum)\nother lobby (forum, private, not joined)`,
   );
   for (const types of [[], ["channel"], "forum", [7]])
-    await expect(callTool(client, {}, "channels", { types })).rejects.toThrow(
+    await expect(
+      callTool(client, {}, "channel_list", { types }),
+    ).rejects.toThrow(
       "types must list some of stream, forum, dm, workflow, system.",
     );
 });
@@ -1063,13 +1105,13 @@ it("keeps a roster signed before NIP-CL joined when listing by type", async () =
   const old = state[roster] as BuzzEvent;
   state[roster] = { ...old, tags: old.tags.filter((t) => t[0] !== "t") };
   await expect(
-    callTool(client, {}, "channels", { types: ["stream"] }),
+    callTool(client, {}, "channel_list", { types: ["stream"] }),
   ).resolves.toBe(`${room} plans`);
   await expect(
-    callTool(client, {}, "channels", { types: ["stream"], all: true }),
+    callTool(client, {}, "channel_list", { types: ["stream"], all: true }),
   ).resolves.toBe(`${room} plans`);
   await expect(
-    callTool(client, {}, "channels", { types: ["forum"], all: true }),
+    callTool(client, {}, "channel_list", { types: ["forum"], all: true }),
   ).resolves.toBe("No channels.");
 });
 
@@ -1099,17 +1141,17 @@ it("lists system channels only when asked, as the relay serves them", async () =
       ],
     }),
   );
-  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
-    `${room} plans`,
-  );
-  await expect(callTool(client, {}, "channels", { all: true })).resolves.toBe(
+  await expect(callTool(client, {}, "channel_list", {})).resolves.toBe(
     `${room} plans`,
   );
   await expect(
-    callTool(client, {}, "channels", { types: ["system"] }),
+    callTool(client, {}, "channel_list", { all: true }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channel_list", { types: ["system"] }),
   ).resolves.toBe(`${system} config (system, private)`);
   await expect(
-    callTool(client, {}, "channels", { types: ["system"], all: true }),
+    callTool(client, {}, "channel_list", { types: ["system"], all: true }),
   ).resolves.toBe(
     `${system} config (system, private)\n${lobby} ops (system, not joined)`,
   );
@@ -1117,8 +1159,7 @@ it("lists system channels only when asked, as the relay serves them", async () =
 
 it("creates a system channel", async () => {
   const { client, published } = relay();
-  const answer = await callTool(client, {}, "channel", {
-    action: "create",
+  const answer = await callTool(client, {}, "channel_create", {
     name: "config",
     visibility: "private",
     type: "system",
@@ -1138,17 +1179,16 @@ it("creates a system channel", async () => {
   ]);
   expect(answer).toBe(`created ${id}`);
   await expect(
-    callTool(client, {}, "channels", { types: ["system"] }),
+    callTool(client, {}, "channel_list", { types: ["system"] }),
   ).resolves.toBe(`${id} config (system, private)`);
-  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+  await expect(callTool(client, {}, "channel_list", {})).resolves.toBe(
     `${room} plans`,
   );
   await expect(
-    callTool(client, {}, "channels", { types: ["stream", "system"] }),
+    callTool(client, {}, "channel_list", { types: ["stream", "system"] }),
   ).resolves.toBe(`${room} plans\n${id} config (system, private)`);
   await expect(
-    callTool(client, {}, "channel", {
-      action: "create",
+    callTool(client, {}, "channel_create", {
       name: "config",
       visibility: "private",
       type: "dm",
@@ -1183,22 +1223,22 @@ it("finds a channel past the relay's first page, by name and then by ID", async 
   for (let n = 1; n <= 500; n++) channel(n, `busy-${n}`, 1000 + n);
   const fixers = channel(501, "fixers", 10);
   const row = `${fixers} fixers (private)`;
-  await expect(callTool(client, {}, "channels", { q: "fixers" })).resolves.toBe(
-    row,
-  );
   await expect(
-    callTool(client, {}, "channels", { all: true, q: "FIXERS" }),
+    callTool(client, {}, "channel_list", { q: "fixers" }),
   ).resolves.toBe(row);
   await expect(
-    callTool(client, {}, "channel", { channel: fixers }),
+    callTool(client, {}, "channel_list", { all: true, q: "FIXERS" }),
+  ).resolves.toBe(row);
+  await expect(
+    callTool(client, {}, "channel_get", { channel: fixers }),
   ).resolves.toBe(`${fixers} fixers (private)\nyou: bot`);
   await expect(
     callTool(client, {}, "canvas_get", { channel: fixers }),
   ).resolves.toBe("No canvas.");
   const unseen =
-    "No channel fixers that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.";
+    "No channel fixers that you can see (it may not be visible yet). If you supplied a name, channel_list with q finds its ID.";
   await expect(
-    callTool(client, {}, "channel", { channel: "fixers" }),
+    callTool(client, {}, "channel_get", { channel: "fixers" }),
   ).rejects.toThrow(unseen);
   await expect(
     callTool(client, {}, "canvas_get", { channel: "fixers" }),
@@ -1267,7 +1307,7 @@ it.each([9_999, 10_000, 10_001])(
   "searches %i metadata events without an oversized reply or hard failure",
   async (count) => {
     const { client } = channelListing(count, false);
-    const answer = (await callTool(client, {}, "channels", {
+    const answer = (await callTool(client, {}, "channel_list", {
       all: true,
       q: "NEEDLE",
     })) as string;
@@ -1293,7 +1333,7 @@ it.each([9_999, 10_000, 10_001])(
         ],
       }),
     );
-    const answer = (await callTool(client, {}, "channels", {
+    const answer = (await callTool(client, {}, "channel_list", {
       q: "needle",
     })) as string;
     expect(answer).toContain("room-0 needle");
@@ -1308,7 +1348,7 @@ it("does not claim non-membership when the membership scan is partial", async ()
   const { client, metadata } = channelListing(10_001, true);
   metadata.splice(0, 10_000);
   await expect(
-    callTool(client, {}, "channels", { all: true }),
+    callTool(client, {}, "channel_list", { all: true }),
   ).resolves.toContain(
     "room-10000 needle (membership unknown)\nPartial channel list",
   );
@@ -1317,7 +1357,7 @@ it("does not claim non-membership when the membership scan is partial", async ()
 it("reports a partial search even when no channel matched before the scan limit", async () => {
   const { client } = channelListing(10_001, false);
   await expect(
-    callTool(client, {}, "channels", { all: true, q: "missing" }),
+    callTool(client, {}, "channel_list", { all: true, q: "missing" }),
   ).resolves.toBe(
     "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.",
   );
@@ -1331,7 +1371,7 @@ it("keeps transport failures as errors instead of treating them as partial scans
     return query(filters);
   });
   await expect(
-    callTool(client, {}, "channels", { all: true, q: "needle" }),
+    callTool(client, {}, "channel_list", { all: true, q: "needle" }),
   ).rejects.toThrow("relay unavailable");
 });
 
@@ -1345,7 +1385,7 @@ it.each([500, 501])(
       {
         id: 1,
         method: "tools/call",
-        params: { name: "channels", arguments: { all: true } },
+        params: { name: "channel_list", arguments: { all: true } },
       },
     );
     if (!("result" in reply)) throw new Error("Expected an MCP result");
@@ -1376,7 +1416,7 @@ it.each(["x", "界", "😀", '"\\\n'])(
       {
         id: 1,
         method: "tools/call",
-        params: { name: "channels", arguments: { all: true, q: unit } },
+        params: { name: "channel_list", arguments: { all: true, q: unit } },
       },
     );
     if (!("result" in reply)) throw new Error("Expected an MCP result");
@@ -1426,7 +1466,7 @@ it.each([-1, 0, 1])(
       {
         id: 1,
         method: "tools/call",
-        params: { name: "channels", arguments: { all: true } },
+        params: { name: "channel_list", arguments: { all: true } },
       },
     );
     if (!("result" in reply)) throw new Error("Expected an MCP result");
@@ -1571,8 +1611,7 @@ it("creates a channel from its owner's template, reporting each agent it could n
   client.templates = vi.fn(async () => [
     { name: "Launch", canvas: "# Plan", agents: [alice, bob, me] },
   ]);
-  const answer = await callTool(client, {}, "channel", {
-    action: "create",
+  const answer = await callTool(client, {}, "channel_create", {
     name: "#launch ",
     visibility: "private",
     template: "launch",
@@ -1626,8 +1665,7 @@ it("adds no template agents when it cannot start the Canvas", async () => {
   client.templates = vi.fn(async () => [
     { name: "Launch", canvas: "# Plan", agents: [alice] },
   ]);
-  const answer = await callTool(client, {}, "channel", {
-    action: "create",
+  const answer = await callTool(client, {}, "channel_create", {
     name: "launch",
     visibility: "private",
     template: "Launch",
@@ -1642,8 +1680,7 @@ it("adds no template agents when it cannot start the Canvas", async () => {
 it("creates nothing from a template it cannot name exactly", async () => {
   const { client, published } = relay();
   const create = (template: string) =>
-    callTool(client, {}, "channel", {
-      action: "create",
+    callTool(client, {}, "channel_create", {
       name: "x",
       visibility: "open",
       template,
@@ -1666,31 +1703,28 @@ it("creates nothing from a template it cannot name exactly", async () => {
 
 it("refuses channel arguments that do not fit, before publishing", async () => {
   const { client, published } = relay();
-  const channel = (args: Record<string, unknown>) =>
-    callTool(client, { channel: room }, "channel", args);
-  await expect(channel({ action: "toString" })).rejects.toThrow(
-    "action must be one of",
-  );
-  await expect(channel({ action: "join", name: "x" })).rejects.toThrow(
-    "name cannot be used with join.",
-  );
+  const channel = (name: string, args: Record<string, unknown>) =>
+    callTool(client, { channel: room }, name, args);
   await expect(
-    channel({ action: "create", channel: room, name: "x", visibility: "open" }),
-  ).rejects.toThrow("leave out channel");
-  await expect(channel({ action: "create", name: "x" })).rejects.toThrow(
+    channel("channel_delete", { channel_id: "other" }),
+  ).rejects.toThrow("channel_id cannot be used with channel_delete.");
+  await expect(
+    channel("channel_create", { name: "x", visibility: "open", topic: "t" }),
+  ).rejects.toThrow("topic cannot be used with channel_create.");
+  await expect(channel("channel_create", { name: "x" })).rejects.toThrow(
     "visibility must be open or private.",
   );
   await expect(
-    channel({ action: "create", name: "#", visibility: "open" }),
+    channel("channel_create", { name: "#", visibility: "open" }),
   ).rejects.toThrow("Enter a channel name");
   await expect(
-    channel({ action: "create", name: "x", visibility: "open", ttl: 1.5 }),
+    channel("channel_create", { name: "x", visibility: "open", ttl: 1.5 }),
   ).rejects.toThrow("ttl must be a whole number of seconds.");
-  await expect(channel({ action: "update" })).rejects.toThrow(
+  await expect(channel("channel_update", {})).rejects.toThrow(
     "Give name, about, visibility, ttl, topic or purpose.",
   );
   await expect(
-    callTool(client, { channel: "chan" }, "channel", { action: "leave" }),
+    callTool(client, { channel: "chan" }, "channel_leave", {}),
   ).rejects.toThrow("Invalid channel ID");
   expect(published).toEqual([]);
 });
@@ -1698,12 +1732,11 @@ it("refuses channel arguments that do not fit, before publishing", async () => {
 it("shows a channel's details and changes them as the channel shows", async () => {
   const { client, published } = relay();
   const context = { channel: room };
-  await expect(callTool(client, context, "channel", {})).resolves.toBe(
+  await expect(callTool(client, context, "channel_get", {})).resolves.toBe(
     `${room} plans (stream, open)\nabout: roadmap\nyou: owner`,
   );
   await expect(
-    callTool(client, context, "channel", {
-      action: "update",
+    callTool(client, context, "channel_update", {
       name: "launch",
       about: "",
       visibility: "private",
@@ -1717,11 +1750,11 @@ it("shows a channel's details and changes them as the channel shows", async () =
     ["visibility", "private"],
     ["ttl", "3600"],
   ]);
-  await expect(callTool(client, context, "channel", {})).resolves.toBe(
+  await expect(callTool(client, context, "channel_get", {})).resolves.toBe(
     `${room} launch (stream, private, archives after 3600s idle)\nyou: owner`,
   );
   await expect(
-    callTool(client, { channel: "gone" }, "channel", {}),
+    callTool(client, { channel: "gone" }, "channel_get", {}),
   ).rejects.toThrow(
     "No channel gone that you can see (it may not be visible yet).",
   );
@@ -1738,7 +1771,7 @@ it("leaves, joins, archives, unarchives and deletes a channel", async () => {
     ["delete", "deleted"],
   ])
     await expect(
-      callTool(client, context, "channel", { action }),
+      callTool(client, context, `channel_${action}`, {}),
     ).resolves.toBe(`${done} ${room}`);
   expect(published.map((template) => template.kind)).toEqual([
     9022, 9021, 9002, 9002, 9008,
@@ -1753,9 +1786,7 @@ it("reports a change the community accepted but does not show", async () => {
   vi.useFakeTimers();
   try {
     const { client } = fake([]);
-    const answer = callTool(client, { channel: room }, "channel", {
-      action: "archive",
-    });
+    const answer = callTool(client, { channel: room }, "channel_archive", {});
     await vi.runAllTimersAsync();
     await expect(answer).resolves.toBe(
       "The community accepted archive but does not show it yet.",
@@ -1819,7 +1850,7 @@ it("refuses member changes that do not fit, before publishing", async () => {
   const members = (args: Record<string, unknown>) =>
     callTool(client, { channel: room }, "members", args);
   await expect(members({ add: [me] })).rejects.toThrow(
-    "For yourself, use channel with action join or leave.",
+    "For yourself, use channel_join or channel_leave.",
   );
   await expect(members({ add: [bob], remove: [bob] })).rejects.toThrow(
     "Add or remove someone, not both.",
@@ -1836,7 +1867,7 @@ it("refuses member changes that do not fit, before publishing", async () => {
 
 it("defaults to the current channel only when channel is left out", async () => {
   const { client, published } = relay();
-  const call = (name: string, args: Record<string, unknown>) =>
+  const call = (name: string, args: unknown) =>
     respond(
       client,
       { channel: room },
@@ -1848,17 +1879,12 @@ it("defaults to the current channel only when channel is left out", async () => 
       },
     );
   for (const [name, args, message] of [
-    [
-      "channel",
-      { action: "delete", channel: 123 },
-      "channel must be a channel ID.",
-    ],
-    [
-      "channel",
-      { action: "delete", channel: "   " },
-      "channel must be a channel ID.",
-    ],
-    ["channel", { action: 5 }, "action must be one of"],
+    ["channel_delete", { channel: 123 }, "channel must be a channel ID."],
+    ["channel_delete", { channel: "   " }, "channel must be a channel ID."],
+    ...[null, [], true, 42, ""].map(
+      (args) =>
+        ["channel_delete", args, "arguments must be an object."] as const,
+    ),
     [
       "members",
       { channel: null, remove: [alice] },
@@ -1867,8 +1893,8 @@ it("defaults to the current channel only when channel is left out", async () => 
     ["members", { remove: [alice, 123] }, "remove must be a list of pubkeys."],
     ["members", { add: alice }, "add must be a list of pubkeys."],
     [
-      "channel",
-      { action: "create", name: "x", visibility: "open", about: 5 },
+      "channel_create",
+      { name: "x", visibility: "open", about: 5 },
       "about must be text.",
     ],
   ] as const)
@@ -1898,8 +1924,7 @@ it("keeps what it changed when a read after the change fails", async () => {
     { name: "Launch", canvas: "", agents: [bob] },
   ]);
   const create = () =>
-    callTool(client, {}, "channel", {
-      action: "create",
+    callTool(client, {}, "channel_create", {
       name: "launch",
       visibility: "open",
       template: "Launch",
@@ -1924,13 +1949,12 @@ it("keeps what it changed when a read after the change fails", async () => {
     `The community accepted channel ${id} but its state could not be read back: kind 39000 unavailable; the template was not applied.`,
   );
   await expect(
-    callTool(client, { channel: room }, "channel", { action: "archive" }),
+    callTool(client, { channel: room }, "channel_archive", {}),
   ).resolves.toBe(
     "The community accepted archive but its state could not be read back: kind 39000 unavailable.",
   );
   await expect(
-    callTool(client, { channel: room }, "channel", {
-      action: "update",
+    callTool(client, { channel: room }, "channel_update", {
       topic: "x",
     }),
   ).rejects.toThrow("kind 39000 unavailable");

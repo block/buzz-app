@@ -38,6 +38,15 @@ vi.mock("../bundled", async () => ({
       module: await import("../bundled/agents"),
     },
     {
+      manifest: {
+        id: "buzz.watching",
+        name: "Attention",
+        apiVersion: 1,
+      },
+      module: await import("../bundled/watching"),
+      enabledByDefault: true,
+    },
+    {
       manifest: { id: "buzz.inbox", name: "Inbox", apiVersion: 1 },
       module: await import("../bundled/inbox"),
     },
@@ -350,16 +359,27 @@ it("lists active primary pages in their sidebar and header placements", async ()
   ).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument();
 
-  const attentionTab = screen.getByRole("tab", { name: "Agent Attention" });
-  await userEvent.click(attentionTab);
-  expect(
-    await screen.findByRole("region", { name: "Agent Attention" }),
-  ).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "New watch" })).toBeNull();
-
   // The fixture page is active and searchable but never a sidebar row.
   expect(current.pages.snapshot().map((page) => page.key)).toContain(
     "fixture.notes/notes",
+  );
+
+  // The Attention tab is on by default, and attention keeps running without it.
+  const providers = () =>
+    current.agents.attentionProviders().map(({ provider }) => provider);
+  await waitFor(() =>
+    expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
+      "buzz.watching/watching",
+    ]),
+  );
+  await act(() => current.plugins.change("disable", "buzz.watching"));
+  await waitFor(() => expect(current.agents.addedTabs()).toEqual([]));
+  expect(providers()).toContain("attention/command");
+  await act(() => current.plugins.change("enable", "buzz.watching"));
+  await waitFor(() =>
+    expect(current.agents.addedTabs().map((tab) => tab.key)).toEqual([
+      "buzz.watching/watching",
+    ]),
   );
 
   await act(() => current.plugins.change("disable", "buzz.agents"));
@@ -372,9 +392,6 @@ it("lists active primary pages in their sidebar and header placements", async ()
   );
 
   expect(screen.queryByRole("tab", { name: "Agents" })).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("tab", { name: "Agent Attention" }),
-  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Search Buzz" }));
   const search = await screen.findByRole("dialog", { name: "Search Buzz" });
   expect(

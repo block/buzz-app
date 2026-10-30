@@ -360,6 +360,11 @@ function ProfileDetails({
     [picture, name, knownAgent],
   );
   usePanelTabTitle(name, tabAvatar);
+  // Targets opened from this panel stay in its community.
+  const scoped =
+    navigation && viewer && communityOrigin
+      ? { navigation, scope: { viewer, communityOrigin } }
+      : undefined;
   const {
     available: canMessage,
     opening: openingMessage,
@@ -370,17 +375,25 @@ function ProfileDetails({
     pubkey,
     viewer,
     agent: displayAgent,
-    enabled: !!navigation && !!communityOrigin,
+    enabled: !!scoped,
     onOpened(channelId) {
-      if (navigation && viewer && communityOrigin)
-        void navigation.open({
-          version: 1,
-          kind: "conversation",
-          channelId,
-          scope: { viewer, communityOrigin },
-        });
+      void scoped?.navigation.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        scope: scoped.scope,
+      });
     },
   });
+  const canEdit = !!scoped && viewer === pubkey;
+  // Settings edits the selected community's profile, so bind it to this one.
+  const editProfile = () =>
+    void scoped?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+      scope: scoped.scope,
+    });
 
   return (
     <section
@@ -419,16 +432,27 @@ function ProfileDetails({
             )}
             <UserStatusDisplay session={session} userId={pubkey} />
           </div>
-          {canMessage && (
+          {(canMessage || canEdit) && (
             <div className={hero.actions}>
-              <Button
-                size="sm"
-                variant={picture ? "glass" : "subtle"}
-                loading={openingMessage}
-                onClick={() => void openMessage()}
-              >
-                Message
-              </Button>
+              {canMessage && (
+                <Button
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  loading={openingMessage}
+                  onClick={() => void openMessage()}
+                >
+                  Message
+                </Button>
+              )}
+              {canEdit && (
+                <Button
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  onClick={editProfile}
+                >
+                  Edit profile
+                </Button>
+              )}
             </div>
           )}
           {messageError && (

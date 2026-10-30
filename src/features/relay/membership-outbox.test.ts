@@ -29,10 +29,11 @@ async function setup(
   loaded?: Promise<void>,
 ) {
   let archived = false,
-    writer = true,
     records = saved,
-    receive!: (events: readonly RelayEvent[]) => void,
-    deny!: (channelId: string, reason: string) => void;
+    gate: Promise<void> | undefined,
+    receive!: (events: readonly RelayEvent[]) => void;
+  /** The channels of each writer read of exact viewer rosters. */
+  const confirmations: string[][] = [];
   const members = new Set([gone, kept]);
   /** Each channel's signed version; a change re-signs only that channel. */
   const versions = new Map([
@@ -109,15 +110,23 @@ async function setup(
         const strong = filters.some(
           (filter) => filter.consistency === "strong",
         );
-        if (strong && !writer)
-          throw new ReadError("unavailable", "Writer unreachable");
-        return [...channel(gone, !strong), ...channel(kept, !strong)].filter(
-          (event) => filters.some((filter) => matchesEvent(event, filter)),
+        const events = [
+          ...channel(gone, !strong),
+          ...channel(kept, !strong),
+        ].filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
         );
+        const exact = filters.find((filter) => filter["#d"] && filter["#p"]);
+        if (strong && exact?.["#d"]) {
+          confirmations.push([...exact["#d"]]);
+          const held = gate;
+          gate = undefined;
+          await held;
+        }
+        return events;
       },
       subscribe(callbacks) {
         receive = callbacks.receive;
-        deny = callbacks.denied;
         return { update() {}, retry() {}, dispose() {} };
       },
     },
@@ -144,22 +153,39 @@ async function setup(
     publish,
     lag: (id: string) => lagging.add(id),
     refuse: (id: string, status: number) => refusals.set(id, status),
-    deny: (id: string) => deny(id, "restricted: not a channel member"),
-    writerDown() {
-      writer = false;
+    confirmations,
+    /** Holds the next writer confirmation's reply until released. */
+    hold() {
+      let release!: () => void;
+      gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      return release;
     },
     /** The ids pending in the outbox and in its storage, which must agree. */
     pending: () => [
       outbox.snapshot().map((item) => item.event.id),
       records.map((item) => item.event.id),
     ],
-    /** Someone else removes the viewer; `seen` is how this device learns. */
+    /** Someone else removes the viewer; `seen` is how this device learns. A
+     * live removal is the relay's 44101 hint, which starts a writer-backed
+     * roster refresh. */
     async remove(
       id: string,
-      seen: "live roster" | "roster refresh" | "strong roster refresh",
+      seen: "live removal" | "roster refresh" | "strong roster refresh",
     ) {
       end(id);
-      if (seen === "live roster") receive([roster(id)]);
+      if (seen === "live removal")
+        receive([
+          signed(relay, {
+            kind: 44101,
+            content: "",
+            tags: [
+              ["p", viewer.pubkey],
+              ["h", id],
+            ],
+          }),
+        ]);
       else
         owner.session.channels.refreshList?.(
           seen === "strong roster refresh" ? { consistency: "strong" } : {},
@@ -168,6 +194,14 @@ async function setup(
         expect(
           owner.session.channels.list().channels.map((item) => item.id),
         ).not.toContain(id),
+      );
+    },
+    /** A roster read that changes nothing, through to its verified end. */
+    async refresh() {
+      owner.session.channels.refreshList?.();
+      expect(owner.session.live.snapshot().roster.state).toBe("pending");
+      await vi.waitFor(() =>
+        expect(owner.session.live.snapshot().roster.state).toBe("verified"),
       );
     },
     /** Someone adds the viewer back, seen through the live roster. */
@@ -190,7 +224,7 @@ const failed = (channelId: string, content: string): OutgoingEvent => ({
   error: "restricted: slow down",
 });
 
-it.each(["leave", "live roster", "roster refresh"] as const)(
+it.each(["leave", "live removal", "roster refresh"] as const)(
   "ending membership by %s discards that channel's failed sends only",
   async (how) => {
     const stranded = failed(gone, "Never sent");
@@ -222,13 +256,13 @@ async function inFlight(h: Awaited<ReturnType<typeof setup>>) {
 }
 
 it("discards a send the relay refuses after removal ends membership", async () => {
-  const h = await setup();
+  const stranded = failed(gone, "Never sent");
+  const h = await setup([stranded]);
   const send = await inFlight(h);
   try {
-    await h.remove(gone, "live roster");
-    expect(h.outbox.snapshot()).toMatchObject([
-      { event: { id: send.id }, delivery: "sending" },
-    ]);
+    await h.remove(gone, "live removal");
+    // The sweep that discards `stranded` has seen the running send.
+    await vi.waitFor(() => expect(h.pending()).toEqual([[send.id], [send.id]]));
   } finally {
     send.end(new PublishRejected("restricted: not a member"));
   }
@@ -239,11 +273,15 @@ it.each([
   ["the viewer is back before it is refused", "failed"],
   ["it may have reached the relay", "unknown"],
 ] as const)("keeps an in-flight send when %s", async (_, delivery) => {
+  const stranded = failed(gone, "Never sent");
   const elsewhere = failed(kept, "Removed later");
-  const h = await setup([elsewhere]);
+  const h = await setup([stranded, elsewhere]);
   const send = await inFlight(h);
+  const running = [elsewhere.event.id, send.id];
   try {
-    await h.remove(gone, "live roster");
+    await h.remove(gone, "live removal");
+    // The sweep that discards `stranded` has seen the running send.
+    await vi.waitFor(() => expect(h.pending()).toEqual([running, running]));
     if (delivery === "failed") await h.rejoin(gone);
   } finally {
     send.end(
@@ -258,11 +296,11 @@ it.each([
     ).toBe(delivery),
   );
   // A later removal's discard is the barrier: outbox writes run in order.
-  await h.remove(kept, "live roster");
+  await h.remove(kept, "live removal");
   await vi.waitFor(() => expect(h.pending()).toEqual([[send.id], [send.id]]));
 });
 
-it("discards a left channel's failed sends once restored sends load", async () => {
+it("discards a removed channel's failed sends once restored sends load", async () => {
   let load!: () => void;
   const loaded = new Promise<void>((resolve) => {
     load = resolve;
@@ -270,10 +308,8 @@ it("discards a left channel's failed sends once restored sends load", async () =
   const stranded = failed(gone, "Restored late");
   const elsewhere = failed(kept, "Still retryable");
   const h = await setup([stranded, elsewhere], loaded);
-  // With no writer to confirm a roster read, only the live removal discards.
-  h.writerDown();
   try {
-    await h.remove(gone, "live roster");
+    await h.remove(gone, "roster refresh");
     expect(h.outbox.snapshot()).toEqual([]);
   } finally {
     load();
@@ -294,29 +330,55 @@ it("keeps failed sends in a channel only a lagging replica leaves out", async ()
 });
 
 it.each([
-  ["a 401 history read", "keeps"],
-  ["a 403 history read", "discards"],
-  ["a live not-a-member refusal", "discards"],
-] as const)("%s %s the channel's failed sends", async (how, outcome) => {
-  const unsent = failed(gone, "Never sent");
-  const elsewhere = failed(kept, "Removed later");
-  const h = await setup([unsent, elsewhere]);
-  if (how === "a live not-a-member refusal") h.deny(gone);
-  else {
-    h.refuse(gone, how === "a 401 history read" ? 401 : 403);
+  ["a 401 history read", 401],
+  ["a relay-wide 403, such as a ban,", 403],
+] as const)(
+  "%s keeps failed sends while the writer lists the viewer",
+  async (_, status) => {
+    const unsent = failed(gone, "Never sent");
+    const elsewhere = failed(kept, "Removed later");
+    const h = await setup([unsent, elsewhere]);
+    h.refuse(gone, status);
     h.session.channels.ensure(gone);
-  }
+    await vi.waitFor(() =>
+      expect(
+        h.session.channels.list().channels.map((item) => item.id),
+      ).not.toContain(gone),
+    );
+    // Discovery keeps the denial, so the next sweep asks the writer about
+    // gone too. One writer read decides both channels, so kept's discard is
+    // the barrier for gone's.
+    await h.remove(kept, "strong roster refresh");
+    const remaining = [unsent.event.id];
+    await vi.waitFor(() => expect(h.pending()).toEqual([remaining, remaining]));
+  },
+);
+
+it("runs one writer confirmation at a time and sweeps again after it", async () => {
+  const unsent = failed(gone, "Never sent");
+  const h = await setup([unsent]);
+  // A 401 denies gone locally while the writer still lists the viewer, so
+  // every sweep asks about it and none discards.
+  h.refuse(gone, 401);
+  h.session.channels.ensure(gone);
   await vi.waitFor(() =>
     expect(
       h.session.channels.list().channels.map((item) => item.id),
     ).not.toContain(gone),
   );
-  // The writer still lists the viewer after a 401, but discovery keeps the
-  // denial. One writer read decides both channels, so kept's discard is the
-  // barrier for gone's.
-  await h.remove(kept, "strong roster refresh");
-  const remaining = outcome === "keeps" ? [unsent.event.id] : [];
-  await vi.waitFor(() => expect(h.pending()).toEqual([remaining, remaining]));
+  const release = h.hold();
+  try {
+    await h.refresh();
+    await vi.waitFor(() => expect(h.confirmations).toEqual([[gone]]));
+    // A sweep this pass started would have asked the writer before the pass
+    // verified. A pass that changes no access leaves the held read running.
+    await h.refresh();
+    expect(h.confirmations).toEqual([[gone]]);
+  } finally {
+    release();
+  }
+  await vi.waitFor(() => expect(h.confirmations).toEqual([[gone], [gone]]));
+  expect(h.pending()).toEqual([[unsent.event.id], [unsent.event.id]]);
 });
 
 it("discards failed sends an earlier session left in a channel the viewer is not on", async () => {
@@ -355,7 +417,7 @@ it("keeps failed sends in a channel the viewer archives", async () => {
   await h.session.channelLifecycle.run("archive", gone);
   expect(h.publish.mock.calls.map(([event]) => event.kind)).toEqual([9002]);
   // A later removal's discard is the barrier: outbox writes run in order.
-  await h.remove(kept, "live roster");
+  await h.remove(kept, "live removal");
   const remaining = [archived.event.id];
   await vi.waitFor(() => expect(h.pending()).toEqual([remaining, remaining]));
 });

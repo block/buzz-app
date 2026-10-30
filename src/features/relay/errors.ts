@@ -38,15 +38,6 @@ export function readErrorKind(error: unknown): ReadErrorKind {
     return "denied";
   return "unavailable";
 }
-/** A relay 403: it knows the viewer and refuses them. A 401 is a failed
- * authentication, such as a lapsed sign-in, and says nothing about access. */
-export function forbidden(error: unknown): boolean {
-  return (
-    error instanceof ReadError &&
-    error.kind === "denied" &&
-    error.status === 403
-  );
-}
 /** Native IPC rejects with plain strings, so its transport failures are known
  * by message (src-tauri/src/relay.rs `send` and `read_response`), plus the
  * NIP-11 discovery read that every native connection starts with. */

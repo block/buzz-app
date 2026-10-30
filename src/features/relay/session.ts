@@ -432,50 +432,38 @@ export function createRelaySession(
       }
     }
   }
-  /** The channel of a failed or running send that membership decides. A
-   * create or membership command can target a channel the viewer is not on
-   * (an owner removes their agent from any channel), so it is never stranded. */
+  /** The channel of a failed or running timeline write: a message, reaction,
+   * edit or deletion. Only membership decides whether these can be sent. Other
+   * kinds have their own owners or may target a channel the viewer is not on
+   * (a create, an owner removing their agent), so they are never stranded. */
   const contribution = (item: OutgoingEvent) =>
     (item.delivery === "failed" || item.delivery === "sending") &&
-    ![9000, 9001, 9007, 9022].includes(item.event.kind)
+    [5, 7, 9, 40003].includes(item.event.kind)
       ? item.event.tags.find(([name]) => name === "h")?.[1]
       : undefined;
-  /** Leaving or removal strands a channel's failed sends: nothing can retry
-   * or reach them. Drop them, and any attempt still running that fails,
-   * unless the viewer is back. Unconfirmed intent stays for a regrant. */
-  function dropFailedSends(ids: readonly string[]) {
+  let sweeping = false;
+  let sweepAgain = false;
+  /** Leaving or removal strands a channel's failed writes: nothing can retry
+   * or reach them, including ones an earlier session left. After a complete
+   * roster read or a confirmed Leave or Delete, the writer confirms which
+   * channels the viewer cannot participate in no longer list them: a
+   * replica's omission can be lag, and a local denial (a 401 or a ban) is not
+   * removal. Their failed writes go, and running ones that then fail, unless
+   * the viewer is back. Unconfirmed intent stays for a regrant. One writer
+   * read runs at a time; a request meanwhile sweeps again after it. */
+  function dropStrandedSends() {
     const outbox = writes?.outbox;
     if (!outbox) return;
+    if (sweeping) {
+      sweepAgain = true;
+      return;
+    }
+    sweeping = true;
     const failed = (id: string) =>
       outbox
         .snapshot()
         .some((item) => item.event.id === id && item.delivery === "failed");
     // Restored sends can still be loading when the first roster read lands.
-    void outbox
-      .ready()
-      .then(() => {
-        for (const item of outbox.snapshot()) {
-          const channelId = contribution(item);
-          if (!channelId || !ids.includes(channelId)) continue;
-          const { id } = item.event;
-          void attemptEnded(outbox, id)
-            .then(() =>
-              failed(id) && !channels.canParticipate(channelId)
-                ? outbox.dismiss(id)
-                : undefined,
-            )
-            .catch(() => {});
-        }
-      })
-      .catch(() => {});
-  }
-  /** After a complete roster read, sends to channels the viewer is not on are
-   * stranded, including ones an earlier session left. The writer confirms
-   * each first: a replica's omission can be lag, and a local denial (a 401)
-   * outlasts a later read that lists the viewer again. */
-  function dropStrandedSends() {
-    const outbox = writes?.outbox;
-    if (!outbox) return;
     void outbox
       .ready()
       .then(async () => {
@@ -488,9 +476,27 @@ export function createRelaySession(
           ),
         ];
         if (!ids.length) return;
-        dropFailedSends(await channels.unlisted(ids, lifetime.signal));
+        const gone = await channels.unlisted(ids, lifetime.signal);
+        for (const item of outbox.snapshot()) {
+          const channelId = contribution(item);
+          if (!channelId || !gone.includes(channelId)) continue;
+          const { id } = item.event;
+          void attemptEnded(outbox, id)
+            .then(() =>
+              failed(id) && !channels.canParticipate(channelId)
+                ? outbox.dismiss(id)
+                : undefined,
+            )
+            .catch(() => {});
+        }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        sweeping = false;
+        if (!sweepAgain) return;
+        sweepAgain = false;
+        dropStrandedSends();
+      });
   }
   /** Solo chats this device is starting; set once channel writes exist. */
   let startingChannel: (id: string) => Promise<void> | undefined = () =>
@@ -960,7 +966,6 @@ export function createRelaySession(
           channelIdentity: transport.channelIdentity,
           media: (url, size) => transport.media(url, size),
           revokeAccess,
-          membershipEnded: dropFailedSends,
           rosterComplete: dropStrandedSends,
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
@@ -1009,12 +1014,10 @@ export function createRelaySession(
     relayAuthor: transport?.relayAuthor ?? "",
     canAccess: (id) => !closed && channels.canParticipate(id),
     acceptDiscovery: (events) => channels.acceptDiscovery(events),
-    removed: (id) =>
-      channels.denyChannel(
-        id,
-        new Error("Channel is no longer available"),
-        true,
-      ),
+    removed: (id) => {
+      channels.denyChannel(id, new Error("Channel is no longer available"));
+      dropStrandedSends();
+    },
   });
   const memberAdministration = createMemberAdministration({
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
@@ -3344,9 +3347,8 @@ export function createRelaySession(
       refreshRoster();
       unread.reconnect();
     },
-    // Live reports only `restricted: not a channel member` as a denial.
     denied(channelId, reason) {
-      if (!closed) channels.denyChannel(channelId, new Error(reason), true);
+      if (!closed) channels.denyChannel(channelId, new Error(reason));
     },
   });
   let activityRosterKey: string | undefined;

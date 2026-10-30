@@ -185,7 +185,12 @@ it("takes pull request links from Links, which keeps the rest of GitHub and stan
   // Without gh in this host, the state comes from the public API.
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ state: "open" }))),
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ title: "A useful change", state: "open" }),
+        ),
+    ),
   );
   const both = message([links, github]);
   const anchor = screen.getByRole("link", { name: "Fix the lab" });
@@ -196,9 +201,11 @@ it("takes pull request links from Links, which keeps the rest of GitHub and stan
   await waitFor(() =>
     expect(icon(both.container)).toHaveAttribute("data-pr-state", "open"),
   );
-  // The state describes the link; the link keeps its authored name.
+  // The state describes the link; the link keeps its authored name, not the
+  // title read with the state.
   expect(anchor).toHaveAttribute("aria-description", "Pull request, open");
   expect(screen.getByRole("link", { name: "Fix the lab" })).toBe(anchor);
+  expect(anchor).not.toHaveTextContent("A useful change");
   cleanup();
 
   const only = message([links]);
@@ -213,35 +220,76 @@ it("takes pull request links from Links, which keeps the rest of GitHub and stan
   );
 });
 
-it("names a pull request link shown as its URL by the URL alone, whatever its state", async () => {
-  const { links, github } = renderers();
-  // Its own pull request: the store keeps what earlier tests read.
-  const raw = "https://github.com/block/buzz-app/pull/8";
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ state: "closed", merged: true })),
-    ),
-  );
-  const { container } = render(
+/** A link pasted as its URL, as messages give the renderer one. */
+const pasted = (entries: readonly Contribution<LinkRenderer>[], url: string) =>
+  render(
     <ToastProvider>
       <MessageLink
-        url={raw}
-        registry={registry([links, github])}
+        url={url}
+        registry={registry(entries)}
         onOpenLink={() => true}
-      >
-        {raw}
-      </MessageLink>
+      />
     </ToastProvider>,
   );
-  const anchor = screen.getByRole("link", { name: raw });
+
+it("names a pasted pull request link by its repository and number, then the title read with its state", async () => {
+  const { links, github } = renderers();
+  const raw = "https://github.com/block/buzz-app/pull/8";
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({ title: "Fix the lab", state: "closed", merged: true }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const { container } = pasted([links, github], raw);
+  const anchor = screen.getByRole("link", { name: "block/buzz-app#8" });
+  expect(anchor).toHaveAttribute("href", raw);
   expect(anchor).toHaveAttribute("aria-description", "Pull request");
   await waitFor(() =>
     expect(icon(container)).toHaveAttribute("data-pr-state", "merged"),
   );
-  expect(screen.getByRole("link", { name: raw })).toBe(anchor);
+  // The title arrives with the state, from the one read the icon makes.
+  expect(anchor).toHaveAccessibleName("block/buzz-app#8 · Fix the lab");
   expect(anchor).toHaveAttribute("aria-description", "Pull request, merged");
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalledWith(
+    "https://api.github.com/repos/block/buzz-app/pulls/8",
+    expect.anything(),
+  );
+});
+
+it("names a pasted pull request link by its repository and number when it cannot be read", async () => {
+  const { links, github } = renderers();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(null, { status: 404 })),
+  );
+  const { container } = pasted(
+    [links, github],
+    "https://github.com/block/buzz-app/pull/9",
+  );
+  const anchor = screen.getByRole("link", { name: "block/buzz-app#9" });
+  await waitFor(() =>
+    expect(anchor).toHaveAttribute(
+      "aria-description",
+      "Pull request, unavailable",
+    ),
+  );
+  expect(icon(container)).toHaveAttribute("data-pr-state", "unknown");
+  expect(anchor).toHaveAccessibleName("block/buzz-app#9");
+});
+
+it("renames a pasted pull request link with each title the store reads, and names it by number alone when nothing is held", () => {
+  const states = fakeStates({ state: "open", title: "Fix the lab" });
+  const { container } = render(<PullLink url={pull} states={states} />);
+  expect(container).toHaveTextContent("block/buzz-app#7 · Fix the lab");
+  act(() => states.set({ state: "merged", title: "Fix the lab, renamed" }));
+  expect(container).toHaveTextContent(
+    "block/buzz-app#7 · Fix the lab, renamed",
+  );
+  act(() => states.set("failed"));
+  expect(container).toHaveTextContent(/^block\/buzz-app#7$/);
 });
 
 it("reads nothing for a pull request link while it is composed", async () => {

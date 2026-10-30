@@ -291,6 +291,74 @@ test.describe("saved strict-window draft", () => {
     channelNames: { [channel]: "Window room" },
     historyCounts: { alpha: 1, [channel]: 0 },
   });
+  for (const cancel of [false, true]) {
+    test(`root loading ${cancel ? "retains a deliberate focus cancellation" : "retains the opening focus intent"} before the composer mounts`, async ({
+      page,
+      app,
+    }) => {
+      const { root } = app.inboxWindow;
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.addInitScript(
+        ({ viewer, rootId, channel }) => {
+          localStorage.setItem(
+            `buzz-view.v1:${JSON.stringify([`https://primary.example:${viewer}`, `draft:${channel}:thread:${rootId}`])}`,
+            JSON.stringify("Held draft"),
+          );
+        },
+        { viewer: app.viewer, rootId: root.id, channel },
+      );
+      await open(page, app);
+      await openPage(page, "Inbox");
+      const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+      await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+      const filters = inbox.getByRole("button", {
+        name: "Inbox filters",
+        exact: true,
+      });
+      await filters.click();
+      await page
+        .getByRole("menuitemradio", { name: "Drafts", exact: true })
+        .click();
+      const seen = Promise.withResolvers();
+      const held = Promise.withResolvers();
+      await page.route("**/api/relay/**/query", async (route) => {
+        if (
+          route
+            .request()
+            .postDataJSON()
+            .some((filter) => filter.ids?.includes(root.id))
+        ) {
+          seen.resolve();
+          await held.promise;
+        }
+        await route.continue();
+      });
+      const detail = inbox.getByRole("region", { name: "Draft detail" });
+      try {
+        await inbox
+          .getByRole("button", { name: "Open draft for #Window room" })
+          .click();
+        await seen.promise;
+        await expect(detail.getByRole("textbox")).toHaveCount(0);
+        if (cancel) {
+          await filters.focus();
+          await expect(filters).toBeFocused();
+        }
+        await page.setViewportSize({ width: 390, height: 900 });
+        await expect(filters).not.toBeVisible();
+      } finally {
+        held.resolve();
+      }
+      const editor = detail.getByRole("textbox", { name: "Reply to thread" });
+      await expect(editor).toBeEditable();
+      await expect(editor).toHaveText("Held draft");
+      if (cancel) {
+        await expect(editor).not.toBeFocused();
+        await page.keyboard.type("x");
+        await expect(editor).toHaveText("Held draft");
+      } else await expect(editor).toBeFocused();
+    });
+  }
   test("opens the exact saved root with newest reply context and one composer", async ({
     page,
     app,
@@ -662,9 +730,14 @@ test.describe("coarse-pointer draft entry", () => {
           })
           .tap();
         const editor = detail.getByRole("textbox");
+        const close = detail.getByRole("button", {
+          name: "Close detail",
+          exact: true,
+        });
+        await expect(close).toBeFocused();
         await expect(editor).toBeEditable();
         await expect(editor).toHaveText(text);
-        await expect(editor).not.toBeFocused();
+        await expect(close).toBeFocused();
         await editor.tap();
         await expect(editor).toBeFocused();
         await detail

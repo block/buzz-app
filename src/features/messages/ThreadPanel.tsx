@@ -32,7 +32,7 @@ import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
-import { MessageComposer } from "./MessageComposer";
+import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
@@ -70,8 +70,8 @@ export type ThreadPanelProps = {
   replyRequest?: number | undefined;
   /** Each new value focuses the reply box, keeping its target. */
   focusRequest?: number | undefined;
-  /** A saved draft carries its opening control through a delayed root read. */
-  autoFocus?: boolean | HTMLElement | undefined;
+  /** A saved draft carries its cancellable target through a delayed root read. */
+  autoFocus?: MessageComposerProps["autoFocus"];
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */

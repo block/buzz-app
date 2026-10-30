@@ -87,13 +87,16 @@ export function DraftsView({
     };
   }, [session]);
   const [selected, setSelected] = useState<string>();
-  const invoking = useRef<{ key: string; row: HTMLButtonElement }>(undefined);
+  const invoking = useRef<{
+    key: string;
+    row: HTMLButtonElement;
+    focus: { current: HTMLElement | null };
+  }>(undefined);
   const fallbackRow = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef<HTMLButtonElement>(null);
   const visit = invoking.current;
-  const autoFocus = window.matchMedia?.("(pointer: coarse)").matches
-    ? false
-    : (visit?.row ?? false);
+  const coarse = !!window.matchMedia?.("(pointer: coarse)").matches;
+  const autoFocus = coarse ? false : (visit?.focus ?? false);
   const detailRef = useCallback((node: HTMLElement | null) => {
     if (!node) return;
     // Ref cleanup runs before removal, while focus ownership is still observable.
@@ -147,6 +150,18 @@ export function DraftsView({
   const closeControl = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const entry = invoking.current;
+    if (!selected || !entry) return;
+    // The visit owns cancellation before a delayed root can mount its editor.
+    const moved = (event: FocusEvent) => {
+      if (event.target !== entry.focus.current) entry.focus.current = null;
+    };
+    document.addEventListener("focusin", moved, true);
+    if (coarse && entry.focus.current === entry.row)
+      closeControl.current?.focus({ preventScroll: true });
+    return () => document.removeEventListener("focusin", moved, true);
+  }, [selected, coarse]);
   const [error, setError] = useState<string>();
   // Selection owns editor lifetime, not the bounded list summary's eligibility.
   const coordinates = selected && draftCoordinates(selected);
@@ -371,6 +386,7 @@ export function DraftsView({
                       invoking.current = {
                         key: entry.key,
                         row: event.currentTarget,
+                        focus: { current: event.currentTarget },
                       };
                     setSelected(entry.key);
                     setConfirmDelete(false);

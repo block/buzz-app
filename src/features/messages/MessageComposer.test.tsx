@@ -676,7 +676,7 @@ it("does not mistake a later focused control for a saved draft's opening row", (
   try {
     row.focus();
     later.focus();
-    const h = mount({ autoFocus: row });
+    const h = mount({ autoFocus: { current: row } });
     expect(later).toHaveFocus();
     expect(h.input()).not.toHaveFocus();
   } finally {
@@ -691,7 +691,7 @@ it("cancels a deferred draft handoff when another control takes focus and disapp
   document.body.append(row, later);
   try {
     row.focus();
-    const h = mount({ autoFocus: row, disabled: true });
+    const h = mount({ autoFocus: { current: row }, disabled: true });
     later.focus();
     later.remove();
     h.retarget({ disabled: false });
@@ -700,6 +700,49 @@ it("cancels a deferred draft handoff when another control takes focus and disapp
   } finally {
     row.remove();
     later.remove();
+  }
+});
+
+it("honors a draft cancellation recorded before its composer mounts", () => {
+  const origin: { current: HTMLElement | null } = { current: null };
+  const h = mount({ autoFocus: origin });
+  expect(h.input()).not.toHaveFocus();
+});
+
+it("honors owner cancellation while the composer waits without a focus event", () => {
+  const row = document.createElement("button");
+  document.body.append(row);
+  const origin: { current: HTMLElement | null } = { current: row };
+  try {
+    row.focus();
+    const h = mount({ autoFocus: origin, disabled: true });
+    origin.current = null;
+    row.remove();
+    h.retarget({ disabled: false });
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    row.remove();
+  }
+});
+
+it("hands the live draft target to its editor through StrictMode replay", () => {
+  const row = document.createElement("button");
+  document.body.append(row);
+  const origin: { current: HTMLElement | null } = { current: row };
+  const moved = (event: FocusEvent) => {
+    if (event.target !== origin.current) origin.current = null;
+  };
+  document.addEventListener("focusin", moved, true);
+  try {
+    row.focus();
+    writeView("scope", "draft:channel", "Saved draft");
+    const h = mount({ autoFocus: origin });
+    expect(h.input()).toHaveFocus();
+    expect(origin.current).toBe(h.input());
+    expect(h.input().selectionEnd).toBe("Saved draft".length);
+  } finally {
+    document.removeEventListener("focusin", moved, true);
+    row.remove();
   }
 });
 

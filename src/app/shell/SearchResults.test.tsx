@@ -1598,6 +1598,90 @@ it("holds an early Enter on the scope action for an open channel, and scopes onc
   }
 });
 
+it.each([
+  ["alone", undefined],
+  ["and the scope action", "general"],
+])(
+  "holds an early Enter for an open channel over Show more messages %s",
+  async (_, currentChannelId) => {
+    vi.useFakeTimers();
+    const relay = keypair();
+    const viewer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const discovery = [
+      metadata(relay, "general", "general"),
+      roster(relay, "general", [viewer.pubkey]),
+      metadata(relay, "lobby", "crew-lobby", 1700000000, [
+        ["public", ""],
+        ["t", "stream"],
+      ]),
+      roster(relay, "lobby", [keypair().pubkey]),
+    ];
+    let resolved!: () => void;
+    const held = new Promise<void>((release) => (resolved = release));
+    const owner = createRelaySession({
+      ...wire.transport,
+      async query(filters, signal) {
+        if (
+          filters.some(
+            (filter) =>
+              filter.search !== undefined && !filter.kinds?.includes(0),
+          )
+        )
+          return wire.transport.query(filters, signal);
+        if (filters.some((filter) => filter["#d"]?.includes("lobby")))
+          await held;
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    const openConversation = vi.fn();
+    const changeScope = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={owner.session}
+          query="crew"
+          onQueryChange={() => {}}
+          input={createRef<HTMLInputElement>()}
+          pages={[]}
+          currentChannelId={currentChannelId}
+          onScopeChange={changeScope}
+          openConversation={openConversation}
+        />,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      // A full page of hits in conversations search does not show.
+      await act(async () =>
+        wire
+          .next()
+          .respond(
+            Array.from({ length: 20 }, (_, i) =>
+              message(viewer, "unknown", `crew hidden ${i}`, 1700000100 - i),
+            ),
+          ),
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      expect(
+        screen.getByRole("option", { name: "Show more messages" }),
+      ).toBeVisible();
+      fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+        key: "Enter",
+      });
+      expect(wire.pending).toHaveLength(0);
+      expect(changeScope).not.toHaveBeenCalled();
+      await act(async () => resolved());
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("lobby");
+      expect(wire.pending).toHaveLength(0);
+      expect(changeScope).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it.each(["a click that does not focus the row", "its shortcut"])(
   "drops a held Enter when the scope action is chosen by %s",
   async (way) => {
@@ -4012,9 +4096,19 @@ it("lets the newest choice win over a DM that is still opening", async () => {
     metadata(relay, "chat", "ally-chat"),
     roster(relay, "chat", [viewer.pubkey]),
   ];
+  // A full first page of hits, so search offers more messages.
+  const hits = Array.from({ length: 20 }, (_, i) =>
+    message(viewer, "chat", `ally note ${i}`, 1700000100 - i),
+  );
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
     async query(filters) {
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
+        return filters.some((filter) => filter.page === 2) ? [] : hits;
       return discovery.filter((event) =>
         filters.some((filter) => matchFilter(filter as Filter, event)),
       );
@@ -4029,6 +4123,7 @@ it("lets the newest choice win over a DM that is still opening", async () => {
   t.open
     .mockImplementationOnce(hold)
     .mockImplementationOnce(async () => "carol-dm")
+    .mockImplementationOnce(hold)
     .mockImplementationOnce(hold)
     .mockImplementationOnce(hold);
   const signal = (call: number) =>
@@ -4083,6 +4178,18 @@ it("lets the newest choice win over a DM that is still opening", async () => {
     );
     expect(signal(3).aborted).toBe(true);
     expect(onScopeChange).toHaveBeenCalledExactlyOnceWith("chat");
+    expect(
+      screen.queryByText("Opening your conversation with Ally Bob…"),
+    ).toBeNull();
+    // So does showing more messages.
+    fireEvent.click(bobRow);
+    expect(
+      await screen.findByText("Opening your conversation with Ally Bob…"),
+    ).toBeVisible();
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Show more messages" }),
+    );
+    expect(signal(4).aborted).toBe(true);
     expect(
       screen.queryByText("Opening your conversation with Ally Bob…"),
     ).toBeNull();

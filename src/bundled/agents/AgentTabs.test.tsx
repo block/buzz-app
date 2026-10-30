@@ -441,8 +441,8 @@ it.each([false, true])(
       {
         id: "voice",
         key: "test/voice",
-      pluginId: "test",
-      revision: "1",
+        pluginId: "test",
+        revision: "1",
         title: "Voice",
         placement: "settings" as const,
         component: ({ agent }: { agent: Agent }) => (

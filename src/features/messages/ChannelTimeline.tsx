@@ -474,8 +474,11 @@ function Timeline({
     setShowJumpToLatest(!bottom);
     if (bottom) setNewMessageCount(0);
   }, []);
+  const cancelDate = dates.cancel;
   const jumpToLatest = useCallback(() => {
     if (!handle.current || !rows.length) return;
+    // Latest supersedes a pending date jump, silently.
+    cancelDate();
     if (detachedNow.current) {
       attaching.current = true;
       queries.channels.attach?.(channelId);
@@ -492,7 +495,7 @@ function Timeline({
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
     });
-  }, [rows.length, queries, channelId]);
+  }, [rows.length, queries, channelId, cancelDate]);
   const inlineSignal = inlineTarget?.signal;
   const externalId =
     inlineTarget?.messageId ??
@@ -502,10 +505,9 @@ function Timeline({
   const externalSignal = inlineSignal ?? navigation?.signal;
   // A date jump supersedes the visit it started over; a newer visit cancels it.
   const [jumpedOver, setJumpedOver] = useState<AbortSignal>();
-  const cancelJump = dates.cancel;
   useLayoutEffect(() => {
-    if (externalSignal && externalSignal !== jumpedOver) cancelJump();
-  }, [externalSignal, jumpedOver, cancelJump]);
+    if (externalSignal && externalSignal !== jumpedOver) cancelDate();
+  }, [externalSignal, jumpedOver, cancelDate]);
   const startJump = dates.jump;
   const jumpTo = useCallback(
     (from: number) => {
@@ -1101,9 +1103,10 @@ function Timeline({
     if (revealMessageId === sent.current) return;
     sent.current = revealMessageId;
     if (!revealMessageId || !detachedNow.current) return;
+    cancelDate();
     attaching.current = true;
     queries.channels.attach?.(channelId);
-  }, [revealMessageId, queries, channelId]);
+  }, [revealMessageId, queries, channelId, cancelDate]);
   const gesture = (upward = false) => {
     restoredAnchor.current = undefined;
     layoutCorrection.current = false;

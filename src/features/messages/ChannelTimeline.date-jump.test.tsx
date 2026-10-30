@@ -311,6 +311,46 @@ it("jump to latest attaches", () => {
   }
 });
 
+it("jump to latest during a jump does not report a failure", async () => {
+  const { owner, seek, attach, content } = fixture();
+  try {
+    let reject!: (error: unknown) => void;
+    seek.mockReturnValue(new Promise((_, fail) => (reject = fail)));
+    // Reattaching supersedes the store's seek.
+    attach.mockImplementation(() =>
+      reject(new DOMException("Stale history seek", "AbortError")),
+    );
+    render(content({ hasNewer: true }));
+    await choose("Last week");
+    fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+    expect(attach).toHaveBeenCalledWith("alpha");
+    await act(() => new Promise((done) => setTimeout(done, 10)));
+    expect(screen.queryByText("Couldn't jump to that date.")).toBeNull();
+    expect(screen.queryByText("Loading older…")).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("a send during a jump does not report a failure", async () => {
+  const { owner, seek, attach, content } = fixture();
+  try {
+    let reject!: (error: unknown) => void;
+    seek.mockReturnValue(new Promise((_, fail) => (reject = fail)));
+    attach.mockImplementation(() =>
+      reject(new DOMException("Stale history seek", "AbortError")),
+    );
+    const view = render(content({ hasNewer: true }));
+    await choose("Last week");
+    view.rerender(content({ hasNewer: true }, "sent"));
+    expect(attach).toHaveBeenCalledWith("alpha");
+    await act(() => new Promise((done) => setTimeout(done, 10)));
+    expect(screen.queryByText("Couldn't jump to that date.")).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("newer pages do not count as new messages", async () => {
   const { owner, content } = fixture();
   const tick = () => act(() => new Promise((done) => setTimeout(done, 5)));

@@ -28,6 +28,7 @@ async function pull(page, from, to) {
   await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, {
     steps: 8,
   });
+  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
 }
 
 // The fixture groups use custom-emoji icons; serve every one as a plain image.
@@ -67,6 +68,7 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await expect(work).not.toHaveAttribute("data-drop-target");
   await page.keyboard.press("Escape");
   await page.mouse.up();
+  await expect(page.locator("body")).not.toHaveCSS("cursor", "grabbing");
   await expect(page.locator("[data-drop-edge]")).toHaveCount(0);
   await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
   await page.clock.fastForward(51);

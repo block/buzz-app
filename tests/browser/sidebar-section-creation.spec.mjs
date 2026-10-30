@@ -214,22 +214,24 @@ async function startDrag(page, locator, position = { x: 0.5, y: 0.5 }) {
 
 // Only a layout engine can verify that the chip follows the actual hit point,
 // rather than the row's origin or the former upward CSS translation.
-async function expectPreviewBelowPointer(page, pointer) {
+async function expectPreviewCenteredOnPointer(page, pointer) {
   const preview = page.locator("[data-section-creation-preview]");
   await expect(preview).toBeVisible();
-  const [gapX, gapY] = await preview.evaluate((node) =>
-    getComputedStyle(node.parentElement)
-      .translate.split(" ")
-      .map(Number.parseFloat),
-  );
-  expect(gapX).toBeGreaterThan(0);
-  expect(gapY).toBeGreaterThan(0);
+  // WebKit resolves percentage translations at subpixel precision. Compare on
+  // the same whole-pixel grid that dnd-kit uses for its pointer transforms.
   await expect
-    .poll(async () => (await preview.boundingBox())?.x)
-    .toBeCloseTo(pointer.x + gapX, 1);
+    .poll(async () => {
+      const box = await preview.boundingBox();
+      return box && Math.round(box.x + box.width / 2);
+    })
+    .toBe(pointer.x);
   await expect
-    .poll(async () => (await preview.boundingBox())?.y)
-    .toBeCloseTo(pointer.y + gapY, 1);
+    .poll(async () => {
+      const box = await preview.boundingBox();
+      return box && Math.round(box.y + box.height / 2);
+    })
+    .toBe(pointer.y);
+  await expect(page.locator("body")).toHaveCSS("cursor", "grabbing");
 }
 
 async function dropOnCreate(page) {
@@ -240,6 +242,7 @@ async function dropOnCreate(page) {
   await target.hover();
   await expect(page.locator('[class*="channelDragOverlay"]')).toBeHidden();
   await page.mouse.up();
+  await expect(page.locator("body")).not.toHaveCSS("cursor", "grabbing");
 }
 
 async function revealCreate(page) {
@@ -270,7 +273,8 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   const row = page.locator('[data-channel-id="alpha"]');
   await expect(target).toHaveCount(0);
   const pointer = await startDrag(page, row);
-  await expectPreviewBelowPointer(page, pointer);
+  await expectPreviewCenteredOnPointer(page, pointer);
+  await expect(row).toHaveCSS("cursor", "grabbing");
   await page.screenshot({
     path: testInfo.outputPath("channel-drag-preview.png"),
   });
@@ -287,7 +291,8 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   await page.mouse.move(channelsPointer.x, channelsBox.y - 8);
   await page.mouse.move(channelsPointer.x, channelsPointer.y);
   await expect(channels).toHaveAttribute("data-drop-target", "true");
-  await expectPreviewBelowPointer(page, channelsPointer);
+  await expectPreviewCenteredOnPointer(page, channelsPointer);
+  await expect(channels.locator("summary")).toHaveCSS("cursor", "grabbing");
   await expect(target).toHaveCount(0);
   await expect(
     page.locator("[data-create-section-slot] + [data-sidebar-section]"),
@@ -324,6 +329,7 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   ).toHaveAttribute("data-drop-target", "true");
   await page.keyboard.press("Escape");
   await page.mouse.up();
+  await expect(page.locator("body")).not.toHaveCSS("cursor", "grabbing");
   await expect(target).toHaveCount(0);
   // The cue retires before its height finishes collapsing. Wait for the layout
   // boundary before sampling Work's header for the next pointer gesture.
@@ -341,7 +347,7 @@ test("only the top channel-section boundary reveals creation, latches, cancels a
   // Release as soon as the original gap accepts the drop, without waiting for
   // expansion. dnd-kit drops on its rendered target, not the last mouse event.
   const edgePointer = await startDrag(page, row, { x: 0.9, y: 0.8 });
-  await expectPreviewBelowPointer(page, edgePointer);
+  await expectPreviewCenteredOnPointer(page, edgePointer);
   const gap = await page.locator("[data-create-section-trigger]").boundingBox();
   if (!gap) throw new Error("Create boundary missing");
   await page.mouse.move(gap.x + gap.width / 2, gap.y + gap.height / 2);
@@ -431,7 +437,7 @@ test.describe("without saved sections", () => {
       page,
       page.locator('[data-channel-id="alpha"]'),
     );
-    await expectPreviewBelowPointer(page, pointer);
+    await expectPreviewCenteredOnPointer(page, pointer);
     await dropOnCreate(page);
     const dialog = page.getByRole("dialog", { name: "Move to new section" });
     await expect(

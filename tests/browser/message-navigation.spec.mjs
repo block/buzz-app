@@ -471,10 +471,23 @@ test("unknown target fails without channel-head success and retries in the same 
   const visit = await page.evaluate(
     () => window.fixtureNavigation.snapshot().entry.id,
   );
+  // The failure is presented, so status stays failed; the reads prove retry.
+  const targetReads = () =>
+    app.report.queries.filter(({ filter }) =>
+      [filter.ids, filter["#e"]].some((ids) =>
+        ids?.some((id) => id === "e".repeat(64) || id === "f".repeat(64)),
+      ),
+    ).length;
+  const before = targetReads();
+  expect(before).toBeGreaterThan(0);
   await thread(page)
     .getByRole("button", { name: "Try again", exact: true })
     .click();
-  await expect.poll(() => status(page)).toBe("failed");
+  await expect.poll(targetReads).toBeGreaterThan(before);
+  await expect(
+    thread(page).getByText("Selected message unavailable."),
+  ).toBeVisible();
+  expect(await status(page)).toBe("failed");
   expect(
     await page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
   ).toBe(visit);

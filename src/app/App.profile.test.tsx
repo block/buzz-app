@@ -21,6 +21,7 @@ import { metadata, roster } from "../features/relay/testing";
 import type { ComposerInputElement } from "../features/messages/composer-dom";
 import { composerDOMFixture } from "../features/messages/composer-testing";
 import * as communityApi from "../features/communities/api";
+import { communityDestination } from "../features/communities/destination";
 import { sidebarFixtureState } from "./sidebar-plugin.fixture";
 
 composerDOMFixture();
@@ -266,8 +267,10 @@ it("retains an owned page sidebar and its draft through Settings sections and Cl
   });
   fireEvent.change(sidebarDraft, { target: { value: "keep this draft" } });
 
+  if (!services) throw new Error("Missing services");
+  const current = services;
   await act(async () => {
-    void services?.navigation.open({
+    void current.navigation.open({
       version: 1,
       kind: "settings",
       section: "appearance",
@@ -276,9 +279,19 @@ it("retains an owned page sidebar and its draft through Settings sections and Cl
   const settings = await screen.findByRole("dialog", { name: "Settings" });
   expect(sidebarDraft).toBeInTheDocument();
   expect(sidebarDraft).toHaveValue("keep this draft");
-  await user.click(
-    within(settings).getByRole("button", { name: "Notifications" }),
-  );
+  // A section button opens its section with the selected community's scope
+  // (openSettingsSection in App.tsx). Make that same navigation here; clicking
+  // the buttons is covered by the unsent-conversation journey below.
+  const { viewer, selected } = current.communities.snapshot();
+  if (!viewer || !selected) throw new Error("Missing selected community");
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "notifications",
+      scope: { viewer, communityOrigin: communityDestination(selected).url },
+    });
+  });
   await within(settings).findByRole("heading", { name: "Notifications" });
   expect(sidebarDraft).toBeInTheDocument();
   await user.click(
@@ -587,27 +600,12 @@ it("opens profile settings from the account menu header", async () => {
   ).toHaveValue("Community name");
 });
 
-it("reopens profile settings from the same session cache while refreshing", async () => {
-  const user = await setup();
+// Startup has already cached the viewer's profile in this session, so the
+// first open is served from that cache.
+it("opens profile settings from the session cache while refreshing", async () => {
+  await setup();
   if (!services) throw new Error("Missing services");
   const current = services;
-  const openProfile = () =>
-    act(async () => {
-      void current.navigation.open({
-        version: 1,
-        kind: "settings",
-        section: "profile",
-      });
-    });
-  await openProfile();
-  const settings = await screen.findByRole("dialog", { name: "Settings" });
-  await within(settings).findByRole("textbox", { name: "Display name" });
-  await user.click(
-    within(settings).getByRole("button", { name: "Close Settings" }),
-  );
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
-  );
   let release = () => {};
   const read = new Promise<void>((resolve) => {
     release = resolve;
@@ -620,16 +618,22 @@ it("reopens profile settings from the same session cache while refreshing", asyn
       return inspect(...args);
     });
   try {
-    await openProfile();
+    await act(async () => {
+      void current.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "profile",
+      });
+    });
     expect(refresh).toHaveBeenCalledWith(
       origin,
       current.relay.snapshot().session,
     );
-    const reopened = screen.getByRole("dialog", { name: "Settings" });
+    const settings = screen.getByRole("dialog", { name: "Settings" });
     expect(
-      within(reopened).getByRole("textbox", { name: "Display name" }),
+      within(settings).getByRole("textbox", { name: "Display name" }),
     ).toHaveValue("Community name");
-    expect(within(reopened).queryByText(/Loading your profile/)).toBeNull();
+    expect(within(settings).queryByText(/Loading your profile/)).toBeNull();
   } finally {
     await act(async () => release());
   }

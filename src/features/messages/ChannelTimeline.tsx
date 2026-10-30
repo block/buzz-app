@@ -641,6 +641,16 @@ function Timeline({
     // rows the reader leaves. Hold the row they read instead, or correcting
     // for the old one would move the rows in view.
     const read = () => {
+      // A virtualizer correction can scroll before its new height reaches the
+      // DOM or this observer. Reconcile that resize before accepting a new Y.
+      const measuredHeight = handle.current?.scrollSize;
+      // CSSOM can round fractional heights (e.g. 5940.734375 to 5940.73px).
+      if (
+        measuredHeight === undefined ||
+        list.style.height !== height ||
+        Math.abs(measuredHeight - Number.parseFloat(list.style.height)) >= 1
+      )
+        return;
       const position = positionAt(element, anchor.id).anchor;
       if (position) Object.assign(anchor, position);
       logical = logicalTop();

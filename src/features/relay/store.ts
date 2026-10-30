@@ -173,6 +173,10 @@ export function createChannelStore(
         media(url: string, size?: "small"): string | undefined;
         /** `ids` names the channels that lost access when known; omitted means any. */
         revokeAccess(commit: () => void, ids?: readonly string[]): void;
+        /** The viewer's membership of `ids` ended: a newer signed roster or a
+         * complete roster read left them out, or the relay denied them (as
+         * after a confirmed leave). Archiving keeps membership. */
+        membershipEnded?(ids: readonly string[]): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
@@ -717,6 +721,7 @@ export function createChannelStore(
     // A chat still starting is not there to deny yet; only a refused or
     // missing create ends it (see channelWrites.start).
     if (discovery?.isPending(channelId)) return;
+    const member = discovery?.authorized(channelId);
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
     discovery?.deny(channelId);
     allowed?.delete(channelId);
@@ -755,6 +760,7 @@ export function createChannelStore(
       void persistence?.remove(channelId).catch(() => {});
       saveDiscovery();
     }, [channelId]);
+    if (member) transport?.membershipEnded?.([channelId]);
   }
   async function readPage(
     channelId: string,
@@ -1235,6 +1241,7 @@ export function createChannelStore(
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
     const overflowRevision = discovery.overflowRevision;
+    const members = discovery.members();
     if (cached) discovery.restrictToKnown();
     const starting = [...windows.keys()].filter((id) =>
       discovery.isPending(id),
@@ -1305,6 +1312,8 @@ export function createChannelStore(
     if (discovery.accessRevision !== accessRevision)
       transport.revokeAccess(commit);
     else commit();
+    const ended = members.filter((id) => !discovery.authorized(id));
+    if (ended.length) transport.membershipEnded?.(ended);
     // Discovery authorizes disk reuse, not speculative reads of the roster.
     // Network heads belong to explicit demand/intent and retained live catch-up.
     if (prepared && !hydration) {

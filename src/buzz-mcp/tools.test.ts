@@ -1865,7 +1865,7 @@ it("creates an announce channel after adding its template's agents", async () =>
   expect(roster()).toContainEqual(["p", alice, "", "member"]);
   // Now anyone added with no role is a guest, and the answer says so.
   await expect(
-    callTool(client, { channel: id }, "members", { add: [bob] }),
+    callTool(client, { channel: id }, "member_add", { pubkeys: [bob] }),
   ).resolves.toBe(`added ${bob} as guest`);
   expect(roster()).toContainEqual(["p", bob, "", "guest"]);
 });
@@ -1972,10 +1972,12 @@ it("reports a change the community accepted but does not show", async () => {
 
 it("adds members with a role and removes others, reporting each", async () => {
   const { client, published } = relay({ [nested]: "restricted: not an admin" });
-  const answer = await callTool(client, { channel: room }, "members", {
-    add: [bob, nested],
-    remove: [alice],
+  const added = await callTool(client, { channel: room }, "member_add", {
+    pubkeys: [bob, nested],
     role: "admin",
+  });
+  const removed = await callTool(client, { channel: room }, "member_remove", {
+    pubkeys: [alice],
   });
   expect(published).toEqual([
     {
@@ -1996,46 +1998,103 @@ it("adds members with a role and removes others, reporting each", async () => {
       ],
     },
   ]);
-  expect(answer).toBe(
+  expect(added).toBe(
     [
       `added ${bob} as admin`,
       `not added ${nested}: restricted: not an admin`,
-      `removed ${alice} Alice Smith`,
     ].join("\n"),
   );
+  expect(removed).toBe(`removed ${alice} Alice Smith`);
   await expect(
-    callTool(client, { channel: room }, "members", { add: [nested] }),
+    callTool(client, { channel: room }, "member_add", { pubkeys: [nested] }),
   ).rejects.toThrow(`not added ${nested}: restricted: not an admin`);
 });
 
 it("changes each member once, however their key is written", async () => {
   const { client, published } = relay();
-  const answer = await callTool(client, { channel: room }, "members", {
-    add: [bob, bob.toUpperCase()],
-    remove: [alice, alice.toUpperCase()],
-  });
+  expect(
+    await callTool(client, { channel: room }, "member_add", {
+      pubkeys: [bob, bob.toUpperCase()],
+    }),
+  ).toBe(`added ${bob}`);
+  expect(
+    await callTool(client, { channel: room }, "member_remove", {
+      pubkeys: [alice, alice.toUpperCase()],
+    }),
+  ).toBe(`removed ${alice} Alice Smith`);
   expect(published.map((template) => template.kind)).toEqual([9000, 9001]);
-  expect(answer).toBe(`added ${bob}\nremoved ${alice} Alice Smith`);
 });
 
 it("refuses member changes that do not fit, before publishing", async () => {
   const { client, published } = relay();
-  const members = (args: Record<string, unknown>) =>
-    callTool(client, { channel: room }, "members", args);
-  await expect(members({ add: [me] })).rejects.toThrow(
+  const call = (name: string, args: Record<string, unknown>) =>
+    callTool(client, { channel: room }, name, args);
+  await expect(call("member_add", { pubkeys: [me] })).rejects.toThrow(
     "For yourself, use channel_join or channel_leave.",
   );
-  await expect(members({ add: [bob], remove: [bob] })).rejects.toThrow(
-    "Add or remove someone, not both.",
+  await expect(call("member_remove", { pubkeys: [me] })).rejects.toThrow(
+    "For yourself, use channel_join or channel_leave.",
   );
-  await expect(members({ add: ["Bob"] })).rejects.toThrow("Not a pubkey: Bob");
-  await expect(members({ add: [bob], role: "root" })).rejects.toThrow(
-    "role must be one of owner, admin, member, guest, bot.",
+  await expect(call("member_add", { pubkeys: ["Bob"] })).rejects.toThrow(
+    "Not a pubkey: Bob",
   );
-  await expect(members({ remove: [alice], role: "admin" })).rejects.toThrow(
-    "role is for the members you add.",
+  await expect(call("member_add", { pubkeys: [] })).rejects.toThrow(
+    "pubkeys is required.",
   );
+  await expect(
+    call("member_add", { pubkeys: [bob], role: "root" }),
+  ).rejects.toThrow("role must be one of owner, admin, member, guest, bot.");
+  await expect(
+    call("member_remove", { pubkeys: [alice], role: "admin" }),
+  ).rejects.toThrow("role cannot be used with member_remove.");
+  await expect(
+    call("member_add", {
+      pubkeys: Array.from({ length: 51 }, (_, i) =>
+        i.toString(16).padStart(64, "0"),
+      ),
+    }),
+  ).rejects.toThrow("Change at most 50 members at a time.");
   expect(published).toEqual([]);
+});
+
+it("lists a channel's members a page at a time, naming only that page", async () => {
+  const roster = Array.from({ length: 5 }, (_, i) =>
+    i.toString(16).padStart(64, "d"),
+  );
+  const { client } = fake([
+    event({
+      kind: 39002,
+      tags: [
+        ["d", room],
+        ...roster.map((key, i) => ["p", key, "", i === 1 ? "admin" : "member"]),
+      ],
+    }),
+    ...roster.map((key, i) => profile(key, `Person ${i}`)),
+  ]);
+  const list = (args: Record<string, unknown>) =>
+    callTool(client, { channel: room }, "member_list", args);
+  expect(await list({ limit: 2 })).toBe(
+    [
+      `${roster[0]} Person 0`,
+      `${roster[1]} Person 1 (admin)`,
+      `3 more; continue with ${JSON.stringify({ channel: room, limit: 2, offset: 2 })}`,
+    ].join("\n"),
+  );
+  expect(client.query).toHaveBeenLastCalledWith([
+    { kinds: [0], authors: roster.slice(0, 2), limit: 2 },
+  ]);
+  expect(await list({ limit: 2, offset: 4 })).toBe(`${roster[4]} Person 4`);
+  expect(await list({ offset: 5 })).toBe("No members.");
+  // The default page holds the whole roster.
+  expect(await list({})).toBe(
+    roster
+      .map((key, i) => `${key} Person ${i}${i === 1 ? " (admin)" : ""}`)
+      .join("\n"),
+  );
+  for (const offset of [-1, 1.5, "2"])
+    await expect(list({ offset })).rejects.toThrow(
+      "offset must be a whole number, 0 or more.",
+    );
 });
 
 it("defaults to the current channel only when channel is left out", async () => {
@@ -2059,12 +2118,21 @@ it("defaults to the current channel only when channel is left out", async () => 
         ["channel_delete", args, "arguments must be an object."] as const,
     ),
     [
-      "members",
-      { channel: null, remove: [alice] },
+      "member_remove",
+      { channel: null, pubkeys: [alice] },
       "channel must be a channel ID.",
     ],
-    ["members", { remove: [alice, 123] }, "remove must be a list of pubkeys."],
-    ["members", { add: alice }, "add must be a list of pubkeys."],
+    [
+      "member_remove",
+      { pubkeys: [alice, 123] },
+      "pubkeys must be a list of pubkeys.",
+    ],
+    ["member_add", { pubkeys: alice }, "pubkeys must be a list of pubkeys."],
+    [
+      "member_list",
+      { channel_id: room },
+      "channel_id cannot be used with member_list.",
+    ],
     [
       "channel_create",
       { name: "x", visibility: "open", about: 5 },
@@ -2307,6 +2375,20 @@ it("reads users by id without the name search", async () => {
     `${bob} Bob`,
   );
   expect(client.searchProfiles).not.toHaveBeenCalled();
+});
+
+it("refuses ids with q, and more than 100 ids", async () => {
+  const { client } = fake(community);
+  await expect(
+    callTool(client, {}, "users", { ids: [bob], q: "alice" }),
+  ).rejects.toThrow("Give ids or q, not both.");
+  const ids = Array.from({ length: 101 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  await expect(callTool(client, {}, "users", { ids })).rejects.toThrow(
+    "Give at most 100 ids.",
+  );
+  expect(client.query).not.toHaveBeenCalled();
 });
 
 const note = (

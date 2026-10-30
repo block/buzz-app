@@ -1798,6 +1798,8 @@ or white 10%, in the same direction as the chips. Hovering the add control lays
 the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
 they keep the standard ink and overlay of the panel they sit on.
+Counted reaction Buttons retain the small control's 32px minimum target with
+4px horizontal insets, keeping neighboring emoji close without shrinking targets.
 
 When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in

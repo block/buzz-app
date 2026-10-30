@@ -111,6 +111,11 @@
     min-height: var(--size-control-sm);
     padding: var(--space-1h) var(--space-4);
   }
+  /* Counted emoji use compact insets while retaining the icon-sized target. */
+  .buzz-button[data-size="sm"][data-reaction]:not([data-icon-variant]) {
+    min-width: var(--size-control-sm);
+    padding-inline: var(--space-1);
+  }
   .buzz-button[data-size="sm"] .buzz-button-label > svg,
   .buzz-button[data-size="sm"] .buzz-button-spinner {
     width: var(--space-4);

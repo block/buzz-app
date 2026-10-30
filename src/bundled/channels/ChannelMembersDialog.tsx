@@ -30,7 +30,6 @@ import { profileTarget } from "../../features/profiles/target";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { personKey, rankPeople } from "../../features/search/people-rank";
 import {
-  noSearchUsage,
   pickerText,
   readSearchUsage,
   recordChoice,
@@ -39,7 +38,6 @@ import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
 import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
-import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
   authorizeMemberChange,
   type MemberChange,
@@ -99,11 +97,6 @@ import {
   channelIcon,
   channelText,
 } from "../../features/channels/channel-icon";
-
-/** How a name matches typed text: the shared person name rule, the same as
- * mentions and New message. */
-const typedMatch = (name: string, needle: string) =>
-  needle ? matchPerson(name, needle) : undefined;
 
 const INVITATION_GROUP_SIZE = 4;
 
@@ -722,19 +715,17 @@ export function ChannelMembersDialog({
   const text = query.trim();
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or explicit refresh rereads stored choice/visit scores.
   const usage = useMemo(
-    () => (solo ? noSearchUsage : readSearchUsage(session.scope)),
-    [session.scope, solo, text, refresh],
+    () => readSearchUsage(session.scope),
+    [session.scope, text, refresh],
   );
   const [invitationPage, setInvitationPage] = useState({
     text,
-    size: MEMBER_SEARCH_PAGE_SIZE,
     revealRelay: false,
     groupSizes: {} as Record<string, number>,
   });
   if (invitationPage.text !== text)
     setInvitationPage({
       text,
-      size: MEMBER_SEARCH_PAGE_SIZE,
       revealRelay: false,
       groupSizes: {},
     });
@@ -930,12 +921,10 @@ export function ChannelMembersDialog({
   );
   // Default suggestions use this client's agents; searches also include the
   // viewer's non-client inventory after people and other community agents.
-  if (text || (!solo && canAdd))
-    for (const agent of solo
-      ? canAddSoloAgents
-        ? agentChoices.selectable
-        : []
-      : agentChoices.selectable.filter((agent) => !!text || agent.managed)) {
+  if (text || canAdd)
+    for (const agent of agentChoices.selectable.filter(
+      (agent) => (!solo || canAddSoloAgents) && (!!text || agent.managed),
+    )) {
       if (
         !text ||
         addable(
@@ -996,27 +985,12 @@ export function ChannelMembersDialog({
     pickerText("channel-members", needle),
     new Set(available.map((person) => personKey(person.pubkey))),
   );
-  // Solo retains its existing combined, name-ranked page.
-  if (solo)
-    available.sort(
-      (a, b) =>
-        (typedMatch(label(a.pubkey, a.name), needle)?.tier ?? 4) -
-        (typedMatch(label(b.pubkey, b.name), needle)?.tier ?? 4),
-    );
-  // Known agents supplement the server page, not its rendering bound. Keep all
-  // matches reachable through the existing More action without mounting them all.
-  const invitationSize =
-    invitationPage.text === text
-      ? invitationPage.size
-      : MEMBER_SEARCH_PAGE_SIZE;
-  const moreCandidates = solo && available.length > invitationSize;
   const offering =
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
     (!!text ||
-      (!solo &&
-        members.size === 1 &&
+      (members.size === 1 &&
         members.has(session.viewer ?? "") &&
         available.length > 0));
   const invitationGroups = [
@@ -1026,7 +1000,7 @@ export function ChannelMembersDialog({
     "Your other agents",
   ].map((name, index) => {
     const people =
-      !solo && roleFilter === "All"
+      roleFilter === "All"
         ? available.filter((person) => candidateGroup(person) === index)
         : [];
     const ranked = rankPeople(
@@ -1078,17 +1052,13 @@ export function ChannelMembersDialog({
   });
   const visibleCandidates = !offering
     ? []
-    : solo
-      ? roleFilter === "All"
-        ? available.slice(0, invitationSize)
-        : []
-      : invitationGroups.flatMap((group) => group.people);
+    : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&
     !canAddSoloAgents &&
     [...candidates.values()].some(agentCandidate);
-  const shareChannels = offering && solo ? share.channels : [];
+  const shareChannels = offering && solo && text ? share.channels : [];
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
@@ -1153,7 +1123,6 @@ export function ChannelMembersDialog({
     setRefresh((value) => value + 1);
     setInvitationPage({
       text,
-      size: MEMBER_SEARCH_PAGE_SIZE,
       revealRelay: false,
       groupSizes: {},
     });
@@ -1236,7 +1205,7 @@ export function ChannelMembersDialog({
           );
         else await session.memberAdditions.add(channelId, key);
         if (!signal.aborted) {
-          if (!solo) recordChoice(session.scope, typed, personKey(key));
+          recordChoice(session.scope, typed, personKey(key));
           if (direct) {
             setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
             setQuery("");
@@ -1263,7 +1232,7 @@ export function ChannelMembersDialog({
         if (direct) pending.delete(key);
       }
     },
-    [session, channelId, canAddSoloAgents, place, solo],
+    [session, channelId, canAddSoloAgents, place],
   );
 
   const addTeam = useCallback(
@@ -1911,9 +1880,7 @@ export function ChannelMembersDialog({
                 aria-label={`Not in this ${place}`}
                 {...highlight.listProps}
               >
-                <div
-                  className={`${solo ? styles.groupHeading : "pt-2"} px-control-inset`}
-                >
+                <div className="pt-2 px-control-inset">
                   <InlineHeader title={`Not in this ${place}`} />
                 </div>
                 {teams.length > 0 && (
@@ -1932,66 +1899,54 @@ export function ChannelMembersDialog({
                     ))}
                   </ul>
                 )}
-                {(solo
-                  ? [
-                      {
-                        name: "",
-                        people: visibleCandidates,
-                        more: false,
-                        next: undefined,
-                      },
-                    ]
-                  : invitationGroups
-                ).map((group) =>
+                {invitationGroups.map((group) =>
                   group.people.length > 0 ? (
                     <section
                       key={group.name}
                       aria-label={
                         group.name === "People"
                           ? `People not in this ${place}`
-                          : group.name || undefined
+                          : group.name
                       }
-                      className={group.name ? "pb-4" : undefined}
+                      className="pb-4"
                     >
-                      {group.name && (
-                        <h4
-                          className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
-                        >
-                          {group.name}
-                          {group.name === "Your agents" && (
-                            <AgentCommunityScope
-                              community={community}
-                              scope="Agents"
+                      <h4
+                        className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
+                      >
+                        {group.name}
+                        {group.name === "Your agents" && (
+                          <AgentCommunityScope
+                            community={community}
+                            scope="Agents"
+                          />
+                        )}
+                        {group.name === "Your other agents" && (
+                          <PopoverRoot>
+                            <PopoverTrigger
+                              openOnHover="preview"
+                              render={
+                                <IconButton
+                                  aria-label="About your other agents"
+                                  variant="ghost"
+                                  size="xs"
+                                  icon={
+                                    <InfoIcon size={16} aria-hidden="true" />
+                                  }
+                                />
+                              }
                             />
-                          )}
-                          {group.name === "Your other agents" && (
-                            <PopoverRoot>
-                              <PopoverTrigger
-                                openOnHover="preview"
-                                render={
-                                  <IconButton
-                                    aria-label="About your other agents"
-                                    variant="ghost"
-                                    size="xs"
-                                    icon={
-                                      <InfoIcon size={16} aria-hidden="true" />
-                                    }
-                                  />
-                                }
-                              />
-                              <PopoverPopup
-                                side="top"
-                                aria-label="About your other agents"
-                              >
-                                <p className="m-0 text-body-sm text-subtle">
-                                  Your agents from other devices or earlier
-                                  setups.
-                                </p>
-                              </PopoverPopup>
-                            </PopoverRoot>
-                          )}
-                        </h4>
-                      )}
+                            <PopoverPopup
+                              side="top"
+                              aria-label="About your other agents"
+                            >
+                              <p className="m-0 text-body-sm text-subtle">
+                                Your agents from other devices or earlier
+                                setups.
+                              </p>
+                            </PopoverPopup>
+                          </PopoverRoot>
+                        )}
+                      </h4>
                       <ul>
                         {group.people.map((person) =>
                           row(
@@ -2072,27 +2027,21 @@ export function ChannelMembersDialog({
                     {search.error}
                   </p>
                 )}
-                {(moreCandidates || search.more) && (
-                  <div
-                    className={`flex justify-center${solo ? "" : " border-t border-standard pt-4"}`}
-                  >
+                {search.more && (
+                  <div className="flex justify-center border-t border-standard pt-4">
                     <Button
-                      variant={solo ? "outline" : "subtle"}
+                      variant="subtle"
                       size="sm"
                       onClick={() => {
-                        setInvitationPage((old) =>
-                          solo
-                            ? {
-                                ...old,
-                                size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                              }
-                            : { ...old, revealRelay: true },
-                        );
-                        if (!moreCandidates) search.next();
+                        setInvitationPage((old) => ({
+                          ...old,
+                          revealRelay: true,
+                        }));
+                        search.next();
                       }}
                       disabled={search.loading}
                     >
-                      {solo ? "Show more results" : "Find more matches"}
+                      Find more matches
                     </Button>
                   </div>
                 )}

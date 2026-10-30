@@ -881,7 +881,7 @@ It is titled **Channel access** in channels and **Chat access** in a Solo chat (
 agents there but cannot change roles.
 One search field, with an accessible name but no visible label, filters current
 members and lists people, agents and Teams to invite under **Not in this channel**.
-With an empty query, ordinary channels show invitations only when the viewer is
+With an empty query, channels and Solo chats show invitations only when the viewer is
 the sole member; otherwise they show just the roster. Searching offers invitations
 with the existing grouping, ranking and expansion behavior.
 Each result's **Add** button, or Enter on the highlighted result, adds immediately.
@@ -904,11 +904,14 @@ preserve the last verified groups on failure. Visible member names request foreg
 priority; avatars, presence and manager enrichment never gate the initial list.
 Search filters
 each group, omits empty elevated and agent groups, and preserves full group counts.
-Non-member search ranking is unchanged. Relay matches followed by matching known
-agents share a 30-row initial invitation page after member/archive exclusion and
-identity deduplication. **Show more results** reveals 30 more already-loaded matches
-before requesting another relay page. Query changes and explicit refresh reset the
-visible page; no matches are silently discarded. Only displayed invitation agents
+Channels and Solo chats share the **Your agents**, **People**, **Other agents** and
+**Your other agents** invitation groups, with empty groups omitted. The idle list
+offers this client's agents; search also includes saved agents. Each group uses
+shared name, relationship and usage ranking, starts with four rows, and has its
+own **Show more**. **Find more matches** requests another directory page and reveals
+its matches. Query changes and explicit refresh reset expansion. Solo retains its
+direct-agent and person-sharing rules, so ineligible agents never enter its groups.
+Only displayed invitation agents
 join ownership observation, so the first character cannot mount/enrich the entire
 known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
@@ -954,11 +957,13 @@ Profile navigation stays available during an invitation; a missing profile panel
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
 one scrolling viewport, with People, Agents and Not in this channel
-separated inside it without extra boxes or fills. Every group heading sticks to the
-top of this viewport while scrolling within its own section, with an opaque matching
-surface so rows do not show through. There is no outer top padding to scroll away:
-when a group starts the list, its heading is pinned from the first scroll pixel;
-the heading itself owns the text's top inset. A compact ghost refresh button sits in the
+separated inside it without extra boxes or fills. In roomy result viewports, group
+headings stick to the top while scrolling within their sections, with an opaque
+matching surface so rows do not show through. When the results have 8rem or less
+of content height, headings scroll with their sections so wrapped labels cannot
+cover keyboard-highlighted actions. Headings own the text's top inset, without
+outer top padding to scroll away; sticky headings start pinned from the first
+scroll pixel when their group starts the list. A compact ghost refresh button sits in the
 fixed dialog header immediately left of Close, matching its button and 16px icon size;
 its tooltip and accessible name are **Refresh member data**. It refreshes this
 dialog's member-related data, not the whole application. It is the single retry
@@ -975,8 +980,8 @@ while the initial list spinner is showing so only one spinner is active. It expo
 and refresh during membership writes are blocked. Optional-name loading/failure does
 not disable Add once the roster is verified. Failed invitations keep their explicit
 Retry; data refresh never resubmits an invitation, role change or removal.
-Supporting buttons use outline emphasis; **Show more results** uses the small size
-and is horizontally centered beneath the search results.
+**Show more** uses subtle emphasis within its invitation group; **Find more
+matches** is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
 The search has a role dropdown on its right when at least two roster groups are
 present. It defaults to All and offers only populated People and Agents groups, with whole-roster counts (including the All total), using the shared

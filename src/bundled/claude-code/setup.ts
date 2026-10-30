@@ -520,6 +520,7 @@ export class ClaudeSetup {
       cwd: "~",
       systemPrompt: prompt.system,
       discovery: true,
+      ...(prompt.outputSchema ? { outputSchema: prompt.outputSchema } : {}),
       ...(model.id ? { model: model.id } : {}),
     });
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
@@ -531,7 +532,10 @@ export class ClaudeSetup {
       timeout.throwIfAborted();
       if (!result.ok)
         throw new Error(result.error ?? "The security model did not complete");
-      return { text: worker.result, model: { id: worker.model ?? model.id } };
+      return {
+        text: prompt.outputSchema ? worker.structuredResult : worker.result,
+        model: { id: worker.model ?? model.id },
+      };
     } finally {
       timeout.removeEventListener("abort", cancel);
       await worker.kill();

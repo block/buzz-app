@@ -37,6 +37,8 @@ export type ClaudeLaunch = Readonly<{
   directories?: readonly string[];
   /** Read-only catalog probe, without workspace customizations or tools. */
   discovery?: boolean;
+  /** Native validation for a temporary review's structured result. */
+  outputSchema?: Readonly<Record<string, unknown>>;
   /** Appended to Claude's own system prompt. */
   systemPrompt: string;
   model?: string;
@@ -120,8 +122,14 @@ export class ClaudeProcess {
   private readonly protectedEvents: Message[] = [];
   private resuming = false;
   private reviewText = "";
+  private reviewOutput: unknown;
   get result() {
     return this.reviewText;
+  }
+  get structuredResult() {
+    if (this.reviewOutput === undefined)
+      throw new Error("The security model returned no structured result");
+    return JSON.stringify(this.reviewOutput);
   }
   protectionContext() {
     return structuredClone({
@@ -251,6 +259,9 @@ export class ClaudeProcess {
           folder,
         ]),
         ...(launch.model ? ["--model", launch.model] : []),
+        ...(launch.outputSchema
+          ? ["--json-schema", JSON.stringify(launch.outputSchema)]
+          : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
@@ -647,8 +658,10 @@ export class ClaudeProcess {
     // Keep native protocol evidence alongside persisted history, without replacing it.
     if (this.protection && ["user", "assistant"].includes(String(message.type)))
       this.protectedEvents.push(structuredClone(message));
-    if (message.type === "result" && typeof message.result === "string")
-      this.reviewText = message.result;
+    if (message.type === "result") {
+      this.reviewOutput = message.structured_output;
+      if (typeof message.result === "string") this.reviewText = message.result;
+    }
     if (typeof message.session_id === "string" && message.session_id)
       this.sessionId = message.session_id;
     if (message.type === "system" && message.subtype === "init") {

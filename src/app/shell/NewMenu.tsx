@@ -1,5 +1,7 @@
+import { createPortal } from "react-dom";
 import { useRef, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
+import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
 import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
@@ -25,6 +27,9 @@ type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
+  triggerContainer?: HTMLElement | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 export function NewMenu(props: Props) {
@@ -45,6 +50,9 @@ function ReadyNewMenu({
   agents,
   session,
   available,
+  triggerContainer,
+  open,
+  onOpenChange,
 }: Props & { session: RelaySession; available: boolean }) {
   useSyncExternalStore(
     session.soloPreferences.subscribe,
@@ -52,28 +60,34 @@ function ReadyNewMenu({
   );
   const preferences = useSidebarPreferences(session.sidebarPreferences);
   const [creatingChannel, setCreatingChannel] = useState(false);
+  const [creatingSection, setCreatingSection] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const scope = splitPartition(session.scope);
   const current = () => relay.snapshot().session === session;
+  const menuTrigger = (
+    <MenuTrigger
+      render={
+        <IconButton
+          hint="familiar"
+          ref={trigger}
+          disabled={!available}
+          aria-label="New"
+          title="New"
+          variant="inset"
+          shape="round"
+          size="sm"
+          icon={<PlusIcon className={styles.createIcon} size={16} />}
+        />
+      }
+    />
+  );
   return (
     <>
-      <MenuRoot>
-        <MenuTrigger
-          render={
-            <IconButton
-              hint="familiar"
-              ref={trigger}
-              disabled={!available}
-              aria-label="New"
-              title="New"
-              variant="chrome"
-              shape="round"
-              size="sm"
-              icon={<PlusIcon className={styles.createIcon} size={18} />}
-            />
-          }
-        />
+      <MenuRoot open={open} onOpenChange={onOpenChange}>
+        {triggerContainer === undefined
+          ? menuTrigger
+          : triggerContainer && createPortal(menuTrigger, triggerContainer)}
         <MenuPopup>
           <MenuItem
             onClick={() => {
@@ -115,6 +129,14 @@ function ReadyNewMenu({
           >
             New channel
           </MenuItem>
+          <MenuItem
+            disabled={!preferences.sectionCreationWritable}
+            onClick={() => {
+              if (current()) setCreatingSection(true);
+            }}
+          >
+            New section
+          </MenuItem>
         </MenuPopup>
       </MenuRoot>
       <CreateChannelDialog
@@ -131,6 +153,25 @@ function ReadyNewMenu({
           revealCreatedChannel(relay, session, navigator, input, channelId);
         }}
       />
+      {creatingSection && (
+        <CreateSidebarSection
+          writable={preferences.sectionCreationWritable}
+          refreshing={preferences.status === "loading"}
+          retry={preferences.reload}
+          finalFocus={trigger}
+          close={() => setCreatingSection(false)}
+          create={async (section) => {
+            if (
+              !current() ||
+              !session.sidebarPreferences.sectionCreationWritable
+            )
+              return false;
+            await preferences.createSection(section);
+            if (current()) setCreatingSection(false);
+            return true;
+          }}
+        />
+      )}
       {creatingProject && (
         <NewWorkspace
           session={session}

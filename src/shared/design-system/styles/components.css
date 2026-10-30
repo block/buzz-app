@@ -591,6 +591,9 @@
     background: var(--affordance-danger-pressed);
     color: var(--text-danger);
   }
+  .buzz-button[data-icon-variant="inset"] {
+    --interaction-fill: var(--surface-inset);
+  }
   .buzz-button[data-icon-variant="chrome"] {
     background: transparent;
   }
@@ -1099,6 +1102,14 @@
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-pill);
     color: var(--text-subtle);
+  }
+  .buzz-tabs:is(
+      [data-variant="segmented"],
+      [data-variant="segmented-icons"]
+    ):where([data-size="sm"])
+    .buzz-tabs-tab {
+    min-height: calc(var(--size-control-sm) - 2 * var(--space-1));
+    padding-block: 0;
   }
   .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
     .buzz-tabs-tab:hover:not([data-selected], [data-disabled]) {

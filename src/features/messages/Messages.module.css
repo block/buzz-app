@@ -2925,13 +2925,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   .message[data-actions-revealed]
     > .messageBody
     > .messageContent
-    .messageBubble:not([data-emoji-only]) {
+    .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+      :has(> .text > table:only-child)
+    ) {
     background: var(--surface-message-hover);
   }
   .message[data-own][data-actions-revealed]
     > .messageBody
     > .messageContent
-    .messageBubble:not([data-emoji-only]) {
+    .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+      :has(> .text > table:only-child)
+    ) {
     background: var(--surface-message-own-hover);
   }
 }
@@ -3509,10 +3513,6 @@ html[data-keyboard-navigation]
      sit on the panel and drop your bubble's pairing. */
   --reaction-surface: initial;
   --reaction-ink: initial;
-}
-.messageBubble[data-diff-only]::after,
-.messageBubble:has(> .text > table:only-child)::after {
-  display: none;
 }
 .workflowAttribution {
   display: inline-flex;

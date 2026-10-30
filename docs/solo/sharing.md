@@ -100,10 +100,12 @@ Sharing gives access, not attention. Someone else's chat never lists in the
 viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
 just because the viewer can open it; they reach it from the card, a link or
 search. Only a tag pulls them in: it alerts like any mention and adds one Inbox
-row per chat, however many tags it holds. While that chat has an unread tag, or
-the viewer has it open, it also shows as a row under Inbox in the sidebar; once
-read and left, the row goes until the next tag. Replies and ordinary messages
-there never count. See [Relevant replies](../unread.md#relevant-replies).
+row per chat, however many tags it holds. While that chat has an unread tag, it
+also shows as a row under Inbox in the sidebar; opened from there, it stays until
+the viewer reads it and moves on, and returns with the next tag. Opening a shared
+chat from its card adds no row: it opens beside the current conversation, which
+stays selected. Replies, ordinary messages and marking a message unread there
+never add a row. See [Relevant replies](../unread.md#relevant-replies).
 
 ## Explicit conversion, separate from Share
 

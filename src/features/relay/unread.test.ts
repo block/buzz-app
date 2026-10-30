@@ -4048,6 +4048,16 @@ it("someone else's Solo chat earns attention only from mentions", async () => {
   expect(unread.inbox().items).toEqual([]);
   expect(unread.activity("chat").items).toEqual([]);
 
+  // Explicit unread intent still applies in someone else's chat.
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "chat",
+    messageId: update.id,
+  });
+  expect(unread.attention("chat", update.id).unread).toBe(true);
+  await unread.markMessageRead("chat", update.id);
+  expect(unread.attention("chat", update.id).unread).toBe(false);
+
   h.emit([ping]);
   expect(
     unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
@@ -4074,6 +4084,7 @@ it("someone else's Solo chat earns attention only from mentions", async () => {
       id: "chat:chat",
       messageIds: [ping.id, again.id],
       preview: "@you and this?",
+      target: { kind: "thread", channelId: "chat", rootId: update.id },
       unreadCount: 2,
     }),
   ]);
@@ -4084,9 +4095,19 @@ it("someone else's Solo chat earns attention only from mentions", async () => {
     ["p", h.viewer.pubkey],
   ]);
   h.emit([elsewhere]);
+  // A newer top-level tag moves the row's target to it, not the older thread.
+  const top = message(h.alice, "chat", "@you last one", 27, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([top]);
   const [item] = unread.inbox().items;
   assert(item);
-  expect(item.unreadCount).toBe(3);
+  expect(item.unreadCount).toBe(4);
+  expect(item.target).toEqual({
+    kind: "message",
+    channelId: "chat",
+    messageId: top.id,
+  });
   for (const step of item.readThrough)
     await unread.markThrough(step.target, step.messageId);
   expect(unread.inbox().items).toEqual([

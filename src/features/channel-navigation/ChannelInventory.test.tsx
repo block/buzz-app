@@ -1854,7 +1854,7 @@ it.each(["star", "section", "unfiled"])(
   },
 );
 
-it("opening a shared chat selects Solo without listing it", async () => {
+it("opening a shared chat keeps the current filter and lists nothing", async () => {
   const h = fixture();
   h.publish("beta", {
     channelType: "solo",
@@ -1863,9 +1863,9 @@ it("opening a shared chat selects Solo without listing it", async () => {
   });
   const view = render(h.view("alpha"));
   await screen.findByRole("button", { name: "gamma" });
-  await userEvent.click(screen.getByRole("tab", { name: "Solo" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Team" }));
   view.rerender(h.view("beta"));
-  expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
+  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
     "aria-selected",
     "true",
   );

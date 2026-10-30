@@ -1063,15 +1063,17 @@ export function createUnread({
               (entry) => entry.rootId !== undefined,
             );
             const lastReply = replies[replies.length - 1];
+            // A shared chat's row points at its newest tag, which it previews.
+            const pointer = guest ? latest : lastReply;
             const target: ReadTarget = dm
               ? { kind: "channel", channelId: channel.id }
-              : lastReply?.rootId &&
-                  events.has(lastReply.rootId) &&
-                  !tombstones.has(lastReply.rootId)
+              : pointer?.rootId &&
+                  events.has(pointer.rootId) &&
+                  !tombstones.has(pointer.rootId)
                 ? {
                     kind: "thread",
                     channelId: channel.id,
-                    rootId: lastReply.rootId,
+                    rootId: pointer.rootId,
                   }
                 : {
                     kind: "message",

@@ -9,6 +9,7 @@ import type { InboxItem } from "../../features/relay/inbox";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { SharedChatRows } from "./SharedChatRows";
+import { updateArchive } from "./archive";
 
 afterEach(cleanup);
 
@@ -40,9 +41,11 @@ function fixture() {
       solo("mine", "My own chat", viewer),
     ],
   };
-  let items: Partial<InboxItem>[] = [];
+  let items: InboxItem[] = [];
+  let sequence = 0;
   let inbox = { status: "ready", items, freshness: "observed" };
   const session = {
+    scope,
     channels: { list: () => list, subscribeList: subscribe, ensureList() {} },
     unread: { inbox: () => inbox, subscribeInbox: subscribe },
   } as unknown as RelaySession;
@@ -72,18 +75,29 @@ function fixture() {
   return {
     view: <SharedChatRows relay={relay} navigator={navigator} />,
     open,
-    tag(channelId: string, unreadCount: number) {
+    tag(channelId: string, unreadCount: number, manual = false) {
+      const id = (++sequence).toString(16).padStart(64, "0");
+      const messages = [{ id, createdAt: 2e9 + sequence, mentioned: true }];
       items = [
         ...items.filter((item) => item.channelId !== channelId),
         {
           id: `${channelId}:${channelId}`,
           channelId,
+          target: { kind: "message", channelId, messageId: id },
+          messageIds: messages.map((message) => message.id),
+          messages,
+          thread: false,
           unreadCount,
-          manual: false,
-        },
+          manual,
+        } as unknown as InboxItem,
       ];
       inbox = { ...inbox, items };
       notify();
+    },
+    archive(channelId: string) {
+      const item = items.find((item) => item.channelId === channelId);
+      if (!item) throw new Error(`No inbox item for ${channelId}`);
+      act(() => updateArchive(scope, item, true));
     },
     go(channelId?: string) {
       target = channelId
@@ -107,8 +121,10 @@ it("pulls in someone else's chat only while it has an unread tag or stays open a
   render(h.view);
   expect(names()).toEqual([]);
 
-  // A tag in the viewer's own chat or a quiet share never adds a row.
+  // A tag in the viewer's own chat, a quiet share, or marking an untagged
+  // message unread never adds a row.
   h.tag("mine", 1);
+  h.tag("quiet", 0, true);
   expect(names()).toEqual([]);
 
   h.tag("shared", 2);
@@ -135,7 +151,12 @@ it("pulls in someone else's chat only while it has an unread tag or stays open a
   h.go("quiet");
   expect(names()).toEqual([]);
 
-  // The next tag brings it back.
+  // The next tag brings it back; archiving it in Inbox clears it unopened,
+  // until a newer tag.
   h.tag("shared", 1);
+  expect(names()).toEqual(["Alex's API question"]);
+  h.archive("shared");
+  expect(names()).toEqual([]);
+  h.tag("shared", 2);
   expect(names()).toEqual(["Alex's API question"]);
 });

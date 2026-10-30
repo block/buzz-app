@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 
 pub(crate) const JEV_MODEL: &str = crate::jev::MODEL;
 const TYPESAFE: &str = "https://api.typesafe.ai/v1/systemone";
-const BUILDERLAB_PATH: &str = "/api/goose/v3/builderlab/decisions";
+const BUILDERLAB_ROUTE: &str = "v3/builderlab/decisions";
 const INPUT_LIMIT: usize = 128 * 1024;
 const RESPONSE_LIMIT: usize = 64 * 1024;
 const MAX_QUESTIONS: usize = 32;
@@ -132,6 +132,14 @@ pub(crate) struct Endpoints {
     pub(crate) builderlab: Option<String>,
 }
 
+/// The decisions route under the build's Builderlab API, whose path keeps any
+/// deployment prefix, as sign-in does.
+fn builderlab_endpoint(origin: &str, api_base_path: &str) -> Option<String> {
+    Some(origin)
+        .filter(|origin| !origin.is_empty())
+        .map(|origin| format!("{origin}{api_base_path}{BUILDERLAB_ROUTE}"))
+}
+
 pub(crate) struct DecisionsHost {
     endpoints: Endpoints,
     slots: Arc<Semaphore>,
@@ -143,9 +151,10 @@ impl DecisionsHost {
         Self::with(
             Endpoints {
                 typesafe: TYPESAFE.into(),
-                builderlab: Some(buzzodz_plugins::BUILDERLAB_ORIGIN)
-                    .filter(|origin| !origin.is_empty())
-                    .map(|origin| format!("{origin}{BUILDERLAB_PATH}")),
+                builderlab: builderlab_endpoint(
+                    buzzodz_plugins::BUILDERLAB_ORIGIN,
+                    buzzodz_plugins::BUILDERLAB_API_BASE_PATH,
+                ),
             },
             TIMEOUT,
         )

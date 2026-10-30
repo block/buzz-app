@@ -99,6 +99,8 @@ export type ChannelStoreOptions = {
   maxHeads?: number;
   maxHistoryRows?: number;
   maxHistoryBytes?: number;
+  /** Public directory budget in pages of 500; at most the default 20,000. */
+  maxPublicDirectory?: number;
   now?: () => number;
   local?: Pick<Outbox, "snapshot" | "subscribe">;
   /** The session's send clock; rendered windows raise its channel watermarks. */
@@ -206,6 +208,7 @@ export function createChannelStore(
     maxHeads = 64,
     maxHistoryRows = 2400,
     maxHistoryBytes = 8 * 1024 * 1024,
+    maxPublicDirectory = PUBLIC_CHANNEL_DIRECTORY,
     now = Date.now,
     local,
     clock = new MessageClock(),
@@ -214,6 +217,13 @@ export function createChannelStore(
   } = options;
   if (!Number.isInteger(maxWindows) || maxWindows < 1)
     throw new Error("Invalid window capacity");
+  if (
+    !Number.isInteger(maxPublicDirectory) ||
+    maxPublicDirectory % PUBLIC_CHANNEL_PAGE !== 0 ||
+    maxPublicDirectory < PUBLIC_CHANNEL_PAGE ||
+    maxPublicDirectory > PUBLIC_CHANNEL_DIRECTORY
+  )
+    throw new Error("Invalid public directory capacity");
   let disposed = false,
     epoch = 0,
     listBusy = false;
@@ -1956,7 +1966,7 @@ export function createChannelStore(
         ),
       );
       if (page.length < PUBLIC_CHANNEL_PAGE) return { partial: false };
-      if (events.length >= PUBLIC_CHANNEL_DIRECTORY) return { partial: true };
+      if (events.length >= maxPublicDirectory) return { partial: true };
       landed();
       // Relay query order is time descending, then ID ascending (also at ties).
       const last = [...page]
@@ -2051,7 +2061,7 @@ export function createChannelStore(
                 ...events,
               ]).values(),
             ];
-            if (result.partial || merged.length > PUBLIC_CHANNEL_DIRECTORY) {
+            if (result.partial || merged.length > maxPublicDirectory) {
               // An incomplete delta cannot advance a complete directory.
               entry.incremental = false;
               entry.fullAt = started;

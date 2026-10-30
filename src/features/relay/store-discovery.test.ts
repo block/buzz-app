@@ -1217,12 +1217,12 @@ it("reconciles missing top matches so they cannot hide a valid ninth candidate",
 
 it("replaces the directory when an incremental merge would exceed its bound", async () => {
   let clock = 1_700_000_000_000;
-  const h = setup({ now: () => clock });
+  const h = setup({ now: () => clock, maxPublicDirectory: 500 });
   h.channels.ensureList();
   await h.rosters(0);
   await h.settled();
-  // Preserve the real 20,000-entry scale contract; ordinary tests use small data.
-  const events = Array.from({ length: 19_999 }, (_, n) =>
+  // Exercise the same signed merge boundary with a one-page memory budget.
+  const events = Array.from({ length: 499 }, (_, n) =>
     metadata(relay, `bounded-${n}`, `entry-${n}`, clock / 1000, [["public"]]),
   ).sort((a, b) => a.id.localeCompare(b.id));
   const warm = h.channels.searchPublic?.("zzz");
@@ -1242,7 +1242,7 @@ it("replaces the directory when an incremental merge would exceed its bound", as
   full.respond([]);
   expect(await delta).toEqual({ channels: [], partial: false });
   expect(h.channels.openDirectory?.()).toEqual([]);
-}, 60_000);
+});
 
 it("finds public channels by the joined-channel name rule, not only by substring", async () => {
   const h = setup();

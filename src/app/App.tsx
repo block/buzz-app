@@ -63,6 +63,7 @@ import {
   SignInEnding,
 } from "../features/federated-identity/LaunchSignIn";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
+import { AgentCompletionNotifications } from "../features/notifications/AgentCompletionNotifications";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -524,6 +525,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
       <SignInEnding identity={services.federatedIdentity} />
+      <AgentCompletionNotifications services={services} />
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell

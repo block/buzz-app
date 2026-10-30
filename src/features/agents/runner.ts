@@ -33,6 +33,7 @@ import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
 import { LIVE_REPLAY_LIMIT } from "../relay/live";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   addressedTo,
   CHAT_KINDS,
@@ -478,6 +479,11 @@ export type RunnerHost = {
     | undefined;
   /** This device's view of each agent's work. */
   activity: LocalAgentActivity;
+  /** The event's channel as the agent's community lists it now. */
+  channel(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): ChannelSummary | undefined;
   /** Whether a mention in `channel` continues the agent's owner's Solo chat,
    * so its turn answers, and shows typing, at channel top level. */
   soloChat(
@@ -2148,13 +2154,24 @@ export class AgentRunners {
     const channelId =
       job.channelId ?? event.tags.find(([key]) => key === "h")?.[1];
     if (!scope || !channelId) return;
+    const threadRootId = threadReference(event)?.rootId;
+    const channel = this.host.channel(agent, event);
+    const soloChat =
+      channel?.channelType === "solo" &&
+      !channel.cached &&
+      !channel.pending &&
+      !channel.metadataPending;
+    const conversationName = channel?.name?.trim();
     job.work = this.host.activity.begin(
       {
         scope,
         agent: runner.member.pubkey,
         channelId,
         messageId: event.id,
-        threadRootId: threadReference(event)?.rootId ?? event.id,
+        threadRootId: threadRootId ?? event.id,
+        ...(threadRootId ? { thread: true } : {}),
+        ...(soloChat ? { soloChat: true } : {}),
+        ...(soloChat && conversationName ? { conversationName } : {}),
       },
       // Retry queues the same mention again. It was seen when first heard,
       // so it is not marked again; its run saves it as working as any does.

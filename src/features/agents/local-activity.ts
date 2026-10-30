@@ -19,6 +19,12 @@ export type LocalWork = Readonly<{
   channelId: string;
   messageId: string;
   threadRootId: string;
+  /** The request is in this thread; absent means channel-level work. */
+  thread?: true;
+  /** The request is in a relay-verified Solo chat, not a DM or channel. */
+  soloChat?: true;
+  /** The Solo chat's existing display name when this work started. */
+  conversationName?: string;
   state: LocalWorkState;
   startedAt: number;
   error?: string;

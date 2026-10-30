@@ -390,16 +390,23 @@ test.describe("pages inside one second", () => {
       const before = await anchor(page);
       // The row above it finishes measuring taller (an image loading). Rows
       // below the reader grow away from them; nothing in view moves.
-      // Re-resolve the virtualized row at mutation time: an idle render may
-      // have unmounted it again since the position assertion above.
-      await row.evaluate((element) => {
-        const extra = document.createElement("div");
-        extra.style.height = "300px";
-        element
-          .closest("li")
-          .previousElementSibling.querySelector("[data-message-id] p")
-          .after(extra);
-      });
+      // Wait for both virtualized rows, and mutate in the same DOM read so
+      // neither can unmount between finding the preceding paragraph and use.
+      await expect
+        .poll(() =>
+          history(page).evaluate((e, id) => {
+            const paragraph = e
+              .querySelector(`[data-message-id="${id}"]`)
+              ?.closest("li")
+              ?.previousElementSibling?.querySelector("[data-message-id] p");
+            if (!paragraph) return false;
+            const extra = document.createElement("div");
+            extra.style.height = "300px";
+            paragraph.after(extra);
+            return true;
+          }, held.id),
+        )
+        .toBe(true);
       await settle(page);
       await expectAnchor(page, before);
     } finally {

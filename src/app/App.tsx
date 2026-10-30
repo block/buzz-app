@@ -10,6 +10,7 @@ import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
+import { TypingDots } from "../shared/design-system/ui/TypingDots";
 import {
   CloudOffIcon,
   LinkBreakIcon,
@@ -458,7 +459,15 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const opening = (
     <div className="page-status">
-      <LoadingRegion pending label="Loading…">
+      <LoadingRegion
+        pending
+        label={
+          <span className="page-status-label">
+            <TypingDots />
+            Loading…
+          </span>
+        }
+      >
         {null}
       </LoadingRegion>
     </div>

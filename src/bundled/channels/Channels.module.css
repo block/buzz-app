@@ -591,6 +591,14 @@ html[data-keyboard-navigation]
 .connect button {
   margin: var(--space-4) 0;
 }
+.connecting {
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  letter-spacing: var(--text-body--letter-spacing);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
 .note {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);

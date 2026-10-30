@@ -4,6 +4,8 @@ import {
   linkedDraftKey,
 } from "../../features/solo/linked-chat";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
@@ -185,17 +187,33 @@ export function ChannelsPage({
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" && !session.cached ? (
         <PanelFrame companion={companion}>
-          <div className={styles.connect}>
-            <div className={styles.connectIcon}>
-              <PlugIcon size={30} />
+          {session.status === "disconnected" ? (
+            <div className={styles.connect}>
+              <div className={styles.connectIcon}>
+                <PlugIcon size={30} />
+              </div>
+              <h1>Your channels, one conversation.</h1>
+              <p>
+                Use the community picker in the header to choose or add a
+                community. Your profile and settings work without a community.
+              </p>
             </div>
-            <h1>Your channels, one conversation.</h1>
-            <p>
-              {session.status === "disconnected"
-                ? "Use the community picker in the header to choose or add a community. Your profile and settings work without a community."
-                : "Connection details and retry are in the sidebar. Your profile and settings work without a community."}
-            </p>
-          </div>
+          ) : (
+            // Connecting, or failed: a failed visit's card covers this page.
+            <div className={styles.connect}>
+              <LoadingRegion
+                pending
+                label={
+                  <span className={styles.connecting}>
+                    <TypingDots />
+                    Connecting…
+                  </span>
+                }
+              >
+                {null}
+              </LoadingRegion>
+            </div>
+          )}
         </PanelFrame>
       ) : (
         <ChannelWorkspace

@@ -314,6 +314,16 @@ ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
 other watches keep no such record, so they still match them. The bundled Agent
 Attention UI plugin calls it.
 
+Protection plugins inject `ctx.agentProtection` to register checks and review
+models and save native owner defaults or per-agent policies. An `AgentType`
+declares `protection` / `protectionUnavailable` and retires native sessions with
+`retire(key)`, where `key` is the membership key. Protected runs receive
+`AgentHandle.protection`; missing providers or enforcement stop them. This
+service shares the trusted-plugin authority described above, not a separate
+plugin permission boundary. The [protection contract](agent-protection.md)
+documents payload capture, missing-provider recovery and the explicit one-way
+storage upgrade, which also affects agents shared with older installed builds.
+
 A plugin, bundled or installed, can add a tool to every agent session in the
 app with `ctx.agents.addTool({ name, description, inputSchema, call })`. `call`
 gets the agent's Buzz client and where it is working, so the tool acts as the

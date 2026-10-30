@@ -1,7 +1,9 @@
+import type { LocalAgentSource } from "../agents/local-activity";
 import type { Communities } from "../communities/service";
 import { communityDestination } from "../communities/destination";
 import type { OpenTarget } from "../navigation/targets";
 import type { IncomingListener } from "../relay/incoming";
+import { relayPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
 import type { NotificationsService } from "./service";
 import { messageNotificationText } from "./content";
@@ -11,6 +13,53 @@ const labels = {
   direct: "Direct messages",
   thread: "Thread replies",
 };
+/** A local Solo run owns its completion feedback; its reply is not a mention alert. */
+export function localSoloAgentReply(
+  activity: LocalAgentSource | undefined,
+  message: {
+    channelId: string;
+    messageId: string;
+    authorId: string;
+    workflowOwnerId?: string | undefined;
+    createdAt: number;
+  },
+  scope?: string,
+  claimed?: Map<string, true>,
+) {
+  const author = message.workflowOwnerId ?? message.authorId;
+  const candidates =
+    activity
+      ?.work()
+      .filter(
+        (item) =>
+          item.soloChat &&
+          (!scope || item.scope === scope) &&
+          item.channelId === message.channelId &&
+          item.agent === author,
+      ) ?? [];
+  if (candidates.some((item) => item.replyMessageId === message.messageId))
+    return true;
+  const work = candidates.find(
+    (item) =>
+      (item.state === "waiting" || item.state === "working") &&
+      message.createdAt * 1000 >= item.startedAt - 1000,
+  );
+  if (!work) return false;
+  const key = JSON.stringify([
+    work.scope,
+    work.agent,
+    work.channelId,
+    work.messageId,
+    work.startedAt,
+  ]);
+  if (claimed?.has(key)) return false;
+  claimed?.set(key, true);
+  if (claimed && claimed.size > 512) {
+    const oldest = claimed.keys().next().value;
+    if (oldest) claimed.delete(oldest);
+  }
+  return true;
+}
 /** No new subscriptions: this first adapter covers only the selected community. */
 export function notificationAuthorized(
   communities: Communities,
@@ -48,6 +97,7 @@ export function notificationAuthorized(
 export function bindMessageNotifications(
   notifications: NotificationsService,
   communities: Communities,
+  localActivity?: LocalAgentSource,
 ) {
   let closed = false;
   let session: RelaySession | undefined;
@@ -57,6 +107,7 @@ export function bindMessageNotifications(
   let stopAccess = () => {};
   let stopSync = () => {};
   let stopPreferences = () => {};
+  const claimedSoloReplies = new Map<string, true>();
   const update = () => {
     const client = communities.snapshot();
     void notifications.selectViewer(client.viewer);
@@ -71,6 +122,7 @@ export function bindMessageNotifications(
     stopAccess();
     stopSync();
     stopPreferences();
+    claimedSoloReplies.clear();
     notifications.revalidate();
     session = relay.session;
     identity = next;
@@ -105,7 +157,14 @@ export function bindMessageNotifications(
           attention.category ?? (attention.pending ? "thread" : undefined);
         if (
           !category ||
-          (attention.status !== "eligible" && !attention.pending)
+          (attention.status !== "eligible" && !attention.pending) ||
+          (category === "mention" &&
+            localSoloAgentReply(
+              localActivity,
+              message,
+              relayPartition(origin, viewer),
+              claimedSoloReplies,
+            ))
         )
           continue;
         void notifications.admit(

@@ -55,6 +55,134 @@ it("does not notify workflow owners for another recipient, but still notifies ex
   });
 });
 
+it("lets local Solo completion feedback replace the agent reply's mention alert", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+    conversationName: "Planning",
+  });
+  run.started();
+  h.emit([h.make("Done")], "live");
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+
+  run.finish({ ok: true });
+  h.emit([h.make("A later message")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
+it("suppresses the correlated final reply when it arrives just after local completion", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+    conversationName: "Planning",
+  });
+  run.started();
+  const reply = h.make("Done after settlement");
+  run.reply(reply.id);
+  run.finish({ ok: true });
+  h.emit([reply], "live");
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+
+  h.emit([h.make("Unrelated later message")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
+it("suppresses the exact locally published reply after a delayed relay echo", async () => {
+  const startedAt = 1_780_000_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(startedAt);
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+    conversationName: "Planning",
+  });
+  run.started();
+  const reply = h.make("Done");
+  run.reply(reply.id);
+  run.finish({ ok: true });
+
+  vi.mocked(Date.now).mockReturnValue(startedAt + 5_000);
+  h.emit([reply], "live");
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+
+  h.emit([h.make("Unrelated later message")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
+it("keeps thread replies from the same agent during local Solo work", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+    conversationName: "Planning",
+  });
+  run.started();
+  const now = Math.floor(Date.now() / 1000);
+  const root = message(h.viewer, "room", "Own thread", now - 1);
+  h.emit([root], "replay");
+  h.emit(
+    [
+      message(h.peer, "room", "Thread reply", now, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+    "live",
+  );
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].title).toContain("replied in");
+});
+
+it("keeps ordinary mentions from the same agent when the local work is not confirmed Solo", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+  });
+  run.started();
+  h.emit([h.make("Review this")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
+it("does not suppress a same-channel agent mention from another community", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://other.example:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+    conversationName: "Elsewhere",
+  });
+  run.started();
+  h.emit([h.make("Mention in this community")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
 it("never alerts for coordination between agents, even when it mentions the viewer", async () => {
   vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
   const h = await setup();

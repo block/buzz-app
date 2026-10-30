@@ -1567,6 +1567,129 @@ it("publishes an agent's reply in a chat its owner is still starting once the st
   expect(await published(native, 9)).toHaveLength(1);
 });
 
+it("confirms first-turn Solo metadata before its reply publish is acknowledged", async () => {
+  const { service, run, emit, session, activity, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let land = () => {};
+  const starting = new Promise<void>((resolve) => {
+    land = resolve;
+  });
+  let acknowledge = (_event: RelayEvent) => {};
+  const published = new Promise<RelayEvent>((resolve) => {
+    acknowledge = resolve;
+  });
+  native.publish.mockImplementationOnce(() => published);
+  vi.spyOn(session.channelWrites, "starting").mockImplementation((id) =>
+    id === channel ? starting : undefined,
+  );
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockImplementation(() => ({
+    ...list,
+    channels: list.channels.map((row) =>
+      row.id === channel
+        ? {
+            ...row,
+            name: "First Solo",
+            channelType: "solo",
+            pending: true,
+          }
+        : row,
+    ),
+  }));
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  });
+  emit({
+    events: [
+      event("first-solo", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(activity.reader.work()[0]).not.toHaveProperty("soloChat");
+
+  const states: string[] = [];
+  const stop = activity.reader.subscribeWork(() => {
+    const work = activity.reader.work()[0];
+    states.push(`${work?.state}:${work?.soloChat === true}`);
+  });
+  land();
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({
+      state: "working",
+      soloChat: true,
+      conversationName: "First Solo",
+    }),
+  );
+  acknowledge(
+    event("first-reply", {
+      pubkey: bot,
+      content: "hi",
+      tags: [["h", channel]],
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({
+      state: "done",
+      replyMessageId: "first-reply".padEnd(64, "0"),
+    }),
+  );
+  stop();
+  expect(states).toContain("working:true");
+});
+
+it("does not confirm first-turn Solo metadata when chat start fails", async () => {
+  const { service, run, emit, session, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let fail = () => {};
+  const starting = new Promise<void>((_resolve, reject) => {
+    fail = () => reject(new Error("Chat creation failed"));
+  });
+  starting.catch(() => {});
+  vi.spyOn(session.channelWrites, "starting").mockImplementation((id) =>
+    id === channel ? starting : undefined,
+  );
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockImplementation(() => ({
+    ...list,
+    channels: list.channels.map((row) =>
+      row.id === channel
+        ? {
+            ...row,
+            name: "Failed Solo",
+            channelType: "solo",
+            pending: true,
+          }
+        : row,
+    ),
+  }));
+  run.mockImplementationOnce(async () => {
+    await starting.catch(() => {});
+  });
+  emit({
+    events: [
+      event("failed-first-solo", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  fail();
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({ state: "done" }),
+  );
+  expect(activity.reader.work()[0]).not.toHaveProperty("soloChat");
+});
+
 it("keeps room for mentions however much watch work waits", async () => {
   const { service, run, emit } = await setup({ identities: [echo] });
   await service.save(bot, {
@@ -8582,6 +8705,61 @@ it("keeps what it lists when the community's records cannot be read", async () =
     place: "hosted",
   });
 });
+
+it.each([
+  ["confirmed Solo", { channelType: "solo" }, true],
+  ["DM", { channelType: "dm" }, false],
+  ["cached Solo", { channelType: "solo", cached: true }, false],
+  ["pending Solo", { channelType: "solo", pending: true }, false],
+  [
+    "metadata-pending Solo",
+    { channelType: "solo", metadataPending: true },
+    false,
+  ],
+] as const)(
+  "captures completion metadata for %s agent work",
+  async (_kind, channelPatch, eligible) => {
+    const f = await setup();
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, name: " Launch planning ", ...channelPatch }
+          : row,
+      ),
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    f.emit({
+      events: [
+        event("completion-metadata", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    try {
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        channelId: channel,
+        ...(eligible
+          ? { soloChat: true, conversationName: "Launch planning" }
+          : {}),
+      });
+      if (!eligible) {
+        expect(f.activity.reader.work()[0]).not.toHaveProperty("soloChat");
+        expect(f.activity.reader.work()[0]).not.toHaveProperty(
+          "conversationName",
+        );
+      }
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
 
 it("projects accepted queued work and keeps working past handover until the plugin's actual result", async () => {
   const f = await setup();

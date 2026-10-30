@@ -118,3 +118,47 @@ it("withholds a denied tool result and checks thrown tool errors before exposing
     ]),
   ).rejects.toThrow("denied result");
 });
+
+it("leaves a plugin tool's path and files semantics with that plugin", async () => {
+  const read = vi.fn();
+  const client = {
+    protect: vi.fn(async () => {}),
+    read,
+  } as unknown as import("./client").BuzzClient;
+  const args = { path: "plugin-owned", files: ["plugin-owned"] };
+  const call = vi.fn(async (_client, _context, captured) =>
+    JSON.stringify(captured),
+  );
+  expect(
+    await callSessionTool(client, {}, "send", args, [
+      { ...tool("send"), call },
+    ]),
+  ).toBe(JSON.stringify(args));
+  expect(read).not.toHaveBeenCalled();
+});
+
+it("checks file-capture errors before exposing them and does not recheck approval failures", async () => {
+  const protect = vi.fn(async (action) => {
+    if (action.kind === "tool-result") throw new Error("denied result");
+  });
+  const client = {
+    protect,
+    read: vi.fn(async () => {
+      throw new Error("untrusted read error");
+    }),
+  } as unknown as import("./client").BuzzClient;
+  await expect(
+    callSessionTool(client, {}, "send", { path: "body.md" }),
+  ).rejects.toThrow("denied result");
+  expect(protect).toHaveBeenCalledExactlyOnceWith({
+    kind: "tool-result",
+    session: "{}",
+    content: { error: "untrusted read error" },
+  });
+  protect.mockReset().mockRejectedValue(new Error("denied action"));
+  await expect(
+    callSessionTool(client, {}, "plugin_write", {}, [tool("plugin_write")]),
+  ).rejects.toThrow("denied action");
+  expect(protect).toHaveBeenCalledOnce();
+  expect(protect.mock.calls[0]?.[0].kind).toBe("tool");
+});

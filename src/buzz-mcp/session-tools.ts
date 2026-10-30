@@ -14,7 +14,13 @@ import {
   isAttentionTool,
 } from "./attention";
 import type { BuzzClient, Context } from "./client";
-import { callTool, type Reply, TOOLS, type Tool } from "./tools";
+import {
+  callTool,
+  captureToolBody,
+  type Reply,
+  TOOLS,
+  type Tool,
+} from "./tools";
 
 /** A tool a plugin adds to every agent session in the app, listed after
  * the Buzz tools under the same server and loaded on search. Its name should
@@ -126,6 +132,11 @@ export async function callSessionTool(
     args = structuredClone(args);
   }
   const session = JSON.stringify(context);
+  // Plugin tools own their argument semantics, even when shadowing a builtin.
+  if (client.protect && !added.some((tool) => tool.name === name))
+    await captureToolBody(client, name, args).catch((error) =>
+      checkedToolError(client, session, error),
+    );
   await client.protect?.({
     kind: "tool",
     session,
@@ -136,18 +147,24 @@ export async function callSessionTool(
   try {
     reply = await dispatchSessionTool(client, context, name, args, added);
   } catch (error) {
-    if (!client.protect) throw error;
-    await client.protect({
-      kind: "tool-result",
-      session,
-      content: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-    throw error;
+    return checkedToolError(client, session, error);
   }
   await client.protect?.({ kind: "tool-result", session, content: reply });
   return reply;
+}
+
+/** File capture and dispatch errors cross the same tool-result boundary. */
+async function checkedToolError(
+  client: BuzzClient,
+  session: string,
+  error: unknown,
+): Promise<never> {
+  await client.protect?.({
+    kind: "tool-result",
+    session,
+    content: { error: error instanceof Error ? error.message : String(error) },
+  });
+  throw error;
 }
 async function dispatchSessionTool(
   client: BuzzClient,

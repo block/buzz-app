@@ -22,10 +22,10 @@ export type AgentIdentity = Readonly<{
    * drop it from its channels and archive it, after which `forget` removes
    * it. */
   deleted: boolean;
+  /** The required installed protection plugin and saved policy. */
   protection?: ProtectionBinding;
+  /** Monotonic native generation shared by every membership of this identity. */
   protectionRevision?: number;
-  /** Its Delete started and has not finished. It keeps its key, so it cannot
-   * be imported again, and stays stopped until Delete is pressed again. */
   /** Its Delete, or its leaving this community, started and has not
    * finished. It stays stopped here until that is pressed again. */
   deleting?: true;

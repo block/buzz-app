@@ -4,7 +4,11 @@
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
-import type { HostProcess, HostProcessOptions } from "../features/host/service";
+import type {
+  HostProcess,
+  HostProcessOptions,
+  ProcessProtection,
+} from "../features/host/service";
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
 
 /** The largest file a tool reads: the community's upload limit. */
@@ -131,9 +135,13 @@ export function appClient(
       check();
       return agent.gitAuth(owner, repo);
     },
-    read: (path) => {
+    read: async (path) => {
       check();
-      return options.read(path);
+      agent.protection?.assertAvailable();
+      const bytes = await options.read(path);
+      check();
+      agent.protection?.assertAvailable();
+      return bytes;
     },
     memories: async (slug) => {
       check();
@@ -193,6 +201,7 @@ export async function readFile(
   cwd: string,
   path: string,
   signal?: AbortSignal,
+  protection?: ProcessProtection,
 ) {
   // `-` would wait on stdin.
   if (path.trim() === "-" || !path.trim())
@@ -201,9 +210,10 @@ export async function readFile(
   let error = "";
   let large = false;
   let child: Awaited<ReturnType<Spawn>> | undefined;
-  child = await spawn("read", {
+  child = await spawn(protection ? "read-protected" : "read", {
     args: [path],
     cwd,
+    ...(protection ? { protection: structuredClone(protection) } : {}),
     onStdout: (data) => {
       output += data;
       if (output.length > (READ_LIMIT / 3) * 4 + 1024 && !large) {

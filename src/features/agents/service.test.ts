@@ -319,6 +319,17 @@ async function setup({
   };
 }
 
+/** Explicit operation gates for runner lifecycle regressions. */
+function runnerGate<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((accept, refuse) => {
+    resolve = accept;
+    reject = refuse;
+  });
+  return { promise, resolve, reject };
+}
+
 /** Lets every pending promise chain finish: a macrotask runs only after the
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -2360,6 +2371,81 @@ it("drops its events while another copy of the app holds the agent, and runs onc
   native.claim.mockResolvedValue(true);
 });
 
+it.each(["mention", "watch"] as const)(
+  "retains queued %s work across uncertain custody and runs it once after reclaim",
+  async (lane) => {
+    vi.useFakeTimers();
+    const identities: AgentIdentity[] = [];
+    const f = await setup({ identities });
+    const firstClaimStarted = runnerGate();
+    const firstClaim = runnerGate<boolean>();
+    const refreshStarted = runnerGate();
+    const refreshAllowed = runnerGate();
+    const reclaimStarted = runnerGate();
+    const reclaim = runnerGate<boolean>();
+    // Install before creation: the first claim cannot finish before work queues.
+    f.native.claim.mockImplementation(async () => {
+      reclaimStarted.resolve(undefined);
+      return reclaim.promise;
+    });
+    f.native.claim.mockImplementationOnce(async () => {
+      firstClaimStarted.resolve(undefined);
+      return firstClaim.promise;
+    });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await firstClaimStarted.promise;
+      if (lane === "watch")
+        await f.service.save(bot, { attentionEnabled: true });
+      const pending =
+        lane === "mention"
+          ? event("custody-mention", {
+              tags: [
+                ["h", channel],
+                ["p", bot],
+              ],
+            })
+          : deploy("custody-watch");
+      f.emit({ events: [pending], channelId: channel });
+      // The responsible native claim is held, so execution cannot start yet.
+      expect(f.run).not.toHaveBeenCalled();
+
+      const refreshing = vi.spyOn(f.service, "refresh");
+      f.native.list.mockImplementation(async () => {
+        refreshStarted.resolve(undefined);
+        await refreshAllowed.promise;
+        return [...identities];
+      });
+      firstClaim.reject(new Error("Transient native custody failure"));
+      await refreshStarted.promise;
+      const reread = refreshing.mock.results[0];
+      if (reread?.type !== "return")
+        throw new Error("Expected recovery refresh");
+      refreshAllowed.resolve(undefined);
+      await reread.value;
+      // Use the existing runner wake interval; no new event re-enqueues the job.
+      await vi.advanceTimersByTimeAsync(5_000);
+      await reclaimStarted.promise;
+      expect(f.run).not.toHaveBeenCalled();
+      reclaim.resolve(true);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].trigger).toMatchObject({
+        type: lane,
+        event: pending,
+      });
+      // Disposal closes the producers and runners before the final negative
+      // assertion; a promise flush or elapsed delay is not the completion barrier.
+      await f.ctx.fiber.dispose();
+      expect(f.run).toHaveBeenCalledTimes(1);
+    } finally {
+      firstClaim.resolve(false);
+      refreshAllowed.resolve(undefined);
+      reclaim.resolve(false);
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
 it.each([false, new Error("Custody unavailable")])(
   "rechecks native custody before an immediate session mutation: %s",
   async (denied) => {
@@ -2486,6 +2572,93 @@ it("leaves a plugin's note for an agent's next turn in a channel, once, while th
     "(I interrupted your reply)",
     "(newer)",
   ]);
+});
+
+it("restores undelivered notes after a revision retires the old run handle", async () => {
+  const identities: AgentIdentity[] = [];
+  const f = await setup({ identities });
+  const root = "a".repeat(64);
+  const elsewhere = "b".repeat(64);
+  const firstDelivered = runnerGate<Delivery<Config>>();
+  const secondDelivered = runnerGate<Delivery<Config>>();
+  const restoreAllowed = runnerGate();
+  let consumed: readonly string[] = [];
+  let restoration: Promise<void> | undefined;
+  f.run.mockImplementationOnce((delivery) => {
+    consumed = delivery.agent.notes?.(channel, root) ?? [];
+    restoration = restoreAllowed.promise.then(() => {
+      delivery.agent.restoreNotes?.(channel, consumed, root);
+    });
+    // Model an undelivered runtime request whose compensation settles later.
+    delivery.workingUntil(restoration);
+    firstDelivered.resolve(delivery);
+  });
+  f.run.mockImplementationOnce((delivery) => {
+    secondDelivered.resolve(delivery);
+  });
+  try {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    expect(f.ctx.agents.note(bot, channel, "older", root)).toBe(true);
+    f.emit({
+      events: [
+        event("notes-before", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    const first = await firstDelivered.promise;
+    expect(consumed).toEqual(["older"]);
+    expect(f.ctx.agents.note(bot, channel, "newer", root)).toBe(true);
+    expect(f.ctx.agents.note(bot, channel, "other thread", elsewhere)).toBe(
+      true,
+    );
+
+    const identity = identities[0];
+    if (!identity) throw new Error("Missing native identity");
+    // A native refresh can retire an active handle independently of the local
+    // manual-retype flow, which correctly refuses while a turn is working.
+    identities[0] = { ...identity, protectionRevision: 1 };
+    await f.service.refresh();
+    expect(first.signal.aborted).toBe(true);
+    await expect(first.agent.query([])).rejects.toThrow();
+    await expect(
+      first.agent.publish({
+        kind: 9,
+        content: "stale",
+        tags: [["h", channel]],
+      }),
+    ).rejects.toThrow();
+
+    if (!restoration) throw new Error("Missing undelivered compensation");
+    restoreAllowed.resolve(undefined);
+    await expect(restoration).resolves.toBeUndefined();
+    f.emit({
+      events: [
+        event("notes-after", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    const next = await secondDelivered.promise;
+    expect(next.agent.notes?.(channel, root)).toEqual(["older", "newer"]);
+    expect(next.agent.notes?.(channel, root)).toEqual([]);
+    expect(next.agent.notes?.(channel, elsewhere)).toEqual(["other thread"]);
+    await f.ctx.fiber.dispose();
+    expect(f.run).toHaveBeenCalledTimes(2);
+  } finally {
+    restoreAllowed.resolve(undefined);
+    await restoration?.catch(() => undefined);
+    await f.ctx.fiber.dispose();
+  }
 });
 
 it("isolates thread notes and restores them to the same conversation", async () => {
@@ -9692,7 +9865,7 @@ describe("Attention plugin sources", () => {
       },
     });
     await service.create({ type: "example/echo", name: "Echo" });
-    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
     await watching?.dispose();

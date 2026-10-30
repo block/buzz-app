@@ -72,8 +72,10 @@ pub struct AppAgent {
     /// with its Delete.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub joining: bool,
+    /// The installed plugin and policy required before this identity can act.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protection: Option<ProtectionBinding>,
+    /// Device-wide monotonic generation for policy CAS and isolated runtime state.
     #[serde(default, skip_serializing_if = "zero_revision")]
     pub protection_revision: u64,
 }
@@ -369,6 +371,21 @@ impl NewAppAgent {
 pub struct AppAgents {
     path: PathBuf,
 }
+
+#[derive(Clone, Copy)]
+struct IdentityFormat {
+    version: u64,
+    protection_clock: u64,
+}
+impl IdentityFormat {
+    fn next_revision(&mut self) -> Result<u64> {
+        if self.protection_clock >= MAX_PROTECTION_REVISION {
+            return Err("Protection revision exhausted".into());
+        }
+        self.protection_clock += 1;
+        Ok(self.protection_clock)
+    }
+}
 impl AppAgents {
     pub fn open(path: PathBuf) -> Self {
         Self { path }
@@ -380,30 +397,71 @@ impl AppAgents {
     /// Saves an earlier development build's versioned list apart, as `write`
     /// does, so older builds can read it again.
     pub fn upgrade(&self) -> Result<()> {
-        if self.read()?.1 == MULTI_COMMUNITY {
+        if self.read()?.1.version == MULTI_COMMUNITY && !self.protection_upgrade_needed()? {
             self.update(|_| Ok(()))?;
         }
         Ok(())
     }
-    /// Every row, and whether they are an earlier development build's
-    /// versioned list, which holds them all.
-    fn read(&self) -> Result<(Vec<AppAgent>, u64)> {
+    /// Whether the owner has already opted this device's store into protection.
+    pub fn protection_storage_current(&self) -> Result<bool> {
+        Ok(self.read()?.1.version == PROTECTED_IDENTITIES)
+    }
+    /// Earlier protection previews need confirmation before any further edits.
+    pub fn protection_upgrade_needed(&self) -> Result<bool> {
+        let (agents, format) = self.read()?;
+        Ok(format.version != PROTECTED_IDENTITIES
+            && (format.version == LEGACY_PROTECTED_IDENTITIES
+                || agents
+                    .iter()
+                    .any(|a| a.protection.is_some() || a.protection_revision > 0)
+                || self.protection_used()?))
+    }
+    /// Called only after native owner confirmation. Re-read under the lock so
+    /// another app's writes during confirmation are retained. Never changes keys.
+    pub fn upgrade_protection_storage(&self) -> Result<()> {
+        self.locked(|| {
+            let (agents, mut format) = self.read()?;
+            if format.version == PROTECTED_IDENTITIES {
+                return Ok(());
+            }
+            format.version = PROTECTED_IDENTITIES;
+            self.write(&agents, format)
+        })
+    }
+    /// Every row, the persisted format and its monotonic protection clock.
+    fn read(&self) -> Result<(Vec<AppAgent>, IdentityFormat)> {
         let malformed = || "Saved agent identities are malformed".to_owned();
         let made = match read_rows(&self.path)? {
             None => vec![],
             Some(serde_json::Value::Array(rows)) => parse_rows(rows)?,
             Some(serde_json::Value::Object(mut saved))
-                if saved.len() == 2
-                    && matches!(
-                        saved.get("version").and_then(serde_json::Value::as_u64),
-                        Some(MULTI_COMMUNITY | PROTECTED_IDENTITIES)
-                    ) =>
+                if matches!(
+                    saved.get("version").and_then(serde_json::Value::as_u64),
+                    Some(MULTI_COMMUNITY | LEGACY_PROTECTED_IDENTITIES | PROTECTED_IDENTITIES)
+                ) =>
             {
                 let format = saved["version"].as_u64().ok_or_else(malformed)?;
+                if saved.len() != if format == PROTECTED_IDENTITIES { 3 } else { 2 } {
+                    return Err(malformed());
+                }
                 let Some(serde_json::Value::Array(rows)) = saved.remove("agents") else {
                     return Err(malformed());
                 };
                 let mut rows = parse_rows(rows)?;
+                let highest = rows
+                    .iter()
+                    .map(|a| a.protection_revision)
+                    .max()
+                    .unwrap_or(0);
+                let clock = if format == PROTECTED_IDENTITIES {
+                    saved
+                        .get("protectionClock")
+                        .and_then(serde_json::Value::as_u64)
+                        .filter(|clock| *clock >= highest && *clock <= MAX_PROTECTION_REVISION)
+                        .ok_or_else(malformed)?
+                } else {
+                    highest
+                };
                 // It saved an agent added back to its home with `home`.
                 for row in &mut rows {
                     if row.home.as_ref() == Some(&row.relay) {
@@ -412,7 +470,7 @@ impl AppAgents {
                 }
                 // Version 2 was also used by an earlier protection build that
                 // did not understand split memberships. Do not discard keys
-                // that build may have left in the sidecar. Version 3 is final.
+                // that build may have left in the sidecar.
                 if format == MULTI_COMMUNITY
                     && (rows
                         .iter()
@@ -429,10 +487,16 @@ impl AppAgents {
                             .iter()
                             .any(|row| row.pubkey == other.pubkey && row.relay == other.relay)
                     }) {
-                        return Err("Protected version-2 identities omit saved community memberships; migrate them before continuing".into());
+                        return Err("An earlier protection preview saved incomplete version-2 identities. No automatic repair is available; restore a complete identities backup before retrying. Saved files and keys were left unchanged.".into());
                     }
                 }
-                return Ok((rows, format));
+                return Ok((
+                    rows,
+                    IdentityFormat {
+                        version: format,
+                        protection_clock: clock,
+                    },
+                ));
             }
             Some(_) => return Err(malformed()),
         };
@@ -467,7 +531,18 @@ impl AppAgents {
             .collect();
         let rows: Vec<AppAgent> = made.into_iter().chain(joined).collect();
         validate_protection(&rows)?;
-        Ok((rows, 0))
+        let clock = rows
+            .iter()
+            .map(|a| a.protection_revision)
+            .max()
+            .unwrap_or(0);
+        Ok((
+            rows,
+            IdentityFormat {
+                version: 0,
+                protection_clock: clock,
+            },
+        ))
     }
     /// Where the rows `join` added are saved, beside the others.
     fn joined(&self) -> PathBuf {
@@ -484,10 +559,16 @@ impl AppAgents {
     /// Runs `change` on the saved list while holding the cross-process lock, and
     /// saves what it returns.
     fn update<T>(&self, change: impl FnOnce(&mut Vec<AppAgent>) -> Result<T>) -> Result<T> {
+        self.update_state(|agents, _| change(agents))
+    }
+    fn update_state<T>(
+        &self,
+        change: impl FnOnce(&mut Vec<AppAgent>, &mut IdentityFormat) -> Result<T>,
+    ) -> Result<T> {
         let _lock = self.lock("lock")?;
-        let (mut agents, versioned) = self.read()?;
-        let result = change(&mut agents)?;
-        self.write(&agents, versioned)?;
+        let (mut agents, mut format) = self.read()?;
+        let result = change(&mut agents, &mut format)?;
+        self.write(&agents, format)?;
         Ok(result)
     }
     /// Takes the cross-process lock in the file beside the list with
@@ -520,6 +601,9 @@ impl AppAgents {
         let _lock = self.lock("lock")?;
         change()
     }
+    /// Opted-in stores retain the complete version-4 envelope and clock on
+    /// every write. Legacy stores use the compatible split layout below;
+    /// protection cannot convert them without explicit native confirmation.
     /// Saves the agents' memberships elsewhere than their homes, and Joins not
     /// yet settled, apart from the others, which stay the plain list older
     /// builds read: they refuse a row with fields they don't know, and would
@@ -528,14 +612,23 @@ impl AppAgents {
     /// write cut short leaves it in both, where the plain one is read. From an
     /// earlier development build's versioned list, the other rows are saved
     /// first instead, as the list still holds every row until it is replaced.
-    fn write(&self, agents: &[AppAgent], versioned: u64) -> Result<()> {
-        if versioned == PROTECTED_IDENTITIES
-            || (versioned == MULTI_COMMUNITY && self.protection_used()?)
+    fn write(&self, agents: &[AppAgent], format: IdentityFormat) -> Result<()> {
+        if format.version == PROTECTED_IDENTITIES {
+            return save_rows(
+                &self.path,
+                &serde_json::json!({
+                    "version": PROTECTED_IDENTITIES, "agents": agents,
+                    "protectionClock": format.protection_clock,
+                }),
+            );
+        }
+        if format.version == LEGACY_PROTECTED_IDENTITIES
+            || (format.version == MULTI_COMMUNITY && self.protection_used()?)
             || agents
                 .iter()
                 .any(|agent| agent.protection.is_some() || agent.protection_revision > 0)
         {
-            return self.write_protected(agents);
+            return Err(PROTECTION_UPGRADE_REQUIRED.into());
         }
         let (joined, made): (Vec<&AppAgent>, Vec<&AppAgent>) = agents
             .iter()
@@ -547,19 +640,13 @@ impl AppAgents {
             }
             Ok(())
         };
-        if versioned == MULTI_COMMUNITY {
+        if format.version == MULTI_COMMUNITY {
             save_joined()?;
             save_rows(&self.path, &made)
         } else {
             save_rows(&self.path, &made)?;
             save_joined()
         }
-    }
-    fn write_protected(&self, agents: &[AppAgent]) -> Result<()> {
-        save_rows(
-            &self.path,
-            &serde_json::json!({ "version": PROTECTED_IDENTITIES, "agents": agents }),
-        )
     }
     /// Changes the agent in the community at `relay`, while it has its key there.
     fn edit(&self, pubkey: &str, relay: &str, change: impl FnOnce(&mut AppAgent)) -> Result<()> {
@@ -673,7 +760,11 @@ impl AppAgents {
                 serde_json::to_vec(&saved).map_err(|_| "Could not encode protection defaults")?;
             // Install the fail-closed barrier before another build could see defaults
             // it does not understand. Failure keeps the previous defaults authoritative.
-            self.write_protected(&self.list()?)?;
+            let (agents, format) = self.read()?;
+            if format.version != PROTECTED_IDENTITIES {
+                return Err(PROTECTION_UPGRADE_REQUIRED.into());
+            }
+            self.write(&agents, format)?;
             std::fs::write(&temp, bytes).map_err(|_| "Could not save protection defaults")?;
             #[cfg(test)]
             tests::before_rename()?;
@@ -700,7 +791,10 @@ impl AppAgents {
         if let Some(value) = &binding {
             value.validate()?;
         }
-        self.update(|agents| {
+        self.update_state(|agents, format| {
+            if format.version != PROTECTED_IDENTITIES {
+                return Err(PROTECTION_UPGRADE_REQUIRED.into());
+            }
             let members: Vec<_> = agents
                 .iter_mut()
                 .filter(|a| a.pubkey == pubkey && !a.deleted)
@@ -722,12 +816,10 @@ impl AppAgents {
             }) {
                 return Err("Another protection plugin owns this agent".into());
             }
-            if revision >= 9_007_199_254_740_991 {
-                return Err("Protection revision exhausted".into());
-            }
+            let next = format.next_revision()?;
             for agent in members {
                 agent.protection = binding.clone();
-                agent.protection_revision = revision + 1;
+                agent.protection_revision = next;
             }
             Ok(())
         })
@@ -816,7 +908,7 @@ impl AppAgents {
         // same ID. It is shared, never added again or deleted on failure here.
         let shared = prepared.adopted && credentials.read(&id, &agent.pubkey)?.is_some();
         let mut pushed = false;
-        let added = self.update(|agents| {
+        let added = self.update_state(|agents, format| {
             // A deleted row awaiting its community cleanup is taken back.
             if prepared.adopted
                 && agents
@@ -826,6 +918,9 @@ impl AppAgents {
                 return Err("That agent is already here".into());
             }
             agent.protection = self.protection_defaults(&agent.owner)?.defaults;
+            if format.version == PROTECTED_IDENTITIES {
+                agent.protection_revision = format.next_revision()?;
+            }
             agents.retain(|saved| saved.pubkey != agent.pubkey || saved.relay != agent.relay);
             agents.push(agent.clone());
             pushed = true;
@@ -1174,7 +1269,11 @@ impl Removal {
 /// The version of the list earlier development builds saved once an agent was
 /// in several communities.
 const MULTI_COMMUNITY: u64 = 2;
-const PROTECTED_IDENTITIES: u64 = 3;
+const LEGACY_PROTECTED_IDENTITIES: u64 = 3;
+const PROTECTED_IDENTITIES: u64 = 4;
+const MAX_PROTECTION_REVISION: u64 = 9_007_199_254_740_991;
+const PROTECTION_UPGRADE_REQUIRED: &str =
+    "Owner confirmation is required to upgrade local agent storage for protection";
 fn zero_revision(value: &u64) -> bool {
     *value == 0
 }

@@ -1,5 +1,5 @@
 import type {} from "../navigation/service";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { connectMcp } from "../../buzz-mcp/connection";
 import type {
@@ -781,8 +781,8 @@ export type AgentType<Config = unknown> = {
   protection?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;
-  /** Fully retires existing native sessions before a protection policy changes. */
-  retire?(pubkey: string): Promise<void>;
+  /** Fully retires native sessions for this membership key before policy changes. */
+  retire?(key: string): Promise<void>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
@@ -2137,6 +2137,17 @@ export class AgentsService extends Service implements Agents {
                 throw new Error("The agent's community connection changed");
             },
             read: async (path) => {
+              if (handle.protection) {
+                if (!host.spawn)
+                  throw new Error("Protected file reading is unavailable");
+                return readFile(
+                  host.spawn.bind(host),
+                  options.cwd ?? "~",
+                  path,
+                  signal,
+                  handle.protection.processProtection,
+                );
+              }
               if (!host.readFile)
                 throw new Error("This plugin cannot read local files");
               return host.readFile(

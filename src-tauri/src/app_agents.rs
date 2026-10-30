@@ -54,6 +54,8 @@ pub(crate) struct AppAgentHost {
     hosting: Arc<Hosting>,
     /// Each agent's NIP-FI grant and assertions, for an organization's communities.
     tokens: AgentTokens,
+    /// Serializes owner prompts, without holding cross-process identity/custody locks.
+    protection_upgrade: Arc<Mutex<()>>,
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
@@ -67,13 +69,16 @@ impl AppAgentHost {
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
-        let agents = path.map(|path| {
+        let agents = path.and_then(|path| {
             let agents = AppAgents::open(path);
+            if agents.protection_upgrade_needed()? {
+                confirm_protection_storage(&agents, &Mutex::new(()), protection_upgrade_dialog)?;
+            }
             // So an older build can read the list again.
             if let Err(error) = agents.upgrade() {
                 eprintln!("Saved agent identities were not upgraded: {error}");
             }
-            agents
+            Ok(agents)
         });
         let listed = agents.clone();
         tokens.watch(move || {
@@ -97,6 +102,7 @@ impl AppAgentHost {
                 held: Mutex::default(),
             }),
             tokens,
+            protection_upgrade: Arc::default(),
         }
     }
     /// The saved identities, for readers outside Agents such as the inventory.
@@ -302,6 +308,36 @@ impl AppAgentHost {
     }
 }
 
+/// Explicit native owner consent; no plugin argument can approve this upgrade.
+fn confirm_protection_storage(
+    agents: &AppAgents,
+    prompt: &Mutex<()>,
+    confirm: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    let _prompt = prompt
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if agents.protection_storage_current()? {
+        return Ok(());
+    }
+    if !confirm() {
+        return Err("Agent storage upgrade cancelled. Saved agents and defaults were left unchanged. Restart Buzz to retry a cancelled startup upgrade.".into());
+    }
+    agents.upgrade_protection_storage()
+}
+
+fn protection_upgrade_dialog() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Upgrade local agents for protection?")
+        .set_description("This is a one-way upgrade for ALL agents on this device. Older Buzz builds will no longer be able to list, run or remove any of these agents, even after protection is turned off.\n\nDevelopment Buzz shares these agents with the installed app. Close other Buzz builds before continuing and keep a compatible build installed. Agent identities and keys will be preserved.\n\nCancel leaves the saved files unchanged.")
+        .set_buttons(rfd::MessageButtons::OkCancelCustom("Upgrade agents".into(), "Cancel".into()))
+        .show();
+    // Windows without common-controls-v6 falls back to the standard OK label.
+    result == rfd::MessageDialogResult::Ok
+        || result == rfd::MessageDialogResult::Custom("Upgrade agents".into())
+}
+
 /// Which running copy of the app runs each agent. Every copy on this machine
 /// (the packaged app and any dev builds) shares the agent list and hears the
 /// same events. The packaged app always runs what it can and holds
@@ -325,8 +361,18 @@ impl Hosting {
     /// Whether this copy runs the agent. The packaged app always does, so a
     /// stuck dev build can never silence it. A dev build takes the agent if no
     /// other copy runs it, and lets go while the packaged app does.
-    #[allow(clippy::incompatible_msrv)] // `File` locking; see `sign_out::Instance`.
+    #[cfg(test)]
     fn claim(&self, pubkey: &str) -> Result<bool, String> {
+        self.claim_validated(pubkey, || Ok(()))
+    }
+    /// Newly acquired custody is provisional until admission is validated.
+    /// Validation errors leave an existing shared lock intact.
+    #[allow(clippy::incompatible_msrv)] // `File` locking; see `sign_out::Instance`.
+    fn claim_validated(
+        &self,
+        pubkey: &str,
+        validate: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
         if pubkey.len() != 64
             || !pubkey
                 .bytes()
@@ -338,27 +384,26 @@ impl Hosting {
         std::fs::create_dir_all(dir).map_err(|_| "Could not open agent hosting")?;
         let packaged = dir.join(format!("{pubkey}.packaged"));
         let mut held = self.held();
-        if self.packaged {
-            if !held.contains_key(pubkey) {
-                let file = open_lock(&packaged)?;
-                // A dev build checking for it holds it briefly; this tries again next time.
-                if lock(file.try_lock())? {
-                    held.insert(pubkey.into(), file);
-                }
-            }
-            return Ok(held.contains_key(pubkey));
-        }
-        if !lock(open_lock(&packaged)?.try_lock_shared())? {
+        if !self.packaged && !lock(open_lock(&packaged)?.try_lock_shared())? {
             held.remove(pubkey);
             return Ok(false);
         }
-        if !held.contains_key(pubkey) {
-            let file = open_lock(&dir.join(format!("{pubkey}.lock")))?;
-            if lock(file.try_lock())? {
-                held.insert(pubkey.into(), file);
-            }
+        if held.contains_key(pubkey) {
+            validate()?;
+            return Ok(true);
         }
-        Ok(held.contains_key(pubkey))
+        let path = if self.packaged {
+            packaged
+        } else {
+            dir.join(format!("{pubkey}.lock"))
+        };
+        let file = open_lock(&path)?;
+        if !lock(file.try_lock())? {
+            return Ok(false);
+        }
+        validate()?;
+        held.insert(pubkey.into(), file);
+        Ok(true)
     }
     /// Policy writes require this copy's custody and no overlapping dev/packaged host.
     #[allow(clippy::incompatible_msrv)]
@@ -508,7 +553,7 @@ pub(crate) async fn app_agent_create(
     .await
 }
 
-/// Changes only the plugin binding, never identity or credential custody.
+/// Reads the owner's defaults without changing storage.
 #[tauri::command]
 pub(crate) async fn app_agent_protection_defaults(
     host: tauri::State<'_, AppAgentHost>,
@@ -518,6 +563,7 @@ pub(crate) async fn app_agent_protection_defaults(
     blocking(move || agents.protection_defaults(&owner)).await
 }
 #[tauri::command]
+/// Changes only plugin defaults, after any required owner storage confirmation.
 pub(crate) async fn app_agent_set_protection_defaults(
     host: tauri::State<'_, AppAgentHost>,
     owner: String,
@@ -526,7 +572,12 @@ pub(crate) async fn app_agent_set_protection_defaults(
     policy: Option<Value>,
 ) -> Result<(), String> {
     let agents = host.agents()?;
-    blocking(move || agents.set_protection_defaults(&owner, revision, &provider, policy)).await
+    let prompt = host.protection_upgrade.clone();
+    blocking(move || {
+        confirm_protection_storage(&agents, &prompt, protection_upgrade_dialog)?;
+        agents.set_protection_defaults(&owner, revision, &provider, policy)
+    })
+    .await
 }
 #[tauri::command]
 pub(crate) async fn app_agent_set_protection(
@@ -538,7 +589,9 @@ pub(crate) async fn app_agent_set_protection(
 ) -> Result<(), String> {
     let agents = state.agents.clone()?;
     let hosting = state.hosting.clone();
+    let prompt = state.protection_upgrade.clone();
     blocking(move || {
+        confirm_protection_storage(&agents, &prompt, protection_upgrade_dialog)?;
         hosting.protecting(&pubkey, || {
             agents.set_protection(&pubkey, revision, &provider, policy)
         })
@@ -781,18 +834,17 @@ pub(crate) async fn app_agent_claim(
     let hosting = state.hosting.clone();
     let agents = state.agents.clone()?;
     blocking(move || {
-        if !hosting.claim(&pubkey)? {
-            return Ok(false);
-        }
-        let current = agents
-            .list()?
-            .into_iter()
-            .find(|agent| agent.pubkey == pubkey && !agent.deleted)
-            .ok_or("No such agent on this device")?;
-        if current.protection_revision != revision.unwrap_or(0) {
-            return Err("Agent protection changed; refresh before running this agent".into());
-        }
-        Ok(true)
+        hosting.claim_validated(&pubkey, || {
+            let current = agents
+                .list()?
+                .into_iter()
+                .find(|agent| agent.pubkey == pubkey && !agent.deleted)
+                .ok_or("No such agent on this device")?;
+            if current.protection_revision != revision.unwrap_or(0) {
+                return Err("Agent protection changed; refresh before running this agent".into());
+            }
+            Ok(())
+        })
     })
     .await
 }
@@ -1346,6 +1398,80 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    #[test]
+    fn declining_storage_upgrade_leaves_files_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        std::fs::write(&path, "[]").unwrap();
+        let agents = AppAgents::open(path.clone());
+        assert!(confirm_protection_storage(&agents, &Mutex::new(()), || false).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "[]");
+        assert!(!dir.path().join("protection.json").exists());
+        assert!(!agents.protection_storage_current().unwrap());
+    }
+
+    #[test]
+    fn storage_confirmation_holds_no_identity_lock_and_keeps_concurrent_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let key = Secret::generate().unwrap();
+        let agent = agent_at("wss://home.example".into(), &key);
+        std::fs::write(&path, serde_json::to_vec(&vec![agent.clone()]).unwrap()).unwrap();
+        let agents = AppAgents::open(path.clone());
+        confirm_protection_storage(&agents, &Mutex::new(()), || {
+            let other = AppAgents::open(path);
+            other.rename(&agent.pubkey, "Concurrent rename").unwrap();
+            other.upgrade_protection_storage().unwrap();
+            other
+                .set_protection(
+                    &agent.pubkey,
+                    0,
+                    "security.test",
+                    Some(serde_json::json!({})),
+                )
+                .unwrap();
+            true
+        })
+        .unwrap();
+        let kept = agents.get(&agent.pubkey, &agent.relay).unwrap();
+        assert_eq!(kept.name, "Concurrent rename");
+        assert_eq!(kept.protection_revision, 1);
+    }
+
+    #[test]
+    fn concurrent_local_protection_saves_share_one_upgrade_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = AppAgents::open(dir.path().join("identities.json"));
+        let prompt = Arc::new(Mutex::new(()));
+        let shown = Arc::new(AtomicU32::new(0));
+        let (entered, started) = std::sync::mpsc::channel();
+        let (allow, allowed) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let first_agents = agents.clone();
+            let first_prompt = prompt.clone();
+            let first_shown = shown.clone();
+            let first = scope.spawn(move || {
+                confirm_protection_storage(&first_agents, &first_prompt, || {
+                    first_shown.fetch_add(1, Ordering::SeqCst);
+                    entered.send(()).unwrap();
+                    allowed.recv().unwrap();
+                    true
+                })
+            });
+            started.recv().unwrap();
+            let second = scope.spawn(|| {
+                confirm_protection_storage(&agents, &prompt, || {
+                    shown.fetch_add(1, Ordering::SeqCst);
+                    true
+                })
+            });
+            allow.send(()).unwrap();
+            first.join().unwrap().unwrap();
+            second.join().unwrap().unwrap();
+        });
+        assert_eq!(shown.load(Ordering::SeqCst), 1);
+    }
+
     /// One saved key, behind a store that is busy for the first few reads.
     struct Busy(Mutex<Option<String>>, AtomicU32);
     impl Credentials for Busy {
@@ -1392,6 +1518,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: AgentTokens::unconfigured(),
+            protection_upgrade: Arc::default(),
         };
         let agent = AppAgent {
             pubkey: key.pubkey().into(),
@@ -1580,6 +1707,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
+            protection_upgrade: Arc::default(),
         };
         let import = |key: &Secret| {
             let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
@@ -1675,6 +1803,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
+            protection_upgrade: Arc::default(),
         };
         let agents = host.agents().unwrap();
 
@@ -1719,6 +1848,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: f.tokens.clone(),
+            protection_upgrade: Arc::default(),
         };
         let import = || {
             let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
@@ -1981,6 +2111,26 @@ mod tests {
     }
 
     #[test]
+    fn failed_admission_releases_only_newly_acquired_custody() {
+        for packaged in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let agent = "a".repeat(64);
+            let one = hosting(Ok(dir.path().join("hosts")), packaged);
+            let other = hosting(Ok(dir.path().join("hosts")), packaged);
+            assert!(one
+                .claim_validated(&agent, || Err("changed revision".into()))
+                .is_err());
+            assert!(other.claim(&agent).unwrap());
+            other.held().remove(&agent);
+            assert!(one.claim(&agent).unwrap());
+            assert!(one
+                .claim_validated(&agent, || Err("read failed".into()))
+                .is_err());
+            assert!(!other.claim(&agent).unwrap());
+        }
+    }
+
+    #[test]
     fn protection_changes_require_current_and_exclusive_hosting() {
         let dir = tempfile::tempdir().unwrap();
         let agent = "a".repeat(64);
@@ -2148,6 +2298,7 @@ mod tests {
             removals: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
             tokens: AgentTokens::unconfigured(),
+            protection_upgrade: Arc::default(),
         };
         let import = || {
             let prepared = AppAgents::adopt(

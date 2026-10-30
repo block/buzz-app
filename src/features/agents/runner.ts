@@ -2187,11 +2187,16 @@ export class AgentRunners {
       // Every copy of the app on this machine hears the same events; only the
       // one holding the agent runs them. Asked on every wake too, so a copy
       // takes over within a tick of the holder quitting or letting go.
-      if (!(await this.claim(runner))) {
+      const held = await this.claim(runner);
+      if (!held) {
         this.host.activity.clear(runner.scope, runner.member.pubkey);
         runner.activityClaimed = false;
-        this.dropMentions(runner);
-        runner.queues.watch.length = 0;
+        // Only confirmed custody elsewhere discards this copy's work. An
+        // uncertain claim stays closed and retries the same queues on a wake.
+        if (held === false) {
+          this.dropMentions(runner);
+          runner.queues.watch.length = 0;
+        }
         break;
       }
       // Retype may have reserved this idle runner while claim was pending.
@@ -2456,7 +2461,7 @@ export class AgentRunners {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
-    return guarded(
+    const handle = guarded(
       {
         protection: protection && {
           ...protection,
@@ -2532,21 +2537,27 @@ export class AgentRunners {
           else runner.notes.delete(channelId);
           return notes.map((note) => note.text);
         },
-        restoreNotes: (
-          channelId: string,
-          notes: readonly string[],
-          root?: string,
-        ) => {
-          if (notes.length)
-            runner.notes.set(channelId, [
-              ...notes.map((text) => ({ text, root })),
-              ...(runner.notes.get(channelId) ?? []),
-            ]);
-        },
         attention: this.attention(agent.key, lifetime),
       },
       () => lifetime.throwIfAborted(),
     );
+    return Object.freeze({
+      ...handle,
+      // Compensation for an undelivered request can settle after retirement.
+      // It only returns local notes to this runner; acting as the agent stays
+      // guarded by the old lifetime above.
+      restoreNotes: (
+        channelId: string,
+        notes: readonly string[],
+        root?: string,
+      ) => {
+        if (notes.length)
+          runner.notes.set(channelId, [
+            ...notes.map((text) => ({ text, root })),
+            ...(runner.notes.get(channelId) ?? []),
+          ]);
+      },
+    });
   }
 
   /** Counts a run as working until it and everything it handed to
@@ -2689,7 +2700,7 @@ export class AgentRunners {
           `Agent ${this.host.agent(runner.key)?.name} was not claimed`,
           error,
         );
-        return false;
+        return undefined;
       }
     });
   }

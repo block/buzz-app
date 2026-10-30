@@ -1224,6 +1224,7 @@ fn protection_is_committed_with_identity_and_changed_with_revision_and_provider_
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let agents = AppAgents::open(dir.path().join("agents/identities.json"));
+    agents.upgrade_protection_storage().unwrap();
     let binding = ProtectionBinding {
         provider: "security.test".into(),
         policy: serde_json::json!({"mode":"human"}),
@@ -1239,39 +1240,39 @@ fn protection_is_committed_with_identity_and_changed_with_revision_and_provider_
         agents.get(&agent.pubkey, RELAY).unwrap().protection,
         Some(binding)
     );
-    assert_eq!(agent.protection_revision, 0);
+    assert_eq!(agent.protection_revision, 1);
     let other = AppAgents::open(agents.path.clone());
     assert!(other
-        .set_protection(&agent.pubkey, 0, "other.plugin", None)
+        .set_protection(&agent.pubkey, 1, "other.plugin", None)
         .is_err());
     agents
         .set_protection(
             &agent.pubkey,
-            0,
+            1,
             "security.test",
             Some(serde_json::json!({"mode":"delegate"})),
         )
         .unwrap();
     assert!(other
-        .set_protection(&agent.pubkey, 0, "security.test", None)
+        .set_protection(&agent.pubkey, 1, "security.test", None)
         .is_err());
     assert!(other
-        .set_protection(&agent.pubkey, 1, "bad/plugin", None)
+        .set_protection(&agent.pubkey, 2, "bad/plugin", None)
         .is_err());
     assert!(other
         .set_protection(
             &agent.pubkey,
-            1,
+            2,
             "security.test",
             Some(serde_json::json!([]))
         )
         .is_err());
     assert_eq!(
         other.get(&agent.pubkey, RELAY).unwrap().protection_revision,
-        1
+        2
     );
     other
-        .set_protection(&agent.pubkey, 1, "security.test", None)
+        .set_protection(&agent.pubkey, 2, "security.test", None)
         .unwrap();
     assert!(agents
         .get(&agent.pubkey, RELAY)
@@ -1308,6 +1309,7 @@ fn defaults_are_native_authority_even_for_an_already_prepared_creation_in_anothe
     let credentials = Memory::default();
     let path = dir.path().join("agents/identities.json");
     let first = AppAgents::open(path.clone());
+    first.upgrade_protection_storage().unwrap();
     let second = AppAgents::open(path);
     let prepared = AppAgents::prepare("https://relay.example/", &owner(), "p/t", "Ada").unwrap();
     let auth: Vec<String> =
@@ -1385,6 +1387,7 @@ fn protection_is_atomic_across_memberships_and_joining_preserves_the_source_poli
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
+    agents.upgrade_protection_storage().unwrap();
     let original = serde_json::json!({"mode":"human"});
     agents
         .set_protection(&agent.pubkey, 0, "security.test", Some(original.clone()))
@@ -1432,6 +1435,7 @@ fn protected_identity_envelope_is_sticky_and_ignores_old_membership_sidecars() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
+    agents.upgrade_protection_storage().unwrap();
     agents
         .set_protection(
             &agent.pubkey,
@@ -1469,6 +1473,7 @@ fn defaults_install_the_old_reader_barrier_before_activation_even_without_agents
     for fail_at in [0, 1, 2] {
         let dir = tempfile::tempdir().unwrap();
         let agents = AppAgents::open(dir.path().join("agents/identities.json"));
+        agents.upgrade_protection_storage().unwrap();
         FAIL_RENAME.set(fail_at);
         let result = agents.set_protection_defaults(
             &owner(),
@@ -1485,7 +1490,7 @@ fn defaults_install_the_old_reader_barrier_before_activation_even_without_agents
             assert!(result.is_err());
             assert!(defaults.defaults.is_none());
         }
-        if fail_at != 1 {
+        {
             let saved: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
             assert_eq!(saved["version"], PROTECTED_IDENTITIES);
@@ -1500,6 +1505,7 @@ fn failed_first_protected_write_preserves_the_previous_identity_policy() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();
     let (agents, agent) = created(dir.path(), &credentials);
+    agents.upgrade_protection_storage().unwrap();
     FAIL_RENAME.set(1);
     assert!(agents
         .set_protection(
@@ -1599,10 +1605,13 @@ fn protected_v2_cannot_silently_discard_a_membership_sidecar() {
 fn legacy_v2_with_defaults_cannot_downgrade_the_old_reader_barrier() {
     let dir = tempfile::tempdir().unwrap();
     let agents = AppAgents::open(dir.path().join("identities.json"));
+    agents.upgrade_protection_storage().unwrap();
     agents
         .set_protection_defaults(&owner(), 0, "security.test", Some(serde_json::json!({})))
         .unwrap();
     std::fs::write(&agents.path, r#"{"version":2,"agents":[]}"#).unwrap();
+    assert!(agents.protection_upgrade_needed().unwrap());
+    agents.upgrade_protection_storage().unwrap();
     agents.upgrade().unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&agents.path).unwrap()).unwrap();
@@ -1612,4 +1621,151 @@ fn legacy_v2_with_defaults_cannot_downgrade_the_old_reader_barrier() {
         .unwrap()
         .defaults
         .is_some());
+}
+
+#[test]
+fn protection_writes_require_explicit_storage_upgrade_and_leave_old_data_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let before = std::fs::read(&agents.path).unwrap();
+    assert!(!agents.protection_storage_current().unwrap());
+    assert!(!agents.protection_upgrade_needed().unwrap());
+    assert!(agents
+        .set_protection(
+            &agent.pubkey,
+            0,
+            "security.test",
+            Some(serde_json::json!({}))
+        )
+        .unwrap_err()
+        .contains("confirmation"));
+    assert!(agents
+        .set_protection_defaults(&owner(), 0, "security.test", None)
+        .unwrap_err()
+        .contains("confirmation"));
+    assert_eq!(std::fs::read(&agents.path).unwrap(), before);
+    assert!(!agents.defaults_path().exists());
+    assert_eq!(agent.read_key(&credentials).unwrap().pubkey(), agent.pubkey);
+}
+
+#[test]
+fn confirmed_legacy_upgrade_preserves_rows_and_uses_the_highest_deleted_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, mut agent) = created(dir.path(), &credentials);
+    agent.protection_revision = 9;
+    let mut deleted = agent.clone();
+    deleted.relay = "wss://other.example".into();
+    deleted.deleted = true;
+    deleted.protection_revision = 50;
+    let rows = vec![agent.clone(), deleted];
+    std::fs::write(
+        &agents.path,
+        serde_json::json!({"version":3,"agents":rows}).to_string(),
+    )
+    .unwrap();
+    assert!(agents.protection_upgrade_needed().unwrap());
+    assert!(agents.rename(&agent.pubkey, "Unconfirmed").is_err());
+    agents.upgrade_protection_storage().unwrap();
+    assert_eq!(agents.list().unwrap(), rows);
+    assert!(!agents.protection_upgrade_needed().unwrap());
+    agents
+        .set_protection(
+            &agent.pubkey,
+            9,
+            "security.test",
+            Some(serde_json::json!({})),
+        )
+        .unwrap();
+    assert_eq!(
+        agents
+            .get(&agent.pubkey, RELAY)
+            .unwrap()
+            .protection_revision,
+        51
+    );
+}
+
+#[test]
+fn forgetting_the_last_identity_cannot_reuse_its_revision_after_readoption() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    agents.upgrade_protection_storage().unwrap();
+    agents
+        .set_protection(
+            &agent.pubkey,
+            0,
+            "security.test",
+            Some(serde_json::json!({"mode":"old"})),
+        )
+        .unwrap();
+    let stale_revision = agents
+        .get(&agent.pubkey, RELAY)
+        .unwrap()
+        .protection_revision;
+    agents.begin_delete(&agent.pubkey).unwrap();
+    remove(&agents, &agent.pubkey, RELAY, &credentials).unwrap();
+    agents.forget(&agent.pubkey, RELAY).unwrap();
+    assert!(agents.list().unwrap().is_empty());
+    let reopened = AppAgents::open(agents.path.clone());
+    reopened
+        .set_protection_defaults(
+            &owner(),
+            0,
+            "security.test",
+            Some(serde_json::json!({"mode":"new"})),
+        )
+        .unwrap();
+    let prepared = AppAgents::adopt(RELAY, &owner(), "p/t", key, "Ada", None, None).unwrap();
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(prepared.pubkey())).unwrap();
+    let (new, _) = reopened.commit(prepared, &auth, &credentials).unwrap();
+    assert!(new.protection_revision > stale_revision);
+    assert_eq!(
+        new.protection.as_ref().unwrap().policy,
+        serde_json::json!({"mode":"new"})
+    );
+    assert!(reopened
+        .set_protection(&new.pubkey, stale_revision, "security.test", None)
+        .is_err());
+}
+
+#[test]
+fn protected_clock_rejects_missing_invalid_or_exhausted_state_without_partial_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, mut agent) = created(dir.path(), &credentials);
+    agent.protection_revision = 5;
+    for clock in [
+        serde_json::Value::Null,
+        serde_json::json!(-1),
+        serde_json::json!(4),
+        serde_json::json!(1.5),
+        serde_json::json!(9_007_199_254_740_992_u64),
+    ] {
+        let saved =
+            serde_json::json!({"version":4,"agents":[agent.clone()],"protectionClock":clock});
+        std::fs::write(&agents.path, saved.to_string()).unwrap();
+        assert!(agents.list().is_err());
+    }
+    let saved = serde_json::json!({"version":4,"agents":[agent.clone()],"protectionClock":MAX_PROTECTION_REVISION});
+    std::fs::write(&agents.path, saved.to_string()).unwrap();
+    let before = std::fs::read(&agents.path).unwrap();
+    assert!(agents
+        .set_protection(&agent.pubkey, 5, "security.test", None)
+        .unwrap_err()
+        .contains("exhausted"));
+    assert_eq!(std::fs::read(&agents.path).unwrap(), before);
+    // Defaults and ordinary edits preserve the same exhausted clock; they do not allocate.
+    agents
+        .set_protection_defaults(&owner(), 0, "security.test", None)
+        .unwrap();
+    agents.rename(&agent.pubkey, "Renamed").unwrap();
+    assert_eq!(
+        agents.read().unwrap().1.protection_clock,
+        MAX_PROTECTION_REVISION
+    );
 }

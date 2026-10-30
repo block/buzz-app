@@ -380,7 +380,7 @@ export class AgentProtectionService extends Service {
     return Object.freeze({
       key,
       phases: Object.freeze(phases),
-      stateKey: `${membership}:${binding.provider}:${agent.protectionRevision ?? 0}`,
+      stateKey: `v4:${membership}:${binding.provider}:${agent.protectionRevision ?? 0}`,
       assertAvailable,
       spawn: provider
         ? this.runtimeSpawn(

@@ -47,14 +47,18 @@ export function createSignInFooter(session: OAuthSession) {
       <motion.div
         initial={{ y: reducedMotion ? 0 : "100%", opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        transition={{
-          duration:
-            reducedMotion ||
-            document.documentElement.hasAttribute("data-keyboard-navigation")
-              ? 0
-              : 0.22,
-          ease: [0.23, 1, 0.32, 1],
-        }}
+        transition={
+          reducedMotion ||
+          document.documentElement.hasAttribute("data-keyboard-navigation")
+            ? { duration: 0 }
+            : {
+                type: "spring",
+                delay: 0.35,
+                duration: 0.6,
+                bounce: 0.25,
+                opacity: { type: "tween", delay: 0.35, duration: 0.18 },
+              }
+        }
       >
         <section
           aria-labelledby={title}

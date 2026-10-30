@@ -234,7 +234,7 @@ async function setup(
   await user.click(trigger);
   if (options.pendingMemberNames)
     await within(
-      await screen.findByRole("region", { name: "Member list", exact: true }),
+      await screen.findByRole("region", { name: "Member list" }),
     ).findAllByRole("listitem");
   else if (missingNames) await screen.findByText(/Some names could not load/);
   else await screen.findByText("Carl (you)");
@@ -2989,7 +2989,6 @@ it("pages a large roster without waiting for optional names or exceeding the pro
     });
     const list = screen.getByRole("region", {
       name: "Member list",
-      exact: true,
     });
     expect(within(list).getAllByRole("listitem")).toHaveLength(50);
     expect(screen.queryByText("Loading members…")).not.toBeInTheDocument();

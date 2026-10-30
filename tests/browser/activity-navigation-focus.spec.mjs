@@ -147,6 +147,9 @@ for (const destination of ["reply", "off-window root"]) {
         await workspace
           .getByRole("button", { name: "Toggle tab pane", exact: true })
           .click();
+      // A slow runner can spend most of the 30 s activity window above, and
+      // the popup closes once it ends. Renew again for the steps that need it.
+      app.observer(activity("turn_liveness", target.id), key);
       await row.focus();
       await row.press("Enter");
       await expect(popup).toBeVisible();

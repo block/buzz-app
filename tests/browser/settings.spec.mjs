@@ -223,9 +223,7 @@ for (const action of ["Remove from this device", "Leave community"]) {
       page.getByRole("heading", { name: "Profile", exact: true }),
     ).toBeVisible();
     await expect(page.locator("#settings-content")).toBeFocused();
-    await expect(
-      page.getByText("This destination couldn’t open", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.locator('.page-status[role="alert"]')).toHaveCount(0);
     expect(leaveRequests).toHaveLength(action === "Leave community" ? 1 : 0);
   });
 }
@@ -289,12 +287,10 @@ test.describe("community administration permissions", () => {
     try {
       await page.reload();
       await started;
-      await expect(
-        page.getByText("Opening destination…", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByText("This destination couldn’t open", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.locator(".page-status").getByRole("status")).toHaveText(
+        "Loading…",
+      );
+      await expect(page.locator('.page-status[role="alert"]')).toHaveCount(0);
       await expect(
         sections.getByRole("button", { name: "Membership", exact: true }),
       ).toHaveCount(0);

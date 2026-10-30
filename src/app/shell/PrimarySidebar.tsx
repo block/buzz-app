@@ -315,21 +315,29 @@ function ScopedSidebar({
             }
           >
             <SidebarList>
-              <p className={styles.connectionMessage}>
-                {connection.status === "connecting"
-                  ? "Connecting to your relay…"
-                  : (connection.error ?? "Choose a community to see channels.")}
-              </p>
-              {connection.status === "error" && (
-                <>
-                  <CommunitySignIn
-                    identity={props.federatedIdentity}
-                    error={connection.error}
-                    retry={props.relay.retry}
-                  />
-                  <Button onClick={props.relay.retry}>Retry channels</Button>
-                </>
-              )}
+              {/* A connection retrying by itself is still connecting; only a
+                  settled failure asks for Try again, right beside its notice. */}
+              <div className={styles.connectionStatus}>
+                <p>
+                  {connection.status === "connecting" || connection.retrying
+                    ? "Connecting…"
+                    : connection.denied
+                      ? "You don’t have access to this community."
+                      : connection.status === "error"
+                        ? "Couldn’t load channels."
+                        : "Choose a community to see channels."}
+                </p>
+                {connection.status === "error" && !connection.retrying && (
+                  <>
+                    <CommunitySignIn
+                      identity={props.federatedIdentity}
+                      error={connection.error}
+                      retry={props.relay.retry}
+                    />
+                    <Button onClick={props.relay.retry}>Try again</Button>
+                  </>
+                )}
+              </div>
             </SidebarList>
           </SidebarFrame>
         </div>

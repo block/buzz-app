@@ -913,6 +913,19 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin: 0;
   padding: 0;
 }
+/* A thread notice keeps its recovery aligned beneath its text. */
+.threadNotice {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--text-subtle);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
 .threadHistoryControls {
   flex-shrink: 0;
   display: flex;

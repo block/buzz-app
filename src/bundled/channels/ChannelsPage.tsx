@@ -4,6 +4,8 @@ import {
   linkedDraftKey,
 } from "../../features/solo/linked-chat";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { profileActivityViewTarget } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
@@ -69,6 +71,8 @@ import {
 import {
   SidebarRightIcon,
   PlugIcon,
+  CloudOffIcon,
+  LockIcon,
   ChatCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
@@ -139,6 +143,10 @@ export function ChannelsPage({
 }) {
   const session = useRelayConnection(relay);
   const sessionNavigation = navigation?.forSession(relay, session);
+  // An opening visit's deadline bounds Connecting; once it has settled, a
+  // retrying connection is a failure that keeps trying, not a connection.
+  // Each attempt republishes the connection, so reading it here stays current.
+  const visitSettled = navigator.snapshot().status !== "opening";
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;
@@ -170,24 +178,95 @@ export function ChannelsPage({
     if (!navigation || !sessionNavigation) return;
     if (session.status === "disconnected" && navigation.target.kind === "page")
       sessionNavigation.complete({ status: "opened" });
-    else if (session.status === "error" && !session.cached)
-      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
-  }, [navigation, sessionNavigation, session.status, session.cached]);
+    // A connection that is retrying on its own keeps the visit pending; the
+    // visit deadline bounds the wait and the host reopens it once connected.
+    else if (session.status === "error" && !session.cached && !session.retrying)
+      sessionNavigation.complete(
+        // A refusal is explained in place, beside its own Try again.
+        session.denied
+          ? { status: "failed", reason: "denied", presented: true }
+          : { status: "failed", reason: "unavailable" },
+      );
+  }, [
+    navigation,
+    sessionNavigation,
+    session.status,
+    session.cached,
+    session.retrying,
+    session.denied,
+  ]);
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" && !session.cached ? (
         <PanelFrame companion={companion}>
-          <div className={styles.connect}>
-            <div className={styles.connectIcon}>
-              <PlugIcon size={30} />
+          {session.status === "disconnected" ? (
+            <div className={styles.connect}>
+              <div className={styles.connectIcon}>
+                <PlugIcon size={30} />
+              </div>
+              <h1>Your channels, one conversation.</h1>
+              <p>
+                Use the community picker in the header to choose or add a
+                community. Your profile and settings work without a community.
+              </p>
             </div>
-            <h1>Your channels, one conversation.</h1>
-            <p>
-              {session.status === "disconnected"
-                ? "Use the community picker in the header to choose or add a community. Your profile and settings work without a community."
-                : "Connection details and retry are in the sidebar. Your profile and settings work without a community."}
-            </p>
-          </div>
+          ) : session.status === "error" && session.denied ? (
+            <div role="alert" className={styles.failed}>
+              <EmptyState
+                icon={<LockIcon />}
+                title="You don’t have access to this"
+                description="It belongs to another account or a community you haven’t joined."
+                action={
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => relay.retry()}
+                  >
+                    Try again
+                  </Button>
+                }
+              />
+            </div>
+          ) : session.status === "error" &&
+            (!session.retrying || visitSettled) ? (
+            // Usually a failed visit's card covers this page, but a visit that
+            // already opened from cached content keeps it: say so plainly.
+            <div role="alert" className={styles.failed}>
+              <EmptyState
+                icon={<CloudOffIcon />}
+                title="Can’t connect"
+                description={
+                  session.retrying
+                    ? "Check your connection. We’ll keep trying."
+                    : "Check your connection, then try again."
+                }
+                action={
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => relay.retry()}
+                  >
+                    Try again
+                  </Button>
+                }
+              />
+            </div>
+          ) : (
+            // Only real connection work animates.
+            <div className={styles.connect}>
+              <LoadingRegion
+                pending
+                label={
+                  <span className={styles.connecting}>
+                    <TypingDots />
+                    Connecting…
+                  </span>
+                }
+              >
+                {null}
+              </LoadingRegion>
+            </div>
+          )}
         </PanelFrame>
       ) : (
         <ChannelWorkspace

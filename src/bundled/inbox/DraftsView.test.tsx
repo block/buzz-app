@@ -959,7 +959,7 @@ it("retries thread history failure without another composer and never rebinds a 
   fireEvent.click(
     screen.getByRole("button", { name: "Open draft for #Design" }),
   );
-  const retry = await screen.findByRole("button", { name: "Retry thread" });
+  const retry = await screen.findByRole("button", { name: "Try again" });
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();

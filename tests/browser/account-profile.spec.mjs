@@ -21,9 +21,18 @@ test("profile Settings opens after a failed connection", async ({
       json: { error: "Connection unavailable" },
     });
   });
+  await page.clock.install();
   await page.goto(app.origin);
+  // Messages waits out its opening deadline while the connection retries.
+  await page.clock.runFor(15_000);
+  await expect(
+    page.getByRole("heading", { name: "Can’t connect", exact: true }),
+  ).toBeVisible();
+  // The card offers only Try again; the account menu still reaches Settings.
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page
-    .getByRole("button", { name: "Open Settings", exact: true })
+    .locator("[data-profile-menu]")
+    .getByRole("menuitem", { name: /, edit profile$/ })
     .click();
   await selectSettingsSection(page, "Appearance");
   await selectSettingsSection(page, "Profile");

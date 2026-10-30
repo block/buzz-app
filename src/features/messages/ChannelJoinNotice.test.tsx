@@ -47,23 +47,29 @@ function lifecycle(
   return { available, run } as ChannelLifecycleCapability;
 }
 
-it.each([false, true])(
-  "prioritizes archived state over guest access %s and Join",
-  (guest) => {
+it.each([
+  { guest: false, place: "channel" as const },
+  { guest: true, place: "channel" as const },
+  { guest: false, place: "chat" as const },
+  { guest: true, place: "chat" as const },
+])(
+  "prioritizes archived $place state over guest access $guest and Join",
+  ({ guest, place }) => {
     render(
       <ChannelJoinNotice
         channelId="archived"
         lifecycle={lifecycle(vi.fn())}
         joinable
         archived
+        place={place}
         guest={guest}
         joinRole={guest ? "guest" : "member"}
         onJoin={vi.fn()}
       />,
     );
     expect(
-      screen.getByRole("region", { name: "Archived channel" }),
-    ).toHaveTextContent(/^This channel is archived$/);
+      screen.getByRole("region", { name: `Archived ${place}` }),
+    ).toHaveTextContent(new RegExp(`^This ${place} is archived$`));
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
   },
 );

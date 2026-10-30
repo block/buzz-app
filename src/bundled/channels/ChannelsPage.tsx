@@ -1723,6 +1723,7 @@ function ChannelWorkspace({
             ready={contentReadyChannel === current.id}
             channelId={current.id}
             archived={!!current.archived}
+            place={solo ? "chat" : "channel"}
             guest={current.viewerRole === "guest"}
             joinRole={current.joinRole}
             lifecycle={queries.channelLifecycle}
@@ -1786,11 +1787,7 @@ function ChannelWorkspace({
             }
             trailingTool={
               solo ? (
-                <WorkspaceControl
-                  session={queries}
-                  channelId={current.id}
-                  disabled={!!current.archived}
-                />
+                <WorkspaceControl session={queries} channelId={current.id} />
               ) : undefined
             }
             onSend={onComposerSend}

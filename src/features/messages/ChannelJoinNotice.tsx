@@ -15,6 +15,7 @@ export function ChannelJoinNotice({
   joinable,
   guest = false,
   archived = false,
+  place = "channel",
   joinRole,
   onJoin,
   onHeightChange,
@@ -25,6 +26,7 @@ export function ChannelJoinNotice({
   joinable: boolean;
   guest?: boolean;
   archived?: boolean;
+  place?: "chat" | "channel";
   joinRole?: "member" | "guest" | undefined;
   onJoin(): void;
   onHeightChange?(height: number): void;
@@ -82,7 +84,7 @@ export function ChannelJoinNotice({
       ref={notice}
       aria-label={
         archived
-          ? "Archived channel"
+          ? `Archived ${place}`
           : readOnly
             ? "Read-only channel"
             : "Channel preview"
@@ -98,7 +100,7 @@ export function ChannelJoinNotice({
       >
         <p className="max-w-md px-2 text-center text-body-sm text-subtle">
           {archived
-            ? "This channel is archived"
+            ? `This ${place} is archived`
             : readOnly
               ? joinRole === "guest"
                 ? "This channel is read-only"

@@ -509,14 +509,12 @@ function ThreadMessages({
       if (channel?.archived) return "archived";
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
-        return !channel.archived &&
-          (channel.channelType === "stream" || channel.channelType === "forum")
+        return channel.channelType === "stream" ||
+          channel.channelType === "forum"
           ? "joinable"
           : "preview";
       }
-      return listed && !listed.readOnly && !listed.archived
-        ? "member"
-        : "other";
+      return listed && !listed.readOnly ? "member" : "other";
     },
   );
   const preview =
@@ -1619,6 +1617,7 @@ function ThreadMessages({
           }
           channelId={channelId}
           archived={channelAccess === "archived"}
+          place={soloConversation ? "chat" : "channel"}
           guest={channelAccess === "guest"}
           joinRole={joinRole}
           lifecycle={session.channelLifecycle}

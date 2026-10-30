@@ -514,16 +514,16 @@ test.describe("Solo chat lifecycle", () => {
     // The retained address must still support archived-history recovery.
     await page.goto(url);
     await expect(
-      page.getByRole("region", { name: "Archived channel", exact: true }),
-    ).toHaveText("This channel is archived");
+      page.getByRole("region", { name: "Archived chat", exact: true }),
+    ).toHaveText("This chat is archived");
     await expect(composer).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Share access", exact: true }),
     ).toHaveCount(0);
     await page.reload();
     await expect(
-      page.getByRole("region", { name: "Archived channel", exact: true }),
-    ).toHaveText("This channel is archived");
+      page.getByRole("region", { name: "Archived chat", exact: true }),
+    ).toHaveText("This chat is archived");
     await expect(composer).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await page
@@ -549,8 +549,8 @@ test.describe("Solo chat lifecycle", () => {
     await expect(search).toHaveCount(0);
     await expect(page).toHaveURL(url);
     await expect(
-      page.getByRole("region", { name: "Archived channel", exact: true }),
-    ).toHaveText("This channel is archived");
+      page.getByRole("region", { name: "Archived chat", exact: true }),
+    ).toHaveText("This chat is archived");
     await expect(composer).toHaveCount(0);
     await header.click();
     await expect(

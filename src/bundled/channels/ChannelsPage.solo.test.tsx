@@ -947,8 +947,8 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   expect(screen.getAllByText("Archived")).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Share access" })).toBeNull();
   expect(
-    await screen.findByRole("region", { name: "Archived channel" }),
-  ).toHaveTextContent("This channel is archived");
+    await screen.findByRole("region", { name: "Archived chat" }),
+  ).toHaveTextContent("This chat is archived");
   expect(screen.queryByRole("textbox")).toBeNull();
 });
 
@@ -956,6 +956,7 @@ it.each(["solo", "stream"] as const)(
   "replaces an archived %s composer with a notice and restores its draft on unarchive",
   async (type) => {
     const f = fixture({ type });
+    const place = type === "solo" ? "chat" : "channel";
     f.mount();
     const editor = await screen.findByRole("textbox");
     const user = userEvent.setup();
@@ -963,8 +964,8 @@ it.each(["solo", "stream"] as const)(
     await user.keyboard("Keep this draft");
     await act(() => f.run("archive"));
     expect(
-      await screen.findByRole("region", { name: "Archived channel" }),
-    ).toHaveTextContent("This channel is archived");
+      await screen.findByRole("region", { name: `Archived ${place}` }),
+    ).toHaveTextContent(`This ${place} is archived`);
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
@@ -974,7 +975,7 @@ it.each(["solo", "stream"] as const)(
       "Keep this draft",
     );
     expect(
-      screen.queryByRole("region", { name: "Archived channel" }),
+      screen.queryByRole("region", { name: `Archived ${place}` }),
     ).toBeNull();
     expect(f.send).not.toHaveBeenCalled();
   },

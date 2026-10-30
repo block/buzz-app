@@ -1455,11 +1455,15 @@ it.each([
     joinable: false,
   },
   { channelType: "stream" as const, archived: true as const, joinable: false },
+  { channelType: "solo" as const, archived: true as const, joinable: false },
   { channelType: "solo" as const, joinable: false },
 ])(
   "replaces the reply composer for a $channelType preview (joinable: $joinable)",
   ({ joinable, ...metadata }) => {
     const h = messagesHarness();
+    Object.assign(h.props, {
+      soloConversation: metadata.channelType === "solo",
+    });
     const channel: ChannelSummary = {
       id: "channel",
       name: "General",
@@ -1479,12 +1483,24 @@ it.each([
     expect(
       screen.getByRole("region", {
         name: metadata.archived
-          ? "Archived channel"
+          ? metadata.channelType === "solo"
+            ? "Archived chat"
+            : "Archived channel"
           : metadata.joinRole === "guest"
             ? "Read-only channel"
             : "Channel preview",
       }),
     ).toBeVisible();
+    if (metadata.archived) {
+      expect(
+        screen.getByText(
+          metadata.channelType === "solo"
+            ? "This chat is archived"
+            : "This channel is archived",
+          { exact: true },
+        ),
+      ).toBeVisible();
+    }
     expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
     expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
   },

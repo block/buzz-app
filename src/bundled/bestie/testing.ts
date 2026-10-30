@@ -304,6 +304,7 @@ export async function bestieFixture(
     );
   };
   let owner = start();
+  const temporarySessions: ReturnType<typeof createRelaySession>[] = [];
   let snapshot: RelaySnapshot = {
     status: "ready",
     generation: 1,
@@ -423,6 +424,7 @@ export async function bestieFixture(
     await runtime.dispose();
     await root.fiber.dispose();
     owner.dispose();
+    for (const temporary of temporarySessions) temporary.dispose();
     await closed.promise;
     listeners.clear();
   });
@@ -461,6 +463,16 @@ export async function bestieFixture(
       signInCanceled = true;
     },
     session: () => owner.session,
+    replaceWithConnectingSession() {
+      const temporary = createRelaySession(null);
+      temporarySessions.push(temporary);
+      snapshot = {
+        status: "connecting",
+        generation: snapshot.generation + 1,
+        session: temporary.session,
+      };
+      notify();
+    },
     ignoreCreateMembers() {
       createMembers = false;
     },

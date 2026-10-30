@@ -94,6 +94,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
 };
 
+function BestieStatus({ children }: { children: ReactNode }) {
+  return (
+    <div className="h-full min-h-0">
+      <FullPageSurface aria-label="Bestie">
+        <div className="flex h-full min-h-0 flex-col">
+          <PanelHeader
+            title={
+              <PanelHeaderLabel
+                title="Bestie"
+                icon={<BestieIcon size="1rem" />}
+              />
+            }
+          />
+          <Intro>{children}</Intro>
+        </div>
+      </FullPageSurface>
+    </div>
+  );
+}
+
 function BestieDestination({
   relay,
   ...props
@@ -106,31 +126,35 @@ function BestieDestination({
 }) {
   const connection = useRelayConnection(relay);
   const saved = useSavedAgentState(connection.session, connection.scope ?? "");
+  const established =
+    connection.status === "ready" &&
+    !!connection.viewer &&
+    !!connection.scope?.endsWith(`:${connection.viewer}`);
+  if (!established && !saved.agent)
+    return (
+      <BestieStatus>
+        <p className="m-0 text-body-sm text-muted" role="status">
+          {connection.status === "connecting"
+            ? "Connecting to your Bestie…"
+            : (connection.error ??
+              "Choose a community to continue with your Bestie.")}
+        </p>
+        {connection.status === "error" && (
+          <Button onClick={relay.retry}>Retry connection</Button>
+        )}
+      </BestieStatus>
+    );
   if (!saved.read || saved.error)
     return (
-      <div className="h-full min-h-0">
-        <FullPageSurface aria-label="Bestie">
-          <div className="flex h-full min-h-0 flex-col">
-            <PanelHeader
-              title={
-                <PanelHeaderLabel
-                  title="Bestie"
-                  icon={<BestieIcon size="1rem" />}
-                />
-              }
-            />
-            <Intro>
-              <p
-                className="m-0 text-body-sm text-muted"
-                role={saved.error ? "alert" : "status"}
-              >
-                {saved.error ?? "Loading your Bestie…"}
-              </p>
-              {saved.error && <Button onClick={saved.retry}>Try again</Button>}
-            </Intro>
-          </div>
-        </FullPageSurface>
-      </div>
+      <BestieStatus>
+        <p
+          className="m-0 text-body-sm text-muted"
+          role={saved.error ? "alert" : "status"}
+        >
+          {saved.error ?? "Loading your Bestie…"}
+        </p>
+        {saved.error && <Button onClick={saved.retry}>Try again</Button>}
+      </BestieStatus>
     );
   return saved.agent ? (
     <PinnedBestie

@@ -135,6 +135,18 @@ it("keeps setup hidden when the account choice read fails and retries it", async
   ).not.toBeInTheDocument();
 });
 
+it("keeps a replacement connecting session out of hosted setup", async () => {
+  const h = await bestieFixture(native.invoke);
+  renderPage(h);
+  act(() => h.replaceWithConnectingSession());
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Connecting to your Bestie…",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Set up Bestie" }),
+  ).not.toBeInTheDocument();
+});
+
 it("routes an account-saved Bestie to its canonical DM instead of hosted setup", async () => {
   const choice = deferred<string | undefined>();
   const h = await bestieFixture(native.invoke, {

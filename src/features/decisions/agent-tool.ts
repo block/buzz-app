@@ -51,21 +51,21 @@ function question(name: string, raw: unknown): DecisionQuestion {
     case "noul": {
       if (criteria === undefined || criteria === null)
         return { type: "yes_no", instructions };
-      if (!record(criteria))
+      const means = (key: "true" | "false", label: string) =>
+        record(criteria) &&
+        criteria[key] !== undefined &&
+        criteria[key] !== null
+          ? [`${label} means: ${asText(criteria[key])}`]
+          : [];
+      const yes = means("true", "Yes");
+      const no = means("false", "No");
+      if (!yes.length && !no.length)
         throw new Error(
           `Question ${name}: a noul's criteria is {"true": …, "false": …}.`,
         );
-      const means = (key: "true" | "false", label: string) =>
-        criteria[key] === undefined || criteria[key] === null
-          ? []
-          : [`${label} means: ${asText(criteria[key])}`];
       return {
         type: "yes_no",
-        instructions: [
-          instructions,
-          ...means("true", "Yes"),
-          ...means("false", "No"),
-        ].join("\n"),
+        instructions: [instructions, ...yes, ...no].filter(Boolean).join("\n"),
       };
     }
     case "choice":
@@ -94,8 +94,9 @@ function question(name: string, raw: unknown): DecisionQuestion {
   }
 }
 
-/** One answer in System One's format. */
-function answer(asked: DecisionQuestion, given: DecisionAnswer) {
+/** One answer in System One's format. `criteria` is the question's, as the
+ * agent sent it, so a score's legend repeats its levels unchanged. */
+function answer(given: DecisionAnswer, criteria: unknown) {
   switch (given.type) {
     case "yes_no":
       return { type: "noul", noul: given.probability };
@@ -105,7 +106,7 @@ function answer(asked: DecisionQuestion, given: DecisionAnswer) {
       return {
         ...given,
         legend: Object.fromEntries(
-          (asked.type === "score" ? asked.levels : []).map((level, i) => [
+          (Array.isArray(criteria) ? criteria : []).map((level, i) => [
             String(i),
             level,
           ]),
@@ -126,7 +127,7 @@ export function registerDecideTool(
   agents.addTool({
     name: "decide",
     description:
-      "Ask fast yes/no (noul), choice or score questions about some content, in TypeSafe's System One format (https://docs.typesafe.ai/api/system-one.md). The decisions provider your owner chose in Settings answers, so it sees state and questions: send only what it needs. Answers come back under each question's name: a noul is the probability of yes; a choice or score has its confidence and a probability for each option or level.",
+      "Ask fast yes/no (noul), choice or score questions about some content, in TypeSafe's System One format (https://docs.typesafe.ai/api/system-one.md). The decisions provider your owner chose in Settings answers, so it sees state and questions: send only what it needs. Differences: each question needs instructions, a choice needs 2 to 255 criteria and a score 2 to 10, and there is no model, images or box. Answers come back under each question's name: a noul is the probability of yes; a choice or score has its confidence and, where the provider reports them, a probability for each option or level.",
     inputSchema: {
       type: "object",
       properties: {
@@ -180,7 +181,11 @@ export function registerDecideTool(
         answers: Object.fromEntries(
           Object.entries(result.answers).map(([name, given]) => [
             name,
-            answer(questions[name] as DecisionQuestion, given),
+            answer(
+              given,
+              (args.questions as Record<string, { criteria?: unknown }>)[name]
+                ?.criteria,
+            ),
           ]),
         ),
       });

@@ -179,7 +179,7 @@ it("refuses questions it cannot map before asking", async () => {
   expect(decide).not.toHaveBeenCalled();
 });
 
-it("lists a schema every harness's model provider accepts", () => {
+it("gives every array in its input schema items", () => {
   const { tool } = setup(() => {
     throw new Error("not asked");
   });
@@ -193,4 +193,61 @@ it("lists a schema every harness's model provider accepts", () => {
   walk(tool.inputSchema);
   expect(arrays.length).toBeGreaterThan(0);
   for (const array of arrays) expect(array).toHaveProperty("items");
+});
+
+it("writes a noul's criteria as the lines Attention uses, and refuses criteria it cannot read", async () => {
+  const { decide, call } = setup((request) => ({
+    outcome: "answered",
+    backend: "buzz.typesafe/typesafe",
+    model: "jev-1.13.0",
+    answers: Object.fromEntries(
+      Object.keys(request.questions).map((name) => [
+        name,
+        { type: "yes_no", probability: 0.5 },
+      ]),
+    ),
+  }));
+  await call({
+    state: "hi",
+    questions: {
+      plain: { type: "noul", instructions: "Spam?" },
+      yes: { type: "noul", instructions: "Spam?", criteria: { true: "Ads" } },
+      bare: { type: "noul", criteria: { false: "A real message" } },
+    },
+  });
+  expect(decide.mock.calls[0]?.[0].questions).toEqual({
+    plain: { type: "yes_no", instructions: "Spam?" },
+    yes: { type: "yes_no", instructions: "Spam?\nYes means: Ads" },
+    bare: { type: "yes_no", instructions: "No means: A real message" },
+  });
+  await expect(
+    call({
+      state: "hi",
+      questions: {
+        spam: { type: "noul", instructions: "Spam?", criteria: { yes: "Ads" } },
+      },
+    }),
+  ).rejects.toThrow('a noul\'s criteria is {"true"');
+  expect(decide).toHaveBeenCalledTimes(1);
+});
+
+it("repeats a score's levels in its legend as the agent sent them", async () => {
+  const { call } = setup(() => ({
+    outcome: "answered",
+    backend: "buzz.typesafe/typesafe",
+    model: "jev-1.13.0",
+    answers: {
+      size: { type: "score", score: 1, confidence: 0.9, probabilities: {} },
+    },
+  }));
+  const levels = [{ label: "small" }, { label: "large" }];
+  const reply = JSON.parse(
+    await call({
+      state: "hi",
+      questions: {
+        size: { type: "score", instructions: "Size?", criteria: levels },
+      },
+    }),
+  );
+  expect(reply.answers.size.legend).toEqual({ "0": levels[0], "1": levels[1] });
 });

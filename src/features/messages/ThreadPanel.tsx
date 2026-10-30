@@ -649,6 +649,23 @@ function ThreadMessages({
       }
     | undefined
   >(undefined);
+  // A toggled message keeps its top where it was, or at the top of the
+  // viewport when it had scrolled above it; the reflow observer applies it.
+  // A following reader stays at the latest reply.
+  const keepCollapsePlace = useCallback((id: string) => {
+    const element = scroller.current;
+    const row = element?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(id)}"]`,
+    );
+    if (!element || !row || !resizePosition.current) return;
+    resizePosition.current.anchor = {
+      element: row,
+      top: Math.max(
+        0,
+        row.getBoundingClientRect().top - element.getBoundingClientRect().top,
+      ),
+    };
+  }, []);
   const captureResizePosition = useCallback(() => {
     const element = scroller.current;
     if (!element || !positioned.current || !element.clientHeight) return;
@@ -1294,6 +1311,7 @@ function ThreadMessages({
           extensions={extensions}
           session={session}
           scope={scope}
+          onCollapseToggle={keepCollapsePlace}
           onReply={snapshot.root && !soloConversation ? targetReply : undefined}
           row={row}
           getThreadRoot={getThreadRoot}
@@ -1555,6 +1573,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
+              onCollapseToggle={keepCollapsePlace}
               onReply={soloConversation ? undefined : focusReply}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}

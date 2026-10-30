@@ -9586,6 +9586,28 @@ describe("Attention plugin sources", () => {
     await vi.waitFor(() => expect(texts(service)).toEqual(["first", "second"]));
     await service.save(bot, { attentionEnabled: false });
   });
+  it("keeps the end of long source output, where a failure is summarised", async () => {
+    const { service, plugin, native } = await sourceFixture();
+    const summary = "\n2 tests failed";
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit, signal }) => {
+        emit(`${"x".repeat(5000)}${summary}`);
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() =>
+      expect(texts(service)).toEqual([
+        `${"x".repeat(2000 - summary.length)}${summary}`,
+      ]),
+    );
+    await service.save(bot, { attentionEnabled: false });
+  });
   it("stops sources while no plugin shows Attention, and starts them again", async () => {
     const { service, plugin, native, watching, ctx } = await sourceFixture();
     const started = vi.fn();

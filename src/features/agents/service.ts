@@ -2220,8 +2220,9 @@ export class AgentsService extends Service implements Agents {
             !object.value.enabled
           )
             throw new Error("This source watch is no longer enabled");
+          // Output keeps its end, where a failure is summarised.
           this.history(key, object, [
-            { at: Math.floor(Date.now() / 1000), text },
+            { at: Math.floor(Date.now() / 1000), text: text.slice(-2000) },
           ]);
           this.runners.wakeSource(
             key,

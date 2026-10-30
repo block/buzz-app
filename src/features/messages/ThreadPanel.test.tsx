@@ -1249,6 +1249,41 @@ it("a presented ordinary thread survives the real navigation deadline while hist
     vi.useRealTimers();
   }
 });
+it("a routed thread that fails in place keeps its reader and recovers through its own Try again", () => {
+  const controller = createNavigationController(createMemoryHistory());
+  try {
+    const navigation = ordinaryNavigation();
+    void controller.navigation.open(navigation.target);
+    const { attempt } = controller.navigation.snapshot();
+    navigation.signal = attempt.signal;
+    navigation.complete.mockImplementation((result) =>
+      controller.complete(attempt, result),
+    );
+    const h = messagesHarness(navigation);
+    h.snapshot.status = "error";
+    h.snapshot.error = "offline";
+    h.render();
+    expect(controller.navigation.snapshot()).toMatchObject({
+      status: "failed",
+      presented: true,
+    });
+    expect(attempt.signal.aborted).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(h.view.refresh).toHaveBeenCalled();
+    h.snapshot.status = "ready";
+    h.snapshot.error = undefined;
+    h.render();
+    expect(h.view.dispose).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("region", { name: "Thread messages" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(h.element.scrollTop).toBe(3400);
+    h.unmount();
+  } finally {
+    controller.dispose();
+  }
+});
 it("revoked ordinary presentation cannot position or complete after loading", () => {
   const controller = new AbortController();
   const navigation = { ...ordinaryNavigation(), signal: controller.signal };

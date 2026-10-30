@@ -171,7 +171,12 @@ export function createNavigationController(
           }
         : {}),
     });
-    if (result.status !== "opened")
+    // A failure presented in place keeps its page's authority until the visit
+    // is left or replaced, as an opened visit does.
+    if (
+      result.status !== "opened" &&
+      !(result.status === "failed" && result.presented)
+    )
       effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
     const reauthorize = result.status === "failed" && result.reauthorize;
     if (reauthorize)

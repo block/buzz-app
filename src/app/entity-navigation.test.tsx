@@ -521,7 +521,8 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   );
   const generation = current.relay.snapshot().generation;
   expect(screen.queryByText(pageFailure)).toBeNull();
-  // The visit's attempt has ended; the timeline's own Retry still works.
+  // The page keeps its visit's authority, so the timeline's own Retry works.
+  expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
   const timeline = () =>
     document.querySelector('[data-channel-timeline="alpha"]');
   while (!timeline()) {
@@ -534,6 +535,15 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
       ).not.toBeNull(),
     );
   }
+  // Rows need real layout to paint; the recovered window is the observable here.
+  expect(
+    current.relay
+      .snapshot()
+      .session.channels.window("alpha")
+      .rows.map((row) => row.content),
+  ).toEqual(["Back again"]);
+  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
+  expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
   expect(failures).toBe(0);
   expect(current.relay.snapshot().generation).toBe(generation);
   expect(screen.queryByText(pageFailure)).toBeNull();

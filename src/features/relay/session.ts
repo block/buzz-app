@@ -448,7 +448,7 @@ export function createRelaySession(
    * replica's omission can be lag, and a local denial (a 401 or a ban) is not
    * removal. Their failed writes go, and running ones that then fail, unless
    * the viewer is back. Unconfirmed intent stays for a regrant. One writer
-   * read runs at a time; a request meanwhile sweeps again after it. */
+   * read runs at a time; a request or a cancelled read sweeps again after it. */
   function dropStrandedSends() {
     const outbox = writes?.outbox;
     if (!outbox) return;
@@ -474,7 +474,18 @@ export function createRelaySession(
           ),
         ];
         if (!ids.length) return;
-        const gone = await channels.unlisted(ids, lifetime.signal);
+        const gone = await channels
+          .unlisted(ids, lifetime.signal)
+          .catch((error: unknown) => {
+            // Access changes cancel this read and may strand more sends. Only
+            // another change can cancel the rerun's read, so this cannot loop.
+            if (
+              readErrorKind(error) === "cancelled" &&
+              !lifetime.signal.aborted
+            )
+              sweepAgain = true;
+            throw error;
+          });
         for (const item of outbox.snapshot()) {
           const channelId = contribution(item);
           if (!channelId || !gone.includes(channelId)) continue;

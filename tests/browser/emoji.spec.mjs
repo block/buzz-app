@@ -1071,6 +1071,54 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         () => window.emojiFixture.report.publications.at(-1).event.content,
       ),
     ).toBe("😀 🙏 👏 hello");
+    // A failed passive warm-up must recover when the user requests custom emoji.
+    const cold = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?cold-error`;
+    await page.goto(cold);
+    await expect
+      .poll(() => page.evaluate(() => window.emojiFixture.status("a")))
+      .toBe("error");
+    await draft().fill(":party");
+    await expect(
+      page.getByRole("option", { name: ":party:", exact: true }),
+    ).toBeVisible();
+    // Continued typing after a foreground failure must retain explicit recovery.
+    await page.goto(cold);
+    await expect
+      .poll(() => page.evaluate(() => window.emojiFixture.status("a")))
+      .toBe("error");
+    await page.evaluate(() => window.emojiFixture.fail(true));
+    await draft().fill(":par");
+    const unavailable = page.getByText(
+      "Community emoji unavailable; Unicode results shown.",
+    );
+    await expect(unavailable).toBeVisible();
+    const failedReads = await page.evaluate(
+      () => window.emojiFixture.report.reads.length,
+    );
+    await draft().press("t");
+    await expect(unavailable).toBeVisible();
+    await draft().press("y");
+    await expect(unavailable).toBeVisible();
+    expect(
+      await page.evaluate(() => window.emojiFixture.report.reads.length),
+    ).toBe(failedReads);
+    await page.evaluate(() => window.emojiFixture.fail(false));
+    await page.getByRole("option", { name: "Retry" }).click();
+    await expect(
+      page.getByRole("option", { name: ":party:", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Community emoji unavailable; Unicode results shown."),
+    ).toHaveCount(0);
+    await page.goto(cold);
+    await expect
+      .poll(() => page.evaluate(() => window.emojiFixture.status("a")))
+      .toBe("error");
+    await picker.click();
+    await expect(
+      page.locator('em-emoji-picker [data-id="buzz-custom"]'),
+    ).toHaveCount(1);
+    await expect(page.getByRole("alert")).toHaveCount(0);
     expect(errors.unexplained()).toEqual([]);
   } finally {
     try {

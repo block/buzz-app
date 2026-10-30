@@ -27,7 +27,7 @@ import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import type { ThreadView } from "../relay/threads";
+import type { ThreadRetarget, ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -268,8 +268,14 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
       }
       if (prior?.view.snapshot().root) {
         if (navigation) setRouting(navigation);
-        const result = await prior.view.retarget(messageId, signal);
-        setRouting((routing) => (routing === navigation ? undefined : routing));
+        let result: ThreadRetarget;
+        try {
+          result = await prior.view.retarget(messageId, signal);
+        } finally {
+          setRouting((routing) =>
+            routing === navigation ? undefined : routing,
+          );
+        }
         if (signal.aborted || current.current !== prior) return;
         if (result === "selected") {
           const next = { ...prior, messageId, navigation, revealRequest };
@@ -488,7 +494,8 @@ function ThreadMessages({
 }: {
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
-   * shown stays hidden rather than showing a place the route replaces. */
+   * shown stays hidden and unread rather than showing a place the route
+   * replaces. */
   routePending?: boolean | undefined;
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
@@ -879,7 +886,8 @@ function ThreadMessages({
   // Leaving a visit once it was presented, by navigating on or unmounting,
   // records where the reader was. A return counts only once restored, so an
   // unrestored return keeps the place it came back for. New replies don't
-  // record one: a return without a place must not become one mid-visit.
+  // record one; a relay rebind does, mid-visit, but restoring that place
+  // leaves the reader where they already are.
   const leftTree = useRef(tree);
   leftTree.current = tree;
   useLayoutEffect(() => {
@@ -1166,8 +1174,10 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
-    if (!routePending) setInitialPositioned(true);
-    readingPositioned(element);
+    if (!routePending) {
+      setInitialPositioned(true);
+      readingPositioned(element);
+    }
     if (jumpingToLatest.current) {
       setShowJumpToLatest(false);
     } else {
@@ -1228,6 +1238,7 @@ function ThreadMessages({
     if (
       !positioned.current ||
       readingSettled.current ||
+      routePending ||
       (navigation && !rootTarget && revealed.current !== navigation.signal)
     )
       return;
@@ -1238,7 +1249,7 @@ function ThreadMessages({
       readingSettled.current = true;
       readingPositioned(scroller.current);
     }
-  }, [active, navigation, rootTarget, revealed, snapshot]);
+  }, [active, navigation, routePending, rootTarget, revealed, snapshot]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {

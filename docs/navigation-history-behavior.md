@@ -12,7 +12,8 @@ Unrelated channel/message visits remain. A cold thread closes to its own channel
 in place. Explicitly opening the same thread later creates a fresh visit.
 Back/Forward returns a thread to where the reader left it in this window; only
 a fresh opening, or a return to a place no longer loaded, reveals a linked
-message again.
+message again. If the channel's latest messages were evicted meanwhile, the
+thread can briefly show its end before it returns to that place.
 
 Profiles and GitHub use the same rule. Their read-only target and optional
 thread context are carried as `detail` in the scoped conversation address;

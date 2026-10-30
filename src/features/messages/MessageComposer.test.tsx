@@ -31,6 +31,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useLayoutEffect } from "react";
+import { createRecovery } from "../relay/recovery";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerCompletion,
@@ -7933,7 +7934,9 @@ describe("repository resource picker", () => {
       },
     );
     const homes = vi.fn(home);
+    const recovery = createRecovery([]);
     Object.assign(h.session as object, {
+      recovery,
       repositories: {
         home: homes,
         load,
@@ -7962,6 +7965,7 @@ describe("repository resource picker", () => {
       h,
       homes,
       load,
+      recovery,
       validations,
       release: async () => {
         await act(async () => {
@@ -8378,6 +8382,39 @@ describe("repository resource picker", () => {
     await waitFor(() =>
       expect(failed.homes.mock.calls.length).toBeGreaterThan(reads),
     );
+  });
+
+  it("reads repositories and their lists refused while signed out again once sign-in lands", async () => {
+    const refused = () =>
+      Promise.reject(new Error("Federated sign-in is required"));
+    let signedIn = false;
+    const p = picker(() =>
+      signedIn
+        ? Promise.resolve({ status: "home", repositories: [repository] })
+        : refused(),
+    );
+    const { recovery } = p;
+    await screen.findByRole("button", { name: "Add issue or pull request" });
+    await act(async () => {});
+    const homes = p.homes.mock.calls.length;
+    signedIn = true;
+    act(() => recovery.retryAll());
+    await waitFor(() =>
+      expect(p.homes.mock.calls.length).toBeGreaterThan(homes),
+    );
+    const reread = p.homes.mock.calls.length;
+    p.load.mockImplementationOnce(refused);
+    signedIn = false;
+    await p.open();
+    expect(
+      await screen.findByText("Could not load issues and pull requests."),
+    ).toBeVisible();
+    const lists = p.load.mock.calls.length;
+    act(() => recovery.retryAll());
+    expect(await screen.findByRole("button", { name: row })).toBeVisible();
+    expect(p.load.mock.calls.length).toBeGreaterThan(lists);
+    // A list refusal rereads the list, not the repositories.
+    expect(p.homes.mock.calls.length).toBe(reread);
   });
 
   it.each(["formatting", "channel"])(

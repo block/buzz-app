@@ -48,7 +48,8 @@ cookie before opening the original app URL. The guest never receives the CLI
 credential. App authorization and consent still run at ingress.
 Opening a different tenant's app never forwards the current account's credential.
 
-Each sign-in has separate website storage. Signing out or changing accounts closes
+Each account has its own website storage, kept across sign-ins and restarts, so
+an app's browser login persists while native exchange is unavailable. Signing out or changing accounts closes
 live and retained guests; deliberate sign-out also requests revocation of the server CLI parent.
 Canceling sign-in or disposing the plugin closes its local guests without logging
 out an existing server session. Other platforms do not expose the app panel.
@@ -135,6 +136,27 @@ agents are not migrated into this type.
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
   sign-out, and disposal.
+  `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
+  sign-in before any plugin session exists, using this plugin's bundled native
+  grant, at the build URL like the Settings card; that credential is separate
+  from the Settings session. The grant exists only while this plugin is
+  enabled, so with it turned off that sign-in refuses before opening the
+  browser.
+  A successful first-run sign-in continues into the app-owned setup steps
+  described in [identity](../../../docs/identity.md): the app reads the key
+  bound to the account, the destinations saved to it (this plugin's
+  known-communities list route, never through the Settings session's client)
+  and the communities it owns through this plugin's bundled grant
+  (`src/features/identity/builderlab-account.ts`, reusing the
+  `communities/` routes and parsers); a linked account is asked for that
+  key, otherwise the user creates a key or brings one they already have, and
+  that key is then bound to the account through the same native signer and
+  backed up (an imported key only once the user agrees);
+  starting over creates a new key and unlinks the lost one before binding it.
+  Key backup hands the sign-in to the native uploader, and the same portal is
+  asked which keys the account holds a backup of; Welcome back
+  restores the linked key from one through native recovery's own browser
+  sign-in.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with

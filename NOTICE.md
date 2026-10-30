@@ -90,11 +90,12 @@ Nous Research copyright notice.
 
 Builderlab: the Builderlab Event 2026 mark was supplied by Taylor Ho as native
 Figma SVG exports on October 29, 2026. Builderlab is a mark of Block, Inc.
-The small-size adaptation is used for 16–32px harness choices and agent cards.
-It broadens the silhouette's top-right and
-bottom-left corner curves for legibility at small sizes, preserves the letter
-geometry and Gaussian blur, pads the viewBox to square, and converts the letter
-to a transparent luminance-mask cutout so the mark follows `currentColor`.
+The small-size adaptation is used for 16–32px harness choices and agent cards
+and for the 24px sign-in callback in `public/builderlab-mark.svg`. It broadens
+the silhouette's top-right and bottom-left corner curves for legibility at small
+sizes, preserves the letter geometry and Gaussian blur, pads the viewBox to
+square, and converts the letter to a transparent luminance-mask cutout so the
+mark follows `currentColor`.
 Procedural grain and displacement are omitted because they alias at small sizes
 and render differently from the source texture. Larger branded surfaces should
 use a dedicated textured asset. No open-source license is asserted for this
@@ -141,6 +142,6 @@ trademarks of OpenAI; goose is a trademark of LF Projects; GitHub and Octocat
 are trademarks of GitHub, Inc. Their inclusion identifies the corresponding
 integrations and does not imply endorsement.
 
-The Huddles, Voice Notes, Usage, Mermaid diagrams and Pi illustrations were supplied
-separately by Taylor Ho and resized for the catalog; the generation attribution
-above does not cover these five assets.
+The Huddles, Voice Notes, Usage, Mermaid diagrams, Pi, TypeSafe, Builderlab and
+Agent Attention UI illustrations were supplied separately by Taylor Ho and resized
+for the catalog; the generation attribution above does not cover these eight assets.

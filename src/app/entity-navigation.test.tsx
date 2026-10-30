@@ -40,7 +40,7 @@ vi.mock("../bundled", async () => ({
     {
       manifest: {
         id: "buzz.watching",
-        name: "Agent Attention UI",
+        name: "Attention",
         apiVersion: 1,
       },
       module: await import("../bundled/watching"),
@@ -364,7 +364,7 @@ it("lists active primary pages in their sidebar and header placements", async ()
     "fixture.notes/notes",
   );
 
-  // The Watching tab is on by default, and attention keeps running without it.
+  // The Attention tab is on by default, and attention keeps running without it.
   const providers = () =>
     current.agents.attentionProviders().map(({ provider }) => provider);
   await waitFor(() =>

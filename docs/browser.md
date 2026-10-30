@@ -47,8 +47,10 @@ If the native exchange is unconfigured or its endpoint returns 404, the same
 account-isolated guest opens through browser login. Other errors stay closed.
 The guest stays blank until installation or this fallback finishes and its account lifetime is checked. No
 credential or generic cookie/header capability is exposed to the guest. Each
-sign-in selects separate storage; aborting that lifetime closes its live
-and parked guests, including a guest whose attach finishes after cancellation.
+account selects its own storage, kept across sign-ins and restarts so a browser
+login made through this fallback persists. Each sign-in is a separate lifetime;
+aborting it closes its live and parked guests, including a guest whose attach
+finishes after cancellation.
 Normal website views retain the storage behavior above.
 
 ## Native ownership

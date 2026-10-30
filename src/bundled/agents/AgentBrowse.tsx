@@ -29,6 +29,7 @@ import {
 import { ReadError } from "../../features/relay/errors";
 import type { EventData } from "../../features/relay/events";
 import { useRelayConnection } from "../../features/relay/react";
+import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -108,11 +109,16 @@ function SharedAgentList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // A catalog opened while signed out loads once sign-in lands.
+  const reauthorized = useReauthorizedRetry(session.recovery, () =>
+    setAttempt((value) => value + 1),
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: An explicit retry reruns this finite read.
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError(false);
+    const failed = reauthorized.begin();
     const readPage = async () => {
       let limit = pageSize;
       for (;;) {
@@ -142,8 +148,10 @@ function SharedAgentList({
       }
     };
     void readPage()
-      .catch(() => {
-        if (!controller.signal.aborted) setError(true);
+      .catch((problem) => {
+        if (controller.signal.aborted) return;
+        setError(true);
+        failed(problem);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);

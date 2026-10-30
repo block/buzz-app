@@ -75,7 +75,11 @@ import {
 import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import {
+  useChannelList,
+  useChannelRoster,
+  useRelayConnection,
+} from "../../features/relay/react";
 import {
   panelOpening,
   type PanelOpening,
@@ -207,6 +211,14 @@ export function ChannelsPage({
   );
 }
 
+/** Recent ordering reads activity, which the workspace's roster ignores. */
+function LiveNewMessage(
+  props: Omit<React.ComponentProps<typeof NewMessage>, "channels">,
+) {
+  const { channels } = useChannelList(props.session.channels);
+  return <NewMessage {...props} channels={channels} />;
+}
+
 function ChannelWorkspace({
   extensions,
   queries,
@@ -256,7 +268,7 @@ function ChannelWorkspace({
         : undefined,
     [draft?.linked, scope, navigation?.signal],
   );
-  const list = useChannelList(queries.channels);
+  const list = useChannelRoster(queries.channels);
   const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
@@ -1647,7 +1659,11 @@ function ChannelWorkspace({
         </Button>
       )}
       {queries.outbox ? (
-        <OutboxStatus outbox={queries.outbox} profiling={queries.profiling} />
+        <OutboxStatus
+          outbox={queries.outbox}
+          profiling={queries.profiling}
+          memberAdditions={queries.memberAdditions}
+        />
       ) : (
         <RelayTimings profiling={queries.profiling} />
       )}
@@ -1826,8 +1842,7 @@ function ChannelWorkspace({
           data-attachment-drop-zone=""
         >
           {composingMessage ? (
-            <NewMessage
-              channels={list.channels}
+            <LiveNewMessage
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}

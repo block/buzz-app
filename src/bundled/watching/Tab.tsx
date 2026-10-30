@@ -911,7 +911,7 @@ export function createTab({
       {
         "data-buzz-ui": "",
         className: "attention-page",
-        "aria-label": "Watching",
+        "aria-label": "Attention",
         ref: page,
         tabIndex: -1,
       },
@@ -921,7 +921,7 @@ export function createTab({
         h(
           "p",
           { className: "text-body-sm text-subtle" },
-          "Agents can watch for events and automatically wake to handle them. For example, you can ask your agent to watch a channel or thread for replies, watch a GitHub PR for CI changes and reviews, or do something at a set time or on a schedule. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
+          "Attention lets agents watch for events and automatically wake to handle them. For example, you can ask your agent to watch a channel or thread for replies, watch a GitHub PR for CI changes and reviews, or do something at a set time or on a schedule. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
         ),
         h(
           "p",

@@ -1273,11 +1273,14 @@ body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
-one flexing scrollport. Keep results and their recovery feedback reachable; Members
+one flexing scrollport. Stable flex bodies outside expanded dialogs retain a
+minimum of one control plus the shared body insets before the whole dialog
+scrolls. Expanded dialogs retain their zero body minimum. Keep results and their
+recovery feedback reachable; Members
 administration errors sit outside that scrollport, below its fixed search controls.
 Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
-body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
+body-to-footer spacing. The default flow layout remains unchanged.
 The shared Dialog uses `duration-settle` and `easing-enter` for a subtle upward
 fade, with `duration-fast` on exit. Base UI owns transition presence;
 keep the controlled component mounted while setting `open={false}` for an exit.

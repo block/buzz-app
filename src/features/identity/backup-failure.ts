@@ -7,6 +7,8 @@ const retry = (cause: string, then = "Try again.") =>
  * and whether Try again can help. Native code names its own kinds and retries
  * them all on its next wake; `unavailable`, `interrupted`, `timeout` and
  * `unknown` are the renderer's. No message carries a service or IPC answer.
+ * A leaf module: vite.config.ts validates the development seed against it
+ * through Node's native loader.
  */
 export const BACKUP_FAILURES = {
   unavailable: {
@@ -59,3 +61,8 @@ export const BACKUP_FAILURES = {
 >;
 
 export type BackupFailureKind = keyof typeof BACKUP_FAILURES;
+
+export const isBackupFailureKind = (
+  value: unknown,
+): value is BackupFailureKind =>
+  typeof value === "string" && Object.hasOwn(BACKUP_FAILURES, value);

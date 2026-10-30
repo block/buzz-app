@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   createRecovery,
   RECOVERY_DELAYS_MS,
+  reauthorizedOnce,
+  type RelayRecovery,
   type RecoveryStatus,
 } from "./recovery";
 
@@ -34,6 +36,7 @@ it("retries a failed read forever with a capped delay", () => {
     recovering: true,
     attempt: 0,
     shown: false,
+    reauthorized: 0,
   });
   const delays = [...RECOVERY_DELAYS_MS, 30_000, 30_000, 30_000];
   for (const [index, delay] of delays.entries()) {
@@ -60,12 +63,14 @@ it("retries only the failed sources and clears once every source settles", () =>
     recovering: true,
     attempt: 1,
     shown: true,
+    reauthorized: 0,
   });
   failed.set("settled");
   expect(recovery.snapshot()).toEqual({
     recovering: false,
     attempt: 0,
     shown: false,
+    reauthorized: 0,
   });
   vi.advanceTimersByTime(60_000);
   expect(failed.retry).toHaveBeenCalledTimes(1);
@@ -103,7 +108,11 @@ it("keeps a shown notice up through retryNow until every source settles", () => 
   // Retry now restarts the delay but must not hide the notice and its
   // focused button while the retried read is still running.
   recovery.retryNow();
-  expect(recovery.snapshot()).toMatchObject({ attempt: 0, shown: true });
+  expect(recovery.snapshot()).toMatchObject({
+    attempt: 0,
+    shown: true,
+    reauthorized: 0,
+  });
   read.set("failed");
   expect(recovery.snapshot().shown).toBe(true);
   recovery.retryNow();
@@ -112,6 +121,7 @@ it("keeps a shown notice up through retryNow until every source settles", () => 
     recovering: false,
     attempt: 0,
     shown: false,
+    reauthorized: 0,
   });
   recovery.dispose();
 });
@@ -131,4 +141,35 @@ it("dispose stops pending retries", () => {
   recovery.dispose();
   vi.advanceTimersByTime(120_000);
   expect(read.retry).not.toHaveBeenCalled();
+});
+
+it("retries settled sources too when asked to retry all", () => {
+  const denied = source("settled");
+  const failed = source("failed");
+  const recovery = createRecovery([denied, failed]);
+  recovery.retryAll();
+  expect(denied.retry).toHaveBeenCalledTimes(1);
+  expect(failed.retry).toHaveBeenCalledTimes(1);
+  recovery.dispose();
+});
+
+it("reopens once, only after credentials change since the request was sent", () => {
+  let reauthorized = 2;
+  const listeners = new Set<() => void>();
+  const recovery = {
+    snapshot: () => ({ reauthorized }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as RelayRecovery;
+  const retry = vi.fn();
+  reauthorizedOnce(recovery, 2, retry);
+  for (const listener of [...listeners]) listener();
+  expect(retry).not.toHaveBeenCalled();
+  reauthorized = 3;
+  for (const listener of [...listeners]) listener();
+  for (const listener of [...listeners]) listener();
+  expect(retry).toHaveBeenCalledOnce();
+  expect(listeners.size).toBe(0);
 });

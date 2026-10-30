@@ -32,7 +32,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
     "Terminal",
     "Workflows",
     "Builderlab",
-    "Agent Attention UI",
+    "Attention",
   ])
     await expect(pluginAction(page, name)).toHaveAccessibleName(/^Disable /);
   await bestie.click();

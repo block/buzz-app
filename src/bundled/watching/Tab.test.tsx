@@ -124,7 +124,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   render(
     React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
   );
-  const ada = screen.getByRole("region", { name: "Watching" });
+  const ada = screen.getByRole("region", { name: "Attention" });
   expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
   expect(within(ada).getByText("1 interest · 1 watch")).toBeTruthy();
   fireEvent.click(
@@ -441,7 +441,7 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   expect(save).toHaveBeenCalledTimes(1);
 });
 
-it("explains Watching to a new agent and switches it on this device", async () => {
+it("explains Attention to a new agent and switches it on this device", async () => {
   const snapshot = {
     status: "ready",
     running: [
@@ -471,7 +471,9 @@ it("explains Watching to a new agent and switches it on this device", async () =
     React.createElement(createTab(ctx), { agent: { key: "membership-b" } }),
   );
   expect(
-    screen.getByText(/Agents can watch for events and automatically wake/),
+    screen.getByText(
+      /Attention lets agents watch for events and automatically wake/,
+    ),
   ).toBeTruthy();
   expect(
     screen.getByText("Watches only run while Buzz is open on this device."),
@@ -874,7 +876,7 @@ it("keeps overview and destination navigation in the selected community", async 
   render(
     React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
   );
-  expect(screen.getByRole("region", { name: "Watching" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Attention" })).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Open destination Release planning" }),
   );

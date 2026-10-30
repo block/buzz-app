@@ -241,7 +241,9 @@ export function createNativeSession(
         };
         listeners.add(changed);
         signal.addEventListener("abort", abort, { once: true });
-        if (state.status !== "pending") void session.signIn();
+        // Native may answer with an unchanged snapshot, which publishes
+        // nothing; the finished attempt settles this wait instead.
+        if (state.status !== "pending") void session.signIn().finally(changed);
       });
     },
     async signIn() {

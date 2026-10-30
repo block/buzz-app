@@ -70,6 +70,7 @@ fn cookie(
     expires_at: &str,
     domain: &str,
     now: i64,
+    federated: bool,
 ) -> Result<Zeroizing<String>, String> {
     if !(32..=512).contains(&credential.len())
         || !credential
@@ -81,7 +82,11 @@ fn cookie(
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)
         .map_err(|_| "Invalid Builderlab sign-in expiry")?;
     if !(1..=8 * 60 * 60).contains(&(expires_at.timestamp() - now)) {
-        return Err("Builderlab sign-in expired. Sign in again in Settings".into());
+        return Err(if federated {
+            format!("Builderlab sign-in expired. {FI_SIGN_IN_AGAIN}")
+        } else {
+            "Builderlab sign-in expired. Sign in again in Settings".into()
+        });
     }
     let expiry = expires_at
         .with_timezone(&chrono::Utc)
@@ -206,7 +211,13 @@ pub(super) async fn prepare(
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Invalid system clock")?
         .as_secs() as i64;
-    let viewer_cookie = cookie(&viewer_credential, &reply.expires_at, domain, now)?;
+    let viewer_cookie = cookie(
+        &viewer_credential,
+        &reply.expires_at,
+        domain,
+        now,
+        federated,
+    )?;
     #[cfg(not(target_os = "macos"))]
     {
         drop(viewer_cookie);
@@ -376,6 +387,7 @@ mod tests {
             chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
                 .unwrap()
                 .timestamp(),
+            false,
         )
         .unwrap();
         assert!(value.starts_with("__Secure-bbidentity_hosted_site_session="));
@@ -394,7 +406,8 @@ mod tests {
                 "apps.example",
                 chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
                     .unwrap()
-                    .timestamp()
+                    .timestamp(),
+                false,
             )
             .is_err());
         }
@@ -405,9 +418,31 @@ mod tests {
                 "apps.example",
                 chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
                     .unwrap()
-                    .timestamp()
+                    .timestamp(),
+                false,
             )
             .is_err());
         }
+        // An expired viewer is renewed where each build signs in.
+        let expired = |federated| {
+            cookie(
+                &"C".repeat(43),
+                "2026-10-26T15:00:00Z",
+                "apps.example",
+                chrono::DateTime::parse_from_rfc3339("2026-10-26T15:00:00Z")
+                    .unwrap()
+                    .timestamp(),
+                federated,
+            )
+            .unwrap_err()
+        };
+        assert_eq!(
+            expired(true),
+            format!("Builderlab sign-in expired. {FI_SIGN_IN_AGAIN}")
+        );
+        assert_eq!(
+            expired(false),
+            "Builderlab sign-in expired. Sign in again in Settings"
+        );
     }
 }

@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { federatedFixture } from "../../features/federated-identity/testing";
 import { createNativeSession } from "./session";
 
@@ -89,6 +89,21 @@ it("joins the shared native sign-in and leaves it running when a view closes", a
   expect(h.service.signIn).not.toHaveBeenCalled();
   session.cancel();
   expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
+  session.dispose();
+});
+
+it("settles a sign-in wait when native sign-in leaves the session unchanged", async () => {
+  const h = federatedFixture();
+  h.publish({ status: "unavailable", failure: "native-unavailable" });
+  // Native returns the same snapshot, as it does before restore finishes.
+  vi.mocked(h.service.signIn).mockImplementationOnce(async () =>
+    h.service.snapshot(),
+  );
+  const session = createNativeSession(h.service);
+  await expect(
+    session.ensureSignedIn(new AbortController().signal),
+  ).rejects.toThrow("Builderlab sign-in did not finish. Try again.");
+  expect(h.service.signIn).toHaveBeenCalledOnce();
   session.dispose();
 });
 

@@ -1810,11 +1810,10 @@ fn a_federated_handoff_stores_only_the_revision_and_requires_the_current_one() {
     let handoff = |host: &NsecBackupHost, generation, source, credential, federated| {
         host.session_from_ipc(source, generation, credential, federated, identity.clone())
     };
-    // Stale revisions, a non-Builderlab source, both and an FI-less host are refused
-    // without consuming the generation.
+    // Stale revisions, both and an FI-less host are refused without consuming
+    // the generation.
     for (host, source, credential, revision) in [
         (&federated, Source::Builderlab, None, "stale".to_owned()),
-        (&federated, Source::Hosted, None, revision.clone()),
         (
             &federated,
             Source::Builderlab,
@@ -1826,6 +1825,38 @@ fn a_federated_handoff_stores_only_the_revision_and_requires_the_current_one() {
         assert_eq!(
             handoff(host, 1, source, credential, Some(revision)),
             Err("Invalid backup session".into())
+        );
+        assert!(host.state.lock().unwrap().sessions.is_empty());
+        assert_eq!(host.state.lock().unwrap().generations, [None, None]);
+    }
+    // FI is Builderlab's alone: an admitted Hosted service refuses it. A
+    // service other than the FI identity root is ignored before that, so the
+    // adapter session never reaches another deployment.
+    let serving = |service_url: &str| NsecBackupHost {
+        config: Arc::new(Some(Config {
+            service_url: service_url.into(),
+            namespace: "backup/staging".into(),
+        })),
+        ..host(Some(fi.clone()))
+    };
+    for (service_url, source, expected) in [
+        (
+            "https://app.builderlab.xyz/api/goose",
+            Source::Hosted,
+            Err("Invalid backup session".into()),
+        ),
+        ("https://other.example/api/goose", Source::Hosted, Ok(None)),
+        (
+            "https://other.example/api/goose",
+            Source::Builderlab,
+            Ok(None),
+        ),
+    ] {
+        let host = serving(service_url);
+        assert_eq!(
+            handoff(&host, 1, source, None, Some(revision.clone())),
+            expected,
+            "{service_url}"
         );
         assert!(host.state.lock().unwrap().sessions.is_empty());
         assert_eq!(host.state.lock().unwrap().generations, [None, None]);

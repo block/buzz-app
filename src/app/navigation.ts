@@ -49,6 +49,11 @@ export function useAppNavigation(
   // frame was the timeout notice.
   useLayoutEffect(() => services.navigationHost.attach(), [services]);
 
+  const relay = useSyncExternalStore(
+    services.relay.subscribe,
+    services.relay.snapshot,
+  );
+
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
@@ -327,6 +332,31 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
+  // A visit that failed while its connection was down, or whose connection has
+  // dropped since, reopens by itself, once, when that connection is live again. A live connection alone does not prove
+  // a failed read recovered. Host-decided, denied and invalid visits keep their
+  // error; a page presenting its failure in place owns that Retry.
+  const offline =
+    relay.status === "connecting" || relay.status === "error" || !!relay.cached;
+  const failedOffline = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      state.status !== "failed" ||
+      state.presented ||
+      state.ingress ||
+      failure ||
+      (state.reason !== "timeout" && state.reason !== "unavailable")
+    )
+      return;
+    if (offline) failedOffline.current = state.attempt.id;
+    else if (
+      relay.status === "ready" &&
+      failedOffline.current === state.attempt.id
+    ) {
+      failedOffline.current = undefined;
+      void navigation.retry();
+    }
+  }, [navigation, state, failure, offline, relay.status]);
   const select = (
     key: string,
     options?: Pick<NavigationOpenOptions, "focus"> & {
@@ -385,6 +415,12 @@ export function useAppNavigation(
     waiting,
     failure,
     selected: pageKey ?? target.kind,
+    /** The connection is down, including a settled refusal. */
+    offline: !failure && offline,
+    /** The connection is still being made or retried, and the visit reopens
+     * once it is live; not a refused or misconfigured connection. */
+    reconnecting:
+      !failure && (relay.status === "connecting" || !!relay.retrying),
     workspace: {
       page: workspacePage || undefined,
       target: workspaceTarget,

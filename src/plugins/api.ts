@@ -45,6 +45,13 @@ export type PluginManifest = Readonly<{
       args?: readonly string[];
       /** Run the copy the app ships, never one on PATH. */
       bundled?: boolean;
+      /** Run an installed executable only when its bytes and declared sibling
+       * files match this descriptor. Mutually exclusive with `bundled`. */
+      artifact?: Readonly<{
+        path: string;
+        sha256: string;
+        siblings?: readonly Readonly<{ name: string; sha256: string }>[];
+      }>;
     }>[];
     /** The plugin may serve MCP with `host.serveMcp`, including tools for
      * commands bound to an Attention source run. */

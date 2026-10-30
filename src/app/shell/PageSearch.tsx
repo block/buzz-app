@@ -168,7 +168,8 @@ export function PageSearch({
       <IconButton
         hint="familiar"
         ref={trigger}
-        variant="chrome"
+        variant="inverted"
+        size="md"
         shape="round"
         aria-label="Search Buzz"
         title={`Search Buzz (${shortcut})`}

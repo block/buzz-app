@@ -116,6 +116,8 @@ of whether browser policy permits closing the callback tab.
   spinner with muted **Closing this window automatically** text for three seconds
   before trying to close its page. The hint reserves its wrapped size through
   script startup and a blocked-close fallback, keeping the panel stationary.
+  Manual-close text aligns with the heading; only automatic-closing text reserves
+  the spinner's space.
   A page wrapper owns the centering grid so additional body elements, such as
   browser-extension containers, cannot introduce rows that displace the panel.
   Its branded panel fades and scales in with a small bounce over the

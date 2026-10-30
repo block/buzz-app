@@ -478,6 +478,37 @@ export function SelectExamples() {
           groups={workspaceGroups}
         />
       </FormExample>
+      <FormExample
+        title="Disabled choices"
+        description="Unavailable choices keep the same disabled text and caret whether showing a value or a placeholder."
+        code={`<Select label="Thinking" variant="preference" disabled
+  value="" placeholder="Unavailable" groups={workspaceGroups}
+  onValueChange={() => {}} />`}
+      >
+        {(["field", "inline", "compact", "preference"] as const).map(
+          (variant) => (
+            <div key={variant}>
+              <Select
+                label={`${variant} placeholder`}
+                variant={variant}
+                disabled
+                value=""
+                placeholder="Unavailable"
+                groups={workspaceGroups}
+                onValueChange={() => {}}
+              />
+              <Select
+                label={`${variant} value`}
+                variant={variant}
+                disabled
+                value="studio"
+                groups={workspaceGroups}
+                onValueChange={() => {}}
+              />
+            </div>
+          ),
+        )}
+      </FormExample>
     </div>
   );
 }

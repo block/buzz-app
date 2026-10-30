@@ -2180,3 +2180,128 @@ it("allows Add to install while an independent folder check is pending, includin
     expect(installImport).toHaveBeenCalledExactlyOnceWith("add", "dist"),
   );
 });
+
+const pinned = "0123456789abcdef0123456789abcdef01234567";
+const managedPolicy = (...states: ("missing" | "current" | "outdated")[]) => ({
+  status: "ready" as const,
+  path: "/data/managed-plugins.json",
+  source: "Example Org",
+  problems: [],
+  plugins: states.map((state, index) => ({
+    id:
+      index === 0 && state !== "missing"
+        ? "example.external"
+        : `example.managed${index}`,
+    repository: "https://example.com/plugins",
+    reference: "v1",
+    commit: pinned,
+    path: "dist",
+    state,
+  })),
+});
+
+it("recommends managed plugins in Settings and points to them from navigation", async () => {
+  const git = vi.fn(async () => ({
+    token: "managed",
+    source: "https://example.com/plugins",
+    commit: pinned,
+    warnings: [],
+    candidates: [
+      {
+        path: "dist",
+        revision: "new",
+        manifest: {
+          id: "example.managed0",
+          name: "Managed",
+          apiVersion: 1 as const,
+        },
+      },
+    ],
+  }));
+  const fixture = reviewPluginFixture({
+    communities: {
+      ...host.communities,
+      relay: { snapshot: () => ({ status: "connecting" }) },
+    } as never,
+  });
+  Object.assign(fixture.manager, {
+    imports: { git, discard: vi.fn(async () => {}) },
+    installImport: vi.fn(async () => true),
+  });
+  Object.assign(fixture.snapshot.configuration, {
+    managed: managedPolicy("missing"),
+  });
+  act(fixture.publish);
+  expect(
+    screen.getByRole("button", { name: /Manage plugins/ }),
+  ).toHaveTextContent("1 recommended plugin");
+  const group = screen.getByRole("region", {
+    name: "Recommended by Example Org",
+  });
+  fireEvent.click(
+    within(group).getByRole("button", {
+      name: "Review and install example.managed0",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review plugin access",
+  });
+  await within(dialog).findByRole("button", { name: "Install plugin" });
+  expect(git).toHaveBeenCalledWith(
+    "https://example.com/plugins",
+    "v1",
+    undefined,
+    pinned,
+  );
+});
+
+it("marks installed managed plugins and keeps the badge only for pending work", () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.snapshot.configuration, {
+    managed: managedPolicy("current"),
+  });
+  act(fixture.publish);
+  expect(
+    screen.getByRole("button", { name: /Manage plugins/ }),
+  ).not.toHaveTextContent("recommended");
+  expect(screen.queryByRole("region", { name: /Recommended by/ })).toBeNull();
+  const row = screen.getByRole("button", {
+    name: "View Zebra external details",
+  });
+  expect(row).toHaveAccessibleDescription(/Managed by Example Org/);
+  fireEvent.click(row);
+  expect(
+    within(
+      screen.getByRole("complementary", { name: "Zebra external details" }),
+    ).getByText("Managed by Example Org"),
+  ).toBeVisible();
+});
+
+it("offers Review update for a managed plugin whose pinned commit changed", () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.manager, {
+    imports: { git: vi.fn(), discard: vi.fn() },
+  });
+  Object.assign(fixture.snapshot.configuration, {
+    managed: managedPolicy("outdated"),
+  });
+  act(fixture.publish);
+  expect(
+    screen.getByRole("button", { name: /Manage plugins/ }),
+  ).toHaveTextContent("1 recommended plugin");
+  expect(
+    screen.getByRole("button", { name: "Review update example.external" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  ).toHaveAccessibleDescription(/Managed by Example Org/);
+});
+
+it("hides managed recommendations where plugins cannot be imported", () => {
+  const fixture = reviewPluginFixture();
+  Object.assign(fixture.snapshot.configuration, {
+    managed: managedPolicy("missing"),
+  });
+  act(fixture.publish);
+  expect(screen.queryByRole("region", { name: /Recommended by/ })).toBeNull();
+});

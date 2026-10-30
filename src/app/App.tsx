@@ -36,6 +36,7 @@ import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
 import { SettingsSidebar } from "./SettingsSidebar";
+import { pendingManaged } from "../plugins/managed";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
 import { OwnedContribution } from "../plugins/OwnedContribution";
@@ -97,6 +98,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const [workspaceElement, setWorkspaceElement] =
     useState<HTMLDivElement | null>(null);
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
+  const { configuration } = useSyncExternalStore(
+    plugins.subscribe,
+    plugins.snapshot,
+  );
+  const pluginRecommendations = pendingManaged(
+    configuration.status === "ready" ? configuration.managed : undefined,
+  ).length;
   const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   // Unsaved Profile edits turn a Settings dismissal into a discard prompt.
   const [settingsUnsaved, setSettingsUnsaved] = useState(false);
@@ -582,6 +590,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             settingsCards={services.settingsCards}
             accountActions={services.accountActions}
             appearance={services.appearance}
+            pluginRecommendations={pluginRecommendations}
             searchServices={services}
             launchers={
               <PanelLaunchers
@@ -639,6 +648,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 <SettingsSidebar
                   cards={services.settingsCards}
                   communities={services.communities}
+                  recommendations={pluginRecommendations}
                   {...(route.target.kind === "settings" && route.target.section
                     ? { selected: route.target.section }
                     : {})}

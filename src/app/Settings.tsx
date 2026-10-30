@@ -52,6 +52,9 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { ManagedPlugins } from "./ManagedPlugins";
+import { managedBy, pendingManaged } from "../plugins/managed";
+import { RecommendationCount } from "./RecommendationCount";
 import { PluginReadme } from "./PluginReadme";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
@@ -198,16 +201,24 @@ function PluginIcon({
 function PluginProvenance({
   source,
   publisher,
+  managedBy,
   className,
 }: {
   source: "bundled" | "external";
   publisher?: string | null | undefined;
+  managedBy?: string | undefined;
   className?: string | undefined;
 }) {
-  if (source !== "bundled" && !publisher) return null;
+  const label = [
+    source === "bundled" ? "Buzz" : publisher,
+    managedBy && `Managed by ${managedBy}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  if (!label) return null;
   return (
     <span className={`${styles.pluginProvenance} ${className ?? ""}`}>
-      <span>{source === "bundled" ? "Buzz" : publisher}</span>
+      <span>{label}</span>
     </span>
   );
 }
@@ -272,6 +283,7 @@ function pluginToggleDisabled(
 
 function PluginDetails({
   plugin,
+  managedSource,
   failure,
   retryable,
   busy,
@@ -289,6 +301,7 @@ function PluginDetails({
   initialUpdateAvailable,
 }: {
   plugin: PluginInfo;
+  managedSource?: string | undefined;
   failure: string | null;
   retryable: boolean;
   busy: boolean;
@@ -379,6 +392,11 @@ function PluginDetails({
             <CheckCircleIcon size={14} aria-hidden="true" />
             Installed
           </span>
+          {managedSource && (
+            <span className={styles.pluginInstallBadge}>
+              Managed by {managedSource}
+            </span>
+          )}
           <span
             ref={setInstalledStatus}
             className={styles.pluginInstallBadge}
@@ -700,6 +718,8 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
+  const managed = ready?.managed;
+  const pendingCount = pendingManaged(managed).length;
   const [activationAttempt, setActivationAttempt] = useState<{
     id: string;
     revision: string;
@@ -968,7 +988,8 @@ export function Settings({
                           plugin.manifest.description
                             ? `plugin-description-${id}`
                             : null,
-                          plugin.source === "external" && plugin.publisher
+                          plugin.source === "external" &&
+                          (plugin.publisher || managedBy(managed, id))
                             ? `plugin-publisher-${id}`
                             : null,
                           isEssentialPlugin(plugin)
@@ -1024,6 +1045,7 @@ export function Settings({
                           <PluginProvenance
                             source={plugin.source}
                             publisher={plugin.publisher}
+                            managedBy={managedBy(managed, id)?.source}
                             className={styles.pluginRowAuthor}
                           />
                         </span>
@@ -1285,6 +1307,15 @@ export function Settings({
               {coreGroup && renderPluginGroup(coreGroup)}
             </AnimatePresence>
             {catalog && (
+              <ManagedPlugins
+                plugins={plugins}
+                managed={managed}
+                catalog={catalog}
+                busy={busy}
+                authorizeGit={authorizePluginGit}
+              />
+            )}
+            {catalog && (
               <motion.div {...layoutMotion} className={styles.pluginToolbar}>
                 <motion.div {...layoutMotion}>
                   <Tabs
@@ -1433,6 +1464,7 @@ export function Settings({
         <PluginDetails
           key={selectedPlugin.manifest.id}
           plugin={selectedPlugin}
+          managedSource={managedBy(managed, selectedPlugin.manifest.id)?.source}
           catalog={catalog}
           initialUpdateAvailable={
             updateChecks[selectedPlugin.manifest.id]?.revision ===
@@ -1522,6 +1554,13 @@ export function Settings({
                         label={label}
                         icon={Icon && <Icon aria-hidden="true" size={18} />}
                         selected={selected === id}
+                        {...(id === "plugins" && pendingCount > 0
+                          ? {
+                              trailing: (
+                                <RecommendationCount count={pendingCount} />
+                              ),
+                            }
+                          : {})}
                         type="button"
                         key={id}
                         aria-current={selected === id ? "page" : undefined}

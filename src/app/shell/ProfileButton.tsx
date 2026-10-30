@@ -1,3 +1,4 @@
+import { RecommendationCount } from "../RecommendationCount";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { usePresenceStatus } from "../../features/presence/react";
 import { useRelayConnection } from "../../features/relay/react";
@@ -72,12 +73,14 @@ export function ProfileButton({
   accountActions,
   appearance,
   settingsSelected,
+  pluginRecommendations = 0,
   onSettings,
 }: {
   communities: Communities;
   accountActions: AccountActionsService;
   appearance: Appearance;
   settingsSelected: boolean;
+  pluginRecommendations?: number;
   /** Opens Settings, optionally at one of its own sections. */
   onSettings(section?: "profile" | "plugins"): void;
 }) {
@@ -488,6 +491,11 @@ export function ProfileButton({
               <SquaresFourIcon aria-hidden="true" size={16} />
             </MenuIcon>
             Plugins
+            {pluginRecommendations > 0 && (
+              <MenuTrailing>
+                <RecommendationCount count={pluginRecommendations} />
+              </MenuTrailing>
+            )}
           </MenuItem>
           <MenuItem
             aria-current={settingsSelected ? "page" : undefined}

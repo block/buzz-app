@@ -2689,6 +2689,7 @@ it("inbox groups a Solo chat's top-level timeline into one conversation, keeping
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const mention = (channel: string, content: string, at: number) =>
@@ -2740,6 +2741,7 @@ it("inbox describes a Solo chat row by its newest top-level message, not only it
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const ping = message(h.alice, "chat", "Ping", 20, [["p", h.viewer.pubkey]]);
@@ -2774,6 +2776,7 @@ it("inbox describes a row by its newest message within the same second", () => {
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
     metadata(h.relay, "dm", "DM", 11, [["t", "dm"]]),
   ]);
@@ -2807,6 +2810,7 @@ it("inbox leaves a Solo chat message its attributed author deleted out of the ro
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const agent = keypair();
@@ -2847,6 +2851,7 @@ it.each([true, false])(
         ["t", "stream"],
         ["private"],
         ["t", SOLO_LABEL],
+        ["P", h.viewer.pubkey],
       ]),
     ]);
     const root = message(
@@ -2881,6 +2886,7 @@ it("inbox keeps a mentioned Solo chat root with its thread so reading the thread
       ["t", "stream"],
       ["private"],
       ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
     ]),
   ]);
   const root = message(h.alice, "chat", "Question", 20, [
@@ -4008,4 +4014,78 @@ it("catch-up and explicit unread intent still apply to agent-audience rows", asy
   ).toMatchObject({ observedCount: 1, attentionCount: 0 });
   await unread.markMessageRead("room", progress.id);
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+});
+
+it("someone else's Solo chat earns attention only from mentions", () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Alice's chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+      ["P", h.alice.pubkey],
+    ]),
+  ]);
+  const mine = message(h.viewer, "chat", "My question", 20);
+  const update = message(h.alice, "chat", "Progress update", 21);
+  const everyone = message(h.alice, "chat", "Heads up", 22, [
+    ["broadcast", "1"],
+  ]);
+  const reply = message(h.alice, "chat", "Answering you", 23, [
+    ["e", mine.id, "", "reply"],
+  ]);
+  const ping = message(h.alice, "chat", "@you is this right?", 24, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mine, update, everyone, reply]);
+  const unread = h.session.unread;
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(0);
+  for (const quiet of [update, everyone, reply])
+    expect(unread.attention("chat", quiet.id).category).toBeUndefined();
+  expect(unread.inbox().items).toEqual([]);
+  expect(unread.activity("chat").items).toEqual([]);
+
+  h.emit([ping]);
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(1);
+  expect(unread.attention("chat", ping.id).category).toBe("mention");
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({
+      channelId: "chat",
+      messageIds: [ping.id],
+      preview: "@you is this right?",
+      unreadCount: 1,
+    }),
+  ]);
+});
+
+it("a Solo chat whose creator is unknown stays quiet until it is known to be the viewer's", () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const update = message(h.alice, "chat", "Progress update", 20);
+  h.emit([update]);
+  const count = () =>
+    h.session.unread.snapshot({ kind: "channel", channelId: "chat" })
+      .observedCount;
+  expect(count()).toBe(0);
+  h.emit([
+    metadata(h.relay, "chat", "Chat", 12, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+      ["P", h.viewer.pubkey],
+    ]),
+  ]);
+  expect(count()).toBe(1);
 });

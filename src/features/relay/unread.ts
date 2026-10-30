@@ -23,6 +23,7 @@ import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
+import { ownSolo } from "../solo/labels";
 import {
   memoryThreadFollows,
   THREAD_FOLLOW_LIMIT,
@@ -296,6 +297,19 @@ export function createUnread({
   }
 
   let bytes = 0;
+  /** Someone else's Solo chats: reachable, but only mentions earn attention.
+   * An unknown creator is not the viewer, so a chat stays quiet while its
+   * metadata loads. */
+  const guestSolos = (list: ReturnType<ChannelQueries["list"]>) =>
+    new Set(
+      list.channels
+        .filter(
+          (channel) =>
+            channel.channelType === "solo" && !ownSolo(channel, viewer),
+        )
+        .map((channel) => channel.id),
+    );
+  let guests = new Set<string>();
   const allowed = (id: string) =>
     channels
       .list()
@@ -528,7 +542,7 @@ export function createUnread({
    * effect read one set even if replies to one parent disagree on its root. */
   const conversation = (entry: Evidence) => {
     const { parentId, channelId, threadRootId } = entry;
-    if (!parentId) return false;
+    if (!parentId || guests.has(channelId)) return false;
     const explicit = chosen(entry);
     if (explicit !== undefined) return explicit;
     return (
@@ -540,14 +554,21 @@ export function createUnread({
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
    * conversations, or when it is a DM, mentions the viewer, or is broadcast.
-   * Quiet agent messages never count; explicit unread intent still can. */
+   * In someone else's Solo chat only a mention counts: access is not
+   * attention. Quiet agent messages never count; explicit unread intent still
+   * can. */
   const relevant = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
-    (!entry.parentId ||
-      dm ||
-      entry.mentioned ||
-      entry.broadcast ||
-      conversation(entry));
+    (guests.has(entry.channelId)
+      ? entry.mentioned
+      : !entry.parentId ||
+        dm ||
+        entry.mentioned ||
+        entry.broadcast ||
+        conversation(entry));
+  /** A broadcast that earns attention: never in someone else's Solo chat. */
+  const loud = (entry: Evidence) =>
+    entry.broadcast && !guests.has(entry.channelId);
   /** Retained evidence cannot decide this reply's conversation yet. */
   const undecided = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
@@ -685,7 +706,7 @@ export function createUnread({
           : undefined;
   }
   function priority(entry: Evidence, dm: boolean) {
-    return !!category(entry, dm) || entry.broadcast;
+    return !!category(entry, dm) || loud(entry);
   }
   function attention(channelId: string, messageId: string): MessageAttention {
     const unknown = Object.freeze({
@@ -836,11 +857,11 @@ export function createUnread({
     // Only unread thread activity is presented; most publishes have none.
     let presented: Map<string, string> | undefined;
     for (const evidence of byChannel.get(channelId) ?? []) {
-      const { event, rootId, mentioned, broadcast } = evidence;
+      const { event, rootId, mentioned } = evidence;
       want(evidence, dm);
       if (
         !rootId ||
-        (!mentioned && !broadcast && !conversation(evidence)) ||
+        (!mentioned && !loud(evidence) && !conversation(evidence)) ||
         !isUnread(evidence, state, dm)
       )
         continue;
@@ -969,7 +990,10 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const session = channel.channelType === "solo";
+        // Someone else's Solo chat contributes only its mentions, each its own
+        // row, not the merged conversation row an owned chat gets.
+        const session =
+          channel.channelType === "solo" && !guests.has(channel.id);
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return entry.event.pubkey !== viewer && !!category(entry, dm);
@@ -1262,7 +1286,7 @@ export function createUnread({
         )
         .map((channel) => [
           channel.id,
-          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}`,
+          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${ownSolo(channel, viewer)}`,
         ]),
     );
   const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>
@@ -1286,6 +1310,7 @@ export function createUnread({
   let archivedKey = inboxArchiveKey(initialList);
   let cachedChannels = cachedIds(initialList);
   let channelTypes = types(initialList);
+  guests = guestSolos(initialList);
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
     const list = channels.list();
@@ -1302,6 +1327,7 @@ export function createUnread({
     const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
+    guests = guestSolos(list);
     // Channel archive changes Inbox eligibility, not membership or read intent.
     const nextArchived = inboxArchiveKey(list);
     const archiveChanged = nextArchived !== archivedKey;
@@ -1337,7 +1363,7 @@ export function createUnread({
     const structuralRootId =
       !entry.rootId &&
       (chosen(entry) === true ||
-        ((entry.mentioned || entry.broadcast || conversation(entry)) &&
+        ((entry.mentioned || loud(entry) || conversation(entry)) &&
           isUnread(entry, reads.state(), dm)))
         ? threadRootId
         : undefined;

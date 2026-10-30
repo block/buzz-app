@@ -105,7 +105,7 @@ export function HuddleLauncher(props: Props) {
     call.destination.viewer === context.viewer &&
     call.destination.channelId === context.channelId;
   if (parent?.archived) return null;
-  if (props.menu && here) return null;
+  if (props.menu && active) return null;
   if (here && call.id)
     return <ActiveHuddle key={call.id} {...props} callId={call.id} />;
   const joinable =

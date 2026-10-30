@@ -91,6 +91,29 @@ it("moves idle Solo huddles to the menu while preserving Team's header action", 
       screen.getByRole("button", { name: "Cancel Huddle connection" }),
     );
     expect(leave).toHaveBeenCalledOnce();
+    for (const phase of ["connecting", "connected", "leaving"] as const) {
+      vi.mocked(huddles.snapshot).mockReturnValue({
+        ...connecting,
+        phase,
+        destination: { ...context, channelId: "other-chat" },
+      });
+      view.rerender(
+        <>
+          <HuddleLauncher {...props} />
+          <MenuRoot open>
+            <MenuPopup>
+              <SoloHuddleMenu {...props} session={session} channelId="chat" />
+            </MenuPopup>
+          </MenuRoot>
+        </>,
+      );
+      const label =
+        phase === "connecting"
+          ? "Cancel Huddle connection"
+          : "Show active Huddle";
+      expect(screen.getByRole("button", { name: label })).toBeVisible();
+      expect(screen.queryByRole("menuitem", { name: label })).toBeNull();
+    }
     vi.mocked(huddles.snapshot).mockRestore();
     channel.channelType = "stream";
     view.rerender(<HuddleLauncher {...props} />);

@@ -162,7 +162,14 @@ it("does not start sign-in or provider reads on mount, then loads after explicit
     "First instructions. Draft",
   );
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  expect(field).toBeDisabled();
+  await user.type(field, " Ignored while signed out");
+  expect(field).toHaveValue("First instructions. Draft");
   expect(signIn).toHaveBeenCalledTimes(1);
+  await act(() => h.session.signIn());
+  expect(await loadedInstructions()).toBe(field);
+  expect(field).toHaveValue("First instructions. Draft");
   h.session.dispose();
 });
 

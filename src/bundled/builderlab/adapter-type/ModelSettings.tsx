@@ -368,7 +368,7 @@ export function ModelSettings({
             appearance="outlined"
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
-            disabled={!saved || saving}
+            disabled={!saved || saving || login.status !== "signed-in"}
             placeholder={!saved ? placeholder : undefined}
             rows={8}
             maxLength={MAX_INSTRUCTIONS_LENGTH}

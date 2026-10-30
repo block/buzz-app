@@ -81,7 +81,7 @@ const sidebarCollisions: CollisionDetection = (args) => {
 const pointerSensorOptions = { activationConstraint: { distance: 6 } };
 
 // Channel chips are narrower than their source rows. Anchor to the actual grab
-// point so the preview stays beside the pointer that determines the destination.
+// point so the preview centers on the pointer that determines the destination.
 const channelPreviewModifiers: Modifier[] = [
   ({ active, activatorEvent, activeNodeRect, transform }) => {
     if (
@@ -152,11 +152,7 @@ export function ChannelSidebarDnd({
         <DragOverlay
           dropAnimation={null}
           modifiers={channelPreviewModifiers}
-          style={
-            dragging?.group
-              ? {}
-              : { translate: "var(--space-3) var(--space-3)" }
-          }
+          className={`${styles.sidebarDragOverlay} ${dragging?.group ? "" : styles.channelDragAnchor}`}
         >
           {dragging ? overlay(dragging.id, dragging.group) : null}
         </DragOverlay>,

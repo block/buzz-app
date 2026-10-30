@@ -478,12 +478,14 @@ export function projectComposerDocument(doc: EditorNode) {
   for (let i = 1; i < positions.length; i++)
     positions[i] = Math.max(positions[i] ?? 0, positions[i - 1] ?? 0);
   positions[positions.length - 1] = text.length;
+  const content = doc.toJSON();
+  if (!doc.attrs.projects?.length) delete content.attrs;
   return {
     draft: {
       text,
       recipients,
       ...(semantic.length ? { tokens: semantic } : {}),
-      document: { version: 1, content: doc.toJSON() },
+      document: { version: 1, content },
     } satisfies MentionDraft,
     positions,
     tokens,

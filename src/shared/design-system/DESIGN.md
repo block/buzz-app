@@ -164,6 +164,9 @@ as the gap between the header and actions. Pass introductory copy through `descr
 omit `children` when there is no task body; do not add an empty wrapper. Keep field
 help, status, warnings, and section-specific explanations with their content.
 Ordinary flow Dialogs use sticky header and footer bars over the scrolling body.
+The bars own the heading-to-content and content-to-action gutters so spacing
+remains visible while scrolling; the body does not duplicate these gutters.
+Empty conditional bodies reserve no space.
 Their full backgrounds combine a surface-color gradient and progressive blur;
 labels and actions remain sharp. Reduced transparency uses an opaque surface.
 `ScrollEdgeMaterial` owns this treatment, shared with the agent Save footer.
@@ -193,8 +196,8 @@ uses this slot for the agent portrait and its overlapping community images.
 | Settings or another sectioned modal | `navigation={{ label, content }}` | Shared flush sidebar and detail scrollports; stacked navigation at narrow widths |
 | Side inspector that must be modal | `placement="right"` | Same modal labelling, focus, and dismissal contracts |
 
-Dialogs and modals share a `2rem` inset, reduced to `1rem` at viewport widths
-of `30rem` or less, and a secondary (`subtle`) Close button. The responsive inset
+Dialogs and modals use a `2rem` inset (`1.5rem` for compact dialogs), reduced to
+`1rem` at viewport widths of `30rem` or less, and a secondary (`subtle`) Close button. The responsive inset
 applies to headers, bodies, actions, and navigation panes; search keeps its
 documented field framing.
 Use `size="compact"` for a short form or confirmation: a centered `25rem` maximum

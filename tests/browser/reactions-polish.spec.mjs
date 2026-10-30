@@ -5,7 +5,7 @@ test("grouped reaction counts fit and preview in both themes and text sizes", as
   page,
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&grouped=8&narrow");
-  const individual = page.locator('button[data-reaction="👍"]').nth(3);
+  const individual = page.getByRole("button", { name: "👍: 8 people" });
   await individual.focus();
   await page.keyboard.press("Enter");
   const group = page.getByRole("button", { name: "👍: 9 people" });
@@ -218,7 +218,7 @@ test("reaction emojis and hit areas grow together without clipping", async ({
   );
 });
 
-test("individual reactions wrap, preview, toggle, and add from the inline control", async ({
+test("reaction bubbles wrap, preview, toggle, and add from the inline control", async ({
   page,
 }, testInfo) => {
   await page.route("**/emoji-media/**", (route) =>
@@ -240,10 +240,7 @@ test("individual reactions wrap, preview, toggle, and add from the inline contro
   );
   expect(new Set(tops).size).toBeGreaterThan(1);
 
-  const custom = row.getByRole("button", {
-    name: ":party:: Fixture Member",
-    exact: true,
-  });
+  const custom = row.locator('button[data-reaction=":party:"]');
   await expect(custom).toHaveAccessibleName(":party:: Fixture Member");
   const native = row.locator('button[data-reaction="👍"]');
   await expect(custom.locator("img")).toHaveCSS("object-fit", "contain");
@@ -303,9 +300,9 @@ test("individual reactions wrap, preview, toggle, and add from the inline contro
       )
       .toBe(true);
     await expect(custom).toHaveAttribute("aria-pressed", "true");
-    await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(2);
+    await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
     await expect(
-      row.getByRole("button", { name: ":party:: You", exact: true }),
+      row.getByRole("button", { name: ":party:: 2 people", exact: true }),
     ).toBeVisible();
     await expect(native).toHaveAttribute("aria-disabled", "true");
     await expect(custom).toHaveCSS("opacity", "1");
@@ -323,7 +320,7 @@ test("individual reactions wrap, preview, toggle, and add from the inline contro
     )
     .toBe(1);
   await expect(custom).toHaveAttribute("aria-disabled", "false");
-  await expect(pills).toHaveCount(13);
+  await expect(pills).toHaveCount(12);
   await custom.click();
   await expect(custom).toHaveAttribute("aria-pressed", "false");
   await expect(row.locator('button[data-reaction=":party:"]')).toHaveCount(1);
@@ -370,10 +367,7 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&single-reaction");
   const message = page.locator("[data-message-id]").first();
-  const reaction = message.getByRole("button", {
-    name: "👍: Fixture Member",
-    exact: true,
-  });
+  const reaction = message.locator('button[data-reaction="👍"]');
   const add = message.getByTestId("inline-add-reaction").getByRole("button");
   for (const [theme, width, scale] of [
     ["light", 800, 1],
@@ -404,7 +398,8 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
       })
       .toEqual({ sameLine: true, contained: true });
     await reaction.click();
-    await expect(message.locator('button[data-reaction="👍"]')).toHaveCount(2);
+    await expect(message.locator('button[data-reaction="👍"]')).toHaveCount(1);
+    await expect(reaction).toHaveAccessibleName("👍: 2 people");
     await expect
       .poll(async () => {
         const boxes = await message
@@ -422,8 +417,8 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
   }
 });
 
-// Actual popup geometry must follow the individual person’s emoji.
-test("reaction previews center above each person’s emoji", async ({ page }) => {
+// Actual popup geometry must follow each emoji bubble.
+test("reaction previews center above each emoji bubble", async ({ page }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated");
   const row = page.locator("[data-message-id]").first();
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
@@ -443,10 +438,7 @@ test("reaction previews center above each person’s emoji", async ({ page }) =>
       { theme, scale },
     );
     for (const content of [":party:", "😂"]) {
-      const chip = row.getByRole("button", {
-        name: `${content}: Fixture Member`,
-        exact: true,
-      });
+      const chip = row.locator(`button[data-reaction="${content}"]`);
       const glyph = chip.locator("[data-reaction-glyph]");
       await chip.hover();
       await expect(preview).toBeVisible();

@@ -20,6 +20,12 @@ export type SavedFollowUp = FollowUpMessage & {
   createdAt: number;
   sending?: true;
 };
+export type FollowUpHandoff = {
+  id: string;
+  message?: string;
+  recipients: readonly string[];
+  complete?: true;
+};
 const prefix = "follow-up:";
 export const followUpRecovery = (id: string) => ({
   key: prefix + id,
@@ -87,6 +93,39 @@ export function followUpStorage(scope: string) {
     },
     remove(id: string) {
       clearView(scope, key(id));
+    },
+    handoff(channelId: string): FollowUpHandoff | null {
+      const name = `follow-up-handoff:${channelId}`;
+      const revision = viewRevision(scope, name);
+      if (revision === null) return null;
+      const value = readView<unknown>(scope, name, null);
+      if (
+        revision === undefined ||
+        !value ||
+        typeof value !== "object" ||
+        typeof (value as FollowUpHandoff).id !== "string" ||
+        !strings((value as FollowUpHandoff).recipients) ||
+        ((value as FollowUpHandoff).message !== undefined &&
+          typeof (value as FollowUpHandoff).message !== "string") ||
+        ((value as FollowUpHandoff).complete !== undefined &&
+          (value as FollowUpHandoff).complete !== true)
+      )
+        throw new Error("Queued message ordering is unavailable. Try again.");
+      return value as FollowUpHandoff;
+    },
+    claim(channelId: string, handoff: FollowUpHandoff) {
+      if (!writeView(scope, `follow-up-handoff:${channelId}`, handoff))
+        throw new Error("Could not save queued message ordering. Try again.");
+    },
+    async lockChat<T>(channelId: string, run: () => Promise<T>) {
+      if (!navigator.locks)
+        throw new Error(
+          "This browser cannot safely send saved queued messages.",
+        );
+      return navigator.locks.request(
+        `buzz-follow-up-chat:${scope}:${channelId}`,
+        run,
+      );
     },
     async tryLock(id: string, run: () => void) {
       if (!navigator.locks) return;

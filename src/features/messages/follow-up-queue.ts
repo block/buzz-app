@@ -5,6 +5,7 @@ import {
   followUpStorage,
   followUpRecovery,
   type FollowUpMessage,
+  type FollowUpHandoff,
 } from "./follow-up-storage";
 
 type Activity = ReturnType<RelaySession["agentActivity"]["snapshot"]>;
@@ -51,6 +52,9 @@ function createQueue(session: RelaySession) {
   let storageError: string | undefined;
   let sequence = Date.now();
   const waits = new Map<string, Wait[]>();
+  // Persist completion of our handoffs so other windows can recognize it.
+  const handoffs = new Map<string, FollowUpHandoff>();
+  const settlingHandoffs = new Set<string>();
   const refreshingSending = new Set<string>();
   function restore() {
     if (!storage) return;
@@ -230,6 +234,8 @@ function createQueue(session: RelaySession) {
     });
     const offDismiss = session.outbox?.observeDismiss((item) => {
       if (item.delivery !== "failed") return;
+      for (const handoff of handoffs.values())
+        if (handoff.message === item.event.id) handoff.complete = true;
       for (const entry of entries) {
         if (entry.deliveryId !== item.event.id) continue;
         entry.deliveryId = undefined;
@@ -317,7 +323,9 @@ function createQueue(session: RelaySession) {
   async function release(entry: Entry, locked = false): Promise<void> {
     if (storage && entry.message && !locked) {
       try {
-        await storage.lock(entry.id, () => release(entry, true));
+        await storage.lock(entry.id, () =>
+          storage.lockChat(entry.channelId, () => release(entry, true)),
+        );
       } catch (error) {
         entries = entries.map((item) =>
           item === entry
@@ -335,6 +343,7 @@ function createQueue(session: RelaySession) {
     publishing.add(entry.id);
     let id: string | undefined;
     let awaitingChoices = false;
+    let claimed = false;
     try {
       if (storage && entry.message) {
         if (!storage.has(entry.id)) {
@@ -351,6 +360,15 @@ function createQueue(session: RelaySession) {
           );
         if (previous) {
           entry.deliveryId = previous.event.id;
+          if (storage.handoff(entry.channelId)?.id === entry.id) {
+            const handoff = {
+              id: entry.id,
+              message: previous.event.id,
+              recipients: entry.recipients,
+            };
+            storage.claim(entry.channelId, handoff);
+            handoffs.set(entry.channelId, handoff);
+          }
           waitForMessage(entry, previous.event.id);
           await session.outbox.recover(
             previous.event.id,
@@ -383,7 +401,34 @@ function createQueue(session: RelaySession) {
       }
       entry.beforePublish?.();
       requested.get(entry.id)?.();
-      if (storage && entry.message) storage.sending(entry.id, true);
+      if (storage && entry.message) {
+        const predecessor = storage.handoff(entry.channelId);
+        const first = storage
+          .load()
+          .find((row) => row.channelId === entry.channelId);
+        if (
+          !requested.has(entry.id) &&
+          (first?.id !== entry.id ||
+            (predecessor !== null &&
+              !predecessor.complete &&
+              !handoffFinished(predecessor) &&
+              predecessor.id !== handoffs.get(entry.channelId)?.id))
+        ) {
+          entry.restored = true;
+          entry.resumeCancelled = true;
+          entry.error =
+            "Another window may be handling an earlier queued message. Check the conversation, then Send when ready.";
+          return;
+        }
+        // Retain the claim after removing the row: storage events and agent
+        // activity in another window may both arrive after this handoff.
+        storage.claim(entry.channelId, {
+          id: entry.id,
+          recipients: entry.recipients,
+        });
+        claimed = true;
+        storage.sending(entry.id, true);
+      }
       entry.sending = true;
       entries = [...entries];
       emit();
@@ -393,8 +438,17 @@ function createQueue(session: RelaySession) {
           entry.message ? followUpRecovery(entry.id) : undefined,
         );
         entry.deliveryId = id;
+        if (storage && entry.message) {
+          const handoff = {
+            id: entry.id,
+            message: id,
+            recipients: entry.recipients,
+          };
+          handoffs.set(entry.channelId, handoff);
+          storage.claim(entry.channelId, handoff);
+        }
       } catch (error) {
-        if (storage && entry.message) storage.sending(entry.id, false);
+        if (storage && entry.message && !id) storage.sending(entry.id, false);
         throw error;
       }
       if (storage && entry.message) {
@@ -405,6 +459,12 @@ function createQueue(session: RelaySession) {
       }
       entries = entries.filter((item) => item !== entry);
     } catch (error) {
+      if (claimed && !id)
+        handoffs.set(entry.channelId, {
+          id: entry.id,
+          recipients: entry.recipients,
+          complete: true,
+        });
       entries = entries.map((item) =>
         item === entry
           ? {
@@ -425,8 +485,43 @@ function createQueue(session: RelaySession) {
     // Presentation failures cannot put an already accepted message back in queue.
     if (id) entry.onSend?.(id);
   }
+  function handoffFinished(handoff: FollowUpHandoff) {
+    const activity = session.agentActivity?.snapshot();
+    const message = handoff.message;
+    return (
+      !!activity &&
+      !!message &&
+      handoff.recipients.every((agent) =>
+        finished({ agent, message }, activity),
+      )
+    );
+  }
   function pump() {
     if (activating) return;
+    for (const [channelId, handoff] of handoffs) {
+      if (
+        !storage ||
+        (!handoff.complete && !handoffFinished(handoff)) ||
+        settlingHandoffs.has(channelId)
+      )
+        continue;
+      settlingHandoffs.add(channelId);
+      void storage
+        .lockChat(channelId, async () => {
+          if (storage.handoff(channelId)?.id === handoff.id)
+            storage.claim(channelId, { ...handoff, complete: true });
+          if (handoffs.get(channelId) === handoff) handoffs.delete(channelId);
+        })
+        .catch((error) => {
+          storageError = error instanceof Error ? error.message : String(error);
+          emit();
+        })
+        .finally(() => {
+          settlingHandoffs.delete(channelId);
+          if (handoffs.has(channelId) && handoffs.get(channelId) !== handoff)
+            pump();
+        });
+    }
     for (const channelId of new Set([
       ...waits.keys(),
       ...entries.map((entry) => entry.channelId),

@@ -411,7 +411,11 @@ remain intact. Resume does not establish channel admission: an incomplete empty 
 keeps saved rows until discovery or an explicit removal establishes their status. Incomplete recipient discovery
 defers release until availability can be determined. A predecessor removed by another
 window pauses only its successors when this window cannot establish its completion;
-earlier rows continue draining. The paused rows explain that an earlier message was
+earlier rows continue draining. Automatic release rechecks saved FIFO order under a
+chat-scoped lock. A durable handoff marker records the sent event and its confirmed completion,
+including completion after Resume. It survives removal of the sent row; a
+window that cannot establish that predecessor's completion pauses its competing
+rows for explicit Send rather than starting overlapping work. The paused rows explain that an earlier message was
 handled in another window.
 **Don’t resume** leaves the saved follow-ups paused. Other chats remain paused.
 Every release rechecks membership and recipient availability. A failed save keeps the

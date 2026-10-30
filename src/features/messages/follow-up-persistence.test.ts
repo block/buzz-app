@@ -1131,3 +1131,202 @@ it("abandoning a gated resumed reread pauses only its saved rows, not fresh subm
   expect(h.send).toHaveBeenCalledOnce();
   expect(h.send.mock.calls[0]?.[1]).toBe("Fresh follow-up");
 });
+
+it.each(["together", "after handoff", "later row first"])(
+  "coordinates distinct automatic rows with delayed storage notifications (%s)",
+  async (order) => {
+    const first = fixture();
+    const firstId = first.enqueue({ ...message, text: "First" });
+    const savedFirst = followUpStorage(scope).load()[0];
+    if (!savedFirst) throw new Error("Missing first row");
+    // Model two windows reading before either sees the other's save. No storage
+    // event is delivered; both records are durable before the turn completes.
+    followUpStorage(scope).remove(firstId);
+    const second = fixture();
+    const secondId = second.enqueue({ ...message, text: "Second" });
+    followUpStorage(scope).save({
+      ...savedFirst,
+      createdAt: savedFirst.createdAt - 1,
+    });
+    expect(first.queue.snapshot().map((row) => row.id)).toEqual([firstId]);
+    expect(second.queue.snapshot().map((row) => row.id)).toEqual([secondId]);
+    if (order === "later row first") second.finish();
+    first.finish();
+    if (order === "after handoff")
+      await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+    if (order !== "later row first") second.finish();
+    await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+    await followUpStorage(scope).lock(secondId, async () => {});
+    expect(first.send).toHaveBeenCalledOnce();
+    expect(second.send).not.toHaveBeenCalled();
+    expect(followUpStorage(scope).has(secondId)).toBe(true);
+    expect(second.queue.snapshot()[0]?.restored).toBe(true);
+    second.queue.sendNow(secondId);
+    await vi.waitFor(() => expect(second.queue.snapshot()).toEqual([]));
+    expect(second.send).toHaveBeenCalledOnce();
+  },
+);
+
+it("resumes the saved successor after restart during a handed-off turn", async () => {
+  const first = fixture();
+  first.enqueue({ ...message, text: "First" });
+  const secondId = first.enqueue({ ...message, text: "Second" });
+  first.finish();
+  await vi.waitFor(() => expect(first.send).toHaveBeenCalledOnce());
+  await vi.waitFor(() =>
+    expect(first.queue.snapshot().map((row) => row.id)).toEqual([secondId]),
+  );
+  const event = first.send.mock.results[0]?.value as string;
+  first.owner.dispose();
+  const restarted = fixture();
+  restarted.finish();
+  restarted.queue.resumeAfter(agent, { [event]: "chat" });
+  restarted.work(event, "done");
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+  expect(restarted.send.mock.calls[0]?.[1]).toBe("Second");
+});
+
+it("keeps completed handoffs from blocking a fresh queue after restart", async () => {
+  const first = fixture();
+  first.enqueue();
+  first.finish();
+  await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+  const event = first.send.mock.results[0]?.value as string;
+  first.work(event, "done");
+  await followUpStorage(scope).lockChat("chat", async () => {});
+  expect(followUpStorage(scope).handoff("chat")?.complete).toBe(true);
+  first.owner.dispose();
+  const restarted = fixture();
+  restarted.enqueue({ ...message, text: "New turn follow-up" });
+  restarted.finish();
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+  expect(restarted.send).toHaveBeenCalledOnce();
+});
+
+it("does not publish when the shared handoff claim cannot be saved", async () => {
+  const h = fixture();
+  const id = h.enqueue();
+  const set = Storage.prototype.setItem;
+  const failing = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.includes("follow-up-handoff:")) throw new Error("Disk full");
+      set.call(this, key, value);
+    });
+  h.finish();
+  await vi.waitFor(() =>
+    expect(h.queue.snapshot()[0]?.error).toContain(
+      "Could not save queued message ordering",
+    ),
+  );
+  expect(h.send).not.toHaveBeenCalled();
+  expect(followUpStorage(scope).has(id)).toBe(true);
+  failing.mockRestore();
+  h.queue.sendNow(id);
+  await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+  expect(h.send).toHaveBeenCalledOnce();
+});
+
+it("repairs a failed event claim before recovering the receipt and restarting", async () => {
+  const h = fixture();
+  const id = h.enqueue({ ...message, text: "First" });
+  h.enqueue({ ...message, text: "Second" });
+  const set = Storage.prototype.setItem;
+  const failing = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.includes("follow-up-handoff:") && JSON.parse(value).message)
+        throw new Error("Event claim failed");
+      set.call(this, key, value);
+    });
+  h.finish();
+  await vi.waitFor(() =>
+    expect(h.queue.snapshot()[0]?.error).toContain(
+      "Could not save queued message ordering",
+    ),
+  );
+  expect(h.send).toHaveBeenCalledOnce();
+  failing.mockRestore();
+  h.queue.sendNow(id);
+  await vi.waitFor(() => expect(followUpStorage(scope).has(id)).toBe(false));
+  const event = h.send.mock.results[0]?.value as string;
+  expect(followUpStorage(scope).handoff("chat")?.message).toBe(event);
+  h.owner.dispose();
+  const restarted = fixture();
+  restarted.finish();
+  restarted.queue.resumeAfter(agent, { [event]: "chat" });
+  restarted.work(event, "done");
+  await vi.waitFor(() => expect(restarted.queue.snapshot()).toEqual([]));
+  expect(restarted.send.mock.calls[0]?.[1]).toBe("Second");
+});
+
+it("settles a claim when publication fails synchronously before handoff", async () => {
+  const h = fixture();
+  const id = h.enqueue();
+  h.send.mockImplementationOnce(() => {
+    throw new Error("Publish unavailable");
+  });
+  h.finish();
+  await vi.waitFor(() =>
+    expect(h.queue.snapshot()[0]?.error).toBe("Publish unavailable"),
+  );
+  await followUpStorage(scope).lockChat("chat", async () => {});
+  expect(followUpStorage(scope).handoff("chat")?.complete).toBe(true);
+  h.queue.remove(id);
+  await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+  const next = fixture();
+  next.enqueue({ ...message, text: "Fresh" });
+  next.finish();
+  await vi.waitFor(() => expect(next.queue.snapshot()).toEqual([]));
+  expect(next.send).toHaveBeenCalledOnce();
+});
+
+it("settles a newer completed handoff after an older completion write waits for its lock", async () => {
+  const h = fixture();
+  h.enqueue({ ...message, text: "First" });
+  const next = h.enqueue({ ...message, text: "Second" });
+  h.finish();
+  await vi.waitFor(() =>
+    expect(h.queue.snapshot().map((row) => row.id)).toEqual([next]),
+  );
+  const firstEvent = h.send.mock.results[0]?.value as string;
+  const channel = await h.refresh();
+  let releaseMembership!: () => void;
+  const membership = new Promise<void>((resolve) => {
+    releaseMembership = resolve;
+  });
+  h.refresh.mockImplementationOnce(async () => {
+    await membership;
+    return channel;
+  });
+  let releaseRecovery!: () => void;
+  const recovery = new Promise<void>((resolve) => {
+    releaseRecovery = resolve;
+  });
+  const recover = vi.fn(
+    async (...args: Parameters<typeof h.owner.outbox.recover>) => {
+      await h.owner.outbox.recover(...args);
+      await recovery;
+    },
+  );
+  Object.assign(h.session, { outbox: { ...h.owner.outbox, recover } });
+  h.refresh.mockClear();
+  try {
+    h.queue.sendNow(next);
+    await vi.waitFor(() => expect(h.refresh).toHaveBeenCalledOnce());
+    h.work(firstEvent, "done");
+    releaseMembership();
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    const secondEvent = h.send.mock.results[1]?.value as string;
+    h.work(secondEvent, "done");
+  } finally {
+    releaseMembership();
+    releaseRecovery();
+  }
+  await vi.waitFor(() =>
+    expect(followUpStorage(scope).handoff("chat")).toMatchObject({
+      id: next,
+      complete: true,
+    }),
+  );
+});

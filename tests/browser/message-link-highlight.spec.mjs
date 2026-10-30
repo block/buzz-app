@@ -10,7 +10,7 @@ test.use({
 
 // Browser coverage owns real virtual-row placement and the painted pseudo-element.
 // Request lifecycle and cancellation permutations stay in the reveal-hook tests.
-for (const destination of ["thread", "channel"]) {
+for (const destination of ["thread", "channel", "agents"]) {
   for (const mode of ["light", "dark"]) {
     test(`message links highlight the ${destination} target in ${mode}`, async ({
       page,
@@ -33,8 +33,19 @@ for (const destination of ["thread", "channel"]) {
           ? app.histories
               .get("primary/alpha")
               .find((event) => event.content === "Broadcast reply")
-          : app.histories.get("primary/beta")[0];
-      const channel = destination === "thread" ? "alpha" : "beta";
+          : destination === "agents"
+            ? app.append(
+                "primary",
+                "alpha",
+                "Agent coordination target",
+                true,
+                false,
+                undefined,
+                undefined,
+                [["audience", "agents"]],
+              )
+            : app.histories.get("primary/beta")[0];
+      const channel = destination === "channel" ? "beta" : "alpha";
       const message = app.append(
         "primary",
         "alpha",
@@ -72,7 +83,7 @@ for (const destination of ["thread", "channel"]) {
       const reader =
         destination === "thread"
           ? page.getByRole("complementary", { name: "Thread", exact: true })
-          : page.locator("[data-channel-timeline=beta]");
+          : page.locator(`[data-channel-timeline=${channel}]`);
       const row = reader.locator(`[data-message-id="${target.id}"]`);
       await expect(row).toBeInViewport();
       await expect
@@ -92,13 +103,24 @@ for (const destination of ["thread", "channel"]) {
       }
       await expect
         .poll(() =>
-          row
-            .locator(":scope > [data-layout]")
-            .evaluate(
-              (element) => getComputedStyle(element, "::after").animationName,
-            ),
+          (destination === "agents"
+            ? row
+            : row.locator(":scope > [data-layout]")
+          ).evaluate(
+            (element) => getComputedStyle(element, "::after").animationName,
+          ),
         )
         .toBe("none");
+      if (destination === "agents") {
+        await row.getByRole("button").click();
+        await expect(
+          row.getByText("Agent coordination target", { exact: true }),
+        ).toBeVisible();
+        await link.press("Enter");
+        await expect
+          .poll(() => page.evaluate(() => window.targetCues.length))
+          .toBe(2);
+      }
     });
   }
 }

@@ -3436,6 +3436,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 /* Returning from a thread only paints its already-visible origin. The wash
    extends into the feed's inset without changing the row's layout box. */
 .returnHighlight {
+  position: relative;
   isolation: isolate;
 }
 .returnHighlight::after {

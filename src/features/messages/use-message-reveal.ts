@@ -127,9 +127,9 @@ export function useMessageReveal({
           return;
         }
         revealed.current = signal;
-        const message = row.querySelector<HTMLElement>(
-          ":scope > [data-layout]",
-        );
+        const message = row.matches("[data-message-highlight]")
+          ? row
+          : row.querySelector<HTMLElement>(":scope > [data-layout]");
         if (message) highlighted.current = highlightMessage(message, signal);
         cancel();
         readingPositioned(container);

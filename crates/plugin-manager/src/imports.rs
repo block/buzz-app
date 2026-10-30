@@ -1,7 +1,9 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
-    artifact_from_parts, err, hash, icon_revision, Catalog, GitSource, InstallSource, Manager,
-    Manifest, Release, ReloadSource, Result, BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    artifact_from_parts, err, hash, icon_revision,
+    managed::{valid_commit, valid_reference},
+    Catalog, GitSource, InstallSource, Manager, Manifest, Release, ReloadSource, Result, BASE64,
+    LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use base64::Engine as _;
 use nostr::event::Event;
@@ -739,11 +741,17 @@ impl Git {
         }
         result
     }
-    fn read_plugins(&self, source: String) -> Result<PreparedImport> {
+    fn read_plugins(&self, source: String, pinned: Option<&str>) -> Result<PreparedImport> {
         let commit = String::from_utf8(self.run(&["-C", "repository", "rev-parse", "HEAD"], 1024)?)
             .map_err(err)?
             .trim()
             .to_string();
+        if pinned.is_some_and(|pinned| !commit.eq_ignore_ascii_case(pinned)) {
+            return Err(format!(
+                "The repository reference is at commit {commit}, not the required commit {}. The reference has moved; ask whoever manages this recommendation to update it.",
+                pinned.unwrap_or_default()
+            ));
+        }
         let tree = self.run(
             &["-C", "repository", "ls-tree", "-rz", "--full-tree", "HEAD"],
             2 * 1024 * 1024,
@@ -897,26 +905,25 @@ pub fn prepare_git(
     reference: &str,
     authorization: Option<&str>,
 ) -> Result<PreparedImport> {
-    prepare_git_authorized(repository, reference, authorization, None, None)
+    prepare_git_authorized(repository, reference, None, authorization, None, None)
 }
 /// Native FI remains native: headers are scoped to this repository through environment config.
+/// `commit` refuses a reference that no longer resolves to exactly that commit.
 pub fn prepare_git_authorized(
     repository: &str,
     reference: &str,
+    commit: Option<&str>,
     authorization: Option<&str>,
     federated_header: Option<&str>,
     retired: Option<Box<dyn Fn() -> bool + Send>>,
 ) -> Result<PreparedImport> {
     let url = repository_url(repository)?;
     let reference = reference.trim();
-    if !reference.is_empty()
-        && (reference.starts_with('-')
-            || reference.len() > 200
-            || !reference
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c)))
-    {
+    if !reference.is_empty() && !valid_reference(reference) {
         return Err("Enter a branch or tag name using letters, digits, dots, underscores, slashes or hyphens".into());
+    }
+    if commit.is_some_and(|commit| !valid_commit(commit)) {
+        return Err("Required commit must be a full 40 or 64 digit hexadecimal object ID".into());
     }
     let mut git = Git::new()?;
     if let Some(token) = authorization {
@@ -954,7 +961,7 @@ pub fn prepare_git_authorized(
     }
     args.extend(["--", &url, "repository"]);
     git.run(&args, LIMIT)?;
-    let mut prepared = git.read_plugins(url.clone())?;
+    let mut prepared = git.read_plugins(url.clone(), commit)?;
     if git.retired.as_ref().is_some_and(|retired| retired()) {
         return Err("Repository authorization retired".into());
     }
@@ -962,6 +969,7 @@ pub fn prepare_git_authorized(
         repository: url,
         reference: reference.into(),
         path: ".".into(),
+        commit: prepared.preview.commit.clone(),
     });
     Ok(prepared)
 }
@@ -1273,7 +1281,7 @@ mod tests {
         for prepared in [
             prepare_folder(&repo).unwrap(),
             prepare_upload(upload).unwrap(),
-            git.read_plugins("fixture".into()).unwrap(),
+            git.read_plugins("fixture".into(), None).unwrap(),
         ] {
             assert_eq!(prepared.preview.candidates.len(), 3);
             assert_eq!(prepared.preview.warnings.len(), 3);
@@ -1402,6 +1410,7 @@ mod tests {
             repository: "https://example.com/plugins".into(),
             reference: "release/one".into(),
             path: ".".into(),
+            commit: None,
         });
         let next = git.install(&manager, &git.preview.token, "dist").unwrap();
         let next = next
@@ -1415,6 +1424,7 @@ mod tests {
             repository: "https://example.com/plugins".into(),
             reference: "release/one".into(),
             path: "dist".into(),
+            commit: None,
         }));
         assert_eq!(next.update_source, git_source);
         let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
@@ -1457,6 +1467,45 @@ mod tests {
             .unwrap();
         assert!(updated.previous.is_some());
         assert_eq!(updated.update_source, git_source);
+    }
+    #[test]
+    fn git_sources_record_the_installed_commit_and_still_read_without_one() {
+        let legacy = serde_json::json!({
+            "repository": "https://example.com/plugins",
+            "reference": "main",
+            "path": "dist"
+        });
+        let parsed: InstallSource = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(matches!(
+            &parsed,
+            InstallSource::Git(GitSource { commit: None, .. })
+        ));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), legacy);
+
+        let commit = "a".repeat(40);
+        let root = tempfile::tempdir().unwrap();
+        plugin(root.path(), "dist", "example.pinned");
+        let mut git = prepare_folder(root.path()).unwrap();
+        git.folder_root = None;
+        git.git_source = Some(GitSource {
+            repository: "https://example.com/plugins".into(),
+            reference: "main".into(),
+            path: ".".into(),
+            commit: Some(commit.clone()),
+        });
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let catalog = git.install(&manager, &git.preview.token, "dist").unwrap();
+        let installed = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.pinned")
+            .unwrap();
+        let Some(InstallSource::Git(source)) = &installed.update_source else {
+            panic!("expected a Git source");
+        };
+        assert_eq!(source.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(source.path, "dist");
     }
     #[test]
     fn folder_skips_hidden_descendants_but_accepts_a_hidden_selection() {
@@ -1517,7 +1566,7 @@ mod tests {
         )
         .unwrap();
         let folder = prepare_folder(&repo).unwrap();
-        let committed = git.read_plugins("fixture".into()).unwrap();
+        let committed = git.read_plugins("fixture".into(), None).unwrap();
         for prepared in [folder, committed] {
             assert_eq!(prepared.preview.candidates.len(), 1);
             assert_eq!(prepared.preview.warnings.len(), 3);
@@ -1701,7 +1750,16 @@ mod tests {
             "uncommitted change",
         )
         .unwrap();
-        let prepared = git.read_plugins("fixture".into()).unwrap();
+        let prepared = git.read_plugins("fixture".into(), None).unwrap();
+        let head = prepared.preview.commit.clone().unwrap();
+        assert!(git
+            .read_plugins("fixture".into(), Some(&head.to_uppercase()))
+            .is_ok());
+        let refused = git
+            .read_plugins("fixture".into(), Some(&"0".repeat(40)))
+            .err()
+            .unwrap();
+        assert!(refused.contains(&head) && refused.contains("not the required commit"));
         assert_eq!(prepared.preview.candidates.len(), 2);
         assert!(prepared
             .preview

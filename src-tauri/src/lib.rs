@@ -361,6 +361,7 @@ async fn plugin_update_preview(
     .await
 }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn plugin_import_git(
     identity: tauri::State<'_, IdentityHost>,
     fi: tauri::State<'_, federated_identity::FederatedIdentity>,
@@ -369,6 +370,7 @@ async fn plugin_import_git(
     reference: String,
     authorization: Option<String>,
     check_only: Option<bool>,
+    commit: Option<String>,
 ) -> Result<Option<Preview>, String> {
     let repository = buzzodz_plugins::imports::repository_url(&repository)?;
     let url = url::Url::parse(&repository).map_err(|_| "Invalid repository")?;
@@ -399,6 +401,7 @@ async fn plugin_import_git(
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
+                commit.as_deref(),
                 authorization.as_deref(),
                 assertion
                     .as_ref()
@@ -421,6 +424,7 @@ async fn plugin_import_git(
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
+                commit.as_deref(),
                 authorization.as_deref(),
                 assertion
                     .as_ref()
@@ -508,6 +512,7 @@ async fn plugin_import_install(
 
 fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
     InstallationResult::Ready {
+        managed: manager.managed(&catalog),
         catalog,
         external_plugins_paused: manager.external_plugins_paused(),
     }
@@ -1116,6 +1121,7 @@ mod tests {
                 "--invalid".into(),
                 None,
                 Some(check_only),
+                None,
             ))
             .err()
             .unwrap()

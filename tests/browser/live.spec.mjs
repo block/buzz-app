@@ -97,6 +97,9 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
       return result;
     };
   });
+  // A running page clock behaves like real time until the cooldown below
+  // pauses it.
+  await page.clock.install();
   await ready(page, app);
   const live = app.append("primary", "alpha", "Policy-realistic live delivery");
   await expect(
@@ -134,6 +137,17 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   const globalRequests = app.relay.requests.filter(({ filters }) =>
     filters.every((filter) => !filter["#h"]),
   ).length;
+  // The app arms its cooldown when it consumes the refusal, and the ignored
+  // clicks below must land before that deadline. Pause the page clock before
+  // the failure and step it in 250 ms slices: the clicks then land within
+  // 250 ms of page time after the 3 s notice delay, inside the 6 s cooldown.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+  const step = (done) =>
+    expect
+      .poll(async () => (await done()) || void (await page.clock.runFor(250)), {
+        intervals: [50],
+      })
+      .toBe(true);
   app.relay.failRoute("primary", "alpha");
   const missed = app.append(
     "primary",
@@ -141,8 +155,6 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     "Delivered by authoritative catch-up",
     false,
   );
-  // The cooldown outlasts the 3 s recovery notice delay, so the notice shows
-  // and the ignored clicks below land before the cooldown ends.
   app.relay.quotaNextHead("alpha", 6);
   // A sidebar preview may reach the shared broker before the selected head.
   // It must not consume the failure injected specifically for head catch-up.
@@ -167,8 +179,9 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   expect(previewStatus).toBe(200);
   expect(app.relay.rejected).toHaveLength(0);
   // No click: automatic recovery sends the head catch-up.
-  await expect.poll(() => app.relay.rejected.length).toBe(1);
-  await expect(notice(page)).toBeVisible();
+  await step(() => app.relay.rejected.length === 1);
+  // The notice appears once recovery lasts 3 s (RECOVERY_NOTICE_DELAY_MS).
+  await step(() => notice(page).isVisible());
   const calls = heads(app, "alpha").length;
   await retry(page).click();
   await retry(page).click();
@@ -179,6 +192,8 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
       filters.every((filter) => !filter["#h"]),
     ),
   ).toHaveLength(globalRequests);
+  // The timeline keeps the browser's own clock from here.
+  await page.clock.resume();
   await expectAnchor(page, reading);
   await retryAfterCooldown(page, app, () => heads(app, "alpha").length > calls);
   await expect(notice(page)).toHaveCount(0);

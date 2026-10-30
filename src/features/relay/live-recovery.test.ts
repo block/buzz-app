@@ -180,6 +180,15 @@ it("owns a surface's read exactly when recovery counts it failed or busy", () =>
   expect(headRecovering(reconnected("pending"), "a")).toBe(true);
   expect(headRecovering(reconnected("live"), "a")).toBe(false);
   expect(headRecovering(reconnected("pending"), "b")).toBe(false);
+  // A terminal connection error retries nothing, even with the channel's
+  // route left pending, and a session without a live stream has no routes:
+  // the timeline's own error shows.
+  expect(
+    headRecovering({ ...reconnected("pending"), status: "error" }, "a"),
+  ).toBe(false);
+  expect(
+    headRecovering({ ...healthy, status: "unavailable", heads: [] }, "a"),
+  ).toBe(false);
   // A connected stream whose channel route failed: an outage still owns it.
   const failedRoute = (error: string) => ({
     ...healthy,

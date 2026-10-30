@@ -1022,7 +1022,15 @@ it.each([
       });
       instructionsSave = undefined;
     }
+    const logouts = requestsTo("v1/auth/logout").length;
     await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(requestsTo("v1/auth/logout")).toHaveLength(logouts + 1),
+    );
+    expect(requestsTo("v1/auth/logout").at(-1)?.request).toMatchObject({
+      method: "POST",
+      headers: { "X-BB-Session-Credential": "private-token" },
+    });
     // Sign-in stays user-started and the failed instructions draft survives it.
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     await user.click(

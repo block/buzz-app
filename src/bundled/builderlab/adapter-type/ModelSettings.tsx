@@ -17,7 +17,6 @@ import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../../shared/design-system/ui/Textarea";
 import { useToastNotification } from "../../../shared/design-system/ui/Toast";
-import inlineStyles from "../../../shared/InlineReference.module.css";
 import {
   MAX_INSTRUCTIONS_LENGTH,
   validInstructions,
@@ -66,7 +65,7 @@ export function ModelSettings({
     signedIn && (mismatch || login.account?.canUseRemoteAgents === false);
   const hasAccess = signedIn && !accountProblem;
   const email = mismatch && "email" in settings ? settings.email : undefined;
-  const builderlab = accountProblem ? new URL(oauthTarget()) : undefined;
+  const logout = accountProblem ? new URL("/logout", oauthTarget()) : undefined;
   const form = useId();
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
@@ -210,27 +209,30 @@ export function ModelSettings({
       label={agent ? "Loading models…" : "Loading settings…"}
       statusVisibility="screen-reader"
       feedback={
-        builderlab ? (
+        logout ? (
           <div className="grid gap-2">
             <p role="alert" className="m-0 text-body-sm text-danger">
               {!mismatch && "This account can’t access Builderlab agents. "}
-              Open{" "}
-              <a
-                className={inlineStyles.link}
-                href={builderlab.origin}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {builderlab.host}
-              </a>
-              {", sign in "}
+              Sign out of Builderlab in Buzz and your browser. Then sign in{" "}
               {email
                 ? `as ${email}`
                 : "with the account you used for this agent"}
-              {", then try again."}
+              {" in your browser and return to Buzz to sign in again."}
             </p>
             <div>
-              <Button onClick={() => void session.signIn()}>Try again</Button>
+              <Button
+                nativeButton={false}
+                render={
+                  <a
+                    href={logout.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+                onClick={() => session.signOut()}
+              >
+                Try again
+              </Button>
             </div>
           </div>
         ) : !hasAccess ? undefined : "error" in settings && settings.error ? (

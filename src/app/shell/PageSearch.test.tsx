@@ -393,7 +393,7 @@ it("opens conversation-scoped search with Command F and returns to overall searc
   }
 });
 
-it("does not open a DM that finishes starting after search closed", async () => {
+it("does not open a DM that finishes starting after search closed and reopened", async () => {
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
@@ -409,6 +409,7 @@ it("does not open a DM that finishes starting after search closed", async () => 
     query: async () => [],
   });
   let started!: (channelId: string) => void;
+  let attempt!: AbortSignal;
   const session = {
     ...owner.session,
     channels: {
@@ -426,7 +427,10 @@ it("does not open a DM that finishes starting after search closed", async () => 
         people: [{ pubkey: bob.pubkey, name: "Bob" }],
         hasMore: false,
       }),
-      open: () => new Promise<string>((resolve) => (started = resolve)),
+      open: (_pubkeys: readonly string[], signal: AbortSignal) => {
+        attempt = signal;
+        return new Promise<string>((resolve) => (started = resolve));
+      },
     },
   } as unknown as typeof owner.session;
   const connection = { status: "ready", generation: 0, session, scope: "s" };
@@ -474,8 +478,8 @@ it("does not open a DM that finishes starting after search closed", async () => 
     expect(
       await screen.findByText("Opening your conversation with Bob…"),
     ).toBeVisible();
-    // Hold the dialog's close animation, so the DM resolves while the
-    // closing palette is still mounted.
+    // Hold the dialog's close animation, so search reopens with the same
+    // results still mounted before the DM resolves.
     let release!: () => void;
     const finished = new Promise<void>((resolve) => (release = resolve));
     const animations = vi.fn(() => [{ finished }]);
@@ -484,11 +488,17 @@ it("does not open a DM that finishes starting after search closed", async () => 
     try {
       fireEvent.keyDown(input, { key: "Escape" });
       await vi.waitFor(() => expect(animations).toHaveBeenCalled());
-      expect(
-        screen.getByText("Opening your conversation with Bob…"),
-      ).toBeInTheDocument();
+      expect(attempt.aborted).toBe(true);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Search Buzz", hidden: true }),
+      );
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveValue("");
       await act(async () => started("bob-dm"));
       expect(open).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText("Opening your conversation with Bob…"),
+      ).toBeNull();
     } finally {
       await act(async () => release());
     }

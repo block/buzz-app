@@ -89,8 +89,10 @@ function conversationName(
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
 
-/** "Search in this conversation" narrows the search; it is not a result. */
-const isScopeAction = (key: string) => key.startsWith("scope:");
+/** "Search in this conversation" narrows the search and "Show more messages"
+ * extends it; neither is a result. */
+const isSearchAction = (key: string) =>
+  key.startsWith("scope:") || key === "more-messages";
 
 export function SearchResults({
   session,
@@ -819,6 +821,11 @@ export function SearchResults({
     personAttempt.current = undefined;
     setPersonOpen(undefined);
   };
+  // So does closing, or a reopen during the close animation would navigate.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cancelPersonOpen reads only refs and setters.
+  useEffect(() => {
+    if (open === false) cancelPersonOpen();
+  }, [open]);
   const openPerson = async (pubkey: string, name: string, agent: boolean) => {
     if (personAttempt.current) return;
     const existing = session.channels
@@ -992,7 +999,10 @@ export function SearchResults({
             ? "Loading more messages…"
             : "Show more messages",
           icon: ChatCircleIcon,
-          run: search.loadMore,
+          run: () => {
+            cancelPersonOpen();
+            search.loadMore();
+          },
         },
       ]
     : messages;
@@ -1232,7 +1242,7 @@ export function SearchResults({
       }
       groups={groups}
       open={open}
-      // Enter before any row, or on the scope action alone, waits for a
+      // Enter before any row, or on search actions alone, waits for a
       // channel or person row, or for the lookups to settle, rather than
       // opening a message that lands first. A cold joined list has not yet
       // started the open-channel lookup.
@@ -1251,7 +1261,7 @@ export function SearchResults({
             group.destinations.length,
         )
       }
-      isAction={isScopeAction}
+      isAction={isSearchAction}
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"

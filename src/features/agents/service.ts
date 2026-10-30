@@ -2197,12 +2197,13 @@ export class AgentsService extends Service implements Agents {
       const record = this.records[key];
       if (!record || record.attention[object.slug] !== object) return;
       const { output, ...prior } = record.attentionHistory?.[object.slug] ?? {};
+      const kept = recentEntries([...(prior.events ?? []), ...events]);
       // Entries replace the one string a watch kept before them.
       const entry = {
         ...prior,
         ...(lastWokeAt !== undefined ? { lastWokeAt } : {}),
-        ...(events.length
-          ? { events: recentEntries([...(prior.events ?? []), ...events]) }
+        ...(kept.length
+          ? { events: kept }
           : output !== undefined
             ? { output }
             : {}),

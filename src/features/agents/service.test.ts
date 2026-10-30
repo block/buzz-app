@@ -52,7 +52,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
-import { readTeams, writeTeams } from "./store";
+import { readTeams, writeTeams, type AgentRecord } from "./store";
 import {
   bot,
   channel,
@@ -1168,6 +1168,37 @@ it("delivers mentions and matching watches once, and never the agent's own event
   }
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
+});
+
+it("records an event wake without a body in place of the history a watch kept before", async () => {
+  const { service, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const records = (
+    service as unknown as { records: Record<string, AgentRecord> }
+  ).records;
+  const record = records[bot];
+  if (!record) throw new Error("fixture");
+  records[bot] = {
+    ...record,
+    attentionHistory: { "watch/channel": { lastWokeAt: 1, output: "before" } },
+  };
+  const blank = deploy("blank", { content: "" });
+  emit({ events: [blank], channelId: channel });
+  await vi.waitFor(() =>
+    expect(service.find(bot)?.attentionHistory?.["watch/channel"]).toEqual({
+      lastWokeAt: expect.any(Number),
+      events: [
+        {
+          id: blank.id,
+          at: blank.created_at,
+          author: blank.pubkey,
+          channel,
+          text: "",
+        },
+      ],
+    }),
+  );
 });
 
 it("gives each member its teams' roster and instructions, and drops a deleted agent from its teams", async () => {

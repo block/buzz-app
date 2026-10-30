@@ -442,6 +442,7 @@ it("keeps a watch's ten latest valid recent events, each clipped", async () => {
         { id: 7, at: 11, text: "id" },
         { at: "12", text: "late" },
         { at: 13, text: "" },
+        { id: "gone", at: 14, text: "" },
         null,
       ],
     },
@@ -450,8 +451,10 @@ it("keeps a watch's ten latest valid recent events, each clipped", async () => {
   const history = readRecords(storage)[pubkey]?.attentionHistory;
   const events = history?.["watch/messages"]?.events ?? [];
   expect(history?.["watch/messages"]?.lastWokeAt).toBe(9);
-  expect(events.map(({ at }) => at)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 11]);
-  expect(events.slice(-2)).toEqual([
+  expect(events.map(({ at }) => at)).toEqual([
+    4, 5, 6, 7, 8, 9, 10, 11, 11, 14,
+  ]);
+  expect(events.slice(-3)).toEqual([
     {
       id: "e",
       at: 11,
@@ -461,5 +464,7 @@ it("keeps a watch's ten latest valid recent events, each clipped", async () => {
       mentions: keys.slice(0, 100),
     },
     { at: 11, text: "id" },
+    // An event without a body, such as a deletion, still woke the agent.
+    { id: "gone", at: 14, text: "" },
   ]);
 });

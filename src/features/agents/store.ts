@@ -97,10 +97,11 @@ export const recentEntries = (entries: readonly unknown[]) =>
   entries
     .flatMap((value): AttentionEntry[] => {
       const entry = value as Partial<AttentionEntry> | null;
+      // An event keeps its place even without a body, as a deletion has none.
       return entry &&
         Number.isFinite(entry.at) &&
         typeof entry.text === "string" &&
-        entry.text
+        (entry.text || typeof entry.id === "string")
         ? [
             {
               at: entry.at as number,

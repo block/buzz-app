@@ -5,6 +5,7 @@ test.use({
   productionBroker: true,
   readState: true,
   threadUnread: true,
+  pluginFixtures: true,
   historyCounts: { alpha: 20, beta: 1 },
 });
 
@@ -78,17 +79,15 @@ for (const pane of ["side", "main"]) {
   });
 }
 
-// The delayed read crosses the real broker/reader boundary. Hold its root until
-// another owner has focus, then prove completion cannot reclaim that focus.
-for (const owner of ["main draft", "menu", "dialog"]) {
-  test(`a loading thread leaves focus with a later ${owner}`, async ({
+// Beta has never been opened, so its root cannot seed the reply editor from the
+// timeline cache. Hold its read until a real gesture cancels the focus request.
+for (const owner of [undefined, "page draft", "menu", "dialog"]) {
+  test(`a late-mounted thread ${owner ? `preserves a later ${owner}` : "focuses its reply composer"}`, async ({
     page,
     app,
   }) => {
     await open(page, app);
-    const root = app.histories
-      .get("primary/alpha")
-      .find((row) => row.content === "Thread root 0");
+    const root = app.histories.get("primary/beta")[0];
     let release;
     let started;
     const held = new Promise((resolve) => {
@@ -110,23 +109,40 @@ for (const owner of ["main draft", "menu", "dialog"]) {
       await route.continue().catch(() => {});
     });
     try {
+      await page.evaluate(
+        (threadId) =>
+          window.fixtureNavigation.open({
+            version: 1,
+            kind: "page",
+            pluginId: "fixture.session",
+            pageId: "thread-focus",
+            route: { version: 1, params: threadId },
+          }),
+        root.id,
+      );
       await page
-        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ })
+        .getByRole("button", { name: "Open cold thread", exact: true })
         .click();
       await pending;
+      // This is the late-mount boundary: neither cached history nor preview
+      // has made an editor available to consume the opening's focus request.
+      const reply = page.locator(
+        '[aria-label="Reply to thread"][role="textbox"]',
+      );
+      await expect(reply).toHaveCount(0);
       let target;
-      if (owner === "main draft") {
+      if (owner === "page draft") {
         target = page.getByRole("textbox", {
-          name: "Message #Alpha",
+          name: "Page draft",
           exact: true,
         });
-        await target.fill("Keep my main draft");
+        await target.click();
+        await page.keyboard.type("Keep my main draft");
       } else if (owner === "menu") {
         await page.getByRole("button", { name: "New", exact: true }).click();
         target = page.getByRole("menuitem", { name: "New chat", exact: true });
         await target.focus();
-      } else {
+      } else if (owner === "dialog") {
         await page
           .getByRole("button", { name: "Search Buzz", exact: true })
           .click();
@@ -139,13 +155,10 @@ for (const owner of ["main draft", "menu", "dialog"]) {
       release();
       // The dialog correctly hides the workspace from the accessibility tree;
       // observe the retained editor DOM as the read-completion barrier.
-      const reply = page.locator(
-        '[aria-label="Reply to thread"][role="textbox"]',
-      );
       await expect(reply).toHaveCount(1);
-      await expect(target).toBeFocused();
-      if (owner === "main draft")
-        await expect(target).toHaveText("Keep my main draft");
+      await expect(target ?? reply).toBeFocused();
+      if (owner === "page draft")
+        await expect(target).toHaveValue("Keep my main draft");
     } finally {
       release();
     }

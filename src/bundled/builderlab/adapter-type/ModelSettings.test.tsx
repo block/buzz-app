@@ -140,72 +140,13 @@ async function choose(label: string, value: string) {
     await user.click(await screen.findByRole("option", { name: value }));
   }
 }
-it("explains the disabled harness selector on hover and keyboard focus without offering migration", async () => {
-  const h = await fixture();
-  const user = userEvent.setup();
-  const harness = screen.getByRole("button", { name: "Harness: Builderlab" });
-  expect(harness).toHaveAttribute("aria-disabled", "true");
-  await user.hover(harness);
-  expect(
-    await screen.findByRole("dialog", { name: "Builderlab harness" }),
-  ).toHaveTextContent(
-    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.",
-  );
-  await user.unhover(harness);
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Builderlab harness" }),
-    ).toBeNull(),
-  );
-  await user.tab();
-  expect(harness).toHaveFocus();
-  expect(
-    await screen.findByRole("dialog", { name: "Builderlab harness" }),
-  ).toHaveTextContent("Builderlab holds this agent’s signing key.");
-  expect(harness).toHaveAccessibleDescription(
-    "Builderlab holds this agent’s signing key. Buzz can’t move that identity to a local harness yet. To run locally, create a new agent.",
-  );
-  await user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Builderlab harness" }),
-    ).toBeNull(),
-  );
-  expect(harness).toHaveFocus();
-  await user.keyboard("{Enter}");
-  expect(
-    await screen.findByRole("dialog", { name: "Builderlab harness" }),
-  ).toBeVisible();
-  await user.click(harness);
-  expect(
-    screen.getByRole("dialog", { name: "Builderlab harness" }),
-  ).toBeVisible();
-  await user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Builderlab harness" }),
-    ).toBeNull(),
-  );
-  await user.keyboard(" ");
-  expect(
-    await screen.findByRole("dialog", { name: "Builderlab harness" }),
-  ).toBeVisible();
-  await user.click(harness);
-  expect(
-    screen.getByRole("dialog", { name: "Builderlab harness" }),
-  ).toBeVisible();
-  await user.click(screen.getByRole("textbox", { name: "Instructions" }));
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("dialog", { name: "Builderlab harness" }),
-    ).toBeNull(),
-  );
-  expect(screen.queryByRole("menu")).toBeNull();
-  expect(
-    h.request.mock.calls.filter(([request]) =>
-      request.url.endsWith("/update-agent"),
-    ),
-  ).toHaveLength(0);
+it("keeps the Builderlab mark when no shared Harness control is supplied", async () => {
+  await fixture();
+  const mark = screen.getByText("Builderlab").querySelector("svg");
+  expect(mark).toHaveAttribute("width", "1.25rem");
+  expect(mark).toHaveAttribute("aria-hidden", "true");
+  expect(mark?.querySelector("mask")).not.toBeNull();
+  expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
 });
 
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {

@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { AgentSaveFooter } from "../../../features/agents/AgentSaveButton";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useAgentSettingsHost } from "../../agents/AgentSettingsHost";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
 import type { Host, HostResponse } from "../../../features/host/service";
@@ -147,9 +148,11 @@ it.each([false, true])(
       if (input.url.endsWith("/get-model-catalog")) return catalog.promise;
       return request(input);
     });
-    render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
+    renderTabs(h);
     const field = screen.getByRole("textbox", { name: "Instructions" });
-    const harness = screen.getByRole("button", { name: "Harness: Builderlab" });
+    const harness = screen.getByRole("button", {
+      name: "Change harness from Builderlab",
+    });
     const mark = harness.querySelector("svg");
     const model = screen.getByRole("button", { name: "Model: …" });
     const thinking = screen.getByRole("combobox", { name: "Thinking" });
@@ -233,10 +236,10 @@ it("retries a failed load and refuses to save a draft through another account", 
   const h = fixture();
   const user = userEvent.setup();
   h.request.mockResolvedValueOnce({ ...response(), status: 400 });
-  render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
+  renderTabs(h);
   expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
   expect(
-    screen.getByRole("button", { name: "Harness: Builderlab" }),
+    screen.getByRole("button", { name: "Change harness from Builderlab" }),
   ).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Model: Unavailable" }),
@@ -297,16 +300,33 @@ it("switching agents hides the old draft and ignores the switched-away read", as
 
 function renderTabs(h: ReturnType<typeof fixture>, close?: () => void) {
   function Pane() {
+    const agents = { save: vi.fn() } as unknown as Agents;
+    const settings = useAgentSettingsHost({
+      agents,
+      agent: agent(),
+      type: h.type,
+      types: [
+        h.type,
+        {
+          defaults: () => ({ config: {} }),
+          pluginId: "local",
+          revision: "1",
+          key: "local/codex",
+          id: "codex",
+          title: "Codex",
+        },
+      ],
+    });
     const [target, setTarget] = useState<HTMLDivElement | null>(null);
     return (
       <AgentSaveFooter value={{ target }}>
         <AgentTabs
-          agents={{ save: vi.fn() } as unknown as Agents}
+          agents={agents}
           agent={agent()}
           type={h.type}
           channels={[]}
           memories={undefined}
-          settingsHost={{ typeControl: () => <p>Hosted provider</p> }}
+          settingsHost={settings.settingsHost}
           settingsContent={<p>Agent settings</p>}
         />
         <div ref={setTarget} data-testid="save-footer" />
@@ -341,19 +361,32 @@ it("dismisses Harness help before allowing Escape to close the agent pane", asyn
   const close = vi.fn();
   renderTabs(h, close);
   const harness = await screen.findByRole("button", {
-    name: "Harness: Builderlab",
+    name: "Change harness from Builderlab",
   });
-  act(() => harness.focus());
+  const selectedMask = harness.querySelector("mask");
+  expect(selectedMask).not.toBeNull();
+  await user.click(harness);
+  const option = await screen.findByRole("menuitemradio", { name: "Builderlab" });
+  expect(option).toBeChecked();
+  const optionMask = option.querySelector("mask");
+  expect(optionMask).not.toBeNull();
+  expect(optionMask?.id).not.toBe(selectedMask?.id);
+  await screen.findByRole("menuitemradio", { name: "Codex" });
+  await user.keyboard("{End}{Enter}");
   expect(
-    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+    await screen.findByRole("dialog", { name: "Harness availability" }),
   ).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(
-      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+      screen.queryByRole("dialog", { name: "Harness availability" }),
     ).toBeNull(),
   );
   expect(screen.getByRole("complementary", { name: "Agent" })).toBeVisible();
+  expect(screen.getByRole("menuitemradio", { name: "Codex" })).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(harness).toHaveFocus();
   expect(close).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");

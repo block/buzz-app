@@ -11,7 +11,7 @@ import {
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
-import { DayDivider } from "./MessageTimestamp";
+import { DayDivider, PinnedDay } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -39,6 +39,7 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { DateJumpContext } from "./DateJumpMenu";
+import { dayStart } from "./date-jump";
 import { useDateJump } from "./use-date-jump";
 import { useReturnHighlight } from "./use-return-highlight";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -516,6 +517,41 @@ function Timeline({
     },
     [externalSignal, startJump],
   );
+  const dateJumps = dateJump && !!queries.channels.seek;
+  // The top visible message's day (its local midnight), pinned while that
+  // day's own divider is out of view.
+  const [pinnedDay, setPinnedDay] = useState<number>();
+  const createdAtById = useMemo(
+    () => new Map(rows.map((row) => [row.id, row.createdAt])),
+    [rows],
+  );
+  const updatePinnedDay = useCallback(
+    (element: HTMLElement) => {
+      const top = element.getBoundingClientRect().top;
+      const row = Array.from(
+        element.querySelectorAll<HTMLElement>("[data-message-id]"),
+      ).find((row) => row.getBoundingClientRect().bottom > top);
+      // The divider can sit beside the id element, within the virtual item.
+      const divider = (row?.closest("li") ?? row)?.querySelector("[data-day]");
+      const createdAt =
+        divider && divider.getBoundingClientRect().top >= top
+          ? undefined
+          : createdAtById.get(row?.dataset.messageId ?? "");
+      setPinnedDay(
+        createdAt === undefined
+          ? undefined
+          : dayStart(new Date(createdAt * 1000)),
+      );
+    },
+    [createdAtById],
+  );
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!dateJumps || !element) return;
+    // Virtual rows mount after the commit that adds them.
+    const frame = requestAnimationFrame(() => updatePinnedDay(element));
+    return () => cancelAnimationFrame(frame);
+  }, [dateJumps, updatePinnedDay]);
   const dateTarget = dates.target;
   const external = externalSignal !== jumpedOver;
   const targetId = dateTarget?.messageId ?? (external ? externalId : undefined);
@@ -1228,6 +1264,7 @@ function Timeline({
         }
         loadNearTop(element);
         loadNearBottom(element);
+        if (dateJumps) updatePinnedDay(element);
       }}
     >
       <div
@@ -1259,10 +1296,19 @@ function Timeline({
           <span role="status">Loading older…</span>
         ) : null}
       </div>
-      {dates.pending && (
+      {dates.pending ? (
         <div className={styles.jumpStatus} role="status">
           <span>Loading older…</span>
         </div>
+      ) : (
+        dateJumps &&
+        pinnedDay !== undefined && (
+          <PinnedDay
+            createdAt={pinnedDay}
+            jump={jumpTo}
+            returnFocus={scroller}
+          />
+        )
       )}
       <JumpToLatestButton
         visible={showJumpToLatest || detached}
@@ -1273,9 +1319,7 @@ function Timeline({
         }
       />
       {width > 0 && (
-        <DateJumpContext
-          value={dateJump && queries.channels.seek ? jumpTo : undefined}
-        >
+        <DateJumpContext value={dateJumps ? jumpTo : undefined}>
           <Virtualizer
             ref={handle}
             scrollRef={scroller}

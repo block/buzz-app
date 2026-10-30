@@ -1,4 +1,4 @@
-import { useContext, type ReactNode } from "react";
+import { useContext, type ReactNode, type RefObject } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
@@ -63,6 +63,35 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
       ) : (
         content
       )}
+    </div>
+  );
+}
+
+/** The top visible message's day, floating over the timeline. Mouse only:
+ * keyboard and screen-reader users reach the same menu through the dividers. */
+export function PinnedDay({
+  createdAt,
+  jump,
+  returnFocus,
+}: {
+  createdAt: number;
+  jump(from: number): void;
+  returnFocus: RefObject<HTMLElement | null>;
+}) {
+  useLocalDay();
+  const label = formatDayGroupLabel(createdAt);
+  return (
+    <div className={styles.pinnedDay} aria-hidden="true" data-pinned-day>
+      <div className={styles.pinnedDaySurface}>
+        <DateJumpMenu
+          label={label}
+          jump={jump}
+          pinned
+          returnFocus={returnFocus}
+        >
+          <span className={styles.dayLabel}>{label}</span>
+        </DateJumpMenu>
+      </div>
     </div>
   );
 }

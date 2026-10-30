@@ -34,15 +34,20 @@ const choices: readonly { choice: JumpChoice; label: string }[] = [
   { choice: "beginning", label: "The very beginning" },
 ];
 
-/** A day divider's label as a "Jump to…" menu trigger. */
+/** A day divider's label as a "Jump to…" menu trigger. A `pinned` trigger is
+ * mouse only and returns focus to `returnFocus`, outside its hidden subtree. */
 export function DateJumpMenu({
   label,
   jump,
   children,
+  pinned = false,
+  returnFocus,
 }: {
   label: string;
   jump(from: number): void;
   children: ReactNode;
+  pinned?: boolean;
+  returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [picking, setPicking] = useState(false);
@@ -57,6 +62,7 @@ export function DateJumpMenu({
               size="inline"
               shape="control"
               aria-label={`${label}, jump to date`}
+              {...(pinned ? { tabIndex: -1 } : {})}
             >
               <span className={styles.dayJump}>
                 {children}
@@ -69,7 +75,11 @@ export function DateJumpMenu({
           }
         />
         {/* The calendar takes focus; the menu must not return it to the trigger. */}
-        <MenuPopup size="compact" align="center" finalFocus={!picking}>
+        <MenuPopup
+          size="compact"
+          align="center"
+          finalFocus={picking ? false : (returnFocus ?? true)}
+        >
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Jump to…</MenuGroupLabel>
             {choices.map(({ choice, label }) => (
@@ -90,7 +100,7 @@ export function DateJumpMenu({
       <DateJumpDialog
         open={picking}
         onOpenChange={setPicking}
-        trigger={trigger}
+        trigger={returnFocus ?? trigger}
         jump={jump}
       />
     </>
@@ -106,7 +116,7 @@ export function DateJumpDialog({
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
-  trigger: RefObject<HTMLButtonElement | null>;
+  trigger: RefObject<HTMLElement | null>;
   jump(from: number): void;
 }) {
   const today = new Date();

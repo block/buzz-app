@@ -42,6 +42,10 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import lockfile from "proper-lockfile";
 
 const context = BACKGROUND_CONTEXT;
+/** Stores a document whole after this many changes, so reading it replays
+ * a bounded number of them, as Pi's own Code Mode documents do. */
+const checkpointWhen = (_value, _ops, { deltasSinceBase }) =>
+  deltasSinceBase >= 64;
 /** Each Buzz conversation key's Pi conversation, the tools' default
  * destination for it, and the newest message it has been shown. */
 const Places = defineDoc({
@@ -49,6 +53,7 @@ const Places = defineDoc({
   version: 1,
   scope: "session",
   initial: () => ({}),
+  checkpointWhen,
 });
 /** An Attention wake's reply destination belongs to its request, independently
  * of the conversation's tool defaults. Recorded before submission for recovery. */
@@ -57,6 +62,7 @@ const Replies = defineDoc({
   version: 1,
   scope: "session",
   initial: () => ({}),
+  checkpointWhen,
 });
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
@@ -473,7 +479,8 @@ export function serve({
           registry,
           settings: SETTINGS,
           env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? homedir() }),
-          onReport: (error) => console.error("Pi reported", error),
+          onReport: (error, { type }) =>
+            console.error(`Pi reported ${type}`, error),
         },
         context,
       );

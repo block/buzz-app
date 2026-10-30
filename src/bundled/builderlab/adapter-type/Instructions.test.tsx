@@ -366,7 +366,9 @@ it("dismisses Harness help before allowing Escape to close the agent pane", asyn
   const selectedMask = harness.querySelector("mask");
   expect(selectedMask).not.toBeNull();
   await user.click(harness);
-  const option = await screen.findByRole("menuitemradio", { name: "Builderlab" });
+  const option = await screen.findByRole("menuitemradio", {
+    name: "Builderlab",
+  });
   expect(option).toBeChecked();
   const optionMask = option.querySelector("mask");
   expect(optionMask).not.toBeNull();

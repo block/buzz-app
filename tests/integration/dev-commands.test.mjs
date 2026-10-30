@@ -98,6 +98,7 @@ if (process.argv[2] === "tauri" && process.argv[3] === "dev") console.log("VIEWE
           BUZZ_TEST_AGENT_COMMAND: commandFile,
           // Do not inherit the operator's public pin in isolated launcher tests.
           BUZZ_DEV_VIEWER: undefined,
+          BUZZ_DEV_SIGNING_IDENTITY: undefined,
           ...settings.env,
         },
         encoding: "utf8",
@@ -353,6 +354,47 @@ test("desktop-bundle builds a debug app bundle with only the development identif
   ]);
   assert.doesNotMatch(stdout, /Bundling with deep links/);
 });
+
+for (const [name, settings, expected] of [
+  [
+    "local certificate",
+    { local: "BUZZ_DEV_SIGNING_IDENTITY=local-cert\n" },
+    "local-cert",
+  ],
+  [
+    "environment precedence",
+    {
+      local: "BUZZ_DEV_SIGNING_IDENTITY=local-cert\n",
+      env: { BUZZ_DEV_SIGNING_IDENTITY: "environment-cert" },
+    },
+    "environment-cert",
+  ],
+  [
+    "empty environment override",
+    {
+      local: "BUZZ_DEV_SIGNING_IDENTITY=local-cert\n",
+      env: { BUZZ_DEV_SIGNING_IDENTITY: "" },
+    },
+    undefined,
+  ],
+]) {
+  test(`desktop-bundle signing: ${name}`, () => {
+    const explicit = JSON.stringify({
+      bundle: { macOS: { signingIdentity: "override-cert" } },
+    });
+    const { call } = launched("desktop-bundle", settings, "--config", explicit);
+    assert.deepEqual(JSON.parse(call[6]), {
+      identifier,
+      ...(process.platform === "darwin" && expected
+        ? { bundle: { macOS: { signingIdentity: expected } } }
+        : {}),
+    });
+    assert.deepEqual(call.slice(7), ["--config", explicit]);
+    // The certificate is scoped to bundling, even when it is exported.
+    const dev = launched("desktop", settings);
+    assert.equal(JSON.parse(dev.call[3]).bundle, undefined);
+  });
+}
 
 test("desktop-bundle keeps a chosen bundle format and forwards the rest", () => {
   const { call } = launched(

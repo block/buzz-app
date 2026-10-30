@@ -58,6 +58,7 @@ import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 import { IdentitySettings } from "./IdentitySettings";
+import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
 
 import type { Appearance } from "../shared/theme/service";
@@ -584,6 +585,7 @@ export function Settings({
   adminAccess,
   communities,
   identity,
+  federatedIdentity,
   appearance,
   shortcuts,
   shortcutBindings,
@@ -591,6 +593,7 @@ export function Settings({
   updates,
   navigation,
   onSection,
+  onProvider,
   navigationPane = false,
   onDeparturePending,
   onUnsavedChange,
@@ -602,6 +605,7 @@ export function Settings({
   adminAccess?: AdminAccessReader;
   communities: Communities;
   identity?: Identity | undefined;
+  federatedIdentity?: FederatedIdentity | undefined;
   appearance: Appearance;
   shortcuts: ShortcutsService;
   shortcutBindings: ShortcutBindings;
@@ -611,6 +615,7 @@ export function Settings({
     | import("../features/navigation/service").PageNavigation
     | undefined;
   onSection?: (section: string) => void;
+  onProvider?: ((provider?: string) => void) | undefined;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
@@ -1172,7 +1177,12 @@ export function Settings({
           />
         </div>
         <div hidden={selected !== "agents"}>
-          <AgentSettings agents={agents} active={selected === "agents"} />
+          <AgentSettings
+            agents={agents}
+            active={selected === "agents"}
+            navigation={navigation}
+            onProvider={onProvider}
+          />
         </div>
         {decisions && (
           <div hidden={selected !== "decisions"}>
@@ -1246,6 +1256,7 @@ export function Settings({
             key={client.viewer}
             viewer={client.viewer}
             identity={identity}
+            federatedIdentity={federatedIdentity}
           />
         )}
         {developerMode && (

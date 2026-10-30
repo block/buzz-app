@@ -52,6 +52,9 @@ pub struct Discovery {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostGrants {
+    /// Hook callbacks may observe and influence these agent types.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_hooks: Vec<String>,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -153,11 +156,21 @@ impl Manifest {
             }
         }
         if let Some(host) = &self.host {
-            if host.commands.len() > 16
+            if host.agent_hooks.len() > 16
+                || host.commands.len() > 16
                 || host.network_origins.len() > 16
                 || host.processes.len() > 16
             {
                 return Err("Too many host declarations".into());
+            }
+            let mut hook_types = std::collections::HashSet::new();
+            for key in &host.agent_hooks {
+                let (plugin, kind) = key.split_once('/').ok_or("Invalid agent hook type")?;
+                valid_id(plugin)?;
+                valid_id(kind)?;
+                if !hook_types.insert(key) {
+                    return Err("Duplicate agent hook type".into());
+                }
             }
             let mut command_ids = std::collections::HashSet::new();
             for command in &host.commands {
@@ -214,6 +227,8 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
+/// Exact Apps domain paired with the build's login origin, or empty when native SSO is unconfigured.
+pub const BUILDERLAB_APPS_DOMAIN: &str = env!("BUZZ_BUILDERLAB_APPS_DOMAIN");
 /// The Apps Platform control plane of the tenant whose Builderlab sign-in
 /// `origin` is, which the bundled Builderlab plugin deploys apps to. Kept in
 /// step with `src/bundled/builderlab/apps/environment.ts`.
@@ -225,6 +240,8 @@ pub fn apps_control_plane(origin: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+/// The matching Builderlab API base path, or empty when unconfigured.
+pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
@@ -289,6 +306,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/watching/manifest.json"))
+            .expect("watching manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/claude-code/manifest.json"
         ))
@@ -303,10 +322,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/hosted-communities/manifest.json"
-        ))
-        .expect("hosted communities manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/moderation/manifest.json"
         ))
@@ -339,6 +354,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.voice-notes"
             | "buzz.huddles"
             | "buzz.github"
+            | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
             | "buzz.reminders"
@@ -348,7 +364,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"
@@ -2306,5 +2321,22 @@ mod tests {
         assert!(plugin.enabled);
         assert_eq!(plugin.revision, first);
         assert_eq!(plugin.previous, None);
+    }
+    #[test]
+    fn validates_agent_hook_grants() {
+        for (keys, valid) in [
+            (vec!["buzz.pi/pi"], true),
+            (vec!["buzz.pi/pi", "buzz.codex/codex"], true),
+            (vec!["pi"], false),
+            (vec!["buzz.pi/pi", "buzz.pi/pi"], false),
+            (vec!["buzz.pi/../pi"], false),
+        ] {
+            let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
+                "id": "policy", "name": "Policy", "apiVersion": 1,
+                "host": { "agentHooks": keys },
+            }))
+            .unwrap();
+            assert_eq!(manifest.validate().is_ok(), valid);
+        }
     }
 }

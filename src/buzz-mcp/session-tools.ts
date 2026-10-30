@@ -33,6 +33,15 @@ export type AddedTool = Readonly<{
 }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
 
+/** The Buzz tools that post a message, and so take `final`. Each harness
+ * strips its own prefix from a tool's name before asking. */
+export const MESSAGE_TOOLS = ["send", "reply_in_subthread"] as const;
+export const isMessageTool = (name: unknown) =>
+  (MESSAGE_TOOLS as readonly unknown[]).includes(name);
+/** Whether a call posts a message marked final, which can end the turn. */
+export const isFinalMessage = (name: unknown, args: unknown) =>
+  isMessageTool(name) && (args as { final?: unknown } | null)?.final === true;
+
 export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
 
 /** What every session of an agent in the app gets. It never changes with
@@ -119,7 +128,7 @@ export async function callSessionTool(
   // The owner can turn attention off while the session runs.
   if (!attention.enabled())
     throw new Error(
-      `Attention is off for you: your owner turned it off, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
+      `Attention is off for you on this device, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
     );
   return callAttentionTool(attention, name, args);
 }

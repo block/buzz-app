@@ -451,6 +451,48 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     assert!(agent
         .http_auth(&key, "https://elsewhere.test/events", b"{}")
         .is_err());
+    for url in [
+        "https://id.test/api/v1/nip-fi/agent-grant",
+        "https://id.test/v1/nip-fi/agent-assertion",
+    ] {
+        let auth = agent.issuer_auth(&key, url, b"{}").unwrap();
+        assert_eq!(auth["tags"][0], serde_json::json!(["u", url]));
+        assert!(agent.issuer_auth(&other, url, b"{}").is_err());
+    }
+    for url in [
+        "https://id.test/v1/nip-fi/agent-grant?x",
+        "https://id.test/v1/identity/assertions",
+        agent.events_url().as_str(),
+    ] {
+        assert!(agent.issuer_auth(&key, url, b"{}").is_err());
+    }
+}
+
+#[test]
+fn signs_artifact_revisions_without_a_timeline_ms_tag() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let tag = |name: &str, value: &str| vec![name.to_owned(), value.to_owned()];
+    // A deletion allows only its envelope and the verified auth tag, so an
+    // added `ms` would make the relay refuse it.
+    let envelope = vec![
+        tag("ar", "1"),
+        tag("d", "7c4f2b1e-3a9d-5e8f-9b6a-2d1c0e4f8a73"),
+        tag("h", "a07a0c8a-cfef-43c3-91f7-69bf8d5e32d7"),
+        tag("type", "example.record"),
+        tag("op", "delete"),
+        tag("prev", &"a".repeat(64)),
+    ];
+    let mut supplied = envelope.clone();
+    supplied.push(tag("ms", "999"));
+    let event = agent.sign(&key, 45010, String::new(), supplied).unwrap();
+    let tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
+    let mut expected = envelope;
+    expected.push(saved);
+    assert_eq!(tags, expected);
 }
 
 #[test]
@@ -536,15 +578,15 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
         assert!(agent.media_url(&input).is_err(), "{input}");
     }
     let future = u64::MAX / 2;
-    let memory = agent.memory(&key, "mem/notes", "hi", future).unwrap();
+    let memory = agent.memory(&key, "mem/notes", Some("hi"), future).unwrap();
     assert_eq!(memory["kind"], 30174);
     assert_eq!(memory["created_at"], future + 1);
     assert_eq!(memory["tags"][1], serde_json::json!(["p", agent.owner]));
-    assert!(agent.memory(&key, "../notes", "hi", 0).is_err());
+    assert!(agent.memory(&key, "../notes", Some("hi"), 0).is_err());
     let other = Secret::generate().unwrap();
     assert!(agent.upload_auth(&other, &sha).is_err());
     assert!(agent.media_auth(&other).is_err());
-    assert!(agent.memory(&other, "core", "hi", 0).is_err());
+    assert!(agent.memory(&other, "core", Some("hi"), 0).is_err());
 }
 
 #[test]

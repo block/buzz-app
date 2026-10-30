@@ -10,7 +10,15 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
@@ -42,6 +50,7 @@ import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
+import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
 import {
@@ -77,6 +86,7 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+  unshare: vi.fn(),
 }));
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
@@ -109,11 +119,20 @@ vi.mock("./relay-removal", () => ({
   deleteAgentRecord: records.remove,
   removeRelayAgent: records.removeAgent,
 }));
+vi.mock("./agent-share", () => ({ unshare: records.unshare }));
 
 const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 
 type Config = { reply: string };
+/** Turns on a plugin that shows Attention, as the Attention plugin does. */
+const showAttention = (ctx: Context, revision: string) =>
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "buzz.watching", revision }) })
+    .plugin({
+      inject: ["agents"],
+      apply: (scope: Context) => scope.agents.controlAttention(),
+    });
 async function setup({
   storage = memoryStorage() as AgentStore,
   identities = [] as AgentIdentity[],
@@ -133,11 +152,18 @@ async function setup({
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
   subscribePlugin = (_listener: () => void) => () => {},
+  /** Whether the Attention plugin is on once startup is over. */
+  attention = true,
+  /** Whether another plugin is still starting after setup, so startup is not
+   * over. */
+  starting = false,
 } = {}) {
   const ctx = new Context();
+  let settled = false;
   ctx.provide("pluginStatus", {
     isActive: pluginActive,
     subscribe: subscribePlugin,
+    settled: () => settled,
   });
   const fake = fakeRelay();
   const second = fakeRelay("https://other.example.test");
@@ -244,6 +270,10 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
+  // The Attention plugin starts after the type, then startup is over.
+  const watching = attention ? showAttention(ctx, "one") : undefined;
+  await watching;
+  settled = !starting;
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
@@ -252,6 +282,10 @@ async function setup({
     activity,
     service,
     typesafe,
+    /** Ends startup, as when the last plugin finishes starting. */
+    settleStartup: () => {
+      settled = true;
+    },
     type,
     native,
     storage,
@@ -270,6 +304,7 @@ async function setup({
     history: fake.history,
     authorize,
     plugin,
+    watching,
     presence: fake.presence,
     second,
     select: client.select,
@@ -308,6 +343,8 @@ beforeEach(() => {
   records.remove.mockImplementation(async () => void steps.push("record"));
   records.removeAgent.mockReset();
   records.removeAgent.mockImplementation(async () => void steps.push("leave"));
+  records.unshare.mockReset();
+  records.unshare.mockImplementation(async () => void steps.push("unshare"));
 });
 afterEach(() => vi.useRealTimers());
 
@@ -875,6 +912,8 @@ it("keeps each account's import of the same old team apart on one device", async
   const other = "f".repeat(64);
   const importAs = async (owner: string, member: string) => {
     signIn(owner);
+    // The new account's relay support check settles first.
+    await settle();
     listsTeam(native, nightShift([member]));
     const { team } = await importTeam(service);
     if (!team) throw new Error("The team was not saved");
@@ -949,6 +988,121 @@ it("keeps a team's imported members when the team cannot be saved, and changes n
   expect(service.snapshot().teams).toEqual(teams);
 });
 
+it.each(["edit", "delete"])(
+  "rejects a stale watch toggle after a concurrent %s",
+  async (operation) => {
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const expected = service.find(bot)?.attention["watch/channel"];
+    if (!expected) throw new Error("fixture");
+    if (expected.value.type !== "event") throw new Error("fixture");
+    const edited = { ...expected.value, channels: "all" as const };
+    await service.save(bot, {
+      attention: { "watch/channel": operation === "delete" ? null : edited },
+    });
+    const before = service.find(bot)?.attention;
+    await expect(
+      service.save(bot, {
+        watchEnabled: { "watch/channel": { enabled: false, expected } },
+      }),
+    ).rejects.toThrow(/changed/);
+    expect(service.find(bot)?.attention).toEqual(before);
+  },
+);
+
+it("sets a watch's target enabled value without changing its configuration", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const expected = service.find(bot)?.attention["watch/channel"];
+  if (!expected) throw new Error("fixture");
+  await service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected } },
+  });
+  expect(service.find(bot)?.attention["watch/channel"]?.value).toEqual({
+    ...expected.value,
+    enabled: false,
+  });
+  const paused = service.find(bot)?.attention["watch/channel"];
+  if (!paused) throw new Error("fixture");
+  await service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected: paused } },
+  });
+  expect(service.find(bot)?.attention["watch/channel"]).toBe(paused);
+});
+
+it("requires rearming a paused timer after its deadline passes", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const now = nowSeconds();
+    const { service } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await service.save(bot, {
+      attention: {
+        "watch/timer": {
+          type: "timer",
+          interest_id: "task",
+          enabled: true,
+          prompt: "Check",
+          armed_at: now,
+          interval_secs: 60,
+          max_occurrences: 5,
+          expires_at: null,
+        },
+      },
+    });
+    const armed = service.find(bot)?.attention["watch/timer"];
+    if (!armed) throw new Error("Missing timer");
+    await service.save(bot, {
+      watchEnabled: { "watch/timer": { enabled: false, expected: armed } },
+    });
+    const paused = service.find(bot)?.attention["watch/timer"];
+    if (!paused) throw new Error("Missing paused timer");
+    const progress = service.find(bot)?.timers["watch/timer"];
+    vi.setSystemTime((now + 120) * 1000);
+    await expect(
+      service.save(bot, {
+        watchEnabled: { "watch/timer": { enabled: true, expected: paused } },
+      }),
+    ).rejects.toThrow(/rearm/);
+    expect(service.find(bot)?.attention["watch/timer"]).toEqual(paused);
+    expect(service.find(bot)?.timers["watch/timer"]).toEqual(progress);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("checks a watch toggle after a queued edit commits", async () => {
+  let hold: Promise<void> | undefined;
+  let entered = () => {};
+  const storage = fileStore(new Map(), async () => {
+    entered();
+    await hold;
+  });
+  const { service } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const expected = service.find(bot)?.attention["watch/channel"];
+  if (!expected) throw new Error("fixture");
+  if (expected.value.type !== "event") throw new Error("fixture");
+  let release = () => {};
+  hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const edited = { ...expected.value, channels: "all" as const };
+  const edit = service.save(bot, { attention: { "watch/channel": edited } });
+  await started;
+  const toggle = service.save(bot, {
+    watchEnabled: { "watch/channel": { enabled: false, expected } },
+  });
+  const rejected = expect(toggle).rejects.toThrow(/changed/);
+  release();
+  await edit;
+  await rejected;
+  expect(service.find(bot)?.attention["watch/channel"]?.value).toEqual(edited);
+});
+
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -971,6 +1125,26 @@ it("delivers mentions and matching watches once, and never the agent's own event
     slug: "watch/channel",
     interest: { instructions: "Be brief." },
   });
+  await vi.waitFor(() =>
+    expect(
+      service.find(bot)?.attentionHistory?.["watch/channel"]?.output,
+    ).toContain(watched.content),
+  );
+  const output = service.find(bot)?.attentionHistory?.["watch/channel"]?.output;
+  if (!output) throw new Error("missing history");
+  expect(output).toContain(watched.pubkey);
+  expect(output.match(/deploy/g)).toHaveLength(1);
+  const history = service.find(bot)?.attentionHistory?.["watch/channel"];
+  for (const enabled of [false, true]) {
+    const expected = service.find(bot)?.attention["watch/channel"];
+    if (!expected) throw new Error("fixture");
+    await service.save(bot, {
+      watchEnabled: { "watch/channel": { enabled, expected } },
+    });
+    expect(service.find(bot)?.attentionHistory?.["watch/channel"]).toEqual(
+      history,
+    );
+  }
   expect(first?.channelId).toBe(channel);
   expect(first?.config).toEqual({ reply: "ok" });
 });
@@ -1081,6 +1255,51 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     expect(await published(native, 5)).toEqual([]);
   } finally {
     finish();
+  }
+});
+
+it("keeps the Mac awake while a turn works and for the chosen time after it", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.stubGlobal("localStorage", {
+    getItem: () => JSON.stringify({ mode: "auto", after: 30 }),
+  });
+  let finish = () => {};
+  try {
+    const { service, run, emit, native } = await setup();
+    const held = () => native.keepAwake.mock.calls.at(-1)?.[0];
+    // Starting the app starts the wait as a finished turn does.
+    expect(held()).toBe(true);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    expect(held()).toBe(false);
+    await service.create({ type: "example/echo", name: "Echo" });
+    const turn = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() => expect(held()).toBe(true));
+    // A turn working longer than the wait still holds.
+    await vi.advanceTimersByTimeAsync(45 * 60_000);
+    expect(held()).toBe(true);
+    finish();
+    await settle();
+    await vi.advanceTimersByTimeAsync(29 * 60_000);
+    expect(held()).toBe(true);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(held()).toBe(false);
+  } finally {
+    finish();
+    vi.unstubAllGlobals();
   }
 });
 
@@ -2933,10 +3152,12 @@ describe("an agent in several communities", () => {
     });
     steps.length = 0;
     await service.leave(away);
+    // Its share there goes with it: nothing there lists it to unshare after.
     expect(steps).toEqual([
       "stop",
       "channels",
       "archive",
+      "unshare",
       "record",
       "key",
       "forget",
@@ -3225,8 +3446,7 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   emit({
     events: [
       // Not conversation with it: a stream message, an unmentioned group DM,
-      // DMs it is not known to be in, an edit, a reaction, its own message and
-      // a sibling agent's.
+      // DMs it is not known to be in, an edit, a reaction and its own message.
       event("stream"),
       event("group", { tags: [["h", groupDm]] }),
       event("others", { tags: [["h", "dm-others"]] }),
@@ -3234,7 +3454,6 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       inDm("edit", { kind: 40003 }),
       inDm("like", { kind: 7, tags: [["e", "x".repeat(64)]] }),
       inDm("own", { pubkey: bot }),
-      inDm("sibling", { pubkey: sibling, tags: [auth] }),
     ],
   });
   await settle();
@@ -3258,20 +3477,24 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   });
   // The runner keys on the channel, not the author: someone outside the roster
   // is queued too, and the runtime's `fromOwner` is what turns them away.
+  // Another of the owner's agents is heard like anyone else.
   emit({ events: [inDm("stranger", { pubkey: other })] });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
+  emit({ events: [inDm("sibling", { pubkey: sibling, tags: [auth] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(6));
   expect(run.mock.calls.map(([{ trigger }]) => trigger)).toMatchObject([
     { type: "mention", event: { id: "hello".padEnd(64, "0") } },
     { type: "mention", event: { id: "more".padEnd(64, "0") } },
     { type: "mention", event: { id: "about".padEnd(64, "0") } },
     { type: "mention", event: { id: "asked".padEnd(64, "0") } },
     { type: "mention", event: { id: "stranger".padEnd(64, "0") } },
+    { type: "mention", event: { id: "sibling".padEnd(64, "0") } },
   ]);
 });
 
-it("wakes on another of the owner's agents only when it names the agent", async () => {
+it("hears another of the owner's agents like anyone else", async () => {
   const { service, run, emit, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
   await service.create({ type: "example/echo", name: "Sibling" });
   run.mockImplementation(async ({ agent, trigger }) => {
     if (trigger.type === "timer") return;
@@ -3291,8 +3514,7 @@ it("wakes on another of the owner's agents only when it names the agent", async 
   const echoMessage = (await published(native, 9))[0]?.id;
   const auth = ["auth", viewer, "", "f".repeat(128)];
   // The sibling replies to Echo's message without naming it, and says "deploy",
-  // which Echo's watch matches. Neither wakes Echo: two agents replying to each
-  // other would otherwise never stop.
+  // which Echo's watch matches: the watch wakes Echo.
   emit({
     events: [
       event("reply", {
@@ -3302,8 +3524,11 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       }),
     ],
   });
-  await settle();
-  expect(run).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    event: { pubkey: sibling },
+  });
   // Naming Echo wakes it, even in reply to Echo's own message.
   emit({
     events: [
@@ -3313,10 +3538,63 @@ it("wakes on another of the owner's agents only when it names the agent", async 
       }),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  expect(run.mock.calls[2]?.[0].trigger).toMatchObject({
     type: "mention",
     event: { pubkey: sibling },
+  });
+});
+
+it("hears a reaction to its own message through a watch", async () => {
+  const { service, run, emit, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/likes": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: [channel],
+        kinds: [7],
+      },
+    },
+  });
+  run.mockImplementation(async ({ agent, trigger }) => {
+    if (trigger.type === "mention")
+      await agent.publish({ kind: 9, content: "hi" });
+  });
+  emit({
+    events: [
+      event("start", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const echoMessage = (await published(native, 9))[0]?.id;
+  emit({
+    events: [
+      event("like", {
+        kind: 7,
+        content: "+",
+        tags: [
+          ["h", channel],
+          ["e", echoMessage],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/likes",
+    event: { id: "like".padEnd(64, "0") },
   });
 });
 
@@ -3759,6 +4037,7 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "stop",
     "channels",
     "archive",
+    "unshare",
     "record",
     "key",
     "forget",
@@ -4710,6 +4989,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "stop",
     "channels",
     "archive",
+    "unshare",
     "record",
     "key",
     "forget",
@@ -6662,51 +6942,62 @@ it("wakes a kind 9 watch added since for nothing older, though an overlapping wa
   }
 });
 
-it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const caught: number[] = [];
-    const { service, history, recover, storage } = await setup({
-      identities: [echo],
-      runOnce: async ({ delivery }) => {
-        const { trigger } = delivery;
-        if (trigger.type === "catch-up") caught.push(trigger.events.length);
-        if (caught.length === 1) await blocked;
-        return { ok: true };
-      },
-    });
-    const now = nowSeconds();
-    vi.setSystemTime(now * 1000);
-    await service.save(bot, {
-      attentionEnabled: true,
-      attention: { ...chat, "watch/channel": null },
-    });
-    await settle();
-    vi.setSystemTime((now + 1_000) * 1000);
-    // Ten turns of 64: one runs, and its lane keeps eight waiting.
-    for (let i = 0; i < 640; i++) history.push(posted(`m${i}`, now + 1 + i));
-    recover();
-    // Nine turns are handed on, the last at the end of its 576th event.
-    const progress = () =>
-      Object.values(readCheckpoints(storage)).map(
-        ({ through, after }) => after?.created_at ?? through,
-      )[0] ?? 0;
-    await vi.waitFor(() =>
-      expect(progress()).toBeGreaterThanOrEqual(now + 576),
+describe("catch-up lane capacity", () => {
+  let now: number;
+  let events: RelayEvent[];
+  beforeAll(() => {
+    now = nowSeconds();
+    // Signed relay fixtures are setup, not part of the queue's time budget.
+    events = Array.from({ length: 640 }, (_, i) =>
+      posted(`m${i}`, now + 1 + i),
     );
-    expect(caught).toHaveLength(1);
-    release();
-    await vi.waitFor(() => expect(caught).toHaveLength(10), {
-      timeout: 5_000,
-    });
-    expect(caught).toEqual(Array<number>(10).fill(64));
-  } finally {
-    vi.useRealTimers();
-  }
+  });
+  it("catches up no faster than its Interest's lane takes turns, so none is dropped", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now * 1000);
+    try {
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const caught: number[] = [];
+      const { service, history, recover, storage } = await setup({
+        identities: [echo],
+        runOnce: async ({ delivery }) => {
+          const { trigger } = delivery;
+          if (trigger.type === "catch-up") caught.push(trigger.events.length);
+          if (caught.length === 1) await blocked;
+          return { ok: true };
+        },
+      });
+      vi.setSystemTime(now * 1000);
+      await service.save(bot, {
+        attentionEnabled: true,
+        attention: { ...chat, "watch/channel": null },
+      });
+      await settle();
+      vi.setSystemTime((now + 1_000) * 1000);
+      // Ten turns of 64: one runs, and its lane keeps eight waiting.
+      history.push(...events);
+      recover();
+      // Nine turns are handed on, the last at the end of its 576th event.
+      const progress = () =>
+        Object.values(readCheckpoints(storage)).map(
+          ({ through, after }) => after?.created_at ?? through,
+        )[0] ?? 0;
+      await vi.waitFor(() =>
+        expect(progress()).toBeGreaterThanOrEqual(now + 576),
+      );
+      expect(caught).toHaveLength(1);
+      release();
+      await vi.waitFor(() => expect(caught).toHaveLength(10), {
+        timeout: 5_000,
+      });
+      expect(caught).toEqual(Array<number>(10).fill(64));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 it("gives a missed event to more of one Interest's watches than its lane holds, as room comes", async () => {
@@ -6961,6 +7252,31 @@ it("wakes nothing from the time its attention was off", async () => {
     history.push(posted("while off", start));
     await service.save(bot, { attentionEnabled: true });
     // A reconnect a minute later catches up from when it was turned on.
+    vi.setSystemTime((start + 60) * 1000);
+    history.push(posted("after", start + 30));
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing from the time no plugin showed its attention", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const { service, run, history, recover, watching, ctx } = await setup({
+      identities: [echo],
+    });
+    const start = nowSeconds();
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await watching?.dispose();
+    history.push(posted("while hidden", start + 5));
+    await showAttention(ctx, "two");
+    // A reconnect a minute later catches up from when it was shown again.
     vi.setSystemTime((start + 60) * 1000);
     history.push(posted("after", start + 30));
     recover();
@@ -7303,6 +7619,47 @@ it("runs a spent timer again when its owner restarts it", async () => {
   });
   finish();
   await vi.advanceTimersByTimeAsync(65_000);
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("turns a stored keyword watch off at startup, and retries its notice after a failed turn", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const storage = memoryStorage();
+  const first = await setup({ storage, identities: [echo] });
+  await first.service.save(bot, { attentionEnabled: true });
+  // Saved by a build that still had keywords, then the app quits.
+  const key = `buzz.agent.v1:${bot}`;
+  const record = JSON.parse(storage.getItem(key) ?? "{}");
+  record.attention = {
+    ...record.attention,
+    "watch/w": {
+      slug: "watch/w",
+      value: {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [9],
+        keywords: ["x"],
+      },
+      modifiedAt: 1,
+    },
+  };
+  storage.setItem(key, JSON.stringify(record));
+  const { service, run } = await setup({ storage, identities: [echo] });
+  expect(service.find(bot)?.attention["watch/w"]?.value).toMatchObject({
+    enabled: false,
+  });
+  expect(service.find(bot)?.attention["watch/fix-w"]?.value.type).toBe("timer");
+  run.mockRejectedValueOnce(new Error("harness failed to start"));
+  await vi.advanceTimersByTimeAsync(50_000);
+  expect(run).not.toHaveBeenCalled();
+  // The notice first runs a minute after startup, not an interval later.
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(service.find(bot)?.attention["watch/fix-w"]).toBeDefined();
+  await vi.advanceTimersByTimeAsync(3_600_000);
   expect(run).toHaveBeenCalledTimes(2);
 });
 
@@ -7743,6 +8100,12 @@ it("deletes a hosted agent from its provider, then from its community", async ()
   await expect(service.remove(hostedKey)).rejects.toThrow("provider down");
   expect(records.removeAgent).not.toHaveBeenCalled();
   expect(service.find(hostedKey)?.place).toBe("hosted");
+  // So does a share still listed: its record, which lists it, stays.
+  records.unshare.mockRejectedValueOnce(new Error("still listed"));
+  await expect(service.remove(hostedKey)).rejects.toThrow("still listed");
+  expect(records.removeAgent).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+  steps.length = 0;
   await service.remove(hostedKey);
   expect(records.removeAgent).toHaveBeenCalledWith(
     session,
@@ -7750,7 +8113,7 @@ it("deletes a hosted agent from its provider, then from its community", async ()
     hostedKey,
     expect.any(AbortSignal),
   );
-  expect(steps).toEqual(["provider", "leave"]);
+  expect(steps).toEqual(["provider", "unshare", "leave"]);
   expect(remote.remove).toHaveBeenCalledWith({
     pubkey: hostedKey,
     community: "wss://relay.example.test",
@@ -7768,7 +8131,7 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
     service.create({ type: "example/cloud", name: "Sky" }),
   ).rejects.toThrow();
   await service.remove(hostedKey);
-  expect(steps).toEqual(["provider", "leave"]);
+  expect(steps).toEqual(["provider", "unshare", "leave"]);
   expect(service.find(hostedKey)).toBeUndefined();
 });
 
@@ -8051,6 +8414,44 @@ it("reserves a tool name while its plugin is still starting", async () => {
   );
   await first.dispose();
   owner("buzz.other").agents.addTool(tool);
+});
+
+it("adds a plugin's tab to every agent's settings until the plugin goes", async () => {
+  const { service, ctx } = await setup();
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const tab = { id: "watching", title: "Watching", component: () => null };
+  const before = service.snapshot();
+  const listener = vi.fn();
+  service.subscribe(listener);
+  const first = owner("buzz.watching").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.registerTab(tab),
+  });
+  await first;
+  expect(service.addedTabs()).toMatchObject([
+    {
+      key: "buzz.watching/watching",
+      pluginId: "buzz.watching",
+      title: "Watching",
+    },
+  ]);
+  // Views that read the tabs render again.
+  expect(service.snapshot()).not.toBe(before);
+  expect(listener).toHaveBeenCalled();
+  for (const bad of [
+    { ...tab, id: "Not An Id" },
+    { ...tab, title: "" },
+    { ...tab, component: undefined as never },
+  ])
+    expect(() => owner("buzz.other").agents.registerTab(bad)).toThrow(
+      /Agent tabs need/,
+    );
+  expect(() => owner("buzz.watching").agents.registerTab(tab)).toThrow(
+    /already registered/,
+  );
+  await first.dispose();
+  expect(service.addedTabs()).toEqual([]);
 });
 
 it("refuses a hosted type that also runs here", async () => {
@@ -8636,6 +9037,262 @@ it("stops watches and timers while attention is off, keeps every object, and res
   ]);
 });
 
+it("wakes nothing from the time no plugin showed its attention, across a restart", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    // The app starts again with the plugin still off, then it is turned on.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("while hidden", start + 10)],
+      attention: false,
+    });
+    await settle();
+    await showAttention(second.ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    second.history.push(posted("after", start + 30));
+    second.recover();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(second.run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing from the time no plugin showed its attention when it is shown during startup", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    // The app starts again with the plugin off, and it is turned on while
+    // another plugin is still starting.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("while hidden", start + 10)],
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live while hidden", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    second.history.push(posted("after", start + 30));
+    second.recover();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(second.run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes only a watch with no hidden stream for an event heard while Attention was off", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    // A second watch on several kinds has no catch-up stream, so no record
+    // that Attention was hidden.
+    const attention = {
+      ...chat,
+      "watch/any": { ...chat["watch/chat"], kinds: [9, 7] },
+    };
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention });
+    await settle();
+    await first.watching?.dispose();
+    await settle();
+    first.connect(false);
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: first.history,
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live while hidden", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalled());
+    await settle();
+    expect(
+      second.run.mock.calls.map(([{ trigger }]) =>
+        trigger.type === "watch" ? trigger.slug : trigger.type,
+      ),
+    ).toEqual(["watch/any"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing from the time Attention was hidden after it was shown during startup", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    // Attention is shown while another plugin is still starting, then hidden
+    // and shown again before its socket recovers.
+    const { service, watching, ctx, history, recover, run } = await setup({
+      identities: [echo],
+      starting: true,
+    });
+    await service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    vi.setSystemTime((start + 5) * 1000);
+    await watching?.dispose();
+    await settle();
+    history.push(posted("while hidden", start + 10));
+    vi.setSystemTime((start + 20) * 1000);
+    await showAttention(ctx, "two");
+    vi.setSystemTime((start + 60) * 1000);
+    history.push(posted("after", start + 30));
+    recover();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(heard(run)).toEqual(["after"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes a watch for an event heard during startup before Attention is shown", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("w")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "watch",
+  ]);
+});
+
+it("hears an event held during startup after what it missed while closed", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage();
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, { attentionEnabled: true, attention: chat });
+    await settle();
+    first.connect(false);
+    // The app starts again, and a live message arrives before Attention is
+    // shown while another plugin is still starting.
+    vi.setSystemTime((start + 20) * 1000);
+    const second = await setup({
+      storage,
+      identities: [echo],
+      history: [...first.history, posted("missed", start + 10)],
+      attention: false,
+      starting: true,
+    });
+    second.emit({ events: [posted("live", start + 20)] });
+    await settle();
+    await showAttention(second.ctx, "two");
+    await vi.waitFor(() => expect(heard(second.run)).toHaveLength(2));
+    expect(heard(second.run)).toEqual(["missed", "live"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("wakes nothing for an event heard during startup when it ends without Attention shown", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx, settleStartup } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("w")] });
+  settleStartup();
+  await vi.advanceTimersByTimeAsync(5_000);
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("turning the saved switch off cancels a startup-held event", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, ctx } = await setup({
+    attention: false,
+    starting: true,
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  emit({ events: [deploy("held-before-off")] });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await service.save(bot, { attentionEnabled: false });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await service.save(bot, { attentionEnabled: true });
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("turns every agent's attention off while no plugin shows it, keeps its switch, and resumes it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, watching, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await watching?.dispose();
+  expect(service.find(bot)?.attentionEnabled).toBe(false);
+  emit({ events: [deploy("w")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).not.toHaveBeenCalled();
+  await showAttention(ctx, "two");
+  expect(service.find(bot)?.attentionEnabled).toBe(true);
+  emit({ events: [deploy("w2")] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "watch",
+  ]);
+});
+
+it("keeps timers and the Attention tools off while no plugin shows Attention", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const { service, run, emit, watching, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true, attention: tick });
+  await watching?.dispose();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(run).not.toHaveBeenCalled();
+  const { attention } = await handleOf(run, emit);
+  expect(attention.enabled()).toBe(false);
+  run.mockClear();
+  await showAttention(ctx, "two");
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
+    "timer",
+  ]);
+});
+
 /** What each presence call said, as `status:agents`. */
 const said = (presence: { mock: { calls: unknown[][] } }) =>
   presence.mock.calls.map(
@@ -8928,6 +9585,30 @@ describe("Attention plugin sources", () => {
     );
     await service.save(bot, { attentionEnabled: false });
   });
+  it("stops sources while no plugin shows Attention, and starts them again", async () => {
+    const { service, plugin, native, watching, ctx } = await sourceFixture();
+    const started = vi.fn();
+    const stopped = vi.fn();
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ signal }) => {
+        started();
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        stopped();
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
+    await watching?.dispose();
+    await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1));
+    await showAttention(ctx, "two");
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
+    await service.save(bot, { attentionEnabled: false });
+  });
   it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
     let active = false;
     const listeners = new Set<() => void>();
@@ -9091,7 +9772,7 @@ describe("Attention plugin sources", () => {
     },
   );
   it.each(["fails", "stops"])(
-    "keeps a subscription when delivery %s before its producer completes",
+    "keeps a completed subscription through pause and resume when delivery %s",
     async (outcome) => {
       const { service, run, plugin, native } = await sourceFixture();
       let finish!: () => void;
@@ -9104,13 +9785,13 @@ describe("Attention plugin sources", () => {
         run.mockImplementation(({ workingUntil }) =>
           workingUntil(Promise.resolve({ ok: true, stopped: true })),
         );
-      plugin.agents.addAttentionSource({
-        id: "command",
-        run: async ({ emit }) => {
+      const produce = vi.fn(
+        async ({ emit }: Parameters<AttentionSource["run"]>[0]) => {
           emit("final output");
           await held;
         },
-      });
+      );
+      plugin.agents.addAttentionSource({ id: "command", run: produce });
       await service.create({ type: "example/echo", name: "Echo" });
       await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
       await service.save(bot, { attentionEnabled: true, attention: watches });
@@ -9120,6 +9801,18 @@ describe("Attention plugin sources", () => {
       await vi.waitFor(() =>
         expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
       );
+      for (const enabled of [false, true]) {
+        const expected = service.find(bot)?.attention["watch/pr"];
+        if (!expected) throw new Error("Missing completed watch");
+        await service.save(bot, {
+          watchEnabled: { "watch/pr": { enabled, expected } },
+        });
+        expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBe(
+          JSON.stringify(service.find(bot)?.attention["watch/pr"]),
+        );
+      }
+      await settle();
+      expect(produce).toHaveBeenCalledTimes(1);
       expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
       expect(service.find(bot)?.attentionHistory?.["watch/pr"]?.output).toBe(
         "final output",
@@ -10482,6 +11175,7 @@ it("rejects invalid source discovery metadata", async () => {
     { configExample: [] },
     { configExample: { value: 1n } },
     { configExample: circular },
+    { present: "GitHub PR" },
   ])
     expect(() =>
       plugin.agents.addAttentionSource({
@@ -11077,6 +11771,41 @@ it("registers Buzz-owned command sources with saved provider keys", async () => 
   );
 });
 
+it("presents a watch through its provider, and plainly when that fails", async () => {
+  const { service, plugin } = await setup();
+  const watch = {
+    type: "source" as const,
+    interest_id: "release",
+    enabled: true,
+    provider: "attention/github-pr",
+    config: {},
+  };
+  const present = vi.fn((_watch: unknown, title: string) => ({
+    type: `GitHub PR ${title}`,
+  }));
+  plugin
+    .extend({ pluginOwner: { id: "buzz.github", revision: "bundled" } })
+    .agents.addAttentionSource({
+      id: "github-pr",
+      present,
+      run: async () => {},
+    });
+  expect(service.presentWatch(watch, "Release")).toEqual({
+    type: "GitHub PR Release",
+  });
+  expect(present).toHaveBeenCalledWith(watch, "Release");
+  expect(
+    service.presentWatch({ ...watch, provider: "example/other" }, "Release"),
+  ).toBeUndefined();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  present.mockImplementation(() => {
+    throw new Error("broken");
+  });
+  expect(service.presentWatch(watch, "Release")).toBeUndefined();
+  expect(warn).toHaveBeenCalled();
+  warn.mockRestore();
+});
+
 it.each(["command"])(
   "starts a saved attention/%s watch after built-in registration",
   async (id) => {
@@ -11199,3 +11928,624 @@ it.each(["spawn", "exit"])(
     }
   },
 );
+
+it("lets an installed harness dispatch only its own hooks through the plugin API", async () => {
+  const { plugin, ctx, type } = await setup();
+  plugin.agents.register({
+    ...type,
+    id: "hooked",
+    hooks: { events: ["BeforeTool"] },
+  });
+  const input = { tool: "shell" };
+  const context = { agent: "agent", session: "session" };
+  const calls: string[] = [];
+  const scope = ctx.extend({
+    pluginOwner: {
+      id: "policy",
+      revision: "one",
+      agentHooks: ["example/hooked"],
+    },
+  });
+  const fiber = scope.plugin((policy) => {
+    policy.agents.registerHook({
+      id: "later",
+      harness: "example/hooked",
+      event: "BeforeTool",
+      run: () => {
+        calls.push("later");
+        return { denied: true };
+      },
+    });
+    policy.agents.registerHook({
+      id: "first",
+      harness: "example/hooked",
+      event: "BeforeTool",
+      run: (value, facts) => {
+        expect(value).toBe(input);
+        expect(facts).toEqual(context);
+        calls.push("first");
+        return {};
+      },
+    });
+  });
+  await fiber.await();
+  const options = {
+    accepts: (value: unknown) =>
+      !!value && typeof value === "object" && "denied" in value,
+    milliseconds: 1000,
+  };
+  try {
+    await expect(
+      plugin.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        options,
+      ),
+    ).resolves.toEqual({ denied: true });
+    expect(calls).toEqual(["first", "later"]);
+    expect(() =>
+      scope.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        options,
+      ),
+    ).toThrow(/own agent types/);
+    expect(() =>
+      ctx.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        options,
+      ),
+    ).toThrow(/own agent types/);
+  } finally {
+    await fiber.dispose();
+  }
+  await expect(
+    plugin.agents.dispatchHook(
+      "example/hooked",
+      "BeforeTool",
+      input,
+      context,
+      options,
+    ),
+  ).resolves.toBeUndefined();
+  await ctx.fiber.dispose();
+});
+
+it("reports unsupported hooks when their harness registers later", async () => {
+  const { plugin, ctx, type } = await setup();
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const fiber = ctx
+    .extend({
+      pluginOwner: {
+        id: "policy",
+        revision: "one",
+        agentHooks: ["example/later"],
+      },
+    })
+    .plugin((policy) => {
+      policy.agents.registerHook({
+        id: "unsupported",
+        harness: "example/later",
+        event: "Missing",
+        run: () => undefined,
+      });
+    });
+  await fiber.await();
+  try {
+    plugin.agents.register({
+      ...type,
+      id: "later",
+      hooks: { events: ["BeforeTool"] },
+    });
+    expect(warning).toHaveBeenCalledWith(
+      "Unsupported agent hook",
+      "policy/unsupported",
+      "example/later",
+      "Missing",
+    );
+  } finally {
+    warning.mockRestore();
+    await fiber.dispose();
+    await ctx.fiber.dispose();
+  }
+});
+
+describe("synced teams", () => {
+  const home = "https://relay.example.test";
+  /** Each community's config channels; `saveTeam` answers as `answer`. */
+  function teamChannels(answer: () => Promise<unknown> = async () => {}) {
+    const saveTeam = vi.fn((_edit: unknown) => answer());
+    const made = new Set<string>();
+    const stores = new Map<string, AgentConfigStore>();
+    coordinators.make = (community, store) => {
+      made.add(community);
+      stores.set(community, store);
+      return {
+        attach: vi.fn(async () => {}),
+        binding: () => undefined,
+        remove: vi.fn(async () => {}),
+        history: () => [],
+        dispose: vi.fn(),
+        saveTeam: (edit: unknown) =>
+          saveTeam(edit).then(
+            (result) =>
+              result ?? { ok: true, added: [], removed: [], skipped: [] },
+          ),
+      };
+    };
+    return { saveTeam, made, stores };
+  }
+  async function ready(
+    identities: AgentIdentity[],
+    storage?: ReturnType<typeof memoryStorage>,
+    listed: RelayEvent[] = [],
+  ) {
+    const channels = teamChannels();
+    const f = await setup({ identities, storage, listed });
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    return { ...f, ...channels };
+  }
+  afterEach(() => {
+    coordinators.make = undefined;
+  });
+  const draft = "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d";
+  const crew = (members: string[]) => ({
+    draft,
+    name: "Crew",
+    instructions: "Ship it",
+    members,
+  });
+
+  const CH = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+  /** A synced team `owner` has in home, with `members`, as discovery saved
+   * it; `confirm` gives it its confirmed copy. */
+  function stored(owner: string, members: string[]) {
+    const storage = memoryStorage();
+    new SyncedTeams(storage).set(owner, home, [
+      { id: draft, channel: CH, archived: false, members },
+    ]);
+    const confirm = (store: AgentConfigStore | undefined) => {
+      const subject: Subject = {
+        owner,
+        community: home,
+        subject: draft,
+        channel: CH,
+        type: "buzz.team",
+      };
+      store?.applyRead(subject, store.capture(subject), {
+        kind: "head",
+        event: finalizeEvent(
+          {
+            kind: 45010,
+            created_at: 1,
+            content: JSON.stringify({
+              version: 1,
+              name: "Crew",
+              instructions: "Ship it",
+            }),
+            tags: [["op", "create"]],
+          },
+          generateSecretKey(),
+        ) as RelayEvent,
+      });
+    };
+    return { storage, confirm };
+  }
+
+  it("edits a team whose members run on another device, naming them by npub", async () => {
+    const away = "9".repeat(64);
+    const team = stored(viewer, [away]);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    const opened = f.service.snapshot().teams.find((t) => t.id === draft);
+    expect(opened?.members).toEqual([away]);
+    f.saveTeam.mockResolvedValueOnce({
+      ok: false,
+      added: [alder],
+      removed: [],
+      skipped: [],
+      failed: away,
+      error: "Its owner couldn't be checked",
+    });
+    const error = await f.service
+      .saveTeam({
+        id: draft,
+        name: "Renamed",
+        instructions: "Ship it",
+        members: [alder],
+        ...(opened && { opened }),
+      })
+      .catch((error: Error) => error.message);
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      base: { members: [away] },
+    });
+    expect(error).toMatch(
+      /Added Alder\. Stopped at npub…\w+\. Reopen the team to continue\./,
+    );
+    expect(error).not.toContain(away);
+  });
+
+  it("puts set-up hosted agents on a team and names them in its roster", async () => {
+    const unfinished = "d".repeat(64);
+    const team = stored(viewer, [bot, hostedKey, unfinished]);
+    const f = await ready([], team.storage);
+    const { type, remote } = cloud();
+    f.plugin.agents.register(type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    remote.provision.mockResolvedValueOnce({ pubkey: unfinished });
+    remote.activate.mockRejectedValueOnce(new Error("provider down"));
+    await expect(
+      f.service.create({ type: "example/cloud", name: "Bo" }),
+    ).rejects.toThrow("provider down");
+    expect(f.service.teamHere({ draft })).toBe(true);
+    await f.service.saveTeam(crew([bot, hostedKey]));
+    expect(f.saveTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [bot, hostedKey] }),
+    );
+    await expect(f.service.saveTeam(crew([unfinished]))).rejects.toThrow(
+      /^Add .+ to relay\.example\.test first$/,
+    );
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await handleOf(f.run, f.emit);
+    const roster = f.run.mock.calls.at(-1)?.[0].team;
+    expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
+    expect(roster).not.toContain(npubEncode(unfinished));
+  });
+
+  it("refuses a new member on another device, and leaves it out of rosters", async () => {
+    const team = stored(viewer, [bot, hostedKey, sibling]);
+    const f = await ready([], team.storage, [record(sibling)]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(f.service.find(sibling)?.place).toBe("elsewhere"),
+    );
+    await expect(f.service.saveTeam(crew([bot, sibling]))).rejects.toThrow(
+      /^Add npub…\w+ to relay\.example\.test first$/,
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await handleOf(f.run, f.emit);
+    const roster = f.run.mock.calls.at(-1)?.[0].team;
+    expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
+    expect(roster).not.toContain(npubEncode(sibling));
+  });
+
+  it("names a hosted teammate by npub while the community's agent list is unread", async () => {
+    const team = stored(viewer, [bot, hostedKey]);
+    const sky = record(hostedKey, {
+      content: JSON.stringify({ name: "Sky" }),
+      tags: [
+        ["d", hostedKey],
+        ["runtime", "example/cloud"],
+      ],
+    });
+    const f = await ready([], team.storage, [sky]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.find(hostedKey)?.place).toBe("hosted"),
+    );
+    const roster = async (id: string) => {
+      const runs = f.run.mock.calls.length;
+      f.emit({
+        events: [
+          event(id, {
+            tags: [
+              ["h", channel],
+              ["p", bot],
+            ],
+          }),
+        ],
+      });
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(runs + 1));
+      return f.run.mock.calls.at(-1)?.[0].team;
+    };
+    const echo = `- Echo (${npubEncode(bot)}), you\n`;
+    expect(await roster("listed")).toContain(
+      `${echo}- Sky (${npubEncode(hostedKey)})\n`,
+    );
+    // As after a restart, its agent list is read again, and the read is held.
+    const read = vi.mocked(f.session.read);
+    const answer = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let fail = () => {};
+    const listing = new Promise<never>((_, reject) => {
+      fail = () => reject(new Error("offline"));
+    });
+    let held = 0;
+    read.mockImplementation((filters, settings) => {
+      if (filters[0]?.kinds?.includes(30177)) {
+        held++;
+        return listing;
+      }
+      return answer(filters, settings);
+    });
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => expect(held).toBe(1));
+    expect(f.service.find(hostedKey)).toBeUndefined();
+    const unread = `${echo}- ${npubEncode(hostedKey)}\n`;
+    expect(await roster("held")).toContain(unread);
+    fail();
+    await settle();
+    expect(await roster("failed")).toContain(unread);
+  });
+
+  it("refuses a hosted member until the community's agent list is read again", async () => {
+    const sky = record(hostedKey, {
+      content: JSON.stringify({ name: "Sky" }),
+      tags: [
+        ["d", hostedKey],
+        ["runtime", "example/cloud"],
+      ],
+    });
+    const f = await ready([], undefined, [sky]);
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() =>
+      expect(f.service.find(hostedKey)?.place).toBe("hosted"),
+    );
+    // A reconnect reads its agent list again; the read is held, then fails.
+    const read = vi.mocked(f.session.read);
+    const answer = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let fail = () => {};
+    const listing = new Promise<never>((_, reject) => {
+      fail = () => reject(new Error("offline"));
+    });
+    let held = 0;
+    read.mockImplementation((filters, settings) => {
+      if (filters[0]?.kinds?.includes(30177)) {
+        held++;
+        return listing;
+      }
+      return answer(filters, settings);
+    });
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => expect(held).toBe(1));
+    // Its config channels are up again first.
+    await vi.waitFor(() => expect(f.service.snapshot().syncsTeams).toBe(true));
+    const unread =
+      /^Can't tell yet whether npub…\w+ is in relay\.example\.test; try again shortly$/;
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      unread,
+    );
+    fail();
+    await settle();
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      unread,
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+    // Once a later read succeeds, the same draft takes it.
+    read.mockImplementation(answer);
+    f.connect(false);
+    f.connect(true);
+    await vi.waitFor(() => {
+      expect(f.service.find(hostedKey)?.place).toBe("hosted");
+      expect(f.service.snapshot().syncsTeams).toBe(true);
+    });
+    await f.service.saveTeam(crew([bot, hostedKey]));
+    expect(f.saveTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [bot, hostedKey] }),
+    );
+  });
+
+  it("keeps a new team, hosted agents and all, off a relay without config channels", async () => {
+    const make = vi.fn((_community: string) => null);
+    coordinators.make = make;
+    const f = await setup();
+    f.plugin.agents.register(cloud().type);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    await vi.waitFor(() =>
+      expect(make).toHaveBeenCalledWith(home, expect.anything()),
+    );
+    await settle();
+    expect(f.service.teamHere({ draft })).toBe(false);
+    await expect(f.service.saveTeam(crew([bot, hostedKey]))).rejects.toThrow(
+      "A member is not an agent on this device",
+    );
+  });
+
+  it("puts a synced team in the selected community only while it is home", async () => {
+    const team = stored(viewer, [alder]);
+    const local = { id: "local", name: "Local", instructions: "", members: [] };
+    writeTeams(team.storage, [local]);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([
+      "local",
+      draft,
+    ]);
+    expect(f.service.teamHere({ id: draft })).toBe(true);
+    expect(f.service.teamHere({ id: "local" })).toBe(false);
+    f.select(f.second.origin);
+    expect(f.service.teamHere({ id: draft })).toBe(false);
+  });
+
+  it("shows only the signed-in account's synced teams", async () => {
+    const team = stored(other, []);
+    const f = await ready([here(alder)], team.storage);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams).toEqual([]);
+    await expect(f.service.removeTeam(draft)).resolves.toBeUndefined();
+    expect(f.saveTeam).not.toHaveBeenCalled();
+  });
+
+  it("refuses New team until a failed support check succeeds again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const channels = teamChannels();
+    const make = coordinators.make;
+    coordinators.make = () => Promise.reject(new Error("discovery failed"));
+    const f = await setup({ identities: [here(alder)] });
+    await settle();
+    await expect(f.service.saveTeam(crew([alder]))).rejects.toThrow(
+      "Can't tell yet whether relay.example.test syncs teams",
+    );
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+    coordinators.make = make;
+    await vi.advanceTimersByTimeAsync(40_000);
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    await f.service.saveTeam(crew([alder]));
+    expect(channels.saveTeam).toHaveBeenCalledOnce();
+  });
+
+  it("tells subscribers when a new team made here starts to sync", async () => {
+    const channels = teamChannels();
+    const make = coordinators.make;
+    let discover = () => {};
+    coordinators.make = (community, store) =>
+      new Promise((resolve) => {
+        discover = () => resolve(make?.(community, store));
+      });
+    const f = await setup();
+    f.plugin.agents.register(cloud().type);
+    // Its hosted agent is listed while the support check is still running.
+    await f.service.create({ type: "example/cloud", name: "Sky" });
+    expect(f.service.find(hostedKey)?.place).toBe("hosted");
+    await settle();
+    expect(f.service.snapshot().syncsTeams).toBeFalsy();
+    expect(f.service.teamHere({ draft })).toBe(false);
+    const changed = vi.fn();
+    f.service.subscribe(changed);
+    discover();
+    await vi.waitFor(() => expect(channels.made.has(home)).toBe(true));
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(f.service.snapshot().syncsTeams).toBe(true);
+    expect(f.service.teamHere({ draft })).toBe(true);
+  });
+
+  it("refuses Import until a failed support check succeeds again", async () => {
+    coordinators.make = () => Promise.reject(new Error("discovery failed"));
+    const f = await setup({ identities: [here(alder)] });
+    await settle();
+    listsTeam(f.native, nightShift([alder]));
+    await expect(importTeam(f.service)).rejects.toThrow(
+      "Can't tell yet whether relay.example.test syncs teams",
+    );
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("notifies subscribers when a synced team arrives from elsewhere", async () => {
+    const team = stored(viewer, [alder]);
+    const f = await ready([here(alder)], team.storage);
+    const changed = vi.fn();
+    f.service.subscribe(changed);
+    team.confirm(f.stores.get(home));
+    expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([draft]);
+    expect(changed).toHaveBeenCalled();
+  });
+
+  it("creates a new team in its home community with the agents there", async () => {
+    const f = await ready([here(alder)]);
+    await f.service.saveTeam(crew([alder]));
+    expect(f.saveTeam).toHaveBeenCalledWith({
+      id: draft,
+      name: "Crew",
+      instructions: "Ship it",
+      members: [alder],
+    });
+    // Not written as a local team.
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("refuses a member with no membership in the team's home community", async () => {
+    const f = await ready([
+      here(alder),
+      here(birch, "wss://other.example.test"),
+    ]);
+    await expect(f.service.saveTeam(crew([alder, birch]))).rejects.toThrow(
+      "Add Birch to relay.example.test first",
+    );
+    expect(f.saveTeam).not.toHaveBeenCalled();
+  });
+
+  it("retries a stopped Create as the same team in the same home", async () => {
+    const f = await ready([here(alder)]);
+    f.saveTeam.mockResolvedValueOnce({
+      ok: false,
+      added: [],
+      removed: [],
+      skipped: [],
+      error: "No answer",
+      uncertain: true,
+    });
+    await expect(f.service.saveTeam(crew([alder]))).rejects.toThrow(
+      "may still take effect",
+    );
+    // Even with another community selected, the retry stays home.
+    f.select(f.second.origin);
+    await f.service.saveTeam(crew([alder]));
+    expect(f.saveTeam).toHaveBeenCalledTimes(2);
+    for (const [edit] of f.saveTeam.mock.calls)
+      expect(edit).toMatchObject({ id: draft });
+    expect(f.saveTeam.mock.calls[1]?.[0]).not.toHaveProperty("base");
+  });
+
+  it("imports an old Buzz team synced, reporting members it couldn't add", async () => {
+    const f = await ready([
+      here(alder),
+      here(birch, "wss://other.example.test"),
+    ]);
+    listsTeam(f.native, nightShift([alder, birch]));
+    const result = await importTeam(f.service);
+    expect(f.saveTeam).toHaveBeenCalledOnce();
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      name: "Night Shift",
+      instructions: "Ship small.",
+      members: [alder],
+      adopt: true,
+    });
+    expect(result.notes).toContain("Add Birch to relay.example.test first.");
+    expect(result.teamError).toBeUndefined();
+    expect(f.storage.get("buzz.agents.teams.v1")).toBeFalsy();
+  });
+
+  it("imports over an edited local copy with its edits, moving templates before removing it", async () => {
+    const storage = memoryStorage();
+    const local = {
+      ...savedShift([alder]),
+      name: "Renamed",
+      instructions: "Mine.",
+    };
+    writeTeams(storage, [local]);
+    const f = await ready([here(alder)], storage);
+    listsTeam(f.native, nightShift([alder]));
+    const moved = vi
+      .spyOn(channelTemplates, "replaceTeam")
+      .mockImplementation(() =>
+        // The local copy is still there when its templates move.
+        expect(f.storage.get("buzz.agents.teams.v1")).toContain("Renamed"),
+      );
+    const result = await importTeam(f.service);
+    expect(f.saveTeam.mock.calls[0]?.[0]).toMatchObject({
+      name: "Renamed",
+      instructions: "Mine.",
+      members: [alder],
+    });
+    const synced = f.saveTeam.mock.calls[0]?.[0] as { id: string } | undefined;
+    expect(moved).toHaveBeenCalledWith(local.id, synced?.id);
+    expect(result.teamError).toBeUndefined();
+    expect(f.storage.get("buzz.agents.teams.v1")).not.toContain("Renamed");
+  });
+});

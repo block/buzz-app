@@ -1,12 +1,13 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import type { RelayRecovery } from "./recovery";
+import { isSignInRefusal, type RelayRecovery } from "./recovery";
 
 const NONE = Object.freeze({
   recovering: false,
   attempt: 0,
   shown: false,
+  reauthorized: 0,
 });
 const subscribeNone = () => () => {};
 const snapshotNone = () => NONE;
@@ -46,6 +47,53 @@ export function useRecovery(recovery: RelayRecovery | undefined) {
     // Stay hidden for a failure that the first automatic retry fixes.
     shown: !!recovery && state.shown,
   };
+}
+
+/** Retries a finite read that recovery does not own once credentials change
+ * (federated sign-in). Call `begin()` as each read starts and pass its failure
+ * to the function it returns. Only a missing-sign-in refusal of a read sent
+ * before the change retries, once; any other failure, or a read begun after
+ * the change, stays put. Reads only: never a mutation or a user's action. */
+export function useReauthorizedRetry(
+  recovery: RelayRecovery | undefined,
+  retry: () => void,
+) {
+  const latest = useRef({ recovery, retry });
+  latest.current = { recovery, retry };
+  /** The credential generation of the read now refused for missing sign-in. */
+  const refused = useRef<number>(undefined);
+  const generation = () =>
+    latest.current.recovery?.snapshot().reauthorized ?? 0;
+  const settle = useRef(() => {});
+  settle.current = () => {
+    if (refused.current === undefined || refused.current >= generation())
+      return;
+    refused.current = undefined;
+    latest.current.retry();
+  };
+  useEffect(() => {
+    if (!recovery) return;
+    let live = true;
+    const stop = recovery.subscribe(() => {
+      if (live) settle.current();
+    });
+    return () => {
+      live = false;
+      refused.current = undefined;
+      stop();
+    };
+  }, [recovery]);
+  return useRef({
+    begin() {
+      refused.current = undefined;
+      const sent = generation();
+      return (error: unknown) => {
+        if (!isSignInRefusal(error)) return;
+        refused.current = sent;
+        settle.current();
+      };
+    },
+  }).current;
 }
 
 /** True while the one recovery notice is visible. Surfaces whose failure

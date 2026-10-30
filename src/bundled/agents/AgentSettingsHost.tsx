@@ -1,5 +1,5 @@
 import { ProviderDialog } from "./ProviderDialog";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type {
   Agent,
   AgentSettingsHost,
@@ -20,6 +20,12 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import {
+  PopoverRoot,
+  PopoverTrigger,
+  PopoverPopup,
+  PopoverDescription,
+} from "../../shared/design-system/ui/Popover";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -82,9 +88,8 @@ export function useAgentSettingsHost({
         setPendingType(undefined);
       }
     : undefined;
-  const canRetype =
-    agent?.place === "here" &&
-    types.some((item) => !item.remote && item.key !== agent.type);
+  const showTypeControl =
+    agent?.place === "here" && types.some((item) => item.key !== agent.type);
   return {
     agent: settingsAgent,
     type: settingsType,
@@ -93,7 +98,7 @@ export function useAgentSettingsHost({
       agents && agent
         ? {
             ...(pendingTypeSave ? { pendingSave: pendingTypeSave } : {}),
-            ...(canRetype
+            ...(showTypeControl
               ? {
                   typeControl: (dirty: boolean) => (
                     <TypeField
@@ -136,8 +141,7 @@ function TypeField({
   selected: string;
   onSelect(type: { key: string; config: unknown } | undefined): void;
 }) {
-  const available =
-    agent.place === "here" ? types.filter((item) => !item.remote) : [];
+  const available = agent.place === "here" ? types : [];
   const others = available.filter((item) => item.key !== agent.type);
   const selectedType = available.find((item) => item.key === selected) ?? type;
   const TypeIcon = selectedType?.icon;
@@ -156,7 +160,7 @@ function TypeField({
       return;
     }
     const target = available.find((item) => item.key === next);
-    if (!target) return;
+    if (!target || target.remote) return;
     setError("");
     try {
       setMigration({
@@ -224,6 +228,10 @@ function TypeField({
                     onValueChange={(next) => choose(String(next))}
                   >
                     {available.map((item) => {
+                      if (item.remote)
+                        return (
+                          <HostedHarnessChoice key={item.key} type={item} />
+                        );
                       const Icon = item.icon;
                       return (
                         <MenuRadioItem
@@ -305,6 +313,81 @@ function TypeField({
         />
       )}
     </>
+  );
+}
+
+function HostedHarnessChoice({ type }: { type: RegisteredAgentType }) {
+  const triggerId = useId();
+  const trigger = useRef<HTMLElement>(null);
+  const description = useId();
+  const [open, setOpen] = useState(false);
+  const Icon = type.icon;
+  return (
+    <PopoverRoot
+      open={open}
+      triggerId={triggerId}
+      onOpenChange={(next, details) => {
+        // The menu returns focus to itself when the pointer enters this card.
+        // Let hover dismissal handle that move; another item still closes it.
+        if (
+          details.reason === "focus-out" &&
+          "relatedTarget" in details.event &&
+          details.event.relatedTarget ===
+            trigger.current?.closest('[role="menu"]')
+        ) {
+          details.cancel();
+          return;
+        }
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger
+        id={triggerId}
+        openOnHover="preview"
+        nativeButton={false}
+        role="menuitemradio"
+        onFocus={(event) => {
+          if (event.currentTarget.matches(":focus-visible")) setOpen(true);
+        }}
+        onKeyDownCapture={(event) => {
+          if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+          } else if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+        aria-describedby={open ? description : undefined}
+        render={
+          <MenuRadioItem
+            ref={trigger}
+            value={type.key}
+            selection="highlight"
+            disabled
+          >
+            <ChoiceRow
+              label={type.title}
+              leading={Icon ? <Icon size={20} /> : undefined}
+            />
+          </MenuRadioItem>
+        }
+      />
+      <PopoverPopup
+        side="right"
+        align="start"
+        aria-label={`${type.title} hosting`}
+        initialFocus={false}
+        finalFocus={false}
+      >
+        <PopoverDescription id={description}>
+          This agent’s signing key is stored on this device. Buzz can’t move
+          that identity to {type.title} yet. To run hosted, create a new{" "}
+          {type.title} agent.
+        </PopoverDescription>
+      </PopoverPopup>
+    </PopoverRoot>
   );
 }
 

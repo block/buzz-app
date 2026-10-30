@@ -1,14 +1,20 @@
+#[path = "src/build_resources.rs"]
+mod build_resources;
 #[path = "src/enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
 #[path = "src/enterprise_auth_build.rs"]
 mod enterprise_auth_build;
 #[path = "src/enterprise_relay_url.rs"]
 mod enterprise_relay_url;
+#[path = "src/federated_identity/config.rs"]
+#[allow(dead_code)]
+mod federated_identity_config;
 #[path = "src/nsec_backup_config.rs"]
 mod nsec_backup_config;
 
 fn main() {
     configure_nsec_backup();
+    configure_federated_identity();
     configure_enterprise_auth();
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
@@ -22,6 +28,13 @@ fn main() {
     // tauri-build watches only the resource files present when it ran, so watch
     // the directory too: goose-acp is staged after a first `cargo check`.
     println!("cargo:rerun-if-changed=resources/bin");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        build_resources::prepare_executables(
+            std::path::Path::new("resources/bin"),
+            &std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR")),
+        )
+        .expect("Could not prepare executable resources");
+    }
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -63,6 +76,8 @@ fn main() {
             "nsec_backup_available",
             "nsec_backup_session",
             "nsec_backup_retry",
+            "nsec_backup_state",
+            "nsec_backup_watch",
             "nsec_restore_begin",
             "nsec_restore_wait",
             "nsec_restore_install",
@@ -73,7 +88,14 @@ fn main() {
             "sign_out_wipe_refusal",
             "identity_prepare_remote_agent_authorization",
             "identity_sign_builderlab_binding",
-            "enterprise_login_gate",
+            "federated_identity_snapshot",
+            "federated_identity_sign_in",
+            "federated_identity_cancel_sign_in",
+            "federated_identity_sign_out",
+            "relay_socket_connect",
+            "relay_socket_start",
+            "relay_socket_send",
+            "relay_socket_close",
             "relay_sign",
             "relay_decode_read_state",
             "relay_sign_read_state",
@@ -108,11 +130,13 @@ fn main() {
             "relay_upload",
             "relay_upload_cancel",
             "media_download",
+            "file_download",
             "media_copy_image",
             "media_stream_base",
             "get_os_idle_seconds",
             "workspace_pick_folder",
             "repositories_folder_validate",
+            "legacy_communities",
             "plugin_import_folder",
             "plugin_update_check",
             "plugin_update_preview",
@@ -138,6 +162,7 @@ fn main() {
             "oauth_callback_begin",
             "oauth_callback_wait",
             "oauth_callback_cancel",
+            "oauth_callback_complete",
             "app_agent_list",
             "app_agent_create",
             "app_agent_portable",
@@ -174,6 +199,7 @@ fn main() {
             "request_notification_access",
             "dock_permission",
             "unread_indicator_set",
+            "keep_awake_set",
             "deep_link_take",
             "deep_link_watch",
             "terminal_create_owner",
@@ -229,5 +255,26 @@ fn configure_enterprise_auth() {
     }
     if let Some(adapter) = configured.adapter.as_deref() {
         println!("cargo:rustc-env={ADAPTER}={adapter}");
+    }
+}
+
+fn configure_federated_identity() {
+    const NAME: &str = "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
+    println!("cargo:rerun-if-env-changed={NAME}");
+    if let Some(raw) = std::env::var(NAME).ok().filter(|raw| !raw.is_empty()) {
+        let config = federated_identity_config::Config::parse(&raw)
+            .unwrap_or_else(|error| panic!("{error}"));
+        for legacy in [
+            "BUZZ_BUILD_ENTERPRISE_AUTH_RELAYS",
+            "BUZZ_BUILD_ENTERPRISE_AUTH_ADAPTER_BASE_URL",
+        ] {
+            if std::env::var(legacy).is_ok_and(|value| !value.is_empty()) {
+                panic!("{legacy} must be removed when {NAME} is configured");
+            }
+        }
+        println!(
+            "cargo:rustc-env={NAME}={}",
+            serde_json::to_string(&config).expect("public descriptor")
+        );
     }
 }

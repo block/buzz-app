@@ -23,6 +23,7 @@ function DraftSettings({
   save,
   settingsSection,
   settingsHost,
+  settingsContent,
 }: AgentViewProps<{ reply: string }>) {
   const form = useId();
   const [value, setValue] = useState(agent.config.reply);
@@ -54,6 +55,7 @@ function DraftSettings({
         />
       </label>
       {error && <p role="alert">{error}</p>}
+      {settingsSection !== "identity" && settingsContent}
       <AgentSaveButton
         form={form}
         disabled={
@@ -97,7 +99,11 @@ function editingFixture(split: boolean, save = vi.fn(async () => {})) {
       save,
       subscribe: () => () => {},
       classifier: () => "unavailable",
+      memberships: () => [],
       configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
+      controlAttention: () => {},
     } as unknown as Agents,
     agent,
     type,
@@ -203,65 +209,6 @@ it("keeps a saving section mounted, then permits discarding after a failed save"
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
 });
 
-it.each(["switch", "remove"])(
-  "keeps Attention mounted when a %s save rejects",
-  async (action) => {
-    const user = userEvent.setup();
-    let reject!: (error: Error) => void;
-    const pending = new Promise<void>((_resolve, fail) => {
-      reject = fail;
-    });
-    const { props, save } = editingFixture(
-      false,
-      vi.fn(() => pending),
-    );
-    render(
-      <AgentTabs
-        {...props}
-        agent={{
-          ...props.agent,
-          skipped: {
-            "watch/bad": {
-              slug: "watch/bad",
-              value: {},
-              modifiedAt: 1,
-              problem: "Unreadable object",
-            },
-          },
-        }}
-      />,
-    );
-    await user.click(screen.getByRole("tab", { name: "Attention" }));
-    await user.click(
-      action === "switch"
-        ? screen.getByRole("switch", { name: "Attention on" })
-        : screen.getByRole("button", { name: "Remove watch/bad" }),
-    );
-    expect(save).toHaveBeenCalledOnce();
-    try {
-      expect(screen.getByRole("tab", { name: "Memory" })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
-      await user.click(screen.getByRole("tab", { name: "Memory" }));
-      expect(screen.getByRole("tab", { name: "Attention" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-    } finally {
-      await act(async () => reject(new Error("Attention save failed")));
-    }
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Attention save failed",
-    );
-    await user.click(screen.getByRole("tab", { name: "Memory" }));
-    expect(screen.getByRole("tab", { name: "Memory" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-  },
-);
-
 it("discards a staged harness change together with the section draft", async () => {
   const user = userEvent.setup();
   const { props } = editingFixture(false);
@@ -353,7 +300,15 @@ it.each(["here", "hosted"] as const)(
     render(
       <AgentTabs
         agents={
-          { save: vi.fn(), configHistory: () => undefined } as unknown as Agents
+          {
+            save: vi.fn(),
+            subscribe: () => () => {},
+            memberships: () => [],
+            configHistory: () => undefined,
+            addedTabs: () => [],
+            registerTab: () => {},
+            controlAttention: () => {},
+          } as unknown as Agents
         }
         agent={agent}
         type={undefined}
@@ -365,11 +320,12 @@ it.each(["here", "hosted"] as const)(
       { wrapper: ToastProvider },
     );
     expect(read).not.toHaveBeenCalled();
-    expect(screen.queryByRole("tab", { name: "Attention" }) !== null).toBe(
-      place === "here",
-    );
+    expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Memory" }));
     expect(await screen.findByText("Original memory")).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("button", { name: "Memory scope: example.com" }),
+    ).toHaveLength(place === "here" ? 0 : 2);
     expect(read).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("tab", { name: "Identity" }));
     expect(screen.queryByText("Original memory")).not.toBeInTheDocument();
@@ -413,6 +369,9 @@ it("shows History for an agent whose config syncs", () => {
         {
           save: vi.fn(),
           configHistory: () => history,
+          addedTabs: () => [],
+          registerTab: () => {},
+          controlAttention: () => {},
           snapshot: () => ({ agents: [agent] }),
           subscribe: () => () => {},
         } as unknown as Agents
@@ -427,4 +386,49 @@ it("shows History for an agent whose config syncs", () => {
     { wrapper: ToastProvider },
   );
   expect(screen.getByRole("tab", { name: "History" })).toBeInTheDocument();
+});
+
+it("places plugin tabs after Activity and before Settings", () => {
+  const { props } = editingFixture(true);
+  const Page = () => <p />;
+  render(
+    <AgentTabs
+      {...props}
+      type={
+        {
+          tabs: [
+            ...(props.type as unknown as { tabs: unknown[] }).tabs,
+            {
+              id: "activity",
+              title: "Activity",
+              role: "activity",
+              component: Page,
+            },
+          ],
+        } as unknown as RegisteredAgentType
+      }
+      agents={
+        {
+          ...props.agents,
+          addedTabs: () => [
+            {
+              id: "watching",
+              key: "buzz.watching/watching",
+              pluginId: "buzz.watching",
+              revision: "1",
+              title: "Watching",
+              component: Page,
+            },
+          ],
+        } as unknown as Agents
+      }
+    />,
+  );
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+    "Identity",
+    "Memory",
+    "Activity",
+    "Watching",
+    "Settings",
+  ]);
 });

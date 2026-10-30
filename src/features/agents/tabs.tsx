@@ -1,10 +1,8 @@
 // An agent's sections, wherever they are shown (its Build view and its
-// profile panel): the type's tabs, local-only Attention, and Memory.
+// profile panel): the type's tabs, settings, and Memory.
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
 import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { ChannelChoice } from "./attention";
-import { AttentionPanel } from "./AttentionPanel";
 import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
 import type { CommunityReader } from "../communities/service";
 import type {
@@ -13,13 +11,15 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "./service";
-import { AgentSaveButton, useAgentSaveState } from "./AgentSaveButton";
+import { AgentSaveButton } from "./AgentSaveButton";
 import { AgentConfigHistory } from "./AgentConfigHistory";
 
 export type AgentSection = Readonly<{
-  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`, `agent:attention`
-   * or `agent:memory`; never collides with a host tab. */
+  /** `agent:<type tab id>`, `agent:settings`, `agent:activity`,
+   * `agent:added:<plugin>/<tab id>` or `agent:memory`; never collides with a
+   * host tab. */
   value: `agent:${string}`;
   label: string;
   render(): ReactNode;
@@ -29,8 +29,9 @@ export function agentSections({
   agents,
   agent,
   type,
-  channels,
   conversation,
+  initialTranscript,
+  close,
   settingsHost,
   memories,
   communities,
@@ -40,8 +41,11 @@ export function agentSections({
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
-  channels: readonly ChannelChoice[];
   conversation?: AgentConversation | undefined;
+  /** Asks to show the conversation's transcript first; see AgentViewProps. */
+  initialTranscript?: TranscriptRequest | undefined;
+  /** Closes the panel the sections are shown in. */
+  close?: (() => void) | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
@@ -51,12 +55,11 @@ export function agentSections({
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
   const typeTabs = type?.tabs ?? [];
-  const settingsTab = settingsHost
-    ? typeTabs.find((tab) => tab.role === "settings")
-    : undefined;
-  const orderedTabs = settingsTab
-    ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
-    : typeTabs;
+  const settingsTab = typeTabs.find((tab) => tab.role === "settings");
+  const orderedTabs =
+    settingsHost && settingsTab
+      ? [settingsTab, ...typeTabs.filter((tab) => tab !== settingsTab)]
+      : typeTabs;
   const tabs = orderedTabs.map(({ id, title, role, component: Component }) => ({
     value: (role ? `agent:${role}` : `agent:type:${id}`) as `agent:${string}`,
     label: title,
@@ -72,6 +75,10 @@ export function agentSections({
               ? { settingsContent }
               : {})}
             {...(conversation && { conversation })}
+            {...(role === "activity" &&
+              conversation &&
+              initialTranscript && { initialTranscript })}
+            {...(role === "activity" && close && { close })}
             save={(config) =>
               settingsHost?.pendingSave
                 ? settingsHost.pendingSave(config)
@@ -83,33 +90,25 @@ export function agentSections({
       </EditorBase>
     ),
   }));
-  if (settingsHost && !settingsTab)
+  if (!settingsTab && (settingsHost?.typeControl || settingsHost?.pendingSave))
     tabs.unshift({
       value: "agent:settings",
       label: "Settings",
       render: () => <HostSettings host={settingsHost} />,
     });
   if (agent.place === "here")
-    tabs.push(
-      ...(agents.configHistory(agent.pubkey)
-        ? [
-            {
-              value: "agent:history" as const,
-              label: "History",
-              render: () => (
-                <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />
-              ),
-            },
-          ]
-        : []),
-      {
-        value: "agent:attention",
-        label: "Attention",
-        render: () => (
-          <AttentionSection agents={agents} agent={agent} channels={channels} />
-        ),
-      },
-    );
+    for (const { key, title, component: Component } of agents.addedTabs())
+      tabs.push({
+        value: `agent:added:${key}`,
+        label: title,
+        render: () => <Component agent={agent} />,
+      });
+  if (agent.place === "here" && agents.configHistory(agent.pubkey))
+    tabs.push({
+      value: "agent:history",
+      label: "History",
+      render: () => <ConfigHistoryTab agents={agents} pubkey={agent.pubkey} />,
+    });
   return [
     ...tabs,
     {
@@ -117,6 +116,7 @@ export function agentSections({
       label: "Memory",
       render: () => (
         <MemoryPanel
+          agents={agents}
           agent={agent}
           memories={memories}
           communities={communities}
@@ -163,42 +163,6 @@ function HostSettings({ host }: { host: AgentSettingsHost }) {
         disabled={!host.pendingSave}
       />
     </form>
-  );
-}
-
-/** Follows classifier availability itself: a host that rerenders only when
- * this agent changes would otherwise show a stale classifier warning. */
-function AttentionSection({
-  agents,
-  agent,
-  channels,
-}: {
-  agents: Pick<Agents, "subscribe" | "classifier" | "save">;
-  agent: Agent;
-  channels: readonly ChannelChoice[];
-}) {
-  // Every Attention write must settle before its section can unmount.
-  const [pending, setPending] = useState(0);
-  useAgentSaveState(false, pending > 0);
-  const classifier = useSyncExternalStore(
-    agents.subscribe,
-    () => agents.classifier(),
-    () => agents.classifier(),
-  );
-  return (
-    <AttentionPanel
-      agent={agent}
-      save={async (change) => {
-        setPending((count) => count + 1);
-        try {
-          await agents.save(agent.key, change);
-        } finally {
-          setPending((count) => count - 1);
-        }
-      }}
-      channels={channels}
-      classifier={classifier}
-    />
   );
 }
 

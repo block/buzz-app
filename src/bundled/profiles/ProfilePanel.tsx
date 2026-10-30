@@ -29,7 +29,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
+  claimProfileTranscript,
+  profileActivityTranscript,
   profileActivityViewKey,
+  profileTranscriptRequest,
+  subscribeProfileTranscripts,
   profileAgentHint,
   profilePanelKey,
   profileTarget,
@@ -47,7 +51,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
-import type { Agents } from "../../features/agents/service";
+import type { Agents, TranscriptRequest } from "../../features/agents/service";
 import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
@@ -73,6 +77,35 @@ export function ProfilePanel({
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
+  const transcript = profileActivityTranscript(target);
+  const opening = transcript ? "transcript" : activityKey ? "activity" : "info";
+  // Asked once per opening. This profile takes the opening as soon as it is
+  // shown, even on another section, so remounting with the channel finds
+  // nothing to reopen; changing sections back after it was offered does not
+  // ask again either.
+  const asked = useSyncExternalStore(subscribeProfileTranscripts, () =>
+    transcript ? profileTranscriptRequest(target) : undefined,
+  );
+  const [held, setHeld] = useState<number>();
+  const [offered, setOffered] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each new opening is claimed.
+  useEffect(() => {
+    const claimed = claimProfileTranscript(target);
+    if (claimed !== undefined) setHeld(claimed);
+  }, [asked, target]);
+  const pending = asked ?? held;
+  const request =
+    pending !== undefined && pending > offered ? pending : undefined;
+  const initialTranscript = useMemo(
+    () =>
+      request === undefined
+        ? undefined
+        : {
+            opening: request,
+            done: () => setOffered((last) => Math.max(last, request)),
+          },
+    [request],
+  );
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
   if (!pubkey) return <p>Unsupported profile.</p>;
@@ -87,10 +120,11 @@ export function ProfilePanel({
   )
     return (
       <OwnedAgentProfile
-        key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
+        key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
         agents={agents}
         communities={communities}
         initialActivity={!!activityKey}
+        initialTranscript={initialTranscript}
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
@@ -101,8 +135,9 @@ export function ProfilePanel({
     );
   return (
     <ProfileDetails
-      key={`${connection.scope}:${connection.generation}:${pubkey}:${activityKey ? "activity" : "info"}`}
+      key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
+      initialTranscript={initialTranscript}
       session={connection.session}
       pubkey={pubkey}
       agentHint={profileAgentHint(target) || !!activityKey}
@@ -120,6 +155,7 @@ function OwnedAgentProfile({
   agents,
   communities,
   initialActivity,
+  initialTranscript,
   pubkey,
   relay,
   session,
@@ -130,6 +166,7 @@ function OwnedAgentProfile({
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
+  initialTranscript: TranscriptRequest | undefined;
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
@@ -152,6 +189,8 @@ function OwnedAgentProfile({
       memories={session.agentMemories}
       onRemoved={close}
       initialActivity={initialActivity}
+      initialTranscript={initialTranscript}
+      close={close}
       conversation={
         context && {
           channelId: context.channelId,
@@ -173,6 +212,7 @@ function OwnedAgentProfile({
 
 function ProfileDetails({
   initialTab,
+  initialTranscript,
   agentHint,
   session,
   pubkey,
@@ -187,6 +227,7 @@ function ProfileDetails({
   agents: Agents | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
+  initialTranscript: TranscriptRequest | undefined;
   agentHint: boolean;
   session: RelaySession;
   pubkey: string;
@@ -227,22 +268,20 @@ function ProfileDetails({
     type: plugin?.type,
     types: agentTypes,
   });
-  const channelChoices = useChannelChoices(
-    plugin ? session.channels : undefined,
-  );
   const sections =
     settings.agent && agents
       ? agentSections({
           agents,
           agent: settings.agent,
           type: settings.type,
-          channels: channelChoices,
           memories: session.agentMemories,
           communities,
           conversation: context && {
             channelId: context.channelId,
             ...(context.rootId && { rootId: context.rootId }),
           },
+          initialTranscript,
+          close,
           ...(settings.settingsHost
             ? { settingsHost: settings.settingsHost }
             : {}),
@@ -321,6 +360,11 @@ function ProfileDetails({
     [picture, name, knownAgent],
   );
   usePanelTabTitle(name, tabAvatar);
+  // Targets opened from this panel stay in its community.
+  const scoped =
+    navigation && viewer && communityOrigin
+      ? { navigation, scope: { viewer, communityOrigin } }
+      : undefined;
   const {
     available: canMessage,
     opening: openingMessage,
@@ -331,17 +375,25 @@ function ProfileDetails({
     pubkey,
     viewer,
     agent: displayAgent,
-    enabled: !!navigation && !!communityOrigin,
+    enabled: !!scoped,
     onOpened(channelId) {
-      if (navigation && viewer && communityOrigin)
-        void navigation.open({
-          version: 1,
-          kind: "conversation",
-          channelId,
-          scope: { viewer, communityOrigin },
-        });
+      void scoped?.navigation.open({
+        version: 1,
+        kind: "conversation",
+        channelId,
+        scope: scoped.scope,
+      });
     },
   });
+  const canEdit = !!scoped && viewer === pubkey;
+  // Settings edits the selected community's profile, so bind it to this one.
+  const editProfile = () =>
+    void scoped?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+      scope: scoped.scope,
+    });
 
   return (
     <section
@@ -380,16 +432,27 @@ function ProfileDetails({
             )}
             <UserStatusDisplay session={session} userId={pubkey} />
           </div>
-          {canMessage && (
+          {(canMessage || canEdit) && (
             <div className={hero.actions}>
-              <Button
-                size="sm"
-                variant={picture ? "glass" : "subtle"}
-                loading={openingMessage}
-                onClick={() => void openMessage()}
-              >
-                Message
-              </Button>
+              {canMessage && (
+                <Button
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  loading={openingMessage}
+                  onClick={() => void openMessage()}
+                >
+                  Message
+                </Button>
+              )}
+              {canEdit && (
+                <Button
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  onClick={editProfile}
+                >
+                  Edit profile
+                </Button>
+              )}
             </div>
           )}
           {messageError && (

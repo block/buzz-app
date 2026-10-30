@@ -20,6 +20,7 @@ export const inject = [
   "settingsCards",
   "agents",
   "shortcuts",
+  "communityReader",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerCanvas(ctx);
@@ -111,6 +112,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         archive={archive}
         companion={companion}
         agents={agents}
+        communities={ctx.communityReader}
       />
     ),
   });

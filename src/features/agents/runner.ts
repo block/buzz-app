@@ -35,7 +35,6 @@ import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
-  tagsAgent,
   watchMatches,
   type AttentionObject,
   type AttentionValue,
@@ -224,7 +223,10 @@ const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
 /** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
  * watch; others have none. */
-const streamOf = (key: AgentKey, { watch, slug, event }: WatchTrigger) =>
+const streamOf = (
+  key: AgentKey,
+  { watch, slug, event }: Pick<WatchTrigger, "watch" | "slug" | "event">,
+) =>
   watch.kinds.length === 1 && watch.kinds[0] === 9
     ? streamKey(
         key,
@@ -275,7 +277,7 @@ type Runner = {
   /** Watch jobs released from `waiting`, oldest first, going into the queue
    * as it has room. */
   readonly later: Job[];
-  /** Events seen, and events it wrote (so reactions to them reach no watch). */
+  /** Events seen. */
   readonly seen: Set<string>;
   /** Events seen in each channel, as many as a reconnect replays of it, so
    * other channels' traffic cannot push out one a replay sends again. Only the
@@ -287,7 +289,6 @@ type Runner = {
   /** A missed event catch-up is still giving out, with delivered and rejected
    * matches retained while its other watches wait. */
   fanning?: { id: string; done: ReadonlySet<string> };
-  readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
   /** Its typing pulses, one per conversation it is working in. */
@@ -408,6 +409,10 @@ export type RunnerHost = {
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
   saved(key: AgentKey): AgentRecord | undefined;
+  /** Whether a plugin that shows Attention is on; Attention runs only then. */
+  attentionShown(): boolean;
+  /** Whether plugins have finished starting. */
+  pluginsSettled(): boolean;
   /** Its record as its attention handle reads it; throws once it is gone. */
   record(key: AgentKey): AgentRecord;
   /** Changes its record after the changes sent before it, from the newest
@@ -477,8 +482,12 @@ export type RunnerHost = {
     signal: AbortSignal,
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
-  remembered(key: AgentKey, slug: string, body: string): void;
-  woke?(key: AgentKey, object: AttentionObject): void;
+  remembered(key: AgentKey, slug: string, body: string | null): void;
+  woke?(
+    key: AgentKey,
+    object: AttentionObject,
+    events?: readonly RelayEvent[],
+  ): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(key: AgentKey): void;
   /** A harness's title for the conversation a mention started; may name a Solo chat. */
@@ -525,6 +534,17 @@ export class AgentRunners {
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
+  /** Whether startup is over for Attention: plugins have finished starting,
+   * or Attention has been shown, since this copy started. */
+  private settled = false;
+  /** Whether Attention is still waiting for startup, so neither its checkpoints
+   * nor the live events it would hear can be decided yet. */
+  private starting() {
+    this.settled ||= this.host.attentionShown() || this.host.pluginsSettled();
+    return !this.settled;
+  }
+  /** Whether live events are held until startup ends. */
+  private heldForStartup = false;
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
    * again or forgotten, as saved. */
@@ -537,9 +557,28 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
+  private workingNow = false;
+  private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
+  }
+
+  /** Whether any agent has a job in a lane or a turn still working. */
+  isWorking() {
+    return this.workingNow;
+  }
+  subscribeWorking(listener: () => void) {
+    this.workingListeners.add(listener);
+    return () => void this.workingListeners.delete(listener);
+  }
+  private noteWorking() {
+    const working = [...this.runners.values()].some(
+      (runner) => runner.busy.size > 0 || runner.working > 0,
+    );
+    if (working === this.workingNow) return;
+    this.workingNow = working;
+    for (const listener of this.workingListeners) listener();
   }
 
   /** Agents with turns the app left working last time, until the owner
@@ -567,7 +606,8 @@ export class AgentRunners {
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
    * replaced type aborts its run. Turning attention off voids the watch work
-   * it queued, even if it is turned on again before that work would run. */
+   * it queued or held, even if it is turned on again before that work would
+   * run. */
   reconcile(
     identities: readonly RunnerMember[],
     types: ReadonlyMap<string, RegisteredAgentType>,
@@ -580,9 +620,13 @@ export class AgentRunners {
     for (const identity of identities) {
       const type = types.get(identity.type);
       const runner = this.runners.get(identity.key);
-      if (runner && this.host.saved(identity.key)?.attentionEnabled !== true) {
+      const off = this.host.saved(identity.key)?.attentionEnabled !== true;
+      if (runner && (off || !this.host.attentionShown())) {
         runner.epoch++;
         this.dropWatchWork(runner);
+        // A startup hold keeps its events until Attention is shown, but not
+        // past the switch being turned off.
+        if (off) runner.held.clear();
       }
       if (!runner) this.runners.set(identity.key, this.runner(identity, type));
       else if (runner.type !== type) {
@@ -785,7 +829,6 @@ export class AgentRunners {
       seen: new Set(),
       seenIn: new Map(),
       backlog: [],
-      wrote: new Set(),
       working: 0,
       typing: new Map(),
       transitioning: false,
@@ -849,7 +892,7 @@ export class AgentRunners {
           continue;
         }
         this.markSeen(runner, event.id, channel);
-        if (this.isOwn(runner, agent, event)) continue;
+        if (this.isOwn(agent, event)) continue;
         // A replay waits for room rather than take the drops a burst of
         // live traffic would.
         runner.backlog.push({
@@ -870,12 +913,9 @@ export class AgentRunners {
       (!!channel && !!runner.seenIn.get(channel)?.has(id))
     );
   }
-  /** An agent never hears itself; its own events keep reactions to them from
-   * its watches. */
-  private isOwn(runner: Runner, agent: Agent, event: RelayEvent) {
-    if (event.pubkey !== agent.pubkey) return false;
-    bounded(runner.wrote, event.id);
-    return true;
+  /** An agent never hears itself. */
+  private isOwn(agent: Agent, event: RelayEvent) {
+    return event.pubkey === agent.pubkey;
   }
   private markSeen(runner: Runner, id: string, channel: string | undefined) {
     bounded(runner.seen, id);
@@ -1002,7 +1042,7 @@ export class AgentRunners {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (this.hasSeen(runner, event.id, channel)) return;
     this.markSeen(runner, event.id, channel);
-    if (this.isOwn(runner, agent, event)) return;
+    if (this.isOwn(agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
@@ -1060,22 +1100,33 @@ export class AgentRunners {
       this.setCheckpoint(key, checkpoint);
       changed = true;
     };
+    // Until plugins finish starting or Attention is shown, every checkpoint
+    // stays put, so the first catch-up still reads what the app missed while
+    // closed, and live events stay held. After that, no plugin showing
+    // Attention is like turning it off.
+    const shown = this.host.attentionShown();
+    const held = this.starting();
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
-      for (const stream of agent ? streamsOf(agent) : []) {
+      for (const stream of agent && !held ? streamsOf(agent) : []) {
+        const checkpoint = this.checkpoints[stream.key];
         if (!on || !stream.enabled) {
           // Saved too, so one turned on after a restart starts from about
-          // when this copy last saw it off.
+          // when this copy last saw it off, or from when Attention is shown.
           this.quiet.add(stream.key);
-          if ((this.checkpoints[stream.key]?.through ?? 0) < now)
-            move(stream.key, { through: now });
+          if (
+            (checkpoint?.through ?? 0) < now ||
+            (!shown && !checkpoint?.hidden)
+          )
+            move(stream.key, { through: now, ...(!shown && { hidden: true }) });
         } else if (
           this.quiet.delete(stream.key) ||
-          !this.checkpoints[stream.key]
+          !checkpoint ||
+          checkpoint.hidden
         )
           // A stream new to catch-up, as every one is on an upgrade, starts
           // now: an earlier `since` does not replay older events.
@@ -1114,6 +1165,11 @@ export class AgentRunners {
       this.passes.set(runner.key, next);
       this.setCatching(runner, new Set(reading.map(({ slug }) => slug)));
       void this.readMissed(runner, next, reading, since);
+    }
+    // Once each catch-up is under way, so they are heard after what it reads.
+    if (!held && this.heldForStartup) {
+      this.heldForStartup = false;
+      this.releaseHeld(() => true);
     }
     if (changed) this.saveCheckpoints();
   }
@@ -1407,7 +1463,6 @@ export class AgentRunners {
       const channel = channelOf(event);
       if (this.hasSeen(runner, event.id, channel)) continue;
       this.markSeen(runner, event.id, channel);
-      this.isOwn(runner, agent, event);
     }
     this.give(runner, agent, mentions, watches, slug, skipped);
     return taken;
@@ -1799,14 +1854,6 @@ export class AgentRunners {
   ): Heard {
     if (this.stopped[runner.key]?.[event.id] !== undefined)
       return { triggers: [] };
-    const wrote = (id: string) => runner.wrote.has(id);
-    // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // watch enough, two agents replying to each other would never stop. The
-    // claimed owner only narrows this; the type verifies it before answering.
-    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
-      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? { triggers: [{ type: "mention", event }] }
-        : { triggers: [] };
     // A one-to-one DM is always addressed to the other member, whoever else it
     // names, so no mention is needed. Only new messages: an edit is not a new
     // turn, and a reaction is not conversation. A group DM still needs the
@@ -1817,17 +1864,35 @@ export class AgentRunners {
       this.host.dm(agent, event)
     )
       return { triggers: [{ type: "mention", event }] };
-    // Addressed events never reach a watch. Only conversation starts a run: not
-    // an encrypted DM (kind 4) it cannot read yet, nor a reaction to its message.
-    if (addressedTo(event, agent.pubkey, wrote))
+    // Addressed events never reach a watch. Only conversation starts a run, not
+    // an encrypted DM (kind 4) it cannot read yet. A reaction to its message is
+    // not addressed, so a watch can still hear it.
+    if (addressedTo(event, agent.pubkey))
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
-    if (!agent.attentionEnabled) return { triggers: [] };
+    // An agent whose Attention waits for startup holds what it would hear.
+    const waiting =
+      !agent.attentionEnabled &&
+      this.host.saved(runner.key)?.attentionEnabled === true &&
+      this.starting();
+    if (!agent.attentionEnabled && !waiting) return { triggers: [] };
     const matches = this.watches(runner, agent).filter(
       ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
     );
     if (!matches.length) return { triggers: [] };
+    if (waiting) {
+      // Not for a stream last seen hidden: Attention was off then, so showing
+      // it wakes nothing from before.
+      const hidden = (match: (typeof matches)[number]) => {
+        const key = streamOf(agent.key, { ...match, event });
+        return !!key && !!this.checkpoints[key]?.hidden;
+      };
+      const discarded = matches.filter(hidden).map(({ slug }) => slug);
+      if (discarded.length === matches.length) return { triggers: [] };
+      this.heldForStartup = true;
+      return { triggers: [], held: true, discarded };
+    }
     const member = this.host.member(agent, event);
     if (member === undefined) return { triggers: [], held: true };
     if (!member) return { triggers: [] };
@@ -2166,6 +2231,7 @@ export class AgentRunners {
     job: Job,
   ) {
     runner.busy.add(lane);
+    this.noteWorking();
     if (job.trigger.type === "source") this.sourceJobs.set(job, agent.key);
     const lifetime = runner.controller.signal;
     const signal = AbortSignal.any([
@@ -2189,7 +2255,15 @@ export class AgentRunners {
     const woke = () => {
       attempted = true;
       if (!addressed(trigger) && job.matched)
-        this.host.woke?.(agent.key, job.matched.object);
+        this.host.woke?.(
+          agent.key,
+          job.matched.object,
+          trigger.type === "watch"
+            ? [trigger.event]
+            : trigger.type === "catch-up"
+              ? trigger.events.map(({ event }) => event)
+              : undefined,
+        );
     };
     const invoke: typeof run = (delivery) => {
       woke();
@@ -2346,6 +2420,7 @@ export class AgentRunners {
           );
     void held.then(() => {
       runner.busy.delete(lane);
+      this.noteWorking();
       void this.drain(runner);
     });
   }
@@ -2385,7 +2460,7 @@ export class AgentRunners {
         lifetime.throwIfAborted();
         return this.require().gitAuth(agent, owner, repo);
       },
-      remember: async (slug: string, body: string, after: number) => {
+      remember: async (slug: string, body: string | null, after: number) => {
         lifetime.throwIfAborted();
         const event = await this.require().remember(agent, slug, body, after);
         this.host.remembered(agent.key, slug, body);
@@ -2494,12 +2569,14 @@ export class AgentRunners {
       stopped = resolve;
     });
     runner.working++;
+    this.noteWorking();
     const stop = () => {
       if (holds < 0) return;
       holds = -1;
       stopped();
       lifetime.removeEventListener("abort", abort);
       runner.working--;
+      this.noteWorking();
       typing?.();
       if (resumable) this.unmark(runner.key, [resumable]);
     };
@@ -2650,7 +2727,8 @@ export class AgentRunners {
     const record = () => this.host.record(key);
     return guarded(
       {
-        enabled: () => record().attentionEnabled === true,
+        enabled: () =>
+          record().attentionEnabled === true && this.host.attentionShown(),
         classifier: () => this.host.classifier(),
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);
@@ -2763,9 +2841,7 @@ export class AgentRunners {
       lifetime.throwIfAborted();
     }
     check?.();
-    const signed = await this.require().publish(runner.member, event);
-    bounded(runner.wrote, signed.id);
-    return signed;
+    return this.require().publish(runner.member, event);
   }
 }
 

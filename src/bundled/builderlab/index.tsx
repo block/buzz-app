@@ -16,6 +16,12 @@ import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { BlockLogoIcon } from "../../shared/design-system/icons";
+import { HostedCommunities } from "./communities/HostedCommunities";
+import { brokerApi, createApi } from "./communities/api";
+import { createNativeBackend } from "./communities/native";
+import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
 
 export const inject = [
@@ -37,13 +43,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  const session = createOAuthSession((signal) => {
-    if (!browserLoginAvailable())
-      throw new Error("Open the Buzz desktop app to sign in with Builderlab.");
-    return browserCredential(ctx.host, signal);
-  });
+  const session = createOAuthSession(
+    (signal) => {
+      if (!browserLoginAvailable())
+        throw new Error(
+          "Open the Buzz desktop app to sign in with Builderlab.",
+        );
+      return browserCredential(ctx.host, signal);
+    },
+    (credential) => {
+      // Local guest teardown is immediate; the parent logout also revokes every server-side viewer child.
+      void ctx.host
+        .request({
+          url: `${oauthTarget()}/v1/auth/logout`,
+          method: "POST",
+          headers: { "X-BB-Session-Credential": credential.value },
+        })
+        .catch(() => {});
+    },
+  );
   ctx.effect(() => () => session.dispose());
-  applyApps(ctx, session);
+  const loginAvailable = browserLoginAvailable() && !unavailable;
+  applyApps(ctx, session, loginAvailable);
   const backupSession = () => {
     if (!nativeIdentityEnabled()) return;
     handoffBackupSession(
@@ -72,7 +93,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }),
     );
   const agents = createAgentClient(ctx.host, session);
-  const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {
     let providerState: AgentProviderSnapshot = {
       readiness: "attention",
@@ -129,37 +149,69 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
+    ctx.provide("builderlab", hostedAgentSettings(session, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
   // reports why when it cannot.
   let linked: unknown;
+  let linking = Promise.resolve();
   ctx.effect(() =>
     session.subscribe(() => {
       if (session.snapshot().status !== "signed-in") return;
       const credential = session.credential();
       if (linked === credential) return;
       linked = credential;
-      void agents.link(new AbortController().signal).catch(() => {});
+      linking = agents.link(new AbortController().signal).catch(() => {});
     }),
   );
+  // Desktop communities use this sign-in. Live development with a pinned
+  // viewer keeps the broker, which signs in and signs bindings on its own.
+  const communities = !nativeIdentityEnabled()
+    ? brokerApi
+    : loginAvailable
+      ? createApi(createNativeBackend(ctx.host, session, () => linking))
+      : null;
+  const Communities = ({ active }: { active(): boolean }) => {
+    const state = useSyncExternalStore(session.subscribe, session.snapshot);
+    if (!communities) return null;
+    if (communities === brokerApi)
+      return <HostedCommunities api={communities} active={active} />;
+    return state.status === "signed-in" ? (
+      <HostedCommunities
+        key={state.account?.subject}
+        api={communities}
+        active={active}
+        sharedSignIn
+      />
+    ) : null;
+  };
   ctx.settingsCards.register({
     id: "login",
-    title: "Builderlab agents",
+    title: "Builderlab",
+    icon: BlockLogoIcon,
     group: "Plugins",
     component: ({ active }) => (
-      <section aria-labelledby="builderlab-agents-title">
-        <Header id="builderlab-agents-title" title="Builderlab agents" />
-        <Login
-          showHeading={false}
-          session={session}
-          available={loginAvailable}
-          unavailableReason={
-            browserLoginAvailable()
-              ? unavailable
-              : "Open the Buzz desktop app to sign in with Builderlab."
-          }
-          active={active}
+      <section aria-labelledby="builderlab-title">
+        <Header
+          id="builderlab-title"
+          title="Builderlab"
+          subtitle="One Builderlab account for hosted communities, remote agents and apps."
         />
+        <InlineHeader title="Account" />
+        <SettingsGroup layout="form">
+          <Login
+            showHeading={false}
+            session={session}
+            available={loginAvailable}
+            unavailableReason={
+              browserLoginAvailable()
+                ? unavailable
+                : "Open the Buzz desktop app to sign in with Builderlab."
+            }
+            active={active}
+          />
+        </SettingsGroup>
+        <Communities active={active} />
         <RemoteAgents client={agents} session={session} active={active} />
       </section>
     ),

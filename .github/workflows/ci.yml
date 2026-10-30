@@ -101,9 +101,8 @@ jobs:
       - name: Select pinned Rust
         shell: pwsh
         run: |
-          $pins = @(Get-ChildItem bin/.rust-*.pkg)
-          if ($pins.Count -ne 1) { throw "Expected exactly one repository Rust pin" }
-          $version = $pins[0].Name -replace '^\.rust-(.*)\.pkg$', '$1'
+          $version = (Select-String -Path rust-toolchain.toml -Pattern '^channel = "(.+)"$').Matches.Groups[1].Value
+          if (!$version) { throw "Expected a rust-toolchain.toml channel" }
           rustup toolchain install $version --profile minimal --component clippy
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "RUSTUP_TOOLCHAIN=$version" >> $env:GITHUB_ENV

@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import type { ChannelChoice } from "../../features/agents/attention";
 import type {
   Agent,
@@ -6,6 +6,7 @@ import type {
   AgentSettingsHost,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { CommunityReader } from "../../features/communities/service";
@@ -27,6 +28,8 @@ export function AgentTabs(props: {
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
+  initialTranscript?: TranscriptRequest | undefined;
+  close?: (() => void) | undefined;
   onDiscard?: () => void;
 }) {
   const split = props.type?.tabs?.some(
@@ -43,8 +46,8 @@ export function AgentTabs(props: {
     ...(identity ? [{ ...identity, label: "Identity" }] : []),
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
-    ...supplied.filter((section) => section.value === "agent:attention"),
     ...supplied.filter((section) => section.value === "agent:activity"),
+    ...supplied.filter((section) => section.value.startsWith("agent:added:")),
     ...supplied.filter((section) => section.value === "agent:history"),
     {
       value: "agent:management",
@@ -56,6 +59,19 @@ export function AgentTabs(props: {
     props.initialActivity ? "agent:activity" : (sections[0]?.value ?? ""),
   );
   const [draft, setDraft] = useState({ dirty: false, saving: false });
+  const drafts = useRef(new Map<string, { dirty: boolean; saving: boolean }>());
+  const reportDraft = useCallback(
+    (state: { dirty: boolean; saving: boolean } | null, id: string) => {
+      if (state) drafts.current.set(id, state);
+      else drafts.current.delete(id);
+      const states = [...drafts.current.values()];
+      setDraft({
+        dirty: states.some((state) => state.dirty),
+        saving: states.some((state) => state.saving),
+      });
+    },
+    [],
+  );
   const [pendingTab, setPendingTab] = useState<string>();
   const panelPrefix = useId();
   const selected =
@@ -78,7 +94,7 @@ export function AgentTabs(props: {
       : "agent:settings";
   const panelId = (value: string) => `${panelPrefix}-${value}`;
   return (
-    <AgentSaveState value={setDraft}>
+    <AgentSaveState value={reportDraft}>
       <Tabs
         value={selected?.value ?? ""}
         onValueChange={(value) => {

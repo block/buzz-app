@@ -15,11 +15,13 @@ use std::path::{Path, PathBuf};
 /// (9), a channel member change (9000, 9001), edit (9002), creation (9007),
 /// deletion (9008), join (9021) or leave (9022), typing (20002), an edit of its
 /// own message (40003), a shared note (30023), a channel canvas (40100), a
-/// request to open a DM (41010) or a repository announcement (30617). The relay
-/// decides which channel changes it may make. Its profile (0) is the app's, and
+/// request to open a DM (41010), a repository announcement (30617) or an
+/// artifact revision (45010). The relay decides which channel changes and
+/// artifact edits it may make. Its profile (0) is the app's, and
 /// its memory (30174) is written by `memory`.
-const KINDS: [u16; 16] = [
+const KINDS: [u16; 17] = [
     5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
+    45010,
 ];
 
 /// One saved identity. The key itself stays in the OS credential store.
@@ -164,7 +166,7 @@ impl AppAgent {
     ) -> Result<serde_json::Value> {
         if !KINDS.contains(&kind) {
             return Err(
-                "Agents can sign messages, edits, reactions, deletions, notes, channel changes and repositories only"
+                "Agents can sign messages, edits, reactions, deletions, notes, channel changes, repositories and artifacts only"
                     .into(),
             );
         }
@@ -223,6 +225,26 @@ impl AppAgent {
         }
         if url != self.events_url() && url != self.query_url() && url != self.profile_search_url() {
             return Err("Agents post only to their community".into());
+        }
+        key.profile_auth(url, body)
+    }
+    /// NIP-98 authorization for this agent's own NIP-FI enrollment
+    /// (`/v1/nip-fi/agent-grant`) or token request (`/v1/nip-fi/agent-assertion`)
+    /// at its owner's identity issuer, whose origin the caller takes from the
+    /// app's build configuration.
+    pub fn issuer_auth(&self, key: &Secret, url: &str, body: &[u8]) -> Result<serde_json::Value> {
+        if key.pubkey() != self.pubkey {
+            return Err("Agent identity changed".into());
+        }
+        let path = url
+            .split_once("://")
+            .and_then(|(_, rest)| rest.find('/').map(|at| &rest[at..]));
+        if !path.is_some_and(|path| {
+            !path.contains(['?', '#'])
+                && (path.ends_with("/v1/nip-fi/agent-grant")
+                    || path.ends_with("/v1/nip-fi/agent-assertion"))
+        }) {
+            return Err("Agents authorize only their own enrollment and tokens".into());
         }
         key.profile_auth(url, body)
     }
@@ -294,12 +316,13 @@ impl AppAgent {
         key.sign_event_after(24242, content.into(), tags, None)
     }
     /// Its memory entry `slug`, encrypted to its owner and newer than the
-    /// entry it replaces (`after`, that entry's `created_at`).
+    /// entry it replaces (`after`, that entry's `created_at`); without a body,
+    /// the tombstone that deletes it.
     pub fn memory(
         &self,
         key: &Secret,
         slug: &str,
-        body: &str,
+        body: Option<&str>,
         after: u64,
     ) -> Result<serde_json::Value> {
         if key.pubkey() != self.pubkey {

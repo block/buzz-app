@@ -2,7 +2,13 @@ import { FadingLabel } from "./FadingLabel";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons/index";
-import { useId, type ReactElement, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import styles from "./ChannelSidebarRow.module.css";
 
@@ -37,9 +43,30 @@ export function ChannelSidebarRow({
   onPrepare: (id: string) => void;
   onHideDm?: (id: string) => void;
 }) {
+  const selectRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const button = selectRef.current;
+    if (!button) return;
+    const document = button.ownerDocument;
+    const section = button.closest("[data-sidebar-section]");
+    return () => {
+      if (document.activeElement !== button) return;
+      // A plugin wrapper can remount the host row. Wait for its replacement,
+      // without overriding focus that moved elsewhere during the update.
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        section
+          ?.querySelector<HTMLElement>(
+            `button[data-channel-id="${CSS.escape(channel.id)}"]`,
+          )
+          ?.focus();
+      });
+    };
+  }, [channel.id]);
   const presenceId = useId();
   const selectButton = (
     <NavigationItem
+      ref={selectRef}
       type="button"
       data-channel-id={channel.id}
       data-working={working || undefined}

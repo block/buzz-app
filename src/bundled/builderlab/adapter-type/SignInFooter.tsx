@@ -19,9 +19,7 @@ export function createProfileActions(session: OAuthSession) {
     if (login.status === "signed-in") return children;
     return (
       <span className="inline-flex items-center rounded-full bg-panel px-3 py-1 text-body-sm text-secondary">
-        {login.status === "pending"
-          ? "Signing in to Builderlab…"
-          : "Signed out of Builderlab"}
+        Signed out of Builderlab
       </span>
     );
   };
@@ -42,6 +40,7 @@ export function createSignInFooter(session: OAuthSession) {
     }, [login.status]);
     if (login.status === "signed-in") return null;
     const pending = login.status === "pending";
+    const waiting = pending && slow;
     const available = browserLoginAvailable();
     return (
       <motion.div
@@ -69,16 +68,18 @@ export function createSignInFooter(session: OAuthSession) {
             <Header
               id={title}
               title="Sign in to Builderlab"
-              subtitle="Use your Builderlab account to access this agent."
+              subtitle={
+                <span role="status">
+                  {waiting
+                    ? "Finish signing in to Builderlab in your browser, then return to Buzz."
+                    : "Use your Builderlab account to access this agent."}
+                </span>
+              }
             />
             <div className="grid gap-3">
-              {(!available || pending) && (
+              {!available && (
                 <p role="status" className="m-0 text-body-sm text-secondary">
-                  {!available
-                    ? "Open the Buzz desktop app to sign in with Builderlab."
-                    : slow
-                      ? "Finish sign-in in your browser, then return to Buzz."
-                      : "Signing in to Builderlab…"}
+                  Open the Buzz desktop app to sign in with Builderlab.
                 </p>
               )}
               {login.error && (
@@ -87,16 +88,17 @@ export function createSignInFooter(session: OAuthSession) {
                 </p>
               )}
               <Button
-                variant={pending ? "outline" : "prominent"}
+                variant={waiting ? "outline" : "prominent"}
                 size="lg"
+                loading={pending && !waiting}
                 disabled={!available && !pending}
                 style={{ width: "100%" }}
                 onClick={() => {
-                  if (pending) session.cancel();
-                  else void session.signIn();
+                  if (waiting) session.cancel();
+                  else if (!pending) void session.signIn();
                 }}
               >
-                {pending ? "Cancel sign-in" : "Sign in to Builderlab"}
+                {waiting ? "Cancel sign-in" : "Sign in to Builderlab"}
               </Button>
             </div>
           </div>

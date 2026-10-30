@@ -67,12 +67,10 @@ it("shows account status with one footer sign-in action and restores profile con
   });
   fireEvent.click(signIn);
   expect(acquire).toHaveBeenCalledTimes(1);
-  expect(screen.queryByText("Signed out of Builderlab")).toBeNull();
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Cancel sign-in" }),
-    ).toBeVisible(),
-  );
+  expect(screen.getByText("Signed out of Builderlab")).toBeVisible();
+  await waitFor(() => expect(signIn).toBeVisible());
+  expect(signIn).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   await act(async () => held.resolve(credential));
   expect(
     await screen.findByRole("button", { name: "Edit profile" }),
@@ -90,7 +88,7 @@ it("shows account status with one footer sign-in action and restores profile con
   session.dispose();
 });
 
-it("waits for a click, exposes delayed guidance, cancels and retries without accepting late results", async () => {
+it("keeps early sign-in passive, then offers guidance and cancellation without accepting late results", async () => {
   // Control browser-guidance deadlines without replacing Motion's frame clock.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const old = deferred<Credential>();
@@ -104,19 +102,30 @@ it("waits for a click, exposes delayed guidance, cancels and retries without acc
   render(<Footer />, { wrapper: StrictMode });
   expect(acquire).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Sign in to Builderlab" }),
-  );
+  const signIn = screen.getByRole("button", { name: "Sign in to Builderlab" });
+  const subtitle = screen.getByRole("status");
+  fireEvent.click(signIn);
+  fireEvent.click(signIn);
   expect(acquire).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Signing in to Builderlab…",
+  expect(signIn).toHaveAttribute("aria-busy", "true");
+  expect(signIn).toHaveAttribute("aria-disabled", "true");
+  expect(session.snapshot().status).toBe("pending");
+  expect(acquire.mock.calls[0]?.[0].aborted).toBe(false);
+  expect(subtitle).toHaveTextContent(
+    "Use your Builderlab account to access this agent.",
   );
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(2999));
-  expect(screen.queryByText(/Finish sign-in/)).toBeNull();
+  expect(screen.queryByText(/Finish signing in/)).toBeNull();
+  expect(signIn).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Finish sign-in in your browser",
+  expect(subtitle).toHaveTextContent(
+    "Finish signing in to Builderlab in your browser, then return to Buzz.",
   );
+  expect(screen.getAllByRole("status")).toEqual([subtitle]);
+  expect(screen.queryByText(/Use your Builderlab account/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
   expect(acquire.mock.calls[0]?.[0].aborted).toBe(true);
   expect(session.snapshot().status).toBe("signed-out");
@@ -125,9 +134,11 @@ it("waits for a click, exposes delayed guidance, cancels and retries without acc
     screen.getByRole("button", { name: "Sign in to Builderlab" }),
   );
   expect(acquire).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Signing in to Builderlab…",
+  expect(signIn).toHaveAttribute("aria-busy", "true");
+  expect(subtitle).toHaveTextContent(
+    "Use your Builderlab account to access this agent.",
   );
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   vi.useRealTimers();
   await act(async () => {
     old.resolve(credential);
@@ -160,6 +171,9 @@ it("shows failure inline and leaves retry user-started", async () => {
   expect(
     screen.getByRole("button", { name: "Sign in to Builderlab" }),
   ).toBeEnabled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Use your Builderlab account to access this agent.",
+  );
   expect(acquire).toHaveBeenCalledTimes(1);
   session.dispose();
 });
@@ -171,7 +185,10 @@ it("observes an existing attempt and leaves it running when the pane closes", as
   const pending = session.signIn();
   const Footer = createSignInFooter(session);
   const mounted = render(<Footer />, { wrapper: StrictMode });
-  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Sign in to Builderlab" }),
+  ).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   mounted.unmount();
   expect(session.snapshot().status).toBe("pending");
   expect(acquire).toHaveBeenCalledTimes(1);
@@ -268,7 +285,7 @@ it("loads the pane after a late browser callback and verified exchange without w
   });
   await act(() => vi.advanceTimersByTimeAsync(30_000));
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Finish sign-in in your browser",
+    "Finish signing in to Builderlab in your browser, then return to Buzz.",
   );
   await act(async () => {
     callback.resolve({ parameters: [["code", "late-code"]] });

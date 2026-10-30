@@ -285,7 +285,8 @@ export function useConversationTabs({
       (!eligible || eligible(entry)) &&
       (!entry.channelContext ||
         (current &&
-          !current.readOnly &&
+          !current.cached &&
+          (!current.readOnly || current.viewerRole === "guest") &&
           (!current.archived ||
             entry.panel.channelMenu?.eligible(current, queries)) &&
           current.id === entry.channelId)),
@@ -369,7 +370,10 @@ export function useConversationTabs({
   };
   const drawerContext = useMemo(
     () =>
-      current && !current.readOnly && viewer
+      current &&
+      !current.cached &&
+      (!current.readOnly || current.viewerRole === "guest") &&
+      viewer
         ? {
             scope,
             viewer,

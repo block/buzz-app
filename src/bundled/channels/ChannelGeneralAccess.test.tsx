@@ -1,0 +1,421 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import type {
+  ChannelDetailsCapability,
+  DetailsAttempt,
+} from "../../features/relay/channel-details";
+import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
+import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
+import type { CommunityReader } from "../../features/communities/service";
+
+afterEach(cleanup);
+
+it.each([false, true])(
+  "uses this channel's community image when readOnly is %s",
+  async (readOnly) => {
+    const h = harness();
+    h.load.mockResolvedValue({ ...base, visibility: "public" });
+    const state: ReturnType<CommunityReader["snapshot"]> = {
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Viewer", picture: "" },
+      selected: "https://other.example",
+      sync: { known: [], outbox: [] },
+      memberships: [
+        {
+          id: "https://other.example",
+          name: "Other",
+          icon: "https://other.example/icon.png",
+        },
+        {
+          id: "https://community.example",
+          name: "Community",
+          icon: "https://community.example/old.png",
+          publishedIcon: "https://community.example/current.png",
+        },
+      ],
+    };
+    const reader: CommunityReader = {
+      subscribe: () => () => {},
+      snapshot: () => state,
+    };
+    const view = render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        communityReader={reader}
+        communityScope={`https://community.example:${"a".repeat(64)}`}
+        channel={{
+          id: "alpha",
+          name: "Alpha",
+          ...(readOnly ? { readOnly: true } : {}),
+          visibility: "public",
+          joinRole: "member",
+        }}
+      />,
+    );
+    if (!readOnly)
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Who can read" }),
+        ).toBeEnabled(),
+      );
+    expect(view.container.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://community.example/current.png",
+    );
+  },
+);
+
+it.each(["public", "private"] as const)(
+  "shows verified %s access to readers without invoking the editing capability",
+  (visibility) => {
+    const h = harness();
+    h.load.mockRejectedValue(
+      new Error("Channel access changed. Reopen channel settings."),
+    );
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        channel={{
+          id: "alpha",
+          name: "Alpha",
+          readOnly: true,
+          visibility,
+          joinRole: "guest",
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveTextContent(
+      visibility === "public"
+        ? "Anyone in the community can read."
+        : "Only channel members can read.",
+    );
+    expect(
+      screen.getByRole("region", { name: "General access" }),
+    ).toHaveTextContent("Viewing only. Ask an owner or admin to participate.");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(h.load).not.toHaveBeenCalled();
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);
+
+const base: ChannelDetails = {
+  channelId: "alpha",
+  version: "v1",
+  name: "Alpha",
+  description: "Description",
+  visibility: "public",
+  joinRole: "guest",
+  canEdit: true,
+};
+function harness() {
+  let attempt: DetailsAttempt | undefined;
+  const listeners = new Set<() => void>();
+  const load = vi.fn(async () => base);
+  const save = vi.fn(async () => {});
+  const check = vi.fn(async () => {});
+  const capability: ChannelDetailsCapability = {
+    available: true,
+    load,
+    save,
+    check,
+    snapshot: () => attempt,
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+  };
+  return {
+    capability,
+    load,
+    save,
+    check,
+    setAttempt(next: DetailsAttempt | undefined) {
+      attempt = next;
+      for (const fn of listeners) fn();
+    },
+  };
+}
+async function select(
+  user: ReturnType<typeof userEvent.setup>,
+  field: string,
+  option: string,
+) {
+  const control = screen.getByRole("combobox", { name: field });
+  await waitFor(() => expect(control).toBeEnabled());
+  await user.click(control);
+  await user.click(await screen.findByRole("option", { name: option }));
+  return control;
+}
+it.each(["public", "private"] as const)(
+  "confirms %s reading access, cancels with focus return, and preserves individual/default roles",
+  async (visibility) => {
+    const h = harness();
+    const current = { ...base, visibility };
+    h.load.mockResolvedValue(current);
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+    );
+    expect(
+      await screen.findByText(
+        visibility === "public"
+          ? "Anyone in the community can find and view."
+          : "Only people you add can read this channel.",
+      ),
+    ).toBeVisible();
+    const option = visibility === "public" ? "Private" : "Public";
+    const control = await select(user, "Who can read", option);
+    const confirm = screen.getByRole("alertdialog", {
+      name: "Change general access?",
+    });
+    expect(confirm).toHaveAccessibleDescription(
+      visibility === "public"
+        ? "Only channel members will have access."
+        : "Everyone in this community will be able to view this channel’s full history.",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    );
+    expect(h.save).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(control).toHaveFocus());
+    expect(control).toHaveTextContent(
+      visibility === "public" ? "Public" : "Private",
+    );
+    await select(user, "Who can read", option);
+    const next = {
+      ...current,
+      visibility:
+        visibility === "public" ? ("private" as const) : ("public" as const),
+    };
+    h.load.mockResolvedValue(next);
+    await user.click(screen.getByRole("button", { name: "Change access" }));
+    await waitFor(() => expect(control).toHaveTextContent(option));
+    expect(h.save).toHaveBeenCalledExactlyOnceWith(
+      current,
+      next,
+      expect.any(AbortSignal),
+    );
+    if (visibility === "public") {
+      expect(
+        screen.queryByRole("combobox", { name: "New people can" }),
+      ).not.toBeInTheDocument();
+    } else {
+      expect(
+        screen.getByRole("combobox", { name: "New people can" }),
+      ).toHaveTextContent("View only");
+    }
+  },
+);
+it.each(["member", "guest"] as const)(
+  "hides the private %s admission default without rewriting it",
+  async (joinRole) => {
+    const h = harness();
+    h.load.mockResolvedValue({ ...base, visibility: "private", joinRole });
+    render(
+      <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+    );
+    expect(
+      await screen.findByText("Only people you add can read this channel."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "New people can" }),
+    ).not.toBeInTheDocument();
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);
+it.each(["member", "guest", undefined] as const)(
+  "stages public participation from the private %s default until confirmation",
+  async (joinRole) => {
+    const h = harness();
+    const current = { ...base, visibility: "private" as const, joinRole };
+    h.load.mockResolvedValue(current);
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+    );
+    const label = joinRole === "guest" ? "View only" : "Participate";
+    const nextRole = joinRole === "guest" ? "member" : "guest";
+    const nextLabel = nextRole === "guest" ? "View only" : "Participate";
+    const control = await select(user, "Who can read", "Public");
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(label);
+    await select(user, "New people can", nextLabel);
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(nextLabel);
+    expect(h.save).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(control).toHaveFocus());
+    expect(control).toHaveTextContent("Private");
+    expect(h.save).not.toHaveBeenCalled();
+
+    await select(user, "Who can read", "Public");
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(label);
+    await select(user, "New people can", nextLabel);
+    const next: ChannelDetails = {
+      ...current,
+      visibility: "public",
+      joinRole: nextRole,
+    };
+    h.load.mockResolvedValue(next);
+    await user.click(screen.getByRole("button", { name: "Change access" }));
+    await waitFor(() => expect(control).toHaveTextContent("Public"));
+    expect(h.save).toHaveBeenCalledExactlyOnceWith(
+      current,
+      next,
+      expect.any(AbortSignal),
+    );
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent(nextLabel);
+  },
+);
+it("confirms new people's View only/Participate access independently of public reading access", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
+  await select(user, "New people can", "Participate");
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    "People already in the channel keep their access.",
+  );
+  h.load.mockResolvedValue({ ...base, joinRole: "member" });
+  await user.click(screen.getByRole("button", { name: "Change access" }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledOnce());
+  expect(h.save).toHaveBeenCalledWith(
+    base,
+    { ...base, joinRole: "member" },
+    expect.any(AbortSignal),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Who can read" }),
+  ).toHaveTextContent("Public");
+  expect(
+    screen.getByText("Anyone in the community can find and participate."),
+  ).toBeVisible();
+});
+it("shows the absent Member default without saving, and a declined save reloads current access", async () => {
+  const h = harness();
+  const current = { ...base, joinRole: undefined };
+  h.load.mockResolvedValue(current);
+  h.save.mockRejectedValueOnce(new Error("Channel details changed"));
+  const user = userEvent.setup();
+  render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toBeEnabled(),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "New people can" }),
+  ).toHaveTextContent("Participate");
+  expect(h.save).not.toHaveBeenCalled();
+  await select(user, "New people can", "View only");
+  await user.click(screen.getByRole("button", { name: "Change access" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Channel details changed",
+  );
+  h.load.mockResolvedValue({ ...base, canEdit: false });
+  await user.click(screen.getByRole("button", { name: "Reload access" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "New people can" }),
+    ).toHaveTextContent("View only"),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "New people can" }),
+  ).toBeDisabled();
+  expect(h.save).toHaveBeenCalledOnce();
+});
+it("locks both choices while saving and recovers an uncertain save after remount without resending", async () => {
+  const h = harness();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.save.mockImplementationOnce(async () => {
+    await gate;
+    h.setAttempt({
+      draft: { ...base, joinRole: "member" },
+      status: "unconfirmed",
+    });
+    throw new Error("Readback unavailable");
+  });
+  const user = userEvent.setup();
+  const view = render(
+    <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+  );
+  await select(user, "New people can", "Participate");
+  try {
+    await user.click(screen.getByRole("button", { name: "Change access" }));
+    await waitFor(() => expect(h.save).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status", { name: "Saving access" })).toBeVisible();
+    expect(screen.queryByText("Saving access…")).not.toBeInTheDocument();
+    for (const control of screen.getAllByRole("combobox"))
+      expect(control).toBeDisabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "General access" }),
+      ).toHaveFocus(),
+    );
+  } finally {
+    await act(async () => {
+      release();
+      await gate;
+    });
+  }
+  await screen.findByRole("button", { name: "Check save status" });
+  expect(
+    screen.queryByRole("status", { name: "Saving access" }),
+  ).not.toBeInTheDocument();
+  view.unmount();
+  render(<ChannelGeneralAccess capability={h.capability} channelId="alpha" />);
+  const check = await screen.findByRole("button", {
+    name: "Check save status",
+  });
+  await waitFor(() => expect(check).toBeEnabled());
+  h.check.mockImplementationOnce(async () => {
+    h.setAttempt(undefined);
+  });
+  await user.click(check);
+  await waitFor(() =>
+    expect(h.check).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(h.save).toHaveBeenCalledOnce();
+});
+it("retires an open confirmation and late reads when the destination changes", async () => {
+  const h = harness();
+  const user = userEvent.setup();
+  const view = render(
+    <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+  );
+  await select(user, "Who can read", "Public");
+  const pending = new Promise<ChannelDetails>(() => {});
+  h.load.mockReturnValueOnce(pending);
+  view.rerender(
+    <ChannelGeneralAccess capability={h.capability} channelId="beta" />,
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  for (const control of screen.getAllByRole("combobox"))
+    expect(control).toBeDisabled();
+  expect(h.save).not.toHaveBeenCalled();
+});

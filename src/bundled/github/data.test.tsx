@@ -6,7 +6,9 @@ import { parseGitHubReference } from "./references";
 
 afterEach(() => vi.unstubAllGlobals());
 const reference = parseGitHubReference("https://github.com/block/buzz/pull/23");
+const issue = parseGitHubReference("https://github.com/block/buzz/issues/23");
 assert.exists(reference);
+assert.exists(issue);
 it("loads PR details and preserves merged state, branches, and change counts", async () => {
   const fetch = vi.fn().mockResolvedValue(
     new Response(
@@ -257,8 +259,9 @@ it.each(["public", "gh"])(
         .fn()
         .mockRejectedValueOnce(new GitHubError("down", "SERVICE_UNAVAILABLE"))
         .mockRejectedValue(new Error("stop"));
+      // Pull requests are the store's; the panel reads the rest this way.
       const pending = loadGitHubObject(
-        reference,
+        issue,
         new AbortController().signal,
         source === "gh" ? gh : undefined,
       );

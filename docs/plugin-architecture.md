@@ -1438,8 +1438,8 @@ URLs: the same label with the pull request's state (open, draft, merged,
 closed) or the issue's (open, closed as completed, closed as not planned) as a
 coloured icon, read with the person's `gh` sign-in or the public API and kept
 current while shown. A pasted pull request or issue URL is labelled
-`owner/repo#number`, then `owner/repo#number · title` once its title is read
-with that state; an authored label stays. Repositories and commits, and every
+`repo#number`, then `repo#number · title` once its title is read with that
+state; an authored label stays. Repositories and commits, and every
 pull request and issue link when that plugin is disabled, keep the Links
 presentation. If the renderer fails, the link shows as a plain link.
 Messages currently recognize

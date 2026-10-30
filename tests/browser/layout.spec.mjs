@@ -100,9 +100,9 @@ async function open(page, app) {
 }
 // A pasted pull request link is named for it, with the title `link` reads.
 const opener = (page, target) => {
-  const [, owner, repo, , number] = new URL(target).pathname.split("/");
+  const [, , repo, , number] = new URL(target).pathname.split("/");
   return page.getByRole("link", {
-    name: `${owner}/${repo}#${number} · A useful change`,
+    name: `${repo}#${number} · A useful change`,
     exact: true,
   });
 };

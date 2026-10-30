@@ -55,10 +55,12 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
     describe?.(words);
     return () => describe?.(undefined);
   }, [describe, words]);
-  // A pasted link is named `owner/repo#7`, then with its title, which is
-  // read with the state.
+  // A pasted link is named `repo#7`, then with its title, which is read with
+  // the state. Its owner stays in the URL the link's tooltip shows.
   const authored = useContext(LinkLabelContext) !== undefined;
-  const name = reference && `${reference.repository}${reference.label}`;
+  const name =
+    reference &&
+    `${reference.repository.slice(reference.repository.indexOf("/") + 1)}${reference.label}`;
   const label = name && state?.title ? `${name} · ${state.title}` : name;
   return (
     <LinkLabel

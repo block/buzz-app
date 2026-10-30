@@ -298,15 +298,17 @@ it("names a pasted pull request link by its repository and number, then the titl
   );
   vi.stubGlobal("fetch", fetch);
   const { container } = pasted([links, github], raw);
-  const anchor = screen.getByRole("link", { name: "block/buzz-app#8" });
+  const anchor = screen.getByRole("link", { name: "buzz-app#8" });
   expect(anchor).toHaveAttribute("href", raw);
   expect(anchor).toHaveAttribute("aria-description", "Pull request");
   await waitFor(() =>
     expect(icon(container)).toHaveAttribute("data-pr-state", "merged"),
   );
   // The title arrives with the state, from the one read the icon makes.
-  expect(anchor).toHaveAccessibleName("block/buzz-app#8 · Fix the lab");
+  expect(anchor).toHaveAccessibleName("buzz-app#8 · Fix the lab");
   expect(anchor).toHaveAttribute("aria-description", "Pull request, merged");
+  // The owner the name leaves out is in the URL its tooltip shows.
+  expect(anchor).toHaveAttribute("title", raw);
   expect(fetch).toHaveBeenCalledOnce();
   expect(fetch).toHaveBeenCalledWith(
     "https://api.github.com/repos/block/buzz-app/pulls/8",
@@ -329,7 +331,7 @@ it("names a pasted issue link by its repository and number, then the title read 
   );
   vi.stubGlobal("fetch", fetch);
   const { container } = pasted([links, github], raw);
-  const anchor = screen.getByRole("link", { name: "block/buzz-app#12" });
+  const anchor = screen.getByRole("link", { name: "buzz-app#12" });
   expect(anchor).toHaveAttribute("href", raw);
   expect(anchor).toHaveAttribute("data-link-renderer", "buzz.github/pull");
   expect(anchor).toHaveAttribute("aria-description", "Issue");
@@ -337,7 +339,7 @@ it("names a pasted issue link by its repository and number, then the title read 
     expect(icon(container)).toHaveAttribute("data-pr-state", "not planned"),
   );
   // The title arrives with the state, from the one read the icon makes.
-  expect(anchor).toHaveAccessibleName("block/buzz-app#12 · Crash on start");
+  expect(anchor).toHaveAccessibleName("buzz-app#12 · Crash on start");
   expect(anchor).toHaveAttribute(
     "aria-description",
     "Issue, closed as not planned",
@@ -364,33 +366,29 @@ it.each([
       [links, github],
       `https://github.com/block/buzz-app/${surface}/9`,
     );
-    const anchor = screen.getByRole("link", { name: "block/buzz-app#9" });
+    const anchor = screen.getByRole("link", { name: "buzz-app#9" });
     await waitFor(() =>
       expect(anchor).toHaveAttribute("aria-description", words),
     );
     expect(icon(container)).toHaveAttribute("data-pr-state", "unknown");
-    expect(anchor).toHaveAccessibleName("block/buzz-app#9");
+    expect(anchor).toHaveAccessibleName("buzz-app#9");
   },
 );
 
 it("renames a pasted pull request link with each title the store reads, and names it by number alone when nothing is held", () => {
   const states = fakeStates({ state: "open", title: "Fix the lab" });
   const { container } = render(<PullLink url={pull} states={states} />);
-  expect(container).toHaveTextContent("block/buzz-app#7 · Fix the lab");
+  expect(container).toHaveTextContent(/^buzz-app#7 · Fix the lab$/);
   act(() => states.set({ state: "merged", title: "Fix the lab, renamed" }));
-  expect(container).toHaveTextContent(
-    "block/buzz-app#7 · Fix the lab, renamed",
-  );
+  expect(container).toHaveTextContent(/^buzz-app#7 · Fix the lab, renamed$/);
   act(() => states.set("failed"));
-  expect(container).toHaveTextContent(/^block\/buzz-app#7$/);
+  expect(container).toHaveTextContent(/^buzz-app#7$/);
 });
 
 it("renames a pasted issue link with each title the store reads, and shows what is held of it while composing, without watching it", () => {
   const states = fakeStates({ state: "open", title: "Crash on start" });
   const shown = render(<PullLink url={issue} states={states} />);
-  expect(shown.container).toHaveTextContent(
-    /^block\/buzz-app#7 · Crash on start$/,
-  );
+  expect(shown.container).toHaveTextContent(/^buzz-app#7 · Crash on start$/);
   expect(states.watch).toHaveBeenCalledWith(issue, expect.any(Function));
   act(() =>
     states.set({
@@ -400,7 +398,7 @@ it("renames a pasted issue link with each title the store reads, and shows what 
     }),
   );
   expect(shown.container).toHaveTextContent(
-    /^block\/buzz-app#7 · Crash on start, renamed$/,
+    /^buzz-app#7 · Crash on start, renamed$/,
   );
   shown.unmount();
   states.watch.mockClear();
@@ -414,7 +412,7 @@ it("renames a pasted issue link with each title the store reads, and shows what 
     "completed",
   );
   expect(composing.container).toHaveTextContent(
-    /^Block\/Buzz-App#7 · Crash on start, renamed$/,
+    /^Buzz-App#7 · Crash on start, renamed$/,
   );
   expect(states.watch).not.toHaveBeenCalled();
 });

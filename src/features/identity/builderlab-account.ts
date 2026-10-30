@@ -77,8 +77,7 @@ export type FirstRunAccount = Readonly<{
   unbind(old: string, replacement: string): Promise<void>;
   /**
    * Backs `pubkey` up and waits for the native uploader's result; rejects with
-   * a `BackupError`, "unavailable" where `backupOfferedFor` says this build
-   * cannot back up for this sign-in (nothing is handed to the uploader).
+   * a `BackupError` (`backUpWith`).
    */
   backUp(pubkey: string): Promise<void>;
   /**
@@ -294,8 +293,9 @@ function owned(community: NonNullable<Reply["communities"]>[number]) {
 /**
  * Whether this build backs a key up for a Builderlab sign-in: only when it has
  * a Builderlab URL (`oauthTarget` throws otherwise) and the native status says
- * Builderlab backup is allowed. First run's backup and status reads and
- * Settings → Identity share this rule. Any error answers false.
+ * Builderlab backup is allowed. First run's status read and Settings →
+ * Identity share this rule; `backUpWith` checks the native status itself.
+ * Any error answers false.
  */
 export async function backupOfferedFor(
   backup: Pick<Identity["backup"], "ready">,
@@ -406,14 +406,17 @@ export function builderlabAccount(
           if (!reply) throw failure(step, response);
           const { challenge_id, nonce, verification_code, origin, expires_at } =
             reply as Record<string, unknown>;
+          if (origin !== portal)
+            throw failure(step, response, "challenge for another origin");
           return { challenge_id, nonce, verification_code, origin, expires_at };
         },
         { origin: portal },
       );
-      // Native code signs only a well-formed challenge for production
-      // Builderlab or the build URL's origin, with whatever key secure storage
-      // holds now. Verify binds the signer, which linking again cannot undo,
-      // so only `pubkey`'s signature may reach kgoose.
+      // Native code signs a well-formed challenge for production Builderlab
+      // or the build URL's origin, so the read above passes on only the
+      // latter. It signs with whatever key secure storage holds now. Verify
+      // binds the signer, which linking again cannot undo, so only `pubkey`'s
+      // signature may reach kgoose.
       const event = await invoke<{ pubkey?: unknown }>(
         "identity_sign_builderlab_binding",
         { challenge },
@@ -502,11 +505,7 @@ export function builderlabAccount(
         { community_url: relayAddress(url) },
       );
     },
-    async backUp(pubkey) {
-      if (!(await backupOfferedFor(identity.backup)))
-        throw new BackupError("unavailable");
-      await backUpWith(identity, pubkey, credential.value);
-    },
+    backUp: (pubkey) => backUpWith(identity, pubkey, credential.value),
     // Backup routes answer plain text, not the card's reply shape, so only
     // the status and a 2xx body are read.
     async backupStatus() {

@@ -138,7 +138,9 @@ agents are not migrated into this type.
   `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
   sign-in before any plugin session exists, using this plugin's bundled native
   grant, at the build URL like the Settings card; that credential is separate
-  from the Settings session.
+  from the Settings session. The grant exists only while this plugin is
+  enabled, so with it turned off that sign-in refuses before opening the
+  browser.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): the app reads the key
   bound to the account, the destinations saved to it (this plugin's

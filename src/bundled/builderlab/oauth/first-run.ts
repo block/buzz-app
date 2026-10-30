@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Host } from "../../../features/host/service";
+import type { StorageResult } from "../../../plugins/types";
 import manifest from "../manifest.json";
 import { browserCredential, type Credential } from "./browser";
 
@@ -19,5 +20,28 @@ export const bundledHost: Host = {
     }),
 };
 
-export const firstRunCredential = (signal: AbortSignal): Promise<Credential> =>
-  browserCredential(bundledHost, signal);
+/**
+ * The bundled grant exists only while this plugin is enabled, so with it
+ * turned off the browser sign-in could finish but never exchange its code.
+ * Refuse before opening the browser instead.
+ */
+export async function firstRunCredential(
+  signal: AbortSignal,
+): Promise<Credential> {
+  const result = await invoke<StorageResult>("plugin_catalog").catch(() => {
+    throw new Error("Could not complete Builderlab sign-in. Try again.");
+  });
+  if (
+    result.status !== "ready" ||
+    !result.catalog.plugins.some(
+      (plugin) =>
+        plugin.source === "bundled" &&
+        plugin.manifest.id === manifest.id &&
+        plugin.enabled,
+    )
+  )
+    throw new Error(
+      "Builderlab is turned off on this device, so you can't sign in with email. Enter a community address instead.",
+    );
+  return browserCredential(bundledHost, signal);
+}

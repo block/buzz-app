@@ -767,6 +767,32 @@ describe("bind", () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  // Native code also signs a challenge for production Builderlab.
+  it("never signs a challenge for another origin", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { request, sent } = kgoose(
+      unbound,
+      answer(200, { ...challenge, origin: "https://app.builderlab.xyz" }),
+    );
+    const failed: unknown = await builderlabAccount(
+      credential,
+      request,
+      untouched,
+    )
+      .bind(pubkey)
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(Error);
+    expect((failed as Error).message).toBe(
+      "Builderlab account link failed (HTTP 200: challenge for another origin).",
+    );
+    expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
+    expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
+      "current",
+      "challenge",
+    ]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["a gateway failure", [answer(502, "<html>bad gateway</html>")], true],
     ["a transport error", [new Error("offline")], true],
@@ -1079,6 +1105,24 @@ describe("backup", () => {
       .catch((error: unknown) => error);
     expect(failed).toBeInstanceOf(BackupError);
     expect(failed).toMatchObject({ kind: "unavailable" });
+    expect(native.setBackupChoice).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("reports a backup status it cannot read as unknown, handing the uploader nothing", async () => {
+    const native = host(status(1, 0));
+    native.send.mockRejectedValueOnce(
+      "Backup status belongs to the main window",
+    );
+    const failed = await builderlabAccount(
+      credential,
+      kgoose().request,
+      native.identity,
+    )
+      .backUp(pubkey)
+      .catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(BackupError);
+    expect(failed).toMatchObject({ kind: "unknown" });
     expect(native.setBackupChoice).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
   });

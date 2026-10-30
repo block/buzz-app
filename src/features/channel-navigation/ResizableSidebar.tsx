@@ -104,6 +104,7 @@ export function ResizableSidebar({
         {children}
       </div>
       <ResizeHandle
+        key={scope}
         width={width}
         setWidth={resize}
         min={SIDEBAR_MIN_WIDTH}

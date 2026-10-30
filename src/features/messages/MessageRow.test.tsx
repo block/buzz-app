@@ -3848,6 +3848,38 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     expect(block.closest("pre, p")).toBeNull();
     cleanup();
 
+    render("See the note.[^1]\n\n[^1]: Footnote text.", true);
+    expect(screen.getByText("(edited)").previousElementSibling?.tagName).toBe(
+      "SECTION",
+    );
+    cleanup();
+
+    render("Read [the doc][d].\n\n[d]: https://example.com", true);
+    expect(screen.getByText("(edited)").parentElement?.tagName).toBe("P");
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "",
+          edited: true,
+          attachments: [
+            { url: "https://example.com/notes.txt", kind: "file" as const },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").previousElementSibling).toHaveAttribute(
+      "data-message-attachments",
+    );
+    cleanup();
+
     render("Hi how are ya.", false);
     expect(screen.queryByText("(edited)")).toBeNull();
   } finally {

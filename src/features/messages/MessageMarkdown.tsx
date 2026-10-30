@@ -303,18 +303,29 @@ function remarkLiteralHtml() {
   };
 }
 
-/** Leave a slot after the body's last line for the edited marker: inside a
- * closing paragraph, else after the last block. Parses are cached by content
- * alone, so every body has the slot and rendering decides whether to fill it. */
-function remarkEditedSlot() {
-  return (tree: MarkdownNode) => {
-    const last = tree.children?.at(-1);
-    const parent = last?.type === "paragraph" ? last : tree;
+type HtmlNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HtmlNode[];
+};
+/** Leave a slot after the body's last rendered line for the edited marker:
+ * inside a closing paragraph, else after the last block, including generated
+ * footnotes. Parses are cached by content alone, so every body has the slot
+ * and rendering decides whether to fill it. */
+function rehypeEditedSlot() {
+  return (tree: HtmlNode) => {
+    const last = tree.children
+      ?.filter((child) => child.type === "element")
+      .at(-1);
+    const parent = last?.tagName === "p" ? last : tree;
     parent.children = [
       ...(parent.children ?? []),
       {
-        type: "editedSlot",
-        data: { hName: "span", hProperties: { "data-edited-slot": "" } },
+        type: "element",
+        tagName: "span",
+        properties: { dataEditedSlot: "" },
+        children: [],
       },
     ];
   };
@@ -514,7 +525,7 @@ export function MessageMarkdown({
 }
 
 /** Metadata, not prose: selection copy omits it like the byline's clock. */
-function EditedMarker() {
+export function EditedMarker() {
   return <span className={`${styles.edited} select-none`}> (edited)</span>;
 }
 
@@ -844,8 +855,8 @@ const MarkdownBody = memo(function MarkdownBody({
           [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
-          remarkEditedSlot,
         ],
+        rehypePlugins: [rehypeEditedSlot],
         components: markdownComponents,
         skipHtml: true,
         urlTransform: transformUrl,

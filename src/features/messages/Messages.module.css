@@ -1765,16 +1765,22 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   font-style: italic;
 }
 
-/* Metadata after the body's last line; on its own line after a closing block. */
+/* Metadata after the body's last line; on its own line after a closing block,
+   or after cards and attachments when no body is drawn. A large-emoji
+   paragraph is itself `.text` and keeps its marker inline. */
 .edited {
   color: var(--text-subtle);
   font-size: var(--text-caption);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.text > .edited {
+.messagePayload > .edited {
+  display: block;
+  margin-top: var(--space-1);
+}
+.text:not(p) > .edited {
   display: block;
 }
-.text > :has(+ .edited:last-child) {
+.text:not(p) > :has(+ .edited:last-child) {
   margin-bottom: var(--space-1);
 }
 
@@ -3204,6 +3210,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .message[data-viewer-message] > .messageBody > .messageContent .sentFromThread {
   padding-inline: 0 var(--space-4);
+  text-align: end;
+}
+.message[data-viewer-message] .messagePayload > .edited {
   text-align: end;
 }
 .message[data-viewer-message] > .messageBody > .reactions {

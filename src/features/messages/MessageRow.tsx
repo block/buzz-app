@@ -74,7 +74,7 @@ import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
-import { MessageMarkdown } from "./MessageMarkdown";
+import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
@@ -1266,6 +1266,8 @@ function MessageRowContent({
                   })}
                 </div>
               )}
+              {/* Without a caption, the edit is marked after the last content. */}
+              {!bodyShown && shown.edited && <EditedMarker />}
             </MessageTimestampHint>
           </div>
           {!reactionsInBubble && reactionContent}

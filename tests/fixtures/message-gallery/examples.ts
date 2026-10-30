@@ -423,6 +423,17 @@ export const groups: Group[] = [
             "Use this command instead:\n\n```sh\njust iterate\n```",
             { authorId: teammate, edited: true },
           ),
+          message("edited-attachment", "", {
+            authorId: teammate,
+            edited: true,
+            attachments: [
+              {
+                url: "https://fixture.test/landscape",
+                kind: "image",
+                dimensions: { width: 640, height: 360 },
+              },
+            ],
+          }),
         ],
       },
       single(

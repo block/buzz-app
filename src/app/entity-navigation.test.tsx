@@ -337,6 +337,9 @@ it("reopens a visit that timed out while connecting once the connection is live"
     expect(
       await screen.findByRole("heading", { name: "Can’t connect" }),
     ).toBeVisible();
+    // Messages is what failed, so the way out leads elsewhere.
+    expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open Settings" })).toBeVisible();
     online();
     await act(() => vi.advanceTimersByTimeAsync(31_000));
     await waitFor(() =>

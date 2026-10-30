@@ -52,7 +52,7 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
     await page.evaluate(() => window.messagesFixture.releaseReconnectRepair());
     const error = history.getByRole("alert");
-    const retry = history.getByRole("button", { name: "Retry thread" });
+    const retry = history.getByRole("button", { name: "Try again" });
     await expect(error).toContainText("Retained range repair failed");
     await expect(retry).toBeInViewport();
     await expect(replies).toHaveCount(10);
@@ -117,7 +117,7 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     await expect(replies.first()).toBeInViewport();
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const error = history.getByRole("alert");
-    const retry = history.getByRole("button", { name: "Retry thread" });
+    const retry = history.getByRole("button", { name: "Try again" });
     await expect(error).toContainText("Older page failed");
     await expect(retry).toBeInViewport();
     await retry.click();
@@ -174,7 +174,7 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
     // The first page is started on mount; the next page is a separate read.
     await expect(replies).toHaveCount(50);
     const error = history.getByRole("alert");
-    const retry = history.getByRole("button", { name: "Retry thread" });
+    const retry = history.getByRole("button", { name: "Try again" });
     await expect(error).toContainText("Legacy continuation failed");
     await expect(retry).toBeVisible();
     await retry.click();
@@ -397,7 +397,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
     await history.hover();
     // The wheel may demand history at the top without moving the scroller.
     await page.mouse.wheel(0, -4000);
-    const retry = history.getByRole("button", { name: "Retry thread" });
+    const retry = history.getByRole("button", { name: "Try again" });
     await expect(history.getByRole("alert")).toContainText("Older page failed");
     await child.scrollIntoViewIfNeeded();
     await expect(child).toBeInViewport();

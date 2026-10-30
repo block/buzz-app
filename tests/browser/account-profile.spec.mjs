@@ -21,7 +21,13 @@ test("profile Settings opens after a failed connection", async ({
       json: { error: "Connection unavailable" },
     });
   });
+  await page.clock.install();
   await page.goto(app.origin);
+  // Messages waits out its opening deadline while the connection retries.
+  await page.clock.runFor(15_000);
+  await expect(
+    page.getByRole("heading", { name: "Can’t connect", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Open Settings", exact: true })
     .click();

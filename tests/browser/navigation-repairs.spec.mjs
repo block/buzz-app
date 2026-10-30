@@ -38,13 +38,21 @@ test("Back restores Personal space without inheriting the active community", asy
   ).toBeVisible();
 });
 
-// An invalid address fails again synchronously, so its Retry control stays.
+// A missing page fails again synchronously, so its Retry control stays.
 test("keyboard Retry keeps focus when the retry fails in place", async ({
   page,
   app,
 }) => {
-  await page.goto(`${app.origin}/#buzz=not-json`);
-  const retry = button(page, "Retry navigation");
+  const missing = {
+    version: 1,
+    kind: "page",
+    pluginId: "missing",
+    pageId: "x",
+  };
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(missing))}`,
+  );
+  const retry = button(page, "Try again");
   await retry.focus();
   await retry.press("Enter");
   await retry.evaluate(
@@ -80,11 +88,11 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   await messages.focus();
   await messages.press("Enter");
   await expect(
-    page.getByRole("heading", { name: "This destination couldn’t open" }),
+    page.getByRole("heading", { name: "This page isn’t available" }),
   ).toBeVisible();
   expect(requests).toBe(1);
   const visit = await entry(page);
-  const retry = button(page, "Retry navigation");
+  const retry = button(page, "Try again");
   const main = page.getByRole("main");
   try {
     await retry.focus();
@@ -178,7 +186,7 @@ launchTest(
   async ({ page, app }) => {
     await page.goto(`${app.origin}/#buzz=%7B`);
     const failed = page.getByRole("heading", {
-      name: "This destination couldn’t open",
+      name: "This link doesn’t work",
       exact: true,
     });
     await expect(page.locator("#buzz-launch")).toHaveCount(0);

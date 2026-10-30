@@ -372,8 +372,12 @@ function ConnectedApp({ services }: { services: AppServices }) {
       Try again
     </Button>
   );
-  // The way out must exist: Messages itself may be what failed to start.
+  // The way out must lead elsewhere: Messages itself may be what failed. A
+  // conversation link still leaves for Messages' own default.
   const messagesButton = (variant: "primary" | "quiet") =>
+    (route.target.kind === "conversation" ||
+      (route.selected !== "buzz.channels/channels" &&
+        route.selected !== "home")) &&
     route.pages.some((page) => page.key === "buzz.channels/channels") ? (
       <Button
         type="button"
@@ -423,20 +427,29 @@ function ConnectedApp({ services }: { services: AppServices }) {
             </>
           }
         />
-      ) : (
+      ) : route.failure || failureReason === "not-found" ? (
         <EmptyState
           icon={<WarningCircleIcon />}
           title="This page isn’t available"
-          description={
-            route.failure || failureReason === "not-found"
-              ? "It may have been removed, or you may need to update Buzz."
-              : "It didn’t load this time. Try again in a moment."
-          }
+          description="It may have been removed, or you may need to update Buzz."
           action={
             <>
               {messagesButton("primary")}
               {(!route.state.ingress || route.state.retryable) &&
                 retryButton("quiet")}
+            </>
+          }
+        />
+      ) : (
+        <EmptyState
+          icon={<WarningCircleIcon />}
+          title="This page isn’t available"
+          description="It didn’t load this time. Try again in a moment."
+          action={
+            <>
+              {(!route.state.ingress || route.state.retryable) &&
+                retryButton("primary")}
+              {messagesButton("quiet")}
             </>
           }
         />

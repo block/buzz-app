@@ -9,7 +9,10 @@ Native FI additionally uses this callback owner internally with NIP-FA `return_t
 and an S256 handoff challenge, without inventing an echoed OAuth state. Its
 native session owner performs exchange and verification; callback codes and
 handoff secrets never cross IPC. A pending callback cannot be replaced by a new
-consumer. The generic commands below retain their provider OAuth contract.
+consumer. The generic commands below retain their provider OAuth contract. Native
+FI keeps the neutral callback HTML, copy and CSP from main, without branding,
+auto-close or focus return. The presentation below applies to generic OAuth
+callbacks and is selected when each attempt starts.
 
 ## Commands
 

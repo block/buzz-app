@@ -157,11 +157,19 @@ impl OAuthCallbackHost {
         } else {
             None
         };
+        // Native federated authorities keep the original neutral callback page.
+        let branded = callback_parameter == "redirect_uri";
         let (send, receive) = oneshot::channel();
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 Duration::from_secs(600),
-                receive_callback(listener, &authority, &path, expected_state.as_deref()),
+                receive_callback(
+                    listener,
+                    &authority,
+                    &path,
+                    expected_state.as_deref(),
+                    branded,
+                ),
             )
             .await
             .unwrap_or_else(|_| Err("Sign-in timed out. Try again.".into()));
@@ -282,6 +290,7 @@ async fn receive_callback(
     authority: &str,
     path: &str,
     expected_state: Option<&str>,
+    branded: bool,
 ) -> CallbackResult {
     loop {
         let (mut stream, _) = listener
@@ -291,7 +300,7 @@ async fn receive_callback(
         // Bound slow/oversize requests; malformed callbacks do not consume the attempt.
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            callback(&mut stream, authority, path, expected_state),
+            callback(&mut stream, authority, path, expected_state, branded),
         )
         .await;
         if let Ok(Some(response)) = result {
@@ -307,6 +316,7 @@ async fn callback(
     authority: &str,
     path: &str,
     expected_state: Option<&str>,
+    branded: bool,
 ) -> Option<OAuthCallback> {
     let mut bytes = Vec::new();
     let mut chunk = [0; 1024];
@@ -317,12 +327,12 @@ async fn callback(
         }
         bytes.extend_from_slice(&chunk[..count]);
         if bytes.len() > 8192 {
-            reply(stream, 400, "Invalid callback").await;
+            reply(stream, 400, "Invalid callback", branded).await;
             return None;
         }
     }
     let (status, message, result) = parse_callback(&bytes, authority, path, expected_state);
-    reply(stream, status, message).await;
+    reply(stream, status, message, branded).await;
     result
 }
 
@@ -390,41 +400,54 @@ fn parse_callback(
     if codes.len() != 1 || codes[0].1.is_empty() || codes[0].1.len() > 4096 {
         return invalid;
     }
-    (200, "", Some(OAuthCallback { parameters: fields }))
+    (
+        200,
+        "Sign-in received. Return to the app to finish verification.",
+        Some(OAuthCallback { parameters: fields }),
+    )
 }
 
-async fn reply(stream: &mut TcpStream, status: u16, message: &str) {
-    // All copy comes from the fixed responses above, never from callback values.
-    let heading = match status {
-        200 => "You're now signed in.",
-        404 => "Page not found",
-        _ => "Sign-in needs attention",
+async fn reply(stream: &mut TcpStream, status: u16, message: &str, branded: bool) {
+    let (body, policy) = if branded {
+        // All copy comes from the fixed responses above, never from callback values.
+        let heading = match status {
+            200 => "You're now signed in.",
+            404 => "Page not found",
+            _ => "Sign-in needs attention",
+        };
+        let style = include_str!("page.css");
+        let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
+        let script = include_str!("page.js");
+        let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
+        // Replace whole HTML comments so the template is valid without parsing placeholders as CSS/JS.
+        let body = include_str!("page.html")
+            .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
+            .replace("<!-- {{script}} -->", &format!("<script>{script}</script>"))
+            .replace("{{complete}}", if status == 200 { "true" } else { "false" })
+            .replace(
+                "{{closeDelay}}",
+                &focus::READABLE_DELAY.as_secs().to_string(),
+            )
+            .replace(
+                "{{brand}}",
+                include_str!("../../../public/builderlab-mark.svg"),
+            )
+            .replace("{{heading}}", heading)
+            .replace("{{message}}", if status == 200 { "" } else { message });
+        let policy = format!("default-src 'none'; style-src 'sha256-{style_hash}'; script-src 'sha256-{script_hash}'; base-uri 'none'; frame-ancestors 'none'");
+        (body, policy)
+    } else {
+        (
+            format!("<!doctype html><title>Sign-in callback</title><p>{message}</p>"),
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'".into(),
+        )
     };
-    let style = include_str!("page.css");
-    let style_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
-    let script = include_str!("page.js");
-    let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
-    // Replace whole HTML comments so the template is valid without parsing placeholders as CSS/JS.
-    let body = include_str!("page.html")
-        .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
-        .replace("<!-- {{script}} -->", &format!("<script>{script}</script>"))
-        .replace("{{complete}}", if status == 200 { "true" } else { "false" })
-        .replace(
-            "{{closeDelay}}",
-            &focus::READABLE_DELAY.as_secs().to_string(),
-        )
-        .replace(
-            "{{brand}}",
-            include_str!("../../../public/builderlab-mark.svg"),
-        )
-        .replace("{{heading}}", heading)
-        .replace("{{message}}", message);
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
         _ => "Bad Request",
     };
-    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; script-src 'sha256-{script_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
+    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: {policy}\r\nReferrer-Policy: no-referrer\r\n\r\n{body}", body.len());
     let _ = stream.write_all(response.as_bytes()).await;
     let _ = stream.shutdown().await;
 }

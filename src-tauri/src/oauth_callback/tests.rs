@@ -200,6 +200,7 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("<span>Builderlab</span>"));
         assert!(response.contains(include_str!("../../../public/builderlab-mark.svg")));
         assert!(response.contains("<h1 id=\"heading\">You're now signed in.</h1>"));
+        assert!(!response.contains("Sign-in received. Return to the app to finish verification."));
         assert!(response.contains("data-complete=\"true\""));
         assert!(response.contains("data-close-delay=\"3\""));
         assert!(response.contains("Closing this window automatically</span>"));
@@ -543,6 +544,18 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     let callback = url::Url::parse(&attempt.callback_url).unwrap();
     assert_eq!(callback.host_str(), Some("127.0.0.1"));
     assert!(callback.port().is_some_and(|port| port > 0));
+    for (target, status, message) in [
+        ("/wrong?code=fixture-code".to_string(), "404", "Not found"),
+        (
+            format!("{}?code=", callback.path()),
+            "400",
+            "Invalid callback",
+        ),
+    ] {
+        let html = send(&callback, &target, "").await;
+        assert!(html.starts_with(&format!("HTTP/1.1 {status}")));
+        assert_neutral_callback(&html, message);
+    }
     let html = send(
         &callback,
         &format!("{}?code=fixture-code", callback.path()),
@@ -550,9 +563,10 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     )
     .await;
     assert!(html.starts_with("HTTP/1.1 200"));
-    assert!(html.contains("<title>Builderlab sign-in</title>"));
-    assert!(html.contains("You're now signed in."));
-    assert!(html.contains(include_str!("../../../public/builderlab-mark.svg")));
+    assert_neutral_callback(
+        &html,
+        "Sign-in received. Return to the app to finish verification.",
+    );
     assert!(!html.contains("fixture-code"));
     assert!(host
         .begin(options("/other"), |_| panic!(
@@ -566,4 +580,50 @@ async fn federated_handoff_uses_return_to_without_legacy_oauth_fields_and_keeps_
     assert!(host.wait(&attempt.id).await.is_err());
     let next = start(&host, options("/other")).unwrap();
     host.cancel(&next.id).unwrap();
+}
+
+fn assert_neutral_callback(response: &str, message: &str) {
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert_eq!(
+        body,
+        format!("<!doctype html><title>Sign-in callback</title><p>{message}</p>")
+    );
+    assert!(headers.contains(
+        "Content-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\n"
+    ));
+    assert!(headers.contains("Cache-Control: no-store\r\n"));
+    assert!(headers
+        .split("\r\n")
+        .any(|header| header == "Referrer-Policy: no-referrer"));
+    assert!(headers.contains(&format!("Content-Length: {}\r\n", body.len())));
+}
+
+#[tokio::test]
+async fn federated_error_keeps_the_neutral_page_and_private_details_native() {
+    let host = OAuthCallbackHost::default();
+    let attempt = host
+        .begin_federated("https://organization.example/v1/login/start".into(), |_| {
+            Ok(())
+        })
+        .unwrap();
+    let callback = url::Url::parse(&attempt.callback_url).unwrap();
+    let html = send(
+        &callback,
+        &format!(
+            "{}?error=access_denied&error_description=private-detail",
+            callback.path()
+        ),
+        "",
+    )
+    .await;
+    assert!(html.starts_with("HTTP/1.1 400"));
+    assert_neutral_callback(&html, "Sign-in failed. Return to the app to retry.");
+    assert!(!html.contains("private-detail"));
+    assert_eq!(
+        host.wait(&attempt.id).await.unwrap(),
+        response(&[
+            ("error", "access_denied"),
+            ("error_description", "private-detail")
+        ])
+    );
 }

@@ -158,11 +158,18 @@
   bottom: 0;
   z-index: 2;
   /* Give the floating surface its own inset, inside the content's border line. */
-  padding: var(--space-5) var(--space-8);
+  padding: var(--space-5) calc(2 * var(--space-5));
   pointer-events: none;
 }
 .panelFooter:empty {
   display: none;
+}
+.panelFooter::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 0;
+  z-index: -1;
+  background: linear-gradient(to top, var(--surface-panel), transparent);
 }
 .panelFooter > * {
   pointer-events: auto;

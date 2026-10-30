@@ -45,38 +45,40 @@ export function createSignInFooter(session: OAuthSession) {
           className="floating-surface"
           style={{ "--floating-inset": "var(--space-5)" } as CSSProperties}
         >
-          <div className="grid gap-4 p-5">
+          <div className="p-5">
             <Header
               id={title}
               title="Sign in to access this agent"
               subtitle="Continue with your Builderlab account."
             />
-            <p role="status" className="m-0 text-body-sm text-secondary">
-              {!available
-                ? "Open the Buzz desktop app to sign in with Builderlab."
-                : pending
-                  ? slow
-                    ? "Finish sign-in in your browser, then return to Buzz."
-                    : "Signing in…"
-                  : ""}
-            </p>
-            {login.error && (
-              <p role="alert" className="m-0 text-body-sm text-danger">
-                {login.error}
-              </p>
-            )}
-            <Button
-              variant={pending ? "outline" : "prominent"}
-              size="lg"
-              disabled={!available && !pending}
-              style={{ width: "100%" }}
-              onClick={() => {
-                if (pending) session.cancel();
-                else void session.signIn();
-              }}
-            >
-              {pending ? "Cancel sign-in" : "Sign in"}
-            </Button>
+            <div className="grid gap-3">
+              {(!available || pending) && (
+                <p role="status" className="m-0 text-body-sm text-secondary">
+                  {!available
+                    ? "Open the Buzz desktop app to sign in with Builderlab."
+                    : slow
+                      ? "Finish sign-in in your browser, then return to Buzz."
+                      : "Signing in…"}
+                </p>
+              )}
+              {login.error && (
+                <p role="alert" className="m-0 text-body-sm text-danger">
+                  {login.error}
+                </p>
+              )}
+              <Button
+                variant={pending ? "outline" : "prominent"}
+                size="lg"
+                disabled={!available && !pending}
+                style={{ width: "100%" }}
+                onClick={() => {
+                  if (pending) session.cancel();
+                  else void session.signIn();
+                }}
+              >
+                {pending ? "Cancel sign-in" : "Sign in"}
+              </Button>
+            </div>
           </div>
         </section>
       </motion.div>

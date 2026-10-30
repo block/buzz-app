@@ -190,15 +190,13 @@ export function ModelSettings({
     return () => clearTimeout(timer);
   }, [pending, agent, revision]);
   const placeholder =
-    login.status === "pending"
-      ? "Signing in…"
-      : login.status === "signed-out"
-        ? "Sign in"
-        : pending
-          ? slow
-            ? "Still loading…"
-            : "…"
-          : "Unavailable";
+    login.status !== "signed-in"
+      ? ""
+      : pending
+        ? slow
+          ? "Still loading…"
+          : "…"
+        : "Unavailable";
   return (
     <LoadingRegion
       pending={pending}

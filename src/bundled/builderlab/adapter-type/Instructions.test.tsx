@@ -141,7 +141,11 @@ it("does not start sign-in or provider reads on mount, then loads after explicit
   const h = await fixture(false);
   const signIn = vi.spyOn(h.session, "signIn");
   render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
-  expect(screen.getByRole("button", { name: "Model: Sign in" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Model:" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveAttribute(
+    "placeholder",
+    "",
+  );
   expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
   expect(signIn).not.toHaveBeenCalled();
   expect(h.request).not.toHaveBeenCalled();

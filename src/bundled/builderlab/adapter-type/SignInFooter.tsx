@@ -1,8 +1,13 @@
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Header } from "../../../shared/design-system/ui/Header";
-import { Panel } from "../../../shared/design-system/ui/Panel";
 import { browserLoginAvailable } from "../oauth/browser";
 import type { OAuthSession } from "../oauth/session";
 
@@ -35,7 +40,11 @@ export function createSignInFooter(session: OAuthSession) {
           ease: [0.23, 1, 0.32, 1],
         }}
       >
-        <Panel aria-labelledby={title}>
+        <section
+          aria-labelledby={title}
+          className="floating-surface"
+          style={{ "--floating-inset": "var(--space-5)" } as CSSProperties}
+        >
           <div className="grid gap-4 p-5">
             <Header
               id={title}
@@ -69,7 +78,7 @@ export function createSignInFooter(session: OAuthSession) {
               {pending ? "Cancel sign-in" : "Sign in"}
             </Button>
           </div>
-        </Panel>
+        </section>
       </motion.div>
     );
   };

@@ -139,12 +139,12 @@ export function useOpenTranscript<T>(
   const fresh = opening !== undefined && opening !== offered.opening;
   if (moved || fresh) {
     setOffered({ place, ...(opening !== undefined && { opening }) });
+    // Only a new opening asks; moving to another conversation drops it.
     const asked =
-      place && request?.initial !== undefined
+      fresh && place && request?.initial !== undefined
         ? { place, row: request.initial, initial: true as const }
         : undefined;
     if (moved || asked) setShown(asked);
-    // Only a new opening waits; moving to another conversation drops it.
     setWaiting(
       fresh && !asked && place && request?.searching ? place : undefined,
     );

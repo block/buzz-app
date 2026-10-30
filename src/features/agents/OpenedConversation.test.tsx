@@ -14,13 +14,14 @@ it("keeps the reader's choice when the opened conversation's lookup finishes lat
     resolve = done;
   });
   const { result } = renderHook(() => {
-    const { session } = useOpenedSession<Row>(
+    const { session, searching } = useOpenedSession<Row>(
       [recent],
       conversation,
       () => lookup,
     );
     return useOpenTranscript<Row>(conversation, (row) => row.key, {
       initial: session,
+      searching,
       opening: 1,
       done() {},
     });
@@ -100,12 +101,14 @@ it.each(["keydown", "pointerdown", "wheel"] as const)(
 
 it("drops a pending request when the profile moves to another conversation", async () => {
   const other = { channelId: "other", rootId: "root" };
+  // Already saved, so it is known as soon as the profile moves to it.
+  const kept: Row = { key: "kept", channelId: "other", root: "root" };
   const lookups = new Map<string, (row: Row) => void>();
   const done = vi.fn();
   const { result, rerender } = renderHook(
     ({ shown }: { shown: typeof conversation }) => {
       const { session, searching } = useOpenedSession<Row>(
-        [recent],
+        [recent, kept],
         shown,
         (place) =>
           new Promise<Row>((resolve) => {

@@ -573,6 +573,7 @@ export function createUnread({
   const undecided = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
     !!entry.parentId &&
+    !guests.has(entry.channelId) &&
     !relevant(entry, dm) &&
     chosen(entry) === undefined &&
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
@@ -1093,15 +1094,16 @@ export function createUnread({
                     },
                     messageId: entry.event.id,
                   }));
-            if (!dm && lastReply?.rootId)
-              readThrough.push({
-                target: {
-                  kind: "thread",
-                  channelId: channel.id,
-                  rootId: lastReply.rootId,
-                },
-                messageId: lastReply.event.id,
-              });
+            // Through each thread's latest reply: a shared chat's row can
+            // gather mentions from several threads.
+            if (!dm)
+              for (const [rootId, reply] of new Map(
+                replies.map((entry) => [entry.rootId as string, entry]),
+              ))
+                readThrough.push({
+                  target: { kind: "thread", channelId: channel.id, rootId },
+                  messageId: reply.event.id,
+                });
             return Object.freeze({
               id: `${channel.id}:${id}`,
               channelId: channel.id,

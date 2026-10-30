@@ -4016,7 +4016,7 @@ it("catch-up and explicit unread intent still apply to agent-audience rows", asy
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
 });
 
-it("someone else's Solo chat earns attention only from mentions", () => {
+it("someone else's Solo chat earns attention only from mentions", async () => {
   const h = setup();
   h.grant("chat");
   h.emit([
@@ -4077,6 +4077,24 @@ it("someone else's Solo chat earns attention only from mentions", () => {
       unreadCount: 2,
     }),
   ]);
+
+  // Archiving reads every tag in the row, across threads.
+  const elsewhere = message(h.alice, "chat", "@you one more", 26, [
+    ["e", everyone.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([elsewhere]);
+  const [item] = unread.inbox().items;
+  assert(item);
+  expect(item.unreadCount).toBe(3);
+  for (const step of item.readThrough)
+    await unread.markThrough(step.target, step.messageId);
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({ id: "chat:chat", unreadCount: 0 }),
+  ]);
+  expect(
+    unread.snapshot({ kind: "channel", channelId: "chat" }).observedCount,
+  ).toBe(0);
 });
 
 it("a Solo chat whose creator is unknown stays quiet until it is known to be the viewer's", () => {

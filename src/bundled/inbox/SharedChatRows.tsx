@@ -1,14 +1,15 @@
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import { conversationTarget } from "../../features/channel-navigation/routes";
-import { ownSolo } from "../../features/solo/labels";
+import { ownSolo, soloChatLinkName } from "../../features/solo/labels";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 
-/** Someone else's Solo chats that tagged the viewer, nested under Inbox. */
+/** Someone else's Solo chats with an unread tag for the viewer, or open now,
+ * nested under Inbox. */
 export function SharedChatRows({
   relay,
   navigator,
@@ -60,21 +61,17 @@ function Rows({
   const chats = list.channels.filter(
     (channel) => channel.channelType === "solo" && !ownSolo(channel, viewer),
   );
-  // Reading the open chat clears its tag; keep its row until the viewer
-  // moves on, so it doesn't vanish underfoot.
-  const [held, setHeld] = useState<string>();
-  const holding =
-    open && (tagged.has(open) || held === open) ? open : undefined;
-  if (holding !== held) setHeld(holding);
+  // The open chat keeps its row, so reading it never pulls the row away
+  // underfoot; it leaves once the viewer moves on.
   return chats
-    .filter((channel) => tagged.has(channel.id) || channel.id === holding)
+    .filter((channel) => tagged.has(channel.id) || channel.id === open)
     .map((channel) => (
       <NavigationItem
         key={channel.id}
         variant="row"
         inset
-        label={channel.name}
-        title={channel.name}
+        label={soloChatLinkName(channel)}
+        title={soloChatLinkName(channel)}
         icon={<ChatCircleIcon size={16} />}
         selected={open === channel.id}
         onClick={() =>

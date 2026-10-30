@@ -102,7 +102,7 @@ function fixture() {
 const names = () =>
   screen.queryAllByRole("button").map((row) => row.textContent);
 
-it("pulls in someone else's chat only while it has an unread tag or stays open", async () => {
+it("shows someone else's chat only while it has an unread tag or is open", async () => {
   const h = fixture();
   render(h.view);
   expect(names()).toEqual([]);
@@ -131,8 +131,12 @@ it("pulls in someone else's chat only while it has an unread tag or stays open",
   h.go();
   expect(names()).toEqual([]);
 
-  // Opening a shared chat without a tag, from a card or link, adds nothing.
+  // A shared chat opened from a card or link shows while it's open.
   h.go("quiet");
+  expect(names()).toEqual(["Shared but untagged"]);
+  h.go("mine");
+  expect(names()).toEqual([]);
+  h.go();
   expect(names()).toEqual([]);
 
   // The next tag brings it back.

@@ -1215,6 +1215,40 @@ it("reconciles missing top matches so they cannot hide a valid ninth candidate",
   ]);
 });
 
+it("preserves newer saved metadata when a provisional exact read replays an older name", async () => {
+  let clock = 1_700_000_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const old = metadata(relay, "renamed", "old-name", 10, [["public"]]);
+  const current = metadata(relay, "renamed", "release-new", 11, [["public"]]);
+  const warm = h.channels.searchPublic?.("zzz");
+  (await h.next(39000)).respond([current]);
+  await warm;
+  clock += 30_000;
+  const progress = vi.fn();
+  const search = h.channels
+    .searchPublic?.("release-new", { progress })
+    .catch(() => undefined);
+  const delta = await h.next(39000);
+  (await h.next(39000)).respond([old]);
+  await vi.waitFor(() => expect(progress).toHaveBeenCalled());
+  expect(progress).toHaveBeenLastCalledWith({ channels: [], partial: false });
+  delta.respond([]);
+  // The newer saved name still nominates a candidate for a fresh final check.
+  const exact = await h.next(39000);
+  expect(exact.filters[0]?.["#d"]).toEqual(["renamed"]);
+  exact.respond([current]);
+  expect(await search).toMatchObject({
+    channels: [{ id: "renamed", name: "release-new" }],
+  });
+  expect(h.channels.openDirectory?.()).toEqual([
+    { id: "renamed", name: "release-new" },
+  ]);
+  expect(h.pending).toHaveLength(0);
+});
+
 it("reuses a full directory repaired by newer exact metadata", async () => {
   const h = setup();
   h.channels.ensureList();

@@ -2181,7 +2181,7 @@ export function createChannelStore(
             const current = discovery.metadataVersion(id);
             const landed = kept.get(id);
             const candidate = latest.get(id);
-            if (current) kept.set(id, newer(landed, current));
+            if (current) kept.set(id, newer(landed, newer(candidate, current)));
             else if (
               !landed ||
               !candidate ||

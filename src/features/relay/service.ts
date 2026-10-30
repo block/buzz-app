@@ -14,6 +14,7 @@ import {
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
+import { ensureStarterChannels } from "./starter-channels";
 const WAKE_TICK_MS = 5_000;
 const WAKE_GAP_MS = 15_000;
 
@@ -279,6 +280,13 @@ export function provideRelay(
             session: store.session,
           });
           store.session.channels.ensureList();
+          // First run in this community: join the starter channels it has.
+          // `signal` ends with the connection, so a replaced session stops.
+          void ensureStarterChannels(
+            store.session,
+            transportPartition(transport),
+            signal,
+          );
         })
         .catch(async (error) => {
           await restoring;

@@ -96,10 +96,11 @@ export function useReauthorizedRetry(
   }).current;
 }
 
-/** True while the one recovery notice is visible. Surfaces whose failure
- * the notice already reports hide their own copy of it. */
-export function useRecoveryShown(recovery: RelayRecovery | undefined) {
-  return useRecovery(recovery).shown;
+/** True from recovery's first failure, including the quiet delay before its
+ * notice. Surfaces whose failure recovery owns hide their own copy, so the
+ * quiet window stays quiet and the notice is the one report after it. */
+export function useRecovering(recovery: RelayRecovery | undefined) {
+  return useRecovery(recovery).recovering;
 }
 
 /** Claim the notice for an inline surface while it is mounted. */
@@ -128,7 +129,7 @@ export function RecoveryNotice({
 }: {
   recovery: RelayRecovery | undefined;
 }) {
-  const shown = useRecoveryShown(recovery);
+  const { shown } = useRecovery(recovery);
   const inline = useSyncExternalStore(
     recovery
       ? (listener: () => void) => {

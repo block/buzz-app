@@ -17,6 +17,11 @@ import { huddleDescription } from "../huddle/lifecycle";
 import { createRelaySession } from "../relay/session";
 import { createChannelLifecycle } from "../relay/channel-lifecycle";
 import { ReadError } from "../relay/errors";
+import {
+  createRecovery,
+  RECOVERY_NOTICE_DELAY_MS,
+  type RecoveryStatus,
+} from "../relay/recovery";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
   SidebarGroups,
@@ -294,6 +299,59 @@ it("keeps visibility recovery quiet, then offers the existing retry after exhaus
     cleanup();
     lifecycle.dispose();
     random.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps a roster failure quiet while recovery owns it, then shows a lasting one", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let status: RecoveryStatus = "failed";
+  const listeners = new Set<() => void>();
+  const recovery = createRecovery([
+    {
+      status: () => status,
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      retry() {},
+    },
+  ]);
+  const failed: ChannelList = {
+    status: "error",
+    error: "Channels could not be loaded.",
+    channels: [],
+  };
+  f.session.recovery = recovery;
+  f.session.channels = { ...f.session.channels, list: () => failed };
+  try {
+    render(f.view("alpha"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(recovery.snapshot()).toMatchObject({
+      recovering: true,
+      shown: false,
+    });
+    expect(
+      screen.queryByText("Channels could not be loaded."),
+    ).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(RECOVERY_NOTICE_DELAY_MS - 1));
+    expect(
+      screen.queryByText("Channels could not be loaded."),
+    ).not.toBeInTheDocument();
+    // Recovery stops owning it, as for a denial: the channel and Solo
+    // inventories each report it.
+    status = "settled";
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+    expect(recovery.snapshot().recovering).toBe(false);
+    const alerts = screen.getAllByText("Channels could not be loaded.");
+    expect(alerts).toHaveLength(2);
+    for (const alert of alerts) expect(alert).toHaveAttribute("role", "alert");
+  } finally {
+    cleanup();
+    recovery.dispose();
     vi.useRealTimers();
   }
 });

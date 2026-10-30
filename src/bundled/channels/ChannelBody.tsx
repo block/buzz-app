@@ -5,7 +5,7 @@ import {
 } from "../../features/conversation/Conversation";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelWindow } from "../../features/relay/react";
-import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
+import { useRecovering } from "../../features/relay/RecoveryNotice";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Channels.module.css";
@@ -54,7 +54,7 @@ export const ChannelBody = memo(function ChannelBody({
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);
   }, [channelId]);
-  const recoveryShown = useRecoveryShown(queries.recovery);
+  const recovering = useRecovering(queries.recovery);
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";
   useEffect(() => {
@@ -86,9 +86,9 @@ export const ChannelBody = memo(function ChannelBody({
     else if (!cached && window.status === "error")
       navigation?.complete({ status: "failed", reason: "unavailable" });
   }, [cached, navigation, window.status]);
-  // While the recovery notice shows, it owns the one Retry now; an empty
-  // failed timeline waits for it instead of offering a second Retry.
-  if (window.status === "error" && !window.rows.length && !recoveryShown)
+  // While recovery runs it owns the one Retry now, in its notice after the
+  // quiet delay; an empty failed timeline waits instead of offering a second.
+  if (window.status === "error" && !window.rows.length && !recovering)
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}

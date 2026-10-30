@@ -25,7 +25,7 @@ import {
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
-import { useRecoveryShown } from "../relay/RecoveryNotice";
+import { useRecovering } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
@@ -91,7 +91,7 @@ export function SoloInventory({
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const recoveryShown = useRecoveryShown(session.recovery);
+  const recovering = useRecovering(session.recovery);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
   const draft =
@@ -321,7 +321,7 @@ export function SoloInventory({
         )}
       />
       {list.status === "loading" && <p role="status">Loading conversations…</p>}
-      {list.status === "error" && !recoveryShown && (
+      {list.status === "error" && !recovering && (
         <p role="alert">{list.error}</p>
       )}
     </>

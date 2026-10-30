@@ -42,6 +42,13 @@ export function CreateSidebarSection({
     if (focusRequest) input.current?.focus();
   }, [focusRequest]);
   const needsRecovery = !pending && !writable;
+  const recovering = useRef(needsRecovery);
+  useLayoutEffect(() => {
+    // Background recovery can also remove the Retry button, even while a
+    // click on it is landing. Return focus to the field either way.
+    if (recovering.current && writable) input.current?.focus();
+    recovering.current = needsRecovery;
+  }, [needsRecovery, writable]);
   const errorId = `${formId}-error`;
   const submit = async () => {
     if (submitted.current || pending || !writable || !name.trim()) return;

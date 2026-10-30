@@ -434,11 +434,13 @@ export function createRelaySession(
   }
   /** The channel of a failed or running timeline write: a message, reaction,
    * edit or deletion. Only membership decides whether these can be sent. Other
-   * kinds have their own owners or may target a channel the viewer is not on
-   * (a create, an owner removing their agent), so they are never stranded. */
+   * kinds, and workflow deletions, have their own owners or may target a
+   * channel the viewer is not on (a create, an owner removing their agent), so
+   * they are never stranded. */
   const contribution = (item: OutgoingEvent) =>
     (item.delivery === "failed" || item.delivery === "sending") &&
-    [5, 7, 9, 40003].includes(item.event.kind)
+    [5, 7, 9, 40003].includes(item.event.kind) &&
+    !isWorkflowOperation(item.event)
       ? item.event.tags.find(([name]) => name === "h")?.[1]
       : undefined;
   let sweeping = false;
@@ -448,9 +450,10 @@ export function createRelaySession(
    * roster read or a confirmed Leave or Delete, the writer confirms which
    * channels the viewer cannot participate in no longer list them: a
    * replica's omission can be lag, and a local denial (a 401 or a ban) is not
-   * removal. Their failed writes go, and running ones that then fail, unless
-   * the viewer is back. Unconfirmed intent stays for a regrant. One writer
-   * read runs at a time; a request or a cancelled read sweeps again after it. */
+   * removal. Their failed writes go. A running one is swept again once it
+   * ends, since the viewer may have rejoined meanwhile. Unconfirmed intent
+   * stays for a regrant. One writer read runs at a time; a request or a
+   * cancelled read sweeps again after it. */
   function dropStrandedSends() {
     const outbox = writes?.outbox;
     if (!outbox) return;
@@ -459,10 +462,6 @@ export function createRelaySession(
       return;
     }
     sweeping = true;
-    const failed = (id: string) =>
-      outbox
-        .snapshot()
-        .some((item) => item.event.id === id && item.delivery === "failed");
     // Restored sends can still be loading when the first roster read lands.
     void outbox
       .ready()
@@ -490,15 +489,16 @@ export function createRelaySession(
           });
         for (const item of outbox.snapshot()) {
           const channelId = contribution(item);
-          if (!channelId || !gone.includes(channelId)) continue;
+          if (
+            !channelId ||
+            !gone.includes(channelId) ||
+            channels.canParticipate(channelId)
+          )
+            continue;
           const { id } = item.event;
-          void attemptEnded(outbox, id)
-            .then(() =>
-              failed(id) && !channels.canParticipate(channelId)
-                ? outbox.dismiss(id)
-                : undefined,
-            )
-            .catch(() => {});
+          if (item.delivery === "failed")
+            void outbox.dismiss(id).catch(() => {});
+          else void attemptEnded(outbox, id).then(dropStrandedSends);
         }
       })
       .catch(() => {})

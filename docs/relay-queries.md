@@ -338,13 +338,23 @@ The relay has no text search for channel metadata. For a typed, unscoped palette
 or `#` completion query, `channels.searchPublic(query)` reads relay-authored
 `39000` metadata without applying it, in pages of 500 through the relay's
 `(until, before_id)` cursor until the relay runs out or 20,000 events are read.
+Cold searches and the first search after five minutes replace the full directory.
+Between those full reads, expired searches request changes with `since`, starting
+two minutes before the previous successful read began. Newer signed metadata
+replaces older versions per channel; an empty delta retains unchanged candidates.
+Only complete reads advance that watermark. A failed read keeps the previous
+directory and watermark. Incomplete directories, clock rollback, and a delta
+merge exceeding 20,000 channels fall back to a full read.
 It matches names locally and keeps only explicit active public channels the
 viewer has not joined. Every query in the same session epoch shares one read:
 a query that stops waiting leaves it running for the next, and a finished read
 is reused for 30 seconds, so typing reads the directory once. After expiry,
 the prior directory also supplies candidates while fresh pages arrive. Each
 candidate still needs fresh exact resolution, including a name-match check;
-only the new scan supplies the final answer. Names match by
+the completed full read or merged delta supplies the final answer. A completed
+directory read cancels unfinished provisional lookups. A failed provisional
+lookup waits for the directory's final answer rather than failing the search.
+Names match by
 the joined-channel rule (`matchRank`: exact, prefix, word start, substring,
 word runs, then letters in order), so `buzz community` finds `buzz-community`.
 The best eight are resolved through the same exact `resolve` path as message
@@ -353,6 +363,14 @@ hits; the page itself never grants access. So
 joined-only. Reaching the 20,000-event bound reports partial coverage; read
 failures show a retry.
 The search waits for a ready channel list.
+
+Private/deleted channels may disappear from delta results without a tombstone.
+Contradicted exact matches are pruned and force full reconciliation; one local
+invalidation restarts the search immediately. Further invalidations use the
+existing bounded read retry policy. Caller cancellation, cache clearing and
+disposal never trigger this restart. Periodic full reads also repair omissions
+caused by clock skew or replica lag beyond the overlap. The directory remains
+session-local; it is not persisted to disk.
 
 A finished read also names every open channel for `#name` prose in messages
 and drafts, through `channels.openDirectory()`, until a later read completes,

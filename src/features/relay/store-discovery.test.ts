@@ -704,7 +704,12 @@ it("ranks public name matches before the cut and reuses one metadata page while 
     if (reads) {
       const request = await h.next(39000);
       expect(request.filters).toEqual([
-        { kinds: [39000], authors: [relay.pubkey], limit: 500 },
+        {
+          kinds: [39000],
+          authors: [relay.pubkey],
+          limit: 500,
+          ...(clock === 1_000_000 ? {} : { since: 880 }),
+        },
       ]);
       request.respond(page);
     }
@@ -753,7 +758,7 @@ it.each(["complete", "fail"])(
     const warm = h.channels.searchPublic?.("zzz");
     (await h.next(39000)).respond([open]);
     await warm;
-    clock += 30_000;
+    clock += 5 * 60_000;
     const progress = vi.fn();
     const search = h.channels.searchPublic?.("release", { progress });
     assert.exists(search);
@@ -801,7 +806,7 @@ it.each(["renamed", "private", "archived", "missing"])(
     const warm = h.channels.searchPublic?.("zzz");
     (await h.next(39000)).respond([old]);
     await warm;
-    clock += 30_000;
+    clock += 5 * 60_000;
     const progress = vi.fn();
     const search = h.channels.searchPublic?.("release", { progress });
     assert.exists(search);
@@ -835,7 +840,7 @@ it.each(["renamed", "private", "archived", "missing"])(
 );
 
 it.each(["private", "missing"])(
-  "makes an expired search retryable when a previously admitted preview becomes %s",
+  "immediately restarts an expired search when a previously admitted preview becomes %s",
   async (change) => {
     let clock = 1_000_000;
     const h = setup({ now: () => clock });
@@ -858,15 +863,68 @@ it.each(["private", "missing"])(
         ? []
         : [metadata(relay, "old", "release-old", 11, [["private"]])],
     );
-    expect(isRetryableRead(await result)).toBe(true);
+    // One local recovery bypasses network retry timers and uses fresh evidence.
+    const current = metadata(relay, "new", "release-new", 12, [["public"]]);
+    const retry = await h.next(39000);
+    expect(retry.filters[0]?.since).toBeUndefined();
     expect(refresh.signal?.aborted).toBe(true);
     expect(h.channels.get?.("old")?.readOnly).not.toBe(true);
-    // The existing retry owner can now finish from fresh evidence.
-    const current = metadata(relay, "new", "release-new", 12, [["public"]]);
-    const retry = h.channels.searchPublic?.("release", { progress() {} });
+    retry.respond([current]);
     (await h.next(39000)).respond([current]);
-    (await h.next(39000)).respond([current]);
-    expect((await retry)?.channels.map(({ id }) => id)).toEqual(["new"]);
+    expect(await result).toMatchObject({
+      channels: [{ id: "new" }],
+      partial: false,
+    });
+    expect(h.pending).toHaveLength(0);
+  },
+);
+
+it.each(["second revocation", "caller cancellation"])(
+  "bounds immediate recovery after %s",
+  async (action) => {
+    let clock = 1_700_000_000_000;
+    const h = setup({ now: () => clock });
+    h.channels.ensureList();
+    await h.rosters(0);
+    await h.settled();
+    const first = metadata(relay, "first", "release-a", clock / 1000, [
+      ["public"],
+    ]);
+    const second = metadata(relay, "second", "release-b", clock / 1000, [
+      ["public"],
+    ]);
+    const warm = h.channels.searchPublic?.("release");
+    (await h.next(39000)).respond([first, second]);
+    (await h.next(39000)).respond([first, second]);
+    await warm;
+    clock += 30_000;
+    const caller = new AbortController();
+    const search = h.channels.searchPublic?.("release", {
+      limit: 1,
+      progress() {},
+      signal: caller.signal,
+    });
+    assert.exists(search);
+    const result = search.catch((error: unknown) => error);
+    const original = await h.next(39000);
+    (await h.next(39000)).respond([
+      metadata(relay, "first", "release-a", clock / 1000, [["private"]]),
+    ]);
+    const recovery = await h.next(39000);
+    expect(original.signal?.aborted).toBe(true);
+    expect(recovery.filters[0]?.since).toBeUndefined();
+    if (action === "caller cancellation") {
+      caller.abort();
+      expect(isRetryableRead(await result)).toBe(false);
+      recovery.respond([]);
+    } else {
+      recovery.respond([second]);
+      expect(h.channels.get?.("second")?.readOnly).toBe(true);
+      (await h.next(39000)).respond([
+        metadata(relay, "second", "release-b", clock / 1000, [["private"]]),
+      ]);
+      expect(await result).toMatchObject({ kind: "unavailable" });
+    }
     expect(h.pending).toHaveLength(0);
   },
 );
@@ -883,7 +941,7 @@ it.each(["stalls", "fails"])(
     const warm = h.channels.searchPublic?.("zzz");
     (await h.next(39000)).respond([old]);
     await warm;
-    clock += 30_000;
+    clock += 5 * 60_000;
     const progress = vi.fn();
     const search = h.channels.searchPublic?.("release", { progress });
     assert.exists(search);
@@ -942,6 +1000,174 @@ it.each(["caller", "cache clear", "disposal"])(
     expect(h.pending).toHaveLength(0);
   },
 );
+
+it("merges incremental metadata and periodically replaces the full directory", async () => {
+  const start = 1_700_000_000_000;
+  let clock = start;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const open = (id: string, name: string, at: number, extra: string[][] = []) =>
+    metadata(relay, id, name, at, [["public"], ...extra]);
+  const read = async () => {
+    const search = h.channels
+      .searchPublic?.("zzz")
+      .catch((error: unknown) => error);
+    return { search, request: await h.next(39000) };
+  };
+  const first = await read();
+  first.request.respond([
+    open("renamed", "before", start / 1000),
+    open("archived", "active", start / 1000),
+    // A busy channel can have a timestamp ahead of the relay wall clock.
+    open("future", "future", start / 1000 + 600),
+  ]);
+  await first.search;
+  clock += 30_000;
+  const delta = await read();
+  expect(delta.request.filters[0]).toMatchObject({ since: start / 1000 - 120 });
+  delta.request.respond([
+    open("renamed", "after", start / 1000 + 1),
+    open("archived", "active", start / 1000 + 2, [["archived", "true"]]),
+    open("new", "new-channel", start / 1000 + 3),
+  ]);
+  expect(await delta.search).toEqual({ channels: [], partial: false });
+  expect(h.channels.openDirectory?.()).toEqual([
+    { id: "renamed", name: "after" },
+    { id: "archived", name: "active", archived: true },
+    { id: "future", name: "future" },
+    { id: "new", name: "new-channel" },
+  ]);
+  clock += 30_000;
+  const empty = await read();
+  expect(empty.request.filters[0]?.since).toBe(start / 1000 + 30 - 120);
+  empty.request.respond([]);
+  await empty.search;
+  expect(h.channels.openDirectory?.()).toHaveLength(4);
+  clock = start + 5 * 60_000 - 1000;
+  const recent = await read();
+  expect(recent.request.filters[0]?.since).toBeDefined();
+  recent.request.respond([]);
+  await recent.search;
+  clock = start + 5 * 60_000;
+  const full = await read();
+  expect(full.request.filters[0]?.since).toBeUndefined();
+  full.request.respond([open("new", "new-channel", start / 1000 + 3)]);
+  await full.search;
+  expect(h.channels.openDirectory?.()).toEqual([
+    { id: "new", name: "new-channel" },
+  ]);
+});
+
+it("keeps the prior watermark and candidates after a failed delta continuation", async () => {
+  const start = 1_700_000_000_000;
+  let clock = start;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const old = metadata(relay, "old", "old", start / 1000, [["public"]]);
+  const warm = h.channels.searchPublic?.("zzz");
+  (await h.next(39000)).respond([old]);
+  await warm;
+  clock += 30_000;
+  const { first } = openDirectory(h);
+  const delta = h.channels.searchPublic?.("zzz");
+  assert.exists(delta);
+  const failed = delta.catch((error: unknown) => error);
+  const page = await h.next(39000);
+  const since = page.filters[0]?.since;
+  page.respond(first);
+  const continuation = await h.next(39000);
+  expect(continuation.filters[0]).toMatchObject({
+    since,
+    before_id: expect.any(String),
+  });
+  continuation.fail(new Error("offline"));
+  expect(await failed).toEqual(new Error("offline"));
+  expect(h.channels.openDirectory?.()).toEqual([{ id: "old", name: "old" }]);
+  clock += 30_000;
+  const retry = h.channels.searchPublic?.("zzz");
+  const request = await h.next(39000);
+  expect(request.filters[0]?.since).toBe(since);
+  request.respond([]);
+  await retry;
+  expect(h.channels.openDirectory?.()).toEqual([{ id: "old", name: "old" }]);
+  // A wall-clock rollback cannot postpone refresh or advance a delta watermark.
+  clock = start - 1;
+  const full = h.channels.searchPublic?.("zzz");
+  const replacement = await h.next(39000);
+  expect(replacement.filters[0]?.since).toBeUndefined();
+  replacement.respond([]);
+  await full;
+  expect(h.channels.openDirectory?.()).toEqual([]);
+});
+
+it("reconciles missing top matches so they cannot hide a valid ninth candidate", async () => {
+  let clock = 1_700_000_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const stale = Array.from({ length: 8 }, (_, n) =>
+    metadata(relay, `stale-${n}`, `release-${n}`, clock / 1000, [["public"]]),
+  );
+  const valid = metadata(relay, "valid", "release-valid", clock / 1000, [
+    ["public"],
+  ]);
+  const warm = h.channels.searchPublic?.("zzz");
+  (await h.next(39000)).respond([...stale, valid]);
+  await warm;
+  clock += 30_000;
+  const search = h.channels.searchPublic?.("release");
+  assert.exists(search);
+  const result = search.catch((error: unknown) => error);
+  (await h.next(39000)).respond([]);
+  const exact = await h.next(39000);
+  expect(exact.filters[0]?.["#d"]).toHaveLength(8);
+  exact.respond([]);
+  const full = await h.next(39000);
+  expect(full.filters[0]?.since).toBeUndefined();
+  full.respond([valid]);
+  (await h.next(39000)).respond([valid]);
+  expect(await result).toMatchObject({
+    channels: [{ id: "valid" }],
+    partial: false,
+  });
+  expect(h.channels.openDirectory?.()).toEqual([
+    { id: "valid", name: "release-valid" },
+  ]);
+});
+
+it("replaces the directory when an incremental merge would exceed its bound", async () => {
+  let clock = 1_700_000_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  // Preserve the real 20,000-entry scale contract; ordinary tests use small data.
+  const events = Array.from({ length: 19_999 }, (_, n) =>
+    metadata(relay, `bounded-${n}`, `entry-${n}`, clock / 1000, [["public"]]),
+  ).sort((a, b) => a.id.localeCompare(b.id));
+  const warm = h.channels.searchPublic?.("zzz");
+  for (let offset = 0; offset < events.length; offset += 500)
+    (await h.next(39000)).respond(events.slice(offset, offset + 500));
+  expect(await warm).toEqual({ channels: [], partial: false });
+  clock += 30_000;
+  const delta = h.channels.searchPublic?.("zzz");
+  const request = await h.next(39000);
+  expect(request.filters[0]?.since).toBeDefined();
+  request.respond([
+    metadata(relay, "extra-1", "extra-1", clock / 1000, [["public"]]),
+    metadata(relay, "extra-2", "extra-2", clock / 1000, [["public"]]),
+  ]);
+  const full = await h.next(39000);
+  expect(full.filters[0]?.since).toBeUndefined();
+  full.respond([]);
+  expect(await delta).toEqual({ channels: [], partial: false });
+  expect(h.channels.openDirectory?.()).toEqual([]);
+}, 60_000);
 
 it("finds public channels by the joined-channel name rule, not only by substring", async () => {
   const h = setup();
@@ -1087,6 +1313,7 @@ it("keeps the prior directory's names while a refresh reads, and when the refres
   await expect(third.search).rejects.toThrow("relay unavailable");
   expect(h.channels.openDirectory?.()).toBe(grown);
   // ...and is not reused: the next keystroke reads again.
+  clock += 5 * 60_000;
   const fourth = await read();
   expect(fourth.page.filters).toEqual([
     { kinds: [39000], authors: [relay.pubkey], limit: 500 },

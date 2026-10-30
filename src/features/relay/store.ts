@@ -117,6 +117,9 @@ const LABELED_CHANNEL_PAGE = 100;
 /** How long name search reuses the public channel metadata once read. Typing
  * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
+/** Delta reads overlap clock/replica lag; full replacement repairs omissions. */
+const PUBLIC_CHANNEL_OVERLAP = 120_000;
+const PUBLIC_CHANNEL_RECONCILE = 5 * 60_000;
 /** How long a channel link keeps a `withheld` answer before rechecking it. */
 const REFERENCE_TTL = 5 * 60_000;
 /** The least wait before a failed channel-link lookup is tried again. */
@@ -1860,9 +1863,9 @@ export function createChannelStore(
       );
   }
   /** Find active public channels the viewer has not joined, by name.
-   * The relay has no metadata text search, so this reads every page of
-   * relay-signed 39000 metadata without applying it (shared while typing, see
-   * PUBLIC_CHANNEL_PAGE_TTL), ranks name matches locally, and admits only
+   * The relay has no metadata text search, so this keeps a bounded directory
+   * of relay-signed 39000 metadata: periodic full reads and overlapping deltas
+   * (shared while typing, see PUBLIC_CHANNEL_PAGE_TTL). It ranks locally and admits only
    * the best matches through `resolve`. Matches become readable
    * previews through `get`; they never enter `list()`. */
   let publicDirectory:
@@ -1870,6 +1873,12 @@ export function createChannelStore(
         generation: number;
         /** When the read finished; a pending read is always reused. */
         at?: number;
+        started: number;
+        fullAt: number;
+        partial?: boolean;
+        incremental: boolean;
+        /** Exact resolution contradicted a candidate; replace this index. */
+        reconcile?: boolean;
         /** The pages read so far, newest first. */
         events: RelayEvent[];
         /** Prior candidates remain searchable while the directory refreshes. */
@@ -1884,14 +1893,17 @@ export function createChannelStore(
   const noOpenDirectory: ReturnType<
     NonNullable<ChannelQueries["openDirectory"]>
   > = Object.freeze([]);
-  function openDirectoryChannels(events: readonly RelayEvent[]) {
+  function latestPublicMetadata(events: readonly RelayEvent[]) {
     const latest = new Map<string, RelayEvent>();
     for (const event of events) {
       const id = tag(event, "d");
       if (id) latest.set(id, newer(latest.get(id), event));
     }
+    return latest;
+  }
+  function openDirectoryChannels(events: readonly RelayEvent[]) {
     return Object.freeze(
-      [...latest.entries()].flatMap(([id, event]) => {
+      [...latestPublicMetadata(events).entries()].flatMap(([id, event]) => {
         const name = openMetadata(event) && metadataName(event);
         if (!name) return [];
         const type = tag(event, "t");
@@ -1919,6 +1931,7 @@ export function createChannelStore(
     signal: AbortSignal,
     events: RelayEvent[],
     landed: () => void,
+    since?: number,
   ) {
     let cursor: { until: number; before_id: string } | undefined;
     for (;;) {
@@ -1928,6 +1941,7 @@ export function createChannelStore(
             kinds: [39000],
             authors: [relay.relayAuthor],
             limit: PUBLIC_CHANNEL_PAGE,
+            ...(since !== undefined ? { since } : {}),
             ...cursor,
           },
         ],
@@ -1965,6 +1979,7 @@ export function createChannelStore(
       exact?: boolean;
       progress?: ((found: PublicChannelSearch) => void) | undefined;
     },
+    recover = true,
   ): Promise<PublicChannelSearch> {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
@@ -1978,7 +1993,10 @@ export function createChannelStore(
     if (
       publicDirectory?.generation !== generation ||
       (publicDirectory.at !== undefined &&
-        now() - publicDirectory.at >= PUBLIC_CHANNEL_PAGE_TTL)
+        (publicDirectory.reconcile ||
+          now() < publicDirectory.started ||
+          now() - publicDirectory.fullAt >= PUBLIC_CHANNEL_RECONCILE ||
+          now() - publicDirectory.at >= PUBLIC_CHANNEL_PAGE_TTL))
     ) {
       const controller = new AbortController();
       controllers.add(controller);
@@ -1989,14 +2007,23 @@ export function createChannelStore(
           ? publicDirectory
           : undefined;
       const events: RelayEvent[] = [];
+      const started = now();
+      const incremental =
+        prior?.at !== undefined &&
+        prior.partial === false &&
+        !prior.reconcile &&
+        started >= prior.started &&
+        started - prior.fullAt < PUBLIC_CHANNEL_RECONCILE;
+      const since = incremental
+        ? Math.max(
+            0,
+            Math.floor((prior.started - PUBLIC_CHANNEL_OVERLAP) / 1000),
+          )
+        : undefined;
       let land = () => {};
       const next = () => new Promise<void>((settle) => (land = settle));
-      const entry: NonNullable<typeof publicDirectory> = {
-        generation,
-        events,
-        ...(prior ? { previous: prior.events } : {}),
-        page: next(),
-        read: readPublicDirectory(
+      const read = (since?: number) =>
+        readPublicDirectory(
           transport,
           generation,
           controller.signal,
@@ -2006,16 +2033,46 @@ export function createChannelStore(
             entry.page = next();
             landed();
           },
-        ),
+          since,
+        );
+      const entry: NonNullable<typeof publicDirectory> = {
+        generation,
+        started,
+        fullAt: incremental ? prior.fullAt : started,
+        incremental,
+        events,
+        ...(prior ? { previous: prior.events } : {}),
+        page: next(),
+        read: read(since).then((result) => {
+          if (incremental) {
+            const merged = [
+              ...latestPublicMetadata([
+                ...(entry.previous ?? []),
+                ...events,
+              ]).values(),
+            ];
+            if (result.partial || merged.length > PUBLIC_CHANNEL_DIRECTORY) {
+              // An incomplete delta cannot advance a complete directory.
+              entry.incremental = false;
+              entry.fullAt = started;
+              events.length = 0;
+              return read();
+            }
+            events.splice(0, events.length, ...merged);
+          }
+          return result;
+        }),
         ...(prior?.open ? { open: prior.open } : {}),
       };
       publicDirectory = entry;
       // A failed read is not reused: the expired prior entry comes back, so
       // its names survive and the next keystroke starts again.
       void entry.read.then(
-        () => {
+        ({ partial }) => {
           controllers.delete(controller);
           entry.at = now();
+          entry.partial = partial;
+          if (!entry.incremental) delete entry.reconcile;
           delete entry.previous;
           // Name references in mounted rows read the directory through the
           // list subscription; the list itself is unchanged.
@@ -2034,6 +2091,10 @@ export function createChannelStore(
     const signal = settings?.signal;
     const limit = settings?.limit ?? 8;
     const resolved = new Set<string>();
+    const refreshRequired = new ReadError(
+      "unavailable",
+      "Public channel directory changed during search",
+    );
     // Ranks the pages read so far. Exact resolution, not a page, owns access:
     // it re-reads the signed metadata and the viewer roster for each match
     // before granting a preview. The final answer re-reads every match; pages
@@ -2042,16 +2103,12 @@ export function createChannelStore(
     // `limit` free discovery slots for its final answer, so a long read
     // cannot fill discovery or crowd out a better match on a later page.
     const answer = async (final: boolean, readSignal?: AbortSignal) => {
-      const latest = new Map<string, RelayEvent>();
       // Saved names are candidates only: each match still resolves freshly.
       // Only the new scan contributes to the final answer.
-      for (const event of [
+      const latest = latestPublicMetadata([
         ...(!final ? (entry.previous ?? []) : []),
         ...entry.events,
-      ]) {
-        const id = tag(event, "d");
-        if (id) latest.set(id, newer(latest.get(id), event));
-      }
+      ]);
       const candidates = [...latest.entries()]
         .flatMap(([id, event]) => {
           const name = metadataName(event);
@@ -2094,8 +2151,37 @@ export function createChannelStore(
           unresolved,
           readSignal ? { ...settings, signal: readSignal } : settings,
         );
+        const stale = new Set(
+          unresolved.filter((id) => {
+            const current = discovery.metadataVersion(id);
+            const candidate = latest.get(id);
+            return (
+              !current ||
+              !candidate ||
+              !openMetadata(current) ||
+              hasTag(current, "archived", "true") ||
+              metadataName(current) !== metadataName(candidate)
+            );
+          }),
+        );
+        if (stale.size) {
+          entry.reconcile = true;
+          // Keep the in-flight scan's array: its next pages append here.
+          const kept = entry.events.filter(
+            (event) => !stale.has(tag(event, "d") ?? ""),
+          );
+          entry.events.splice(0, entry.events.length, ...kept);
+          if (entry.previous)
+            entry.previous = entry.previous.filter(
+              (event) => !stale.has(tag(event, "d") ?? ""),
+            );
+        }
         for (const id of unresolved) resolved.add(id);
       }
+      if (final && entry.incremental && entry.reconcile)
+        // Reuse the bounded retry owner rather than resolving an unbounded
+        // tail of stale candidates that could consume discovery capacity.
+        throw refreshRequired;
       // A better match past the budget does not hide the rows already shown.
       return (final ? ids : candidates.map(({ id }) => id))
         .flatMap((id) => {
@@ -2130,8 +2216,10 @@ export function createChannelStore(
           throw new DOMException("Stale channel search", "AbortError");
         if (result) {
           const channels = await answer(true);
-          if (generation === epoch)
-            recentPublic = { generation, ids: channels.map(({ id }) => id) };
+          signal?.throwIfAborted();
+          if (disposed || generation !== epoch)
+            throw new DOMException("Stale channel search", "AbortError");
+          recentPublic = { generation, ids: channels.map(({ id }) => id) };
           return { channels, partial: result.partial };
         }
         // A page that lands while this one is ranked wakes the next turn at once.
@@ -2161,18 +2249,16 @@ export function createChannelStore(
       }
     } catch (error) {
       if (
-        isAbort(error) &&
         !disposed &&
         !signal?.aborted &&
-        generation !== epoch &&
-        revokedEpoch === epoch
-      )
-        // The existing retry owner recovers an access purge, but never a
-        // caller cancellation, cache clear or disposal.
-        throw new ReadError(
-          "unavailable",
-          "Channel access changed during search",
-        );
+        (error === refreshRequired ||
+          (isAbort(error) && generation !== epoch && revokedEpoch === epoch))
+      ) {
+        // One local invalidation restarts immediately. Further changes use
+        // the existing retry owner; network failures keep its normal backoff.
+        if (recover) return searchPublic(query, settings, false);
+        throw refreshRequired;
+      }
       throw error;
     } finally {
       publicSearchReserve -= limit;

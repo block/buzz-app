@@ -1014,7 +1014,7 @@ addition to the heading’s own top inset; invitation/recovery spacing is unchan
 The search composition reduces the shared header-to-body gap by `--space-2`
 (16px normally, 8px at the compact breakpoint) without affecting other dialogs.
 The member-list area flexes into the remaining dialog height and owns the only
-scrollbar, including search results and recovery messages. The role groups and
+scrollbar, including search results and recovery messages. Current-member groups render at most 50 rows per page, with Previous/Next controls and whole-group counts. Search still filters the whole roster, and query, role-filter or roster changes reset paging. Large-roster ordering and group membership stay stable while names update; reopening, refreshing or changing the roster takes a new ordering. Large rosters show the verified list without waiting for optional names; name enrichment requests only the displayed member pages through the existing profile directory, without warming the entire roster. Name search uses profiles already in that shared directory; public-key search covers every member. Public-key labels remain available when a name is absent or evicted from that shared directory. The role groups and
 Not in this channel flow naturally one after the other; empty groups are hidden. Only the bordered viewport fills spare
 height, never a group inside it. The shared Dialog's opt-in flex body
 keeps the outer body non-scrolling; other dialogs are unchanged.

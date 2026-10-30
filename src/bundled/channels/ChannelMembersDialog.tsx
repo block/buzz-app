@@ -100,6 +100,7 @@ import {
 import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
+const MEMBER_PAGE_SIZE = 50;
 
 const additionRoles = [
   {
@@ -789,6 +790,7 @@ export function ChannelMembersDialog({
     };
   }, [session, channelId, refresh, solo]);
   const memberKey = channel?.members?.join(":") ?? "";
+  const largeRoster = (channel?.members?.length ?? 0) > MEMBER_PAGE_SIZE;
   const administration = useMemberAdministration(
     session,
     channelId,
@@ -800,30 +802,6 @@ export function ChannelMembersDialog({
     administration.operation.status === "pending"
   )
     busy.add(administration.operation.change.pubkey);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
-  useEffect(() => {
-    setNameError("");
-    setNamesSettledFor(undefined);
-    if (!memberKey) {
-      setNamesSettledFor({ session, memberKey });
-      return;
-    }
-    let current = true;
-    void session.profiles
-      .ensure(memberKey.split(":"), "foreground")
-      .catch(() => {
-        if (current)
-          setNameError(
-            "Some names could not load. Public keys still identify members. Try again.",
-          );
-      })
-      .finally(() => {
-        if (current) setNamesSettledFor({ session, memberKey });
-      });
-    return () => {
-      current = false;
-    };
-  }, [session, memberKey, refresh]);
   const namesBusy =
     namesSettledFor?.session !== session ||
     namesSettledFor?.memberKey !== memberKey;
@@ -847,9 +825,14 @@ export function ChannelMembersDialog({
     // The authority hook may have started a new roster's read in this effect
     // flush. Do not reveal using the previous render's settled role snapshot.
     const status = session.memberAdministration.snapshot(channelId).status;
-    if (!rosterBusy && !namesBusy && rolesSettled && status !== "loading")
+    if (
+      !rosterBusy &&
+      (!namesBusy || largeRoster) &&
+      rolesSettled &&
+      status !== "loading"
+    )
       setRevealedFor(session);
-  }, [session, channelId, rosterBusy, namesBusy, rolesSettled]);
+  }, [session, channelId, rosterBusy, namesBusy, largeRoster, rolesSettled]);
   const initialLoading = revealedFor !== session;
   const known = useMemo(
     () =>
@@ -867,8 +850,9 @@ export function ChannelMembersDialog({
         formatPublicKey(key) ??
         "Unknown member",
     );
-  // Filters the fully loaded member list.
+  // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
+    !text ||
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
@@ -882,10 +866,11 @@ export function ChannelMembersDialog({
       typed === npubEncode(key)
     );
   };
-  const currentMembers = [...members].sort(
-    (a, b) => label(a).localeCompare(label(b)) || a.localeCompare(b),
-  );
-  const groups = ["People", "Agents"].map((name) => {
+  const currentMembers = [...members]
+    .map((key) => ({ key, name: label(key) }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key))
+    .map(({ key }) => key);
+  const currentGroups = ["People", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
       const group =
         known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
@@ -894,9 +879,40 @@ export function ChannelMembersDialog({
     return {
       name,
       count: keys.length,
-      keys: keys.filter((key) => matches(key, label(key))),
+      keys,
     };
   });
+  // Optional profile updates change labels, not the identities being browsed.
+  // Reopening, refreshing or changing the roster takes a new paging order.
+  const [memberOrder, setMemberOrder] = useState({
+    session,
+    channelId,
+    memberKey,
+    refresh,
+    initialLoading,
+    groups: currentGroups,
+  });
+  const orderChanged =
+    memberOrder.session !== session ||
+    memberOrder.channelId !== channelId ||
+    memberOrder.memberKey !== memberKey ||
+    memberOrder.refresh !== refresh ||
+    memberOrder.initialLoading !== initialLoading;
+  if (largeRoster && orderChanged)
+    setMemberOrder({
+      session,
+      channelId,
+      memberKey,
+      refresh,
+      initialLoading,
+      groups: currentGroups,
+    });
+  const groups = (
+    largeRoster && !orderChanged ? memberOrder.groups : currentGroups
+  ).map((group) => ({
+    ...group,
+    keys: group.keys.filter((key) => matches(key, label(key))),
+  }));
   const presentGroups = groups.filter((group) => group.count > 0);
   const roleFilter =
     query.length === 0 &&
@@ -915,6 +931,75 @@ export function ChannelMembersDialog({
       (roleFilter === "All" || group.name === roleFilter) &&
       group.keys.length > 0,
   );
+  const [memberPages, setMemberPages] = useState({
+    memberKey,
+    text,
+    roleFilter,
+    pages: {} as Record<string, number>,
+  });
+  const pages =
+    memberPages.memberKey === memberKey &&
+    memberPages.text === text &&
+    memberPages.roleFilter === roleFilter
+      ? memberPages.pages
+      : {};
+  if (pages !== memberPages.pages)
+    setMemberPages({ memberKey, text, roleFilter, pages: {} });
+  const pendingMemberPage = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const group = pendingMemberPage.current;
+    pendingMemberPage.current = null;
+    if (group === null) return;
+    const heading = document.getElementById(`${presenceId}-${group}-page`);
+    heading?.focus({ preventScroll: true });
+    heading?.parentElement?.scrollIntoView({ block: "start" });
+  });
+  const changeMemberPage = (group: string, page: number) => {
+    pendingMemberPage.current = group;
+    setMemberPages({
+      memberKey,
+      text,
+      roleFilter,
+      pages: { ...pages, [group]: page },
+    });
+  };
+  const profileKey = !largeRoster
+    ? memberKey
+    : filteredGroups
+        .flatMap((group) => {
+          const page = Math.min(
+            pages[group.name] ?? 0,
+            Math.ceil(group.keys.length / MEMBER_PAGE_SIZE) - 1,
+          );
+          return group.keys.slice(
+            page * MEMBER_PAGE_SIZE,
+            (page + 1) * MEMBER_PAGE_SIZE,
+          );
+        })
+        .join(":");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
+  useEffect(() => {
+    let current = true;
+    setNameError("");
+    setNamesSettledFor(undefined);
+    void session.profiles
+      .ensure(
+        profileKey ? profileKey.split(":") : [],
+        largeRoster ? "background" : "foreground",
+      )
+      .catch(() => {
+        if (current)
+          setNameError(
+            "Some names could not load. Public keys still identify members. Try again.",
+          );
+      })
+      .finally(() => {
+        if (current) setNamesSettledFor({ session, memberKey });
+      });
+    return () => {
+      current = false;
+    };
+  }, [session, memberKey, profileKey, refresh, largeRoster]);
   const search = useMemberSearch(session, query, canAddPeople);
   const relayKeys = new Set(search.people.map((person) => person.pubkey));
   const candidates = new Map(
@@ -1853,18 +1938,64 @@ export function ChannelMembersDialog({
               )
             ) : (
               <>
-                {filteredGroups.map((group) => (
-                  <section key={group.name} aria-label={group.name}>
-                    <h3
-                      className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
-                    >
-                      {group.name} · {text ? group.keys.length : group.count}
-                    </h3>
-                    <ul>
-                      {group.keys.map((key) => row(key, label(key), false))}
-                    </ul>
-                  </section>
-                ))}
+                {filteredGroups.map((group) => {
+                  const pageCount = Math.ceil(
+                    group.keys.length / MEMBER_PAGE_SIZE,
+                  );
+                  const page = Math.min(pages[group.name] ?? 0, pageCount - 1);
+                  return (
+                    <section key={group.name} aria-label={group.name}>
+                      <h3
+                        id={`${presenceId}-${group.name}-page`}
+                        tabIndex={-1}
+                        className={`${styles.groupHeading} pb-2 text-caption text-subtle`}
+                      >
+                        {group.name} · {text ? group.keys.length : group.count}
+                      </h3>
+                      <ul>
+                        {group.keys
+                          .slice(
+                            page * MEMBER_PAGE_SIZE,
+                            (page + 1) * MEMBER_PAGE_SIZE,
+                          )
+                          .map((key) => row(key, label(key), false))}
+                      </ul>
+                      {pageCount > 1 && (
+                        <nav
+                          aria-label={`${group.name} member pages`}
+                          className="flex items-center justify-between gap-2 px-control-inset"
+                        >
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={page === 0}
+                            onClick={() =>
+                              changeMemberPage(group.name, page - 1)
+                            }
+                          >
+                            Previous
+                          </Button>
+                          <span
+                            className="text-caption text-subtle"
+                            aria-live="polite"
+                          >
+                            {page + 1} of {pageCount}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={page + 1 === pageCount}
+                            onClick={() =>
+                              changeMemberPage(group.name, page + 1)
+                            }
+                          >
+                            Next
+                          </Button>
+                        </nav>
+                      )}
+                    </section>
+                  );
+                })}
                 {!filteredGroups.length && !rosterBusy && !offering && (
                   <p className="px-control-inset text-body-sm text-subtle">
                     {query

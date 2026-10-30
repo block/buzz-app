@@ -71,6 +71,45 @@ export function coreMemorySection(memory: string | null | undefined) {
   return body ? `<core-memory>\n${body}\n</core-memory>` : "";
 }
 
+/** The most of each note `recentNotesSection` shows, in UTF-8 bytes. */
+export const NOTE_LIMIT = 8 * 1024;
+
+/** Yesterday's and today's `mem/notes/<date>` notes, in a section of a prompt.
+ * Dates are this device's, which JS takes as UTC when it has no time zone.
+ * Notes are appended to, so a long one keeps its end. A note that is missing,
+ * blank or unread adds nothing. */
+export async function recentNotesSection(
+  read: (slug: string) => Promise<MemoryListing>,
+  now = new Date(),
+) {
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const notes = await Promise.all(
+    [yesterday, now].map(async (day) => {
+      const slug = `mem/notes/${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+      const body = await read(slug).then(
+        (listing) =>
+          listing.entries.find((entry) => entry.slug === slug)?.body.trim(),
+        () => undefined,
+      );
+      return body ? `<note slug="${slug}">\n${tail(body)}\n</note>` : "";
+    }),
+  );
+  const body = notes.filter(Boolean).join("\n");
+  return body ? `<recent-notes>\n${body}\n</recent-notes>` : "";
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** The last `NOTE_LIMIT` bytes of `text`, cut where a character starts. */
+function tail(text: string) {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= NOTE_LIMIT) return text;
+  let start = bytes.length - NOTE_LIMIT;
+  while (((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
+  return `[older part of this note left out]\n${new TextDecoder().decode(bytes.subarray(start))}`;
+}
+
 /** Stops waiting when `signal` aborts, even if the read itself does not. */
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
   return new Promise<T>((resolve, reject) => {

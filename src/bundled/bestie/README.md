@@ -34,9 +34,8 @@ Bestie, each with **Remove**. **Add to a channel** (**Choose…**) and **Add to
 all my private channels** add it to the private channels you are in, most
 recently active first; each channel's members see that you added it. Each
 action has a row of its own, so in a narrow panel its button wraps under it.
-Public channels
-need nothing: agents read them already. Adding Bestie to new channels you
-create is not set up yet.
+Public channels need nothing: agents read them already. Adding Bestie to new
+channels you create is not set up yet.
 
 **Check-ins → Every hour** needs Remembers you, and turning memory off turns it
 off too. On adds the `buzz:bestie/checkin.hourly` Hourly upkeep section to the
@@ -49,6 +48,15 @@ Buzz is open and the Watching plugin is on: this plugin doesn't call
 every agent. While the timer can't run, the row says it is paused. After a
 sleep it runs once, not once for each missed hour. Each
 check-in is a feature in `features.ts`, so another kind is one more entry.
+
+**Changing your Bestie.** Only your Bestie checks in: whenever the saved Bestie
+is known, on this device or synced from another, any other agent here has its
+check-ins removed. Its memory section and channels stay. An agent this device
+makes Bestie starts with Remembers you on; a choice synced from elsewhere
+changes nothing, so memory turned off stays off. A former Bestie keeps a
+**Former Bestie** tab while it has a Bestie section, or, if this device saw it
+as Bestie, while it is in one of your private channels. The tab has the same
+switches, **Remove from all** for its channels, and **Make my Bestie again**.
 
 ---
 

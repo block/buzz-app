@@ -16,7 +16,10 @@ import { keypair, signed } from "../../features/relay/testing";
 import userEvent from "@testing-library/user-event";
 import { RemindDialog } from "./RemindDialog";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 it("saves a preview that never splits an emoji at the cap", async () => {
   const create = vi.fn(async () => {});
@@ -128,6 +131,32 @@ function dialog(
   );
   return close;
 }
+
+it("keeps coarse-pointer entry on the dialog until When is chosen", async () => {
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    matches: media === "(pointer: coarse)",
+    media,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => true,
+  }));
+  const user = userEvent.setup();
+  const create = vi.fn(async () => {});
+  dialog(create);
+  await vi.waitFor(() =>
+    expect(screen.getByRole("dialog", { name: "Remind me" })).toHaveFocus(),
+  );
+  const when = screen.getByRole("combobox", { name: "When" });
+  expect(when).not.toHaveFocus();
+  await user.click(when);
+  expect(
+    await screen.findByRole("option", { name: "In 1 hour" }),
+  ).toBeVisible();
+  expect(create).not.toHaveBeenCalled();
+});
 
 it("lets a preset and note be chosen before saving, and keeps the draft after failure", async () => {
   const user = userEvent.setup();

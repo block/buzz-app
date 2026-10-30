@@ -611,3 +611,67 @@ test("keyboard draft retirement returns to its row, a remaining row, then Inbox 
   await expect(inbox.getByText("No drafts", { exact: true })).toBeVisible();
   await expect(filters).toBeFocused();
 });
+
+test.describe("coarse-pointer draft entry", () => {
+  test.use({ hasTouch: true });
+
+  // Native taps and rich-editor focus cannot be established by jsdom.
+  test("waits for an editor tap when opening channel and thread drafts", async ({
+    page,
+    app,
+  }) => {
+    const root = app.histories.get("primary/alpha")[0].id;
+    const scope = `https://primary.example:${app.viewer}`;
+    await page.addInitScript(
+      ({ scope, root }) => {
+        for (const [key, text] of [
+          ["draft:beta", "Channel draft"],
+          [`draft:alpha:thread:${root}`, "Thread draft"],
+        ])
+          localStorage.setItem(
+            `buzz-view.v1:${JSON.stringify([scope, key])}`,
+            JSON.stringify(text),
+          );
+      },
+      { scope, root },
+    );
+    await open(page, app);
+    expect(
+      await page.evaluate(() => matchMedia("(pointer: coarse)").matches),
+    ).toBe(true);
+    await openPage(page, "Inbox");
+    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+    await inbox
+      .getByRole("button", { name: "Inbox filters", exact: true })
+      .tap();
+    await page
+      .getByRole("menuitemradio", { name: "Drafts", exact: true })
+      .tap();
+    const detail = inbox.getByRole("region", { name: "Draft detail" });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const [channel, text] of [
+        ["Beta", "Channel draft"],
+        ["Alpha", "Thread draft"],
+      ]) {
+        await inbox
+          .getByRole("button", {
+            name: `Open draft for #${channel}`,
+            exact: true,
+          })
+          .tap();
+        const editor = detail.getByRole("textbox");
+        await expect(editor).toBeEditable();
+        await expect(editor).toHaveText(text);
+        await expect(editor).not.toBeFocused();
+        await editor.tap();
+        await expect(editor).toBeFocused();
+        await detail
+          .getByRole("button", { name: "Close detail", exact: true })
+          .tap();
+        await expect(detail).toHaveCount(0);
+      }
+    }
+  });
+});

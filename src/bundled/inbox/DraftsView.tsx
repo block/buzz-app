@@ -91,6 +91,9 @@ export function DraftsView({
   const fallbackRow = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef<HTMLButtonElement>(null);
   const visit = invoking.current;
+  const autoFocus = window.matchMedia?.("(pointer: coarse)").matches
+    ? false
+    : (visit?.row ?? false);
   const detailRef = useCallback((node: HTMLElement | null) => {
     if (!node) return;
     // Ref cleanup runs before removal, while focus ownership is still observable.
@@ -467,7 +470,7 @@ export function DraftsView({
                     <ConversationThread
                       messageId={active.coordinates.threadRootId}
                       requireReadyRoot
-                      autoFocus={visit?.row ?? false}
+                      autoFocus={autoFocus}
                       onDraftSaved={retire}
                     />
                   ) : (
@@ -478,7 +481,7 @@ export function DraftsView({
                           : activeChannel.name
                       }
                       draft
-                      autoFocus={visit?.row ?? false}
+                      autoFocus={autoFocus}
                       onDraftSaved={retire}
                     />
                   )}

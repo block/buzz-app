@@ -155,6 +155,242 @@ it("reads the title with the state, so a poll renames a renamed pull request in 
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
+const issue = "https://github.com/block/buzz-app/issues/5";
+/** GitHub's answer to one query, by the number each alias asks for. */
+const answers =
+  (byNumber: (number: number) => unknown) =>
+  async (_query: string, variables: Record<string, number>) =>
+    Object.fromEntries(
+      Object.entries(variables).flatMap(([name, value]) =>
+        name.startsWith("p") ? [[`r${name.slice(1)}`, byNumber(value)]] : [],
+      ),
+    );
+
+it("reads an issue's state and title in the query it reads pull requests in, so a poll renames it in the read it already makes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let found: Record<string, unknown> = {
+    state: "OPEN",
+    stateReason: null,
+    title: "Crash on start",
+  };
+  const gh = mockGh(
+    answers((number) =>
+      number === 5
+        ? { issue: found }
+        : rollup("OPEN", { title: "Fix the lab" }),
+    ),
+  );
+  const states = createPullStates(gh);
+  const changed = vi.fn();
+  const [unwatchPull] = [
+    states.watch(pull, () => {}),
+    states.watch(issue, changed),
+  ];
+  await vi.waitFor(() => expect(states.get(issue)).toBeDefined());
+  // One request for both, asking the issue for its state, why and title.
+  expect(gh).toHaveBeenCalledOnce();
+  expect(gh.mock.calls[0]?.[0]).toContain(
+    "r1:repository(owner:$o1,name:$n1){issue(number:$p1){state stateReason title}}",
+  );
+  expect(gh.mock.calls[0]?.[1]).toEqual({
+    o0: "block",
+    n0: "buzz-app",
+    p0: 7,
+    o1: "block",
+    n1: "buzz-app",
+    p1: 5,
+  });
+  expect(states.get(issue)).toEqual({ state: "open", title: "Crash on start" });
+  expect(states.get(pull)).toMatchObject({ title: "Fix the lab" });
+  const before = states.get(issue);
+  found = { ...found, title: "Crash on start, renamed" };
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(states.get(issue)).not.toBe(before);
+  expect(states.get(issue)).toEqual({
+    state: "open",
+    title: "Crash on start, renamed",
+  });
+  expect(changed).toHaveBeenCalledTimes(2);
+  found = { ...found, state: "CLOSED", stateReason: "NOT_PLANNED" };
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(3);
+  expect(states.get(issue)).toEqual({
+    state: "closed",
+    reason: "not planned",
+    title: "Crash on start, renamed",
+  });
+  expect(changed).toHaveBeenCalledTimes(3);
+
+  // A closed issue can reopen, as a closed pull request can: it is read
+  // every few minutes, not every minute, and not never, as a merged one is.
+  unwatchPull?.();
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS - PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(3);
+  found = { ...found, stateReason: "COMPLETED" };
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(4);
+  expect(gh.mock.calls[3]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 5 });
+  expect(states.get(issue)).toMatchObject({ reason: "completed" });
+  expect(changed).toHaveBeenCalledTimes(4);
+});
+
+it("reads an issue's state and title from the public API in the one read of the issue, so a poll renames it", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let body: Record<string, unknown> = {
+    title: "Crash on start",
+    state: "open",
+    state_reason: null,
+  };
+  const fetch = vi.fn(
+    async (_url: string) => new Response(JSON.stringify(body)),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const states = createPullStates(undefined);
+  const changed = vi.fn();
+  states.watch(issue, changed);
+  await vi.waitFor(() =>
+    expect(states.get(issue)).toEqual({
+      state: "open",
+      title: "Crash on start",
+    }),
+  );
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalledWith(
+    "https://api.github.com/repos/block/buzz-app/issues/5",
+    expect.anything(),
+  );
+  body = {
+    title: "Crash on start, renamed",
+    state: "closed",
+    state_reason: "completed",
+  };
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(states.get(issue)).toEqual({
+    state: "closed",
+    reason: "completed",
+    title: "Crash on start, renamed",
+  });
+  expect(changed).toHaveBeenCalledTimes(2);
+  // One that can't be read again keeps what was read, title and all.
+  const before = states.get(issue);
+  fetch.mockResolvedValueOnce(new Response(null, { status: 502 }));
+  await vi.advanceTimersByTimeAsync(PULL_SLOW_REFRESH_MS);
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(states.get(issue)).toBe(before);
+  expect(states.readAt(issue)?.error).toBeInstanceOf(Error);
+  expect(changed).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  ["COMPLETED", "completed"],
+  ["NOT_PLANNED", "not planned"],
+  ["DUPLICATE", "not planned"],
+  [null, "completed"],
+])(
+  "reads an issue closed with the reason %s as closed as %s, with gh and from the public API",
+  async (reason, expected) => {
+    const read = { state: "closed", reason: expected, title: "A" };
+    const gh = mockGh(async () => ({
+      r0: { issue: { state: "CLOSED", stateReason: reason, title: "A" } },
+    }));
+    const signedIn = createPullStates(gh);
+    const stop = [signedIn.watch(issue, () => {})];
+    await vi.waitFor(() => expect(signedIn.get(issue)).toEqual(read));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              title: "A",
+              state: "closed",
+              state_reason: reason?.toLowerCase() ?? null,
+            }),
+          ),
+      ),
+    );
+    const publicly = createPullStates(undefined);
+    stop.push(publicly.watch(issue, () => {}));
+    await vi.waitFor(() => expect(publicly.get(issue)).toEqual(read));
+    for (const unwatch of stop) unwatch();
+  },
+);
+
+it("keys an issue by its canonical URL, so pasted variants share one entry and read", async () => {
+  const gh = mockGh(async () => ({
+    r0: { issue: { state: "OPEN", title: "A" } },
+  }));
+  const states = createPullStates(gh);
+  const variants = [
+    `${issue}?notification_referrer_id=abc`,
+    `${issue}/`,
+    "https://github.com/Block/Buzz-App/issues/5",
+  ];
+  const stop = [issue, ...variants].map((url) => states.watch(url, () => {}));
+  await vi.waitFor(() => expect(states.get(issue)).toBeDefined());
+  expect(gh).toHaveBeenCalledOnce();
+  expect(gh.mock.calls[0]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 5 });
+  for (const url of variants) expect(states.get(url)).toBe(states.get(issue));
+  for (const unwatch of stop) unwatch();
+});
+
+it("keeps an issue's URL apart from the pull request's with its number, and reads neither as the other", async () => {
+  const numbered = "https://github.com/block/buzz-app/issues/7";
+  // GitHub's public issues answer for a pull request too, and say so.
+  const fetch = vi.fn(
+    async (url: string) =>
+      new Response(
+        JSON.stringify({
+          title: "Fix the lab",
+          state: "open",
+          ...(url.includes("/issues/") && {
+            pull_request: {
+              url: "https://api.github.com/repos/block/buzz-app/pulls/7",
+            },
+          }),
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const publicly = createPullStates(undefined);
+  const stop = [
+    publicly.watch(pull, () => {}),
+    publicly.watch(numbered, () => {}),
+  ];
+  await vi.waitFor(() => expect(publicly.get(numbered)).toBe("failed"));
+  expect(publicly.get(pull)).toEqual({ state: "open", title: "Fix the lab" });
+  expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([
+    "https://api.github.com/repos/block/buzz-app/issues/7",
+    "https://api.github.com/repos/block/buzz-app/pulls/7",
+  ]);
+  expect(publicly.readAt(numbered)?.error?.message).toBe(
+    "GitHub has a pull request, not an issue, at this number.",
+  );
+  // With gh, GitHub finds no issue at a pull request's number, and still
+  // answers for the rest.
+  const gh = mockGh(async () => {
+    throw new GitHubError(
+      "Could not resolve to an Issue with the number of 7.",
+      "NOT_FOUND",
+      { r0: rollup("OPEN", { title: "Fix the lab" }), r1: { issue: null } },
+    );
+  });
+  const signedIn = createPullStates(gh);
+  stop.push(
+    signedIn.watch(pull, () => {}),
+    signedIn.watch(numbered, () => {}),
+  );
+  await vi.waitFor(() => expect(signedIn.get(numbered)).toBe("failed"));
+  expect(gh).toHaveBeenCalledOnce();
+  expect(signedIn.get(pull)).toMatchObject({
+    state: "open",
+    title: "Fix the lab",
+  });
+  for (const unwatch of stop) unwatch();
+});
+
 it("keys a pull request by its canonical URL, so pasted variants share one entry and read", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const gh = mockGh(async () => ({
@@ -196,21 +432,28 @@ it("keys a pull request by its canonical URL, so pasted variants share one entry
   for (const unwatch of stop) unwatch();
 });
 
-it("neither watches nor throws for a URL that is not a pull request's, and reads the rest", async () => {
+it("neither watches nor throws for a URL that is not a pull request's or issue's, and reads the rest", async () => {
   const gh = mockGh(async () => ({ r0: rollup("OPEN") }));
   const states = createPullStates(gh);
+  const commit = "https://github.com/block/buzz-app/commit/abcdef1";
   const issue = "https://github.com/block/buzz-app/issues/7";
   // A number GraphQL's Int cannot hold would fail the whole query, and with
   // it every pull request shown alongside.
   const beyond = "https://github.com/block/buzz-app/pull/2147483648";
-  const stop = [issue, beyond, pull].map((url) => states.watch(url, () => {}));
+  const stop = [commit, beyond, pull].map((url) => states.watch(url, () => {}));
+  // An issue has only its state: an agent's watch or the panel can't have it.
+  stop.push(
+    states.watch(issue, () => {}, "feedback"),
+    states.watch(issue, () => {}, "details"),
+  );
   states.watch("not a url", () => {})();
   await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
   expect(gh).toHaveBeenCalledOnce();
   expect(gh.mock.calls[0]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 7 });
   expect(states.get(pull)).toMatchObject({ state: "open" });
-  for (const url of [issue, beyond, "not a url"])
+  for (const url of [commit, beyond, "not a url"])
     expect(states.get(url)).toBe("failed");
+  expect(states.get(issue)).toBeUndefined();
   for (const unwatch of stop) unwatch();
 });
 
@@ -1045,8 +1288,17 @@ it("answers a reader from what it holds within the age asked, and reads otherwis
   expect(listings(gh)).toHaveLength(3);
   expect(a.readAt).toBe(b.readAt);
   await expect(
-    states.read("https://github.com/block/buzz-app/issues/7", { maxAge: 0 }),
+    states.read("https://github.com/block/buzz-app/commit/abcdef1", {
+      maxAge: 0,
+    }),
   ).rejects.toThrow("Not a GitHub pull request URL");
+  await expect(
+    states.read("https://github.com/block/buzz-app/issues/7", {
+      maxAge: 0,
+      level: "details",
+    }),
+  ).rejects.toThrow("Not a GitHub pull request URL");
+  expect(listings(gh)).toHaveLength(3);
 });
 
 it("tells a reader why a pull request could not be read, or that GitHub answered for none", async () => {

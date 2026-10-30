@@ -2,7 +2,8 @@
 // pull requests from GitHub. Links and the Solo sidebar, the panel, agents'
 // watches and agents' own lookups each ask it for a level of detail; it reads
 // each pull request once for all of them, at every level asked of it, and
-// holds what it read only while someone still wants it.
+// holds what it read only while someone still wants it. Links read issues'
+// state from it too, the same way.
 import { loadGitHubChecks, type CheckSummary } from "./checks";
 import {
   GitHubRateLimited,
@@ -46,7 +47,7 @@ export const BODY_CHARS = 1_000;
 
 /** What a reader wants of a pull request. Every level has its state:
  * - `state`: its title, draft, merged or closed, checks and conflicts, as
- *   links show;
+ *   links show; the only level an issue has;
  * - `feedback`: its reviews and comments with their text, for agents'
  *   watches, read whether or not the window is visible;
  * - `details`: everything the panel shows and acts on: details, review,
@@ -83,7 +84,11 @@ export type PullDetails = Readonly<{
 }>;
 
 export type PullState = Readonly<{
+  /** An issue is only open or closed. */
   state: "open" | "draft" | "merged" | "closed";
+  /** Why an issue was closed: completed, or not planned, as a duplicate is
+   * too. */
+  reason?: "completed" | "not planned" | undefined;
   /** Read with the state, so a renamed one is renamed where it is shown. */
   title?: string | undefined;
   /** The head commit's combined checks, when read with `gh`. */
@@ -140,8 +145,9 @@ const isState = (
 ) => typeof state === "object" && names.includes(state.state);
 
 /** Links and the Solo sidebar: every minute while the window is visible;
- * every few minutes for a closed one, which rarely reopens, one that could
- * not be read, or one read from the public API; never once merged. */
+ * every few minutes for a closed one, issue or pull request, which rarely
+ * reopens, one that could not be read, or one read from the public API;
+ * never once merged. */
 export const LINK_POLLING: Polling = (
   state,
   { hidden, public: publicly, failing },
@@ -180,7 +186,7 @@ export type PullStates = Readonly<{
    * often as `polling` wants, or its readers wanting it more often do; by
    * default as that level's reader polls. A level not held yet is read at
    * once. Feedback text is read only where some reader `wantsText`. A URL
-   * that is not a pull request's is not watched. */
+   * that is not a pull request's, or at `state` an issue's, is not watched. */
   watch(
     url: string,
     listener: () => void,
@@ -188,15 +194,16 @@ export type PullStates = Readonly<{
     options?: Readonly<{ polling?: Polling; wantsText?: WantsText }>,
   ): () => void;
   /** Its latest state, kept when a later read fails; `"failed"` when it was
-   * never read or `url` is not a pull request's, or undefined before the
-   * first read. */
+   * never read or `url` is neither a pull request's nor an issue's, or
+   * undefined before the first read. */
   get(url: string): PullState | "failed" | undefined;
   /** When its state was read, and why the last read failed, if it did. */
   readAt(url: string): Omit<PullRead, "state"> | undefined;
   /** Its state as read within `maxAge` ms at `level`: what is held, or else
    * read now with whatever else is due, shown or not. When it could not be
    * read again, what is held, with why. Throws when `url` is not a pull
-   * request's, or it could not be read and nothing is held. */
+   * request's, or at `state` an issue's, or it could not be read and nothing
+   * is held. */
   read(
     url: string,
     options: {
@@ -233,9 +240,15 @@ type StateData = {
   reviews?: { nodes?: ({ id?: string; comments?: Ids } | null)[] };
   comments?: Ids;
 };
+type IssueData = {
+  state: "OPEN" | "CLOSED";
+  stateReason?: string | null;
+  title?: string;
+};
 type RepositoryData =
   | (NonNullable<PullData["repository"]> & {
       pullRequest?: (StateData & Node) | null;
+      issue?: IssueData | null;
     })
   | null;
 
@@ -264,6 +277,7 @@ commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCo
 __typename
 ... on CheckRun{name status conclusion}
 ... on StatusContext{context state}}}}}}}`;
+const ISSUE = "state stateReason title";
 // Every inline comment, a reply on an old thread too, comes with a newly
 // submitted review; pending ones are not yet sent.
 const FEEDBACK = `reviews(last:50,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{id comments(first:100){nodes{id}}}}
@@ -337,6 +351,23 @@ function stateOf(pull: StateData): PullState {
   };
 }
 
+/** An issue's state, as either API gives it: closed as completed when GitHub
+ * gives no reason, as for one closed before it kept them. */
+const issueOf = (
+  closed: boolean,
+  reason: string | null | undefined,
+  title: string | undefined,
+): PullState =>
+  closed
+    ? {
+        state: "closed",
+        reason: /^(?:not_planned|duplicate)$/i.test(reason ?? "")
+          ? "not planned"
+          : "completed",
+        title,
+      }
+    : { state: "open", title };
+
 const KINDS: Record<string, string> = {
   PullRequestReview: "review",
   IssueComment: "comment",
@@ -393,9 +424,10 @@ type Asked = Readonly<{
   listed: readonly string[];
 }>;
 
-/** All of `urls`, canonical pull request URLs, in one GitHub request, and
- * the text of feedback not yet held in another: each one's state, or an error
- * for one GitHub could not read. Throws when it answered for none. */
+/** All of `urls`, canonical pull request and issue URLs, in one GitHub
+ * request, and the text of feedback not yet held in another: each one's
+ * state, or an error for one GitHub could not read, as is an issue's URL
+ * that numbers a pull request. Throws when it answered for none. */
 async function readStates(
   gh: GitHubCli,
   urls: readonly string[],
@@ -409,6 +441,8 @@ async function readStates(
     variables[`o${i}`] = owner;
     variables[`n${i}`] = name;
     variables[`p${i}`] = Number(url.split("/").at(-1));
+    if (reference?.kind === "issue")
+      return `r${i}:repository(owner:$o${i},name:$n${i}){issue(number:$p${i}){${ISSUE}}}`;
     const { feedback, details } = asks(url);
     return `r${i}:repository(owner:$o${i},name:$n${i}){${details ? PANEL_REPOSITORY_FIELDS : ""}
       pullRequest(number:$p${i}){${STATE}${feedback ? `\n${FEEDBACK}` : ""}${details ? `\n${PANEL_PULL_FIELDS}` : ""}}}`;
@@ -436,6 +470,9 @@ async function readStates(
   const viewer = str((data as { viewer?: Node }).viewer?.login);
   const states = urls.map((url, i): PullState | Error => {
     const repository = data[`r${i}`];
+    const issue = repository?.issue;
+    if (issue)
+      return issueOf(issue.state === "CLOSED", issue.stateReason, issue.title);
     const pull = repository?.pullRequest;
     if (!repository || !pull)
       return failure?.type === "NOT_FOUND" || !failure
@@ -518,7 +555,8 @@ async function readText(
 }
 
 /** `url` from the public API, with its details when `withDetails`, and its
- * public checks as `checks` says. */
+ * public checks as `checks` says. An issue's URL that numbers a pull request
+ * is not read as either. */
 async function readPublicState(
   url: string,
   withDetails: boolean,
@@ -529,6 +567,17 @@ async function readPublicState(
   const reference = parseGitHubReference(url);
   if (!reference) throw new Error("Not a GitHub pull request URL");
   const details = await loadGitHubDetails(reference, signal);
+  if (reference.kind === "issue") {
+    if (details.pullRequest)
+      throw new Error(
+        "GitHub has a pull request, not an issue, at this number.",
+      );
+    return issueOf(
+      details.state === "closed",
+      details.stateReason,
+      details.title,
+    );
+  }
   const sha = details.headSha;
   return {
     state:
@@ -568,6 +617,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
   (typeof a === "object" &&
     typeof b === "object" &&
     a.state === b.state &&
+    a.reason === b.reason &&
     a.title === b.title &&
     a.checks === b.checks &&
     a.conflicts === b.conflicts &&
@@ -586,12 +636,17 @@ const holds = (state: PullState | "failed" | undefined, level: PullLevel) =>
 
 /** The pull request `url` names, as the store keys it: its canonical URL, so
  * a link pasted with a query string or trailing slash shares the entry, and
- * the read, of the plain one. Undefined for a URL that is not a pull request's. */
+ * the read, of the plain one. Undefined for a URL that is not a pull request's,
+ * or an issue's at `state`, the only level an issue has; an issue and a pull
+ * request with one number keep their own. */
 /** GitHub names are not case-sensitive, so one key holds every casing a
  * link, the panel or a watch gives. */
-const keyOf = (url: string) => {
+const keyOf = (url: string, level: PullLevel = "state") => {
   const reference = parseGitHubReference(url);
-  return reference?.kind === "pull" ? reference.url.toLowerCase() : undefined;
+  return reference?.kind === "pull" ||
+    (reference?.kind === "issue" && level === "state")
+    ? reference.url.toLowerCase()
+    : undefined;
 };
 
 type Listener = Readonly<{
@@ -989,7 +1044,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   }
   return {
     watch(raw, notify, level = "state", options = {}) {
-      const url = keyOf(raw);
+      const url = keyOf(raw, level);
       if (!url) return () => {};
       const listener = {
         notify,
@@ -1039,7 +1094,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       raw,
       { maxAge, level = "state", wantsText = allText, interactive = false },
     ) {
-      const url = keyOf(raw);
+      const url = keyOf(raw, level);
       if (!url)
         return Promise.reject(new Error("Not a GitHub pull request URL"));
       const state = states.get(url);

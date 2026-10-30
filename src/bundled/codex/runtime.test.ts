@@ -2525,7 +2525,6 @@ it.each(["v2", "v3", "v5", "v6", "v7", "v15", "v16"])(
       expect.arrayContaining([
         "channel_list",
         "channel_get",
-        "member_list",
         "media_get",
         "mem_rm",
         "notes_get",

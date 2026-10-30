@@ -687,16 +687,21 @@ panel fill. Use it over artwork, not on ordinary neutral profile headers.
 
 ### Match controls to their surface
 
-The shell groups creation, page tabs, and search in one `chrome-navigation`
-track. Nested chrome tabs retain their selected fill without a second track.
+The shell groups page tabs in one `chrome-navigation` track, with Search as a
+separate adjacent button. Creation sits beside the sidebar scope filters.
+Nested chrome tabs retain their selected fill without a second track.
 Layout and overflow remain shell-owned.
 
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
+Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px
+control step, paired with `IconButton size="sm"` for adjacent actions.
 Proposed: `Tabs variant="segmented-icons"` uses the same track for icon-only
 avatar choices, retaining accessible labels and titles. Each item supplies an icon.
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
+Use `IconButton variant="inset"` for a secondary action beside segmented filters;
+it shares their `surface-inset` fill and retains secondary interaction states.
 Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule
 (neutral 3 in light mode, distinct from the app background),
 with `affordance-chrome-hover` for an inactive item and `text-chrome-subtle` labels. Selection uses the pane color

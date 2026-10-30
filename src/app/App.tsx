@@ -373,15 +373,19 @@ function ConnectedApp({ services }: { services: AppServices }) {
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell
-            creationAction={
+            creationInSidebar={!workspace.page?.sidebar}
+            creationAction={(open, onOpenChange, triggerContainer) => (
               <NewMenu
+                triggerContainer={triggerContainer}
+                open={open}
+                onOpenChange={onOpenChange}
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}
               />
-            }
+            )}
             workspaceRef={setWorkspaceElement}
-            sidebar={(pageNavigation) =>
+            sidebar={(pageNavigation, creationAction) =>
               workspace.page?.sidebar && pageSidebarReady ? (
                 <OwnedContribution
                   entry={workspace.page}
@@ -417,6 +421,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 </div>
               ) : (
                 <PrimarySidebar
+                  creationAction={creationAction}
                   federatedIdentity={services.federatedIdentity}
                   relay={services.relay}
                   navigator={services.navigation}

@@ -1772,6 +1772,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 }
 
 .membership {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3297,6 +3298,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   outline-offset: -2px;
 }
 .audienceEntry {
+  position: relative;
   display: flex;
   align-items: flex-start;
   border-radius: var(--radius-control);

@@ -45,27 +45,30 @@ async function frame() {
     }
   });
 }
-function mount(hold?: () => boolean) {
+function mount(hold?: () => boolean, { focus }: { focus?: boolean } = {}) {
   const request = new AbortController();
   const complete = vi.fn();
   function Surface({
     signal = request.signal,
     prepare = undefined,
     rowKey = 0,
+    messageId = "target",
   }: {
     signal?: AbortSignal;
     prepare?: () => void;
     rowKey?: number;
+    messageId?: string;
   }) {
     const scroller = useRef<HTMLDivElement>(null);
     const settled = useRef(false);
     useMessageReveal({
       scroller,
       settled,
-      messageId: "target",
+      messageId,
       signal,
       ready: true,
       complete,
+      ...(focus === undefined ? {} : { focus }),
       ...(prepare ? { prepare } : {}),
       ...(hold ? { hold } : {}),
     });
@@ -74,6 +77,11 @@ function mount(hold?: () => boolean) {
         <div ref={scroller}>
           <div key={rowKey} data-message-id="target">
             Target
+            <div data-highlight-surface="" />
+          </div>
+          <div data-message-id="other">
+            Other
+            <div data-highlight-surface="" />
           </div>
         </div>
         <button type="button">Elsewhere</button>
@@ -93,6 +101,10 @@ function mount(hold?: () => boolean) {
     remountRow: () => result.rerender(<Surface rowKey={1} />),
     next: () =>
       result.rerender(<Surface signal={new AbortController().signal} />),
+    other: () =>
+      result.rerender(
+        <Surface signal={new AbortController().signal} messageId="other" />,
+      ),
   };
 }
 async function mutate(row: HTMLElement) {
@@ -113,22 +125,59 @@ it("notifies reading after the revealed row is verified", async () => {
   expect(complete).toHaveBeenCalledOnce();
 });
 
+function highlighted(row: HTMLElement) {
+  return !!row
+    .querySelector(":scope > [data-highlight-surface]")
+    ?.classList.contains(styles.messageHighlight ?? "");
+}
+
 it("marks the arrival once the revealed row is verified", async () => {
   const { row, request, unmount } = mount();
-  const message = document.createElement("div");
-  message.dataset.layout = "timeline";
-  row.append(message);
-  const highlighted = () =>
-    message.classList.contains(styles.messageHighlight ?? "");
   await frame(); // Attach observers.
   await frame(); // Reveal, but do not verify yet.
-  expect(highlighted()).toBe(false);
+  expect(highlighted(row)).toBe(false);
   await frame();
-  expect(highlighted()).toBe(true);
+  expect(highlighted(row)).toBe(true);
   request.abort();
-  expect(highlighted()).toBe(true);
+  expect(highlighted(row)).toBe(true);
   unmount();
-  expect(highlighted()).toBe(false);
+  expect(highlighted(row)).toBe(false);
+});
+
+it("moves the arrival mark to the next revealed message", async () => {
+  const { row, other } = mount();
+  await frame();
+  await frame();
+  await frame();
+  expect(highlighted(row)).toBe(true);
+  other();
+  await frame();
+  await frame();
+  await frame();
+  expect(highlighted(row)).toBe(false);
+  expect(highlighted(screen.getByText("Other"))).toBe(true);
+});
+
+it("does not mark a row that fails verification", async () => {
+  const { row, complete } = mount();
+  await frame();
+  await frame();
+  vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+    ...row.getBoundingClientRect(),
+    height: 0,
+  });
+  await frame();
+  expect(complete).not.toHaveBeenCalled();
+  expect(highlighted(row)).toBe(false);
+});
+
+it("does not mark a reveal behind a covering panel", async () => {
+  const { row, complete } = mount(undefined, { focus: false });
+  await frame();
+  await frame();
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+  expect(highlighted(row)).toBe(false);
 });
 
 it.each([false, true])(

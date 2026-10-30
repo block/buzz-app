@@ -30,6 +30,12 @@ import {
   markdownRanges,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
+import { catalogEmoji } from "./MessageReactions";
+import {
+  blocksReactionToggle,
+  lastReactableMessage,
+  toggleReaction,
+} from "./react-to-latest";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
@@ -1006,6 +1012,39 @@ function Composer({
     channelId,
     (channel) => !!channel?.archived || !!channel?.readOnly,
   );
+  const canReactToLatest =
+    !editLocked && !!host?.outbox?.supports(7) && !!host?.outbox?.supports(5);
+  const reactToLatest = () => {
+    if (!host || !canReactToLatest) return undefined;
+    const target = lastReactableMessage(session, editableRows());
+    if (
+      !target ||
+      host.outbox?.snapshot().some(blocksReactionToggle(host, target.id))
+    )
+      return undefined;
+    return (content: string): boolean => {
+      // Reread the captured row: its reactions may have changed since capture.
+      const row = editableRows().find((live) => live.id === target.id);
+      if (
+        !row ||
+        !lastReactableMessage(session, [row]) ||
+        host.outbox?.snapshot().some(blocksReactionToggle(host, row.id))
+      )
+        return false;
+      try {
+        toggleReaction(
+          host,
+          scope,
+          row,
+          content,
+          catalogEmoji(host.emoji.snapshot().entries, content),
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  };
   const editDisabled = disabled || editLocked;
   const editingDisabled =
     disabled ||
@@ -3161,6 +3200,9 @@ function Composer({
                     replaceRecipients={replaceRecipients}
                     replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
                     insertResource={insertResource}
+                    {...(canReactToLatest && !editing.target && !submission
+                      ? { reactToLatest }
+                      : {})}
                     focus={() => input.current?.focus()}
                   />
                 ) : (

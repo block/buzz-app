@@ -250,6 +250,33 @@ function mount(
     }),
     send: vi.fn<RelaySession["messages"]["send"]>(() => "channel-id"),
     reply: vi.fn<RelaySession["messages"]["reply"]>(() => "reply-id"),
+    // Reacting queues an optimistic outgoing event, like the real outbox.
+    react: vi.fn((id: string, content: string) => {
+      setPending([
+        ...pending,
+        {
+          event: {
+            id: "reaction-id",
+            kind: 7,
+            pubkey: first.pubkey,
+            created_at: 100,
+            content,
+            tags: [
+              ["h", "channel"],
+              ["e", id],
+            ],
+          },
+          delivery: "sending",
+        },
+      ]);
+      return "reaction-id";
+    }),
+    remove: vi.fn(() => "removal-id"),
+    reactionTarget: vi.fn((event: RelayEvent) =>
+      event.kind === 7
+        ? event.tags.find(([name]) => name === "e")?.[1]
+        : undefined,
+    ),
   };
   const typing: ReturnType<RelaySession["typing"]["snapshot"]> = [];
   let profiles: ReadonlyMap<string, Profile> = new Map();
@@ -262,7 +289,10 @@ function mount(
   };
   const channelList = {
     status: "ready" as const,
-    channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
+    channels: [
+      { id: "channel", members: [first.pubkey, second.pubkey] },
+      { id: "archive", archived: true, members: [first.pubkey] },
+    ],
   };
   const rawSession = {
     // Full-session fixture; the detached editor intentionally omits this capability.
@@ -6607,6 +6637,108 @@ const editableMessage = (
   attachments: [],
   reactions: [],
   ...overrides,
+});
+
+it("reacts to the row captured at open even when a newer message arrives", () => {
+  const h = mount({}, undefined, first.pubkey);
+  expect(h.commands().reactToLatest?.()).toBeUndefined();
+  const older = editableMessage({ id: "a".repeat(64) });
+  const newest = editableMessage({ id: "b".repeat(64) });
+  h.setRows([older, newest]);
+  const commit = h.commands().reactToLatest?.();
+  expect(commit).toBeDefined();
+  const arrived = editableMessage({ id: "e".repeat(64) });
+  h.setRows([older, newest, arrived]);
+  act(() => {
+    expect(commit?.("👍")).toBe(true);
+  });
+  expect(h.messages.react).toHaveBeenCalledWith(newest.id, "👍", undefined);
+  h.setDelivery("accepted");
+  const vanished = h.commands().reactToLatest?.();
+  h.setRows([older, newest]);
+  act(() => {
+    expect(vanished?.("👍")).toBe(false);
+  });
+  expect(h.messages.react).toHaveBeenCalledTimes(1);
+});
+
+it("withholds a new capture and rejects commits while a reaction is in flight", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage({ id: "a".repeat(64) })]);
+  const commit = h.commands().reactToLatest?.();
+  act(() => {
+    expect(commit?.("👍")).toBe(true);
+  });
+  expect(h.commands().reactToLatest?.()).toBeUndefined();
+  act(() => {
+    expect(commit?.("🎉")).toBe(false);
+  });
+  h.setDelivery("accepted");
+  expect(h.commands().reactToLatest?.()).toBeDefined();
+  expect(h.messages.react).toHaveBeenCalledTimes(1);
+});
+
+it("removes the viewer's own reaction instead of reacting again", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([
+    editableMessage({
+      id: "a".repeat(64),
+      reactions: [
+        {
+          content: "👍",
+          events: [{ id: "f".repeat(64), authorId: first.pubkey }],
+        },
+      ],
+    }),
+  ]);
+  act(() => {
+    expect(h.commands().reactToLatest?.()?.("👍")).toBe(true);
+  });
+  expect(h.messages.remove).toHaveBeenCalledWith(["f".repeat(64)]);
+  expect(h.messages.react).not.toHaveBeenCalled();
+});
+
+it("targets the thread's newest row from a thread composer", () => {
+  const root = editableMessage({ id: "a".repeat(64) });
+  const reply = editableMessage({ id: "b".repeat(64) });
+  const h = mount(
+    { threadRootId: root.id, editMessages: [root, reply] },
+    undefined,
+    first.pubkey,
+  );
+  act(() => {
+    expect(h.commands().reactToLatest?.()?.("🎉")).toBe(true);
+  });
+  expect(h.messages.react).toHaveBeenCalledWith(reply.id, "🎉", undefined);
+});
+
+it("withholds reactToLatest while editing, for submissions and in locked channels", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  expect(h.commands().reactToLatest).toBeDefined();
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  expect(h.commands().reactToLatest).toBeUndefined();
+  fireEvent.keyDown(h.input(), { key: "Escape", keyCode: 27 });
+  expect(h.commands().reactToLatest).toBeDefined();
+  // The fixture session skips channel facts unless `get` marks it listable.
+  const relisted = {
+    ...h.session,
+    channels: { ...h.session.channels, get: () => undefined },
+  } as RelaySession;
+  h.retarget({ channelId: "archive", session: relisted });
+  expect(h.commands().reactToLatest).toBeUndefined();
+  h.retarget({ channelId: "channel", session: relisted });
+  expect(h.commands().reactToLatest).toBeDefined();
+  h.retarget({
+    submission: {
+      draftKey: "submission",
+      locked: false,
+      disabled: false,
+      submit: vi.fn(),
+    },
+  });
+  expect(h.commands().reactToLatest).toBeUndefined();
 });
 
 it("edits in the same composer, cancels without persisting edit text, and restores draft undo history", () => {

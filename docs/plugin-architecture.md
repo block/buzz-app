@@ -1568,7 +1568,7 @@ selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
-`insertMentions([{ pubkey, name }, …])`, `replaceRecipients`, `insertResource` and `focus` commands,
+`insertMentions([{ pubkey, name }, …])`, `replaceRecipients`, `insertResource`, `reactToLatest` and `focus` commands,
 and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
 draft order, so a tool can act for whoever the draft addresses. There is one entry
 per mention, so a person mentioned twice appears twice. Recipients the host adds
@@ -1576,6 +1576,12 @@ at send time, such as a Solo channel's sole agent, are not included. The array
 keeps its identity until the recipients change.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.
+`reactToLatest` is offered only where the composer's conversation can take
+reactions. Calling it captures the newest reactable message and returns a
+command that toggles the viewer's reaction on that message — or `undefined`
+when there is no target — so a selection made later cannot drift to a message
+that arrived in between. The returned command reports `false` once the captured
+message is gone, no longer reactable, or has a reaction delivery in flight.
 The host serializes successive commands using the latest draft and selection,
 enforces text/recipient limits, and revokes commands on tool removal/replacement,
 editor destination/session change, disabled/read-only state and unmount. Names are

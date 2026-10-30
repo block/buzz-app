@@ -24,9 +24,9 @@ import type {
 } from "../relay/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
-import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
-import { recordReaction, useQuickReactions } from "./quick-reactions";
+import { useQuickReactions } from "./quick-reactions";
+import { blocksReactionToggle, toggleReaction } from "./react-to-latest";
 import styles from "./Messages.module.css";
 
 type Props = {
@@ -59,26 +59,13 @@ function useReactionAction({ row, session, scope, disabled }: Props) {
     session.outbox?.snapshot ?? empty,
     session.outbox?.snapshot ?? empty,
   );
-  const blocksToggle = (item: OutgoingEvent) =>
-    ["sending", "failed", "unknown"].includes(item.delivery) &&
-    session.messages.reactionTarget(item.event) === row.id;
+  const blocksToggle = blocksReactionToggle(session, row.id);
   const busy = operations.some(blocksToggle);
   const toggle = (content: string, emoji?: CustomEmoji) => {
     if (!active.current || session.outbox?.snapshot().some(blocksToggle))
       return false;
     try {
-      const group = row.reactions.find(
-        (reaction) =>
-          reaction.content === content && reaction.emoji?.url === emoji?.url,
-      );
-      const mine =
-        group?.events.filter((event) => event.authorId === session.viewer) ??
-        [];
-      if (mine.length) session.messages.remove(mine.map((event) => event.id));
-      else {
-        session.messages.react(row.id, content, emoji);
-        recordReaction(scope, content);
-      }
+      toggleReaction(session, scope, row, content, emoji);
       setError(undefined);
       return true;
     } catch (reason) {
@@ -118,7 +105,7 @@ const catalogIndexes = new WeakMap<
   ReadonlyMap<string, CustomEmoji>
 >();
 /** Every row looks up its quick reactions on each render; index each catalog snapshot once. */
-function catalogEmoji(entries: readonly CustomEmoji[], content: string) {
+export function catalogEmoji(entries: readonly CustomEmoji[], content: string) {
   if (!content.startsWith(":")) return undefined;
   let index = catalogIndexes.get(entries);
   if (!index) {

@@ -169,6 +169,12 @@ export function AgentDetails({
   const [editingIdentity, setEditingIdentity] = useState(false);
   const identityMenu = useRef<HTMLButtonElement>(null);
   const [editingName, setEditingName] = useState(false);
+  useLayoutEffect(() => {
+    if (signInVisible) {
+      setEditingName(false);
+      setEditingIdentity(false);
+    }
+  }, [signInVisible]);
   const [name, setName] = useState(agent.name);
   const [namePending, setNamePending] = useState(false);
   const [nameError, setNameError] = useState("");

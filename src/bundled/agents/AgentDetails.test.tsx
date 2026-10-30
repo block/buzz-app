@@ -24,6 +24,11 @@ import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentDetails } from "./AgentDetails";
+import { createOAuthSession } from "../builderlab/oauth/session";
+import {
+  createProfileActions,
+  createSignInFooter,
+} from "../builderlab/adapter-type/SignInFooter";
 
 afterEach(cleanup);
 
@@ -164,6 +169,127 @@ it("keeps one provider footer across tabs and measures its changing height for t
   width.mockRestore();
   left.mockRestore();
 });
+
+it.each(["name", "avatar"])(
+  "closes the %s editor when the provider signs out",
+  async (target) => {
+    const callbacks = new Set<() => void>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private changed: () => void) {}
+        observe() {
+          callbacks.add(this.changed);
+        }
+        disconnect() {
+          callbacks.delete(this.changed);
+        }
+        unobserve() {}
+      },
+    );
+    const session = createOAuthSession(async () => ({
+      value: "credential",
+      account: {
+        subject: "account",
+        email: "a@example.com",
+        canUseRemoteAgents: true,
+      },
+    }));
+    await session.signIn();
+    const signIn = vi.spyOn(session, "signIn");
+    const agent = {
+      key: "a".repeat(64),
+      pubkey: "a".repeat(64),
+      owner: "f".repeat(64),
+      name: "Ada",
+      type: "test/hosted",
+      place: "hosted",
+      relay: "wss://current.example",
+      config: {},
+      attention: {},
+      skipped: {},
+      timers: {},
+      attentionEnabled: true,
+    } satisfies Agent;
+    const type = {
+      key: agent.type,
+      pluginId: "test",
+      revision: "1",
+      id: "hosted",
+      title: "Hosted",
+      defaults: () => ({ config: {} }),
+      PanelFooter: createSignInFooter(session),
+      ProfileActions: createProfileActions(session),
+    } as RegisteredAgentType;
+    const agents = {
+      save: vi.fn(),
+      subscribe: () => () => {},
+      snapshot: () => ({ agents: [agent] }),
+      configHistory: () => undefined,
+      addedTabs: () => [],
+      memberships: () => [],
+    } as unknown as Agents;
+    const view = render(
+      <AgentDetails
+        agents={agents}
+        agent={agent}
+        type={type}
+        types={[type]}
+        channels={[]}
+        memories={undefined}
+        onRemoved={vi.fn()}
+        messageAction={() => <Button>Message</Button>}
+      />,
+    );
+    try {
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByRole("button", { name: "Agent profile actions" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: `Change ${target}` }),
+      );
+      if (target === "name")
+        expect(
+          screen.getByRole("textbox", { name: "Agent name" }),
+        ).toBeVisible();
+      else
+        expect(
+          screen.getByRole("dialog", { name: "Change avatar" }),
+        ).toBeVisible();
+      act(() => session.signOut());
+      act(() => {
+        for (const callback of callbacks) callback();
+      });
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("textbox", { name: "Agent name" }),
+        ).toBeNull();
+        expect(
+          screen.queryByRole("dialog", { name: "Change avatar" }),
+        ).toBeNull();
+      });
+      await user.keyboard("{Enter}");
+      expect(signIn).not.toHaveBeenCalled();
+      expect(agents.save).not.toHaveBeenCalled();
+      await act(() => session.signIn());
+      act(() => {
+        for (const callback of callbacks) callback();
+      });
+      expect(
+        await screen.findByRole("button", { name: "Agent profile actions" }),
+      ).toBeVisible();
+      expect(screen.queryByRole("textbox", { name: "Agent name" })).toBeNull();
+      expect(
+        screen.queryByRole("dialog", { name: "Change avatar" }),
+      ).toBeNull();
+    } finally {
+      view.unmount();
+      session.dispose();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 function Settings({ agent, save }: AgentViewProps<{ reply: string }>) {
   const form = useId();

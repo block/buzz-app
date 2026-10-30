@@ -1777,13 +1777,15 @@ is over 128 KiB (`input_limit`), or the call times out, fails, or returns
 answers that do not fit the questions. A failed call is not retried and never
 falls back to another provider.
 
-Agents ask through the `decide` tool, which the Agents plugin adds to every
-agent session (`src/features/decisions/agent-tool.ts`). It takes and returns
-TypeSafe's [System One format](https://docs.typesafe.ai/api/system-one.md)
+Agents ask through the `decisions_ask` tool, which the Agents plugin adds to
+every agent session (`src/features/decisions/agent-tool.ts`). It takes and
+returns TypeSafe's [System One format](https://docs.typesafe.ai/api/system-one.md)
 (`noul`, `choice` and `score` questions with `criteria`), maps it onto
-`decide`, and sends the agent's community. It has no `model`, images or box
-questions: the provider the owner chose answers. A failure is a tool error
-that names the reason and what the owner can do about it.
+`decide`, and sends the agent's community. It has no `model`, images, box
+questions or `usage`: the provider the owner chose answers. A failure is a tool
+error that names the reason and what the owner can do about it. Agents on a
+device have at most 4 calls in flight at once, so Attention's classifier keeps
+most of the native client's 16 slots.
 
 ### Decision providers
 

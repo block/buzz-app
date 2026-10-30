@@ -64,6 +64,13 @@ it("rejects duplicate tags, duplicate identities, malformed shapes and oversized
   ).toThrow();
 });
 it("keeps unknown versions inert and fallback labels literal", () => {
+  const project: ComposerToken = {
+    kind: "nexus.project",
+    id: "opaque",
+    label: "#Do not send this project tag",
+  };
+  expect(taskTokenFallback([project, token])).toBe(taskTokenFallback([token]));
+  expect(readTaskTokens(taskTokenTags([project]))).toEqual([project]);
   expect(readTaskTokens([["nexus.tokens.v2", "invalid future bytes"]])).toEqual(
     [],
   );

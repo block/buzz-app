@@ -59,6 +59,7 @@ export function readTaskTokens(
  * a resolved repository, an extra mention, or an access grant. */
 export function taskTokenFallback(tokens: readonly ComposerToken[]) {
   return tokens
+    .filter((token) => token.kind !== "nexus.project")
     .map((token) => {
       const label = composerTokenName(token);
       const fence = "`".repeat(

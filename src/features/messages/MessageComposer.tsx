@@ -143,7 +143,6 @@ import {
   type TaskContext,
 } from "../solo/task-mode";
 import { soloNavigationFor } from "../channel-navigation/solo-navigation";
-import { TaskRecipientControl } from "../solo/TaskRecipientControl";
 import { taskHeaderUI } from "../solo/TaskHeaderTitle";
 import { identityLink } from "./composer-clipboard";
 import { taskTokenTags, taskTokenFallback } from "./task-tokens";
@@ -454,7 +453,6 @@ function Composer({
     taskNavigation?.subscribe ?? noSubscription,
     taskNavigation?.snapshot ?? (() => undefined),
   );
-  const [, refreshTaskState] = useState(0);
   let taskContext: TaskContext | undefined;
   let taskError: string | undefined;
   let taskPrimary: string | undefined;
@@ -2240,16 +2238,6 @@ function Composer({
   const context = (
     <div className={styles.composerContext}>
       {taskError && <p role="status">{taskError}</p>}
-      {taskContext && !taskError && !editing.target && (
-        <TaskRecipientControl
-          session={session}
-          channelId={channelId}
-          context={taskContext}
-          explicit={value.recipients.map((item) => item.pubkey)}
-          disabled={disabled || !active}
-          onUpdated={() => refreshTaskState((revision) => revision + 1)}
-        />
-      )}
       {!cached && !submission && (
         <TypingIndicator
           clickOpensPanel={activityClickOpensPanel}

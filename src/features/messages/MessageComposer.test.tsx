@@ -10211,6 +10211,9 @@ async function taskComposerFixture(allowHistorical = false) {
   const eligible = new Set([first.pubkey, second.pubkey]);
   const historical = new Set([first.pubkey, second.pubkey]);
   let primary = first.pubkey;
+  const makePrimary = async (_channel: string, key: string) => {
+    primary = key;
+  };
   const source = await region.register({
     task: {
       prepare: async () => ({ ok: false, reason: "unused" }),
@@ -10228,9 +10231,7 @@ async function taskComposerFixture(allowHistorical = false) {
             }
           : {}),
         defaultRecipient: () => primary,
-        makePrimary: async (_channel, key) => {
-          primary = key;
-        },
+        makePrimary,
         maxRecipients: 1,
       },
     },
@@ -10280,13 +10281,26 @@ async function taskComposerFixture(allowHistorical = false) {
     },
   };
   h.retarget({ ownSoloConversation: true, requireMention: true, session });
-  return { h, session, region, source, eligible, addAgents, refreshMembership };
+  return {
+    h,
+    session,
+    region,
+    source,
+    eligible,
+    addAgents,
+    refreshMembership,
+    makePrimary,
+  };
 }
 
-it("task primary A survives explicit B; later Make primary B changes untagged routing without prefill", async () => {
-  const { h, addAgents } = await taskComposerFixture();
+it("routes task messages without a recipient footer while preserving explicit and primary changes", async () => {
+  const { h, addAgents, makePrimary } = await taskComposerFixture();
   expect(h.input()).toHaveValue("");
-  expect(screen.getByRole("button", { name: "To Ada" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: /^(To |Choose primary|This message)/,
+    }),
+  ).toBeNull();
   h.fill("Untagged A");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
@@ -10297,8 +10311,10 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   });
   await h.user.type(h.input(), "Explicit B");
   expect(
-    screen.getByRole("button", { name: "This message → Bea" }),
-  ).toBeVisible();
+    screen.queryByRole("button", {
+      name: /^(To |Choose primary|This message)/,
+    }),
+  ).toBeNull();
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
   expect(addAgents).toHaveBeenCalledWith(
@@ -10312,11 +10328,7 @@ it("task primary A survives explicit B; later Make primary B changes untagged ro
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(3));
   expect(h.messages.send.mock.calls[2]?.[2]).toEqual([first.pubkey]);
-  await h.user.click(screen.getByRole("button", { name: "To Ada" }));
-  await h.user.click(
-    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
-  );
-  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  await act(() => makePrimary("channel", second.pubkey));
   h.fill("Now B");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(4));
@@ -10388,8 +10400,9 @@ it("projects stable structured explicit recipients to completion matchers and co
   expect(signal?.aborted).toBe(false);
 });
 
-it("keeps task repair visible with revoked historical A, then sends only to eligible primary B", async () => {
-  const { h, session, eligible, addAgents } = await taskComposerFixture(true);
+it("keeps task repair visible without a recipient footer, then sends only to eligible primary B", async () => {
+  const { h, session, eligible, addAgents, makePrimary } =
+    await taskComposerFixture(true);
   act(() => h.commands().insertMention({ ...second, name: "Bea" }));
   await h.user.type(h.input(), "Admit B");
   h.submit();
@@ -10397,12 +10410,13 @@ it("keeps task repair visible with revoked historical A, then sends only to elig
   eligible.delete(first.pubkey);
   h.retarget({ session });
   expect(screen.getByText("Task repair")).toBeVisible();
-  await h.user.click(screen.getByRole("button", { name: "Choose primary" }));
-  expect(screen.queryByRole("menuitem", { name: /Ada/ })).toBeNull();
-  await h.user.click(
-    await screen.findByRole("menuitem", { name: "Make Bea primary" }),
-  );
-  expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: /^(To |Choose primary|This message)/,
+    }),
+  ).toBeNull();
+  await act(() => makePrimary("channel", second.pubkey));
+  h.retarget({ session });
   h.fill("Continue with B");
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
@@ -10553,7 +10567,7 @@ it.each([false, true])(
   "queued task follow-ups preserve captured primary/token identity (explicit=%s)",
   async (explicit) => {
     localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
-    const { h, session, addAgents } = await taskComposerFixture();
+    const { h, session, addAgents, makePrimary } = await taskComposerFixture();
     await addAgents("channel", [second.pubkey], () => true);
     const listeners = new Set<() => void>();
     let activity = {
@@ -10607,11 +10621,7 @@ it.each([false, true])(
     await screen.findByRole("region", { name: "Queued follow-ups" });
     expect(h.messages.send).not.toHaveBeenCalled();
     // A primary update after queueing cannot retarget this captured request.
-    await h.user.click(screen.getByRole("button", { name: "To Ada" }));
-    await h.user.click(
-      await screen.findByRole("menuitem", { name: "Make Bea primary" }),
-    );
-    expect(await screen.findByRole("button", { name: "To Bea" })).toBeVisible();
+    await act(() => makePrimary("channel", second.pubkey));
     act(() => {
       activity = {
         ...activity,

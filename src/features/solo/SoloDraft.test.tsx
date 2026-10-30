@@ -1599,9 +1599,7 @@ it.each(["remove", "change"] as const)(
         );
       let view = mount();
       const user = userEvent.setup();
-      expect(
-        screen.getByLabelText("Project Selected project"),
-      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("Project Selected project")).toBeNull();
       expect(route.agent).toBeUndefined();
       const input = screen.getByRole(
         "textbox",
@@ -1625,9 +1623,16 @@ it.each(["remove", "change"] as const)(
       expect(f.channelWrites.start).not.toHaveBeenCalled();
       view.unmount();
       view = mount();
+      expect(screen.queryByLabelText("Project Selected project")).toBeNull();
       expect(
-        screen.getByLabelText("Project Selected project"),
-      ).toBeInTheDocument();
+        mentionDraft(
+          readView(
+            region.scope,
+            `solo:task:${route.task.draftId}:new-draft`,
+            null,
+          ),
+        ).tokens?.[0]?.token,
+      ).toEqual({ kind: "nexus.project", ...project });
       await user.click(
         screen.getByRole("button", { name: `${action} selected project` }),
       );
@@ -1663,6 +1668,11 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
   const f = setup();
   const region = createSoloRegionFixture(f.session.viewer);
   const agent = "a".repeat(64);
+  const project = {
+    kind: "nexus.project" as const,
+    id: "selected-project",
+    label: "#Private project label",
+  };
   const prepare = vi.fn<
     import("../channel-navigation/solo-navigation-contract").SoloTaskMode["prepare"]
   >(async (input) => ({
@@ -1707,6 +1717,13 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
       />,
     );
     const user = userEvent.setup();
+    const input = screen.getByRole(
+      "textbox",
+    ) as import("../messages/composer-dom").ComposerInputElement;
+    act(() => {
+      expect(input.insertToken(project, { start: 0, end: 0 })).toBe(true);
+    });
+    expect(input.value).not.toContain(project.label);
     await user.click(screen.getByRole("textbox"));
     await user.type(screen.getByRole("textbox"), "Do the task");
     await user.keyboard("{Enter}");
@@ -1723,11 +1740,16 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
     expect(prepared).toMatchObject({
       draftId: route.draftId,
       primary: agent,
-      tokens: [],
+      tokens: [project],
       attachments: [],
     });
     expect(f.channelWrites.start.mock.calls[0]?.[2]).toEqual([agent]);
     expect(f.messages.send.mock.calls[0]?.[2]).toEqual([agent]);
+    expect(f.messages.send.mock.calls[0]?.[7]).toEqual([project]);
+    expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(project.label);
+    expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(
+      "Task reference: Project",
+    );
     const recovery = f.messages.send.mock.calls[0]?.[4];
     expect(JSON.parse(recovery?.value ?? "null")).toMatchObject({
       draftId: route.draftId,

@@ -149,8 +149,12 @@ export function stopFormerCheckIns(relay: RelayData, agents: ReconcileAgents) {
             const fresh = agents
               .snapshot()
               .agents.find((each) => each.key === agent.key);
-            if (!fresh || !bestie.known() || bestie.snapshot() !== current)
+            if (!fresh) return;
+            if (!bestie.known() || bestie.snapshot() !== current) {
+              // Tried again once the saved Bestie is known.
+              tried.delete(agent.key);
               return;
+            }
             await saveFeature(agents, fresh, feature, false, { timerOnly });
           }
         })

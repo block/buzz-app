@@ -38,6 +38,8 @@ import {
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
+  attachmentDraftCount,
+  clearAttachmentDraft,
   transferAttachmentDraft,
   type AttachmentDraft,
 } from "../messages/attachment-draft";
@@ -86,6 +88,21 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
     writeView(scope, key, null);
 }
 
+/** Whether New chat holds nothing of the person's since a start cleared it:
+ * tags at most, no files, and its settings and workspace untouched. */
+function blankNewChat(session: RelaySession, scope: string, key: string) {
+  const saved = mentionDraft(readView<unknown>(scope, `${key}:new-draft`, ""));
+  return (
+    (!composerMarkdown(saved).trim() || addressingOnly(saved)) &&
+    !attachmentDraftCount(session, `${scope}:${key}:new-draft`) &&
+    readView(scope, `${key}:settings`, null) === null &&
+    readView(scope, `${key}:new-project`, null) === null
+  );
+}
+/** Open New chats, told when a refused start gives their draft back: their
+ * composer reads it only as it mounts. */
+const restoreListeners = new Set<(scope: string, key: string) => void>();
+
 export function SoloDraft({
   session,
   scope,
@@ -107,8 +124,8 @@ export function SoloDraft({
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
-  /** The started chat `id` was never made, and what was sent in it is lost;
-   * `message` says why. */
+  /** The started chat `id` was never made; `message` says why. What was sent
+   * in it goes back to New chat, unless a draft was begun there since. */
   onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
@@ -161,6 +178,17 @@ export function SoloDraft({
       }
     });
   }, [scope, draftKey, projectId]);
+  const [restored, setRestored] = useState(0);
+  useEffect(() => {
+    const listener = (restoredScope: string, key: string) => {
+      if (restoredScope === scope && key === draftKey)
+        setRestored((count) => count + 1);
+    };
+    restoreListeners.add(listener);
+    return () => {
+      restoreListeners.delete(listener);
+    };
+  }, [scope, draftKey]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!focusRequest) return;
@@ -278,6 +306,7 @@ export function SoloDraft({
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
+      const attached = files.snapshot();
       // The chat lists at once, in its workspace, and its message goes out
       // behind the create, so the agents start on it without waiting for the
       // relay. Its Canvas is saved once the chat exists; until then local
@@ -335,11 +364,26 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
       // Only a start that made no chat ends here; the chat and its messages
-      // are dropped (see channelWrites.start). Any other miss leaves the chat
-      // listed, with its messages' own Retry.
+      // are dropped (see channelWrites.start), and what was sent returns to a
+      // New chat still blank. Any other miss leaves the chat listed, with its
+      // messages' own Retry.
       void ready.catch((reason: unknown) => {
         if (!(reason instanceof ChatNotStarted)) return;
         writeView(scope, `draft:${channelId}`, null);
+        clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
+        if (blankNewChat(session, scope, draftKey)) {
+          if (source) writeView(scope, draftKey, source);
+          writeView(scope, `${draftKey}:settings`, draftSettings);
+          writeView(scope, `${draftKey}:new-project`, project);
+          writeView(scope, `${draftKey}:new-draft`, draft);
+          attachmentDraft(
+            session,
+            `${scope}:${draftKey}:new-draft`,
+            channelId,
+            true,
+          ).adopt(attached);
+          for (const listener of restoreListeners) listener(scope, draftKey);
+        }
         onFailed?.(channelId, `Couldn't start "${name}": ${reason.message}`);
       });
     } catch (reason) {
@@ -353,6 +397,7 @@ export function SoloDraft({
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
+        key={restored}
         chatPresentation
         ownSoloConversation
         session={session}

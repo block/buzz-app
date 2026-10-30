@@ -246,7 +246,7 @@ it("uses restored explicit mentions, not a separate picker", async () => {
     "b".repeat(64),
   ]);
 });
-it("a refused start reports why and leaves New chat to the user", async () => {
+it("a refused start reports why and never overwrites a draft begun since", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -286,6 +286,77 @@ it("a refused start reports why and leaves New chat to the user", async () => {
   expect(screen.getByRole("textbox")).toHaveTextContent("Next idea");
   expect(screen.getByRole("textbox")).not.toHaveTextContent("Lost start");
   expect(readView("test", `draft:${id}`, null)).toBeNull();
+});
+it("a refused start gives its prompt, files and settings back to a blank New chat", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    onFailed = vi.fn(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  let refuse = () => {};
+  test.channelWrites.ready = new Promise<void>((_resolve, reject) => {
+    refuse = () => reject(new ChatNotStarted("Channel creation rejected"));
+  });
+  test.channelWrites.ready.catch(() => {});
+  writeView("test", "solo:new-draft", taggedDraft("Audit the onboarding flow"));
+  writeView("test", "solo:settings", { name: "Onboarding audit" });
+  const view = () => (
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+      onFailed={onFailed}
+    />
+  );
+  const first = render(view());
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  const id = test.channelWrites.create.mock.calls[0]?.[0];
+  first.unmount();
+  // New chat is open and still blank when the relay refuses the first.
+  render(view());
+  expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit");
+  await act(async () => {
+    refuse();
+    await test.channelWrites.ready.catch(() => {});
+  });
+  await waitFor(() =>
+    expect(onFailed).toHaveBeenCalledWith(
+      id,
+      `Couldn't start "Onboarding audit": Channel creation rejected`,
+    ),
+  );
+  expect(screen.getByRole("textbox")).toHaveTextContent(
+    "Audit the onboarding flow",
+  );
+  expect(screen.getByRole("button", { name: "Remove notes.txt" })).toBeTruthy();
+  expect(readView("test", `draft:${id}`, null)).toBeNull();
+  // Sending again starts a new chat with the same name and the upload made.
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledTimes(2));
+  const retry = test.channelWrites.create.mock.calls[1]?.[0];
+  expect(retry).not.toBe(id);
+  expect(test.channelWrites.start).toHaveBeenLastCalledWith(
+    retry,
+    "Onboarding audit",
+    ["a".repeat(64)],
+    undefined,
+    true,
+    undefined,
+  );
+  expect(test.messages.send).toHaveBeenLastCalledWith(
+    retry,
+    taggedDraft("Audit the onboarding flow").text,
+    ["a".repeat(64)],
+    [notes],
+  );
+  expect(uploadForNewChat).toHaveBeenCalledOnce();
 });
 
 it("a start that is only unconfirmed keeps the chat and its message", async () => {

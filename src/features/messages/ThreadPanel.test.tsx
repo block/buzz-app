@@ -1983,6 +1983,29 @@ it("records a visit's place when the reader leaves, not as replies arrive", () =
   expect(places.has("thread-visit:thread")).toBe(true);
 });
 
+it("a reader still shown after its route is withdrawn records its place when it leaves", async () => {
+  const { visit } = visitPlaces();
+  // Rows sit below the scroller top, so the reader's first row anchors it.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 500, 500),
+  );
+  const h = messagesHarness(visit("thread-visit"));
+  h.snapshot.replies = [threadReply("d", row.id)];
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  expect(h.element.scrollTop).toBe(3400);
+  // A link in the timeline routes elsewhere; the thread stays open beside it
+  // and the reader keeps scrolling.
+  Object.assign(props, { navigation: undefined });
+  h.rerenderProps();
+  h.scroll(1000);
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  await act(async () => h.rerenderProps());
+  expect(h.view.retarget).toHaveBeenCalledOnce();
+  expect(h.element.scrollTop).toBe(1000);
+});
+
 it("a reader first shown while its route retargets stays hidden until the route restores its place", async () => {
   const { places, visit } = visitPlaces();
   places.set("thread-visit:thread", {

@@ -887,31 +887,40 @@ function ThreadMessages({
   // records where the reader was. A return counts only once restored, so an
   // unrestored return keeps the place it came back for. New replies don't
   // record one; a relay rebind does, mid-visit, but restoring that place
-  // leaves the reader where they already are.
+  // leaves the reader where they already are. A reader still shown after its
+  // route is withdrawn records again when it leaves or the next route
+  // arrives, before that route can restore the place.
   const leftTree = useRef(tree);
   leftTree.current = tree;
+  const withdrawn = useRef<() => void>(undefined);
   useLayoutEffect(() => {
-    if (!navigation) return;
+    if (!navigation) return withdrawn.current;
+    withdrawn.current = undefined;
     return () => {
-      const reading = resizePosition.current;
       const presented = returning
         ? restoredVisit.current === navigation.signal
         : (rootTarget && positioned.current) ||
           revealed.current === navigation.signal;
-      if (!presented || !reading) return;
-      const id = reading.anchor?.element.dataset.messageId;
-      navigation.savePosition(
-        THREAD_PLACE,
-        follow.current || !reading.anchor || !id
-          ? {}
-          : {
-              anchor: {
-                id,
-                top: reading.anchor.top,
-                ancestors: leftTree.current.ancestors(id),
+      if (!presented) return;
+      const record = () => {
+        const reading = resizePosition.current;
+        if (!reading) return;
+        const id = reading.anchor?.element.dataset.messageId;
+        navigation.savePosition(
+          THREAD_PLACE,
+          follow.current || !reading.anchor || !id
+            ? {}
+            : {
+                anchor: {
+                  id,
+                  top: reading.anchor.top,
+                  ancestors: leftTree.current.ancestors(id),
+                },
               },
-            },
-      );
+        );
+      };
+      record();
+      withdrawn.current = record;
     };
   }, [navigation, returning, rootTarget, revealed]);
   useEffect(() => {

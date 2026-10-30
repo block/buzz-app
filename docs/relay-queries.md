@@ -378,8 +378,11 @@ A finished read also names every open channel for `#name` prose in messages
 and drafts, through `channels.openDirectory()`, until a later read completes,
 the cache is cleared, or the session's access changes (dropped names link
 again after the next search); a refresh that is still reading, or that fails,
-keeps the prior names. Rendering never starts the read: a name the joined list
-lacks stays prose on a cold directory and links once a search has warmed it.
+keeps the prior names. Names a delta cannot retract, such as deleted or newly
+private channels, stay until the next successful full read. Until then, such a
+name shared with a newer open channel is ambiguous, so neither links. Rendering
+never starts the read: a name the joined list lacks stays prose on a cold
+directory and links once a search has warmed it.
 The joined list owns a name both carry. Opening such a link resolves the
 channel through `refer`, as any channel-only link does. Raw
 `buzz://channel/<id>` links never take a directory name: outside the joined

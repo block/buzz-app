@@ -996,6 +996,11 @@ export type Agents = {
     configExample?: Readonly<Record<string, unknown>>;
     builtIn?: boolean;
   }>[];
+  /** How the watch's provider shows it, when the provider presents its watches. */
+  presentWatch(
+    watch: import("./attention").SourceWatch,
+    title: string,
+  ): import("./attention-sources").SourcePresentation | undefined;
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tab to the settings of every agent running on this device,
@@ -1999,6 +2004,7 @@ export class AgentsService extends Service implements Agents {
       !plugin ||
       !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
       typeof source.run !== "function" ||
+      (source.present !== undefined && typeof source.present !== "function") ||
       (source.description !== undefined &&
         (typeof source.description !== "string" ||
           !source.description.trim())) ||
@@ -2176,6 +2182,21 @@ export class AgentsService extends Service implements Agents {
           : { configExample: JSON.parse(JSON.stringify(configExample)) }),
       };
     });
+  presentWatch = (watch: import("./attention").SourceWatch, title: string) => {
+    const source = this.attentionSources
+      .snapshot()
+      .find((source) => this.attentionProvider(source) === watch.provider);
+    try {
+      return source?.present?.(watch, title);
+    } catch (error) {
+      // One plugin's mistake leaves its watches plain, not the page broken.
+      console.warn(
+        `Attention source ${watch.provider} failed to present`,
+        error,
+      );
+      return undefined;
+    }
+  };
   private history(
     key: AgentKey,
     object: AttentionObject,

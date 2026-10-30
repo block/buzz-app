@@ -274,9 +274,14 @@ it("discards a send the relay refuses after removal ends membership", async () =
 });
 
 it.each([
-  ["the viewer is back before it is refused", "failed"],
-  ["it may have reached the relay", "unknown"],
-] as const)("keeps an in-flight send when %s", async (_, delivery) => {
+  ["the viewer is back before it is refused", "failed", undefined],
+  [
+    "the viewer is back before a 401 history read and the refusal",
+    "failed",
+    401,
+  ],
+  ["it may have reached the relay", "unknown", undefined],
+] as const)("keeps an in-flight send when %s", async (_, delivery, status) => {
   const stranded = failed(gone, "Never sent");
   const elsewhere = failed(kept, "Removed later");
   const h = await setup([stranded, elsewhere]);
@@ -287,6 +292,16 @@ it.each([
     // The sweep that discards `stranded` has seen the running send.
     await vi.waitFor(() => expect(h.pending()).toEqual([running, running]));
     if (delivery === "failed") await h.rejoin(gone);
+    if (status) {
+      // A local denial after the rejoin is not removal: the writer decides.
+      h.refuse(gone, status);
+      h.session.channels.ensure(gone);
+      await vi.waitFor(() =>
+        expect(
+          h.session.channels.list().channels.map((item) => item.id),
+        ).not.toContain(gone),
+      );
+    }
   } finally {
     send.end(
       delivery === "failed"
@@ -304,21 +319,35 @@ it.each([
   await vi.waitFor(() => expect(h.pending()).toEqual([[send.id], [send.id]]));
 });
 
-it("discards a removed channel's failed sends once restored sends load", async () => {
+it("discards a removed channel's failed contributions once restored sends load", async () => {
   let load!: () => void;
   const loaded = new Promise<void>((resolve) => {
     load = resolve;
   });
-  const stranded = failed(gone, "Restored late");
+  const target = message(viewer, gone, "Reacted to", 1_700_000_000).id;
+  const contribution = (kind: number, tags: string[][]): OutgoingEvent => ({
+    event: signed(viewer, { kind, content: "", tags: [["h", gone], ...tags] }),
+    delivery: "failed",
+  });
+  const stranded = [
+    failed(gone, "Restored late"),
+    contribution(7, [["e", target]]),
+    contribution(40003, [["e", target]]),
+    contribution(5, [["e", target]]),
+  ];
+  // Workflow deletions are kind 5 too, but the workflow capability owns them.
+  const workflowDelete = contribution(5, [
+    ["a", `30620:${viewer.pubkey}:${unborn}`],
+  ]);
   const elsewhere = failed(kept, "Still retryable");
-  const h = await setup([stranded, elsewhere], loaded);
+  const h = await setup([...stranded, workflowDelete, elsewhere], loaded);
   try {
     await h.remove(gone, "roster refresh");
     expect(h.outbox.snapshot()).toEqual([]);
   } finally {
     load();
   }
-  const remaining = [elsewhere.event.id];
+  const remaining = [workflowDelete.event.id, elsewhere.event.id];
   await vi.waitFor(() => expect(h.pending()).toEqual([remaining, remaining]));
 });
 

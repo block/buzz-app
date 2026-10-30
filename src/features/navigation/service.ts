@@ -18,6 +18,8 @@ export type PageNavigation = Readonly<{
   signal: AbortSignal;
   /** Suppress destination autofocus when the opening control retains focus. */
   focus?: NavigationFocus;
+  /** Back/Forward returned to this visit: restore what it showed, never replay its opening. */
+  traversal?: true;
   /** Bind a domain subtree to the exact connection it renders, without another visit. */
   forSession(relay: RelayData, connection: RelaySnapshot): PageNavigation;
   /** Resolve the pending visit's default destination without replacing its caller. */
@@ -86,6 +88,7 @@ export function provideNavigation(
           entryId: attempt.entry.id,
           target: attempt.entry.target,
           signal: retainedSignal,
+          ...(attempt.traversal && { traversal: attempt.traversal }),
           get focus() {
             return active === attempt
               ? (attempt.focus ?? "content")
@@ -202,6 +205,7 @@ function bindPresentation(
     entryId: parent.entryId,
     target: parent.target,
     signal: lifetime.signal,
+    ...(parent.traversal && { traversal: parent.traversal }),
     get focus() {
       return parent.focus ?? "content";
     },

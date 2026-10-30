@@ -114,19 +114,25 @@ describe("navigation attempts over one history driver", () => {
     host.complete(nav.snapshot().attempt, { status: "opened" });
     await expect(first).resolves.toEqual({ status: "opened" });
     void nav.open(page);
+    expect(nav.snapshot().attempt.traversal).toBeUndefined();
     nav.back();
     expect(nav.snapshot().entry).toBe(settingsEntry);
     expect(nav.snapshot().canGoForward).toBe(true);
+    // Traversal returns to a visit; retry and a same-target open open it again.
+    expect(nav.snapshot().attempt.traversal).toBe(true);
     const retry = nav.retry();
     expect(nav.snapshot().entry).toBe(settingsEntry);
     expect(nav.snapshot().canGoForward).toBe(true);
+    expect(nav.snapshot().attempt.traversal).toBeUndefined();
     const same = nav.open(settings);
     await expect(retry).resolves.toEqual({ status: "superseded" });
     expect(nav.snapshot().entry).toBe(settingsEntry);
     expect(nav.snapshot().canGoForward).toBe(true);
+    expect(nav.snapshot().attempt.traversal).toBeUndefined();
     nav.forward();
     await expect(same).resolves.toEqual({ status: "superseded" });
     expect(nav.snapshot().entry.target).toEqual(page);
+    expect(nav.snapshot().attempt.traversal).toBe(true);
     nav.back();
     nav.back();
     expect(nav.snapshot().entry).toBe(initial);
@@ -274,6 +280,7 @@ describe("navigation attempts over one history driver", () => {
     history.back();
     expect(nav.snapshot().entry.target).toEqual(settings);
     expect(nav.snapshot().canGoBack).toBe(false);
+    expect(nav.snapshot().attempt.traversal).toBe(true);
     history.back();
     expect(nav.snapshot().entry.target).toEqual(settings);
     history.forward();

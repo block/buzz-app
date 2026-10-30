@@ -913,6 +913,9 @@ history, unread reconciliation or channel caches.
 Live RAM is limited to 200 envelopes / 2 MiB plaintext and 512 turn states, with
 visible trimming. Disable, cache/access reset and session replacement clear live
 evidence. A batch with a recognized denied channel is hidden as a whole.
+Dropping raw records leaves only their own turns incomplete; unrelated requests
+keep their confirmed outcomes. If the bounded turn or trigger associations overflow,
+aggregate completion stays unknown until the live evidence resets.
 
 Activity frames (24200) and turn metrics (44200) are no longer saved locally or
 restored after reload; plugin harnesses show history from their own session files.

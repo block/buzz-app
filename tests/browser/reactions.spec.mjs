@@ -293,6 +293,42 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
   expect(errors.unexplained()).toEqual([]);
 });
 
+// Browser-only: top-layer preview hit-testing can obstruct the pointer retry.
+test("keyboard removal keeps pointer retry reachable after a rejected deletion", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 520, height: 950 });
+  await page.goto("/tests/fixtures/emoji.html?reactions&single-reaction");
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+  );
+  const row = page.locator("[data-message-id]").first();
+  const pill = row.locator('button[data-reaction="👍"]');
+  await pill.click();
+  await expect(pill).toHaveAttribute("aria-pressed", "true");
+  await expect(pill).toHaveAttribute("aria-disabled", "false");
+  await page.mouse.move(0, 0);
+  await pill.press("Tab");
+  await pill.focus();
+  const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
+  await expect(preview).toBeVisible();
+  await page.evaluate(() => window.emojiFixture.rejectReaction());
+  await pill.press("Space");
+  const retry = row.getByRole("button", { name: "Retry reaction" });
+  await expect(retry).toBeVisible();
+  await expect(pill).toBeFocused();
+  await expect(pill).toHaveAttribute("aria-pressed", "true");
+  await expect(preview).toHaveCount(0);
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  await expect(pill).toHaveAttribute("aria-pressed", "false");
+  await expect(pill).toHaveAttribute("aria-disabled", "false");
+  // Deliberate pointer re-entry still reveals who reacted after recovery.
+  await page.mouse.move(0, 0);
+  await pill.hover();
+  await expect(preview).toBeVisible();
+});
+
 test("one active reaction picker preserves target and focus when switching or unmounting", async ({
   page,
 }) => {

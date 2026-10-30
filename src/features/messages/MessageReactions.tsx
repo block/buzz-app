@@ -253,6 +253,9 @@ function ReactionEmoji({
   onPreviewChange(open: boolean): void;
 }) {
   const [name, setName] = useState(reaction.content);
+  // A retained focus must not reopen the preview over delivery recovery controls.
+  // Fresh pointer or keyboard entry can reveal it again.
+  const [previewDismissed, setPreviewDismissed] = useState(false);
   const [previewTilt, setPreviewTilt] = useState("0deg");
   const emojiAnchor = useRef<HTMLSpanElement>(null);
   const previewAuthors = useMemo(() => {
@@ -297,7 +300,7 @@ function ReactionEmoji({
         side="top"
         align="center"
         anchor={emojiAnchor}
-        open={previewOpen}
+        open={previewOpen && !previewDismissed && !unavailable}
         warm={previewWarm}
         className={[
           styles.reactionPreview,
@@ -320,14 +323,20 @@ function ReactionEmoji({
             aria-disabled={unavailable}
             disabled={disabled}
             onMouseEnter={(event) => {
+              setPreviewDismissed(false);
               const tilt = `${Math.random() * 20 - 10}deg`;
               event.currentTarget.style.setProperty("--reaction-tilt", tilt);
               setPreviewTilt(tilt);
               revealName();
             }}
-            onFocus={revealName}
+            onFocus={() => {
+              setPreviewDismissed(false);
+              revealName();
+            }}
             onClick={(event) => {
               if (unavailable) return;
+              setPreviewDismissed(true);
+              onPreviewChange(false);
               const losesFocus =
                 own &&
                 authorIds.length === 1 &&

@@ -353,12 +353,14 @@ function renderAgentActivity(
   tabs: { title: string; role?: string }[],
   rootId?: string,
   transcript: "opened" | "shown again" | false = false,
+  preferences = false,
 ) {
   const owner = createRelaySession(null);
   const snapshot = {
     status: "ready" as const,
     generation: 1,
     session: owner.session,
+    ...(preferences && { viewer: key }),
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
@@ -409,6 +411,7 @@ function renderAgentActivity(
     name: "Echo",
     type: type.key,
     place: "here",
+    ...(preferences && { owner: key }),
     config: {},
     attention: {},
   } as unknown as Agent;
@@ -421,7 +424,22 @@ function renderAgentActivity(
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
     memberships: () => [],
     configHistory: () => undefined,
-    addedTabs: () => [],
+    addedTabs: () =>
+      preferences
+        ? [
+            {
+              id: "voice",
+              key: "test/voice",
+              pluginId: "test",
+              revision: "1",
+              title: "Voice",
+              placement: "settings",
+              component: ({ agent }: { agent: Agent }) => (
+                <button type="button">Voice for {agent.name}</button>
+              ),
+            },
+          ]
+        : [],
     registerTab: () => {},
     controlAttention: () => {},
   } as unknown as Agents;
@@ -577,6 +595,25 @@ it("opens an agent's activity on its type's first tab when the type has no Activ
     ).toBeVisible();
     expect(screen.getByText("Echo settings")).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("shows plugin preferences in the owned agent profile's Settings tab", async () => {
+  const dispose = renderAgentActivity(
+    [{ title: "Settings", role: "settings" }],
+    undefined,
+    false,
+    true,
+  );
+  try {
+    expect(screen.queryByRole("tab", { name: "Voice" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Voice for Echo" })).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(
+      screen.getByRole("button", { name: "Voice for Echo" }),
+    ).toBeVisible();
   } finally {
     dispose();
   }

@@ -1091,6 +1091,10 @@
   --text-on-selection-own: var(--neutral-1);
   --surface-message: var(--bubble-received);
   --surface-message-own: var(--bubble-neutral);
+  --surface-message-hover: var(--bubble-hover);
+  --surface-message-own-hover: var(--bubble-own-hover);
+  --bubble-hover: color-mix(in srgb, var(--surface-message) 95%, black);
+  --bubble-own-hover: color-mix(in srgb, var(--surface-message-own) 95%, black);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --affordance-message-own-hover: var(--shade-quiet-fill);
@@ -1221,6 +1225,10 @@
 .dark {
   --surface-message: var(--bubble-received);
   --surface-message-own: var(--bubble-neutral);
+  --surface-message-hover: var(--bubble-hover);
+  --surface-message-own-hover: var(--bubble-own-hover);
+  --bubble-hover: color-mix(in srgb, var(--surface-message) 95%, white);
+  --bubble-own-hover: color-mix(in srgb, var(--surface-message-own) 95%, white);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --affordance-message-own-hover: var(--tint-quiet-fill);

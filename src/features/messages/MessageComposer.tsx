@@ -14,7 +14,11 @@ import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import {
+  ToastNotice,
+  useToastNotification,
+} from "../../shared/design-system/ui/Toast";
+import { writeClipboardText } from "../../shared/clipboard";
 import { SelectedMentionContext } from "./selected-mention-context";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
@@ -284,6 +288,8 @@ export type MessageComposerProps = {
   onSend?: (id: string) => void;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
+  /** Before a focused form detaches, its host can hand focus to retained content. */
+  onFocusedRemoval?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?:
@@ -457,6 +463,7 @@ function Composer({
   placeholder,
   onSend,
   onDraftSaved,
+  onFocusedRemoval,
   editMessages,
   onOpenLink,
   canOpenLink,
@@ -747,6 +754,7 @@ function Composer({
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const hasFocused = useRef(false);
   const focusFromControl = useRef(
     typeof autoFocus === "object" ? autoFocus : undefined,
   );
@@ -853,8 +861,10 @@ function Composer({
   useEffect(() => {
     const editor = input.current;
     if (!focusRequest || !editor) return;
+    // A new editor starts after its saved draft; a retained editor owns its caret.
+    if (!hasFocused.current)
+      editor.setSelectionRange(editor.value.length, editor.value.length);
     editor.focus();
-    editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,
@@ -1048,7 +1058,35 @@ function Composer({
     !!submission?.attachments,
   );
   const picker = useRef<HTMLInputElement>(null);
+  const pickerFocus = useRef<
+    { ids: readonly string[]; owner: Element | null } | undefined
+  >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  const notify = useToastNotification();
+  const handOffFocus = useEffectEvent(() => {
+    if (!form.current?.contains(document.activeElement)) return;
+    const text = input.current?.value ?? "";
+    onFocusedRemoval?.();
+    if (!text.trim() || !session.channels?.get?.(channelId)?.archived) return;
+    const copy = async () => {
+      try {
+        await writeClipboardText(text);
+        notify("Text copied", "success");
+      } catch {
+        notify("Couldn’t copy text", "error", {
+          label: "Try again",
+          onClick: () => void copy(),
+          timeout: Infinity,
+        });
+      }
+    };
+    notify(`${solo ? "Chat" : "Channel"} archived: ${channelName}`, "info", {
+      label: "Copy text",
+      onClick: () => void copy(),
+      timeout: Infinity,
+    });
+  });
+  useLayoutEffect(() => () => handOffFocus(), []);
   const canAttach = submission
     ? !!submission.attachments && !!session.attachments?.uploadForNewChat
     : !!session.attachments;
@@ -1061,6 +1099,34 @@ function Composer({
     if (disabled) attachments.store.cancel();
     else attachments.store.resume();
   }, [disabled, attachments.store]);
+  useEffect(() => {
+    const pending = pickerFocus.current;
+    if (!pending) return;
+    const selected = pending.ids.map((id) =>
+      attachments.items.find((item) => item.id === id),
+    );
+    if (
+      !presented ||
+      editingDisabled ||
+      editing.target ||
+      document.activeElement !== pending.owner ||
+      selected.some((item) => !item || item.status === "error")
+    ) {
+      pickerFocus.current = undefined;
+      return;
+    }
+    if (selected.every((item) => item?.status === "ready")) {
+      pickerFocus.current = undefined;
+      input.current?.focus();
+      return;
+    }
+    // A later upload must not undo a deliberate focus move, even a round trip.
+    const moved = (event: FocusEvent) => {
+      if (event.target !== pending.owner) pickerFocus.current = undefined;
+    };
+    document.addEventListener("focusin", moved, true);
+    return () => document.removeEventListener("focusin", moved, true);
+  }, [attachments.items, presented, editingDisabled, editing.target]);
   const dragging = useFileDrop(
     form,
     active &&
@@ -1093,6 +1159,10 @@ function Composer({
     try {
       attachments.store.add(files);
       setAttachmentError(undefined);
+      return attachments.store
+        .snapshot()
+        .slice(-files.length)
+        .map((item) => item.id);
     } catch (reason) {
       setAttachmentError(
         reason instanceof Error ? reason.message : "Could not attach files.",
@@ -2785,7 +2855,11 @@ function Composer({
             hidden
             aria-label="Choose attachments"
             onChange={(event) => {
-              attachFiles(Array.from(event.currentTarget.files ?? []));
+              const ids = attachFiles(
+                Array.from(event.currentTarget.files ?? []),
+              );
+              if (ids?.length)
+                pickerFocus.current = { ids, owner: document.activeElement };
               event.currentTarget.value = "";
             }}
           />
@@ -3045,7 +3119,10 @@ function Composer({
               )}
               aria-label={label}
               placeholder={placeholder ?? label}
-              onFocus={() => completion.observe(true)}
+              onFocus={() => {
+                hasFocused.current = true;
+                completion.observe(true);
+              }}
               onBlur={() => {
                 completion.invalidate();
               }}

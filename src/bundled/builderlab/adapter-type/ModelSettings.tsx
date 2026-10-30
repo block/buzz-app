@@ -246,14 +246,11 @@ export function ModelSettings({
         }
         message={failure}
         action={{
-          label: loadError
-            ? "Retry"
-            : catalogError
-              ? "Retry models"
-              : "Refresh models",
-          disabled: busy && !loadError,
+          label: loadError ? "Retry" : error ? "Try again" : "Retry models",
+          disabled: loadError ? false : error ? disabled : busy,
           run: () => {
             if (loadError && "retry" in settings) settings.retry();
+            else if (error) void save();
             else setRevision((value) => value + 1);
           },
         }}

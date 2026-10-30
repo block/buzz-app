@@ -19,6 +19,7 @@ import {
 } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import { ModelSettings } from "./ModelSettings";
+import { deferred } from "../test-helpers";
 import { ToastProvider } from "../../../shared/design-system/ui/Toast";
 
 beforeEach(() =>
@@ -514,7 +515,7 @@ it.each(["save", "catalog"])(
     await waitFor(() =>
       expect(
         screen.getByRole("button", {
-          name: kind === "save" ? "Refresh models" : "Retry models",
+          name: kind === "save" ? "Try again" : "Retry models",
         }),
       ).toBeVisible(),
     );
@@ -561,31 +562,81 @@ it("retires a session-expired save error after explicit reauthentication", async
   ).toHaveLength(1);
 });
 
-it("retries a failed catalog refresh without retrying a failed save", async () => {
+it("retries a failed catalog request without saving the draft", async () => {
+  const h = await fixture({
+    modelId: "model-one",
+    reasoningEffort: "high",
+    modelSelectionStatus: "valid",
+    instructions: "Saved instructions.",
+  });
+  const user = userEvent.setup();
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(field, " Draft");
+  h.offline(true);
+  act(() => h.session.signOut());
+  await act(() => h.session.signIn());
+  const retry = await screen.findByRole("button", { name: "Retry models" });
+  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
+  h.offline(false);
+  await user.click(retry);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(field).toHaveValue("Saved instructions. Draft");
+  expect(
+    h.request.mock.calls.filter(([request]) =>
+      request.url.endsWith("/update-agent"),
+    ),
+  ).toHaveLength(0);
+});
+
+it("retries a failed save with the current draft and blocks duplicate writes while pending", async () => {
   const h = await fixture();
   await choose("Model", "Friendly One");
   await choose("Thinking", "Low");
   const user = userEvent.setup();
   h.offline(true);
   await user.click(screen.getByRole("button", { name: "Save" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Refresh models" }),
-  );
-  const retry = await screen.findByRole("button", { name: "Retry models" });
+  await user.click(await screen.findByRole("button", { name: "Try again" }));
   expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
-  h.offline(false);
-  await user.click(retry);
-  await screen.findByRole("button", { name: "Refresh models" });
-  expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
-  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveTextContent(
-    "Low",
-  );
   expect(
     h.request.mock.calls.filter(([request]) =>
       request.url.endsWith("/update-agent"),
     ),
-  ).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  ).toHaveLength(2);
+  const instructions = screen.getByRole("textbox", { name: "Instructions" });
+  await user.type(instructions, "Latest draft");
+  const gate = deferred<void>();
+  const request = h.request.getMockImplementation();
+  if (!request) throw new Error("Missing request implementation");
+  h.request.mockImplementationOnce(async (...args) => {
+    await gate.promise;
+    return request(...args);
+  });
+  h.offline(false);
+  try {
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+    const save = screen.getByRole("button", { name: "Saving…" });
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    await user.click(save);
+    const form = instructions.closest("form");
+    if (!form) throw new Error("Missing settings form");
+    fireEvent.submit(form);
+    const writes = h.request.mock.calls.filter(([row]) =>
+      row.url.endsWith("/update-agent"),
+    );
+    expect(writes).toHaveLength(3);
+    const body = writes[2]?.[0].body;
+    if (!body) throw new Error("Missing retried settings write");
+    expect(JSON.parse(body)).toMatchObject({
+      agent_instructions: "Latest draft",
+      model_id: "model-one",
+      reasoning_effort: "low",
+    });
+  } finally {
+    await act(async () => gate.resolve());
+  }
   expect(
     await screen.findByRole("dialog", { name: "Model preferences saved" }),
   ).toBeVisible();

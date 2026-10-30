@@ -345,8 +345,14 @@ it("hides a failed settings load and Retry while signed out, then loads after ex
   const h = await fixture();
   h.request.mockResolvedValueOnce({ ...response(), status: 400 });
   render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
-  expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
-  expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("HTTP 400");
+  expect(
+    screen.getByRole("region", { name: "Couldn’t load settings" }),
+  ).toContainElement(alert);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible(),
+  );
   const before = h.request.mock.calls.length;
   const signIn = vi.spyOn(h.session, "signIn");
   act(() => h.session.signOut());
@@ -418,9 +424,12 @@ it.each([
     await act(() => h.session.signIn());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "Sign out of Builderlab in Buzz and your browser. Then sign in as a@example.com in your browser and return to Buzz to sign in again.",
+      "Sign in as a@example.com to edit this agent.",
     );
     expect(alert).not.toHaveTextContent("b@example.com");
+    expect(
+      screen.getByRole("region", { name: "Different account needed" }),
+    ).toContainElement(alert);
     expect(screen.getByRole("button", { name: /^Model:/ })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
     expect(field).toBeDisabled();
@@ -428,7 +437,7 @@ it.each([
       screen.queryByRole("button", { name: /Switch account|Save|^Retry$/ }),
     ).toBeNull();
     expect(h.request).toHaveBeenCalledTimes(reads);
-    const retry = screen.getByRole("button", { name: "Try again" });
+    const retry = screen.getByRole("button", { name: "Use another account" });
     expect(retry).toHaveAttribute(
       "href",
       "https://staging.builderlab.example:8443/logout",
@@ -462,7 +471,9 @@ it.each([
       expect(
         screen.getByRole("button", { name: "Sign in to Builderlab" }),
       ).toBeEnabled();
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Use another account" }),
+      ).toBeNull();
       expect(screen.queryByRole("alert")).toBeNull();
       expect(field).toBeDisabled();
       h.prepareAccount({
@@ -501,9 +512,12 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
   });
   await act(() => h.session.signIn());
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This account can’t access Builderlab agents. Sign out of Builderlab in Buzz and your browser. Then sign in with the account you used for this agent in your browser and return to Buzz to sign in again.",
+    "This account can’t access Builderlab agents.",
   );
   expect(screen.queryByText(/coming soon/)).toBeNull();
+  expect(screen.getByRole("alert")).not.toHaveTextContent(
+    /used for this agent|set up|created/,
+  );
   expect(
     screen.queryByRole("button", { name: /^Retry$|Switch account|Save/ }),
   ).toBeNull();
@@ -514,7 +528,9 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
   const user = userEvent.setup();
   const browser = observeLogout(h.session);
   try {
-    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(
+      screen.getByRole("button", { name: "Use another account" }),
+    );
     expect(browser.opened).toEqual([
       { url: "https://builderlab.example/logout", status: "signed-out" },
     ]);
@@ -529,7 +545,9 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
       screen.getByRole("button", { name: "Sign in to Builderlab" }),
     );
     expect(h.acquire).toHaveBeenCalledTimes(2);
-    await user.click(await screen.findByRole("button", { name: "Try again" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Use another account" }),
+    );
     expect(browser.opened).toHaveLength(2);
     expect(h.request).not.toHaveBeenCalled();
     const held = deferred<ReturnType<typeof h.session.credential>>();
@@ -544,7 +562,9 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
         screen.getByRole("button", { name: "Sign in to Builderlab" }),
       ).toHaveAttribute("aria-busy", "true");
       expect(screen.queryByRole("alert")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Use another account" }),
+      ).toBeNull();
     } finally {
       await act(async () =>
         held.resolve({
@@ -559,12 +579,16 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
       );
     }
     expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
-    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Use another account" }),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(h.acquire).toHaveBeenCalledTimes(3);
     expect(await loadedInstructions()).toHaveValue("First instructions.");
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Use another account" }),
+    ).toBeNull();
     expect(h.request).toHaveBeenCalledTimes(3);
   } finally {
     browser.stop();
@@ -593,7 +617,7 @@ it("retries a failed load and refuses to save a draft through another account", 
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "sign in as a@example.com in your browser and return to Buzz to sign in again.",
+    "Sign in as a@example.com to edit this agent.",
   );
   expect(field).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
@@ -637,7 +661,7 @@ it("settles an aborted catalog read after switching accounts without losing the 
     expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
     const before = h.request.mock.calls.length;
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "sign in as a@example.com in your browser and return to Buzz to sign in again.",
+      "Sign in as a@example.com to edit this agent.",
     );
     expect(field).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();

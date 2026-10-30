@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
   Fragment,
@@ -124,17 +124,26 @@ export function AgentDetails({
   usePanelTabTitle(agent.name, tabAvatar);
   const [saveFooter, setSaveFooter] = useState<HTMLDivElement | null>(null);
   const [signInVisible, setSignInVisible] = useState(false);
+  const [footerVisible, setFooterVisible] = useState(false);
+  const [panelNotice, setPanelNotice] = useState<ReactNode>(null);
   const content = useRef<HTMLDivElement>(null);
-  const panelFooter = useRef<HTMLDivElement>(null);
+  const [panelFooter, setPanelFooter] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
-    const footer = panelFooter.current;
+    const footer = panelFooter;
     const scroll = content.current;
     if (!type?.PanelFooter || !footer || !scroll) {
       setSignInVisible(false);
+      setFooterVisible(false);
       return;
     }
     const measure = () => {
-      setSignInVisible(footer.childElementCount > 0);
+      setFooterVisible(footer.childElementCount > 0);
+      setSignInVisible(
+        [...footer.children].some(
+          (sheet) =>
+            sheet.getAttribute("data-agent-access-required") !== "false",
+        ),
+      );
       // Share the fields' usable width, excluding either side's scrollbar gutter.
       footer.style.width = `${scroll.clientWidth}px`;
       footer.style.left = `${scroll.offsetLeft + scroll.clientLeft}px`;
@@ -153,19 +162,23 @@ export function AgentDetails({
     });
     observer.observe(footer);
     observer.observe(scroll);
+    // Presence can replace equally tall sheets with different access semantics.
+    const changes = new MutationObserver(measure);
+    changes.observe(footer, { childList: true });
     return () => {
       observer.disconnect();
+      changes.disconnect();
       cancelAnimationFrame(frame);
       scroll.style.removeProperty("--agent-footer-height");
     };
-  }, [type?.PanelFooter]);
+  }, [type?.PanelFooter, panelFooter]);
   useEffect(() => {
     // Setup or sign-in removes its focused button; continue in the selected tab.
-    if (!signInVisible && document.activeElement === document.body)
+    if (!footerVisible && document.activeElement === document.body)
       content.current
         ?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
         ?.focus();
-  }, [signInVisible]);
+  }, [footerVisible]);
   const [copied, setCopied] = useState(false);
   const [editingIdentity, setEditingIdentity] = useState(false);
   const identityMenu = useRef<HTMLButtonElement>(null);
@@ -240,6 +253,7 @@ export function AgentDetails({
     <AgentSaveFooter
       value={{
         target: saveFooter,
+        setPanelNotice,
         notice: (
           <SharedSettingsNotice
             agents={agents}
@@ -564,8 +578,10 @@ export function AgentDetails({
           <div ref={setSaveFooter} className={styles.saveFooter} />
         </div>
         {type?.PanelFooter && (
-          <div ref={panelFooter} className={styles.panelFooter}>
-            <type.PanelFooter />
+          <div ref={setPanelFooter} className={styles.panelFooter}>
+            <AnimatePresence mode="wait">
+              {panelNotice ?? <type.PanelFooter key="sign-in" />}
+            </AnimatePresence>
           </div>
         )}
       </div>

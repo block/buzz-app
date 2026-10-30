@@ -390,7 +390,7 @@ it("preserves a failed draft and refuses to save it through a different account"
   await act(async () => h.changeAccount());
   const before = h.request.mock.calls.length;
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "sign in with the account you used for this agent in your browser and return to Buzz to sign in again.",
+    "Sign in with another Builderlab account to edit this agent.",
   );
   const field = screen.getByRole("textbox", { name: "Instructions" });
   expect(field).toBeDisabled();
@@ -404,7 +404,7 @@ it("preserves a failed draft and refuses to save it through a different account"
   );
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   expect(screen.queryByRole("button", { name: /Retry|Refresh/ })).toBeNull();
-  expect(screen.queryByText(/HTTP 400/)).toBeNull();
+  await waitFor(() => expect(screen.queryByText(/HTTP 400/)).toBeNull());
   const form = field.closest("form");
   if (!form) throw new Error("Missing settings form");
   fireEvent.submit(form);
@@ -453,14 +453,16 @@ it("replaces a previous account's catalog error with mismatch guidance and recov
   act(() => h.session.signOut());
   await act(() => h.session.signIn());
   expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
-  expect(screen.getByRole("button", { name: "Retry models" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Retry models" })).toBeVisible(),
+  );
   await act(() => h.changeAccount());
   const before = h.request.mock.calls.length;
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "sign in with the account you used for this agent in your browser and return to Buzz to sign in again.",
+    "Sign in with another Builderlab account to edit this agent.",
   );
-  expect(screen.queryByText(/HTTP 400/)).toBeNull();
+  await waitFor(() => expect(screen.queryByText(/HTTP 400/)).toBeNull());
   expect(
     screen.queryByRole("button", { name: /Retry|Refresh|Save/ }),
   ).toBeNull();
@@ -501,12 +503,21 @@ it.each(["save", "catalog"])(
       act(() => h.session.signOut());
       await act(() => h.session.signIn());
     }
-    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("HTTP 400");
     expect(
-      screen.getByRole("button", {
-        name: kind === "save" ? "Refresh models" : "Retry models",
+      screen.getByRole("region", {
+        name:
+          kind === "save" ? "Couldn’t save changes" : "Couldn’t load models",
       }),
-    ).toBeVisible();
+    ).toContainElement(alert);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: kind === "save" ? "Refresh models" : "Retry models",
+        }),
+      ).toBeVisible(),
+    );
     const before = h.request.mock.calls.length;
     const signIn = vi.spyOn(h.session, "signIn");
     act(() => h.session.signOut());

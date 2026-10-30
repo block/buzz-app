@@ -25,7 +25,7 @@ import {
   type RemoteAgentModel,
 } from "../agents/client";
 import type { OAuthSession } from "../oauth/session";
-import { oauthTarget } from "../oauth/browser";
+import { AccountRecoverySheet, SettingsErrorSheet } from "./SignInFooter";
 import { effortLabel, modelChoice } from "./models";
 
 const statuses = {
@@ -65,7 +65,6 @@ export function ModelSettings({
     signedIn && (mismatch || login.account?.canUseRemoteAgents === false);
   const hasAccess = signedIn && !accountProblem;
   const email = mismatch && "email" in settings ? settings.email : undefined;
-  const logout = accountProblem ? new URL("/logout", oauthTarget()) : undefined;
   const form = useId();
   const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
@@ -203,48 +202,15 @@ export function ModelSettings({
           ? "Still loading…"
           : "…"
         : "Unavailable";
+  const loadError = "error" in settings ? settings.error : "";
+  const failure = hasAccess ? loadError || error || catalogError : "";
   return (
     <LoadingRegion
       pending={pending}
       label={agent ? "Loading models…" : "Loading settings…"}
       statusVisibility="screen-reader"
       feedback={
-        logout ? (
-          <div className="grid gap-2">
-            <p role="alert" className="m-0 text-body-sm text-danger">
-              {!mismatch && "This account can’t access Builderlab agents. "}
-              Sign out of Builderlab in Buzz and your browser. Then sign in{" "}
-              {email
-                ? `as ${email}`
-                : "with the account you used for this agent"}
-              {" in your browser and return to Buzz to sign in again."}
-            </p>
-            <div>
-              <Button
-                nativeButton={false}
-                render={
-                  <a
-                    href={logout.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-                onClick={() => session.signOut()}
-              >
-                Try again
-              </Button>
-            </div>
-          </div>
-        ) : !hasAccess ? undefined : "error" in settings && settings.error ? (
-          <div className="grid gap-2">
-            <p role="alert" className="m-0 text-body-sm text-danger">
-              {settings.error}
-            </p>
-            <div>
-              <Button onClick={settings.retry}>Retry</Button>
-            </div>
-          </div>
-        ) : slow && pending ? (
+        hasAccess && !failure && slow && pending ? (
           <div className="grid justify-items-start gap-2">
             <p role="status" className="m-0 text-body-sm text-secondary">
               {agent
@@ -263,6 +229,35 @@ export function ModelSettings({
         ) : undefined
       }
     >
+      <AccountRecoverySheet
+        session={session}
+        active={accountProblem}
+        email={email}
+        mismatch={mismatch}
+      />
+      <SettingsErrorSheet
+        active={!!failure}
+        title={
+          loadError
+            ? "Couldn’t load settings"
+            : error
+              ? "Couldn’t save changes"
+              : "Couldn’t load models"
+        }
+        message={failure}
+        action={{
+          label: loadError
+            ? "Retry"
+            : catalogError
+              ? "Retry models"
+              : "Refresh models",
+          disabled: busy && !loadError,
+          run: () => {
+            if (loadError && "retry" in settings) settings.retry();
+            else setRevision((value) => value + 1);
+          },
+        }}
+      />
       <form
         id={form}
         className="grid gap-4"
@@ -357,20 +352,13 @@ export function ModelSettings({
           disabled={disabled}
           dirty={modelChanged || instructionsChanged}
         />
-        {hasAccess && (catalogError || error) && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error || catalogError}
-          </p>
-        )}
-        {hasAccess && (catalogError || error || models?.length === 0) && (
+        {hasAccess && !failure && models?.length === 0 && (
           <div>
             <Button
               disabled={busy}
               onClick={() => setRevision((value) => value + 1)}
             >
-              {catalogError || models?.length === 0
-                ? "Retry models"
-                : "Refresh models"}
+              Retry models
             </Button>
           </div>
         )}

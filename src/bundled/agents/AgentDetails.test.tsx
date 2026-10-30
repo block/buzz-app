@@ -12,7 +12,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import type {
   Agent,
   Agents,
@@ -26,6 +26,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { AgentDetails } from "./AgentDetails";
 import { createOAuthSession } from "../builderlab/oauth/session";
 import {
+  AccountRecoverySheet,
   createProfileActions,
   createSignInFooter,
 } from "../builderlab/adapter-type/SignInFooter";
@@ -189,9 +190,16 @@ it("keeps one provider footer across tabs and measures its changing height for t
   left.mockRestore();
 });
 
-it.each(["name", "avatar"])(
-  "closes the %s editor when the provider signs out",
-  async (target) => {
+it.each([
+  { target: "name", recovery: false },
+  { target: "avatar", recovery: false },
+  { target: "name", recovery: true },
+  { target: "avatar", recovery: true },
+])(
+  "closes the $target editor for account access (recovery: $recovery)",
+  async ({ target, recovery }) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+    let canUseRemoteAgents = true;
     const callbacks = new Set<() => void>();
     vi.stubGlobal(
       "ResizeObserver",
@@ -211,7 +219,7 @@ it.each(["name", "avatar"])(
       account: {
         subject: "account",
         email: "a@example.com",
-        canUseRemoteAgents: true,
+        canUseRemoteAgents,
         canUseBuilderlabDecisions: false,
       },
     }));
@@ -231,6 +239,19 @@ it.each(["name", "avatar"])(
       timers: {},
       attentionEnabled: true,
     } satisfies Agent;
+    function RecoverySettings() {
+      const login = useSyncExternalStore(session.subscribe, session.snapshot);
+      return (
+        <AccountRecoverySheet
+          session={session}
+          mismatch={false}
+          active={
+            login.status === "signed-in" &&
+            login.account?.canUseRemoteAgents === false
+          }
+        />
+      );
+    }
     const type = {
       key: agent.type,
       pluginId: "test",
@@ -240,6 +261,14 @@ it.each(["name", "avatar"])(
       defaults: () => ({ config: {} }),
       PanelFooter: createSignInFooter(session),
       ProfileActions: createProfileActions(session),
+      tabs: [
+        {
+          id: "settings",
+          title: "Identity",
+          role: "settings",
+          component: RecoverySettings,
+        },
+      ],
     } as RegisteredAgentType;
     const agents = {
       save: vi.fn(),
@@ -277,7 +306,10 @@ it.each(["name", "avatar"])(
         expect(
           screen.getByRole("dialog", { name: "Change avatar" }),
         ).toBeVisible();
-      act(() => session.signOut());
+      if (recovery) {
+        canUseRemoteAgents = false;
+        await act(() => session.signIn());
+      } else act(() => session.signOut());
       act(() => {
         for (const callback of callbacks) callback();
       });
@@ -289,9 +321,25 @@ it.each(["name", "avatar"])(
           screen.queryByRole("dialog", { name: "Change avatar" }),
         ).toBeNull();
       });
+      if (recovery) {
+        const sheet = await screen.findByRole("region", {
+          name: "Builderlab access unavailable",
+        });
+        const identity = screen.getByRole("complementary", {
+          name: "Ada identity",
+        });
+        const scroll = identity.parentElement;
+        expect(scroll).not.toContainElement(sheet);
+        expect(scroll?.nextElementSibling).toContainElement(sheet);
+        expect(
+          screen.queryByRole("button", { name: "Sign in to Builderlab" }),
+        ).toBeNull();
+      }
+      const attempts = signIn.mock.calls.length;
       await user.keyboard("{Enter}");
-      expect(signIn).not.toHaveBeenCalled();
+      expect(signIn).toHaveBeenCalledTimes(attempts);
       expect(agents.save).not.toHaveBeenCalled();
+      canUseRemoteAgents = true;
       await act(() => session.signIn());
       act(() => {
         for (const callback of callbacks) callback();
@@ -307,6 +355,7 @@ it.each(["name", "avatar"])(
       view.unmount();
       session.dispose();
       vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
     }
   },
 );

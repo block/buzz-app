@@ -1215,6 +1215,57 @@ it("reconciles missing top matches so they cannot hide a valid ninth candidate",
   ]);
 });
 
+it("reuses a full directory repaired by newer exact metadata", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const old = metadata(relay, "renamed", "release", 10, [["public"]]);
+  const current = metadata(relay, "renamed", "shipping", 11, [["public"]]);
+  const first = h.channels.searchPublic?.("release");
+  (await h.next(39000)).respond([old]);
+  (await h.next(39000)).respond([current]);
+  expect(await first).toMatchObject({ channels: [] });
+  const second = h.channels.searchPublic?.("shipping").catch(() => undefined);
+  const exact = await h.next(39000);
+  expect(exact.filters[0]?.["#d"]).toEqual(["renamed"]);
+  exact.respond([current]);
+  expect(await second).toMatchObject({ channels: [{ id: "renamed" }] });
+  expect(h.pending).toHaveLength(0);
+});
+
+it("does not restart a verified concurrent answer when another delta answer is stale", async () => {
+  let clock = 1_700_000_000_000;
+  const h = setup({ now: () => clock });
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const old = metadata(relay, "old", "release", 10, [["public"]]);
+  const valid = metadata(relay, "valid", "shipping", 10, [["public"]]);
+  const warm = h.channels.searchPublic?.("zzz");
+  (await h.next(39000)).respond([old, valid]);
+  await warm;
+  clock += 30_000;
+  const stale = h.channels.searchPublic?.("release").catch(() => undefined);
+  const unaffected = h.channels
+    .searchPublic?.("shipping")
+    .catch(() => undefined);
+  (await h.next(39000)).respond([]);
+  const staleExact = await h.next(39000);
+  const validExact = await h.next(39000);
+  expect(staleExact.filters[0]?.["#d"]).toEqual(["old"]);
+  expect(validExact.filters[0]?.["#d"]).toEqual(["valid"]);
+  staleExact.respond([]);
+  const recovery = await h.next(39000);
+  expect(recovery.filters[0]?.since).toBeUndefined();
+  // Keep the repair pending until the other answer finishes its exact read.
+  validExact.respond([valid]);
+  expect(await unaffected).toMatchObject({ channels: [{ id: "valid" }] });
+  expect(h.pending).toHaveLength(0);
+  recovery.respond([valid]);
+  expect(await stale).toMatchObject({ channels: [] });
+});
+
 it("replaces the directory when an incremental merge would exceed its bound", async () => {
   let clock = 1_700_000_000_000;
   const h = setup({ now: () => clock, maxPublicDirectory: 500 });

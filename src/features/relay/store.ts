@@ -1891,8 +1891,8 @@ export function createChannelStore(
         reconcile?: boolean;
         /** The pages read so far, newest first. */
         events: RelayEvent[];
-        /** Prior candidates remain searchable while the directory refreshes. */
-        previous?: readonly RelayEvent[];
+        /** Indexed once; prior candidates remain searchable during refresh. */
+        previous?: Map<string, RelayEvent>;
         /** Settles when the next page lands or the read ends. */
         page: Promise<void>;
         read: Promise<{ partial: boolean }>;
@@ -1903,8 +1903,11 @@ export function createChannelStore(
   const noOpenDirectory: ReturnType<
     NonNullable<ChannelQueries["openDirectory"]>
   > = Object.freeze([]);
-  function latestPublicMetadata(events: readonly RelayEvent[]) {
-    const latest = new Map<string, RelayEvent>();
+  function latestPublicMetadata(
+    events: readonly RelayEvent[],
+    previous?: ReadonlyMap<string, RelayEvent>,
+  ) {
+    const latest = new Map(previous);
     for (const event of events) {
       const id = tag(event, "d");
       if (id) latest.set(id, newer(latest.get(id), event));
@@ -2051,15 +2054,12 @@ export function createChannelStore(
         fullAt: incremental ? prior.fullAt : started,
         incremental,
         events,
-        ...(prior ? { previous: prior.events } : {}),
+        ...(prior ? { previous: latestPublicMetadata(prior.events) } : {}),
         page: next(),
         read: read(since).then((result) => {
           if (incremental) {
             const merged = [
-              ...latestPublicMetadata([
-                ...(entry.previous ?? []),
-                ...events,
-              ]).values(),
+              ...latestPublicMetadata(events, entry.previous).values(),
             ];
             if (result.partial || merged.length > maxPublicDirectory) {
               // An incomplete delta cannot advance a complete directory.
@@ -2082,7 +2082,6 @@ export function createChannelStore(
           controllers.delete(controller);
           entry.at = now();
           entry.partial = partial;
-          if (!entry.incremental) delete entry.reconcile;
           delete entry.previous;
           // Name references in mounted rows read the directory through the
           // list subscription; the list itself is unchanged.
@@ -2115,10 +2114,10 @@ export function createChannelStore(
     const answer = async (final: boolean, readSignal?: AbortSignal) => {
       // Saved names are candidates only: each match still resolves freshly.
       // Only the new scan contributes to the final answer.
-      const latest = latestPublicMetadata([
-        ...(!final ? (entry.previous ?? []) : []),
-        ...entry.events,
-      ]);
+      const latest = latestPublicMetadata(
+        entry.events,
+        !final ? entry.previous : undefined,
+      );
       const candidates = [...latest.entries()]
         .flatMap(([id, event]) => {
           const name = metadataName(event);
@@ -2175,7 +2174,6 @@ export function createChannelStore(
           }),
         );
         if (stale.size) {
-          if (final) entry.reconcile = true;
           // Exact reads can beat directory pages. Retain their signed newer
           // versions, and never discard a newer page that landed meanwhile.
           const kept = latestPublicMetadata(entry.events);
@@ -2193,17 +2191,16 @@ export function createChannelStore(
           }
           // Keep the in-flight array: subsequent pages append here.
           entry.events.splice(0, entry.events.length, ...kept.values());
-          if (entry.previous)
-            entry.previous = entry.previous.filter(
-              (event) => !stale.has(tag(event, "d") ?? ""),
-            );
+          for (const id of stale) entry.previous?.delete(id);
+          if (final && entry.incremental) {
+            entry.reconcile = true;
+            // Only the answer that found stale candidates needs to restart.
+            // Avoid an unbounded tail that could consume discovery capacity.
+            throw refreshRequired;
+          }
         }
         for (const id of unresolved) resolved.add(id);
       }
-      if (final && entry.incremental && entry.reconcile)
-        // Reuse the bounded retry owner rather than resolving an unbounded
-        // tail of stale candidates that could consume discovery capacity.
-        throw refreshRequired;
       // A better match past the budget does not hide the rows already shown.
       return (final ? ids : candidates.map(({ id }) => id))
         .flatMap((id) => {
@@ -2223,7 +2220,7 @@ export function createChannelStore(
     );
     // A search that joins a read in flight ranks its landed pages at once.
     let page =
-      entry.events.length || entry.previous?.length
+      entry.events.length || entry.previous?.size
         ? Promise.resolve()
         : entry.page;
     publicSearchReserve += limit;

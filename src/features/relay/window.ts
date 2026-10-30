@@ -9,6 +9,8 @@ export type WindowPage = Readonly<{
   hasMore: boolean;
 }>;
 export const WINDOW_PAGE_SIZE = 20;
+/** The relay's largest window page. */
+export const WINDOW_PAGE_MAX = 200;
 
 /** NIP-CW window request: top-level rows plus aux closure and thread summaries, paged by the relay's composite cursor. */
 export function windowFilter(
@@ -19,7 +21,7 @@ export function windowFilter(
   return {
     kinds: [...CHANNEL_ROW_KINDS],
     "#h": [channelId],
-    limit: Math.max(1, Math.min(200, limit)),
+    limit: Math.max(1, Math.min(WINDOW_PAGE_MAX, limit)),
     top_level: true,
     include_aux: true,
     include_summaries: true,
@@ -27,13 +29,33 @@ export function windowFilter(
   };
 }
 /** The relay answers each served window with exactly one signed kind 39006 bounds event. Anything else is rejected;
- * an absent or malformed bound must never be mistaken for "no more history". */
+ * an absent or malformed bound must never be mistaken for "no more history". A read continued past membership
+ * notices holds one bound per page; the chain from `cursor` describes the whole read. */
 export function parseWindow(
   channelId: string,
   cursor: WindowCursor | null,
   relayAuthor: string,
   events: readonly RelayEvent[],
 ): WindowPage {
+  let page = parseBound(channelId, cursor, relayAuthor, events);
+  if (!page)
+    throw new Error("Channel history response has invalid window bounds");
+  while (page.cursor) {
+    const next = parseBound(channelId, page.cursor, relayAuthor, events);
+    if (!next) break;
+    page = next;
+  }
+  return {
+    events: events.filter((event) => event.kind !== 39006),
+    ...page,
+  };
+}
+function parseBound(
+  channelId: string,
+  cursor: WindowCursor | null,
+  relayAuthor: string,
+  events: readonly RelayEvent[],
+): Omit<WindowPage, "events"> | undefined {
   const suffix = cursor
     ? `${channelId}:${cursor.createdAt}:${cursor.eventId}`
     : `${channelId}:head`;
@@ -45,7 +67,8 @@ export function parseWindow(
       hasTag(event, "d", suffix),
   );
   const [bound] = bounds;
-  if (bounds.length !== 1 || !bound)
+  if (!bound) return;
+  if (bounds.length !== 1)
     throw new Error("Channel history response has invalid window bounds");
   const body = objectBody(bound.content);
   if (!body) throw new Error("Channel history bounds are malformed");
@@ -76,9 +99,5 @@ export function parseWindow(
   }
   if (body.has_more !== (nextCursor !== null))
     throw new Error("Channel history bounds contradict their cursor");
-  return {
-    events: events.filter((event) => event.kind !== 39006),
-    hasMore: body.has_more,
-    cursor: nextCursor,
-  };
+  return { hasMore: body.has_more, cursor: nextCursor };
 }

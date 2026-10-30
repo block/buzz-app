@@ -25,7 +25,13 @@ import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
-import { parseWindow, windowFilter, type WindowCursor } from "./window";
+import {
+  parseWindow,
+  WINDOW_PAGE_MAX,
+  WINDOW_PAGE_SIZE,
+  windowFilter,
+  type WindowCursor,
+} from "./window";
 import { ByteLru, byteSize, listByteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
@@ -127,6 +133,14 @@ const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on
  * reaching the rows the reader kept across the disconnect. */
 const CATCH_UP_PAGES = 5;
+/** Membership notices spend the relay's page budget like messages. A window
+ * read they leave short of a page of conversational rows continues through up
+ * to this many full pages to fill it. */
+const NOTICE_PAGES = 5;
+const noticeShort = (events: readonly RelayEvent[]) =>
+  events.some((event) => event.kind === 40099) &&
+  events.filter((event) => channelRowKind(event.kind) && event.kind !== 40099)
+    .length < WINDOW_PAGE_SIZE;
 const rowIds = (state: WindowState) =>
   new Set(
     state.events
@@ -620,20 +634,44 @@ export function createChannelStore(
   ) {
     if (!transport) throw new Error("Relay is unavailable");
     const source = transport;
-    const read = (signal?: AbortSignal) =>
-      source.read([windowFilter(channelId, cursor)], {
-        ...settings,
-        ...(signal ? { signal } : {}),
-      });
-    // Head reads belong to session recovery; only manual pagination needs a
-    // finite retry owner here.
-    const events = cursor
-      ? await retryRead(read, settings.signal ?? new AbortController().signal)
-      : await read();
-    return {
-      events,
-      page: parseWindow(channelId, cursor, transport.relayAuthor, events),
+    const readFrom = (from: WindowCursor | null, limit?: number) => {
+      const read = (signal?: AbortSignal) =>
+        source.read([windowFilter(channelId, from, limit)], {
+          ...settings,
+          ...(signal ? { signal } : {}),
+        });
+      // Head reads belong to session recovery; only manual pagination needs a
+      // finite retry owner here.
+      return cursor
+        ? retryRead(read, settings.signal ?? new AbortController().signal)
+        : read();
     };
+    let events = await readFrom(cursor);
+    let page = parseWindow(channelId, cursor, source.relayAuthor, events);
+    for (
+      let more = 0;
+      more < NOTICE_PAGES && page.cursor && noticeShort(page.events);
+      more++
+    ) {
+      let next: readonly RelayEvent[];
+      try {
+        next = await readFrom(page.cursor, WINDOW_PAGE_MAX);
+      } catch (error) {
+        // The pages read so far are a whole window ending at their last bound;
+        // Load older continues from it. Cancellation and denial still fail.
+        if (readErrorKind(error) !== "unavailable") throw error;
+        break;
+      }
+      const older = parseWindow(
+        channelId,
+        page.cursor,
+        source.relayAuthor,
+        next,
+      );
+      events = [...events, ...next];
+      page = { ...older, events: [...page.events, ...older.events] };
+    }
+    return { events, page };
   }
   async function requestHead(
     channelId: string,

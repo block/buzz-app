@@ -275,8 +275,8 @@ export function AgentDetails({
                       ease: [0.23, 1, 0.32, 1],
                       "--agent-artwork-scale": {
                         type: "spring",
-                        duration: 0.8,
-                        bounce: 0.4,
+                        duration: 1.1,
+                        bounce: 0.65,
                       },
                     }
             }

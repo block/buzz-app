@@ -108,7 +108,7 @@ it("keeps early sign-in passive, then offers guidance and cancellation without a
   fireEvent.click(signIn);
   expect(acquire).toHaveBeenCalledTimes(1);
   expect(signIn).toHaveAttribute("aria-busy", "true");
-  expect(signIn).toHaveAttribute("aria-disabled", "true");
+  expect(signIn).toBeDisabled();
   expect(session.snapshot().status).toBe("pending");
   expect(acquire.mock.calls[0]?.[0].aborted).toBe(false);
   expect(subtitle).toHaveTextContent(
@@ -118,6 +118,7 @@ it("keeps early sign-in passive, then offers guidance and cancellation without a
   await act(() => vi.advanceTimersByTimeAsync(2999));
   expect(screen.queryByText(/Finish signing in/)).toBeNull();
   expect(signIn).toHaveAttribute("aria-busy", "true");
+  expect(signIn).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(subtitle).toHaveTextContent(

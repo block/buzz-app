@@ -91,7 +91,7 @@ export function createSignInFooter(session: OAuthSession) {
                 variant={waiting ? "outline" : "prominent"}
                 size="lg"
                 loading={pending && !waiting}
-                disabled={!available && !pending}
+                disabled={(!available && !pending) || (pending && !waiting)}
                 style={{ width: "100%" }}
                 onClick={() => {
                   if (waiting) session.cancel();

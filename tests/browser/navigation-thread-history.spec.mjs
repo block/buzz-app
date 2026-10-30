@@ -251,9 +251,7 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${last.id}"]`),
         ).toBeInViewport();
         await expect(
-          page.locator(
-            '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
-          ),
+          page.getByRole("textbox", { name: "Reply to thread", exact: true }),
         ).toBeFocused();
       }
       const live = app.reply(root.id);

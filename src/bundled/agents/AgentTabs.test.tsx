@@ -432,3 +432,35 @@ it("places plugin tabs after Activity and before Settings", () => {
     "Settings",
   ]);
 });
+
+it.each([false, true])(
+  "places plugin preferences in Settings, outside the type form (split %s)",
+  async (split) => {
+    const { props } = editingFixture(split);
+    const added = [
+      {
+        id: "voice",
+        key: "test/voice",
+      pluginId: "test",
+      revision: "1",
+        title: "Voice",
+        placement: "settings" as const,
+        component: ({ agent }: { agent: Agent }) => (
+          <button type="button">Voice for {agent.name}</button>
+        ),
+      },
+    ];
+    props.agents.addedTabs = () => added;
+    const view = render(<AgentTabs {...props} />);
+    expect(screen.queryByRole("button", { name: "Voice for Ada" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Voice" })).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    expect(screen.getByText("Agent settings")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Voice for Ada" }).closest("form"),
+    ).toBeNull();
+    props.agents.addedTabs = () => [];
+    view.rerender(<AgentTabs {...props} />);
+    expect(screen.queryByRole("button", { name: "Voice for Ada" })).toBeNull();
+  },
+);

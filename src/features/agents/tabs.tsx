@@ -97,7 +97,9 @@ export function agentSections({
       render: () => <HostSettings host={settingsHost} />,
     });
   if (agent.place === "here")
-    for (const { key, title, component: Component } of agents.addedTabs())
+    for (const { key, title, component: Component } of agents
+      .addedTabs()
+      .filter((tab) => !tab.placement))
       tabs.push({
         value: `agent:added:${key}`,
         label: title,

@@ -32,6 +32,15 @@ export function AgentTabs(props: {
   close?: (() => void) | undefined;
   onDiscard?: () => void;
 }) {
+  const preferences =
+    props.agent.place === "here"
+      ? props.agents
+          .addedTabs()
+          .filter((tab) => tab.placement === "settings")
+          .map(({ key, component: Component }) => (
+            <Component key={key} agent={props.agent} />
+          ))
+      : [];
   const split = props.type?.tabs?.some(
     (section) => section.role === "settings" && section.splitSettings,
   );
@@ -52,7 +61,12 @@ export function AgentTabs(props: {
     {
       value: "agent:management",
       label: "Settings",
-      render: () => props.settingsContent,
+      render: () => (
+        <>
+          {props.settingsContent}
+          {preferences}
+        </>
+      ),
     },
   ];
   const [tab, setTab] = useState<string>(
@@ -119,7 +133,10 @@ export function AgentTabs(props: {
           id={panelId(settingsValue)}
           aria-labelledby={`${panelId(settingsValue)}-tab`}
         >
-          <div className="grid gap-6 pt-4">{settings.render()}</div>
+          <div className="grid gap-6 pt-4">
+            {settings.render()}
+            {selected?.value === "agent:management" && preferences}
+          </div>
         </div>
       )}
       {sections

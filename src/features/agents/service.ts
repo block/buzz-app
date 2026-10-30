@@ -299,6 +299,9 @@ export type AgentTab<Config = unknown> = Readonly<{
 export type AgentAddedTab = Readonly<{
   id: string;
   title: string;
+  /** Shows immediate, plugin-owned preferences after the existing Settings
+   * editor instead of creating another tab. Local agents only. */
+  placement?: "settings";
   component: ComponentType<{ agent: Agent }>;
 }>;
 export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
@@ -1004,7 +1007,8 @@ export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tab to the settings of every agent running on this device,
-   * whatever its type, after Activity. It shows while the plugin is on. */
+   * whatever its type, after Activity. With placement: "settings", adds
+   * content to its existing Settings tab. It shows while the plugin is on. */
   registerTab(tab: AgentAddedTab): void;
   /** The tabs active plugins add now. */
   addedTabs(): readonly RegisteredAgentAddedTab[];
@@ -1957,6 +1961,7 @@ export class AgentsService extends Service implements Agents {
     if (
       !/^[a-z0-9][a-z0-9._-]*$/.test(tab.id ?? "") ||
       !tab.title ||
+      (tab.placement !== undefined && tab.placement !== "settings") ||
       typeof tab.component !== "function"
     )
       throw new Error("Agent tabs need an id, a title and a component");

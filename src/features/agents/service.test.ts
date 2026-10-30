@@ -8442,6 +8442,7 @@ it("adds a plugin's tab to every agent's settings until the plugin goes", async 
   for (const bad of [
     { ...tab, id: "Not An Id" },
     { ...tab, title: "" },
+    { ...tab, placement: "other" as never },
     { ...tab, component: undefined as never },
   ])
     expect(() => owner("buzz.other").agents.registerTab(bad)).toThrow(

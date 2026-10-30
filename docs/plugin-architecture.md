@@ -298,7 +298,11 @@ running on this device, whatever its type, with
 follows Activity and precedes History and Settings, in the agent's Build view and
 its profile panel, and is not offered for hosted or elsewhere agents. It is
 removed when the plugin is turned off or its scope ends. The bundled Agent
-Attention UI plugin uses it.
+Attention UI plugin uses it. Set `placement: "settings"` to show immediate,
+plugin-owned preferences inside the existing Settings tab instead of adding a
+tab. These appear after the host/type settings, outside the type's config form;
+the plugin owns their persistence and errors. For example, Berd Call uses this
+slot for its per-agent voice override. This does not change the Identity tab.
 
 A plugin that shows Attention and its device switch calls
 `ctx.agents.controlAttention()`. Installed plugins may call it too, and one that

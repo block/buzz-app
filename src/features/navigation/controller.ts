@@ -52,6 +52,8 @@ export type OpenAttempt = Readonly<{
   entry: NavigationEntry;
   signal: AbortSignal;
   focus?: NavigationFocus;
+  /** History traversal returned to a visit it already held; not opened again. */
+  traversal?: true;
 }>;
 export type NavigationSnapshot = Readonly<{
   entry: NavigationEntry;
@@ -176,7 +178,10 @@ export function createNavigationController(
       });
     emit();
   }
-  function start(focus: NavigationFocus = "content"): Promise<OpenResult> {
+  function start(
+    focus: NavigationFocus = "content",
+    traversal = false,
+  ): Promise<OpenResult> {
     if (disposed) return Promise.resolve({ status: "cancelled" });
     ingressRetry = undefined;
     const old = active;
@@ -192,6 +197,7 @@ export function createNavigationController(
       entry: state.current,
       signal: controller.signal,
       focus,
+      ...(traversal && { traversal }),
     });
     let resolve: (result: OpenResult) => void = () => {};
     const promise = new Promise<OpenResult>((settle) => {
@@ -310,7 +316,13 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         openingFocus = returningFocus = undefined;
-        start(focus);
+        // A return lands on a visit history already held. open() publishes
+        // while opening, and a driver mints a new visit for an edited address
+        // or a dismissal's fallback; none of those returns.
+        start(
+          focus,
+          !opening && !!snapshot.retainedVisits?.includes(state.current.id),
+        );
       }
     });
   });

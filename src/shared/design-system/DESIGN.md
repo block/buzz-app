@@ -312,10 +312,10 @@ exception and open on hover at once, as menus conventionally do.
 
 | Bucket | Use for | Timing | API |
 | --- | --- | --- | --- |
-| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 1.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
-| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.5s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
-| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.6s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
-| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.1s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 0.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.25s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.3s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.05s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
 | No hover | A control whose visible text already says what it does | None | Omit `title` |
 
 Hints share the app's `TooltipProvider`: once one is showing, its neighbors open
@@ -1789,10 +1789,10 @@ the same overlay again on top of the strip. Inside your bubble reactions take
 its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
 they keep the standard ink and overlay of the panel they sit on.
 
-Hovering your own message lays a quieter overlay across the whole bubble
-(`affordance-message-own-hover`: black 4% or white 8%), in the same direction as
-its chips, so a bright bubble never takes a white wash in dark mode. Received
-bubbles keep the quiet surface their reaction strip shares and take no hover.
+When message actions show, both received and own bubbles use their
+`surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in
+light mode and 5% toward white in dark mode. This changes only the background,
+without a stroke or an overlay on text and media. Emoji-only messages stay clear.
 
 These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

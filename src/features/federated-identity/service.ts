@@ -189,11 +189,24 @@ export class FederatedIdentityService
     if (cached) return cached;
     const token = crypto.randomUUID();
     let active = true;
-    const registration = invoke<void>("federated_identity_register", {
-      id: owner.id,
-      revision: owner.revision,
-      registration: token,
-    })
+    // Installed before native admission, so a disposed fiber, even one
+    // retrying a retirement, throws here instead of registering again.
+    this.ctx.effect(() => () => {
+      active = false;
+      if (this.shared.registrations.get(fiber) === registration)
+        this.shared.registrations.delete(fiber);
+      void invoke("federated_identity_unregister", {
+        registration: token,
+      }).catch(() => {});
+    });
+    const registration: Promise<string> = invoke<void>(
+      "federated_identity_register",
+      {
+        id: owner.id,
+        revision: owner.revision,
+        registration: token,
+      },
+    )
       .then(() => {
         if (!active) {
           void invoke("federated_identity_unregister", {
@@ -208,14 +221,6 @@ export class FederatedIdentityService
           this.shared.registrations.delete(fiber);
         throw error;
       });
-    this.ctx.effect(() => () => {
-      active = false;
-      if (this.shared.registrations.get(fiber) === registration)
-        this.shared.registrations.delete(fiber);
-      void invoke("federated_identity_unregister", {
-        registration: token,
-      }).catch(() => {});
-    });
     this.shared.registrations.set(fiber, registration);
     return registration;
   }

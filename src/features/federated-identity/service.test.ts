@@ -277,6 +277,28 @@ it("retries every in-flight request whose shared registration native retires", a
   ).resolves.toHaveLength(2);
 });
 
+it("does not register again when native retires an admission after plugin unload", async () => {
+  const { root } = setup();
+  const a = await plugin(root);
+  let refuse!: () => void;
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "federated_identity_register"
+      ? new Promise<void>((_, reject) => {
+          refuse = () => reject("Plugin registration retired");
+        })
+      : Promise.resolve(undefined),
+  );
+  const request = a.service.request({ path: "/api/list" });
+  await vi.waitFor(() => expect(refuse).toBeTypeOf("function"));
+  await a.fiber.dispose();
+  refuse();
+  await expect(request).rejects.toThrow();
+  const calls = (name: string) =>
+    vi.mocked(invoke).mock.calls.filter(([command]) => command === name);
+  expect(calls("federated_identity_register")).toHaveLength(1);
+  expect(calls("federated_identity_request")).toHaveLength(0);
+});
+
 it("retires a registration admitted after plugin unload without forwarding the request", async () => {
   const { root } = setup();
   const a = await plugin(root);

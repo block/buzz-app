@@ -541,7 +541,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Avatar",
     purpose:
       "Show a person or agent with an image or stable fallback. Use a circle for a person and a squircle for an agent, based on identity data supplied by the caller.",
-    behavior: "Base UI Avatar.",
+    behavior:
+      "Base UI Avatar. An identity badge can replace presence in the shared badge slot.",
     variants: [
       "compact",
       "small",

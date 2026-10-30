@@ -1,9 +1,25 @@
-.buzz-avatar-status[data-status][data-shape="circle"] > .buzz-avatar {
+.buzz-avatar-status:is([data-status], [data-badged])[data-shape="circle"]
+  > .buzz-avatar {
   mask: url("./avatar-status-cutout.svg") center / 100% 100% no-repeat;
 }
 
-.buzz-avatar-status[data-status][data-shape="squircle"] > .buzz-avatar {
+.buzz-avatar-status:is([data-status], [data-badged])[data-shape="squircle"]
+  > .buzz-avatar {
   mask: url("./avatar-status-squircle-cutout.svg") center / 100% 100% no-repeat;
+}
+
+.buzz-avatar-status[data-badged][data-shape="squircle"] > .buzz-avatar {
+  mask: url("./avatar-identity-cutout.svg") center / 100% 100% no-repeat;
+}
+
+.buzz-avatar-badge {
+  position: absolute;
+  top: 85%;
+  left: 85%;
+  width: 25%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .buzz-avatar-status[data-shape="squircle"] .buzz-avatar-status-dot {

@@ -56,6 +56,7 @@ import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useProfileManager } from "../../features/profiles/useProfileManager";
 
 const noSubscribe = () => () => {};
 const emptyAgentTypes = Object.freeze([]);
@@ -327,6 +328,12 @@ function ProfileDetails({
     attempt,
   );
   const verifiedOwner = ownership.owner;
+  const manager = useProfileManager(
+    session,
+    verifiedOwner ? pubkey : undefined,
+    viewer,
+  );
+  const managerTarget = manager ? profileTarget(manager.id) : undefined;
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   let communityOrigin: string | undefined;
@@ -417,18 +424,45 @@ function ProfileDetails({
               size="fill"
               shape={displayAgent ? "squircle" : "circle"}
               statusBadge={presence === "unknown" ? undefined : presence}
+              badge={
+                manager && (
+                  <Avatar
+                    src={manager.picture}
+                    alt={`Managed by ${manager.name}`}
+                    fallback={manager.name}
+                    size="fill"
+                  />
+                )
+              }
             />
           </div>
           <div className={styles.identity}>
             <h2 className="text-body-lg">{name}</h2>
-            {presence !== "unknown" && (
-              <p className="text-body-sm text-primary">
-                {
-                  { online: "Active", away: "Away", offline: "Offline" }[
-                    presence
-                  ]
-                }
-              </p>
+            {manager ? (
+              managerTarget && context?.canOpen(managerTarget) ? (
+                <Button
+                  size="compact"
+                  variant="link"
+                  aria-label={`Open owner profile: ${manager.name}`}
+                  onClick={() => (context.push ?? context.open)(managerTarget)}
+                >
+                  Managed by {manager.name}
+                </Button>
+              ) : (
+                <p className="text-body-sm text-primary">
+                  Managed by {manager.name}
+                </p>
+              )
+            ) : (
+              presence !== "unknown" && (
+                <p className="text-body-sm text-primary">
+                  {
+                    { online: "Active", away: "Away", offline: "Offline" }[
+                      presence
+                    ]
+                  }
+                </p>
+              )
             )}
             <UserStatusDisplay session={session} userId={pubkey} />
           </div>
@@ -526,7 +560,7 @@ function ProfileDetails({
                       {copyStatus}
                     </span>
                   </div>
-                  {knownAgent && verifiedOwner && (
+                  {knownAgent && verifiedOwner && !manager && (
                     <ProfileAgentIdentity
                       session={session}
                       owner={verifiedOwner}

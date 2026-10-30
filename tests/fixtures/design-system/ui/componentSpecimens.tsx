@@ -336,6 +336,26 @@ function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
       <SpecimenGroup
+        label="Manager identity replaces activity"
+        code={
+          '<Avatar alt="Agent" fallback="Agent" shape="squircle" badge={<Avatar src={avatarUrl} alt="Managed by Morgan" fallback="Morgan" size="fill" />} />'
+        }
+      >
+        <Avatar
+          alt="Agent"
+          fallback="Agent"
+          shape="squircle"
+          badge={
+            <Avatar
+              src={avatarUrl}
+              alt="Managed by Morgan"
+              fallback="Morgan"
+              size="fill"
+            />
+          }
+        />
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Identity shape: circles for humans, squircles for agents"
         code={`<div className="flex flex-wrap items-center gap-4">
 

@@ -1262,18 +1262,24 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
-the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
-or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
-on top of that body padding. Footers following body content also reserve a fixed
-`--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
-meets the buttons directly. Header-only confirmations retain their header-to-action
-gap. Create/Edit channel forms opt into
-`headerGap="compact"` for a 12px heading-to-body gap at every breakpoint;
-other dialog compositions retain their default spacing. Their privacy confirmation
-steps also opt into `footerGap="compact"` for `0.5rem` of body-bottom padding
-before the fixed footer gutter; returning to the form restores the normal
-body-bottom padding.
+the close button so its hit area does not enlarge the text gap. Ordinary content-height
+flow dialogs put vertical gutters on their sticky header and footer, rather than
+on the body. The default gutter matches `--dialog-padding`; `headerGap="compact"`
+uses 12px and `footerGap="compact"` retains 0.5rem plus the fixed 1rem footer
+gutter (1.5rem total). Empty conditional bodies add no gutter of their own.
+Transparent footer gutters pass pointer input through to visible body controls;
+footer actions remain interactive.
+
+Other layouts (stepped, navigated, stable-height, side inspectors, expanded, and
+internally scrolling bodies) retain their existing body-owned vertical padding
+matching `--dialog-padding`: 2rem, 1.5rem for compact dialogs, or 1rem at viewport
+widths up to 30rem. Do not add an outer flex gap on top of that body padding.
+Their footers following body content also reserve a fixed `--space-4` (1rem) top
+gutter outside the scrollport. In these layouts, `footerGap="compact"` keeps
+0.5rem of body-bottom padding before that fixed gutter. Create/Edit channel
+privacy steps use this compact spacing; returning to the form restores the
+normal body-bottom padding. Header-only confirmations retain their
+header-to-action gap.
 Session settings uses content height and the default footer spacing, with one
 body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`

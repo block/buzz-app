@@ -746,10 +746,16 @@ html[data-keyboard-navigation]
 
     > .buzz-dialog-body[data-footer-gap="compact"]
       + .buzz-dialog-actions[data-chrome-spacing="default"] {
-      padding-top: calc(var(--space-2) + var(--space-1));
+      padding-top: calc(var(--space-2) + var(--space-4) + var(--space-1));
     }
 
     > .buzz-dialog-actions {
+      /* The transparent gutter can overlap focused body controls. Only the
+         actual footer controls should intercept pointer input. */
+      pointer-events: none;
+      > :not(.buzz-dialog-bar-material) {
+        pointer-events: auto;
+      }
       /* Preserve access to oversized actions at narrow widths/enlarged text. */
       overflow-x: auto;
       bottom: calc(-1 * var(--dialog-padding));

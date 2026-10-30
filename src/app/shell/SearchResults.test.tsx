@@ -8595,6 +8595,7 @@ it.each([true, false])(
         refresh,
       },
     } as typeof t.session;
+    const openNewMessage = vi.fn();
     try {
       render(
         <SearchResults
@@ -8603,6 +8604,7 @@ it.each([true, false])(
           onQueryChange={() => {}}
           input={createRef()}
           pages={[]}
+          openNewMessage={openNewMessage}
           openConversation={() => {}}
         />,
       );
@@ -8623,17 +8625,15 @@ it.each([true, false])(
       await act(async () => finish());
       if (managed)
         await waitFor(() =>
-          expect(t.open).toHaveBeenCalledExactlyOnceWith(
-            [scout.pubkey],
-            expect.any(AbortSignal),
-          ),
+          expect(openNewMessage).toHaveBeenCalledExactlyOnceWith(scout.pubkey),
         );
       else {
         expect(await screen.findByRole("alert")).toHaveTextContent(
           "This agent is not ready to message in this community.",
         );
-        expect(t.open).not.toHaveBeenCalled();
+        expect(openNewMessage).not.toHaveBeenCalled();
       }
+      expect(t.open).not.toHaveBeenCalled();
     } finally {
       cleanup();
       owner.dispose();

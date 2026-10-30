@@ -425,6 +425,10 @@ export class DiscoveryState {
   members(): string[] {
     return [...this.rosters.keys()].filter((id) => this.authorized(id));
   }
+  /** Denied only because a complete read left it out. */
+  omitted(id: string): boolean {
+    return this.absent.has(id);
+  }
   /** Every roster channel get() serves, system channels included. Membership,
    * not listing, decides what the device may keep. */
   readable(): ChannelSummary[] {

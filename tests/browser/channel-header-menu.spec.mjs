@@ -57,6 +57,24 @@ test("header actions use the full-size menu and retain pane/dialog focus owners"
   await expect(
     menu.getByRole("menuitem", { name: "Delete channel", exact: true }),
   ).toHaveAttribute("data-tone", "danger");
+  // Check the rendered label and icon, not just the component's tone prop.
+  const deleteItem = menu.getByRole("menuitem", {
+    name: "Delete channel",
+    exact: true,
+  });
+  const dangerColor = await deleteItem.evaluate((item) => {
+    const reference = document.createElement("span");
+    reference.style.color = "var(--text-danger)";
+    item.append(reference);
+    const color = getComputedStyle(reference).color;
+    reference.remove();
+    return color;
+  });
+  await expect(deleteItem).toHaveCSS("color", dangerColor);
+  await expect(deleteItem.locator(".buzz-menu-icon svg")).toHaveCSS(
+    "color",
+    dangerColor,
+  );
   await expect(
     menu.getByRole("menuitem", { name: /Edit details|Review pending changes/ }),
   ).toHaveCount(0);

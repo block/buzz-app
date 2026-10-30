@@ -144,10 +144,7 @@ export function RecipientPicker({
       (person) =>
         person.pubkey !== viewer &&
         !excludedPubkeys.includes(person.pubkey) &&
-        // Agents still loading are not yet known to be uncontrolled.
-        (!person.isAgent ||
-          controlled.has(person.pubkey) ||
-          agents.managedPending) &&
+        (!person.isAgent || controlled.has(person.pubkey)) &&
         !selected.some((item) => item.pubkey === person.pubkey),
     );
     const picked = usage.pick(
@@ -212,7 +209,6 @@ export function RecipientPicker({
     };
   }, [
     agents.identities,
-    agents.managedPending,
     channels,
     profiles,
     people,
@@ -270,9 +266,7 @@ export function RecipientPicker({
       selection.current.length >= 8 ||
       person.pubkey === session.viewer ||
       excludedPubkeys.includes(person.pubkey) ||
-      (person.isAgent &&
-        !controlled.has(person.pubkey) &&
-        !agents.managedPending) ||
+      (person.isAgent && !controlled.has(person.pubkey)) ||
       selection.current.some((item) => item.pubkey === person.pubkey)
     )
       return;
@@ -569,7 +563,8 @@ export function RecipientPicker({
                     !directory.error &&
                     !agents.managedPending &&
                     !candidates.length && <p>No matching people.</p>}
-                  {directory.loading &&
+                  {/* Agents still loading may add controlled ones. */}
+                  {(directory.loading || agents.managedPending) &&
                     (!query.trim() || !candidates.length) && (
                       <div role="status" aria-label="Loading people">
                         <div aria-hidden="true">

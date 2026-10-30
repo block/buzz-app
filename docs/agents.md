@@ -195,6 +195,14 @@ misspelled organization, counts as none, and bots and deleted accounts are in
 no organization. Each poll reads the rules again, so a change applies to
 running watches. CI and pull request state are not limited.
 
+Settings asks `gh` about the names the saved rules use, and warns about an
+organization or user GitHub has no record of, and an organization the signed-in
+account is not a member of, whose private members never match. Bots are not
+looked up. An agent reads and saves the same rules with `github_author_rules`:
+without arguments it gives them, and with `rules` or `fallback` it saves them
+as Settings does, refusing rules that do not parse. Its answer lists the same
+warnings, and says when the rules let anyone wake agents.
+
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each

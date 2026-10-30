@@ -87,6 +87,7 @@ import { MemberRow, useMemberAdministration } from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
+import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -748,6 +749,10 @@ export function ChannelMembersDialog({
       lifetime.current = undefined;
     };
   }, [session, channelId]);
+  // A roster refused while signed out reads again once sign-in lands.
+  const reauthorized = useReauthorizedRetry(session.recovery, () =>
+    setRefresh((value) => value + 1),
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries the roster read.
   useEffect(() => {
     void session.archives.ensure();
@@ -755,6 +760,7 @@ export function ChannelMembersDialog({
     let current = true;
     setRosterReading(true);
     setRosterReadError("");
+    const failed = reauthorized.begin();
     void session
       .read([{ kinds: [39002], "#d": [channelId], limit: 1 }], { fresh: true })
       .then(
@@ -773,9 +779,10 @@ export function ChannelMembersDialog({
               "The member list could not be confirmed. Try again.",
             );
         },
-        () => {
-          if (current)
-            setRosterReadError("The member list could not load. Try again.");
+        (error) => {
+          if (!current) return;
+          setRosterReadError("The member list could not load. Try again.");
+          failed(error);
         },
       )
       .finally(() => {
@@ -2194,6 +2201,7 @@ export function ChannelMembersDialog({
               communityScope={communityScope}
               key={channelId}
               capability={session.channelDetails}
+              recovery={session.recovery}
               channelId={channelId}
               channel={channel}
             />

@@ -33,7 +33,9 @@ const homes: string[] = [];
 const runs: PromiseWithChild<unknown>[] = [];
 afterEach(async () => {
   // A test that times out can leave launchers running, which would write into
-  // its home as it is removed. Each stopped here is expected to fail.
+  // its home as it is removed. Each stopped here is expected to fail. Taking
+  // its homes off `homes` first makes `run` refuse any its body starts later.
+  const removing = homes.splice(0);
   await Promise.all(
     runs.splice(0).map(async (running) => {
       const { child } = running;
@@ -45,7 +47,7 @@ afterEach(async () => {
     }),
   );
   await Promise.all(
-    homes.splice(0).map((home) => rm(home, { recursive: true, force: true })),
+    removing.map((home) => rm(home, { recursive: true, force: true })),
   );
 });
 
@@ -55,6 +57,11 @@ function run(
   args: readonly string[],
   options: ExecFileOptions = {},
 ) {
+  // A timed-out test's body goes on after `afterEach`. Started in its home,
+  // codex.sh would make folders there again.
+  const home = options.env?.HOME;
+  if (home !== undefined && !homes.includes(home))
+    throw new Error(`${home} is removed: its test has ended`);
   const running = execFileAsync(file, args, { ...options, encoding: "utf8" });
   runs.push(running);
   return running;
@@ -186,13 +193,14 @@ it("starts the release in use when switches prune the one it read", async () => 
   );
   // Complete home setup before observing the release-read boundary.
   await step("run", "--version");
-  // A `cat` that stops after its first read, of `current`, until `go`, or
-  // until a timed-out test's home is removed.
+  // A `cat` that stops after its first read, of `current`, until `go`. It also
+  // stops once a timed-out test's home is removed, or after 30 s in case the
+  // worker died before removing it.
   const bin = join(home, "bin");
   await mkdir(bin);
   await writeFile(
     join(bin, "cat"),
-    `#!/bin/sh\n/bin/cat "$@"\n[ -e "${bin}/read" ] && exit\n: >"${bin}/read"\nuntil [ -e "${bin}/go" ] || [ ! -d "${bin}" ]; do sleep 0.05; done\n`,
+    `#!/usr/bin/env bash\n/bin/cat "$@"\n[ -e "${bin}/read" ] && exit\n: >"${bin}/read"\nuntil [ -e "${bin}/go" ] || [ ! -d "${bin}" ] || [ "$SECONDS" -ge 30 ]; do sleep 0.05; done\n`,
   );
   await chmod(join(bin, "cat"), 0o755);
   let observed!: () => void;

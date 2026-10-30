@@ -2,6 +2,7 @@ import { assert, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
+import { ReadError } from "./errors";
 import {
   flush,
   keypair,
@@ -331,6 +332,50 @@ it("retries failed Recent activity after an explicit roster refresh", async () =
     expect(
       h.channels.list().channels.find((c) => c.id === "beta")?.lastActivityAt,
     ).toBe(100);
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("hands a transient activity failure to session recovery instead of the sidebar", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setSort("channels", "recent", []);
+    take(h.pending).reject(
+      new ReadError("unavailable", "Relay read failed (502)"),
+    );
+    await flush();
+    expect(h.channels.list()).toMatchObject({
+      activityStatus: "error",
+      activityTransient: true,
+    });
+    expect(h.owner.session.recovery?.snapshot().recovering).toBe(true);
+
+    h.owner.session.recovery?.retryNow();
+    expect(h.activity).toHaveBeenCalledTimes(2);
+    expect(h.channels.list().activityStatus).toBe("loading");
+    expect(h.channels.list().activityTransient).toBeUndefined();
+    take(h.pending).resolve([message(h.peer, "beta", "recovered", 100)]);
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("ready");
+    expect(h.owner.session.recovery?.snapshot().recovering).toBe(false);
+
+    // A failure no retry can fix stays with the sidebar notice.
+    h.channels.refreshList?.();
+    h.wire
+      .next()
+      .respond([
+        roster(h.relay, "alpha", [h.viewer.pubkey]),
+        roster(h.relay, "gamma", [h.viewer.pubkey]),
+        metadata(h.relay, "alpha", "Alpha"),
+        metadata(h.relay, "gamma", "Gamma"),
+      ]);
+    await flush();
+    take(h.pending).reject(new ReadError("denied", "Relay read failed (403)"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+    expect(h.channels.list().activityTransient).toBeUndefined();
+    expect(h.owner.session.recovery?.snapshot().recovering).toBe(false);
   } finally {
     h.owner.dispose();
   }

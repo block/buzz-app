@@ -34,8 +34,8 @@ const changeClaims = (recovery: RelayRecovery, delta: number) => {
 };
 
 /** Recovery state for one surface. `shown` is true while the notice is
- * visible; `recovering` is true from the first failure, including the quiet
- * first second before the notice appears. */
+ * visible; `recovering` is true from the first failure, including the
+ * quiet RECOVERY_NOTICE_DELAY_MS before the notice appears. */
 export function useRecovery(recovery: RelayRecovery | undefined) {
   const state = useSyncExternalStore(
     recovery?.subscribe ?? subscribeNone,
@@ -44,7 +44,7 @@ export function useRecovery(recovery: RelayRecovery | undefined) {
   );
   return {
     recovering: !!recovery && state.recovering,
-    // Stay hidden for a failure that the first automatic retry fixes.
+    // Stay hidden for a failure that recovery fixes before the notice delay.
     shown: !!recovery && state.shown,
   };
 }

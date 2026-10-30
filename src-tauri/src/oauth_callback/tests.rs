@@ -199,7 +199,7 @@ async fn real_listener_preserves_callback_parameters_and_closes_after_completion
         assert!(response.contains("<title>Builderlab sign-in</title>"));
         assert!(response.contains("<span>Builderlab</span>"));
         assert!(response.contains(include_str!("../../../public/builderlab-mark.svg")));
-        assert!(response.contains("<h1 id=\"heading\">You're now signed in.</h1>"));
+        assert!(response.contains("<h1 id=\"heading\">Signing you in…</h1>"));
         assert!(!response.contains("Sign-in received. Return to the app to finish verification."));
         assert!(response.contains("data-complete=\"true\""));
         assert!(response.contains("data-close-delay=\"3\""));

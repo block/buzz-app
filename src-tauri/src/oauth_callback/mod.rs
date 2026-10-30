@@ -411,7 +411,7 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, branded: bool
     let (body, policy) = if branded {
         // All copy comes from the fixed responses above, never from callback values.
         let heading = match status {
-            200 => "You're now signed in.",
+            200 => "Signing you in…",
             404 => "Page not found",
             _ => "Sign-in needs attention",
         };

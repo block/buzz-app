@@ -110,7 +110,7 @@ of whether browser policy permits closing the callback tab.
   shell/panel, spacing and type roles, browser light/dark mode, `no-store`,
   and `no-referrer`. Its Content Security Policy permits only the exact embedded
   stylesheet and close-window script by hash, with no external assets or network
-  requests. A valid callback shows the headline **You're now signed in.** and a
+  requests. A valid callback shows the headline **Signing you in…** and a
   spinner with muted **Closing this window automatically** text for three seconds
   before trying to close its page. The hint reserves its wrapped size through
   script startup and a blocked-close fallback, keeping the panel stationary.
@@ -124,9 +124,9 @@ of whether browser policy permits closing the callback tab.
   reading delay and native focus-return delay share one native constant. Error
   pages remain open. Restoring an unclosed tab later can still fail because the
   loopback listener is temporary.
-  The headline acknowledges the browser sign-in callback. Receipt of a callback
-  does not establish successful account verification; Buzz still performs code
-  exchange and account validation, and reports failures in the app.
+  The headline describes sign-in in progress. Buzz still performs code exchange
+  and account validation after receiving the callback, and reports any verification
+  failures in the app.
   The standalone stylesheet mirrors the shared roles without loading the app;
   Inter uses the system fallback when unavailable locally. It does not inherit
   the app's Appearance preference. `public/builderlab-mark.svg` is a standalone

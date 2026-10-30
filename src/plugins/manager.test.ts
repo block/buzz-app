@@ -164,6 +164,22 @@ it("activates and observes CLI changes without any React subscribers", async () 
   await vi.advanceTimersByTimeAsync(1000);
   expect(pages.snapshot()).toHaveLength(0);
 });
+it("reports plugins the user turns on or off, from Settings or the CLI, but not startup", async () => {
+  const { plugins, installation } = harness();
+  const toggled = vi.fn();
+  plugins.onToggle(toggled);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugins.startup()).toBe("ready");
+  expect(toggled).not.toHaveBeenCalled();
+  await plugins.change("disable", "example");
+  expect(toggled).toHaveBeenCalledExactlyOnceWith("example", false);
+  vi.mocked(installation.getCatalog).mockResolvedValue(ready(true));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(toggled).toHaveBeenLastCalledWith("example", true);
+  // An unchanged poll reports nothing.
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(toggled).toHaveBeenCalledTimes(2);
+});
 it("ignores a stale poll after a management change", async () => {
   const { plugins, pages, installation } = harness();
   await vi.advanceTimersByTimeAsync(0);

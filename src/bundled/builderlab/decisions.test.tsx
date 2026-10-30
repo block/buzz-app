@@ -151,3 +151,16 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
     screen.getByText(/Builderlab decisions are not turned on for your account/),
   ).toHaveAttribute("role", "status");
 });
+
+it("starts sign-in when its plugin is turned on, only if signed out and sign-in is available", async () => {
+  const acquire = vi.fn(async () => credential("first"));
+  const session = createOAuthSession(acquire);
+  builderlabProvider(session, false, vi.fn()).setUp?.();
+  expect(acquire).not.toHaveBeenCalled();
+  const provider = builderlabProvider(session, true, vi.fn());
+  provider.setUp?.();
+  expect(session.snapshot().status).toBe("pending");
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+  provider.setUp?.();
+  expect(acquire).toHaveBeenCalledOnce();
+});

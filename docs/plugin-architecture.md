@@ -1799,6 +1799,7 @@ export function apply(ctx: Context) {
       return { outcome: "answered", model: "example-1", answers: {} };
     },
     Settings: ({ active }) => null, // shown while this provider is selected
+    setUp: () => {}, // optional: start setup, such as sign-in, when turned on
   });
 }
 ```
@@ -1812,13 +1813,18 @@ that were not asked are dropped.
 
 The user chooses the provider in Settings > Decisions API, and the choice is
 kept on this device. Until they choose, TypeSafe (`buzz.typesafe/typesafe`)
-answers. Decision text can include private messages, so no other provider gets
-it without that choice: while the chosen provider is not on, decisions are
-`unavailable` and are not sent to another provider. `ctx.decisions.backend()`
-is the answering provider's key (`<plugin id>/<provider id>`), or undefined
-when none is on, and `ctx.decisions.status()` its status. `Decisions` exposes
-no way to choose the provider. `state` and every question go to the provider,
-so send only what the decision needs.
+answers. Turning a provider's plugin on in Settings > Plugins or the CLI is
+also a choice: the host selects that provider once it registers and calls its
+optional `setUp`, where it can start a sign-in. Turning the chosen provider's
+plugin off selects the first other provider whose status is `ready`; with none
+ready, the choice stays. Decision text can include private messages, so no
+other provider gets it without one of those choices: while the chosen provider
+is not on, decisions are `unavailable` and are not sent to another provider.
+`ctx.decisions.backend()` is the answering provider's key
+(`<plugin id>/<provider id>`), or undefined when none is on, and
+`ctx.decisions.status()` its status. `Decisions` exposes no way to choose the
+provider. `state` and every question go to the provider, so send only what the
+decision needs.
 
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|

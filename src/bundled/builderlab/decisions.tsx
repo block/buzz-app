@@ -50,6 +50,11 @@ export function builderlabProvider(
         : "needs-setup";
     },
     subscribe: session.subscribe,
+    // Turning the Builderlab decisions plugin on starts sign-in, if needed.
+    setUp: () => {
+      if (loginAvailable && session.snapshot().status === "signed-out")
+        void session.signIn();
+    },
     decide: async (request) => {
       if (!native) return { outcome: "failed", reason: "unavailable" };
       const credential = signedIn();

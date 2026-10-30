@@ -94,6 +94,7 @@ export function createPluginManager(
   let changes = 0;
   let timer: ReturnType<typeof setTimeout>;
   const listeners = new Set<() => void>();
+  const toggleListeners = new Set<(id: string, enabled: boolean) => void>();
   const read = () => ({
     configuration,
     activation: runtime.snapshot(),
@@ -112,10 +113,29 @@ export function createPluginManager(
   function accept(next: StorageResult) {
     if (JSON.stringify(configuration) === JSON.stringify(next) && !refreshError)
       return;
+    const before = enabledIds(configuration);
     configuration = next;
     refreshError = null;
+    // A plugin turned on or off in a read catalog is the user's change, from
+    // Settings or the CLI. Starting up or recovering is not. Listeners hear it
+    // before the plugin starts or stops.
+    const after = enabledIds(next);
+    if (before && after)
+      for (const id of new Set([...before, ...after]))
+        if (before.has(id) !== after.has(id))
+          for (const listener of [...toggleListeners])
+            listener(id, after.has(id));
     runtime.reconcile(desiredPlugins());
     publish();
+  }
+  function enabledIds(state: ConfigurationState) {
+    return state.status === "ready"
+      ? new Set(
+          state.catalog.plugins
+            .filter((plugin) => plugin.enabled)
+            .map((plugin) => plugin.manifest.id),
+        )
+      : undefined;
   }
   function desiredPlugins() {
     const current = configuration;
@@ -218,6 +238,13 @@ export function createPluginManager(
         listeners.delete(listener);
       };
     },
+    /** Hears each plugin the user turns on or off, not startup. */
+    onToggle(listener: (id: string, enabled: boolean) => void) {
+      toggleListeners.add(listener);
+      return () => {
+        toggleListeners.delete(listener);
+      };
+    },
     imports: storage.imports,
     installImport: (token: string, path: string) =>
       update(() => {
@@ -248,6 +275,7 @@ export function createPluginManager(
       clearTimeout(timer);
       unsubscribe();
       listeners.clear();
+      toggleListeners.clear();
       await runtime.dispose();
     },
   };

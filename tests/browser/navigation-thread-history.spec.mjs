@@ -673,7 +673,7 @@ test("closing an active thread highlights its visible channel origin without scr
     const observer = new MutationObserver(() => {
       if (
         getComputedStyle(element, "::after").animationName.includes(
-          "return-message-highlight",
+          "message-highlight",
         )
       ) {
         window.returnHighlightPainted = true;

@@ -18,7 +18,7 @@ export function createProfileActions(session: OAuthSession) {
     const login = useSyncExternalStore(session.subscribe, session.snapshot);
     if (login.status === "signed-in") return children;
     return (
-      <span className="inline-flex items-center rounded-full bg-inset px-3 py-1 text-body-sm text-secondary">
+      <span className="inline-flex items-center rounded-full bg-panel px-3 py-1 text-body-sm text-secondary">
         {login.status === "pending"
           ? "Signing in to Builderlab…"
           : "Signed out of Builderlab"}

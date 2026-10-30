@@ -1907,22 +1907,18 @@ export function createChannelStore(
       const candidates = [...latest.entries()]
         .flatMap(([id, event]) => {
           const name = metadataName(event);
+          // The joined-channel rule (`matchRank`), so "buzz community" finds
+          // "buzz-community" here too.
+          const rank = name ? matchRank(name, needle) : undefined;
           return openMetadata(event) &&
             !event.tags.some(
               ([key, value]) => key === "archived" && value === "true",
             ) &&
             !discovery.authorized(id) &&
             name &&
-            (settings?.exact
-              ? name.toLowerCase() === needle
-              : name.toLowerCase().includes(needle))
-            ? [
-                {
-                  id,
-                  name,
-                  rank: matchRank(name, needle) ?? MatchRank.substring,
-                },
-              ]
+            rank !== undefined &&
+            (!settings?.exact || rank === MatchRank.exact)
+            ? [{ id, name, rank }]
             : [];
         })
         // Best match first before the cut, so an exact name is never dropped.
@@ -2091,16 +2087,13 @@ export function createChannelStore(
     return recentPublic.ids
       .flatMap((id) => {
         const channel = previewable(id);
-        const name = channel?.name.toLowerCase();
+        const rank = channel?.name
+          ? matchRank(channel.name, needle)
+          : undefined;
         return channel &&
-          name &&
-          (settings?.exact ? name === needle : name.includes(needle))
-          ? [
-              {
-                channel,
-                rank: matchRank(channel.name, needle) ?? MatchRank.substring,
-              },
-            ]
+          rank !== undefined &&
+          (!settings?.exact || rank === MatchRank.exact)
+          ? [{ channel, rank }]
           : [];
       })
       .sort((a, b) => a.rank - b.rank)

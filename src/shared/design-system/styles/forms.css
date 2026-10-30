@@ -421,6 +421,11 @@
   .buzz-select-value[data-placeholder] {
     color: var(--text-metadata);
   }
+  .buzz-select
+    :is(:disabled, [data-disabled])
+    .buzz-select-value[data-placeholder] {
+    color: inherit;
+  }
 
   .buzz-input-group {
     display: flex;

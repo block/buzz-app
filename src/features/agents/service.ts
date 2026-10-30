@@ -725,6 +725,17 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Provider-owned account notice, pinned across the agent's tabs.
+   * Return null when no account notice is needed. The active settings view may
+   * replace this slot through the AgentSaveFooter context's setPanelNotice(content),
+   * clearing it with null on cleanup; the host retains outgoing content through exit.
+   * By default a notice dims identity artwork and closes name/avatar editors.
+   * Ordinary load/save notices must set data-agent-access-required="false" on
+   * their outer DOM element to opt out of those access effects. Both kinds share
+   * host-owned placement and measured scroll space. */
+  PanelFooter?: ComponentType;
+  /** Provider-owned sign-in gate for messaging and name/avatar editing actions. */
+  ProfileActions?: ComponentType<{ children: ReactNode }>;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,

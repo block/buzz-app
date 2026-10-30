@@ -421,23 +421,18 @@ export class DiscoveryState {
         : [roster];
     });
   }
-  /** Channels whose signed roster lists the viewer and that no denial ended. */
-  members(): string[] {
-    return [...this.rosters.keys()].filter((id) => this.authorized(id));
-  }
-  /** Denied only because a complete read left it out. */
-  omitted(id: string): boolean {
-    return this.absent.has(id);
-  }
   /** Every roster channel get() serves, system channels included. Membership,
    * not listing, decides what the device may keep. */
   readable(): ChannelSummary[] {
-    return [...new Set([...this.members(), ...this.starting.keys()])].flatMap(
-      (id) => {
-        const channel = this.get(id);
-        return channel ? [channel] : [];
-      },
-    );
+    return [
+      ...new Set([
+        ...[...this.rosters.keys()].filter((id) => this.authorized(id)),
+        ...this.starting.keys(),
+      ]),
+    ].flatMap((id) => {
+      const channel = this.get(id);
+      return channel ? [channel] : [];
+    });
   }
   /** The channel list. System channels (NIP-CL) hold app data, not
    * conversation: they stay readable through get() but never list here. */

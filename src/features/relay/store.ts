@@ -3,12 +3,7 @@ import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
-import {
-  forbidden,
-  isTransientFailure,
-  ReadError,
-  readErrorKind,
-} from "./errors";
+import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import type {
   ChannelReference,
   ChannelList,
@@ -143,10 +138,6 @@ export function createChannelStore(
         media(url: string, size?: "small"): string | undefined;
         /** `ids` names the channels that lost access when known; omitted means any. */
         revokeAccess(commit: () => void, ids?: readonly string[]): void;
-        /** The viewer's membership of `ids` provably ended: a newer signed
-         * roster left them out, or the relay refused them as a non-member (as
-         * after a confirmed leave). Archiving keeps membership. */
-        membershipEnded?(ids: readonly string[]): void;
         /** A complete roster read applied. A replica can lag, so a channel it
          * left out may still list the viewer; `unlisted` asks the writer. */
         rosterComplete?(): void;
@@ -577,17 +568,10 @@ export function createChannelStore(
     void persistence.write(record).catch(() => {});
     return signature;
   }
-  /** `ended` says the denial proves the viewer is no longer a member; a 401
-   * or a read that merely omitted the channel does not. */
-  function denyChannel(
-    channelId: string,
-    error: unknown,
-    ended = forbidden(error),
-  ) {
+  function denyChannel(channelId: string, error: unknown) {
     // A chat still starting is not there to deny yet; only a refused or
     // missing create ends it (see channelWrites.start).
     if (discovery?.isPending(channelId)) return;
-    const member = discovery?.authorized(channelId);
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
     discovery?.deny(channelId);
     allowed?.delete(channelId);
@@ -623,7 +607,6 @@ export function createChannelStore(
       void persistence?.remove(channelId).catch(() => {});
       saveDiscovery();
     }, [channelId]);
-    if (member && ended) transport?.membershipEnded?.([channelId]);
   }
   async function readPage(
     channelId: string,
@@ -1103,7 +1086,6 @@ export function createChannelStore(
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
     const overflowRevision = discovery.overflowRevision;
-    const members = discovery.members();
     if (cached) discovery.restrictToKnown();
     const starting = [...windows.keys()].filter((id) =>
       discovery.isPending(id),
@@ -1174,12 +1156,6 @@ export function createChannelStore(
     if (discovery.accessRevision !== accessRevision)
       transport.revokeAccess(commit);
     else commit();
-    // A lagging replica can omit a roster, so omission alone proves nothing
-    // final; rosterComplete leaves that to a writer-backed read.
-    const ended = members.filter(
-      (id) => !discovery.authorized(id) && !discovery.omitted(id),
-    );
-    if (ended.length) transport.membershipEnded?.(ended);
     // Discovery authorizes disk reuse, not speculative reads of the roster.
     // Network heads belong to explicit demand/intent and retained live catch-up.
     if (prepared && !hydration) {

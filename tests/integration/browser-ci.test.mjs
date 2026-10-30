@@ -54,6 +54,35 @@ const browserJobs = () => {
   });
 };
 
+test("native protection produces upload evidence and preserves a failed test status", (t) => {
+  if (process.platform === "win32") return t.skip("macOS shell step");
+  const step = parse(workflow).jobs.agent_protection.steps.find(
+    (step) => step.name === "Native approval-state containment",
+  );
+  const root = mkdtempSync(join(tmpdir(), "buzz-native-evidence-"));
+  try {
+    mkdirSync(join(root, "bin"));
+    writeFileSync(
+      join(root, "bin/cargo"),
+      '#!/bin/sh\nprintf "kernel stdout\\n"\nprintf "kernel stderr\\n" >&2\nexit "$FIXTURE_CARGO_STATUS"\n',
+      { mode: 0o755 },
+    );
+    for (const code of [0, 19]) {
+      const result = spawnSync("/bin/bash", ["-e", "-c", step.run], {
+        cwd: root,
+        env: { ...process.env, FIXTURE_CARGO_STATUS: String(code) },
+      });
+      assert.equal(result.status, code, result.stderr?.toString());
+      assert.equal(
+        readFileSync(join(root, "test-results/protection/native.log"), "utf8"),
+        "kernel stdout\nkernel stderr\n",
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Linux shards and macOS recording discover every CI functional test/project exactly once", (t) => {
   const command = browser.match(
     /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,

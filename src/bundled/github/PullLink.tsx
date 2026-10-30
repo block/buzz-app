@@ -11,14 +11,20 @@ import {
 } from "../../features/conversation/LinkLabelContext";
 import { LinkLabel } from "../links/InlineLink";
 import inlineStyles from "../../shared/InlineReference.module.css";
-import { describePull, stateIcons } from "./pull-state-view";
+import {
+  describeIssue,
+  describePull,
+  issueIcons,
+  issueState,
+  stateIcons,
+} from "./pull-state-view";
 import type { PullStates } from "./pull-states";
 import { parseGitHubReference } from "./references";
 import styles from "./GitHub.module.css";
 
-/** A pull request link in a message: the Links label with the pull request's
- * state as its icon, in place of the GitHub logo, and a pasted link named by
- * its repository, number and title. */
+/** A pull request or issue link in a message: the Links label with its state
+ * as its icon, in place of the GitHub logo, and a pasted link named by its
+ * repository, number and title. */
 export function PullLink({ url, states }: { url: string; states: PullStates }) {
   // A composer decoration or preview shows what is already known and reads
   // nothing: typing a link mounts one for every prefix of its number.
@@ -29,10 +35,19 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   );
   const read = useSyncExternalStore(subscribe, () => states.get(url));
   const state = typeof read === "object" ? read : undefined;
-  // The plain pull request glyph until read, and when it can't be, so the
-  // icon doesn't swap when the state arrives.
-  const Icon = stateIcons[state?.state ?? "open"];
-  const words = describePull({ state, failed: read === "failed" });
+  const reference = parseGitHubReference(url);
+  const issue = reference?.kind === "issue";
+  // The plain pull request or issue glyph until read, and when it can't be,
+  // so the icon doesn't swap when the state arrives. An issue's shows why it
+  // was closed.
+  const shown = state && (issue ? issueState(state) : state.state);
+  const Icon = issue
+    ? issueIcons[state ? issueState(state) : "open"]
+    : stateIcons[state?.state ?? "open"];
+  const words = (issue ? describeIssue : describePull)({
+    state,
+    failed: read === "failed",
+  });
   // The state describes the link rather than joining its name, which stays
   // the authored label as the state changes.
   const describe = useContext(LinkDescriptionContext);
@@ -43,7 +58,6 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   // A pasted link is named `owner/repo#7`, then with its title, which is
   // read with the state.
   const authored = useContext(LinkLabelContext) !== undefined;
-  const reference = parseGitHubReference(url);
   const name = reference && `${reference.repository}${reference.label}`;
   const label = name && state?.title ? `${name} · ${state.title}` : name;
   return (
@@ -53,7 +67,7 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
       icon={
         <span
           className={styles.pullState}
-          data-pr-state={state?.state ?? "unknown"}
+          data-pr-state={shown ?? "unknown"}
           aria-hidden="true"
           title={words}
         >

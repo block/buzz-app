@@ -10,6 +10,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
+import { targetKey } from "../../features/navigation/targets";
 import { messageViewKey } from "../../features/messages/view-key";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
@@ -335,9 +336,15 @@ function BestieConversation({
   };
   const closeThread = () => {
     if (navigation?.target.kind === "page" && routed && ownsCurrentVisit) {
+      const base = bestieBaseTarget(navigation.target);
       navigator.dismiss(
-        [navigation.entryId],
-        bestieBaseTarget(navigation.target),
+        (target) =>
+          target.kind === "page" &&
+          targetKey(bestieBaseTarget(target)) === targetKey(base) &&
+          bestieRoute(target.route?.params)?.messageId === routed.messageId &&
+          bestieRoute(target.route?.params)?.threadRootId ===
+            routed.threadRootId,
+        base,
       );
     } else if (!navigation) setLocalThread(undefined);
     focusComposer((value) => value + 1);

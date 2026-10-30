@@ -463,7 +463,7 @@ it("keeps a failed DM retry focused and announces another failure", async () => 
   expect(retry).toHaveFocus();
 });
 
-it("restores Bestie threads with Back and Forward and retires an explicitly closed visit", async () => {
+it("restores Bestie threads with Back and Forward and retires every explicitly closed visit", async () => {
   const f = await fixture({ existing: true, withReply: true });
   f.choose(pollen);
   const previous = {
@@ -525,11 +525,29 @@ it("restores Bestie threads with Back and Forward and retires an explicitly clos
   rerender();
   expect(await screen.findByLabelText("Thread")).toBeVisible();
 
+  const other = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+  } as const;
+  void navigator.open(other);
+  rerender();
+  void navigator.open(bestie);
+  rerender();
+  void navigator.open(threadTarget);
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+
   await userEvent.click(screen.getByRole("button", { name: "Close thread" }));
   rerender();
   expect(navigator.snapshot().entry.target).toEqual(bestie);
   act(() => navigator.back());
-  expect(navigator.snapshot().entry.target).toEqual(previous);
+  expect(navigator.snapshot().entry.target).toEqual(other);
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  act(() => navigator.forward());
+  expect(navigator.snapshot().entry.target).toEqual(other);
   act(() => navigator.forward());
   expect(navigator.snapshot().entry.target).toEqual(bestie);
 });

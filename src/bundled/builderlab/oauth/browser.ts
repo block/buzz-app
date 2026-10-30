@@ -73,6 +73,7 @@ export async function browserCredential(
   signal.throwIfAborted();
   const target = oauthTarget();
   let id: string | undefined;
+  let completion: Promise<void> | undefined;
   const path = `/callback/${crypto.randomUUID()}`;
   const login = new URL(`${target}/v1/auth/login`);
   const cancel = () => {
@@ -156,9 +157,9 @@ export async function browserCredential(
     const account = await request("/v1/auth/me", session_credential);
     if (typeof account?.subject !== "string" || !account.subject.trim())
       throw new Error("Builderlab did not return a valid account.");
-    // Presentation is best effort; a failed focus request must not fail verified login.
-    await bridge.complete(id).catch(() => {});
     signal.throwIfAborted();
+    // Focus return is best effort and must not delay verified login.
+    completion = bridge.complete(id).catch(() => {});
     return Object.freeze({
       value: session_credential,
       account: Object.freeze({
@@ -176,6 +177,8 @@ export async function browserCredential(
       : new Error("Could not complete Builderlab sign-in. Try again.");
   } finally {
     signal.removeEventListener("abort", cancel);
-    if (id) await bridge.cancel(id);
+    // Canceling before completion settles would retire its focus permission.
+    if (completion) void completion.then(cancel);
+    else if (id) await bridge.cancel(id);
   }
 }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { Host } from "../../../features/host/service";
 import { browserCredential, type BrowserBridge, oauthTarget } from "./browser";
+import { createOAuthSession } from "./session";
 import { deferred } from "../test-helpers";
 beforeEach(() =>
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
@@ -90,7 +91,9 @@ it("acquires a verified credential with the RFC 7636 S256 proof", async () => {
   );
   expect(bridge.wait).toHaveBeenCalledWith(attemptId);
   expect(bridge.complete).toHaveBeenCalledWith(attemptId);
-  expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
+  await expect
+    .poll(() => vi.mocked(bridge.cancel).mock.calls)
+    .toEqual([[attemptId]]);
 });
 
 it("keeps verified login usable when native focus return fails", async () => {
@@ -102,8 +105,46 @@ it("keeps verified login usable when native focus return fails", async () => {
     value: "private-token",
   });
   expect(bridge.complete).toHaveBeenCalledWith(attemptId);
-  expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
+  await expect
+    .poll(() => vi.mocked(bridge.cancel).mock.calls)
+    .toEqual([[attemptId]]);
 });
+
+it.each(["resolve", "reject"] as const)(
+  "signs in before focus return settles and cleans up after it %ss",
+  async (outcome) => {
+    const { host, bridge } = fixture();
+    const started = deferred<void>();
+    const focus = deferred<void>();
+    const cleaned = deferred<void>();
+    vi.mocked(bridge.complete).mockImplementation(() => {
+      started.resolve();
+      return focus.promise;
+    });
+    vi.mocked(bridge.cancel).mockImplementation(async () => {
+      cleaned.resolve();
+    });
+    const session = createOAuthSession((signal) =>
+      browserCredential(host, signal, bridge),
+    );
+    const login = session.signIn();
+    try {
+      await started.promise;
+      await expect.poll(() => session.snapshot().status).toBe("signed-in");
+      await login;
+      expect(session.credential().value).toBe("private-token");
+      expect(bridge.complete).toHaveBeenCalledWith(attemptId);
+      expect(bridge.cancel).not.toHaveBeenCalled();
+    } finally {
+      if (outcome === "resolve") focus.resolve();
+      else focus.reject(new Error("Focus unavailable"));
+      await login;
+      await cleaned.promise;
+      session.dispose();
+    }
+    expect(bridge.cancel).toHaveBeenCalledExactlyOnceWith(attemptId);
+  },
+);
 
 it("does not request focus for an unverified account", async () => {
   const { host, bridge, controller } = fixture();
@@ -292,7 +333,7 @@ it("cancellation during challenge hashing does not start a browser attempt", asy
   expect(host.request).not.toHaveBeenCalled();
 });
 
-it.each(["begin", "wait", "exchange", "account", "complete"] as const)(
+it.each(["begin", "wait", "exchange", "account"] as const)(
   "cancellation during a held %s ignores its late result and closes the listener",
   async (boundary) => {
     const { host, bridge, controller } = fixture();
@@ -339,11 +380,7 @@ it.each(["begin", "wait", "exchange", "account", "complete"] as const)(
     expect(bridge.cancel).toHaveBeenCalledWith(attemptId);
     expect(bridge.wait).toHaveBeenCalledTimes(boundary === "begin" ? 0 : 1);
     expect(host.request).toHaveBeenCalledTimes(
-      boundary === "account" || boundary === "complete"
-        ? 2
-        : boundary === "exchange"
-          ? 1
-          : 0,
+      boundary === "account" ? 2 : boundary === "exchange" ? 1 : 0,
     );
   },
 );

@@ -54,7 +54,7 @@ const browserJobs = () => {
   });
 };
 
-test("Linux shards and macOS recording discover every functional test/project exactly once", (t) => {
+test("Linux shards and macOS recording discover every CI functional test/project exactly once", (t) => {
   const command = browser.match(
     /^ {8}run: .+ -- (\.\/bin\/pnpm test:browser:ci .+)$/m,
   )?.[1];
@@ -86,6 +86,8 @@ test("Linux shards and macOS recording discover every functional test/project ex
     "--project",
     "webkit",
     "--no-deps",
+    "--grep-invert",
+    "@classic-scrollbars|@local-only",
   ]);
   assert.ok(expected.length > 0);
   const actual = [];
@@ -127,7 +129,7 @@ test("Linux shards and macOS recording discover every functional test/project ex
   assert.deepEqual(
     actual.sort(),
     expected.sort(),
-    "Linux and macOS must cover full local functional discovery",
+    "Linux and macOS must cover functional discovery without local-only cases",
   );
 });
 

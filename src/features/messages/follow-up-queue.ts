@@ -746,8 +746,10 @@ function createQueue(session: RelaySession) {
           handoff &&
           !handoff.complete &&
           handoff.message === message &&
-          handoff.recipients.includes(agent);
-        if (resumedHandoff) handoffs.set(channelId, handoff);
+          handoff.recipients.includes(agent)
+            ? handoff
+            : undefined;
+        if (resumedHandoff) handoffs.set(channelId, resumedHandoff);
         if (
           !resumedHandoff &&
           !entries.some((entry) => entry.channelId === channelId)

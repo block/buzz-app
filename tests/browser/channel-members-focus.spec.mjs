@@ -690,8 +690,13 @@ test("member search reuses unchanged rows and owner observations", async ({
   const refresh = dialog.getByRole("button", { name: "Refresh member data" });
   await expect(
     dialog.getByRole("button", { name: /^Open owner profile:/ }),
-  ).toHaveCount(60);
+  ).toHaveCount(50);
   await expect(refresh).toHaveAttribute("aria-busy", "false");
+  await expect(
+    dialog
+      .getByRole("navigation", { name: "Agents member pages" })
+      .getByText("1 of 2"),
+  ).toBeVisible();
   const before = await page.evaluate(() => window.ownerChecks);
   const workBefore = await page.evaluate(() => ({
     ...window.focusFixture.searchWork,
@@ -701,7 +706,7 @@ test("member search reuses unchanged rows and owner observations", async ({
   await expect(refresh).toHaveAttribute("aria-busy", "false");
   await expect(
     dialog.getByRole("button", { name: /^Open owner profile:/ }),
-  ).toHaveCount(60);
+  ).toHaveCount(50);
   expect(await page.evaluate(() => window.focusFixture.searchWork.images)).toBe(
     workBefore.images,
   );
@@ -709,7 +714,7 @@ test("member search reuses unchanged rows and owner observations", async ({
   await expect(refresh).toHaveAttribute("aria-busy", "false");
   await expect(
     dialog.getByRole("button", { name: /^Open owner profile:/ }),
-  ).toHaveCount(60);
+  ).toHaveCount(50);
   await page.evaluate(() => {
     window.searchFrames = [];
     window.searchSample = true;
@@ -726,7 +731,7 @@ test("member search reuses unchanged rows and owner observations", async ({
     await expect(refresh).toHaveAttribute("aria-busy", "false");
     await expect(
       dialog.getByRole("button", { name: /^Open owner profile:/ }),
-    ).toHaveCount(query === "Agent 1" || query === "Agent 2" ? 11 : 60);
+    ).toHaveCount(query === "Agent 1" || query === "Agent 2" ? 11 : 50);
   }
   const sample = await page.evaluate(() => {
     window.searchSample = false;
@@ -938,7 +943,7 @@ test("member identity dropdown fits beside search and preserves modal focus", as
     await search.fill("");
     await expect(filter).toBeVisible();
     await expect(filter).toHaveText("All");
-    await expect(dialog.getByRole("listitem")).toHaveCount(61);
+    await expect(dialog.getByRole("listitem")).toHaveCount(51);
     await filter.click();
     await expect(all).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("Escape");

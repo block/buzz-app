@@ -1208,14 +1208,14 @@ it("hands the visible request bubble to the live preview after a reply, even wit
       }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Activity: Blossom working" }),
+      screen.queryByRole("button", { name: "Reading notes.txt" }),
     ).toBeNull();
     view.rerender(ui([A]));
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
+      screen.getByRole("button", { name: "Reading notes.txt" }),
     ).toHaveTextContent("Reading notes.txt");
   } finally {
     view.unmount();

@@ -531,7 +531,7 @@ it.each([undefined, "thread-root"])(
     const status = within(h.container).getByRole("status", {
       name: "Conversation activity",
     });
-    expect(status).toHaveTextContent(/^Sam is typing$/);
+    expect(status).toHaveTextContent(/^Assistant is working\. Sam is typing$/);
     expect(
       within(h.container).getByText("Sam is typing", {
         selector: "span[aria-hidden] span",

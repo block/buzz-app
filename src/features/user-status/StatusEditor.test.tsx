@@ -207,6 +207,49 @@ it("names the custom code an unresolved emoji trigger will save", async () => {
   expect(trigger).toHaveAccessibleDescription(":bee-intensifies:");
 });
 
+it("keeps the focused emoji trigger when a refresh drops its custom code", async () => {
+  const owner = createRelaySession(null);
+  owners.push(owner);
+  const cached: UserStatus = {
+    userId: "a".repeat(64),
+    text: "Remote",
+    emoji: ":bee:",
+    updatedAt: 1,
+  };
+  let resolve!: (value: UserStatus) => void;
+  const current = () =>
+    new Promise<UserStatus>((done) => {
+      resolve = done;
+    });
+  render(
+    <StatusEditor
+      session={{
+        ...owner.session,
+        statuses: { ...owner.session.statuses, current },
+      }}
+      viewer={cached.userId}
+      scope="https://status.test"
+      current={cached}
+      close={() => {}}
+      finalFocus={{ current: null }}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Status message")).toHaveFocus(),
+  );
+  const trigger = screen.getByRole("button", { name: "Choose a status emoji" });
+  act(() => trigger.focus());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(":bee:");
+  await act(async () => resolve({ ...cached, emoji: "🏠", updatedAt: 2 }));
+  expect(screen.getByRole("button", { name: "Choose a status emoji" })).toBe(
+    trigger,
+  );
+  expect(trigger).toHaveFocus();
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+});
+
 it("shows non-expiring status honestly and preserves it until a duration is selected", async () => {
   const user = userEvent.setup();
   const { save } = setup({

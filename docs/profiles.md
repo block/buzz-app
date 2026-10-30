@@ -110,8 +110,9 @@ value (`["emoji", ":code:", url]`) so it renders without the viewer's catalog;
 unicode keeps the two-value tag, and older two-value custom statuses use the
 catalog. While the catalog loads, an unresolved shortcode reserves the emoji's
 space. Once settled, sidebar rows, bylines and the editor's emoji button show the
-default 💬, keeping the full status in their label and tooltip; tooltips and
-profiles show the shortcode as status text.
+default 💬. Rows and bylines keep the full status in their label and tooltip, and
+the editor's button names the shortcode in its hint; tooltips and profiles show
+the shortcode as status text.
 Set or clear your own status from the top-right profile menu. Shared design-system
 Avatar and Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet

@@ -4055,10 +4055,26 @@ it("someone else's Solo chat earns attention only from mentions", () => {
   expect(unread.attention("chat", ping.id).category).toBe("mention");
   expect(unread.inbox().items).toEqual([
     expect.objectContaining({
+      id: "chat:chat",
       channelId: "chat",
       messageIds: [ping.id],
       preview: "@you is this right?",
       unreadCount: 1,
+    }),
+  ]);
+
+  // A second tag, even in a thread, joins the chat's one row.
+  const again = message(h.alice, "chat", "@you and this?", 25, [
+    ["e", update.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([again]);
+  expect(unread.inbox().items).toEqual([
+    expect.objectContaining({
+      id: "chat:chat",
+      messageIds: [ping.id, again.id],
+      preview: "@you and this?",
+      unreadCount: 2,
     }),
   ]);
 });

@@ -990,10 +990,10 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        // Someone else's Solo chat contributes only its mentions, each its own
-        // row, not the merged conversation row an owned chat gets.
-        const session =
-          channel.channelType === "solo" && !guests.has(channel.id);
+        const session = channel.channelType === "solo";
+        // Someone else's Solo chat contributes only its mentions, all in one
+        // row for the chat, previewing the newest mention.
+        const guest = guests.has(channel.id);
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return entry.event.pubkey !== viewer && !!category(entry, dm);
@@ -1005,7 +1005,9 @@ export function createUnread({
         const elsewhere = new Set<string>();
         for (const entry of evidence) {
           const id =
-            dm || (session && !entry.parentId && !roots.has(entry.event.id))
+            dm ||
+            guest ||
+            (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
           if (id !== channel.id) elsewhere.add(id);
@@ -1023,20 +1025,21 @@ export function createUnread({
         // A session's top-level row shows its newest message from someone
         // else to everyone, even one that is not Inbox evidence, unless that
         // message is the root of its own thread row.
-        const newest = session
-          ? rows.reduce<RelayEvent | undefined>((best, row) => {
-              const event = events.get(row.id);
-              return event &&
-                !row.threadRootId &&
-                !row.membership &&
-                !row.audience &&
-                row.authorId !== viewer &&
-                !elsewhere.has(row.id) &&
-                (!best || order(event, best) > 0)
-                ? event
-                : best;
-            }, undefined)
-          : undefined;
+        const newest =
+          session && !guest
+            ? rows.reduce<RelayEvent | undefined>((best, row) => {
+                const event = events.get(row.id);
+                return event &&
+                  !row.threadRootId &&
+                  !row.membership &&
+                  !row.audience &&
+                  row.authorId !== viewer &&
+                  !elsewhere.has(row.id) &&
+                  (!best || order(event, best) > 0)
+                  ? event
+                  : best;
+              }, undefined)
+            : undefined;
         for (const [id, entries] of groups) {
           entries.sort((a, b) => order(a.event, b.event));
           const project = (

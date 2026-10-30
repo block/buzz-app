@@ -16,6 +16,8 @@ import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { rowProfileIds } from "./membership";
+import { listByteSize } from "./budget";
+import { ReadError } from "./errors";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -130,7 +132,7 @@ it.each([false, true])(
         kinds: [40002, 40008, 40099, 48100, 48103, 9],
         until: 20,
         before_id: row.id,
-        limit: 200,
+        limit: 20,
       });
       const old = addition(pinky.pubkey, 19);
       older.respond([
@@ -233,23 +235,20 @@ it.each([false, true])(
     const q = owner.session.channels;
     try {
       live.receive([roster(relay, "a", [viewer.pubkey])]);
-      const joins = Array.from({ length: 320 }, (_, index) =>
+      const joins = Array.from({ length: 300 }, (_, index) =>
         addition(pinky.pubkey, 1000 - index),
       );
-      const newest = joins.slice(0, 20),
-        middle = joins.slice(20, 220),
-        rest = joins.slice(220);
       const conversation = Array.from({ length: 25 }, (_, index) =>
         message(brain, "a", `Conversation ${index}`, 500 - index),
       );
-      const reached = conversation.slice(0, 5),
-        filled = conversation.slice(5);
+      const history = [...joins, ...conversation];
       const oldest = message(brain, "a", "Oldest", 400),
         arrival = message(brain, "a", "Arrived meanwhile", 2000);
       q.ensure("a");
       const head = await windowRead(wire);
       expect(head.filters[0]).toMatchObject({ limit: 20 });
       expect(head.filters[0]).not.toHaveProperty("until");
+      const newest = history.slice(0, 20);
       head.respond([
         ...newest,
         bounds(relay, "a", "head", {
@@ -257,49 +256,29 @@ it.each([false, true])(
           next_cursor: cursorAt(last(newest)),
         }),
       ]);
-      const second = await windowRead(wire);
-      expect(second.filters[0]).toMatchObject({
-        until: 981,
-        before_id: last(newest).id,
-        limit: 200,
-      });
-      expect(q.window("a").status).toBe("loading");
-      live.receive([arrival]);
-      second.respond([
-        ...middle,
-        bounds(relay, "a", after(last(newest)), {
-          has_more: true,
-          next_cursor: cursorAt(last(middle)),
-        }),
-      ]);
-      const third = await windowRead(wire);
-      expect(third.filters[0]).toMatchObject({
-        until: 781,
-        before_id: last(middle).id,
-        limit: 200,
-      });
-      third.respond([
-        ...rest,
-        ...reached,
-        bounds(relay, "a", after(last(middle)), {
-          has_more: true,
-          next_cursor: cursorAt(last(reached)),
-        }),
-      ]);
-      // Notices still leave the read short of a page of conversation.
-      const fourth = await windowRead(wire);
-      expect(fourth.filters[0]).toMatchObject({
-        until: 496,
-        before_id: last(reached).id,
-        limit: 200,
-      });
-      fourth.respond([
-        ...filled,
-        bounds(relay, "a", after(last(reached)), {
-          has_more: true,
-          next_cursor: cursorAt(last(filled)),
-        }),
-      ]);
+      // Continuations start at the shortfall and double while notices fill them.
+      let served = newest;
+      for (const limit of [20, 40, 80, 160]) {
+        const read = await windowRead(wire);
+        expect(read.filters[0]).toMatchObject({
+          until: last(served).created_at,
+          before_id: last(served).id,
+          limit,
+        });
+        if (limit === 20) {
+          expect(q.window("a").status).toBe("loading");
+          live.receive([arrival]);
+        }
+        const page = history.slice(served.length, served.length + limit);
+        read.respond([
+          ...page,
+          bounds(relay, "a", after(last(served)), {
+            has_more: true,
+            next_cursor: cursorAt(last(page)),
+          }),
+        ]);
+        served = [...served, ...page];
+      }
       await vi.waitFor(() =>
         expect(q.window("a")).toMatchObject({
           status: "ready",
@@ -307,25 +286,23 @@ it.each([false, true])(
           loadingOlder: false,
         }),
       );
-      const history = [
-        ...conversation.map((row) => row.id).reverse(),
-        ...joins.map((join) => join.id).reverse(),
-        arrival.id,
-      ];
-      expect(q.window("a").rows.map((row) => row.id)).toEqual(history);
+      const shown = [...served.map((row) => row.id).reverse(), arrival.id];
+      expect(shown).toHaveLength(321);
+      expect(q.window("a").rows.map((row) => row.id)).toEqual(shown);
       // The read that filled a page of conversation is complete: nothing else pages.
       expect(windowReads(wire)).toBe(0);
       q.loadOlder("a");
       const older = await windowRead(wire);
       expect(older.filters[0]).toMatchObject({
-        until: 476,
-        before_id: last(filled).id,
+        until: last(served).created_at,
+        before_id: last(served).id,
         limit: 20,
       });
+      const rest = history.slice(served.length);
       older.respond([
-        last(filled),
+        ...rest,
         oldest,
-        bounds(relay, "a", after(last(filled)), {
+        bounds(relay, "a", after(last(served)), {
           has_more: false,
           next_cursor: null,
         }),
@@ -338,7 +315,8 @@ it.each([false, true])(
       );
       expect(q.window("a").rows.map((row) => row.id)).toEqual([
         oldest.id,
-        ...history,
+        ...rest.map((row) => row.id).reverse(),
+        ...shown,
       ]);
       expect(windowReads(wire)).toBe(0);
     } finally {
@@ -371,6 +349,8 @@ it("activity-only history stops at its start or the read bound, and a failed con
       roster(relay, "b", [viewer.pubkey]),
       roster(relay, "c", [viewer.pubkey]),
       roster(relay, "d", [viewer.pubkey]),
+      roster(relay, "e", [viewer.pubkey]),
+      roster(relay, "f", [viewer.pubkey]),
     ]);
     // History of only activity ends at its start.
     q.ensure("a");
@@ -404,11 +384,12 @@ it("activity-only history stops at its start or the read bound, and a failed con
         next_cursor: cursorAt(last(run)),
       }),
     ]);
-    for (let page = 1; page <= 5; page++) {
+    for (const limit of [20, 40, 80, 160, 200]) {
+      const page = run.length;
       const read = await windowRead(wire, "b");
       expect(read.filters[0]).toMatchObject({
         before_id: last(run).id,
-        limit: 200,
+        limit,
       });
       const notice = joined("b", 100 - page);
       read.respond([
@@ -443,7 +424,9 @@ it("activity-only history stops at its start or the read bound, and a failed con
         next_cursor: cursorAt(notice),
       }),
     ]);
-    (await windowRead(wire, "b")).fail(new Error("relay down"));
+    (await windowRead(wire, "b")).fail(
+      new ReadError("unavailable", "relay down", 429, 60_000),
+    );
     await vi.waitFor(() =>
       expect(q.window("b")).toMatchObject({
         status: "ready",
@@ -484,7 +467,9 @@ it("activity-only history stops at its start or the read bound, and a failed con
         next_cursor: cursorAt(served),
       }),
     ]);
-    (await windowRead(wire, "d")).fail(new Error("relay timeout"));
+    (await windowRead(wire, "d")).fail(
+      new ReadError("unavailable", "relay timeout"),
+    );
     await vi.waitFor(() =>
       expect(q.window("d")).toMatchObject({
         status: "ready",
@@ -515,6 +500,135 @@ it("activity-only history stops at its start or the read bound, and a failed con
     expect((await windowRead(wire, "c")).filters[0]).not.toHaveProperty(
       "until",
     );
+    // An invalid continuation fails the read rather than ending it early.
+    q.ensure("f");
+    const signedJoin = joined("f", 10);
+    (await windowRead(wire, "f")).respond([
+      signedJoin,
+      bounds(relay, "f", "head", {
+        has_more: true,
+        next_cursor: cursorAt(signedJoin),
+      }),
+    ]);
+    (await windowRead(wire, "f")).fail(
+      new Error("Relay supplied a malformed or invalidly signed event"),
+    );
+    await vi.waitFor(() =>
+      expect(q.window("f")).toMatchObject({
+        status: "error",
+        rows: [],
+        error: expect.stringMatching(/invalidly signed/),
+      }),
+    );
+    // A page with a few notices reads only the rows they displaced.
+    q.ensure("e");
+    const mixed = [
+      ...Array.from({ length: 19 }, (_, index) =>
+        message(brain, "e", `Mixed ${index}`, 60 - index),
+      ),
+      joined("e", 40),
+    ];
+    (await windowRead(wire, "e")).respond([
+      ...mixed,
+      bounds(relay, "e", "head", {
+        has_more: true,
+        next_cursor: cursorAt(last(mixed)),
+      }),
+    ]);
+    const shortfall = await windowRead(wire, "e");
+    expect(shortfall.filters[0]).toMatchObject({
+      before_id: last(mixed).id,
+      limit: 1,
+    });
+    // When that row is a notice too, the next read takes at least a page.
+    const another = joined("e", 35);
+    shortfall.respond([
+      another,
+      bounds(relay, "e", after(last(mixed)), {
+        has_more: true,
+        next_cursor: cursorAt(another),
+      }),
+    ]);
+    const page = await windowRead(wire, "e");
+    expect(page.filters[0]).toMatchObject({ before_id: another.id, limit: 20 });
+    const filler = message(brain, "e", "Filler", 30);
+    page.respond([
+      filler,
+      bounds(relay, "e", after(another), {
+        has_more: true,
+        next_cursor: cursorAt(filler),
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(q.window("e")).toMatchObject({ status: "ready", hasMore: true }),
+    );
+    expect(q.window("e").rows).toHaveLength(22);
+    expect(windowReads(wire)).toBe(0);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("an older continuation stays within the remaining history row budget", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { maxHistoryRows: 25 },
+  );
+  const q = owner.session.channels;
+  try {
+    live.receive([roster(relay, "a", [viewer.pubkey])]);
+    q.ensure("a");
+    const chats = Array.from({ length: 20 }, (_, index) =>
+      message(brain, "a", `Chat ${index}`, 100 - index),
+    );
+    (await windowRead(wire)).respond([
+      ...chats,
+      bounds(relay, "a", "head", {
+        has_more: true,
+        next_cursor: cursorAt(last(chats)),
+      }),
+    ]);
+    await vi.waitFor(() => expect(q.window("a").status).toBe("ready"));
+    q.loadOlder("a");
+    const join = addition(pinky.pubkey, 70);
+    (await windowRead(wire)).respond([
+      join,
+      bounds(relay, "a", after(last(chats)), {
+        has_more: true,
+        next_cursor: cursorAt(join),
+      }),
+    ]);
+    const continuation = await windowRead(wire);
+    expect(continuation.filters[0]).toMatchObject({
+      before_id: join.id,
+      limit: 4,
+    });
+    const joins = Array.from({ length: 4 }, (_, index) =>
+      addition(brain.pubkey, 69 - index),
+    );
+    continuation.respond([
+      ...joins,
+      bounds(relay, "a", after(join), {
+        has_more: true,
+        next_cursor: cursorAt(last(joins)),
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(q.window("a")).toMatchObject({
+        loadingOlder: false,
+        hasMore: true,
+      }),
+    );
+    expect(q.window("a").rows).toHaveLength(25);
+    expect(windowReads(wire)).toBe(0);
   } finally {
     owner.dispose();
   }
@@ -700,5 +814,81 @@ it("a restored head continued past activity pages on from its last bound", async
     });
   } finally {
     second.owner.dispose();
+  }
+});
+
+it("a continued head is cached and saved only as far as its leading pages fit", async () => {
+  let saved: SavedHead[] = [];
+  const disk: HeadPersistence = {
+    read: async () => saved,
+    write: async (record) => {
+      saved = [record];
+    },
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const lead = addition(pinky.pubkey, 100),
+    joins = Array.from({ length: 20 }, (_, index) =>
+      addition(brain.pubkey, 99 - index),
+    ),
+    chats = Array.from({ length: 20 }, (_, index) =>
+      message(pinky, "a", `Before the joins ${index}`, 50 - index),
+    );
+  const pages = [
+    [
+      lead,
+      bounds(relay, "a", "head", {
+        has_more: true,
+        next_cursor: cursorAt(lead),
+      }),
+    ],
+    [
+      ...joins,
+      bounds(relay, "a", after(lead), {
+        has_more: true,
+        next_cursor: cursorAt(last(joins)),
+      }),
+    ],
+    [
+      ...chats,
+      bounds(relay, "a", after(last(joins)), {
+        has_more: true,
+        next_cursor: cursorAt(last(chats)),
+      }),
+    ],
+  ];
+  const kept = pages.slice(0, 2).flat();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession(wire.transport, {
+    prepared: true,
+    persistence: disk,
+    maxHeads: 1,
+    // A head holds its events and their folded rows: room for the kept pages only.
+    maxHeadBytes: 3 * listByteSize(kept),
+  });
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    q.prepare?.("a");
+    for (const page of pages) (await windowRead(wire)).respond(page);
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0]?.events).toEqual(kept);
+    // Opening paints the kept pages, then reads the head in full again.
+    q.ensure("a");
+    expect(q.window("a").rows).toHaveLength(21);
+    for (const page of pages) (await windowRead(wire)).respond(page);
+    await vi.waitFor(() => expect(q.window("a").rows).toHaveLength(41));
+    expect(q.window("a")).toMatchObject({ status: "ready", hasMore: true });
+  } finally {
+    owner.dispose();
   }
 });

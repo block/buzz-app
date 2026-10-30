@@ -1260,15 +1260,17 @@ Messages, local-day changes and gaps over an hour break groups; removals by diff
 actors stay separate. Same-adder additions use “added by you” for the viewer;
 mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
 IDs, pagination cursors and retention budgets remain per event. Activity spends relay
-page rows like messages, so a head or older read that activity leaves short of a page
-(20) of conversational rows continues through up to five 200-row pages until it fills
-one or reaches the start; past that bound, Load older continues. When a continuation
-fails, the read keeps the pages it has and Load older continues from the last one;
-cancellation, denial and invalid bounds still fail the read. A saved head restores
-the cursor of its last page. The history row cap applies to the whole continued read,
-so near the cap an older read can stop history even when its first page would fit.
-Profiles reuse the
-shared background directory/cache, and reading anchors can resolve a member of a
+page rows like messages, so a head, older or reconnect catch-up read that activity
+leaves short of a page (20) of conversational rows continues through up to five more
+pages until it fills one or reaches the start; past that bound, Load older continues.
+The first continuation reads only the missing rows; each next one reads at least a
+page and doubles, up to 200. When a continuation is unavailable, the read keeps the pages it has and Load
+older continues from the last one; cancellation, denial and invalid responses still
+fail the read. An older read's continuations stay within the remaining history row
+cap. A continued head is cached and saved only as far as its leading pages fit one
+head's share of the head cache, and showing that shorter head reads it again; a
+saved head restores the cursor of its last page. Profiles reuse the shared background
+directory/cache, and reading anchors can resolve a member of a
 group. Activity has no message actions, thread, unread evidence or chat preview.
 A Solo chat omits its owner's additions and removals of agents before its first
 message once history reaches its start; later changes, people and agents added by others still

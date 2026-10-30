@@ -73,6 +73,8 @@ type Head = {
   savedAt: number;
   cached: boolean;
   restored?: true;
+  /** Kept only up to the leading pages of a continued read; showing it re-reads. */
+  partial?: true;
 };
 export type ChannelStoreOptions = {
   profiling?: RelayProfiler;
@@ -135,12 +137,11 @@ const FRESH_FOR = 60_000;
 const CATCH_UP_PAGES = 5;
 /** Membership notices spend the relay's page budget like messages. A window
  * read they leave short of a page of conversational rows continues through up
- * to this many full pages to fill it. */
+ * to this many more pages to fill it. */
 const NOTICE_PAGES = 5;
-const noticeShort = (events: readonly RelayEvent[]) =>
-  events.some((event) => event.kind === 40099) &&
+const conversational = (events: readonly RelayEvent[]) =>
   events.filter((event) => channelRowKind(event.kind) && event.kind !== 40099)
-    .length < WINDOW_PAGE_SIZE;
+    .length;
 const rowIds = (state: WindowState) =>
   new Set(
     state.events
@@ -631,6 +632,7 @@ export function createChannelStore(
     channelId: string,
     cursor: WindowCursor | null,
     settings: ReadOptions,
+    budget = Infinity,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
     const source = transport;
@@ -647,19 +649,29 @@ export function createChannelStore(
         : read();
     };
     let events = await readFrom(cursor);
+    const pages = [events];
     let page = parseWindow(channelId, cursor, source.relayAuthor, events);
+    // Read the shortfall first, then at least a page, doubling while notices
+    // keep the read short.
+    let limit = WINDOW_PAGE_SIZE - conversational(page.events);
     for (
       let more = 0;
-      more < NOTICE_PAGES && page.cursor && noticeShort(page.events);
+      more < NOTICE_PAGES &&
+      page.cursor &&
+      limit > 0 &&
+      page.events.some((event) => event.kind === 40099);
       more++
     ) {
+      // The history row budget caps the whole read, not only its first page.
+      limit = Math.min(limit, budget - page.events.length);
+      if (limit < 1) break;
       let next: readonly RelayEvent[];
       try {
-        next = await readFrom(page.cursor, WINDOW_PAGE_MAX);
+        next = await readFrom(page.cursor, limit);
       } catch (error) {
         // The pages read so far are a whole window ending at their last bound;
-        // Load older continues from it. Cancellation and denial still fail.
-        if (readErrorKind(error) !== "unavailable") throw error;
+        // Load older continues from it. Only an outage keeps them.
+        if (!isTransientFailure(error) || isAbort(error)) throw error;
         break;
       }
       const older = parseWindow(
@@ -668,10 +680,16 @@ export function createChannelStore(
         source.relayAuthor,
         next,
       );
+      pages.push(next);
       events = [...events, ...next];
       page = { ...older, events: [...page.events, ...older.events] };
+      const short = WINDOW_PAGE_SIZE - conversational(page.events);
+      limit =
+        short > 0
+          ? Math.min(WINDOW_PAGE_MAX, Math.max(WINDOW_PAGE_SIZE, limit * 2))
+          : 0;
     }
-    return { events, page };
+    return { events, page, pages };
   }
   async function requestHead(
     channelId: string,
@@ -683,10 +701,11 @@ export function createChannelStore(
     const controller = new AbortController();
     controllers.add(controller);
     let head: Head;
+    let stored: Head;
     try {
       if (disposed || !transport || !canReadRemote(channelId))
         throw new DOMException("Stale request", "AbortError");
-      const { events, page } = await readPage(channelId, null, {
+      const { events, page, pages } = await readPage(channelId, null, {
         signal: controller.signal,
         priority,
       });
@@ -699,21 +718,36 @@ export function createChannelStore(
         throw new DOMException("Stale request", "AbortError");
       const retained = heads.peek(channelId);
       if (retained?.events === events) return retained;
-      head = {
+      const relayAuthor = transport.relayAuthor;
+      const savedAt = now();
+      const headOf = (
+        read: readonly RelayEvent[],
+        window = parseWindow(channelId, null, relayAuthor, read),
+      ): Head => ({
         rows: Object.freeze(
-          foldChannelMessages(channelId, transport.relayAuthor, page.events),
+          foldChannelMessages(channelId, relayAuthor, window.events),
         ),
-        cursor: page.cursor,
-        hasMore: page.hasMore,
-        events,
-        savedAt: now(),
+        cursor: window.cursor,
+        hasMore: window.hasMore,
+        events: read,
+        savedAt,
         cached: false,
-      };
+      });
+      head = headOf(events, page);
       if (
         head.rows.length > maxHistoryRows ||
         byteSize(head.rows) > maxHistoryBytes
       )
         throw new Error("Channel head exceeds the read budget");
+      // A continued head is returned in full, but cached, saved and restored
+      // only as far as its leading pages fit one head's share of the cache.
+      stored = head;
+      for (
+        let count = pages.length - 1;
+        count > 0 && byteSize(stored) > maxHeadBytes / maxHeads;
+        count--
+      )
+        stored = { ...headOf(pages.slice(0, count).flat()), partial: true };
     } catch (error) {
       relayDebug("head failed", channelId.slice(0, 8), readErrorKind(error));
       if (
@@ -732,17 +766,17 @@ export function createChannelStore(
       channelId.slice(0, 8),
       `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
     );
-    heads.set(channelId, head);
+    heads.set(channelId, stored);
     setList(list);
     // Durable message warmth must not wait behind optional name enrichment.
     const savedProfiles =
-      generation === epoch ? save(channelId, head) : undefined;
+      generation === epoch ? save(channelId, stored) : undefined;
     void fetchProfiles(
       head.rows,
       priority === "background" && intent !== channelId ? channelId : undefined,
     ).then(() => {
       const current = heads.peek(channelId);
-      if (generation === epoch && current?.events === head.events)
+      if (generation === epoch && current?.events === stored.events)
         save(channelId, current, savedProfiles);
     });
     if (intent === channelId) prepareMedia(channelId);
@@ -763,9 +797,12 @@ export function createChannelStore(
         adoptHead(state, head);
         return;
       }
-      const { page } = await readPage(state.channelId, cursor, {
-        signal: controller.signal,
-      });
+      const { page } = await readPage(
+        state.channelId,
+        cursor,
+        { signal: controller.signal },
+        maxHistoryRows - (cursor ? state.snapshot.rows.length : 0),
+      );
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
       const combined = new Map(
@@ -2615,7 +2652,9 @@ export function createChannelStore(
             previous &&
             state.atHead &&
             !state.controller &&
-            (previous.cached || now() - previous.savedAt >= FRESH_FOR)
+            (previous.cached ||
+              (previous.partial && state.events === previous.events) ||
+              now() - previous.savedAt >= FRESH_FOR)
           )
             void loadPage(state, null);
         }

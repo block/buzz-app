@@ -2151,6 +2151,28 @@ export class AgentRunners {
       ...(soloChat ? { soloChat: true } : {}),
       ...(soloChat && conversationName ? { conversationName } : {}),
     });
+    if (
+      !soloChat &&
+      channel?.channelType === "solo" &&
+      channel.pending &&
+      !channel.cached &&
+      !channel.metadataPending
+    ) {
+      const starting = this.host.starting?.(agent, channelId);
+      if (starting)
+        void starting.then(
+          () => {
+            const confirmed = this.host.channel(agent, event);
+            if (
+              confirmed?.channelType === "solo" &&
+              !confirmed.cached &&
+              !confirmed.metadataPending
+            )
+              job.work?.confirmSolo(confirmed.name ?? undefined);
+          },
+          () => {},
+        );
+    }
   }
 
   // Mentions run one at a time, in arrival order. Beside them, attention work
@@ -2255,7 +2277,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle = this.handleFor(runner, agent, true);
+    const handle = this.handleFor(runner, agent, true, job.work);
     const anchor = conversationWake(job.trigger, "");
     const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
@@ -2443,7 +2465,12 @@ export class AgentRunners {
   }
 
   /** The agent as `run` holds it. */
-  private handleFor(runner: Runner, agent: Agent, run = false): AgentHandle {
+  private handleFor(
+    runner: Runner,
+    agent: Agent,
+    run = false,
+    work?: ReturnType<LocalAgentActivity["begin"]>,
+  ): AgentHandle {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
     return Object.freeze({
@@ -2455,7 +2482,19 @@ export class AgentRunners {
       // is deleted, removed from this community or retyped can't.
       publish: async (event: AgentEventTemplate, check?: () => void) => {
         lifetime.throwIfAborted();
-        return this.publish(runner, event, lifetime, check);
+        const published = await this.publish(runner, event, lifetime, check);
+        if (event.kind === 9 && work) {
+          const channel = this.host.channel(agent, published);
+          if (
+            channel?.channelType === "solo" &&
+            !channel.cached &&
+            !channel.pending &&
+            !channel.metadataPending
+          )
+            work.confirmSolo(channel.name ?? undefined);
+          work.reply(published.id);
+        }
+        return published;
       },
       query: async (filters: readonly object[]) => {
         lifetime.throwIfAborted();

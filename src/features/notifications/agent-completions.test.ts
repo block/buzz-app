@@ -5,6 +5,7 @@ import {
   bindAgentCompletionNotifications,
   completionBody,
   completionTarget,
+  completionTitle,
   completionToast,
   isViewingCompletedWork,
   shouldShowForegroundCompletion,
@@ -160,16 +161,18 @@ it("names the Solo chat in native and in-app completion copy", () => {
     state: "done" as const,
     conversationName: "Launch planning",
   };
-  expect(completionBody(done)).toBe("Launch planning · Your reply is ready");
-  expect(completionToast("Echo", done)).toBe(
-    "Echo finished in Launch planning",
-  );
+  expect(completionTitle("Echo", done)).toBe("Echo is done");
+  expect(completionBody(done)).toBe("View in Launch planning");
+  expect(completionToast("Echo", done)).toBe("Echo is done in Launch planning");
   const failed = {
     state: "error" as const,
     error: "The run failed",
     conversationName: "Launch planning",
   };
-  expect(completionBody(failed)).toBe("Launch planning · The run failed");
+  expect(completionTitle("Echo", failed)).toBe("Echo encountered an error");
+  expect(completionBody(failed)).toBe(
+    "View in Launch planning · The run failed",
+  );
   expect(completionToast("Echo", failed)).toBe(
     "Echo encountered an error in Launch planning",
   );

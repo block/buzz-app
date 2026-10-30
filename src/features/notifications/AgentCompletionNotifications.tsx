@@ -8,6 +8,7 @@ import {
   bindAgentCompletionNotifications,
   completionBody,
   completionTarget,
+  completionTitle,
   completionToast,
   shouldShowForegroundCompletion,
 } from "./agent-completions";
@@ -41,7 +42,7 @@ export function AgentCompletionNotifications({
             () => true,
             () => true,
             () => ({
-              title: `${name} finished`,
+              title: completionTitle(name, work),
               body: completionBody(work),
             }),
           );

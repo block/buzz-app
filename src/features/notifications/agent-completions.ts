@@ -27,26 +27,32 @@ export function completionTarget(
   };
 }
 
+export function completionTitle(
+  agentName: string,
+  work: Pick<LocalWork, "state">,
+) {
+  return work.state === "error"
+    ? `${agentName} encountered an error`
+    : `${agentName} is done`;
+}
+
 export function completionBody(
   work: Pick<LocalWork, "state" | "error" | "conversationName">,
 ) {
-  const status =
-    work.state === "error"
-      ? work.error || "Could not finish this request"
-      : "Your reply is ready";
-  return work.conversationName
-    ? `${work.conversationName} · ${status}`
-    : status;
+  const destination = work.conversationName
+    ? `View in ${work.conversationName}`
+    : "View conversation";
+  return work.state === "error" && work.error
+    ? `${destination} · ${work.error}`
+    : destination;
 }
 
 export function completionToast(
   agentName: string,
   work: Pick<LocalWork, "state" | "conversationName">,
 ) {
-  const status = work.state === "error" ? "encountered an error" : "finished";
-  return work.conversationName
-    ? `${agentName} ${status} in ${work.conversationName}`
-    : `${agentName} ${status}`;
+  const title = completionTitle(agentName, work);
+  return work.conversationName ? `${title} in ${work.conversationName}` : title;
 }
 
 export function shouldShowForegroundCompletion(state: {

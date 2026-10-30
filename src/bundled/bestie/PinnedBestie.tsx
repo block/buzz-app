@@ -266,13 +266,16 @@ function DirectMessage({
         bestie={agent.name}
       />
     );
-  if (error)
+  if (error || attempt > 0)
     return (
       <Notice
         title="Couldn’t open this conversation"
-        description={error}
+        description={error ?? `Trying your DM with ${agent.name} again…`}
+        announce={error ? "alert" : "status"}
         action={
-          <Button onClick={() => retry((value) => value + 1)}>Try again</Button>
+          <Button loading={!error} onClick={() => retry((value) => value + 1)}>
+            Try again
+          </Button>
         }
       />
     );
@@ -386,17 +389,21 @@ function Notice({
   title,
   description,
   action,
+  announce,
 }: {
   title: string;
   description: string;
   action?: React.ReactNode;
+  announce?: "alert" | "status" | undefined;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-6">
       <EmptyState
         icon={<RobotIcon />}
         title={title}
-        description={description}
+        description={
+          announce ? <span role={announce}>{description}</span> : description
+        }
         action={action}
       />
     </div>

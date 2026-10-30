@@ -436,6 +436,33 @@ it("reports an open failure and retries through the same DM owner", async () => 
   await screen.findByRole("textbox", { name: "Message Pollen" });
 });
 
+it("keeps a failed DM retry focused and announces another failure", async () => {
+  const f = await fixture();
+  f.open.mockRejectedValueOnce(new Error("DM temporarily unavailable"));
+  // StrictMode abandons its initial effect; both initial opens must fail.
+  f.open.mockRejectedValueOnce(new Error("DM temporarily unavailable"));
+  let rejectRetry!: (reason: unknown) => void;
+  f.open.mockImplementationOnce(
+    () =>
+      new Promise<string>((_resolve, reject) => {
+        rejectRetry = reject;
+      }),
+  );
+  f.choose(pollen);
+  f.mount();
+  await screen.findByText("DM temporarily unavailable");
+  const retry = screen.getByRole("button", { name: "Try again" });
+  await userEvent.click(retry);
+  expect(retry).toHaveFocus();
+  await waitFor(() => expect(retry).toHaveAttribute("aria-busy", "true"));
+  await act(async () => rejectRetry(new Error("DM still unavailable")));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "DM still unavailable",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBe(retry);
+  expect(retry).toHaveFocus();
+});
+
 it("restores Bestie threads with Back and Forward and retires an explicitly closed visit", async () => {
   const f = await fixture({ existing: true, withReply: true });
   f.choose(pollen);

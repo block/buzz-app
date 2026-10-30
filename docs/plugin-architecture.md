@@ -1484,8 +1484,9 @@ formatting, escaped pasted wrappers are normalized outside code, and paired `<�
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;
 the full destination remains on the anchor. A raw message or thread link in a listed
-channel reads as “<author> in #<channel>” once its author has a name; DMs, Solo chats,
-authored labels and drafts keep the channel name. Buzz activation stays inside the host,
+channel reads as “<author> in #<channel>” once its author has a name, and a workflow’s
+as “Workflow in #<channel>”; DMs, Solo chats, authored labels and drafts keep the channel
+name, as do deleted or unavailable messages. Buzz activation stays inside the host,
 including modifier/middle clicks, even when the optional Links plugin is disabled.
 Unsupported Buzz formats remain plain text. The host-matched author preview exports `LinkRenderer`; older hosts do not
 provide `registerLink`.
@@ -1493,7 +1494,8 @@ provide `registerLink`.
 Message hover/focus previews are host-owned. The entire card is a keyboard-accessible
 link to the same destination, routed through the same host navigation handler. Opening a preview allocates the current
 session's bounded thread reader; closing disposes it. A live message link borrows
-the same reader only until it learns its author. The reader supplies verified
+the same reader only until it learns its author, and not when its channel’s timeline
+already holds the message. The reader supplies verified
 message content, author and timestamp and preserves edit/deletion/access handling.
 Previewing never acknowledges reading or switches community. The host offers a
 resolved label to the bundled presentation via `LinkLabelContext`, and whether

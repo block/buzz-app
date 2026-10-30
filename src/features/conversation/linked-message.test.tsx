@@ -2,6 +2,8 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { LinkLabel } from "../../bundled/links/InlineLink";
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../identity-names/testing";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
@@ -45,14 +47,19 @@ const ready = (target: ChannelMessage): Partial<ThreadSnapshot> => ({
   targetStatus: "ready",
 });
 
-/** Exact readers the test settles by hand; `open` counts undisposed ones. */
+type Channel = {
+  id: string;
+  name: string;
+  channelType?: string;
+  cached?: true;
+};
+/** Exact readers the test settles by hand; `open` counts undisposed ones.
+ * Names resolve through the app's own names view and agent directory. */
 function fixture({
-  channels = [{ id: "design", name: "design" }] as {
-    id: string;
-    name: string;
-    channelType?: string;
-  }[],
+  channels = [{ id: "design", name: "design" }] as Channel[],
   profiles = new Map<string, Profile>([[alice, { name: "Alice" }]]),
+  agents = [] as { pubkey: string; name: string }[],
+  shown = [] as ChannelMessage[],
   capacity = Number.POSITIVE_INFINITY,
 } = {}) {
   const views: {
@@ -90,21 +97,51 @@ function fixture({
       },
     };
   });
+  const changed = (listeners: Set<() => void>) => () =>
+    act(async () => {
+      for (const listener of listeners) listener();
+    });
+  const subscriber = (listeners: Set<() => void>) => (listener: () => void) => {
+    listeners.add(listener);
+    return () => void listeners.delete(listener);
+  };
   const profileListeners = new Set<() => void>();
-  const list = { status: "ready", channels };
+  const listListeners = new Set<() => void>();
+  const liveListeners = new Set<() => void>();
+  let list = { status: "ready", channels };
+  let live = { status: "connected" };
   const ensure = vi.fn(async () => {});
+  const profileQueries = {
+    snapshot: () => profiles,
+    subscribe: subscriber(profileListeners),
+    ensure,
+  };
+  const library = { status: "ready", definitions: [], identities: agents };
+  const names = bindNames(
+    {
+      profiles: profileQueries,
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+        refresh: async () => {},
+        retain: () => () => {},
+      },
+    },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
   const session = {
     unread: {},
     thread,
-    profiles: {
-      snapshot: () => profiles,
-      subscribe(listener: () => void) {
-        profileListeners.add(listener);
-        return () => void profileListeners.delete(listener);
-      },
-      ensure,
+    names,
+    profiles: profileQueries,
+    channels: {
+      list: () => list,
+      subscribeList: subscriber(listListeners),
+      window: (channelId: string) => ({
+        rows: shown.filter((row) => row.channelId === channelId),
+      }),
     },
-    channels: { list: () => list, subscribeList: () => () => {} },
+    live: { snapshot: () => live, subscribe: subscriber(liveListeners) },
     media: () => undefined,
   } as unknown as RelaySession;
   return {
@@ -115,9 +152,15 @@ function fixture({
     open: () => views.filter((view) => !view.disposed),
     async setProfiles(next: Map<string, Profile>) {
       profiles = next;
-      await act(async () => {
-        for (const listener of profileListeners) listener();
-      });
+      await changed(profileListeners)();
+    },
+    async setChannels(next: Channel[]) {
+      list = { status: "ready", channels: next };
+      await changed(listListeners)();
+    },
+    async setLive(status: string) {
+      live = { status };
+      await changed(liveListeners)();
     },
   };
 }
@@ -168,8 +211,9 @@ it("names the linked message's author and channel once its exact reader settles"
   expect(app.ensure).toHaveBeenCalledWith([alice], "background");
 });
 
-it("names a reply's author with the thread icon and a workflow by its owner", async () => {
+it("names a reply's author with the thread icon and a workflow as its row header does", async () => {
   const app = fixture();
+  const relay = "c".repeat(64);
   render(
     <>
       {link(app.session, href(id(1), id(9)))}
@@ -179,50 +223,137 @@ it("names a reply's author with the thread icon and a workflow by its owner", as
   await started();
   await app.views[0]?.publish(ready(message(id(1), { threadRootId: id(9) })));
   await app.views[1]?.publish(
-    ready(message(id(2), { authorId: "c".repeat(64), workflowOwnerId: alice })),
+    ready(message(id(2), { authorId: relay, workflowOwnerId: alice })),
   );
   const reply = screen.getByRole("link", { name: "Alice in #design" });
   expect(reply.querySelector('[data-link-kind="thread"] svg')).not.toBeNull();
-  expect(
-    screen.getByRole("link", { name: "Workflow · owned by Alice in #design" }),
-  ).toBeTruthy();
+  // The owner did not send it, so only the workflow is named.
+  const workflow = screen.getByRole("link", { name: "Workflow in #design" });
+  expect(workflow.textContent).toBe("Workflow in #design");
+  expect(app.ensure).not.toHaveBeenCalledWith([relay], "background");
 });
 
-it("keeps the channel label while the author has no name, and names them once loaded", async () => {
+it("never names an author by a key fragment, and names them once their profile does", async () => {
+  const agent = "d".repeat(64);
+  const unnamed = (key: string): Profile => ({
+    name: key.slice(0, 10),
+    nameIsFallback: true,
+  });
   const app = fixture({
     profiles: new Map([
-      [alice, { name: alice.slice(0, 10), nameIsFallback: true }],
+      [alice, unnamed(alice)],
+      [agent, unnamed(agent)],
     ]),
+    agents: [{ pubkey: agent, name: "Builder" }],
   });
-  render(link(app.session, href(id(1))));
+  // The app's names view hands back the fragment for a profile with no name.
+  expect(app.session.names.resolve(alice)).toBe(alice.slice(0, 10));
+  render(
+    <>
+      {link(app.session, href(id(1)))}
+      {link(app.session, href(id(2)))}
+    </>,
+  );
   await started();
   await app.views[0]?.publish(ready(message(id(1))));
+  await app.views[1]?.publish(ready(message(id(2), { authorId: agent })));
   expect(screen.getByRole("link", { name: "design" }).textContent).toBe(
     "design",
   );
-  await app.setProfiles(new Map([[alice, { name: "Alice" }]]));
+  // An agent's library name is a name even while its profile has none.
+  expect(screen.getByRole("link", { name: "Builder in #design" })).toBeTruthy();
+  await app.setProfiles(
+    new Map([
+      [alice, { name: "Alice" }],
+      [agent, unnamed(agent)],
+    ]),
+  );
   expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
 });
 
-it("keeps the channel label when the message is unavailable or no reader is free", async () => {
-  const unavailable = fixture();
-  const view = render(link(unavailable.session, href(id(1))));
+it("takes the author from the channel's loaded timeline without reading", async () => {
+  const app = fixture({ shown: [message(id(1))] });
+  render(
+    <>
+      {link(app.session, href(id(1)))}
+      {link(app.session, href(id(2)))}
+    </>,
+  );
   await started();
-  await unavailable.views[0]?.publish({
-    status: "idle",
+  expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
+  // Only the message no timeline holds is read.
+  expect(app.thread).toHaveBeenCalledOnce();
+  expect(app.thread).toHaveBeenCalledWith("design", id(2), { exact: true });
+});
+
+it("waits for the relay to confirm a cached channel before reading", async () => {
+  const app = fixture({
+    channels: [{ id: "design", name: "design", cached: true }],
+  });
+  render(link(app.session, href(id(1))));
+  await started();
+  expect(app.thread).not.toHaveBeenCalled();
+  expect(screen.getByRole("link", { name: "design" })).toBeTruthy();
+  await app.setChannels([{ id: "design", name: "design" }]);
+  await started();
+  expect(app.thread).toHaveBeenCalledOnce();
+  await app.views[0]?.publish(ready(message(id(1))));
+  expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
+});
+
+it("keeps the channel label for an unavailable message and never reads it again", async () => {
+  const app = fixture();
+  const view = render(link(app.session, href(id(1))));
+  await started();
+  await app.views[0]?.publish({
+    status: "ready",
+    canLoadMore: false,
     targetStatus: "unavailable",
-    error: "Message unavailable",
   });
   expect(screen.getByRole("link", { name: "design" })).toBeTruthy();
-  expect(unavailable.open()).toHaveLength(0);
+  expect(app.open()).toHaveLength(0);
+  // A virtualized remount, or the stream reconnecting, does not re-read it.
   view.unmount();
+  render(link(app.session, href(id(1))));
+  await started();
+  await app.setLive("retrying");
+  await app.setLive("connected");
+  expect(app.thread).toHaveBeenCalledOnce();
+  expect(screen.getByRole("link", { name: "design" })).toBeTruthy();
+});
+
+it("retries a failed lookup once the live stream reconnects, never in a loop", async () => {
+  const app = fixture();
+  render(link(app.session, href(id(1))));
+  await started();
+  await app.views[0]?.publish({
+    status: "error",
+    targetStatus: "error",
+    error: "Relay unavailable",
+  });
+  await started();
+  expect(app.thread).toHaveBeenCalledOnce();
+  expect(app.open()).toHaveLength(0);
+  // The stream staying up is no news; connecting again is.
+  await app.setLive("connected");
+  expect(app.thread).toHaveBeenCalledOnce();
+  await app.setLive("retrying");
+  await app.setLive("connected");
+  expect(app.thread).toHaveBeenCalledTimes(2);
+  await app.views[1]?.publish(ready(message(id(1))));
+  expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
+  cleanup();
+  // No free reader fails the same way, without retrying until then.
   const full = fixture({ capacity: 0 });
   render(link(full.session, href(id(1))));
   await started();
   await started();
-  // A failed lookup waits for a later mount instead of retrying in a loop.
   expect(full.thread).toHaveBeenCalledOnce();
   expect(screen.getByRole("link", { name: "design" })).toBeTruthy();
+  await full.setLive("retrying");
+  await full.setLive("connected");
+  await started();
+  expect(full.thread).toHaveBeenCalledTimes(2);
 });
 
 it("reads nothing for authored labels, drafts, unlisted channels, DMs or Solo chats", async () => {

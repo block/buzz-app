@@ -1116,7 +1116,8 @@ it("lists each recent event apart, shown as a chat message from its author", () 
       item.querySelector("[data-message-id]")?.getAttribute("data-message-id"),
     ),
   ).toEqual(["3".repeat(64), "2".repeat(64), "1".repeat(64)]);
-  expect(ensure).toHaveBeenCalledWith([author], "background");
+  // Each row reads the profiles it names, so its mentions resolve.
+  expect(ensure).toHaveBeenCalledWith([author, casey], "background");
   for (const item of events)
     expect(within(item).getByText("Alex").tagName).toBe("STRONG");
   // Its tags and the community's channels give a message its references.

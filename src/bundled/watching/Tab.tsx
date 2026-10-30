@@ -29,6 +29,7 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { MessageRow } from "../../features/messages/MessageRow";
 import { useRowProfiles } from "../../features/relay/react";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { rowProfileIds } from "../../features/relay/membership";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import type { RelaySession } from "../../features/relay/session";
 import type { AttentionEntry } from "../../features/agents/store";
@@ -254,8 +255,9 @@ export function createTab({
     );
     const queries = session?.profiles ?? noProfiles;
     React.useEffect(
-      () => void queries.ensure([author], "background").catch(() => {}),
-      [queries, author],
+      () =>
+        void queries.ensure(rowProfileIds(row), "background").catch(() => {}),
+      [queries, row],
     );
     const profiles = useRowProfiles(queries, [row]);
     const resolve = useChannelIdentityNames(session, channel);

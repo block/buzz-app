@@ -8,6 +8,8 @@ import {
 } from "../../features/conversation/Conversation";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
 import { messageViewKey } from "../../features/messages/view-key";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
@@ -26,6 +28,7 @@ import {
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
 import { bestieChat } from "./chat";
+import { bestieBaseTarget, bestieRoute, bestieThreadTarget } from "./routes";
 import styles from "./PinnedBestie.module.css";
 
 /** Account-saved Besties use their canonical verified DM. No saved choice means
@@ -34,10 +37,14 @@ export function PinnedBestie({
   relay,
   host,
   extensions,
+  navigator,
+  navigation,
 }: {
   relay: RelayData;
   host: ConversationHostServices;
   extensions: ConversationExtensions;
+  navigator: Navigation;
+  navigation?: PageNavigation | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const { session, scope, viewer } = connection;
@@ -140,6 +147,8 @@ export function PinnedBestie({
         scope={scope}
         host={host}
         extensions={extensions}
+        navigator={navigator}
+        navigation={navigation}
         agent={{ pubkey: agent.pubkey, name }}
         channel={channel}
       />
@@ -176,6 +185,8 @@ export function PinnedBestie({
         scope={scope}
         host={host}
         extensions={extensions}
+        navigator={navigator}
+        navigation={navigation}
         agent={{ pubkey: agent.pubkey, name }}
         channel={undefined}
       />
@@ -198,6 +209,8 @@ function DirectMessage({
   scope,
   host,
   extensions,
+  navigator,
+  navigation,
   agent,
   channel,
 }: {
@@ -205,6 +218,8 @@ function DirectMessage({
   scope: string;
   host: ConversationHostServices;
   extensions: ConversationExtensions;
+  navigator: Navigation;
+  navigation?: PageNavigation | undefined;
   agent: { pubkey: string; name: string };
   channel: ChannelSummary | undefined;
 }) {
@@ -245,6 +260,8 @@ function DirectMessage({
         scope={scope}
         host={host}
         extensions={extensions}
+        navigator={navigator}
+        navigation={navigation}
         channel={channel}
         bestie={agent.name}
       />
@@ -277,6 +294,8 @@ function BestieConversation({
   scope,
   host,
   extensions,
+  navigator,
+  navigation,
   channel,
   bestie,
 }: {
@@ -284,12 +303,42 @@ function BestieConversation({
   scope: string;
   host: ConversationHostServices;
   extensions: ConversationExtensions;
+  navigator: Navigation;
+  navigation?: PageNavigation | undefined;
   channel: ChannelSummary;
   bestie: string;
 }) {
   const [sent, setSent] = useState<string>();
-  const [thread, setThread] = useState<string>();
+  const routed =
+    navigation?.target.kind === "page"
+      ? bestieRoute(navigation.target.route?.params)
+      : undefined;
+  const [localThread, setLocalThread] = useState<string>();
+  const thread = routed?.messageId ?? localThread;
   const [composerFocus, focusComposer] = useState(0);
+  const ownsCurrentVisit =
+    !!navigation &&
+    !navigation.signal.aborted &&
+    navigator.snapshot().entry.id === navigation.entryId;
+  const openThread = (messageId: string, threadRootId: string) => {
+    if (!navigation) {
+      setLocalThread(messageId);
+      return;
+    }
+    if (navigation.target.kind !== "page" || !ownsCurrentVisit) return;
+    void navigator.open(
+      bestieThreadTarget(navigation.target, { messageId, threadRootId }),
+    );
+  };
+  const closeThread = () => {
+    if (navigation?.target.kind === "page" && routed && ownsCurrentVisit) {
+      navigator.dismiss(
+        [navigation.entryId],
+        bestieBaseTarget(navigation.target),
+      );
+    } else if (!navigation) setLocalThread(undefined);
+    focusComposer((value) => value + 1);
+  };
   return (
     <ConversationChannel
       session={session}
@@ -308,10 +357,8 @@ function BestieConversation({
         {thread ? (
           <ConversationThread
             messageId={thread}
-            close={() => {
-              setThread(undefined);
-              focusComposer((value) => value + 1);
-            }}
+            navigation={routed ? navigation : undefined}
+            close={closeThread}
           />
         ) : (
           <SoloColumn>
@@ -321,7 +368,7 @@ function BestieConversation({
               activityLane={!channel.cached}
               revealMessageId={sent}
               marksRead
-              onOpenThread={setThread}
+              onOpenThread={openThread}
             />
             <ConversationComposer
               label={`Message ${bestie}`}

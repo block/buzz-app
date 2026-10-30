@@ -9,6 +9,7 @@ import {
 import { BestieIcon } from "../../shared/design-system/icons";
 import type { PluginModule } from "../../plugins/api";
 import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import {
   PanelHeader,
@@ -33,6 +34,7 @@ import { useRelayConnection } from "../../features/relay/react";
 import { useSavedAgentState } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import { PinnedBestie } from "./PinnedBestie";
+import { bestieRoute } from "./routes";
 
 export const inject = [
   "pages",
@@ -75,7 +77,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Bestie",
     layout: "workspace",
     primary: true,
-    component: () => {
+    route: { version: 1, validate: (params) => !!bestieRoute(params) },
+    component: ({ navigation: pageNavigation }) => {
       const current = useSyncExternalStore(
         source.subscribe,
         source.snapshot,
@@ -88,6 +91,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           navigation={ctx.navigation}
           extensions={ctx.conversation}
           host={ctx}
+          pageNavigation={pageNavigation}
         />
       );
     },
@@ -123,6 +127,7 @@ function BestieDestination({
   navigation: Navigation;
   extensions: ConversationExtensions;
   host: ConversationHostServices;
+  pageNavigation?: PageNavigation | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const saved = useSavedAgentState(connection.session, connection.scope ?? "");
@@ -161,6 +166,8 @@ function BestieDestination({
       relay={relay}
       host={props.host}
       extensions={props.extensions}
+      navigator={props.navigation}
+      navigation={props.pageNavigation}
     />
   ) : (
     <BestiePage {...props} />

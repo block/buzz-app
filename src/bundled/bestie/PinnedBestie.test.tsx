@@ -9,6 +9,12 @@ import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import { localAgentsFixture } from "../../features/agents/local-testing";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+import {
+  createNavigationController,
+  type Navigation,
+} from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
+import type { PageNavigation } from "../../features/navigation/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import {
@@ -25,6 +31,7 @@ import { setDefaultAgent } from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { PinnedBestie } from "./PinnedBestie";
+import { bestieRoute } from "./routes";
 
 // jsdom has no virtualized layout. Keep the real rows, thread reader and React
 // lifecycle; model only Virtua's imperative layout boundary, not scroll behavior.
@@ -245,6 +252,10 @@ async function fixture({
     disconnect() {},
     async clearCache() {},
   };
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+    dismiss: vi.fn(),
+  } as unknown as Navigation;
   const host = {
     relay,
     panels: {
@@ -263,6 +274,7 @@ async function fixture({
     open,
     gate,
     native,
+    navigator,
     makePollenIneligible() {
       const current = choices.snapshot();
       ineligibleSnapshot = {
@@ -281,10 +293,33 @@ async function fixture({
       unavailable = false;
     },
     choose: (pubkey: string) => setDefaultAgent(scope, pubkey),
+    element: ({
+      renderedNavigator = navigator,
+      navigation,
+    }: {
+      renderedNavigator?: Navigation | undefined;
+      navigation?: PageNavigation | undefined;
+    } = {}) => (
+      <ToastProvider>
+        <PinnedBestie
+          relay={relay}
+          host={host}
+          extensions={extensions}
+          navigator={renderedNavigator}
+          navigation={navigation}
+        />
+      </ToastProvider>
+    ),
+    rootId: root.id,
     mount: () =>
       render(
         <ToastProvider>
-          <PinnedBestie relay={relay} host={host} extensions={extensions} />
+          <PinnedBestie
+            relay={relay}
+            host={host}
+            extensions={extensions}
+            navigator={navigator}
+          />
         </ToastProvider>,
         { reactStrictMode: true },
       ),
@@ -399,6 +434,77 @@ it("reports an open failure and retries through the same DM owner", async () => 
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Try again" }));
   await screen.findByRole("textbox", { name: "Message Pollen" });
+});
+
+it("restores Bestie threads with Back and Forward and retires an explicitly closed visit", async () => {
+  const f = await fixture({ existing: true, withReply: true });
+  f.choose(pollen);
+  const previous = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+  } as const;
+  const bestie = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.bestie",
+    pageId: "bestie",
+  } as const;
+  const controller = createNavigationController(createMemoryHistory(previous));
+  disposals.push(controller.dispose);
+  const navigator = controller.navigation;
+  void navigator.open(bestie);
+  const pageNavigation = (): PageNavigation => {
+    const { entry, attempt } = navigator.snapshot();
+    const request: PageNavigation = {
+      entryId: entry.id,
+      target: entry.target,
+      signal: attempt.signal,
+      ...(attempt.focus ? { focus: attempt.focus } : {}),
+      forSession: () => request,
+      resolve: () => false,
+      complete: () => true,
+    };
+    return request;
+  };
+  const view = render(
+    f.element({ renderedNavigator: navigator, navigation: pageNavigation() }),
+    { reactStrictMode: true },
+  );
+  const rerender = () =>
+    view.rerender(
+      f.element({ renderedNavigator: navigator, navigation: pageNavigation() }),
+    );
+
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  const threadTarget = navigator.snapshot().entry.target;
+  expect(
+    threadTarget.kind === "page"
+      ? bestieRoute(threadTarget.route?.params)
+      : undefined,
+  ).toEqual({ messageId: f.rootId, threadRootId: f.rootId });
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+
+  act(() => navigator.back());
+  rerender();
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeVisible();
+  act(() => navigator.forward());
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+
+  await userEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(previous);
+  act(() => navigator.forward());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
 });
 
 it("never renders a DM whose signed membership does not match the chosen agent", async () => {

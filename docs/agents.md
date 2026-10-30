@@ -409,7 +409,9 @@ sources, deduplicated by public key:
 
 The same app-owned source also supplies completed hosted agents shown in the
 selected community, separately from local identities. The projection checks their
-owner and community and gives non-archived hosted choices `messageable: true`.
+owner and community and gives hosted choices `messageable: true`. As with local
+agents, archived identities remain in `identities`; `selectable` and each action's
+existing archive policy govern forward-looking choices.
 `canMessageAgent` accepts that flag or local `managed` evidence. Profile Message,
 search, the DM picker and fresh-send validation use this predicate; hosted agents
 never gain local custody or template-management status from it. Library presence

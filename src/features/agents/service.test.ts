@@ -4719,6 +4719,21 @@ it("reads the list again on refresh and clears the error a failed read left", as
   expect(service.snapshot().error).toBeUndefined();
 });
 
+it("keeps local selection evidence stable across unrelated agent attention changes", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const local = service.local();
+  const agents = service.snapshot().agents;
+  await service.save(bot, { attentionEnabled: true });
+  expect(service.snapshot().agents).not.toBe(agents);
+  expect(service.local()).toBe(local);
+  await service.save(hostedKey, { name: "Sea" });
+  expect(service.local()).not.toBe(local);
+  expect(service.local().hosted?.map((agent) => agent.name)).toEqual(["Sea"]);
+});
+
 it("fires a due timer once, then again an interval after it ran", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const { service, run, storage } = await setup();

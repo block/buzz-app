@@ -47,15 +47,22 @@ it("allows hosted DMs only with current owned source evidence, without local man
       managed: false,
       messageable: true,
     },
+    {
+      pubkey: "cd".repeat(32),
+      name: agent.name,
+      managed: false,
+      messageable: true,
+    },
   ]);
-  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
+  expect(choices.snapshot().selectable.filter(canMessageAgent)).toHaveLength(1);
   expect(choices.snapshot().templates.identities).toEqual([]);
   archived.push(agent.pubkey);
   await archives.refresh();
-  expect(choices.snapshot().identities.filter(canMessageAgent)).toEqual([]);
+  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(2);
+  expect(choices.snapshot().selectable.filter(canMessageAgent)).toEqual([]);
   archived.pop();
   await archives.refresh();
-  expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
+  expect(choices.snapshot().selectable.filter(canMessageAgent)).toHaveLength(1);
   source.set({ status: "error", error: "Cannot read agents" });
   expect(choices.snapshot().identities.filter(canMessageAgent)).toEqual([]);
   source.set({ status: "ready", hosted: [] });
@@ -64,6 +71,45 @@ it("allows hosted DMs only with current owned source evidence, without local man
   expect(choices.snapshot().identities.filter(canMessageAgent)).toHaveLength(1);
   lifetime.abort();
   expect(choices.snapshot().identities).toEqual([]);
+});
+
+it("preserves library names and artwork when hosted evidence makes the same key messageable", async () => {
+  const source = localAgentsFixture();
+  source.set({
+    hosted: [
+      {
+        ...agent,
+        name: "Hosted name",
+        picture: "https://cdn.example/hosted.png",
+      },
+    ],
+  });
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      {
+        pubkey: agent.pubkey,
+        name: "Library name",
+        avatar: "https://cdn.example/library.png",
+      },
+    ],
+  }));
+  const choices = createAgentChoices({
+    scope,
+    library: library.queries,
+    native: source,
+    signal: new AbortController().signal,
+  });
+  await choices.refresh();
+  expect(choices.snapshot().identities).toEqual([
+    {
+      pubkey: agent.pubkey,
+      name: "Library name",
+      avatar: "https://cdn.example/library.png",
+      managed: false,
+      messageable: true,
+    },
+  ]);
 });
 
 /** Finite archive evidence with the real lazy-read lifecycle. */

@@ -2316,7 +2316,8 @@ export class AgentsService extends Service implements Agents {
   private localCache:
     | {
         identities: readonly AgentIdentity[];
-        state: Pick<AgentsSnapshot, "status" | "error" | "agents">;
+        state: Pick<AgentsSnapshot, "status" | "error">;
+        hosted: readonly Agent[];
         value: LocalAgentsSnapshot;
       }
     | undefined;
@@ -2324,17 +2325,18 @@ export class AgentsService extends Service implements Agents {
    * selected community. Hosted choices grant no local custody. */
   local = (): LocalAgentsSnapshot => {
     const { identities, state } = this;
+    const hosted = state.agents.filter(
+      (agent) => agent.place === "hosted" && !agent.unfinished,
+    );
     const cached = this.localCache;
     if (
       cached?.identities === identities &&
-      cached.state.agents === state.agents &&
+      cached.hosted.length === hosted.length &&
+      hosted.every((agent, index) => agent === cached.hosted[index]) &&
       cached.state.status === state.status &&
       cached.state.error === state.error
     )
       return cached.value;
-    const hosted = state.agents.filter(
-      (agent) => agent.place === "hosted" && !agent.unfinished,
-    );
     const value: LocalAgentsSnapshot = Object.freeze({
       status: state.status,
       agents: Object.freeze(
@@ -2367,7 +2369,7 @@ export class AgentsService extends Service implements Agents {
         : {}),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, value };
+    this.localCache = { identities, state, hosted, value };
     return value;
   };
 

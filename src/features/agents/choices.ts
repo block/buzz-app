@@ -126,12 +126,11 @@ export function createAgentChoices({
         choices.set(row.pubkey, { ...row, managed: false });
     if (local?.status === "ready")
       for (const row of sameCommunityAgents(local.hosted ?? [], scope)) {
-        if (archiveHides(archives, row.pubkey, viewer)) continue;
         choices.set(row.pubkey, {
-          ...choices.get(row.pubkey),
           pubkey: row.pubkey,
           name: row.name,
           ...(row.picture ? { avatar: row.picture } : {}),
+          ...choices.get(row.pubkey),
           managed: false,
           messageable: true,
         });

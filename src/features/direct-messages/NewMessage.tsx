@@ -260,7 +260,7 @@ export function NewMessage({
       )
     )
       throw new Error(
-        "A selected agent is no longer available. Remove it or wait for agent controls to reconnect.",
+        "A selected agent is no longer available. Remove it or refresh its details and try again.",
       );
   }
   function change(people: Recipient[]) {

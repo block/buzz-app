@@ -20,24 +20,35 @@ const scroll = vi.hoisted(() => ({
   toIndex: vi.fn(),
   toOffset: vi.fn(),
   itemOffset: vi.fn((_index: number) => 0),
+  size: undefined as number | undefined,
   resized: () => {},
 }));
 vi.mock("virtua", async () => {
-  const { forwardRef, useImperativeHandle } = await import("react");
+  const { forwardRef, useImperativeHandle, useRef } = await import("react");
   return {
     Virtualizer: forwardRef(function Virtualizer(
       { children, onResize }: { children: ReactNode; onResize?: () => void },
       ref,
     ) {
       scroll.resized = onResize ?? (() => {});
+      const list = useRef<HTMLOListElement>(null);
       useImperativeHandle(ref, () => ({
         cache: undefined,
+        get scrollSize() {
+          return (
+            scroll.size ?? Number.parseFloat(list.current?.style.height ?? "0")
+          );
+        },
         findItemIndex: () => 0,
         getItemOffset: scroll.itemOffset,
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));
-      return <ol style={{ height: 2000 }}>{children}</ol>;
+      return (
+        <ol ref={list} style={{ height: 2000 }}>
+          {children}
+        </ol>
+      );
     }),
   };
 });
@@ -49,6 +60,7 @@ beforeEach(() => {
   scroll.toIndex.mockClear();
   scroll.toOffset.mockClear();
   scroll.itemOffset.mockReset().mockReturnValue(0);
+  scroll.size = undefined;
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(2000);
@@ -241,6 +253,70 @@ it.each([
       bottom: false,
       anchor: { y: 358 },
     });
+  },
+);
+it.each([
+  {
+    order: "model first",
+    modelHeight: 2420.234375,
+    renderedHeight: "2420.23px",
+  },
+  { order: "DOM first", modelHeight: 2420.4999, renderedHeight: "2420.5px" },
+])(
+  "preserves a held reader when a resize scroll precedes height reconciliation ($order)",
+  async ({ order, modelHeight, renderedHeight }) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(
+          0,
+          this.closest("ol") ? 520 - region.scrollTop : 0,
+          800,
+          100,
+        );
+      },
+    );
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    fireEvent.pointerDown(region);
+    try {
+      region.scrollTop = 400;
+      fireEvent.scroll(region);
+      h.pageAroundAnchor();
+      await h.measured();
+      expect(region.scrollTop).toBe(400);
+      const list = screen.getByRole("list");
+      if (order === "model first") scroll.size = modelHeight;
+      await act(async () => {
+        if (order === "DOM first") {
+          scroll.size = modelHeight;
+          list.style.height = renderedHeight;
+        }
+        // Virtua's native correction can arrive before React publishes its height
+        // or before the real MutationObserver reconciles that publication.
+        region.scrollTop -= 137;
+        fireEvent.scroll(region);
+        list.style.height = renderedHeight;
+        await Promise.resolve();
+      });
+      expect(region.scrollTop).toBe(400);
+
+      // With reconciled geometry, the same held pointer must still move freely.
+      region.scrollTop -= 50;
+      fireEvent.scroll(region);
+      await act(async () => {
+        scroll.size = 2500;
+        list.style.height = "2500px";
+        await Promise.resolve();
+      });
+      expect(region.scrollTop).toBe(350);
+    } finally {
+      fireEvent.pointerUp(region);
+    }
   },
 );
 it("preserves a held reader's logical offset while its DOM lookup is absent", async () => {

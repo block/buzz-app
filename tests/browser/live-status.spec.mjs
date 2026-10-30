@@ -96,6 +96,7 @@ for (const target of ["alpha", "profiles"]) {
     page,
     app,
   }, testInfo) => {
+    await page.clock.install();
     if (target === "profiles")
       await page.addInitScript(() =>
         localStorage.setItem("buzz-appearance.v1", "dark"),
@@ -192,19 +193,34 @@ for (const target of ["alpha", "profiles"]) {
       await openDiagnostics(page);
       await expect(notice(page)).toHaveCount(1);
     }
-    const beforeManual = requests().length;
-    await page
-      .getByRole("button", { name: "Close Channel settings tab", exact: true })
-      .click();
-    // Retry now stays available to skip the wait.
-    await retryNow(page).focus();
-    await retryNow(page).press("Enter");
-    await expect.poll(() => requests().length).toBeGreaterThan(beforeManual);
-    await expect(notice(page)).toBeVisible();
-    app.relay.releaseEose(target);
-    await expect(notice(page)).toHaveCount(0);
-    await openChannelDetails(page);
-    await openDiagnostics(page);
+    // The held request may still be busy after the layout checks. Retry now
+    // skips a failed source's wait; it does not restart an in-flight request.
+    // Hold that wait and observe a fresh refusal before testing keyboard Retry.
+    const pausedAt = new Date();
+    await page.clock.setFixedTime(pausedAt);
+    await page.clock.pauseAt(pausedAt);
+    await page.clock.setSystemTime(pausedAt);
+    try {
+      // Layout work can outlast the broker's real-time setup deadline. Retry
+      // first so either a busy request or an expired request has an active REQ.
+      await retryNow(page).press("Enter");
+      await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
+      const reason = "error: Fixture manual retry failure";
+      app.relay.failRoute("primary", target, reason);
+      await expect(
+        page.getByText(`Last rejection: ${reason}`, { exact: true }),
+      ).toBeVisible();
+      const beforeManual = requests().length;
+      await retryNow(page).focus();
+      await expect(retryNow(page)).toBeFocused();
+      await retryNow(page).press("Enter");
+      await expect.poll(() => requests().length).toBeGreaterThan(beforeManual);
+      await expect(notice(page)).toBeVisible();
+      app.relay.releaseEose(target);
+      await expect(notice(page)).toHaveCount(0);
+    } finally {
+      await page.clock.resume();
+    }
     await expect(
       page.getByText("Live updates: stream established", { exact: true }),
     ).toBeVisible();

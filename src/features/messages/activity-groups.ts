@@ -4,6 +4,7 @@ import type { ChannelMessage } from "../relay/contracts";
  * Human messages, public agent replies and membership notices stay visible. */
 export function activityRuns(
   rows: readonly ChannelMessage[],
+  requests?: ReadonlyMap<string, string>,
 ): ChannelMessage[][] {
   const groups: ChannelMessage[][] = [];
   let group: ChannelMessage[] | undefined;
@@ -15,6 +16,8 @@ export function activityRuns(
       if (
         !group ||
         previous?.channelId !== row.channelId ||
+        previous.threadRootId !== row.threadRootId ||
+        requests?.get(previous.id) !== requests?.get(row.id) ||
         new Date(previous.createdAt * 1000).toDateString() !==
           new Date(row.createdAt * 1000).toDateString()
       ) {

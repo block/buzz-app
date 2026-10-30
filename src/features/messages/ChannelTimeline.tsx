@@ -305,7 +305,7 @@ function Timeline({
   }
   const disclosures = new Map(
     activity
-      .filter((group) => !group.done || group.retained)
+      .filter((group) => !group.hidden || group.retained)
       .map((group) => [
         group.ids[0],
         {
@@ -319,7 +319,7 @@ function Timeline({
     activity
       .filter(
         (group) =>
-          (!group.done || group.retained) &&
+          (!group.hidden || group.retained) &&
           group.ids.some((id) => expandedActivity.has(id)),
       )
       .flatMap((group) => group.ids.map((id) => [id, group.ids[0]] as const)),

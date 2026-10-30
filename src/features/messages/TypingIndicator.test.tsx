@@ -868,3 +868,61 @@ it("announces split human and agent activity once from the composer", () => {
     "Agent is working. Human is typing",
   );
 });
+
+it("keeps one live indicator when a public progress reply follows working activity", () => {
+  const f = fixture();
+  f.update([{ pubkey: agent, channelId: "channel" }], {
+    local: [
+      {
+        scope: "test",
+        agent,
+        channelId: "channel",
+        messageId: root,
+        threadRootId: root,
+        state: "working",
+        startedAt: 1,
+      },
+    ],
+  });
+  const row: ChannelMessage = {
+    id: "step",
+    channelId: "channel",
+    authorId: agent,
+    audience: "agents",
+    replyParentId: root,
+    createdAt: 100,
+    content: "Checking the fix",
+    mentions: [],
+    attachments: [],
+    reactions: [],
+    participants: [],
+    replyCount: 0,
+  };
+  const { audience: _audience, ...reply } = row;
+  const group = activityPresentation(
+    [row, { ...reply, id: "reply", content: "Still checking" }],
+    f.session.agentActivity.snapshot(),
+    new Set([agent]),
+  ).groups[0];
+  if (!group) throw new Error("Missing activity group");
+  render(
+    <ActivityIndicatorPresentation>
+      <ActivityGroupPreview
+        session={f.session}
+        group={group}
+        profiles={new Map()}
+        media={() => undefined}
+        expanded={false}
+        onToggle={() => {}}
+      />
+      <TypingIndicator session={f.session} channelId="channel" />
+    </ActivityIndicatorPresentation>,
+  );
+  expect(screen.getByText("Checking the fix")).toHaveAttribute(
+    "data-active",
+    "true",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Activity: .*working/ }),
+  ).toBeNull();
+});

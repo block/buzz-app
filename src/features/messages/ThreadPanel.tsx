@@ -1315,7 +1315,7 @@ function ThreadMessages({
       messageId,
     );
     const activeGroups = groups.filter(
-      (group) => !group.done || group.retained,
+      (group) => !group.hidden || group.retained,
     );
     const groupsByFirst = new Map(
       activeGroups.map((group) => [group.ids[0], group]),

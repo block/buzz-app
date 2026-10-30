@@ -31,6 +31,7 @@ const step: ChannelMessage = {
   id: "step",
   channelId: "channel",
   threadRootId: "request",
+  replyParentId: "request",
   authorId: "agent",
   audience: "agents",
   createdAt: 100,
@@ -61,7 +62,7 @@ function fixture() {
     },
   };
 }
-it("keeps a closed sequence hidden when another request starts in the same thread", () => {
+it("keeps working activity through a public reply, then retires only that request", () => {
   const f = fixture();
   try {
     const { audience: _audience, ...publicStep } = step;
@@ -93,7 +94,19 @@ it("keeps a closed sequence hidden when another request starts in the same threa
         />
       );
     }
+    const work = f.local.begin({
+      scope: "test",
+      agent: "agent",
+      channelId: "channel",
+      messageId: "request",
+      threadRootId: "request",
+    });
+    work.started();
     render(<Preview />);
+    expect(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    ).toBeVisible();
+    act(() => work.finish({ ok: true }));
     expect(screen.queryByRole("button")).toBeNull();
     act(() => {
       f.local

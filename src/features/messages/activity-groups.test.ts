@@ -23,6 +23,10 @@ const activity = (
   replyCount: 0,
   ...patch,
 });
+const publicMessage = (id: string, patch: Partial<ChannelMessage> = {}) => {
+  const { audience: _audience, ...row } = activity(id, patch);
+  return row;
+};
 const run = (prefix: string, count = 6) =>
   Array.from({ length: count }, (_, index) => activity(`${prefix}${index}`));
 
@@ -163,4 +167,279 @@ it("hands unparented thread replies to the latest request without overriding exp
   expect(projected({}).get("root")).toBeUndefined();
   expect(projected({ replyParentId: "root" }).get("root")).toEqual(["agent"]);
   expect(projected({ replyParentId: "root" }).get("request")).toBeUndefined();
+});
+
+it.each([
+  {
+    label: "coordinator",
+    authorId: "coordinator",
+    replyParentId: "request",
+    hidden: true,
+  },
+  {
+    label: "unrelated agent",
+    authorId: "other",
+    replyParentId: "request",
+    hidden: false,
+  },
+  {
+    label: "human recipient",
+    authorId: "human",
+    replyParentId: "request",
+    hidden: false,
+  },
+  {
+    label: "another request",
+    authorId: "coordinator",
+    replyParentId: "earlier",
+    hidden: false,
+  },
+])(
+  "only hides helper work after its coordinator replies: $label",
+  ({ authorId, replyParentId, hidden }) => {
+    const request = publicMessage("request", {
+      authorId: "human",
+    });
+    const earlier = { ...request, id: "earlier" };
+    const checking = activity("checking", { replyParentId: "request" });
+    const result = activity("result", {
+      replyParentId: "request",
+      mentions: ["coordinator", "human"],
+    });
+    const reply = publicMessage("reply", {
+      authorId,
+      replyParentId,
+    });
+    const rows = [earlier, request, checking, result, reply];
+    const agents = new Set(["agent", "coordinator", "other"]);
+    const project = (messages: ChannelMessage[]) =>
+      activityDisplayRows(
+        messages,
+        activityPresentation(messages, undefined, agents).groups,
+      );
+    expect(project(rows.slice(0, -1))).toEqual(rows.slice(0, -1));
+    expect(project(rows)).toEqual(hidden ? [earlier, request, reply] : rows);
+  },
+);
+
+it.each([
+  "waiting",
+  "working",
+  "error",
+  "stopped",
+  "done",
+  "superseded",
+] as const)(
+  "uses explicit helper lifecycle over a public progress reply: %s",
+  (state) => {
+    const request = publicMessage("request", {
+      authorId: "human",
+    });
+    const step = activity("step", {
+      replyParentId: request.id,
+      mentions: ["coordinator"],
+    });
+    const reply = publicMessage("reply", {
+      authorId: "coordinator",
+      replyParentId: request.id,
+    });
+    const rows = [request, step, reply];
+    const projection = activityPresentation(
+      rows,
+      {
+        status: "listening",
+        records: [],
+        turns: [],
+        typing: [],
+        trimmed: 0,
+        local: [
+          {
+            scope: "test",
+            agent: "agent",
+            channelId: "solo",
+            threadRootId: request.id,
+            messageId: request.id,
+            startedAt: 1,
+            state,
+          },
+        ],
+      },
+      new Set(["agent", "coordinator"]),
+    );
+    const settled = ["done", "stopped", "superseded"].includes(state);
+    expect(activityDisplayRows(rows, projection.groups)).toEqual(
+      settled ? [request, reply] : rows,
+    );
+    expect(projection.byRow.get(step.id)?.active).toBe(state === "working");
+  },
+);
+
+it("does not borrow completion from a preceding human message without a reply link", () => {
+  const request = publicMessage("request", {
+    authorId: "human",
+  });
+  const step = activity("step");
+  const rows = [request, step];
+  const projection = activityPresentation(
+    rows,
+    {
+      status: "listening",
+      records: [],
+      turns: [],
+      typing: [],
+      trimmed: 0,
+      local: [
+        {
+          scope: "test",
+          agent: "agent",
+          channelId: "solo",
+          threadRootId: request.id,
+          messageId: request.id,
+          startedAt: 1,
+          state: "done",
+        },
+      ],
+    },
+    new Set(["agent"]),
+  );
+  expect(activityDisplayRows(rows, projection.groups)).toEqual(rows);
+});
+
+it("keeps interleaved requests separate when one helper finishes", () => {
+  const first = publicMessage("first", { authorId: "human" });
+  const second = { ...first, id: "second" };
+  const firstStep = activity("first-step", { replyParentId: first.id });
+  const secondStep = activity("second-step", { replyParentId: second.id });
+  const rows = [first, second, firstStep, secondStep];
+  const projection = activityPresentation(
+    rows,
+    {
+      status: "listening",
+      records: [],
+      turns: [],
+      typing: [],
+      trimmed: 0,
+      local: [first, second].map((row) => ({
+        scope: "test",
+        agent: "agent",
+        channelId: "solo",
+        threadRootId: row.id,
+        messageId: row.id,
+        startedAt: 1,
+        state: row === first ? ("done" as const) : ("working" as const),
+      })),
+    },
+    new Set(["agent"]),
+  );
+  expect(activityDisplayRows(rows, projection.groups)).toEqual([
+    first,
+    second,
+    secondStep,
+  ]);
+  expect(projection.byRow.get(secondStep.id)?.active).toBe(true);
+});
+
+it.each(["working", "disconnected", "completed", "failed", "trimmed"] as const)(
+  "uses remote turn evidence without treating a reply as completion: %s",
+  (phase) => {
+    const request = publicMessage("a".repeat(64), {
+      authorId: "human",
+    });
+    const step = activity("step", { replyParentId: request.id });
+    const reply = publicMessage("reply", {
+      replyParentId: request.id,
+    });
+    const rows = [request, step, reply];
+    const kinds = [
+      "turn_started",
+      ...(phase === "completed" || phase === "trimmed"
+        ? ["turn_completed"]
+        : phase === "failed"
+          ? ["turn_error"]
+          : []),
+    ];
+    const projection = activityPresentation(
+      rows,
+      {
+        status: phase === "disconnected" ? "interrupted" : "listening",
+        typing: [],
+        trimmed: phase === "trimmed" ? 1 : 0,
+        records: kinds.map((kind, seq) => ({
+          id: String(seq),
+          agent: "agent",
+          createdAt: 100,
+          receivedAt: 100000,
+          kind,
+          channelIds: ["solo"],
+          plaintext: JSON.stringify({
+            kind,
+            turnId: "turn",
+            channelId: "solo",
+            seq,
+            timestamp: new Date(100000).toISOString(),
+            payload: { triggeringEventIds: [request.id] },
+          }),
+        })),
+        turns: [
+          {
+            agent: "agent",
+            turnId: "turn",
+            channelId: "solo",
+            timestamp: 100000,
+            state:
+              phase === "working"
+                ? "working"
+                : phase === "disconnected"
+                  ? "unknown"
+                  : "ended",
+          },
+        ],
+      },
+      new Set(["agent"]),
+    );
+    expect(activityDisplayRows(rows, projection.groups)).toEqual(
+      phase === "completed" ? [request, reply] : rows,
+    );
+    expect(projection.byRow.get(step.id)?.active).toBe(phase === "working");
+  },
+);
+
+it("waits for both helpers to finish and keeps their history available", () => {
+  const first = activity("one", { replyParentId: "request" });
+  const second = activity("two", {
+    authorId: "helper",
+    replyParentId: "request",
+  });
+  const rows = [first, second];
+  const snapshot = {
+    status: "listening" as const,
+    records: [],
+    turns: [],
+    typing: [],
+    trimmed: 0,
+    local: ["agent", "helper"].map((agent) => ({
+      scope: "test",
+      agent,
+      channelId: "solo",
+      threadRootId: "request",
+      messageId: "request",
+      startedAt: 1,
+      state: agent === "agent" ? ("done" as const) : ("working" as const),
+    })),
+  };
+  const agents = new Set(["agent", "helper"]);
+  const pending = activityPresentation(rows, snapshot, agents);
+  expect(activityDisplayRows(rows, pending.groups)).toEqual(rows);
+  expect(pending.byRow.get(second.id)?.active).toBe(true);
+  const finished = activityPresentation(
+    rows,
+    {
+      ...snapshot,
+      local: snapshot.local.map((entry) => ({ ...entry, state: "done" })),
+    },
+    agents,
+  );
+  expect(activityDisplayRows(rows, finished.groups)).toEqual([]);
+  expect(finished.groups[0]?.history).toEqual(rows);
+  expect(activityDisplayRows(rows, finished.groups, first.id)).toEqual([first]);
 });

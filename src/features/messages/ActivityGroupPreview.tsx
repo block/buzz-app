@@ -34,15 +34,15 @@ export function ActivityGroupPreview({
 }) {
   const container = useRef<HTMLDivElement>(null);
   useActivityFocusHandoff(container);
-  const { latest: row, history, participants, done, working } = group;
+  const { latest: row, history, participants, hidden, working } = group;
   const live = useActivityIndicator(
     session,
     row,
-    !done && !group.followingMessage,
+    !hidden && (working || !group.followingMessage),
     participants,
     group.requestId,
   );
-  if (done && !group.retained) return null;
+  if (hidden && !group.retained) return null;
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
   const name = profile?.name ?? primary.slice(0, 10);

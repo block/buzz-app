@@ -208,7 +208,11 @@ export function provideRelay(
           status: "connecting",
           generation,
           session: store.session,
-          ...(resume ? { restoring: true as const } : {}),
+          // Only the first attempt bootstraps from disk behind the launch
+          // surface; a retry after a failure keeps the app on screen.
+          ...(resume && snapshot.status !== "error"
+            ? { restoring: true as const }
+            : {}),
         });
       else {
         const { error: _error, ...retainedSnapshot } = snapshot;

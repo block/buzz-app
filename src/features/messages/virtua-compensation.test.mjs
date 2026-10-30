@@ -699,6 +699,21 @@ it("releases a flushed correction's held range at scroll-end when another write 
   c.driver.R();
 });
 
+it("keeps a jump's held range when scroll-end fires before the jump's scroll event", () => {
+  const c = setup({ vendor: "Google Inc.", offset: 400 }); // Chromium
+  c.viewport.scrollTop = 300;
+  c.viewport.dispatchEvent(new Event("scroll")); // arms the 150ms scroll-end
+  vi.advanceTimersByTime(140);
+  c.prepend(40); // a 2000px shift jump: the viewport is now 2300–2800
+  expect(c.store.$(1600)).toEqual([7, 39]);
+  // Scroll-end fires before the jump's scroll event. Releasing the hold at the
+  // pre-jump offset would mount rows 0–24 and leave most of the viewport blank.
+  vi.advanceTimersByTime(10);
+  expect(c.store.O()).toBe(false);
+  expect(c.store.$(1600)).toEqual([7, 39]);
+  c.driver.R();
+});
+
 it("re-renders at scroll-end for a held range even when the direction is already idle", () => {
   const c = setup({ platform: "Linux x86_64", offset: 1000 });
   c.store.h(2); // idle before the correction

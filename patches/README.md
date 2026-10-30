@@ -49,8 +49,12 @@ the page's reader row unmounts") Linux WebKit went idle after a 91px correction
 with no buffer below the viewport, and a row just below it did not remount
 before the test failed; the trace does not show which write left the
 correction without its event. Scroll-end now releases the held range and
-re-renders, so idle buffers both sides as above. A correction flushed after
-scroll-end with no later scroll event still holds its range until the next one.
+re-renders, so idle buffers both sides as above. Before that release, the
+driver's scroll-end reads the native offset, as the viewport resize path does:
+a jump whose scroll event trails the 150ms timer is consumed as its own event,
+and the range is not re-rendered at the stale pre-jump offset. A correction
+flushed after scroll-end with no later scroll event still holds its range until
+the next one.
 
 In an isolated WKWebView over real channel history (images, video, live relay),
 fast alternating flicks were measured per frame. In two instrumented runs, all 46

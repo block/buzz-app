@@ -14,6 +14,7 @@ import {
   savedAgentStore,
   setDefaultAgent,
   useDefaultAgent,
+  useSavedAgentState,
 } from "./default-agent";
 
 afterEach(() => {
@@ -578,6 +579,134 @@ it("keeps a live choice adopted on retry through later archive reads", async () 
   expect(screen.getByRole("status").textContent).toBe("Second");
 });
 
+it("ignores an older read failure after a newer choice and preserves it through retry", async () => {
+  const pending = () => {
+    let resolve!: (value: string | undefined) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<string | undefined>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  };
+  const first = pending();
+  const second = pending();
+  let reads = 0;
+  const account = {
+    read: vi.fn(() => (reads++ ? second.promise : first.promise)),
+    write: vi.fn(async () => {}),
+  };
+  const session = { mainAgent: account } as unknown as RelaySession;
+  function Selection() {
+    const state = useSavedAgentState(session, "stale-failure");
+    return (
+      <>
+        <output aria-label="agent">{state.agent ?? "none"}</output>
+        <output aria-label="error">{state.error ?? "none"}</output>
+        <button type="button" onClick={state.retry}>
+          Retry
+        </button>
+      </>
+    );
+  }
+  render(<Selection />);
+  await act(() => chooseDefaultAgent(session, "stale-failure", "a".repeat(64)));
+  await act(async () => first.reject(new Error("old read failed")));
+  expect(screen.getByLabelText("agent")).toHaveTextContent("a".repeat(64));
+  expect(screen.getByLabelText("error")).toHaveTextContent("none");
+  await act(async () => screen.getByRole("button", { name: "Retry" }).click());
+  await act(async () => second.resolve("a".repeat(64)));
+  expect(screen.getByLabelText("agent")).toHaveTextContent("a".repeat(64));
+  expect(screen.getByLabelText("error")).toHaveTextContent("none");
+});
+
+it("settles a first account read after its attempted choice fails", async () => {
+  let resolve!: (value: string | undefined) => void;
+  const read = new Promise<string | undefined>((done) => {
+    resolve = done;
+  });
+  const account = {
+    read: vi.fn(() => read),
+    write: vi.fn(async () => {
+      throw new Error("write failed");
+    }),
+  };
+  const session = { mainAgent: account } as unknown as RelaySession;
+  function Selection() {
+    const state = useSavedAgentState(session, "failed-first-choice");
+    return (
+      <>
+        <output aria-label="read">{String(state.read)}</output>
+        <output aria-label="agent">{state.agent ?? "none"}</output>
+        <output aria-label="error">{state.error ?? "none"}</output>
+      </>
+    );
+  }
+  const view = render(<Selection />);
+  await act(async () => {});
+  await expect(
+    chooseDefaultAgent(session, "failed-first-choice", "a".repeat(64)),
+  ).rejects.toThrow(
+    "Your bestie couldn't be saved to your account. Try again.",
+  );
+  await act(async () => resolve("b".repeat(64)));
+  expect(screen.getByLabelText("read")).toHaveTextContent("true");
+  expect(screen.getByLabelText("agent")).toHaveTextContent("b".repeat(64));
+  expect(screen.getByLabelText("error")).toHaveTextContent("none");
+  view.unmount();
+  render(<Selection />);
+  expect(screen.getByLabelText("read")).toHaveTextContent("true");
+  expect(screen.getByLabelText("agent")).toHaveTextContent("b".repeat(64));
+});
+
+it("recovers a failed first account read after its attempted choice fails", async () => {
+  const pending = () => {
+    let resolve!: (value: string | undefined) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<string | undefined>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  };
+  const first = pending();
+  const second = pending();
+  let reads = 0;
+  const account = {
+    read: vi.fn(() => (reads++ ? second.promise : first.promise)),
+    write: vi.fn(async () => {
+      throw new Error("write failed");
+    }),
+  };
+  const session = { mainAgent: account } as unknown as RelaySession;
+  function Selection() {
+    const state = useSavedAgentState(session, "failed-first-read");
+    return (
+      <>
+        <output aria-label="read">{String(state.read)}</output>
+        <output aria-label="agent">{state.agent ?? "none"}</output>
+        <output aria-label="error">{state.error ?? "none"}</output>
+      </>
+    );
+  }
+  const view = render(<Selection />);
+  await act(async () => {});
+  await expect(
+    chooseDefaultAgent(session, "failed-first-read", "a".repeat(64)),
+  ).rejects.toThrow(
+    "Your bestie couldn't be saved to your account. Try again.",
+  );
+  await act(async () => first.reject(new Error("account offline")));
+  expect(screen.getByLabelText("read")).toHaveTextContent("true");
+  expect(screen.getByLabelText("error")).toHaveTextContent("account offline");
+  view.unmount();
+  render(<Selection />);
+  await act(async () => second.resolve("b".repeat(64)));
+  expect(screen.getByLabelText("read")).toHaveTextContent("true");
+  expect(screen.getByLabelText("agent")).toHaveTextContent("b".repeat(64));
+  expect(screen.getByLabelText("error")).toHaveTextContent("none");
+});
+
 it("a choice made while the account is read wins, even when already cached", async () => {
   const { account, session, Selection } = accountSession("b".repeat(64));
   setDefaultAgent("account", "a".repeat(64));
@@ -778,4 +907,97 @@ it("a choice in another community doesn't keep a failed removal from coming back
   expect(readView("turn-here", "solo:default-agent", null)).toBe(
     "b".repeat(64),
   );
+});
+
+it("saves none when the account's Bestie is deleted, if the account still holds it", async () => {
+  const { account, session } = accountSession("b".repeat(64));
+  const store = savedAgentStore(session, "deleted");
+  const stop = store.subscribe(() => {});
+  await act(async () => account.resolve());
+  expect(store.snapshot()).toBe("b".repeat(64));
+  forgetDefaultAgent("b".repeat(64));
+  // The account is read again before none is saved.
+  expect(account.write).not.toHaveBeenCalled();
+  await act(async () => account.resolve());
+  await vi.waitFor(() => expect(account.write).toHaveBeenLastCalledWith(null));
+  expect(account.saved()).toBeUndefined();
+  expect(store.snapshot()).toBeUndefined();
+  expect(store.known()).toBe(true);
+  stop();
+});
+
+it("keeps a Bestie another device chose before the deleted one was cleared", async () => {
+  const { account, session } = accountSession("b".repeat(64));
+  const stop = savedAgentStore(session, "moved").subscribe(() => {});
+  await act(async () => account.resolve());
+  // Another device saves First meanwhile.
+  await account.write("a".repeat(64));
+  account.write.mockClear();
+  forgetDefaultAgent("b".repeat(64));
+  await act(async () => account.resolve());
+  expect(account.write).not.toHaveBeenCalled();
+  expect(account.saved()).toBe("a".repeat(64));
+  stop();
+});
+
+it("keeps a choice made here while a deleted Bestie's account is read", async () => {
+  const { account, session } = accountSession("b".repeat(64));
+  const stop = savedAgentStore(session, "meanwhile").subscribe(() => {});
+  await act(async () => account.resolve());
+  forgetDefaultAgent("b".repeat(64));
+  await act(() => chooseDefaultAgent(session, "meanwhile", "a".repeat(64)));
+  // The read begun before the choice still finds Second.
+  await act(async () => account.resolve());
+  expect(account.write.mock.calls).toEqual([["a".repeat(64)]]);
+  expect(account.saved()).toBe("a".repeat(64));
+  stop();
+});
+
+it("says the choice is known again after clearing a deleted Bestie fails", async () => {
+  const { account, session } = accountSession("b".repeat(64));
+  const store = savedAgentStore(session, "failed-clear");
+  const heard = vi.fn(() => store.known());
+  const stop = store.subscribe(() => heard());
+  await act(async () => account.resolve());
+  account.write.mockRejectedValueOnce(new Error("offline"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  forgetDefaultAgent("b".repeat(64));
+  await act(async () => account.resolve());
+  await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+  // The last thing listeners heard is that the account's choice is known.
+  expect(heard.mock.results.at(-1)?.value).toBe(true);
+  expect(account.saved()).toBe("b".repeat(64));
+  stop();
+});
+
+it("saves none when the account is read after its Bestie was deleted here", async () => {
+  const { account, session } = accountSession("b".repeat(64));
+  const store = savedAgentStore(session, "deleted-unread");
+  const stop = store.subscribe(() => {});
+  // Deleted while the account's first read is pending.
+  forgetDefaultAgent("b".repeat(64));
+  await act(async () => account.resolve());
+  // It isn't cached on this device again, and the account is read once more.
+  expect(readView("deleted-unread", "solo:default-agent", null)).toBeNull();
+  await act(async () => account.resolve());
+  await vi.waitFor(() => expect(account.write).toHaveBeenLastCalledWith(null));
+  expect(store.snapshot()).toBeUndefined();
+  stop();
+});
+
+it("falls back to a saved choice, not an older read, when a later choice fails", async () => {
+  const { account, session } = accountSession("b".repeat(64));
+  const store = savedAgentStore(session, "fallback");
+  const stop = store.subscribe(() => {});
+  // A choice saved while the first read is pending.
+  await act(() => chooseDefaultAgent(session, "fallback", "a".repeat(64)));
+  await act(async () => account.resolve());
+  account.write.mockRejectedValueOnce(new Error("offline"));
+  await act(() =>
+    expect(
+      chooseDefaultAgent(session, "fallback", "c".repeat(64)),
+    ).rejects.toThrow(),
+  );
+  expect(store.snapshot()).toBe("a".repeat(64));
+  stop();
 });

@@ -1769,7 +1769,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
    or after cards and attachments when no body is drawn. A large-emoji
    paragraph is itself `.text` and keeps its marker inline. */
 .edited {
-  color: var(--text-subtle);
+  color: var(--text-metadata);
   font-size: var(--text-caption);
   letter-spacing: var(--text-caption--letter-spacing);
 }
@@ -3121,7 +3121,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: var(--text-standard);
 }
 .messageBubble[data-own] .edited {
-  color: inherit;
+  color: var(--text-metadata-own);
 }
 .messageBubble[data-own] .spoilerMask {
   color: inherit;

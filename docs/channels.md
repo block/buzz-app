@@ -1249,8 +1249,16 @@ guarantee of general profile retry after every cache clear/network failure. See
 
 ## Membership activity
 
-Channel history and the existing live route include relay-signed kind-40099
-`member_joined`, `member_left` and `member_removed` summaries. Only recognized,
+The live route includes relay-signed kind-40099 `member_joined`, `member_left` and
+`member_removed` summaries. History pages do not: a NIP-CW page counts every row kind
+against its limit, so a burst of joins could fill pages and hold messages back. After
+each page or head read, the window reads the relay's notices apart, newest first in
+pages of 500, down to its oldest loaded message, so the messages show first and the
+activity between them follows. A head read re-reads the newest notices; when they do
+not meet the ones held, the descent starts over. A window holds at most 2,000 notices
+read this way, outside its row budget; older pages past that show without activity.
+A failed notice read leaves activity out until the next page or head read and never
+errors the window. Saved heads carry no notices. Only recognized,
 channel-scoped payloads from the connected relay become activity rows; malformed,
 unknown and other authors' summaries are not rendered as JSON. These events do not
 grant/revoke access: the existing signed roster remains authoritative.
@@ -1259,7 +1267,8 @@ The timeline groups adjacent arrivals/departures into compact avatar-and-text ro
 Messages, local-day changes and gaps over an hour break groups; removals by different
 actors stay separate. Same-adder additions use “added by you” for the viewer;
 mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
-IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
+IDs and cursors remain per event, and live activity counts against the row budget.
+Profiles reuse the
 shared background directory/cache, and reading anchors can resolve a member of a
 group. Activity has no message actions, thread, unread evidence or chat preview.
 A Solo chat omits its owner's additions and removals of agents before its first

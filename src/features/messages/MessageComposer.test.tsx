@@ -10099,6 +10099,18 @@ it("an archived agent in the pill blocks the send and asks for another agent", (
   ).toBeVisible();
 });
 
+it("choosing another agent replaces an archived one the menu cannot uncheck", async () => {
+  let archived = false;
+  const { h, bea, sendingTo } = mountSoloAgents({ archived: () => archived });
+  archived = true;
+  act(() => h.commands().audience?.toggle(bea));
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.fill("hello");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls.at(-1)?.[2]).toEqual([second.pubkey]);
+});
+
 it("a deleted typed mention falls back to the chat's own agent when the main agent isn't in it", async () => {
   const { h, ada, sendingTo } = mountSoloAgents({
     main: second.pubkey,

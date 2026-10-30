@@ -975,7 +975,13 @@ function Composer({
             return;
           }
           if (!routed.some((person) => person.pubkey === pubkey)) {
-            if (routed.length < 32) choose([...routed, { pubkey, name }]);
+            // An added agent replaces any the message can no longer reach,
+            // which the menu cannot uncheck.
+            const admitted = admits();
+            const reachable = routed.filter((person) =>
+              admitted(person.pubkey),
+            );
+            if (reachable.length < 32) choose([...reachable, { pubkey, name }]);
           } else if (routed.length > 1)
             choose(routed.filter((person) => person.pubkey !== pubkey));
         },

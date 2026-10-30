@@ -26,6 +26,11 @@ import type {
 } from "../plugins/installer";
 
 const shortCommit = (commit: string) => commit.slice(0, 12);
+const sourceLabel = (repository: string, path: string) =>
+  path === "." ? repository : `${repository} · ${path}`;
+const trimSlash = (value: string) => value.replace(/\/+$/, "");
+const requester = (origin: PluginInstallRequest["origin"]) =>
+  origin.kind === "plugin" ? origin.name : "a link";
 
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
@@ -68,6 +73,8 @@ export function PluginImport({
   returnFocus,
   request,
   onRequestSettled,
+  onRequestClaimed,
+  holdReview,
 }: {
   initialUpdateAvailable?: boolean;
   plugins: PluginManager;
@@ -87,6 +94,9 @@ export function PluginImport({
   onRequestSettled?:
     | ((id: number, outcome: PluginInstallOutcome) => void)
     | undefined;
+  onRequestClaimed?: ((id: number) => void) | undefined;
+  /** Marks a review dialog as open so a plugin request cannot open a second one. */
+  holdReview?: (() => () => void) | undefined;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
     repository: string,
@@ -197,11 +207,16 @@ export function PluginImport({
       });
     };
   }, []);
+  useEffect(() => {
+    if (!open || !holdReview) return;
+    return holdReview();
+  }, [open, holdReview]);
   const claimRequest = useEffectEvent((next: PluginInstallRequest) => {
     if (open || loading || discarding || preview || pending.current) {
       onRequestSettled?.(next.id, "unavailable");
       return;
     }
+    onRequestClaimed?.(next.id);
     boundId.current = next.id;
     setBound(next);
     setRepository(next.source.repository);
@@ -280,8 +295,29 @@ export function PluginImport({
 
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
-  const duplicate = updating && !updateId && !requested;
+  const installedSource = existing?.updateSource;
+  const conflict =
+    requested &&
+    existing?.source === "external" &&
+    candidate &&
+    preview &&
+    !(
+      installedSource &&
+      "repository" in installedSource &&
+      trimSlash(installedSource.repository) === trimSlash(preview.source) &&
+      installedSource.path === candidate.path
+    )
+      ? `${existing.manifest.name} is already installed from ${
+          installedSource && "repository" in installedSource
+            ? sourceLabel(installedSource.repository, installedSource.path)
+            : installedSource
+              ? sourceLabel(installedSource.root, installedSource.path)
+              : "an unknown source"
+        }; remove it first to install it from ${sourceLabel(preview.source, candidate.path)}.`
+      : null;
+  const duplicate = updating && !updateId && (!requested || !!conflict);
   const upToDate =
+    !conflict &&
     // An identical package can still establish a missing source. Native keeps
     // its enabled state and existing rollback target for the same revision.
     !(updateId && !savedSource) &&
@@ -456,7 +492,11 @@ export function PluginImport({
       setError(null);
       setDragging(false);
       setShowUnchanged(false);
-      releaseRequest("cancelled");
+      releaseRequest(
+        requested && reviewing && upToDate && !conflict
+          ? "installed"
+          : "cancelled",
+      );
       setOpen(false);
       onClosed?.();
       return true;
@@ -766,6 +806,7 @@ export function PluginImport({
               {reviewing &&
                 candidate &&
                 !upToDate &&
+                !conflict &&
                 (!existing || !!updateId || requested) && (
                   <Button
                     ref={installButton}
@@ -846,58 +887,62 @@ export function PluginImport({
           <div hidden={!!preview || (!!updateId && !!savedSource)}>
             {(!updateId || !savedSource) && (
               <div className={styles.columns}>
-                <section
-                  aria-label="Add from folder"
-                  className={styles.folder}
-                  data-dragging={dragging || undefined}
-                  onDragOver={(event) => {
-                    if (!event.dataTransfer.types.includes("Files")) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.dataTransfer.dropEffect = blocked ? "none" : "copy";
-                    setDragging(!blocked);
-                  }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setDragging(false);
-                    const items = Array.from(event.dataTransfer.items);
-                    const entry =
-                      items.length === 1
-                        ? items[0]?.webkitGetAsEntry?.()
-                        : null;
-                    const current = lifetime.current;
-                    void load(async () => {
-                      if (!entry?.isDirectory)
-                        throw new Error("Drop one folder, or choose Browse.");
-                      const upload = await readPluginFolder(entry);
-                      if (!current.active) return null;
-                      const next = await imports.files(
-                        upload.source,
-                        upload.files,
-                      );
-                      return next
-                        ? {
-                            ...next,
-                            warnings: [...upload.warnings, ...next.warnings],
-                          }
-                        : null;
-                    });
-                  }}
-                >
-                  <FolderOpenIcon size={32} aria-hidden="true" />
-                  <p className="m-0 text-body-sm">Drop a plugin folder here</p>
-                  <Button
-                    size="sm"
-                    ref={browse}
-                    aria-label="Browse plugin folder"
-                    disabled={blocked}
-                    onClick={() => void load(() => imports.folder())}
+                {!bound && (
+                  <section
+                    aria-label="Add from folder"
+                    className={styles.folder}
+                    data-dragging={dragging || undefined}
+                    onDragOver={(event) => {
+                      if (!event.dataTransfer.types.includes("Files")) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.dataTransfer.dropEffect = blocked ? "none" : "copy";
+                      setDragging(!blocked);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setDragging(false);
+                      const items = Array.from(event.dataTransfer.items);
+                      const entry =
+                        items.length === 1
+                          ? items[0]?.webkitGetAsEntry?.()
+                          : null;
+                      const current = lifetime.current;
+                      void load(async () => {
+                        if (!entry?.isDirectory)
+                          throw new Error("Drop one folder, or choose Browse.");
+                        const upload = await readPluginFolder(entry);
+                        if (!current.active) return null;
+                        const next = await imports.files(
+                          upload.source,
+                          upload.files,
+                        );
+                        return next
+                          ? {
+                              ...next,
+                              warnings: [...upload.warnings, ...next.warnings],
+                            }
+                          : null;
+                      });
+                    }}
                   >
-                    Browse
-                  </Button>
-                </section>
+                    <FolderOpenIcon size={32} aria-hidden="true" />
+                    <p className="m-0 text-body-sm">
+                      Drop a plugin folder here
+                    </p>
+                    <Button
+                      size="sm"
+                      ref={browse}
+                      aria-label="Browse plugin folder"
+                      disabled={blocked}
+                      onClick={() => void load(() => imports.folder())}
+                    >
+                      Browse
+                    </Button>
+                  </section>
+                )}
                 <form
                   aria-label="Add from Git"
                   className={styles.git}
@@ -950,6 +995,7 @@ export function PluginImport({
                     </Field>
                     {bound && (
                       <p className="m-0 break-all text-caption text-muted">
+                        Requested by {requester(bound.origin)}.{" "}
                         {bound.source.commit
                           ? `Pinned to commit ${shortCommit(bound.source.commit)}. Nothing is installed unless the fetched repository matches it. `
                           : ""}
@@ -1083,6 +1129,11 @@ export function PluginImport({
                     </code>
                   </section>
                 )}
+                {reviewing && bound && (
+                  <p className="m-0 text-caption text-muted">
+                    Requested by {requester(bound.origin)}.
+                  </p>
+                )}
                 {reviewing && requested && preview.commit && (
                   <p className="m-0 break-all text-caption text-muted">
                     Commit {shortCommit(preview.commit)}
@@ -1091,6 +1142,7 @@ export function PluginImport({
                       : ""}
                   </p>
                 )}
+                {reviewing && conflict && <p className="m-0">{conflict}</p>}
                 {reviewing && updating && !updateId && !requested && (
                   <p>
                     This plugin is already installed. Open its details to manage
@@ -1100,6 +1152,7 @@ export function PluginImport({
                 {reviewing &&
                   candidate &&
                   (existing?.source !== "bundled" || loading) &&
+                  !conflict &&
                   (!existing || !!updateId || requested) && (
                     <PluginAccessReview
                       manifest={candidate.manifest}

@@ -226,7 +226,7 @@ lookup returns `undefined` when an older host has not provided it.
 
 ```ts
 type PluginInstaller = {
-  installed(): readonly { id: string; revision: string; enabled: boolean }[];
+  installed(): readonly { id: string; enabled: boolean }[];
   subscribe(listener: () => void): () => void;
   requestInstall(source: {
     repository: string; // https://, ssh:// or scp-style git URL
@@ -237,22 +237,40 @@ type PluginInstaller = {
 };
 ```
 
-`installed()` lists the catalog and keeps the same array until it changes, so it
-works directly as an external-store snapshot with `subscribe`. `requestInstall`
-never installs silently. It opens Settings → Plugins with the Git source prefilled
+`installed()` lists the plugin IDs in the catalog and whether each is enabled. It
+reports external plugins as disabled while they are paused, omits revisions and
+sources, and is not gated: every active plugin can read it. The returned array and
+its entries are frozen, and the same array is returned until the list changes, so it
+works directly as an external-store snapshot with `subscribe`. A subscription ends
+when the calling plugin does, and a throwing listener is logged and ignored.
+`requestInstall` never installs silently. It opens Settings → Plugins with the Git source prefilled
 and read-only, and the user still chooses **Find**, reviews the existing access
 review, and confirms. The promise resolves with what the user did: `installed`,
 `updated` (an installed plugin was replaced), or `cancelled` (the dialog was
 closed, nothing changed, or the plugin was already current). It resolves
 `unavailable` in the browser build, before plugin settings have loaded, when
-Settings cannot open, or while another request is waiting on the user, and rejects
-for a source outside the accepted grammar. When `commit` is given, the native Git
+Settings cannot open, while another request waits or any plugin review dialog is
+open, without a recent user gesture (where the platform reports user activation),
+or when the calling plugin is throttled. It rejects for a source outside the
+accepted grammar or a caller that is not an installed plugin.
+
+The request is attributed to the calling plugin, and the review says "Requested by
+<plugin name>" ("a link" for an OS link). After a `cancelled` outcome a plugin waits
+5 seconds before its next request, doubling with each consecutive cancel up to 5
+minutes; an install resets it. A plugin may make 20 accepted requests per session.
+A request nobody claims in Settings expires as `cancelled` after a minute, and any
+request is cancelled when Settings closes.
+
+A request can install a new plugin, or update an installed plugin only from the same
+saved Git repository and folder. A plugin already installed from another source,
+including a local folder or an unknown one, is refused with a message naming both
+sources; remove it first to install it from the new one. A plugin already at the
+requested revision resolves `installed`. The source fields are read-only while a
+request is open, and the folder source is hidden. When `commit` is given, the native Git
 import refuses a reference whose tip is any other commit, so a branch that moves
 after a catalog review cannot install unreviewed code. The same request
 arrives from an OS link as
 [`buzz://plugin-install`](deep-links.md#accepted-links).
-
-### Conversation sidebar sections
 
 ### Conversation sidebar sections
 

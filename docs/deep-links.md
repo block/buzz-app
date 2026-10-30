@@ -52,9 +52,10 @@ page itself guards.
 
 `buzz://plugin-install` asks to review a plugin for installation; it is OS-only,
 like `buzz://join`, and is not a message-content link or a navigation destination.
-It holds through identity setup, then opens Settings → Plugins with the Git source
+It holds through identity setup and while plugin settings are still loading, then
+opens Settings → Plugins with the Git source
 prefilled and read-only: `repository` (an `https://` or `ssh://` URL, or an scp-style
-`user@host:path`, without a password, query or fragment), `ref` (required; letters,
+`git@host:path`, without a password, query or fragment), `ref` (required; letters,
 digits, `.`, `_`, `/` and `-`) and, optionally, `path`, a relative folder inside the
 repository (no `..` segments). Nothing is read from the network until the user
 chooses **Find**, and nothing is installed until the user confirms the existing
@@ -62,8 +63,11 @@ access review. `path` selects that plugin folder directly; a repository without 
 is refused. `commit` (40- or 64-hex) pins the reviewed commit: the native Git import
 refuses a reference whose tip is any other commit, so nothing reaches review, and the
 review shows the short commit. Without `commit`, the branch or tag is read as it stands.
-Malformed or repeated parameters fail as `invalid-target`; the link does not bind to
-the selected community. The same request is available to plugins as the optional
+The repository must not carry a password, an ssh user other than `git`, a host
+beginning with `-`, a non-ASCII character, or a GitHub tree URL. The review says
+"Requested by a link", and a plugin already installed from a different source is
+refused rather than replaced. Malformed or repeated parameters fail as
+`invalid-target`; the link does not bind to the selected community. The same request is available to plugins as the optional
 `pluginInstaller` service described in the
 [plugin architecture](plugin-architecture.md).
 

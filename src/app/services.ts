@@ -47,6 +47,8 @@ import { bundledPlugins } from "../bundled";
 import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
 import {
+  createPluginInstallCore,
+  createPluginInstallLinkHandler,
   createPluginInstallRequests,
   PluginInstallerService,
 } from "../plugins/installer";
@@ -73,12 +75,13 @@ export function createServices() {
   const pages = new PagesService(ctx);
   const sidebarSections = new SidebarSectionsService(ctx);
   const pluginInstallRequests = createPluginInstallRequests();
-  const pluginInstaller = new PluginInstallerService(ctx, {
+  const pluginInstallCore = createPluginInstallCore({
     plugins,
     requests: pluginInstallRequests,
     openPlugins: () =>
       navigation.open({ version: 1, kind: "settings", section: "plugins" }),
   });
+  new PluginInstallerService(ctx, { plugins, core: pluginInstallCore });
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -164,15 +167,18 @@ export function createServices() {
   };
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
+  const pluginInstallLinks = createPluginInstallLinkHandler({
+    plugins,
+    core: pluginInstallCore,
+    fail: navigationHost.fail,
+  });
+  ctx.effect(() => pluginInstallLinks.dispose);
   ctx.effect(() =>
     bindDeepLinks(
       {
         ...navigationHost,
         invite: invites.open,
-        pluginInstall: ({ source }) =>
-          void pluginInstaller.requestInstall(source).then((outcome) => {
-            if (outcome === "unavailable") navigationHost.fail("unavailable");
-          }),
+        pluginInstall: pluginInstallLinks.handle,
       },
       communities,
     ),

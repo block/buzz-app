@@ -12,8 +12,6 @@ use protection::ProcessProtection;
 use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
-#[cfg(test)]
-use buzzodz_plugins::ProcessArtifact;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;

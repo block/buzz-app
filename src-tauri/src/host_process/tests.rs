@@ -398,7 +398,7 @@ fn snapshot_mcp_and_containment_keep_the_verified_target_and_argument_order() {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
     use sha2::{Digest, Sha256};
-    let artifact = ProcessArtifact {
+    let artifact = buzzodz_plugins::ProcessArtifact {
         path: source.to_str().unwrap().into(),
         sha256: format!("{:x}", Sha256::digest(&bytes)),
         siblings: vec![],

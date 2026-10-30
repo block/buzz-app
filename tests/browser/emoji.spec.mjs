@@ -1081,6 +1081,32 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(
       page.getByRole("option", { name: ":party:", exact: true }),
     ).toBeVisible();
+    // Continued typing after a foreground failure must retain explicit recovery.
+    await page.goto(cold);
+    await expect
+      .poll(() => page.evaluate(() => window.emojiFixture.status("a")))
+      .toBe("error");
+    await page.evaluate(() => window.emojiFixture.fail(true));
+    await draft().fill(":par");
+    const unavailable = page.getByText(
+      "Community emoji unavailable; Unicode results shown.",
+    );
+    await expect(unavailable).toBeVisible();
+    const failedReads = await page.evaluate(
+      () => window.emojiFixture.report.reads.length,
+    );
+    await draft().press("t");
+    await expect(unavailable).toBeVisible();
+    await draft().press("y");
+    await expect(unavailable).toBeVisible();
+    expect(
+      await page.evaluate(() => window.emojiFixture.report.reads.length),
+    ).toBe(failedReads);
+    await page.evaluate(() => window.emojiFixture.fail(false));
+    await page.getByRole("option", { name: "Retry" }).click();
+    await expect(
+      page.getByRole("option", { name: ":party:", exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByText("Community emoji unavailable; Unicode results shown."),
     ).toHaveCount(0);

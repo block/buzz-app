@@ -510,7 +510,15 @@ it("active catalog demand bypasses queued warm-up and recovers a cold failure wi
     expect(h.session.emoji.snapshot().status).toBe("error");
     await h.session.emoji.ensure();
     expect(h.session.emoji.snapshot().status).toBe("error");
-    const retry = h.session.emoji.ensure("foreground");
+    const failed = h.session.emoji.snapshot();
+    const failedReads = h.query.mock.calls.length;
+    // Completion providers remount on each edit. A settled foreground failure
+    // retains its recovery action instead of starting another automatic read.
+    await h.session.emoji.ensure("foreground");
+    await h.session.emoji.ensure("foreground");
+    expect(h.query.mock.calls).toHaveLength(failedReads);
+    expect(h.session.emoji.snapshot()).toBe(failed);
+    const retry = h.session.emoji.refresh();
     await vi.advanceTimersByTimeAsync(0);
     catalog()?.respond([set()]);
     await retry;

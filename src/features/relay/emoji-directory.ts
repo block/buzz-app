@@ -174,10 +174,14 @@ export function createEmojiDirectory(
   }
   const refresh = () => load("foreground");
   function ensure(priority: Priority = "background") {
+    // Active controls may remount on every keystroke. Promote passive demand
+    // once; after an active failure, keep the error and explicit Retry stable.
     if (
       !limited &&
       (snapshot.status === "idle" ||
-        (priority === "foreground" && snapshot.status !== "ready"))
+        (priority === "foreground" &&
+          pendingPriority === "background" &&
+          snapshot.status !== "ready"))
     )
       return load(priority);
     return pending ?? Promise.resolve();

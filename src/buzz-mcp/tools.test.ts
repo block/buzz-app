@@ -1006,7 +1006,15 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
     }
     if (kind === 9000 || kind === 9021) {
       const key = kind === 9021 ? me : target;
-      const role = template.tags.find((t) => t[0] === "role")?.[1] ?? "member";
+      // Like the relay, with no role asked for a member keeps theirs and a
+      // new one gets the channel's join_role.
+      const tags = (kind: number) =>
+        state.find((e) => e.kind === kind && e.tags[0]?.[1] === id)?.tags ?? [];
+      const role =
+        template.tags.find((t) => t[0] === "role")?.[1] ??
+        tags(39002).find((t) => t[0] === "p" && t[1] === key)?.[3] ??
+        tags(39000).find((t) => t[0] === "join_role")?.[1] ??
+        "member";
       put(39002, id, (tags) => [...without(tags, key), ["p", key, "", role]]);
     }
     if (kind === 9001 || kind === 9022)
@@ -1720,9 +1728,29 @@ it("refuses channel arguments that do not fit, before publishing", async () => {
   await expect(
     channel("channel_create", { name: "x", visibility: "open", ttl: 1.5 }),
   ).rejects.toThrow("ttl must be a whole number of seconds.");
+  await expect(
+    channel("channel_create", {
+      name: "x",
+      visibility: "open",
+      join_role: "admin",
+    }),
+  ).rejects.toThrow("join_role must be member or guest.");
+  await expect(
+    channel("channel_create", {
+      name: "x",
+      visibility: "private",
+      join_role: "guest",
+    }),
+  ).rejects.toThrow("join_role guest is for open channels.");
+  await expect(
+    channel("channel_update", { visibility: "private", join_role: "guest" }),
+  ).rejects.toThrow("join_role guest is for open channels.");
   await expect(channel("channel_update", {})).rejects.toThrow(
-    "Give name, about, visibility, ttl, topic or purpose.",
+    "Give name, about, visibility, ttl, join_role, topic or purpose.",
   );
+  await expect(
+    channel("channel_update", { join_role: "owner" }),
+  ).rejects.toThrow("join_role must be member or guest.");
   await expect(
     callTool(client, { channel: "chan" }, "channel_leave", {}),
   ).rejects.toThrow("Invalid channel ID");
@@ -1758,6 +1786,151 @@ it("shows a channel's details and changes them as the channel shows", async () =
   ).rejects.toThrow(
     "No channel gone that you can see (it may not be visible yet).",
   );
+});
+
+it("makes a channel an announce channel and back", async () => {
+  const { client, published } = relay();
+  const context = { channel: room };
+  await expect(
+    callTool(client, context, "channel_update", { join_role: "guest" }),
+  ).resolves.toBe(`updated ${room}`);
+  await expect(callTool(client, context, "channel_get", {})).resolves.toBe(
+    `${room} plans (stream, open, join as guest)\nabout: roadmap\nyou: owner`,
+  );
+  await expect(
+    callTool(client, context, "channel_update", { join_role: "member" }),
+  ).resolves.toBe(`updated ${room}`);
+  expect(published.map((template) => template.tags)).toEqual([
+    [
+      ["h", room],
+      ["join_role", "guest"],
+    ],
+    [
+      ["h", room],
+      ["join_role", "member"],
+    ],
+  ]);
+});
+
+it("creates an announce channel after adding its template's agents", async () => {
+  const { client, published, state } = relay();
+  client.templates = vi.fn(async () => [
+    { name: "Team", canvas: "", agents: [alice] },
+  ]);
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "team",
+    visibility: "open",
+    join_role: "guest",
+    template: "Team",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  // Set last: an agent added with no role would otherwise join as a guest.
+  expect(published.map((template) => [template.kind, template.tags])).toEqual([
+    [
+      9007,
+      [
+        ["h", id],
+        ["name", "team"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ],
+    ],
+    [
+      9000,
+      [
+        ["h", id],
+        ["p", alice],
+      ],
+    ],
+    [
+      9002,
+      [
+        ["h", id],
+        ["join_role", "guest"],
+      ],
+    ],
+  ]);
+  expect(answer).toBe(
+    [
+      `created ${id}`,
+      `added ${alice} Alice Smith`,
+      "new people join as guests",
+    ].join("\n"),
+  );
+  await expect(
+    callTool(client, { channel: id }, "channel_get", {}),
+  ).resolves.toBe(`${id} team (stream, open, join as guest)\nyou: owner`);
+  const roster = () =>
+    state.find((e) => e.kind === 39002 && e.tags[0]?.[1] === id)?.tags;
+  expect(roster()).toContainEqual(["p", alice, "", "member"]);
+  // Now anyone added with no role is a guest, and the answer says so.
+  await expect(
+    callTool(client, { channel: id }, "members", { add: [bob] }),
+  ).resolves.toBe(`added ${bob} as guest`);
+  expect(roster()).toContainEqual(["p", bob, "", "guest"]);
+});
+
+it("sets join_role when the template's Canvas is refused, and says when it cannot", async () => {
+  const { client, published } = relay();
+  const publish = client.publish;
+  client.publish = vi.fn(async (template: Template) => {
+    if (template.kind === 40100) throw new Error("canvas refused");
+    return publish(template);
+  });
+  client.templates = vi.fn(async () => [
+    { name: "Team", canvas: "# Plan", agents: [alice] },
+  ]);
+  const create = () =>
+    callTool(client, {}, "channel_create", {
+      name: "team",
+      visibility: "open",
+      join_role: "guest",
+      template: "Team",
+    });
+  let answer = await create();
+  let id = published[0]?.tags[0]?.[1] as string;
+  expect(published.map((template) => template.kind)).toEqual([9007, 9002]);
+  expect(answer).toBe(
+    `created ${id}\nCanvas not started, so no agents were added: canvas refused\nnew people join as guests`,
+  );
+  const query = client.query;
+  client.query = vi.fn(async (filters: readonly Filter[]) => {
+    if (filters.some((f) => (f.kinds as number[]).includes(39000)))
+      throw new Error("kind 39000 unavailable");
+    return query(filters);
+  });
+  answer = await create();
+  id = published.at(-1)?.tags[0]?.[1] as string;
+  expect(published.at(-1)?.kind).toBe(9007);
+  expect(answer).toBe(
+    `The community accepted channel ${id} but its state could not be read back: kind 39000 unavailable; the template was not applied; join_role was not set.`,
+  );
+});
+
+it("reports a new channel whose join_role was refused", async () => {
+  const { client, published } = relay();
+  const publish = client.publish;
+  client.publish = vi.fn(async (template: Template) => {
+    if (template.kind === 9002) throw new Error("restricted: admins only");
+    return publish(template);
+  });
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "news",
+    visibility: "open",
+    join_role: "guest",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(published.map((template) => template.kind)).toEqual([9007]);
+  expect(answer).toBe(
+    `created ${id}\njoin_role not set: restricted: admins only`,
+  );
+  // member is the default, so it needs no second event.
+  await callTool(client, {}, "channel_create", {
+    name: "chat",
+    visibility: "open",
+    join_role: "member",
+  });
+  expect(published.map((template) => template.kind)).toEqual([9007, 9007]);
 });
 
 it("leaves, joins, archives, unarchives and deletes a channel", async () => {

@@ -81,6 +81,7 @@
     "allow-media-download",
     "allow-file-download",
     "allow-media-copy-image",
+    "allow-clipboard-write-text",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",
     "allow-workspace-pick-folder",

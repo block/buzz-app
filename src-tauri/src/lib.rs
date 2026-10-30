@@ -52,7 +52,7 @@ use nsec_backup::{
     nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
-mod image_clipboard;
+mod clipboard;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
@@ -70,6 +70,7 @@ mod workspace_folder;
 use legacy_communities::legacy_communities;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::repositories_folder_validate;
+mod relaunch;
 mod relay;
 mod relay_admin;
 mod sign_out;
@@ -575,7 +576,7 @@ async fn plugin_recover(
 }
 #[tauri::command]
 async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    app.request_restart();
+    relaunch::request(&app);
     Ok(())
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
@@ -649,6 +650,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         file_download,
         media_download,
         media_copy_image,
+        clipboard::clipboard_write_text,
         media_stream_base,
         get_os_idle_seconds,
         workspace_pick_folder,
@@ -966,7 +968,7 @@ pub fn run() {
         None => builder,
     };
     builder
-        .manage(image_clipboard::ImageClipboard::default())
+        .manage(clipboard::Clipboard::default())
         .manage(keep_awake::KeepAwake::default())
         .manage(identity)
         .manage(archive::ArchiveHost::default())
@@ -1055,6 +1057,8 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 shut_down(app);
+                #[cfg(target_os = "macos")]
+                relaunch::on_exit(app);
             }
         });
 }
@@ -1066,7 +1070,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<federated_identity::socket::Sockets>().clear();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
-    app.state::<image_clipboard::ImageClipboard>().release();
+    app.state::<clipboard::Clipboard>().release();
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();

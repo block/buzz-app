@@ -64,15 +64,19 @@ afterEach(() => {
 });
 function fixture() {
   let subject = "account-a";
-  const session = createOAuthSession(async () => ({
-    value: "credential",
-    account: {
-      subject,
-      email: "a@example.com",
-      canUseRemoteAgents: true,
-      canUseBuilderlabDecisions: false,
-    },
-  }));
+  const session = createOAuthSession(
+    async () => ({
+      value: "credential",
+      account: {
+        subject,
+        email: "a@example.com",
+        canUseRemoteAgents: true,
+        canUseBuilderlabDecisions: false,
+      },
+    }),
+    undefined,
+    { request: (input) => request(input) },
+  );
   let stored = response();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {
     if (url.endsWith("/update-agent")) {
@@ -105,7 +109,7 @@ function fixture() {
         }
       : stored;
   });
-  const client = createAgentClient({ request, runCommand: vi.fn() }, session);
+  const client = createAgentClient(session);
   const type = {
     ...builderlabType(client, session, {
       snapshot: () => ({ status: "disconnected", generation: 0 }),

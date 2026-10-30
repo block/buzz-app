@@ -17,7 +17,7 @@ import {
   type RemoteAgent,
   type RemoteAgentModel,
 } from "../agents/client";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 import { effortLabel, modelChoice } from "./models";
 
 const statuses = {
@@ -39,7 +39,7 @@ export function ModelSettings({
   harnessControl,
 }: {
   client: AgentClient;
-  session: OAuthSession;
+  session: BuilderlabSession;
   harnessControl?: ReactNode;
   settings:
     | { agent: RemoteAgent; subject: string }

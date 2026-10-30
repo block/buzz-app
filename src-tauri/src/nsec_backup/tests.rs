@@ -184,6 +184,7 @@ impl Service {
     }
     fn host(&self, root: &std::path::Path) -> NsecBackupHost {
         NsecBackupHost {
+            federated: None,
             state: Default::default(),
             config: Arc::new(Some(Config {
                 service_url: self.root.clone(),
@@ -195,7 +196,7 @@ impl Service {
     fn session(&self) -> Session {
         Session {
             source: Source::Hosted,
-            credential: Zeroizing::new("synthetic-cli-credential".into()),
+            auth: Auth::Credential(Zeroizing::new("synthetic-cli-credential".into())),
         }
     }
     async fn enable(&self, host: &NsecBackupHost) {
@@ -251,11 +252,13 @@ async fn serve(
         bytes.extend_from_slice(&chunk[..count]);
     }
     let body = bytes[header_end..].to_vec();
+    let lower = header.to_ascii_lowercase();
     assert!(
         path.ends_with("/exchange")
-            || header
-                .to_ascii_lowercase()
-                .contains("x-bb-session-credential: synthetic-cli-credential")
+            || lower.contains("x-bb-session-credential: synthetic-cli-credential")
+            || lower.contains("authorization: bearer fixture-session-token")
+                && !lower.contains("x-bb-session-credential"),
+        "{header}"
     );
     let (status, response) = {
         let mut state = shared.lock().unwrap();
@@ -879,6 +882,7 @@ async fn saving_consent_after_login_wakes_the_existing_uploader_and_disable_fenc
 fn source_generations_and_teardown_fence_retired_work_without_another_sources_logout() {
     // No filesystem or worker is configured; exercise purpose-specific credential ownership.
     let host = NsecBackupHost {
+        federated: None,
         state: Default::default(),
         root: None,
         config: Arc::new(Some(Config {
@@ -1163,6 +1167,7 @@ async fn pending_backup_reseals_when_the_authenticated_recipient_rotates() {
 #[test]
 fn signing_out_the_latest_source_retains_the_other_sources_session() {
     let host = NsecBackupHost {
+        federated: None,
         state: Default::default(),
         root: None,
         config: Arc::new(Some(Config {
@@ -1173,7 +1178,7 @@ fn signing_out_the_latest_source_retains_the_other_sources_session() {
     // Start with an admitted secondary session, independent of optional build origins.
     host.state.lock().unwrap().sessions.push(Session {
         source: Source::Builderlab,
-        credential: Zeroizing::new("synthetic-builderlab-session".into()),
+        auth: Auth::Credential(Zeroizing::new("synthetic-builderlab-session".into())),
     });
     host.session(
         Source::Hosted,
@@ -1210,7 +1215,7 @@ fn signing_out_the_latest_source_retains_the_other_sources_session() {
         .sessions
         .last()
         .is_some_and(|s| s.source == Source::Builderlab
-            && s.credential.as_str() == "synthetic-builderlab-session"));
+            && matches!(&s.auth, Auth::Credential(c) if c.as_str() == "synthetic-builderlab-session")));
 }
 
 #[tokio::test]
@@ -1221,6 +1226,7 @@ async fn login_session_changes_leave_recovery_and_selected_installation_alive() 
         let host = service.host(directory.path());
         // Admit normal source events on the configured origin; HTTP stays on the loopback fixture.
         let login = NsecBackupHost {
+            federated: None,
             state: host.state.clone(),
             root: None,
             config: Arc::new(Some(Config {
@@ -1254,10 +1260,10 @@ async fn login_session_changes_leave_recovery_and_selected_installation_alive() 
             assert_eq!(identity.viewer().await.unwrap(), pubkey([1; 32]));
             let state = host.state.lock().unwrap();
             assert_eq!(state.sessions.len(), 1);
-            assert_eq!(
-                state.sessions[0].credential.as_str(),
-                "synthetic-plugin-session"
-            );
+            assert!(matches!(
+                &state.sessions[0].auth,
+                Auth::Credential(c) if c.as_str() == "synthetic-plugin-session"
+            ));
         } else {
             service.pause_upload.store(true, Ordering::SeqCst);
             let recovering = recover_with(&service, &host);
@@ -1542,6 +1548,7 @@ async fn a_null_handoff_reports_no_session_only_for_a_running_pass() {
     let host = service.host(directory.path());
     // Admit hosted handoffs on the production origin; HTTP stays on the loopback fixture.
     let login = NsecBackupHost {
+        federated: None,
         state: host.state.clone(),
         root: Some(directory.path().to_owned()),
         config: production(),
@@ -1651,11 +1658,13 @@ async fn handoffs_and_retries_return_a_ticket_only_when_a_pass_will_start() {
     // No consent is saved, so admitted passes stop before any request.
     let directory = tempfile::tempdir().unwrap();
     let host = NsecBackupHost {
+        federated: None,
         state: Default::default(),
         root: Some(directory.path().to_owned()),
         config: production(),
     };
     let foreign = NsecBackupHost {
+        federated: None,
         state: Default::default(),
         root: Some(directory.path().to_owned()),
         config: Arc::new(Some(Config {
@@ -1695,6 +1704,188 @@ async fn handoffs_and_retries_return_a_ticket_only_when_a_pass_will_start() {
     );
     assert_eq!(host.retry(Source::Hosted, identity), None);
     assert_eq!(host.status().pass, 2);
+}
+
+fn signed_in() -> (FederatedIdentity, String) {
+    let fi = crate::federated_identity::testing::signed_in(
+        "http://127.0.0.1:1".into(),
+        "wss://relay.example",
+        false,
+    );
+    let revision = fi
+        .with_session(|_, revision, _| revision.to_owned())
+        .unwrap();
+    (fi, revision)
+}
+
+#[tokio::test]
+async fn a_federated_session_sends_the_current_fi_token_as_bearer_only() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (fi, revision) = signed_in();
+    let host = NsecBackupHost {
+        federated: Some(fi),
+        ..service.host(directory.path())
+    };
+    service.enable(&host).await;
+    let session = Session {
+        source: Source::Builderlab,
+        auth: Auth::Federated(revision),
+    };
+    // The fixture rejects any request without the Bearer token or with the legacy header.
+    assert_eq!(
+        host.backup(&IdentityHost::fixture(), &session, 0).await,
+        Ok(Outcome::Complete)
+    );
+    let requests = service.state.lock().unwrap().requests.clone();
+    for path in [
+        "/v1/auth/me",
+        "/v1/buzz/nostr-identities/current",
+        "/v1/buzz/nsec-backups/enrollment",
+        "/v1/buzz/nsec-backups",
+    ] {
+        assert_eq!(requests[path], 1, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_federated_session_is_signed_out_once_its_revision_is_not_current() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    for change in [
+        FederatedIdentity::sign_out_for_test as fn(&FederatedIdentity),
+        FederatedIdentity::switch_account_for_test,
+    ] {
+        let (fi, revision) = signed_in();
+        let host = NsecBackupHost {
+            federated: Some(fi.clone()),
+            ..service.host(directory.path())
+        };
+        service.enable(&host).await;
+        change(&fi);
+        let session = Session {
+            source: Source::Builderlab,
+            auth: Auth::Federated(revision),
+        };
+        assert_eq!(
+            host.backup(&IdentityHost::fixture(), &session, 0).await,
+            Err(Stop::Failed(Failure::SignedOut))
+        );
+        assert!(service.state.lock().unwrap().requests.is_empty());
+    }
+    // A host without FI can never resolve a federated session.
+    let host = service.host(directory.path());
+    let session = Session {
+        source: Source::Builderlab,
+        auth: Auth::Federated("revision".into()),
+    };
+    assert_eq!(
+        host.backup(&IdentityHost::fixture(), &session, 0).await,
+        Err(Stop::Failed(Failure::SignedOut))
+    );
+}
+
+#[test]
+fn a_federated_handoff_stores_only_the_revision_and_requires_the_current_one() {
+    if buzzodz_plugins::BUILDERLAB_ORIGIN.is_empty() {
+        return;
+    }
+    let granted = format!(
+        "{}{}",
+        buzzodz_plugins::BUILDERLAB_ORIGIN,
+        buzzodz_plugins::BUILDERLAB_API_BASE_PATH.trim_end_matches('/')
+    );
+    let (fi, revision) = signed_in();
+    let host = |federated| NsecBackupHost {
+        federated,
+        state: Default::default(),
+        root: None,
+        config: Arc::new(Some(Config {
+            service_url: granted.clone(),
+            namespace: "backup/staging".into(),
+        })),
+    };
+    let identity = IdentityHost::fixture();
+    let federated = host(Some(fi.clone()));
+    let handoff = |host: &NsecBackupHost, generation, source, credential, federated| {
+        host.session_from_ipc(source, generation, credential, federated, identity.clone())
+    };
+    // Stale revisions, a non-Builderlab source, both and an FI-less host are refused
+    // without consuming the generation.
+    for (host, source, credential, revision) in [
+        (&federated, Source::Builderlab, None, "stale".to_owned()),
+        (&federated, Source::Hosted, None, revision.clone()),
+        (
+            &federated,
+            Source::Builderlab,
+            Some("synthetic-session".to_owned()),
+            revision.clone(),
+        ),
+        (&host(None), Source::Builderlab, None, revision.clone()),
+    ] {
+        assert_eq!(
+            handoff(host, 1, source, credential, Some(revision)),
+            Err("Invalid backup session".into())
+        );
+        assert!(host.state.lock().unwrap().sessions.is_empty());
+        assert_eq!(host.state.lock().unwrap().generations, [None, None]);
+    }
+    assert_eq!(
+        handoff(
+            &federated,
+            1,
+            Source::Builderlab,
+            None,
+            Some(revision.clone())
+        ),
+        Ok(None)
+    );
+    let state = federated.state.lock().unwrap();
+    assert!(matches!(
+        state.sessions.as_slice(),
+        [Session { source: Source::Builderlab, auth: Auth::Federated(stored) }] if *stored == revision
+    ));
+    drop(state);
+    // A null handoff retires it, as for a credential.
+    assert_eq!(
+        handoff(&federated, 2, Source::Builderlab, None, None),
+        Ok(None)
+    );
+    assert!(federated.state.lock().unwrap().sessions.is_empty());
+}
+
+#[test]
+fn the_legacy_handoff_shape_is_unchanged() {
+    let host = NsecBackupHost {
+        federated: None,
+        state: Default::default(),
+        root: None,
+        config: production(),
+    };
+    let identity = IdentityHost::fixture();
+    assert_eq!(
+        host.session_from_ipc(
+            Source::Hosted,
+            1,
+            Some("synthetic-session".into()),
+            None,
+            identity.clone()
+        ),
+        Ok(None)
+    );
+    assert!(matches!(
+        host.state.lock().unwrap().sessions.as_slice(),
+        [Session { auth: Auth::Credential(c), .. }] if c.as_str() == "synthetic-session"
+    ));
+    assert_eq!(
+        host.session_from_ipc(Source::Hosted, 2, None, None, identity.clone()),
+        Ok(None)
+    );
+    assert!(host.state.lock().unwrap().sessions.is_empty());
+    assert_eq!(
+        host.session_from_ipc(Source::Hosted, 3, Some("not valid".into()), None, identity),
+        Err("Invalid backup session".into())
+    );
 }
 
 #[test]
@@ -1769,6 +1960,7 @@ fn statuses_serialize_flat_and_report_whether_builderlab_backup_can_run() {
         ),
     ] {
         let host = NsecBackupHost {
+            federated: None,
             state: Default::default(),
             root: root.map(ToOwned::to_owned),
             config: Arc::new(Some(Config {

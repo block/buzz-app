@@ -4,7 +4,7 @@ import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../../shared/InlineReference.module.css";
 import type { AgentClient, RemoteAgent } from "../agents/client";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 import { ModelSettings } from "./ModelSettings";
 
 const message = (reason: unknown) =>
@@ -13,7 +13,10 @@ const message = (reason: unknown) =>
     : "Could not load Builderlab settings.";
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
-export function createSettingsTab(client: AgentClient, session: OAuthSession) {
+export function createSettingsTab(
+  client: AgentClient,
+  session: BuilderlabSession,
+) {
   function Editor({
     pubkey,
     retry,

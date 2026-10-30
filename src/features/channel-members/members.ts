@@ -105,7 +105,7 @@ export async function addChannelMember(
   const channel = () =>
     session.channels.list().channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
-  const check = () => {
+  const checkAccess = () => {
     signal.throwIfAborted();
     if (
       !(soloParticipant
@@ -119,26 +119,15 @@ export async function addChannelMember(
       throw new Error(
         "Archived identities cannot be added. Choose someone else.",
       );
-    if (
-      soloParticipant &&
-      !allowSoloAgents &&
-      (session.agentChoices
-        .snapshot()
-        .identities.some((agent) => agent.pubkey === pubkey) ||
-        session.profiles.snapshot().get(pubkey)?.isAgent)
-    )
-      throw new Error(
-        "Add agents by tagging them in the chat composer instead.",
-      );
   };
-  check();
+  checkAccess();
   const outbox = session.outbox;
   if (!outbox) throw new Error("Member additions are unavailable.");
   await outbox.ready();
-  check();
+  checkAccess();
   // This existing session operation verifies the connected relay's signed roster.
   await session.channelWrites.refreshMembership(channelId);
-  check();
+  checkAccess();
   const journal = receipts ?? outbox;
   // Only a roster-confirmed prior addition may be superseded by explicit Add.
   const fresh =
@@ -164,11 +153,36 @@ export async function addChannelMember(
                   tag === "role" && value !== "bot" && value !== "member",
               ),
         );
+  const recovery = { key: `member-add:${channelId}:${pubkey}`, value: "1" };
+  // A saved share may finish its exact Bot grant; it cannot authorize a new one.
+  const recoveringSoloAgent =
+    pending &&
+    !pending.acknowledged &&
+    !pending.guarded &&
+    pending.recovery?.key === recovery.key &&
+    pending.event.tags.some(
+      ([tag, value]) => tag === "role" && value === "bot",
+    );
+  const check = () => {
+    checkAccess();
+    if (
+      soloParticipant &&
+      !allowSoloAgents &&
+      !recoveringSoloAgent &&
+      (session.agentChoices
+        .snapshot()
+        .identities.some((agent) => agent.pubkey === pubkey) ||
+        session.profiles.snapshot().get(pubkey)?.isAgent)
+    )
+      throw new Error(
+        "Add agents by tagging them in the chat composer instead.",
+      );
+  };
+  check();
   if (pending?.guarded && !channel()?.members?.includes(pubkey))
     throw new Error(
       "Retry this invitation from the agent’s profile so its eligibility can be checked.",
     );
-  const recovery = { key: `member-add:${channelId}:${pubkey}`, value: "1" };
   if (pending && !pending.acknowledged)
     await outbox.recover(pending.event.id, recovery);
   check();

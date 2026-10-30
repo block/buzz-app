@@ -157,28 +157,34 @@ it("owns a surface's read exactly when recovery counts it failed or busy", () =>
     expect(rosterRecovering(roster)).toBe(
       liveRecoveryStatus({ ...healthy, roster }) !== "settled",
     );
-  // A dropped stream clears catch-up entries; establishment reads every open
-  // head again, so recovery still owns the head with none listed.
-  for (const status of ["connected", "connecting", "retrying"] as const) {
-    for (const head of reads)
-      expect(
-        headRecovering({ status, heads: [{ ...head, channelId: "a" }] }, "a"),
-      ).toBe(
-        liveRecoveryStatus({
-          ...healthy,
-          status,
-          routes: [],
-          heads: [head],
-        }) !== "settled",
-      );
-    expect(headRecovering({ status, heads: [] }, "a")).toBe(
-      status !== "connected",
-    );
-  }
-  expect(
-    headRecovering(
-      { status: "connected", heads: [{ channelId: "b", state: "pending" }] },
-      "a",
-    ),
-  ).toBe(false);
+  // A channel's timeline follows the live source for that channel alone.
+  const other = { ...healthy, heads: [{ channelId: "b", state: "pending" }] };
+  expect(headRecovering(other, "a")).toBe(false);
+  for (const head of reads)
+    expect(
+      headRecovering({ ...healthy, heads: [{ ...head, channelId: "a" }] }, "a"),
+    ).toBe(liveRecoveryStatus({ ...healthy, heads: [head] }) !== "settled");
+  // After a dropped stream, catch-up entries return only once the channel's
+  // route re-establishes; recovery owns the head through that handoff.
+  for (const status of ["connecting", "retrying"] as const)
+    expect(headRecovering({ ...healthy, status, heads: [] }, "a")).toBe(true);
+  const routeA = {
+    id: "channel:a",
+    channelId: "a",
+    replay: "unknown",
+  } as const;
+  const reconnected = (status: "pending" | "live") => ({
+    ...healthy,
+    routes: [{ ...routeA, status }],
+  });
+  expect(headRecovering(reconnected("pending"), "a")).toBe(true);
+  expect(headRecovering(reconnected("live"), "a")).toBe(false);
+  expect(headRecovering(reconnected("pending"), "b")).toBe(false);
+  // A connected stream whose channel route failed: an outage still owns it.
+  const failedRoute = (error: string) => ({
+    ...healthy,
+    routes: [{ ...routeA, status: "error" as const, error }],
+  });
+  expect(headRecovering(failedRoute("error: interrupted"), "a")).toBe(true);
+  expect(headRecovering(failedRoute("restricted: no access"), "a")).toBe(false);
 });

@@ -5,7 +5,11 @@ import type { LiveSnapshot } from "./live";
 export type LiveRecoveryView = LiveSnapshot &
   Readonly<{
     roster: Readonly<{ state: string; transient?: true }>;
-    heads: readonly Readonly<{ state: string; transient?: true }>[];
+    heads: readonly Readonly<{
+      channelId?: string;
+      state: string;
+      transient?: true;
+    }>[];
     previews?: "checking" | "suspended";
   }>;
 
@@ -75,18 +79,18 @@ export const rosterRecovering = (roster: LiveRead) =>
   roster.state === "deferred" ||
   roster.state === "pending" ||
   (roster.state === "error" && !!roster.transient);
-/** The same for one channel's head read, which fills its timeline. While the
- * stream reconnects, its catch-up entries are cleared and establishment reads
- * every open head again, so recovery owns that read then too. */
-export function headRecovering(
-  view: Pick<LiveSnapshot, "status"> &
-    Readonly<{ heads: readonly (LiveRead & { channelId?: string })[] }>,
-  channelId: string,
-) {
-  if (view.status === "connecting" || view.status === "retrying") return true;
-  const head = view.heads.find((entry) => entry.channelId === channelId);
+/** The same for one channel's timeline: true while the live source is not
+ * settled for that channel. That covers its head read failing transiently or
+ * in flight, and the handoff after a dropped stream: catch-up entries are
+ * cleared until the channel's route re-establishes, which reads its head
+ * again. */
+export function headRecovering(view: LiveRecoveryView, channelId: string) {
   return (
-    !!head &&
-    (head.state === "pending" || (head.state === "error" && !!head.transient))
+    liveRecoveryStatus({
+      status: view.status,
+      routes: view.routes.filter((route) => route.channelId === channelId),
+      roster: { state: "verified" },
+      heads: view.heads.filter((head) => head.channelId === channelId),
+    }) !== "settled"
   );
 }

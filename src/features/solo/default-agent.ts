@@ -27,6 +27,9 @@ const advance = (account: Account) => {
 // found no record. Read failures are tracked separately.
 const saved = new WeakMap<Account, string | undefined>();
 const readErrors = new WeakMap<Account, string>();
+const readValues = new WeakMap<Account, string | undefined>();
+const readFailures = new WeakMap<Account, string>();
+const failedChoices = new WeakSet<Account>();
 const listeners = new Set<() => void>();
 function notifySaved() {
   for (const listener of listeners) listener();
@@ -77,19 +80,36 @@ export async function chooseDefaultAgent(
   const account = session.mainAgent;
   if (account) {
     explicit.add(account);
-    advance(account);
   }
   // A choice this device can't cache still applies here, so it is still saved
   // to the account.
   setDefaultAgent(scope, pubkey);
   if (!account) return;
+  const attempt = advance(account);
   try {
     await account.write(pubkey);
   } catch {
+    if (revision(account) === attempt) {
+      if (readValues.has(account)) {
+        remember(account, readValues.get(account));
+      } else if (readFailures.has(account)) {
+        adopted.delete(account);
+        readErrors.set(
+          account,
+          readFailures.get(account) ??
+            "Your Bestie couldn't be read from your account.",
+        );
+        saved.set(account, saved.get(account));
+        notifySaved();
+      } else {
+        failedChoices.add(account);
+      }
+    }
     throw new Error(
       "Your bestie couldn't be saved to your account. Try again.",
     );
   }
+  failedChoices.delete(account);
   remember(account, pubkey);
 }
 
@@ -111,20 +131,32 @@ function adopt(account: Account, scope: string) {
     const started = revision(account);
     pending = account.read().then(
       (agent) => {
-        if (started !== revision(account)) return;
+        readValues.set(account, agent);
+        readFailures.delete(account);
+        if (started !== revision(account)) {
+          if (failedChoices.delete(account)) remember(account, agent);
+          return;
+        }
         const adopts = !explicit.has(account);
         if (adopts && agent !== undefined) cache(scope, agent);
         remember(account, adopts ? agent : (saved.get(account) ?? agent));
       },
       (cause) => {
         adopted.delete(account);
-        if (started !== revision(account)) return;
-        readErrors.set(
-          account,
+        const error =
           cause instanceof Error
             ? cause.message
-            : "Your Bestie couldn't be read from your account.",
-        );
+            : "Your Bestie couldn't be read from your account.";
+        readFailures.set(account, error);
+        if (started !== revision(account)) {
+          if (failedChoices.delete(account)) {
+            readErrors.set(account, error);
+            saved.set(account, saved.get(account));
+            notifySaved();
+          }
+          return;
+        }
+        readErrors.set(account, error);
         // Solo still settles and can choose a device fallback while offline.
         saved.set(account, saved.get(account));
         notifySaved();

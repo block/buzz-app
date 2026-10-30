@@ -163,7 +163,19 @@ export function AgentDetails({
     observer.observe(footer);
     observer.observe(scroll);
     // Presence can replace equally tall sheets with different access semantics.
-    const changes = new MutationObserver(measure);
+    const changes = new MutationObserver((records) => {
+      measure();
+      // An exiting sheet becomes inert before its replacement mounts.
+      if (
+        document.activeElement === document.body &&
+        records.some((record) => record.addedNodes.length > 0)
+      )
+        footer
+          .querySelector<HTMLElement>(
+            ':scope > :not([inert]) :is(button:not(:disabled), [role="button"]:not([aria-disabled="true"]))',
+          )
+          ?.focus({ preventScroll: true });
+    });
     changes.observe(footer, { childList: true });
     return () => {
       observer.disconnect();

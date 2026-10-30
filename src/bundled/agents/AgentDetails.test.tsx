@@ -32,6 +32,11 @@ import {
 } from "../builderlab/adapter-type/SignInFooter";
 import { deferred } from "../builderlab/test-helpers";
 
+vi.mock("../builderlab/oauth/browser", async (original) => ({
+  ...(await original<typeof import("../builderlab/oauth/browser")>()),
+  browserLoginAvailable: () => true,
+}));
+
 afterEach(cleanup);
 
 it("keeps one provider footer across tabs and measures its changing height for the scroll area", async () => {
@@ -336,9 +341,30 @@ it.each([
         ).toBeNull();
       }
       const attempts = signIn.mock.calls.length;
+      act(() => screen.getByRole("tab", { selected: true }).focus());
       await user.keyboard("{Enter}");
       expect(signIn).toHaveBeenCalledTimes(attempts);
       expect(agents.save).not.toHaveBeenCalled();
+      if (recovery) {
+        const useAnother = screen.getByRole("button", {
+          name: "Use another account",
+        });
+        act(() => useAnother.focus());
+        await user.keyboard("{Enter}");
+        const reconnect = await screen.findByRole("button", {
+          name: "Sign in to Builderlab",
+        });
+        await waitFor(() => expect(reconnect).toHaveFocus());
+        expect(session.snapshot().status).toBe("signed-out");
+        expect(signIn).toHaveBeenCalledTimes(attempts);
+        const selected = screen.getByRole("tab", { selected: true });
+        act(() => selected.focus());
+        await act(() => session.signIn());
+        await screen.findByRole("button", { name: "Use another account" });
+        act(() => session.signOut());
+        await screen.findByRole("button", { name: "Sign in to Builderlab" });
+        expect(selected).toHaveFocus();
+      }
       canUseRemoteAgents = true;
       await act(() => session.signIn());
       act(() => {

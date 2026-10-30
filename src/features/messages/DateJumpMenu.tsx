@@ -121,7 +121,6 @@ export function DateJumpDialog({
     >
       <Calendar
         mode="single"
-        captionLayout="dropdown"
         defaultMonth={today}
         startMonth={new Date(2000, 0)}
         endMonth={today}

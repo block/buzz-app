@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DateJumpContext } from "./DateJumpMenu";
@@ -88,6 +94,25 @@ it("jumps to a past day picked in the calendar", async () => {
   await user.click(picked as HTMLButtonElement);
   expect(jump).toHaveBeenCalledExactlyOnceWith(dayStart(new Date(2026, 9, 12)));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("pages the calendar by month with the shared caption", async () => {
+  const user = userEvent.setup();
+  divider();
+  await user.click(screen.getByRole("button", { name: "Today, jump to date" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Jump to a specific date" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Jump to a specific date",
+  });
+  // The shared calendar styles no dropdown caption.
+  expect(within(dialog).queryAllByRole("combobox")).toHaveLength(0);
+  expect(within(dialog).getByText("October 2026")).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("button", { name: /previous month/i }),
+  );
+  expect(within(dialog).getByText("September 2026")).toBeInTheDocument();
 });
 
 it("works by keyboard and returns focus on Escape", async () => {

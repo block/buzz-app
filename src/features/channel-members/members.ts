@@ -352,11 +352,22 @@ export async function addChannelMembersAtOnce(
     }
   const sent: string[] = [];
   try {
+    let roster: ChannelSummary | undefined = before;
     // One missing person gains nothing from a batch; the single addition sends it.
     if ([...groups.values()].flat().length > 1)
       for (const [role, keys] of groups)
         for (let start = 0; start < keys.length; start += batchLimit) {
-          if (!allowed()) break;
+          // Each later write reads the roster again, so it never names someone
+          // admitted meanwhile, whose role an explicit one would overwrite.
+          if (sent.length)
+            roster = await attempt(() =>
+              session.channelWrites.refreshMembership(channelId),
+            );
+          if (!roster || !allowed()) break;
+          const recipients = keys
+            .slice(start, start + batchLimit)
+            .filter((key) => !roster?.members?.includes(key));
+          if (!recipients.length) continue;
           beforeDispatch?.();
           const id = await attempt(() =>
             outbox.send(
@@ -365,9 +376,7 @@ export async function addChannelMembersAtOnce(
                 content: "",
                 tags: [
                   ["h", channelId],
-                  ...keys
-                    .slice(start, start + batchLimit)
-                    .map((key) => ["p", key]),
+                  ...recipients.map((key) => ["p", key]),
                   ...(role ? [["role", role]] : []),
                 ],
               },

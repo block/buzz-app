@@ -8,6 +8,14 @@ import type { Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
 import { isBatchAddition } from "../../features/channel-members/members";
 
+/** A batch names everyone its Retry re-adds. */
+function additionLabel(tags: readonly (readonly string[])[]) {
+  const people = tags.filter(([tag]) => tag === "p");
+  return people.length > 1
+    ? `Add ${people.length} people`
+    : `Add agent ${people[0]?.[1]?.slice(0, 12) ?? ""}`;
+}
+
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
 export function OutboxStatus({
   outbox,
@@ -40,7 +48,7 @@ export function OutboxStatus({
           <li key={item.event.id}>
             <span>
               {item.event.kind === 9000
-                ? `Add agent ${item.event.tags.find(([tag]) => tag === "p")?.[1]?.slice(0, 12) ?? ""}`
+                ? additionLabel(item.event.tags)
                 : item.event.content.slice(0, 100)}{" "}
               ·{" "}
               {

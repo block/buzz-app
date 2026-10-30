@@ -147,6 +147,7 @@ it("retries a batch addition per person, then settles it rather than resending i
     },
     recovery: { key: "member-add:batch:operation", value: "1" },
   });
+  expect(screen.getByText(/Add 2 people/)).toBeVisible();
   add.mockImplementation(async (...args: unknown[]) => {
     if (args[1] === "two") throw new Error("Could not add two");
   });

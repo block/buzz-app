@@ -762,7 +762,9 @@ function batchSetup(applyAll = true) {
   let clock = 1700000000;
   let records: readonly OutgoingEvent[] = [];
   const published: RelayEvent[] = [];
+  let onPublish = () => {};
   const publish = vi.fn(async (event: RelayEvent) => {
+    onPublish();
     const named = event.tags.flatMap(([tag, value]) =>
       tag === "p" && value ? [value] : [],
     );
@@ -821,6 +823,14 @@ function batchSetup(applyAll = true) {
     published,
     records: () => records,
     members: () => members,
+    /** Runs as the relay receives each write, e.g. another owner's admission. */
+    onPublish(run: () => void) {
+      onPublish = run;
+    },
+    admit(key: string) {
+      members = [...members, key];
+      clock++;
+    },
     async ready() {
       owner.session.channels.ensureList();
       await vi.waitFor(() =>
@@ -901,4 +911,21 @@ it("leaves a pending single addition to resume, never batching its person again"
     ["p", other],
   ]);
   expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it("reads the roster again before a later write, so it never names someone admitted meanwhile", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  // Another owner admits the agent, at any role, while the people's write is held.
+  t.onPublish(() => {
+    t.onPublish(() => {});
+    t.admit(t.agent.pubkey);
+  });
+  await t.addAll([first, second, t.agent.pubkey]);
+  expect(t.published).toHaveLength(1);
+  expect(
+    t.published[0]?.tags.some(([, value]) => value === t.agent.pubkey),
+  ).toBe(false);
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
 });

@@ -192,6 +192,7 @@ export function fixture(
     publish();
     return { status: "opened" as const };
   });
+  const findChannel = vi.fn();
   const navigator = {
     open,
     subscribe,
@@ -212,6 +213,7 @@ export function fixture(
             relay={relay}
             navigator={navigator}
             agents={agents}
+            findChannel={findChannel}
           >
             {(creationAction) =>
               sidebarVisible && (
@@ -248,6 +250,7 @@ export function fixture(
   return {
     session,
     relay,
+    findChannel,
     navigate(next: OpenTarget) {
       target = next;
       rendered.rerender(tree());

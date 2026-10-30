@@ -334,6 +334,29 @@ test.describe("public search destination", () => {
       .toContainEqual([9, "Hello from a new member", app.openChannelId]);
   });
 
+  test("Join channel in New opens search for unjoined public channels and restores focus", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    const trigger = button(page, "New");
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "Join channel" }).click();
+    const input = page.getByRole("combobox", { name: "Search Buzz" });
+    await expect(input).toBeFocused();
+    await input.fill("ope");
+    await expect(
+      page
+        .locator(
+          '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+        )
+        .locator("[data-search-result]")
+        .filter({ hasText: /^open/ }),
+    ).toContainText("Public channel · not joined");
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+  });
+
   test("focuses the composer when live membership arrives before the join request settles", async ({
     page,
     app,

@@ -174,11 +174,19 @@
 .panelFooter > * {
   pointer-events: auto;
 }
+.identityPortrait {
+  position: relative;
+  width: 8rem;
+  height: 8rem;
+}
 /* The decorative backdrop and portrait fade; labels and controls retain color. */
 .build:has(> .panelFooter:not(:empty))
   .identityCard
   > :is([aria-hidden="true"], .identityPortrait) {
   animation: signInDesaturate 10s linear forwards;
+}
+.build:has(> .panelFooter:not(:empty)) .identityCard > .identityPortrait {
+  animation-name: signInAvatarRecede;
 }
 @keyframes signInDesaturate {
   from {
@@ -186,6 +194,19 @@
   }
   to {
     filter: grayscale(1);
+  }
+}
+@keyframes signInAvatarRecede {
+  from {
+    filter: grayscale(0) blur(0px);
+    scale: 1;
+    opacity: 1;
+  }
+  to {
+    filter: grayscale(1) blur(2px);
+    /* Independent scale preserves the name editor's motion transform. */
+    scale: 0.85;
+    opacity: 0.5;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -217,11 +238,6 @@
   width: fit-content;
   max-width: 100%;
   margin-inline: auto;
-}
-.identityPortrait {
-  position: relative;
-  width: 8rem;
-  height: 8rem;
 }
 .work {
   min-width: 0;

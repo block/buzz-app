@@ -67,9 +67,9 @@ behavior on the label, so a rename touches copy only.
   chat is still blank (no text beyond tags, no files, settings and workspace
   unchanged), the prompt, its mentions and files, the draft settings and the
   workspace go back into it. A draft begun since is kept, and the prompt is
-  lost. Setup that fails or is interrupted leaves a
-  working chat without that setup; it never holds the message. Draft settings
-  remain local until first send and use Solo's defaults namespace.
+  lost. The error says which happened. Setup that fails or is interrupted
+  leaves a working chat without that setup; it never holds the message. Draft
+  settings remain local until first send and use Solo's defaults namespace.
 - New Solo chats are created with the `buzz.solo` label and no `about` text, so
   a relay without NIP-CL labels cannot start one. The label is a routing hint for
   agents: answer as one channel-scoped, top-level conversation. It is not access

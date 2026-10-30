@@ -164,3 +164,43 @@ for (const owner of [undefined, "page draft", "menu", "dialog"]) {
     }
   });
 }
+
+test("a link to a specific reply reveals it without focusing the composer", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const target = app.reply(root.id, false, false);
+  const message = app.append(
+    "primary",
+    "alpha",
+    `<buzz://message?channel=alpha&id=${target.id}>`,
+  );
+  const link = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"] a`,
+  );
+  const thread = page.getByRole("region", {
+    name: "Thread messages",
+    exact: true,
+  });
+  const reply = page.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  // Check both normal navigation and the link menu's workspace-local opener.
+  for (const menu of [false, true]) {
+    if (menu) {
+      await link.click({ button: "right" });
+      await page
+        .getByRole("menuitem", { name: "Open link", exact: true })
+        .click();
+    } else await link.click();
+    const row = thread.locator(`[data-message-id="${target.id}"]`);
+    await expect(row).toBeInViewport();
+    await expect(reply).toBeVisible();
+    await expect(reply).not.toBeFocused();
+  }
+});

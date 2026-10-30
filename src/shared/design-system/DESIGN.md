@@ -1768,6 +1768,7 @@ level's bubble fill. Components consume the matching link role;
 never pick a link color per component.
 
 Mentions are people, not destinations, so they are chips rather than links.
+Mention chips use `radius-pill` for capsule ends in messages and composers.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.

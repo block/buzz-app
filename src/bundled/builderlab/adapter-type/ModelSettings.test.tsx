@@ -140,6 +140,15 @@ async function choose(label: string, value: string) {
     await user.click(await screen.findByRole("option", { name: value }));
   }
 }
+it("keeps the Builderlab mark when no shared Harness control is supplied", async () => {
+  await fixture();
+  const mark = screen.getByText("Builderlab").querySelector("svg");
+  expect(mark).toHaveAttribute("width", "1.25rem");
+  expect(mark).toHaveAttribute("aria-hidden", "true");
+  expect(mark?.querySelector("mask")).not.toBeNull();
+  expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
+});
+
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
   const h = await fixture({ instructions: "Saved instructions." });
   expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(

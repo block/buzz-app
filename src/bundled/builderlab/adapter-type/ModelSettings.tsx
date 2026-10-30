@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AgentSaveButton } from "../../../features/agents/AgentSaveButton";
 import { ModelFamilyMenu } from "../../../features/agents/ModelFamilyMenu";
+import { BuilderlabLogoIcon } from "../../../shared/design-system/icons";
 import { Button } from "../../../shared/design-system/ui/Button";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { LoadingRegion } from "../../../shared/design-system/ui/LoadingRegion";
@@ -198,7 +199,15 @@ export function ModelSettings({
         )}
         <SettingsGroup>
           {harnessControl ?? (
-            <PreferenceRow title="Harness" trailing="Builderlab" />
+            <PreferenceRow
+              title="Harness"
+              trailing={
+                <span className="flex min-w-0 items-center gap-2">
+                  <BuilderlabLogoIcon size={20} aria-hidden="true" />
+                  Builderlab
+                </span>
+              }
+            />
           )}
           <ModelFamilyMenu
             label="Model"

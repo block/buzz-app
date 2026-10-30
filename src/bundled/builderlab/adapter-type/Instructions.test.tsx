@@ -153,10 +153,13 @@ it.each([false, true])(
     const harness = screen.getByRole("button", {
       name: "Change harness from Builderlab",
     });
+    const mark = harness.querySelector("svg");
     const model = screen.getByRole("button", { name: "Model: …" });
     const thinking = screen.getByRole("combobox", { name: "Thinking" });
     const region = field.closest("[aria-busy]");
     try {
+      expect(mark).toHaveAttribute("width", "1.25rem");
+      expect(mark).toHaveAttribute("aria-hidden", "true");
       await waitFor(() =>
         expect(h.request).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -186,6 +189,7 @@ it.each([false, true])(
         ),
       );
       expect(harness).toHaveFocus();
+      expect(harness.querySelector("svg")).toBe(mark);
       expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
       expect(field).toHaveValue("First instructions.");
       expect(region).toHaveAttribute("aria-busy", "true");
@@ -215,6 +219,7 @@ it.each([false, true])(
       expect(model).toHaveTextContent("Friendly Model");
       expect(thinking).toHaveTextContent("High");
       expect(region).toHaveAttribute("aria-busy", "false");
+      expect(harness.querySelector("svg")).toBe(mark);
       expect(field).toHaveValue("First instructions. Draft.");
       expect(screen.getByRole("button", { name: /^Model:/ })).toBe(model);
       expect(screen.getByRole("combobox", { name: "Thinking" })).toBe(thinking);
@@ -358,7 +363,16 @@ it("dismisses Harness help before allowing Escape to close the agent pane", asyn
   const harness = await screen.findByRole("button", {
     name: "Change harness from Builderlab",
   });
+  const selectedMask = harness.querySelector("mask");
+  expect(selectedMask).not.toBeNull();
   await user.click(harness);
+  const option = await screen.findByRole("menuitemradio", {
+    name: "Builderlab",
+  });
+  expect(option).toBeChecked();
+  const optionMask = option.querySelector("mask");
+  expect(optionMask).not.toBeNull();
+  expect(optionMask?.id).not.toBe(selectedMask?.id);
   await screen.findByRole("menuitemradio", { name: "Codex" });
   await user.keyboard("{End}{Enter}");
   expect(

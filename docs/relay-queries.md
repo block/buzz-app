@@ -379,6 +379,25 @@ roster, applied through shared discovery. That makes the channel a sidebar
 member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
 
+On first run in a community, the session also joins the public starter channels
+the community already has: `general`, `welcome-everyone` and `announcements`
+(`starter-channels.ts`, mirroring the desktop's `ensure_starter_channels`). Once
+the channel list is ready it looks each name up with `searchPublic(name, { exact })`,
+which keeps only active public streams the viewer has not joined, and joins
+each through the same lifecycle Join, one at a time. A bare `9021` takes the
+channel's join role, so an announce channel (`guest`) makes the viewer a
+read-only guest. It never creates a channel, and a missing starter is skipped.
+Names match case-insensitively (the query is trimmed). The pass is silent and best
+effort, skipped without a lifecycle writer (including cache-only sessions),
+and ends with the connection. A `starter-channels-done` view-state marker per
+viewer and community (`origin:viewer`) is saved only after a pass with no
+failed join and no partial directory read (a lookup that hit the 20,000-event
+bound cannot call a starter absent), so an incomplete pass retries next
+session; leaving the community clears it with the rest of its view state. Starter
+joins run as `background` lifecycle actions: the one-action-at-a-time rule makes
+them wait for a viewer's own Join, Leave or Archive, and a viewer's action waits
+for a background join already in flight, instead of failing as busy.
+
 ### Finite read recovery
 
 A finite read that has no session recovery source retries transient failures

@@ -346,7 +346,10 @@ function fixture({
     scope,
     session,
     setArchived(archived: boolean) {
-      list = { ...list, channels: [{ ...channel, archived }] };
+      const next = { ...channel };
+      if (archived) next.archived = true;
+      else delete next.archived;
+      list = { ...list, channels: [next] };
       emitList();
     },
     // Chat activity: a new summary object for the same chat.

@@ -753,6 +753,7 @@ function Composer({
 
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const hasFocused = useRef(false);
   const focusOnMount = useRef(
     autoFocus && typeof document !== "undefined"
       ? document.activeElement
@@ -845,8 +846,10 @@ function Composer({
   useEffect(() => {
     const editor = input.current;
     if (!focusRequest || !editor) return;
+    // A new editor starts after its saved draft; a retained editor owns its caret.
+    if (!hasFocused.current)
+      editor.setSelectionRange(editor.value.length, editor.value.length);
     editor.focus();
-    editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,
@@ -3101,7 +3104,10 @@ function Composer({
               )}
               aria-label={label}
               placeholder={placeholder ?? label}
-              onFocus={() => completion.observe(true)}
+              onFocus={() => {
+                hasFocused.current = true;
+                completion.observe(true);
+              }}
               onBlur={() => {
                 completion.invalidate();
               }}

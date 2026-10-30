@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { createGifShortcut } from "./gif-shortcut";
+import { createComposerShortcut } from "./composer-shortcut";
 
 afterEach(() => document.body.replaceChildren());
 
 it("opens one visible chat without editor focus, preferring the focused pane", () => {
-  const shortcut = createGifShortcut();
+  const shortcut = createComposerShortcut();
   const pane = () => {
     const section = document.createElement("section");
     const history = document.createElement("button");
@@ -38,7 +38,7 @@ it("opens one visible chat without editor focus, preferring the focused pane", (
 });
 
 it("ignores retained hidden or detached composers", () => {
-  const shortcut = createGifShortcut();
+  const shortcut = createComposerShortcut();
   const composer = document.createElement("form");
   const open = vi.fn();
   shortcut.register(composer, open);

@@ -11,7 +11,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { relayGifRequests } from "../../features/relay/gifs";
-import { createGifShortcut } from "./gif-shortcut";
+import { createComposerShortcut } from "./composer-shortcut";
 import { EmojiPicker } from "./EmojiPicker";
 
 afterEach(() => {
@@ -298,7 +298,7 @@ it("keeps the newest composer shortcut target when older discovery completes", a
     },
   );
   const owner = createRelaySession(null);
-  const shortcut = createGifShortcut();
+  const shortcut = createComposerShortcut();
   let settle!: (value: boolean) => void;
   const olderSupports = vi.fn(
     () =>

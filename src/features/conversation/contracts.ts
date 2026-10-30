@@ -54,6 +54,15 @@ export type ComposerToolProps = Readonly<{
    * the link, escapes the label and sends exactly `[label](uri)` there; the draft
    * keeps it after tool removal. Otherwise returns the host's user-facing reason. */
   insertResource(resource: ComposerResource): true | string;
+  /** Capture the newest reactable message in this composer's conversation as a
+   * reaction target; undefined when none exists or its reaction delivery is
+   * pending. The returned command toggles the viewer's reaction — the emoji
+   * string becomes the reaction content — and true means the toggle was
+   * accepted locally, not that it was delivered. It returns false once the
+   * captured message is no longer reactable, a reaction on it is pending, or
+   * either phase is revoked with the tool/destination lifetime. Offered only
+   * where the session can react. */
+  reactToLatest?(): ((emoji: string) => boolean) | undefined;
   capture?(
     component: ComponentType<ComposerCaptureProps>,
   ): (() => void) | false;

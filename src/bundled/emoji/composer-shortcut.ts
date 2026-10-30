@@ -1,5 +1,5 @@
 /** One plugin shortcut routes to one live composer, including split-pane chats. */
-export function createGifShortcut() {
+export function createComposerShortcut() {
   const pickers = new Map<HTMLElement, () => void>();
   const target = () => {
     const visible = [...pickers.keys()].filter(
@@ -34,4 +34,4 @@ export function createGifShortcut() {
     },
   };
 }
-export type GifShortcut = ReturnType<typeof createGifShortcut>;
+export type ComposerShortcut = ReturnType<typeof createComposerShortcut>;

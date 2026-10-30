@@ -1,4 +1,4 @@
-import { createGifShortcut } from "./gif-shortcut";
+import { createComposerShortcut } from "./composer-shortcut";
 import { EmojiCompletion } from "./EmojiCompletion";
 import { emojiQuery } from "./emoji-query";
 import type { PluginModule } from "../../plugins/api";
@@ -22,7 +22,8 @@ const entries = (content: InlineContent) =>
       : []
     : (content.message.emoji ?? []);
 export const apply: PluginModule["apply"] = (ctx) => {
-  const gifShortcut = createGifShortcut();
+  const gifShortcut = createComposerShortcut();
+  const reactionShortcut = createComposerShortcut();
   ctx.inject(["shortcuts"], (scope) => {
     scope.shortcuts.register({
       id: "gif-picker",
@@ -31,6 +32,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
       allowInEditable: true,
       when: gifShortcut.available,
       run: gifShortcut.run,
+    });
+    scope.shortcuts.register({
+      id: "react-to-latest",
+      title: "React to latest message",
+      // Shift over backslash types "|" on ANSI layouts, so that alias leads;
+      // Settings lists the first binding, and "\" covers the rest.
+      binding: [
+        { key: "|", mod: true, shift: true },
+        { key: "\\", mod: true, shift: true },
+      ],
+      allowInEditable: true,
+      when: reactionShortcut.available,
+      run: reactionShortcut.run,
     });
   });
   // Authoring needs a relay host; conversation-only hosts still get the palette.
@@ -66,13 +80,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
       scope,
       disabled,
       insertText,
+      reactToLatest,
+      focus,
     }: ComposerToolProps) => (
       <EmojiPicker
         gifShortcut={gifShortcut}
+        reactionShortcut={reactionShortcut}
         session={session}
         scope={scope}
         disabled={disabled}
         insert={insertText}
+        reactToLatest={reactToLatest}
+        focus={focus}
       />
     ),
   });

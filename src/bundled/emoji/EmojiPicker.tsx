@@ -1,6 +1,6 @@
 import { createShortcutBindings } from "../../features/shortcuts/preferences";
 import { matches } from "../../features/shortcuts/bindings";
-import type { GifShortcut } from "./gif-shortcut";
+import type { ComposerShortcut } from "./composer-shortcut";
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -21,6 +21,7 @@ import {
   PopoverRoot,
   PopoverTrigger,
   PopoverPopup,
+  PopoverTitle,
 } from "../../shared/design-system/ui/Popover";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import type { CustomEmoji } from "../../features/relay/emoji";
@@ -51,9 +52,17 @@ export function EmojiPicker({
   gifRequests = relayGifRequests,
   externalTrigger,
   gifShortcut,
+  reactionShortcut,
+  reactToLatest,
+  focus,
 }: {
   session: ComposerSession;
-  gifShortcut?: GifShortcut;
+  gifShortcut?: ComposerShortcut;
+  /** Opens this picker in react mode; selections route to the captured target. */
+  reactionShortcut?: ComposerShortcut;
+  reactToLatest?: (() => ((emoji: string) => boolean) | undefined) | undefined;
+  /** Returns keyboard focus to the composer after a react-mode selection. */
+  focus?: (() => void) | undefined;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
@@ -70,6 +79,8 @@ export function EmojiPicker({
   const [colorMode, setColorMode] = useState<"light" | "dark">();
   const [open, setOpen] = useState(!!externalTrigger);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
+  // "react" routes the next selection to the latest message instead of the draft.
+  const [mode, setMode] = useState<"insert" | "react">("insert");
   const [gifAvailability, setGifAvailability] = useState<{
     community: string;
     supported: boolean | undefined;
@@ -82,6 +93,7 @@ export function EmojiPicker({
     scale: 1,
   });
   const [error, setError] = useState<string>();
+  const [reactError, setReactError] = useState<string>();
   const [attempt, retry] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const controls = useRef<HTMLFieldSetElement>(null);
@@ -90,6 +102,16 @@ export function EmojiPicker({
   const searchSelection = useRef<EmojiSearchSelection | undefined>(undefined);
   const onInsert = useRef(insert);
   onInsert.current = insert;
+  const onReact = useRef(reactToLatest);
+  onReact.current = reactToLatest;
+  const onFocus = useRef(focus);
+  onFocus.current = focus;
+  // The reaction target commit captured when the shortcut opened the picker.
+  const pendingReact = useRef<((emoji: string) => boolean) | undefined>(
+    undefined,
+  );
+  const currentMode = useRef(mode);
+  currentMode.current = mode;
   const accepted = useRef(false);
   const escapeFocus = useRef<HTMLElement | false>(false);
   const community = reaction ? undefined : communityFromScope(scope);
@@ -100,7 +122,7 @@ export function EmojiPicker({
     : false;
   const currentGifs = useRef(gifs);
   currentGifs.current = gifs;
-  const showGifTab = gifs === true || tab === "gifs";
+  const showGifTab = mode !== "react" && (gifs === true || tab === "gifs");
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -162,6 +184,7 @@ export function EmojiPicker({
       accepted.current = false;
       if (currentGifs.current !== true) setGifAvailability(undefined);
       setGifDiscoveryRequested(true);
+      setMode("insert");
       setTab("gifs");
       setOpen(true);
     };
@@ -194,6 +217,31 @@ export function EmojiPicker({
       bindings.dispose();
     };
   }, [community, disabled, reaction, active, gifShortcut]);
+  useEffect(() => {
+    const form = controls.current?.closest("form");
+    if (
+      !form ||
+      reaction ||
+      disabled ||
+      !active ||
+      !reactionShortcut ||
+      !reactToLatest
+    )
+      return;
+    return reactionShortcut.register(form, () => {
+      // No reactable target is a quiet no-op, like Arrow-Up with nothing to edit.
+      const commit = onReact.current?.();
+      if (!commit) return;
+      pendingReact.current = commit;
+      accepted.current = false;
+      escapeFocus.current = false;
+      setReactError(undefined);
+      setMode("react");
+      setTab("emoji");
+      void session.emoji.ensure();
+      setOpen(true);
+    });
+  }, [reaction, disabled, active, reactionShortcut, reactToLatest, session]);
   useEffect(() => {
     if (
       !community ||
@@ -248,7 +296,17 @@ export function EmojiPicker({
           entries,
           media: session.media,
           select: (value) => {
-            onInsert.current(value);
+            if (currentMode.current === "react") {
+              if (!pendingReact.current?.(value)) {
+                setReactError(
+                  "Could not update the reaction. The message may be gone, or one is still sending.",
+                );
+                return;
+              }
+              setReactError(undefined);
+              if (onFocus.current) onFocus.current();
+              else trigger.current?.focus();
+            } else onInsert.current(value);
             accepted.current = true;
             setOpen(false);
           },
@@ -341,6 +399,11 @@ export function EmojiPicker({
           </Button>
         </div>
       )}
+      {tab === "emoji" && mode === "react" && reactError && (
+        <div role="alert" className={styles.emojiStatus}>
+          {reactError}
+        </div>
+      )}
       {tab === "emoji" && catalog.error && (
         <div className={styles.emojiStatus}>
           <p role="alert">{catalog.error}</p>
@@ -392,7 +455,11 @@ export function EmojiPicker({
           // An external toolbar stays hidden until the popup closes. Use the
           // shared return-focus path; ordinary composer focus stays immediate.
           if (externalTrigger) escapeFocus.current = target ?? false;
-          else if (target) target.focus();
+          // A keyboard-opened react picker returns focus to the composer input.
+          else if (mode === "react") {
+            if (onFocus.current) onFocus.current();
+            else if (target) target.focus();
+          } else if (target) target.focus();
           // Keyboard dismissal is immediate; release the external trigger before
           // another Enter can arrive, rather than waiting for exit completion.
           externalTrigger?.close();
@@ -416,7 +483,8 @@ export function EmojiPicker({
         initialFocus={false}
         padding="none"
         id={externalTrigger?.id}
-        aria-label="Emoji picker"
+        // React mode is named by its visible title instead.
+        aria-label={mode === "react" ? undefined : "Emoji picker"}
         style={{
           width: Math.min(
             availableWidth,
@@ -427,9 +495,14 @@ export function EmojiPicker({
         finalFocus={
           externalTrigger
             ? () => escapeFocus.current || externalTrigger.finalFocus()
-            : !accepted.current || !!reaction
+            : mode !== "react" && (!accepted.current || !!reaction)
         }
       >
+        {mode === "react" && (
+          <div className={styles.reactTitle}>
+            <PopoverTitle>React to latest message</PopoverTitle>
+          </div>
+        )}
         {picker}
       </PopoverPopup>
     </fieldset>
@@ -445,6 +518,9 @@ export function EmojiPicker({
         if (next) {
           accepted.current = false;
           escapeFocus.current = false;
+          pendingReact.current = undefined;
+          setReactError(undefined);
+          setMode("insert");
           void session.emoji.ensure();
           if (gifs !== true && gifAvailability?.community === community)
             setGifAvailability(undefined);

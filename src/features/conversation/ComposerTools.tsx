@@ -76,6 +76,7 @@ function OwnedTool({
         | "replaceRecipients"
         | "replaceRecipientsIfEmpty"
         | "insertResource"
+        | "reactToLatest"
         | "focus"
         | "capture"
       >
@@ -117,6 +118,11 @@ function OwnedTool({
         active()
           ? current.current.insertResource(resource)
           : "The message can't be edited right now",
+      reactToLatest: () => {
+        if (!active()) return undefined;
+        const commit = current.current.reactToLatest?.();
+        return commit && ((emoji: string) => active() && commit(emoji));
+      },
       focus: () => {
         if (active()) current.current.focus();
       },
@@ -130,12 +136,13 @@ function OwnedTool({
   const Tool = tool.component;
   // A host that cannot attach withholds capture, so capture tools hide.
   if (!commands) return null;
-  const { capture, ...rest } = commands;
+  const { capture, reactToLatest, ...rest } = commands;
   return (
     <Tool
       {...props}
       {...rest}
       {...(props.capture && capture ? { capture } : {})}
+      {...(props.reactToLatest && reactToLatest ? { reactToLatest } : {})}
       {...opener}
     />
   );

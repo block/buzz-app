@@ -778,7 +778,7 @@ it("replaces a missing saved Bestie from the chooser in place", async () => {
   ).toBeVisible();
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Your agents" }));
-  await user.click(screen.getByRole("option", { name: "Fizz" }));
+  await user.click(await screen.findByRole("option", { name: "Fizz" }));
   expect(
     await screen.findByRole("textbox", { name: "Message Fizz" }),
   ).toBeVisible();

@@ -355,10 +355,22 @@ test.describe("pages inside one second", () => {
       const row = history(page).locator(`[data-message-id="${held.id}"]`);
       const seen = await history(page).evaluateHandle((e, id) => {
         const seen = { unmounted: false };
-        new MutationObserver(() => {
-          if (!e.querySelector(`[data-message-id="${id}"]`))
+        const heldRow = e.querySelector(`[data-message-id="${id}"]`);
+        const observer = new MutationObserver((records) => {
+          // Read the removals themselves: the row may already be remounted
+          // when the observer delivers a batch of mutations.
+          if (
+            records.some((record) =>
+              Array.from(record.removedNodes).some((node) =>
+                node.contains(heldRow),
+              ),
+            )
+          ) {
             seen.unmounted = true;
-        }).observe(e, { childList: true, subtree: true });
+            observer.disconnect();
+          }
+        });
+        observer.observe(e, { childList: true, subtree: true });
         e.scrollTop -= e.clientHeight + 150;
         return seen;
       }, held.id);

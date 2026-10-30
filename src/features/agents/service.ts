@@ -258,8 +258,9 @@ export type AgentViewProps<Config = unknown> = {
   /** Where the agent was opened from, when it was opened from a conversation. */
   conversation?: AgentConversation;
   /** Present while the panel asks to show that conversation's transcript
-   * first: an Activity tab does so, if it knows it then, and calls `done`
-   * once it has, so the panel asks only once. */
+   * first: an Activity tab does so if it knows it then, or once its lookup
+   * finds it unless the reader acts first, and calls `done` once it has
+   * decided, so the panel asks only once. */
   initialTranscript?: TranscriptRequest;
   /** Closes the panel showing the tab. */
   close?: () => void;

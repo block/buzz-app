@@ -66,14 +66,15 @@ it("opens a transcript its lookup finds after the conversation was shown, once",
   expect(result.current.open).toBeUndefined();
 });
 
-it("keeps the overview when the reader types or clicks before the lookup finishes", async () => {
-  for (const input of ["keydown", "pointerdown"] as const) {
+it.each(["keydown", "pointerdown", "wheel"] as const)(
+  "keeps the overview when the reader acts (%s) before the lookup finishes",
+  async (input) => {
     let resolve: (row: Row) => void = () => {};
     const lookup = new Promise<Row>((done) => {
       resolve = done;
     });
     const done = vi.fn();
-    const { result, unmount } = renderHook(() => {
+    const { result } = renderHook(() => {
       const { session, searching } = useOpenedSession<Row>(
         [recent],
         conversation,
@@ -94,8 +95,47 @@ it("keeps the overview when the reader types or clicks before the lookup finishe
     }
     expect(result.current.open).toBeUndefined();
     expect(done).toHaveBeenCalledTimes(1);
-    unmount();
+  },
+);
+
+it("drops a pending request when the profile moves to another conversation", async () => {
+  const other = { channelId: "other", rootId: "root" };
+  const lookups = new Map<string, (row: Row) => void>();
+  const done = vi.fn();
+  const { result, rerender } = renderHook(
+    ({ shown }: { shown: typeof conversation }) => {
+      const { session, searching } = useOpenedSession<Row>(
+        [recent],
+        shown,
+        (place) =>
+          new Promise<Row>((resolve) => {
+            lookups.set(place.channelId, resolve);
+          }),
+      );
+      return useOpenTranscript<Row>(shown, (row) => row.key, {
+        initial: session,
+        searching,
+        opening: 1,
+        done,
+      });
+    },
+    { initialProps: { shown: conversation } },
+  );
+  try {
+    rerender({ shown: other });
+    expect(done).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => {
+      lookups.get("channel")?.(found);
+      lookups.get("other")?.({
+        key: "other",
+        channelId: "other",
+        root: "root",
+      });
+    });
   }
+  expect(result.current.open).toBeUndefined();
+  expect(done).toHaveBeenCalledTimes(1);
 });
 
 it("settles without opening when the lookup finds no session", async () => {

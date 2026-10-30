@@ -103,7 +103,7 @@ export function useOpenedSession<T extends Saved>(
  * conversation, and viewing it again brings its tab back in a tabbed host.
  * `request` asks for the conversation's transcript first. While its session
  * is still `searching`, the transcript opens once found, unless the reader
- * clicks or types first, so a late result never takes their focus;
+ * clicks, types or scrolls first, so a late result never takes their place;
  * `request.done` reports that it was offered. A new `request.opening` asks
  * again, even for the conversation already shown. Closing that tab calls
  * `close`, since it was all that was asked for, unless the host is only
@@ -136,14 +136,18 @@ export function useOpenTranscript<T>(
   // The place whose asked-for session is still being looked up.
   const [waiting, setWaiting] = useState<string>();
   const moved = offered.place !== place;
-  if (moved || (opening !== undefined && opening !== offered.opening)) {
+  const fresh = opening !== undefined && opening !== offered.opening;
+  if (moved || fresh) {
     setOffered({ place, ...(opening !== undefined && { opening }) });
     const asked =
       place && request?.initial !== undefined
         ? { place, row: request.initial, initial: true as const }
         : undefined;
     if (moved || asked) setShown(asked);
-    setWaiting(!asked && place && request?.searching ? place : undefined);
+    // Only a new opening waits; moving to another conversation drops it.
+    setWaiting(
+      fresh && !asked && place && request?.searching ? place : undefined,
+    );
   } else if (waiting !== undefined) {
     if (waiting !== place || !request) setWaiting(undefined);
     else if (request.initial !== undefined) {
@@ -152,12 +156,14 @@ export function useOpenTranscript<T>(
     } else if (!request.searching) setWaiting(undefined);
   }
   const pending = !!place && waiting === place;
-  // The reader's own click or key press wins over a lookup still finishing.
+  // The reader's own click, key press or scroll wins over a lookup still
+  // finishing.
   useEffect(() => {
     if (!pending) return;
     const cancel = () => setWaiting(undefined);
-    const events = ["pointerdown", "keydown"] as const;
-    for (const type of events) document.addEventListener(type, cancel, true);
+    const events = ["pointerdown", "keydown", "wheel"] as const;
+    for (const type of events)
+      document.addEventListener(type, cancel, { capture: true, passive: true });
     return () => {
       for (const type of events)
         document.removeEventListener(type, cancel, true);

@@ -60,6 +60,7 @@ function fixture({
   profiles = new Map<string, Profile>([[alice, { name: "Alice" }]]),
   agents = [] as { pubkey: string; name: string }[],
   shown = [] as ChannelMessage[],
+  freshness = "verified",
   capacity = Number.POSITIVE_INFINITY,
 } = {}) {
   const views: {
@@ -138,6 +139,7 @@ function fixture({
       list: () => list,
       subscribeList: subscriber(listListeners),
       window: (channelId: string) => ({
+        freshness,
         rows: shown.filter((row) => row.channelId === channelId),
       }),
     },
@@ -272,18 +274,37 @@ it("never names an author by a key fragment, and names them once their profile d
 });
 
 it("takes the author from the channel's loaded timeline without reading", async () => {
-  const app = fixture({ shown: [message(id(1))] });
+  const app = fixture({
+    shown: [
+      message(id(1)),
+      message(id(3), {
+        membership: { type: "member_joined", actor: alice, target: alice },
+      }),
+      message(id(4), { huddle: { room: "huddle", state: "started" } }),
+    ],
+  });
   render(
-    <>
-      {link(app.session, href(id(1)))}
-      {link(app.session, href(id(2)))}
-    </>,
+    [1, 2, 3, 4].map((n) => (
+      <span key={n}>{link(app.session, href(id(n)))}</span>
+    )),
   );
   await started();
   expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
-  // Only the message no timeline holds is read.
-  expect(app.thread).toHaveBeenCalledOnce();
-  expect(app.thread).toHaveBeenCalledWith("design", id(2), { exact: true });
+  // Only message rows name an author: the message no timeline holds and the
+  // system rows are read, and the exact reader decides them.
+  expect(app.thread.mock.calls.map(([, messageId]) => messageId)).toEqual([
+    id(2),
+    id(3),
+    id(4),
+  ]);
+  cleanup();
+  // A timeline restored from disk is not trusted until it is revalidated.
+  const restored = fixture({ shown: [message(id(1))], freshness: "cached" });
+  render(link(restored.session, href(id(1))));
+  await started();
+  expect(restored.thread).toHaveBeenCalledWith("design", id(1), {
+    exact: true,
+  });
 });
 
 it("waits for the relay to confirm a cached channel before reading", async () => {
@@ -301,7 +322,7 @@ it("waits for the relay to confirm a cached channel before reading", async () =>
   expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
 });
 
-it("keeps the channel label for an unavailable message and never reads it again", async () => {
+it("keeps the channel label for an unavailable message and re-reads it on remount", async () => {
   const app = fixture();
   const view = render(link(app.session, href(id(1))));
   await started();
@@ -310,16 +331,47 @@ it("keeps the channel label for an unavailable message and never reads it again"
     canLoadMore: false,
     targetStatus: "unavailable",
   });
+  await started();
   expect(screen.getByRole("link", { name: "design" })).toBeTruthy();
   expect(app.open()).toHaveLength(0);
-  // A virtualized remount, or the stream reconnecting, does not re-read it.
+  expect(app.thread).toHaveBeenCalledOnce();
+  // A lagging replica can miss a message just posted, so a remount reads it
+  // again and names its author once the read finds it.
   view.unmount();
   render(link(app.session, href(id(1))));
   await started();
-  await app.setLive("retrying");
-  await app.setLive("connected");
+  expect(app.thread).toHaveBeenCalledTimes(2);
+  await app.views[1]?.publish(ready(message(id(1))));
+  expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
+});
+
+it("retries a failed lookup once every link to it has unmounted", async () => {
+  const app = fixture();
+  const tree = (both: boolean) => (
+    <>
+      <span>{link(app.session, href(id(1)))}</span>
+      {both && <span>{link(app.session, href(id(1)))}</span>}
+    </>
+  );
+  const view = render(tree(true));
+  await started();
+  await app.views[0]?.publish({
+    status: "error",
+    targetStatus: "error",
+    error: "Relay unavailable",
+  });
+  await started();
+  // The live stream stays connected throughout; a link still mounted keeps
+  // the failure.
+  view.rerender(tree(false));
+  await started();
   expect(app.thread).toHaveBeenCalledOnce();
-  expect(screen.getByRole("link", { name: "design" })).toBeTruthy();
+  view.unmount();
+  render(tree(false));
+  await started();
+  expect(app.thread).toHaveBeenCalledTimes(2);
+  await app.views[1]?.publish(ready(message(id(1))));
+  expect(screen.getByRole("link", { name: "Alice in #design" })).toBeTruthy();
 });
 
 it("retries a failed lookup once the live stream reconnects, never in a loop", async () => {

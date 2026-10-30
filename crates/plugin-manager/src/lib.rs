@@ -81,6 +81,7 @@ pub struct FederatedIdentityGrant {
     pub operations: Vec<AuthenticatedOperation>,
     /// The session may also call the agent API of the Apps control plane
     /// paired with the authority's origin, which Buzz derives itself.
+    /// Bundled plugins only.
     #[serde(
         default,
         rename = "appsControlPlane",
@@ -220,6 +221,11 @@ impl Manifest {
                     })
                 {
                     return Err("Invalid authenticated authority operations".into());
+                }
+                // Only Buzz's own bundled Builderlab grant reaches the Apps
+                // control plane; bundled manifests are never validated here.
+                if grant.apps_control_plane {
+                    return Err("Only bundled plugins may use the Apps control plane".into());
                 }
             }
             let mut command_ids = std::collections::HashSet::new();
@@ -2122,6 +2128,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_bundled_plugins_reach_the_apps_control_plane() {
+        let manifest = |apps: bool| {
+            serde_json::from_value::<super::Manifest>(serde_json::json!({
+                "id": "example.fi",
+                "name": "Example",
+                "apiVersion": 1,
+                "host": {"federatedIdentity": {
+                    "authority": "test",
+                    "operations": [{"method": "GET", "path": "/api/list"}],
+                    "appsControlPlane": apps
+                }}
+            }))
+            .unwrap()
+        };
+        assert!(manifest(false).validate().is_ok());
+        assert!(manifest(true).validate().is_err());
+    }
     #[test]
     fn host_grants_follow_enabled_bundled_manifest() {
         let temp = tempfile::tempdir().unwrap();

@@ -1066,7 +1066,8 @@ caller's enabled current artifact, a live registration and the session revision
 the call started under. Plugin reload, recovery and enable changes retire
 registrations; a caller registers again once. The token never enters the
 renderer, and an ordinary network origin is never authority to use it.
-With `appsControlPlane`, `appsRequest` and `appsUpload` send the same session as
+Installed plugins cannot declare `appsControlPlane`; only the bundled grant
+carries it. With it, `appsRequest` and `appsUpload` send the same session as
 `Authorization: BBIdentity` to the Apps control plane Buzz pairs with the
 identity origin, never to a plugin-named origin. Calls must stay under
 `/v1/agent/`; an upload goes only to `/v1/agent/apps/<app>/deploy` and is an

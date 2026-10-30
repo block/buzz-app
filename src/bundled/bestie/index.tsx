@@ -67,7 +67,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   });
   ctx.effect(() => () => listeners.clear());
-  ctx.agents.registerTab(bestieTab(ctx.relay));
+  ctx.agents.registerTab(bestieTab(ctx.relay, ctx.agents));
   ctx.pages.register({
     id: "bestie",
     title: "Bestie",

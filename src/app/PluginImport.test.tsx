@@ -2211,3 +2211,122 @@ it("waits for an occupied native acquisition slot and previews the latest link",
   expect(discard).toHaveBeenCalledWith("remembered");
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+it.each(["Escape", "Close"])(
+  "abandons a linked preview with %s and discards its late result",
+  async (action) => {
+    let finish!: (preview: ImportPreview) => void;
+    const gate = new Promise<ImportPreview>((resolve) => {
+      finish = resolve;
+    });
+    const git = vi
+      .fn()
+      .mockReturnValueOnce(gate)
+      .mockResolvedValue({
+        ...rememberedPreview,
+        candidates: rememberedPreview.candidates.slice(0, 1),
+      });
+    const discard = vi.fn(async () => {});
+    const installImport = vi.fn();
+    const onClosed = vi.fn();
+    const manager = {
+      imports: { git, discard },
+      installImport,
+    } as unknown as PluginManager;
+    const props = {
+      plugins: manager,
+      catalog: { profile: "test", location: "test", plugins: [] },
+      busy: false,
+    };
+    const view = render(
+      <PluginImport
+        key="first"
+        {...props}
+        onClosed={onClosed}
+        initialGit={{
+          repository: "https://example.com/first.git",
+          reference: "",
+        }}
+      />,
+    );
+    try {
+      await waitFor(() => expect(git).toHaveBeenCalledTimes(1));
+      const dialog = screen.getByRole("dialog", { name: "Add a plugin" });
+      expect(
+        within(dialog).getByRole("button", { name: "Close" }),
+      ).toBeEnabled();
+      if (action === "Escape") fireEvent.keyDown(dialog, { key: "Escape" });
+      else
+        await userEvent.click(
+          within(dialog).getByRole("button", { name: "Close" }),
+        );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(onClosed).toHaveBeenCalledTimes(1);
+      finish({
+        ...rememberedPreview,
+        candidates: rememberedPreview.candidates.slice(0, 1),
+      });
+      await waitFor(() => expect(discard).toHaveBeenCalledWith("remembered"));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(installImport).not.toHaveBeenCalled();
+      view.rerender(
+        <PluginImport
+          key="second"
+          {...props}
+          initialGit={{
+            repository: "https://example.com/second.git",
+            reference: "",
+          }}
+        />,
+      );
+      await screen.findByRole("dialog", { name: /^Review .+ access$/ });
+      expect(git).toHaveBeenCalledTimes(2);
+    } finally {
+      finish({ ...rememberedPreview, candidates: [] });
+    }
+  },
+);
+
+it("keeps a manual acquisition protected after returning from a linked preview", async () => {
+  let finish!: (preview: ImportPreview) => void;
+  const gate = new Promise<ImportPreview>((resolve) => {
+    finish = resolve;
+  });
+  const preview = {
+    ...rememberedPreview,
+    candidates: rememberedPreview.candidates.slice(0, 1),
+  };
+  const git = vi.fn().mockResolvedValueOnce(preview).mockReturnValueOnce(gate);
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      initialGit={{
+        repository: "https://example.com/plugin.git",
+        reference: "",
+      }}
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  try {
+    const review = await screen.findByRole("dialog", {
+      name: /^Review .+ access$/,
+    });
+    await userEvent.click(within(review).getByRole("button", { name: "Back" }));
+    const dialog = screen.getByRole("dialog", { name: "Add a plugin" });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Find plugins" }),
+    );
+    await waitFor(() => expect(git).toHaveBeenCalledTimes(2));
+    expect(
+      within(dialog).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(dialog).toBeVisible();
+  } finally {
+    await act(async () => finish(preview));
+  }
+});

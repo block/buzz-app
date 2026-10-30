@@ -104,6 +104,7 @@ export function PluginImport({
   // new install into an update while its enable operation is still pending.
   const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
+  const [abandonable, setAbandonable] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [checkedRevision, setCheckedRevision] = useState<string>();
   const [checking, setChecking] = useState(false);
@@ -289,7 +290,7 @@ export function PluginImport({
     const request = requestSignal ?? initialGit;
     if (linkedRequest.current === request) return;
     linkedRequest.current = request;
-    void loadGit(initialGit.repository, initialGit.reference);
+    void loadGit(initialGit.repository, initialGit.reference, true);
   });
   useEffect(() => {
     if (!initialGit || requestSignal?.aborted || !imports || busy) return;
@@ -300,15 +301,25 @@ export function PluginImport({
   }, [initialGit, requestSignal, imports, busy]);
 
   const blocked = busy || loading || discarding;
+  const canAbandonPreview =
+    abandonable &&
+    loading &&
+    !busy &&
+    !discarding &&
+    !lifetime.current.installing;
   if (!imports) return null;
 
-  async function load(operation: () => Promise<ImportPreview | null>) {
+  async function load(
+    operation: () => Promise<ImportPreview | null>,
+    linked = false,
+  ) {
     if (!imports || pending.current || blocked) return;
     const returnTo = document.activeElement as HTMLElement | null;
     sourceTrigger.current = returnTo;
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
+    setAbandonable(linked);
     if (!savedSource) setError(null);
     setPreview(null);
     setShowUnchanged(false);
@@ -394,14 +405,18 @@ export function PluginImport({
       }
     }
   }
-  async function loadGit(repository: string, reference: string) {
+  async function loadGit(
+    repository: string,
+    reference: string,
+    linked = false,
+  ) {
     if (!imports) return;
     await load(async () => {
       const signed = await authorizeGit?.(repository);
       return signed
         ? imports.git(signed.repository, reference, signed.token)
         : imports.git(repository, reference);
-    });
+    }, linked);
   }
   async function dismiss() {
     if (blocked || pending.current || !preview) return;
@@ -420,6 +435,12 @@ export function PluginImport({
     }
   }
   async function close() {
+    if (canAbandonPreview) {
+      lifetime.current.active = false;
+      setOpen(false);
+      onClosed?.();
+      return true;
+    }
     if (blocked || pending.current) return false;
     const current = lifetime.current;
     const returnTo = document.activeElement;
@@ -836,7 +857,7 @@ export function PluginImport({
           return true;
         }}
         dismissOnOutsideClick
-        preventClose={blocked}
+        preventClose={blocked && !canAbandonPreview}
         finalFocus={() =>
           returnFocus?.() ?? trigger.current ?? checkAgain.current
         }

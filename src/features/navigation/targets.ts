@@ -96,10 +96,23 @@ export function parseGitPluginSource(input: unknown): GitPluginSource {
     )
   )
     throw invalid();
-  const repository = new URL(value.repository);
+  const repositoryText = value.repository;
+  const scp = /^([^/@:]+@[^/:]+):(.+)$/.exec(repositoryText);
+  const expanded =
+    !repositoryText.includes("://") && scp
+      ? `ssh://${scp[1]}/${scp[2]}`
+      : repositoryText.startsWith("github.com/")
+        ? `https://${repositoryText}`
+        : !repositoryText.includes(":") &&
+            repositoryText.split("/").length === 2
+          ? `https://github.com/${repositoryText}`
+          : repositoryText;
+  const repository = new URL(expanded);
   if (
     !["https:", "ssh:"].includes(repository.protocol) ||
     !repository.hostname ||
+    repository.hostname.startsWith("-") ||
+    repository.username.startsWith("-") ||
     !repository.pathname.replaceAll("/", "") ||
     repository.password ||
     (repository.protocol === "https:" && repository.username) ||

@@ -236,3 +236,22 @@ const clientForPluginLink = {
   selected: scope.communityOrigin,
   viewer: scope.viewer,
 };
+
+it.each([
+  ["git@github.com:org/repo.git", "ssh://git@github.com/org/repo.git"],
+  ["github.com/org/repo", "https://github.com/org/repo"],
+  ["org/repo", "https://github.com/org/repo"],
+])(
+  "normalizes a Settings repository address in a plugin link: %s",
+  (input, repository) => {
+    const href = `buzz://plugin-install?repository=${encodeURIComponent(input)}`;
+    const target = {
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+      pluginImport: { repository, reference: "" },
+    };
+    expect(buzzLinkTarget(href, scope)).toEqual(target);
+    expect(deepLinkStep(href, { selected: null })).toEqual({ open: target });
+  },
+);

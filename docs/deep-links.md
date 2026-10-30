@@ -29,12 +29,18 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
 
 Plugin install links open **Settings > Plugins > Manage plugins** and fetch a
-preview from the Git repository and optional branch or tag. Use an explicit HTTPS
-or SSH URL and percent-encode each query value. Review the plugin and computer
-access, then select **Install plugin**. Opening the link does not install, enable,
-or grant access. This Settings link needs no selected community or signed-in
-identity. An omitted ref uses the repository default. Duplicate known parameters
-and repository credentials are rejected.
+preview from the Git repository and optional branch or tag. The repository accepts
+HTTPS, `ssh://`, `git@host:path`, `github.com/owner/repo`, or `owner/repo`.
+Percent-encode each query value. Review the plugin and computer access, then select
+**Install plugin**. Opening the link does not install, enable, or grant access.
+You can close a linked preview while Git loads; its late result is discarded.
+An omitted `ref` uses the repository default. Duplicate known parameters and
+repository credentials are rejected.
+
+The Settings target has no community scope. A new installation completes identity
+setup before the app can show it. Repositories hosted by a Buzz community require
+that community to be selected and connected for authentication. See
+[Git imports and SSH agents](plugin-architecture.md#open-a-git-import-from-a-link).
 
 Both query-based invite and message links also accept a single `/` before `?`,
 as supplied by Windows URL activation (for example, `buzz://join/?relay=…&code=…`).

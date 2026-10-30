@@ -32,12 +32,13 @@ async function nativeImports(
   samples = [],
   previewOptions = {},
   links = [],
+  hold = false,
 ) {
-  const input = { samples, previewOptions, links };
-  await page.addInitScript(({ samples, previewOptions, links }) => {
+  const input = { samples, previewOptions, links, hold };
+  await page.addInitScript(({ samples, previewOptions, links, hold }) => {
     window.isTauri = true;
     window.importCalls = [];
-    window.importDelay = false;
+    window.importDelay = hold;
     const plugins = ["channels", "github", "bestie", "repos", "workflows"].map(
       (name) => ({
         manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
@@ -1627,3 +1628,67 @@ for (const mode of ["Light", "Dark"]) {
     await expect(dialog).toBeHidden();
   });
 }
+
+test("a linked preview can close during acquisition and a later link still opens", async ({
+  page,
+  app,
+}) => {
+  const link = "buzz://plugin-install?repository=org%2Frepo&ref=first";
+  await nativeImports(
+    page,
+    [
+      {
+        path: ".",
+        manifest: {
+          id: "example.linked",
+          name: "Linked",
+          apiVersion: 1,
+          host: { files: true },
+        },
+        revision: "one",
+      },
+    ],
+    { warnings: [] },
+    [link],
+    true,
+  );
+  await page.goto(app.origin);
+  const loading = page.getByRole("dialog", {
+    name: "Add a plugin",
+    exact: true,
+  });
+  await expect(loading).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => typeof window.resolveImport))
+    .toBe("function");
+  await expect(
+    loading.getByRole("button", { name: "Close", exact: true }),
+  ).toBeEnabled();
+  await loading.press("Escape");
+  await expect(loading).toBeHidden();
+  await page.evaluate((link) => {
+    window.importDelay = false;
+    window.deliverPluginLink(link.replace("ref=first", "ref=next"));
+  }, link);
+  await expect(loading).toBeVisible();
+  await page.evaluate(() => window.resolveImport());
+  const review = page.getByRole("dialog", {
+    name: "Review Linked Plugin access",
+    exact: true,
+  });
+  await expect(review).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(
+        (call) => call.command === "plugin_import_install",
+      ),
+    ),
+  ).toHaveLength(0);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls
+        .filter((call) => call.command === "plugin_import_git")
+        .map((call) => call.args.reference),
+    ),
+  ).toEqual(["first", "next"]);
+});

@@ -2055,7 +2055,7 @@
     color: var(--text-subtle);
   }
   .buzz-menu-group-label {
-    padding: var(--space-2) var(--space-2) var(--space-1);
+    padding: var(--space-2) var(--space-3) var(--space-1);
     color: var(--text-subtle);
   }
   .buzz-menu-group-label[data-emphasis="quiet"] {
@@ -2097,6 +2097,9 @@
   .buzz-popover-popup[data-size="compact"][data-padding="list"] {
     --floating-inset: var(--space-half);
     padding: var(--space-half);
+  }
+  .buzz-menu-popup[data-size="compact"] .buzz-menu-group-label {
+    padding-inline: var(--space-2);
   }
   .buzz-menu-popup[data-size="compact"] .buzz-menu-item {
     padding: var(--space-1) var(--space-2);

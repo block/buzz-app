@@ -45,6 +45,8 @@ import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
+  abortable,
+  recentNotesSection,
 } from "../../features/agent-harness/core-memory";
 import { readProject } from "../../features/agent-harness/project";
 import { SessionControls } from "../../features/agent-harness/session-control";
@@ -159,6 +161,9 @@ const listing = (added: readonly AddedTool[]): Listing => ({
       ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
       : tool,
 });
+
+/** How long a session start waits for the agent's recent notes. */
+const NOTES_WAIT_MS = 2_000;
 
 export class ClaudeRuntime {
   private readonly agents = new Map<AgentKey, Entry>();
@@ -937,7 +942,17 @@ export class ClaudeRuntime {
         ]),
       launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
-        const memory = await this.core(agent);
+        // Read once per process: a new note doesn't restart a session, and a
+        // slow read starts it without them.
+        const [memory, notes] = await Promise.all([
+          this.core(agent),
+          recentNotesSection((slug) =>
+            abortable(
+              this.memories(agent, slug),
+              AbortSignal.timeout(NOTES_WAIT_MS),
+            ),
+          ),
+        ]);
         const directories = key ? entry.directories.get(key) : undefined;
         return {
           ...where(entry.config),
@@ -955,6 +970,7 @@ export class ClaudeRuntime {
             instructions,
             team: entry.team,
             ...(memory === undefined ? {} : { memory }),
+            notes,
           }),
         };
       },

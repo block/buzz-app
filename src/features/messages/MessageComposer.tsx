@@ -1071,8 +1071,8 @@ function Composer({
       return;
     }
     // A later upload must not undo a deliberate focus move, even a round trip.
-    const moved = () => {
-      pickerFocus.current = undefined;
+    const moved = (event: FocusEvent) => {
+      if (event.target !== pending.owner) pickerFocus.current = undefined;
     };
     document.addEventListener("focusin", moved, true);
     return () => document.removeEventListener("focusin", moved, true);

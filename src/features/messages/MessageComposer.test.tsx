@@ -1535,6 +1535,21 @@ it("focuses the composer only after the whole picker batch succeeds", async () =
   expect(h.input()).toHaveFocus();
 });
 
+it.each(["before", "after"])(
+  "keeps the picker handoff when focus returns to Attach %s change",
+  async (order) => {
+    const h = await mountUploadComposer();
+    const trigger = screen.getByRole("button", { name: "Attach files" });
+    trigger.focus();
+    if (order === "before") fireEvent.focusIn(trigger);
+    pickAttachments(h.container, [attachmentFile()]);
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    if (order === "after") fireEvent.focusIn(trigger);
+    await act(() => h.uploadCalls[0]?.result.resolve(uploadDescriptor()));
+    expect(h.input()).toHaveFocus();
+  },
+);
+
 it("leaves focus alone on picker cancellation or rejected files", async () => {
   const h = await mountUploadComposer();
   const trigger = screen.getByRole("button", { name: "Attach files" });

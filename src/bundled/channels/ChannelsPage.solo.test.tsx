@@ -961,6 +961,7 @@ it.each(["solo", "stream"] as const)(
     const place = type === "solo" ? "chat" : "channel";
     f.mount();
     const editor = await screen.findByRole("textbox");
+    expect(editor).toHaveFocus();
     const user = userEvent.setup();
     await user.click(editor);
     await user.keyboard("Keep this draft");
@@ -971,7 +972,12 @@ it.each(["solo", "stream"] as const)(
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
-    // A refreshed, unarchived summary must restore composition and its draft.
+    // Remote unarchive restores composition without taking the reader's focus.
+    const history = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    history.focus();
+    expect(history).toHaveFocus();
     act(() => f.setArchived(false));
     expect(await screen.findByRole("textbox")).toHaveTextContent(
       "Keep this draft",
@@ -979,6 +985,7 @@ it.each(["solo", "stream"] as const)(
     expect(
       screen.queryByRole("region", { name: `Archived ${place}` }),
     ).toBeNull();
+    expect(history).toHaveFocus();
     expect(f.send).not.toHaveBeenCalled();
   },
 );

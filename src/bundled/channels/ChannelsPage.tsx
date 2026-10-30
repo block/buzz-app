@@ -593,6 +593,7 @@ function ChannelWorkspace({
     currentId: string | undefined;
     queries: RelaySession;
     channelType: string | undefined;
+    archived: boolean;
   }>(undefined);
   const continuingVisit =
     committedVisit.current?.currentId === currentId &&
@@ -602,8 +603,9 @@ function ChannelWorkspace({
       currentId,
       queries,
       channelType: current?.channelType,
+      archived: !!current?.archived,
     };
-  }, [currentId, queries, current?.channelType]);
+  }, [currentId, queries, current?.channelType, current?.archived]);
   const tabState = useChannelTabState(
     queries,
     currentId,
@@ -1784,6 +1786,8 @@ function ChannelWorkspace({
             key={`composer:${current.id}`}
             onFocusedRemoval={focusArchivedHistory}
             autoFocus={
+              // Remote unarchive restores controls within the reader's current visit.
+              !(continuingVisit && committedVisit.current?.archived) &&
               // Conversion remounts the body, but isn't a new conversation opening.
               // Its dialog hands off focus after closing and releasing modality.
               !(

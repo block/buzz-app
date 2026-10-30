@@ -743,6 +743,9 @@ test.describe("remote archive focus", () => {
         } else {
           await expect(copy).toHaveCount(0);
         }
+        const retainedFocus = focus === "elsewhere" ? elsewhere : history;
+        await retainedFocus.focus();
+        await expect(retainedFocus).toBeFocused();
         app.relay.publish(
           "primary",
           app.signRelay({
@@ -758,9 +761,105 @@ test.describe("remote archive focus", () => {
         );
         await expect(notice).toHaveCount(0);
         await expect(editor).toHaveJSProperty("value", draft);
+        await frames(page);
+        await expect(retainedFocus).toBeFocused();
       }
       expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
       expect(app.report.unexpected).toEqual([]);
     });
   }
+});
+
+// A fresh composer must not override native focus in an already-open archived Solo visit.
+test.describe("remote Solo unarchive", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  test.use({
+    soloChannels: [id],
+    lifecycleVisibility: { archived: [id], hidden: [] },
+  });
+  test("retains history and outside focus when remote unarchive restores composition", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page
+      .getByRole("button", { name: "Search Buzz", exact: true })
+      .click();
+    const search = page.getByRole("dialog", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    await search
+      .getByRole("combobox", { name: "Search Buzz" })
+      .fill("Lifecycle channel");
+    await search
+      .getByRole("group", { name: "Chats" })
+      .getByRole("option", { name: /Lifecycle channel/ })
+      .click();
+    const notice = page.getByRole("region", {
+      name: "Archived chat",
+      exact: true,
+    });
+    await expect(notice).toHaveText("This chat is archived");
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+      exact: true,
+    });
+    // This minimal archived chat is empty; its settled empty state ends startup.
+    await expect(
+      history.getByRole("heading", { name: "No messages yet.", exact: true }),
+    ).toBeVisible();
+    await expect(history).not.toHaveAttribute(
+      "data-buzz-launch-pending",
+      "settling",
+    );
+    const outside = page.getByRole("button", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    const editor = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const tags = [
+      ["d", id],
+      ["name", "Lifecycle channel"],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["private"],
+      ["P", app.channelMetadata(id, []).pubkey],
+    ];
+    let timestamp = Math.floor(Date.now() / 1000);
+    for (const target of [history, outside]) {
+      await target.focus();
+      await expect(target).toBeFocused();
+      app.relay.publish(
+        "primary",
+        app.signRelay({
+          kind: 39000,
+          tags,
+          content: "",
+          created_at: ++timestamp,
+        }),
+      );
+      await expect(notice).toHaveCount(0);
+      await expect(editor).toBeVisible();
+      await frames(page);
+      await expect(target).toBeFocused();
+      await outside.focus();
+      app.relay.publish(
+        "primary",
+        app.signRelay({
+          kind: 39000,
+          tags: [...tags, ["archived", "true"]],
+          content: "",
+          created_at: ++timestamp,
+        }),
+      );
+      await expect(notice).toHaveText("This chat is archived");
+    }
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
 });

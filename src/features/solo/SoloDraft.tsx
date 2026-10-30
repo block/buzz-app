@@ -103,15 +103,6 @@ function blankNewChat(session: RelaySession, scope: string, key: string) {
  * composer reads it only as it mounts. */
 const restoreListeners = new Set<(scope: string, key: string) => void>();
 
-function focusPrompt(prompt: HTMLElement | null) {
-  const input = prompt?.querySelector<
-    HTMLTextAreaElement | ComposerInputElement
-  >('textarea, [contenteditable="true"]');
-  input?.focus();
-  // A returning draft resumes at its end, not before its first tag.
-  input?.setSelectionRange(input.value.length, input.value.length);
-}
-
 export function SoloDraft({
   session,
   scope,
@@ -135,7 +126,7 @@ export function SoloDraft({
   onStarted: (id: string) => void;
   /** The started chat `id` was never made; `message` says why, and whether
    * what was sent in it went back to New chat. It does unless a draft was
-   * begun there since. */
+   * begun there since or it can't be saved on this device. */
   onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
@@ -190,28 +181,27 @@ export function SoloDraft({
   }, [scope, draftKey, projectId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (focusRequest) focusPrompt(prompt.current);
+    if (!focusRequest) return;
+    const input = prompt.current?.querySelector<
+      HTMLTextAreaElement | ComposerInputElement
+    >('textarea, [contenteditable="true"]');
+    input?.focus();
+    // A returning draft resumes at its end, not before its first tag.
+    input?.setSelectionRange(input.value.length, input.value.length);
   }, [focusRequest]);
-  const [restored, setRestored] = useState(0);
   // The remount replaces the editor; one that had the caret keeps it.
-  const refocus = useRef(false);
+  const [restored, setRestored] = useState({ count: 0, focus: false });
   useEffect(() => {
     const listener = (restoredScope: string, key: string) => {
       if (restoredScope !== scope || key !== draftKey) return;
-      refocus.current = !!prompt.current?.contains(document.activeElement);
-      setRestored((count) => count + 1);
+      const focus = !!prompt.current?.contains(document.activeElement);
+      setRestored(({ count }) => ({ count: count + 1, focus }));
     };
     restoreListeners.add(listener);
     return () => {
       restoreListeners.delete(listener);
     };
   }, [scope, draftKey]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: The remounted composer commits with the new count.
-  useEffect(() => {
-    if (!refocus.current) return;
-    refocus.current = false;
-    focusPrompt(prompt.current);
-  }, [restored]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
@@ -426,7 +416,8 @@ export function SoloDraft({
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
-        key={restored}
+        key={restored.count}
+        focusRequest={restored.focus ? restored.count : 0}
         chatPresentation
         ownSoloConversation
         session={session}

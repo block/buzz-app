@@ -619,7 +619,7 @@ export function SearchResults({
     ]),
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
-  // The relay matches public channels itself; keep its matches, ranked last.
+  // The store matches public channels by the same rule (`matchRank`).
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {

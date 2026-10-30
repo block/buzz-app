@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { AgentSaveFooter } from "../../../features/agents/AgentSaveButton";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useAgentSettingsHost } from "../../agents/AgentSettingsHost";
 import { AgentTabs } from "../../agents/AgentTabs";
 import type { Agents, Agent } from "../../../features/agents/service";
 import type { Host, HostResponse } from "../../../features/host/service";
@@ -65,7 +66,12 @@ function fixture() {
   let subject = "account-a";
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
+    account: {
+      subject,
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   let stored = response();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {
@@ -121,14 +127,133 @@ function fixture() {
     },
   };
 }
+async function loadedInstructions() {
+  const field = screen.getByRole("textbox", { name: "Instructions" });
+  await waitFor(() => expect(field).toBeEnabled());
+  return field;
+}
+it.each([false, true])(
+  "keeps the full form mounted across settings and catalog loading (catalog fails: %s)",
+  async (fails) => {
+    const h = fixture();
+    const user = userEvent.setup();
+    const settings = deferred<HostResponse>();
+    const catalog = deferred<HostResponse>();
+    const data = JSON.parse(response().body);
+    Object.assign(data.agents[0], {
+      model_id: "one",
+      reasoning_effort: "high",
+      model_selection_status: 1,
+    });
+    const settingsResponse = { ...response(), body: JSON.stringify(data) };
+    const request = h.request.getMockImplementation();
+    if (!request) throw new Error("Missing request fixture");
+    h.request.mockImplementation((input) => {
+      if (input.url.endsWith("/list-agents")) return settings.promise;
+      if (input.url.endsWith("/get-model-catalog")) return catalog.promise;
+      return request(input);
+    });
+    renderTabs(h);
+    const field = screen.getByRole("textbox", { name: "Instructions" });
+    const harness = screen.getByRole("button", {
+      name: "Change harness from Builderlab",
+    });
+    const mark = harness.querySelector("svg");
+    const model = screen.getByRole("button", { name: "Model: …" });
+    const thinking = screen.getByRole("combobox", { name: "Thinking" });
+    const region = field.closest("[aria-busy]");
+    try {
+      expect(mark).toHaveAttribute("width", "1.25rem");
+      expect(mark).toHaveAttribute("aria-hidden", "true");
+      await waitFor(() =>
+        expect(h.request).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: expect.stringContaining("/list-agents"),
+          }),
+        ),
+      );
+      expect(region).toHaveAttribute("aria-busy", "true");
+      expect(region?.querySelector(".sr-only")).toBeInTheDocument();
+      expect(region?.querySelector(".buzz-loading-region-feedback")).toBeNull();
+      expect(model).toBeDisabled();
+      expect(model.querySelector(".buzz-select-leading")).toBeNull();
+      expect(thinking).toBeDisabled();
+      expect(field).toBeDisabled();
+      expect(field).toHaveValue("");
+      await user.type(field, "Must not become a draft.");
+      expect(field).toHaveValue("");
+      expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+      act(() => harness.focus());
+      await act(async () => settings.resolve(settingsResponse));
+      await waitFor(() => expect(field).toBeEnabled());
+      await waitFor(() =>
+        expect(h.request).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: expect.stringContaining("/get-model-catalog"),
+          }),
+        ),
+      );
+      expect(harness).toHaveFocus();
+      expect(harness.querySelector("svg")).toBe(mark);
+      expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
+      expect(field).toHaveValue("First instructions.");
+      expect(region).toHaveAttribute("aria-busy", "true");
+      expect(region?.querySelector(".sr-only")).toBeInTheDocument();
+      expect(model).toBeDisabled();
+      expect(thinking).toBeDisabled();
+      await user.type(field, " Draft.");
+      if (fails) {
+        await act(async () =>
+          catalog.resolve({ status: 400, headers: {}, body: "{}" }),
+        );
+        expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+        expect(model).toHaveTextContent("Unavailable");
+        expect(model.querySelector(".buzz-select-leading")).toBeNull();
+        expect(model).toBeDisabled();
+        expect(thinking).toBeDisabled();
+        h.request.mockImplementation(request);
+        await user.click(screen.getByRole("button", { name: "Retry models" }));
+      } else {
+        const result = await request({
+          url: "https://builderlab.example/get-model-catalog",
+          method: "POST",
+        });
+        await act(async () => catalog.resolve(result));
+      }
+      await waitFor(() => expect(model).toBeEnabled());
+      expect(model).toHaveTextContent("Friendly Model");
+      expect(thinking).toHaveTextContent("High");
+      expect(region).toHaveAttribute("aria-busy", "false");
+      expect(harness.querySelector("svg")).toBe(mark);
+      expect(field).toHaveValue("First instructions. Draft.");
+      expect(screen.getByRole("button", { name: /^Model:/ })).toBe(model);
+      expect(screen.getByRole("combobox", { name: "Thinking" })).toBe(thinking);
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    } finally {
+      await act(async () => {
+        settings.resolve(response());
+        catalog.resolve({ status: 200, headers: {}, body: '{"models":[]}' });
+      });
+    }
+  },
+);
 it("retries a failed load and refuses to save a draft through another account", async () => {
   const h = fixture();
   const user = userEvent.setup();
   h.request.mockResolvedValueOnce({ ...response(), status: 400 });
-  render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
+  renderTabs(h);
   expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 400");
+  expect(
+    screen.getByRole("button", { name: "Change harness from Builderlab" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Model: Unavailable" }),
+  ).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Retry" }));
-  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  const field = await loadedInstructions();
   expect(field).toHaveValue("First instructions.");
   await user.type(field, "Changed.");
   await act(async () => h.changeAccount());
@@ -146,7 +271,7 @@ it("switching agents hides the old draft and ignores the switched-away read", as
   const mounted = render(<h.Tab agent={agent()} save={vi.fn()} />, {
     wrapper: StrictMode,
   });
-  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  const field = await loadedInstructions();
   await user.type(field, "Unsaved.");
   const delayed = deferred<HostResponse>();
   h.request.mockReturnValueOnce(delayed.promise);
@@ -159,14 +284,14 @@ it("switching agents hides the old draft and ignores the switched-away read", as
         ),
       ).toHaveLength(2),
     );
-    expect(screen.getByRole("status")).toHaveTextContent("Loading settings");
     expect(
-      screen.queryByRole("textbox", { name: "Instructions" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("textbox", { name: "Instructions" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+      "",
+    );
     mounted.rerender(<h.Tab agent={agent()} save={vi.fn()} />);
-    expect(
-      await screen.findByRole("textbox", { name: "Instructions" }),
-    ).toHaveValue("First instructions.");
+    expect(await loadedInstructions()).toHaveValue("First instructions.");
   } finally {
     await act(async () => {
       delayed.resolve(response());
@@ -180,16 +305,33 @@ it("switching agents hides the old draft and ignores the switched-away read", as
 
 function renderTabs(h: ReturnType<typeof fixture>, close?: () => void) {
   function Pane() {
+    const agents = { save: vi.fn() } as unknown as Agents;
+    const settings = useAgentSettingsHost({
+      agents,
+      agent: agent(),
+      type: h.type,
+      types: [
+        h.type,
+        {
+          defaults: () => ({ config: {} }),
+          pluginId: "local",
+          revision: "1",
+          key: "local/codex",
+          id: "codex",
+          title: "Codex",
+        },
+      ],
+    });
     const [target, setTarget] = useState<HTMLDivElement | null>(null);
     return (
       <AgentSaveFooter value={{ target }}>
         <AgentTabs
-          agents={{ save: vi.fn() } as unknown as Agents}
+          agents={agents}
           agent={agent()}
           type={h.type}
           channels={[]}
           memories={undefined}
-          settingsHost={{ typeControl: () => <p>Hosted provider</p> }}
+          settingsHost={settings.settingsHost}
           settingsContent={<p>Agent settings</p>}
         />
         <div ref={setTarget} data-testid="save-footer" />
@@ -224,19 +366,34 @@ it("dismisses Harness help before allowing Escape to close the agent pane", asyn
   const close = vi.fn();
   renderTabs(h, close);
   const harness = await screen.findByRole("button", {
-    name: "Harness: Builderlab",
+    name: "Change harness from Builderlab",
   });
-  act(() => harness.focus());
+  const selectedMask = harness.querySelector("mask");
+  expect(selectedMask).not.toBeNull();
+  await user.click(harness);
+  const option = await screen.findByRole("menuitemradio", {
+    name: "Builderlab",
+  });
+  expect(option).toBeChecked();
+  const optionMask = option.querySelector("mask");
+  expect(optionMask).not.toBeNull();
+  expect(optionMask?.id).not.toBe(selectedMask?.id);
+  await screen.findByRole("menuitemradio", { name: "Codex" });
+  await user.keyboard("{End}{Enter}");
   expect(
-    await screen.findByRole("dialog", { name: "Builderlab harness" }),
+    await screen.findByRole("dialog", { name: "Harness availability" }),
   ).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(
-      screen.queryByRole("dialog", { name: "Builderlab harness" }),
+      screen.queryByRole("dialog", { name: "Harness availability" }),
     ).toBeNull(),
   );
   expect(screen.getByRole("complementary", { name: "Agent" })).toBeVisible();
+  expect(screen.getByRole("menuitemradio", { name: "Codex" })).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(harness).toHaveFocus();
   expect(close).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
@@ -252,7 +409,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
     "aria-selected",
     "true",
   );
-  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  const field = await loadedInstructions();
   expect(await screen.findByRole("button", { name: /^Model:/ })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toBeVisible();
   expect(screen.queryByText("Workspace")).toBeNull();
@@ -308,7 +465,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
-  const fresh = await screen.findByRole("textbox", { name: "Instructions" });
+  const fresh = await loadedInstructions();
   expect(fresh).not.toBe(field);
   expect(fresh).toHaveValue("First instructions.");
   expect(screen.queryByRole("alert")).toBeNull();
@@ -320,7 +477,7 @@ it("guards hosted model drafts and a pending model save", async () => {
   const h = fixture();
   const user = userEvent.setup();
   renderTabs(h);
-  await screen.findByRole("textbox", { name: "Instructions" });
+  await loadedInstructions();
   const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
   await waitFor(() => expect(modelTrigger).toBeEnabled());
   await user.click(modelTrigger);
@@ -361,9 +518,7 @@ it("guards hosted model drafts and a pending model save", async () => {
   expect(screen.getByText("Agent settings")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
-  expect(
-    await screen.findByRole("textbox", { name: "Instructions" }),
-  ).toHaveValue("First instructions.");
+  expect(await loadedInstructions()).toHaveValue("First instructions.");
   expect(
     await screen.findByRole("button", { name: /^Model:/ }),
   ).toHaveTextContent("Choose a model");
@@ -377,7 +532,7 @@ it("saves model and instructions together through one footer action", async () =
   const h = fixture();
   const user = userEvent.setup();
   renderTabs(h);
-  const field = await screen.findByRole("textbox", { name: "Instructions" });
+  const field = await loadedInstructions();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   const modelTrigger = await screen.findByRole("button", { name: /^Model:/ });
   await waitFor(() => expect(modelTrigger).toBeEnabled());

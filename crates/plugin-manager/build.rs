@@ -5,15 +5,19 @@ mod build_env;
 
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
+const BUILDERLAB_API_BASE_PATH_KEY: &str = "BUZZ_BUILDERLAB_API_BASE_PATH";
 
-fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'static str> {
+fn builderlab_target(
+    local: &Path,
+    process: Option<String>,
+) -> Result<(String, String), &'static str> {
     let values = build_env::load(local, &[BUILDERLAB_URL_KEY], |_| process.clone())?;
     let raw = values
         .get(BUILDERLAB_URL_KEY)
         .map(String::as_str)
         .unwrap_or("https://app.builderlab.xyz");
     if raw.is_empty() {
-        return Ok(String::new());
+        return Ok((String::new(), String::new()));
     }
     let url = url::Url::parse(raw).map_err(|_| "Invalid Builderlab build URL")?;
     if url.scheme() != "https"
@@ -24,7 +28,12 @@ fn builderlab_origin(local: &Path, process: Option<String>) -> Result<String, &'
     {
         return Err("Builderlab build URL must use HTTPS without credentials, query, or fragment");
     }
-    Ok(url.origin().ascii_serialization())
+    // Native backup handoff trusts Builderlab credentials only for this API
+    // path, and decisions call under it. Drop one terminal slash, exactly as
+    // sign-in's `oauthTarget` does, so all three share the same path.
+    let path = url.path();
+    let api_base_path = format!("{}/api/goose/", path.strip_suffix('/').unwrap_or(path));
+    Ok((url.origin().ascii_serialization(), api_base_path))
 }
 
 fn builderlab_apps_domain(
@@ -81,11 +90,12 @@ fn main() {
         Err(std::env::VarError::NotPresent) => None,
         Err(std::env::VarError::NotUnicode(_)) => panic!("Native build inputs must be UTF-8"),
     };
-    let origin = builderlab_origin(&local, process(BUILDERLAB_URL_KEY))
+    let (origin, api_base_path) = builderlab_target(&local, process(BUILDERLAB_URL_KEY))
         .expect("Invalid Builderlab build configuration");
     let apps_domain = builderlab_apps_domain(&local, &origin, process(BUILDERLAB_APPS_DOMAIN_KEY))
         .expect("Invalid Builderlab Apps build configuration");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
+    println!("cargo:rustc-env={BUILDERLAB_API_BASE_PATH_KEY}={api_base_path}");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_APPS_DOMAIN={apps_domain}");
 }
 
@@ -148,42 +158,73 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
         assert_eq!(
-            builderlab_origin(&local, None).unwrap(),
-            "https://app.builderlab.xyz"
+            builderlab_target(&local, None).unwrap(),
+            ("https://app.builderlab.xyz".into(), "/api/goose/".into())
         );
         assert_eq!(
-            builderlab_apps_domain(&local, &builderlab_origin(&local, None).unwrap(), None)
+            builderlab_apps_domain(&local, &builderlab_target(&local, None).unwrap().0, None)
                 .unwrap(),
             "apps.builderlab.xyz"
         );
-        assert_eq!(builderlab_origin(&local, Some(String::new())).unwrap(), "");
-        std::fs::write(&local, "BUZZ_BUILDERLAB_URL=\n").unwrap();
-        assert_eq!(builderlab_origin(&local, None).unwrap(), "");
         assert_eq!(
-            builderlab_apps_domain(&local, &builderlab_origin(&local, None).unwrap(), None)
+            builderlab_target(&local, Some(String::new())).unwrap(),
+            (String::new(), String::new())
+        );
+        std::fs::write(&local, "BUZZ_BUILDERLAB_URL=\n").unwrap();
+        assert_eq!(
+            builderlab_target(&local, None).unwrap(),
+            (String::new(), String::new())
+        );
+        assert_eq!(
+            builderlab_apps_domain(&local, &builderlab_target(&local, None).unwrap().0, None)
                 .unwrap(),
             ""
         );
     }
 
     #[test]
-    fn local_url_and_process_overrides_produce_an_exact_origin() {
+    fn local_url_and_process_overrides_produce_an_exact_origin_and_api_path() {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
+        assert_eq!(
+            builderlab_target(&local, None).unwrap(),
+            ("https://app.builderlab.xyz".into(), "/api/goose/".into())
+        );
         std::fs::write(
             &local,
             "\u{feff}export BUZZ_BUILDERLAB_URL=\"https://OVERRIDE.EXAMPLE:443/deployment/\" # comment\n",
         )
         .unwrap();
         assert_eq!(
-            builderlab_origin(&local, None).unwrap(),
-            "https://override.example"
+            builderlab_target(&local, None).unwrap(),
+            (
+                "https://override.example".into(),
+                "/deployment/api/goose/".into()
+            )
         );
         assert_eq!(
-            builderlab_origin(&local, Some("https://login.example:8443/path/".into())).unwrap(),
-            "https://login.example:8443"
+            builderlab_target(&local, Some("https://login.example:8443/path/".into())).unwrap(),
+            (
+                "https://login.example:8443".into(),
+                "/path/api/goose/".into()
+            )
         );
-        assert_eq!(builderlab_origin(&local, Some(String::new())).unwrap(), "");
+        // Only one slash goes, as in sign-in, so an empty segment is kept.
+        assert_eq!(
+            builderlab_target(
+                &local,
+                Some("https://login.example:8443/deployment//".into())
+            )
+            .unwrap(),
+            (
+                "https://login.example:8443".into(),
+                "/deployment//api/goose/".into()
+            )
+        );
+        assert_eq!(
+            builderlab_target(&local, Some(String::new())).unwrap(),
+            (String::new(), String::new())
+        );
     }
 
     #[test]
@@ -197,16 +238,19 @@ mod tests {
             "https://login.example#",
             "invalid",
         ] {
-            let error = builderlab_origin(&local, Some(configured.into())).unwrap_err();
+            let error = builderlab_target(&local, Some(configured.into())).unwrap_err();
             assert!(!error.contains(configured));
         }
         std::fs::write(&local, "BUZZ_BUILDERLAB_URL='unterminated").unwrap();
         assert_eq!(
-            builderlab_origin(&local, None).unwrap_err(),
+            builderlab_target(&local, None).unwrap_err(),
             "Invalid native build .env.local"
         );
         // Explicit process input also overrides malformed same-key assignments.
-        assert_eq!(builderlab_origin(&local, Some(String::new())).unwrap(), "");
+        assert_eq!(
+            builderlab_target(&local, Some(String::new())).unwrap(),
+            (String::new(), String::new())
+        );
     }
 
     #[test]
@@ -215,8 +259,8 @@ mod tests {
         let local = directory.path().join(".env.local");
         std::fs::write(&local, "PRIVATE_VALUE='unterminated").unwrap();
         assert_eq!(
-            builderlab_origin(&local, None).unwrap(),
-            "https://app.builderlab.xyz"
+            builderlab_target(&local, None).unwrap(),
+            ("https://app.builderlab.xyz".into(), "/api/goose/".into())
         );
 
         for quote in ["'", "\"", "`"] {
@@ -228,8 +272,11 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
-                builderlab_origin(&local, None).unwrap(),
-                "https://after-multiline.example"
+                builderlab_target(&local, None).unwrap(),
+                (
+                    "https://after-multiline.example".into(),
+                    "/api/goose/".into()
+                )
             );
         }
         for quote in ["'", "\""] {
@@ -241,8 +288,8 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
-                builderlab_origin(&local, None).unwrap(),
-                "https://app.builderlab.xyz"
+                builderlab_target(&local, None).unwrap(),
+                ("https://app.builderlab.xyz".into(), "/api/goose/".into())
             );
         }
     }

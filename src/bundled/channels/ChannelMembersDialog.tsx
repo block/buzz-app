@@ -30,7 +30,6 @@ import { profileTarget } from "../../features/profiles/target";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { personKey, rankPeople } from "../../features/search/people-rank";
 import {
-  noSearchUsage,
   pickerText,
   readSearchUsage,
   recordChoice,
@@ -39,7 +38,6 @@ import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
 import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
-import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
   authorizeMemberChange,
   type MemberChange,
@@ -83,10 +81,15 @@ import {
   UsersIcon,
   XIcon,
 } from "../../shared/design-system/icons";
-import { MemberRow, useMemberAdministration } from "./MemberAdministration";
+import {
+  MemberRow,
+  useMemberAdministration,
+  memberAccessLabel,
+} from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
+import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -94,19 +97,15 @@ import {
   channelIcon,
   channelText,
 } from "../../features/channels/channel-icon";
-
-/** How a name matches typed text: the shared person name rule, the same as
- * mentions and New message. */
-const typedMatch = (name: string, needle: string) =>
-  needle ? matchPerson(name, needle) : undefined;
+import { writeClipboardText } from "../../shared/clipboard";
 
 const INVITATION_GROUP_SIZE = 4;
 
 const additionRoles = [
   {
     role: "member",
-    label: "Participant",
-    action: "Add as participant",
+    label: "Participate",
+    action: "Add to participate",
     description: "Send messages, reply, and react.",
   },
   {
@@ -717,19 +716,17 @@ export function ChannelMembersDialog({
   const text = query.trim();
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or explicit refresh rereads stored choice/visit scores.
   const usage = useMemo(
-    () => (solo ? noSearchUsage : readSearchUsage(session.scope)),
-    [session.scope, solo, text, refresh],
+    () => readSearchUsage(session.scope),
+    [session.scope, text, refresh],
   );
   const [invitationPage, setInvitationPage] = useState({
     text,
-    size: MEMBER_SEARCH_PAGE_SIZE,
     revealRelay: false,
     groupSizes: {} as Record<string, number>,
   });
   if (invitationPage.text !== text)
     setInvitationPage({
       text,
-      size: MEMBER_SEARCH_PAGE_SIZE,
       revealRelay: false,
       groupSizes: {},
     });
@@ -748,6 +745,10 @@ export function ChannelMembersDialog({
       lifetime.current = undefined;
     };
   }, [session, channelId]);
+  // A roster refused while signed out reads again once sign-in lands.
+  const reauthorized = useReauthorizedRetry(session.recovery, () =>
+    setRefresh((value) => value + 1),
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries the roster read.
   useEffect(() => {
     void session.archives.ensure();
@@ -755,6 +756,7 @@ export function ChannelMembersDialog({
     let current = true;
     setRosterReading(true);
     setRosterReadError("");
+    const failed = reauthorized.begin();
     void session
       .read([{ kinds: [39002], "#d": [channelId], limit: 1 }], { fresh: true })
       .then(
@@ -773,9 +775,10 @@ export function ChannelMembersDialog({
               "The member list could not be confirmed. Try again.",
             );
         },
-        () => {
-          if (current)
-            setRosterReadError("The member list could not load. Try again.");
+        (error) => {
+          if (!current) return;
+          setRosterReadError("The member list could not load. Try again.");
+          failed(error);
         },
       )
       .finally(() => {
@@ -919,12 +922,10 @@ export function ChannelMembersDialog({
   );
   // Default suggestions use this client's agents; searches also include the
   // viewer's non-client inventory after people and other community agents.
-  if (text || (!solo && canAdd))
-    for (const agent of solo
-      ? canAddSoloAgents
-        ? agentChoices.selectable
-        : []
-      : agentChoices.selectable.filter((agent) => !!text || agent.managed)) {
+  if (text || canAdd)
+    for (const agent of agentChoices.selectable.filter(
+      (agent) => (!solo || canAddSoloAgents) && (!!text || agent.managed),
+    )) {
       if (
         !text ||
         addable(
@@ -985,27 +986,12 @@ export function ChannelMembersDialog({
     pickerText("channel-members", needle),
     new Set(available.map((person) => personKey(person.pubkey))),
   );
-  // Solo retains its existing combined, name-ranked page.
-  if (solo)
-    available.sort(
-      (a, b) =>
-        (typedMatch(label(a.pubkey, a.name), needle)?.tier ?? 4) -
-        (typedMatch(label(b.pubkey, b.name), needle)?.tier ?? 4),
-    );
-  // Known agents supplement the server page, not its rendering bound. Keep all
-  // matches reachable through the existing More action without mounting them all.
-  const invitationSize =
-    invitationPage.text === text
-      ? invitationPage.size
-      : MEMBER_SEARCH_PAGE_SIZE;
-  const moreCandidates = solo && available.length > invitationSize;
   const offering =
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
     (!!text ||
-      (!solo &&
-        members.size === 1 &&
+      (members.size === 1 &&
         members.has(session.viewer ?? "") &&
         available.length > 0));
   const invitationGroups = [
@@ -1015,7 +1001,7 @@ export function ChannelMembersDialog({
     "Your other agents",
   ].map((name, index) => {
     const people =
-      !solo && roleFilter === "All"
+      roleFilter === "All"
         ? available.filter((person) => candidateGroup(person) === index)
         : [];
     const ranked = rankPeople(
@@ -1067,17 +1053,13 @@ export function ChannelMembersDialog({
   });
   const visibleCandidates = !offering
     ? []
-    : solo
-      ? roleFilter === "All"
-        ? available.slice(0, invitationSize)
-        : []
-      : invitationGroups.flatMap((group) => group.people);
+    : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&
     !canAddSoloAgents &&
     [...candidates.values()].some(agentCandidate);
-  const shareChannels = offering && solo ? share.channels : [];
+  const shareChannels = offering && solo && text ? share.channels : [];
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
@@ -1142,7 +1124,6 @@ export function ChannelMembersDialog({
     setRefresh((value) => value + 1);
     setInvitationPage({
       text,
-      size: MEMBER_SEARCH_PAGE_SIZE,
       revealRelay: false,
       groupSizes: {},
     });
@@ -1225,7 +1206,7 @@ export function ChannelMembersDialog({
           );
         else await session.memberAdditions.add(channelId, key);
         if (!signal.aborted) {
-          if (!solo) recordChoice(session.scope, typed, personKey(key));
+          recordChoice(session.scope, typed, personKey(key));
           if (direct) {
             setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
             setQuery("");
@@ -1252,7 +1233,7 @@ export function ChannelMembersDialog({
         if (direct) pending.delete(key);
       }
     },
-    [session, channelId, canAddSoloAgents, place, solo],
+    [session, channelId, canAddSoloAgents, place],
   );
 
   const addTeam = useCallback(
@@ -1292,8 +1273,7 @@ export function ChannelMembersDialog({
   );
   const copy = async () => {
     try {
-      // The `navigator` prop is app navigation; the clipboard is the browser's.
-      await globalThis.navigator.clipboard.writeText(soloChatLink(channelId));
+      await writeClipboardText(soloChatLink(channelId));
       setCopyStatus("Link copied");
     } catch {
       setCopyStatus("Couldn’t copy the link.");
@@ -1526,7 +1506,7 @@ export function ChannelMembersDialog({
             ? `Remove ${removalTarget} from ${place}`
             : selection.expectedRole === "absent"
               ? "Add member?"
-              : "Change member role?"
+              : `Change access to ${memberAccessLabel(selection.role)}?`
           : (title ??
             (solo
               ? "Share access"
@@ -1604,7 +1584,9 @@ export function ChannelMembersDialog({
                 ? `Remove ${removalTarget}`
                 : selectedAddition
                   ? selectedAddition.action
-                  : `Make ${selection.role}`}
+                  : selection.role === "admin"
+                    ? "Set as admin"
+                    : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
             </Button>
           </>
         ) : solo ? (
@@ -1666,7 +1648,7 @@ export function ChannelMembersDialog({
         selection.role !== "remove" && (
           <p className="text-body-sm">
             {selectedAddition?.description ??
-              `Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
+              `Change access from ${memberAccessLabel(selection.expectedRole)} to ${memberAccessLabel(selection.role)}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes what they can do in this ${place}.`}`}
           </p>
         )
       ) : (
@@ -1898,9 +1880,7 @@ export function ChannelMembersDialog({
                 aria-label={`Not in this ${place}`}
                 {...highlight.listProps}
               >
-                <div
-                  className={`${solo ? styles.groupHeading : "pt-2"} px-control-inset`}
-                >
+                <div className="pt-2 px-control-inset">
                   <InlineHeader title={`Not in this ${place}`} />
                 </div>
                 {teams.length > 0 && (
@@ -1919,66 +1899,54 @@ export function ChannelMembersDialog({
                     ))}
                   </ul>
                 )}
-                {(solo
-                  ? [
-                      {
-                        name: "",
-                        people: visibleCandidates,
-                        more: false,
-                        next: undefined,
-                      },
-                    ]
-                  : invitationGroups
-                ).map((group) =>
+                {invitationGroups.map((group) =>
                   group.people.length > 0 ? (
                     <section
                       key={group.name}
                       aria-label={
                         group.name === "People"
                           ? `People not in this ${place}`
-                          : group.name || undefined
+                          : group.name
                       }
-                      className={group.name ? "pb-4" : undefined}
+                      className="pb-4"
                     >
-                      {group.name && (
-                        <h4
-                          className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
-                        >
-                          {group.name}
-                          {group.name === "Your agents" && (
-                            <AgentCommunityScope
-                              community={community}
-                              scope="Agents"
+                      <h4
+                        className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
+                      >
+                        {group.name}
+                        {group.name === "Your agents" && (
+                          <AgentCommunityScope
+                            community={community}
+                            scope="Agents"
+                          />
+                        )}
+                        {group.name === "Your other agents" && (
+                          <PopoverRoot>
+                            <PopoverTrigger
+                              openOnHover="preview"
+                              render={
+                                <IconButton
+                                  aria-label="About your other agents"
+                                  variant="ghost"
+                                  size="xs"
+                                  icon={
+                                    <InfoIcon size={16} aria-hidden="true" />
+                                  }
+                                />
+                              }
                             />
-                          )}
-                          {group.name === "Your other agents" && (
-                            <PopoverRoot>
-                              <PopoverTrigger
-                                openOnHover="preview"
-                                render={
-                                  <IconButton
-                                    aria-label="About your other agents"
-                                    variant="ghost"
-                                    size="xs"
-                                    icon={
-                                      <InfoIcon size={16} aria-hidden="true" />
-                                    }
-                                  />
-                                }
-                              />
-                              <PopoverPopup
-                                side="top"
-                                aria-label="About your other agents"
-                              >
-                                <p className="m-0 text-body-sm text-subtle">
-                                  Your agents from other devices or earlier
-                                  setups.
-                                </p>
-                              </PopoverPopup>
-                            </PopoverRoot>
-                          )}
-                        </h4>
-                      )}
+                            <PopoverPopup
+                              side="top"
+                              aria-label="About your other agents"
+                            >
+                              <p className="m-0 text-body-sm text-subtle">
+                                Your agents from other devices or earlier
+                                setups.
+                              </p>
+                            </PopoverPopup>
+                          </PopoverRoot>
+                        )}
+                      </h4>
                       <ul>
                         {group.people.map((person) =>
                           row(
@@ -2059,27 +2027,21 @@ export function ChannelMembersDialog({
                     {search.error}
                   </p>
                 )}
-                {(moreCandidates || search.more) && (
-                  <div
-                    className={`flex justify-center${solo ? "" : " border-t border-standard pt-4"}`}
-                  >
+                {search.more && (
+                  <div className="flex justify-center border-t border-standard pt-4">
                     <Button
-                      variant={solo ? "outline" : "subtle"}
+                      variant="subtle"
                       size="sm"
                       onClick={() => {
-                        setInvitationPage((old) =>
-                          solo
-                            ? {
-                                ...old,
-                                size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                              }
-                            : { ...old, revealRelay: true },
-                        );
-                        if (!moreCandidates) search.next();
+                        setInvitationPage((old) => ({
+                          ...old,
+                          revealRelay: true,
+                        }));
+                        search.next();
                       }}
                       disabled={search.loading}
                     >
-                      {solo ? "Show more results" : "Find more matches"}
+                      Find more matches
                     </Button>
                   </div>
                 )}
@@ -2194,6 +2156,7 @@ export function ChannelMembersDialog({
               communityScope={communityScope}
               key={channelId}
               capability={session.channelDetails}
+              recovery={session.recovery}
               channelId={channelId}
               channel={channel}
             />

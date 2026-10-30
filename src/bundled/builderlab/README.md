@@ -23,6 +23,11 @@ tenant's runtimes and schema location. Creation checks that contract and support
 initialization. The executable profile returns the required asset manifest and
 bindings, even when its handler serves all content itself.
 
+Sharing follows the one-workspace model: `apps_visibility` switches an app
+between everyone in the owner's workspace and only the owner, and
+`apps_community` grants or revokes a Buzz community at the grant revision it just
+read. `apps_visibility` keeps existing viewers and community grants.
+
 BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
 boundary: the server must grant Builderlab access to the current workspace/account.
 Existing workspace early-preview enablement can provide that access; these tools
@@ -43,7 +48,8 @@ cookie before opening the original app URL. The guest never receives the CLI
 credential. App authorization and consent still run at ingress.
 Opening a different tenant's app never forwards the current account's credential.
 
-Each sign-in has separate website storage. Signing out or changing accounts closes
+Each account has its own website storage, kept across sign-ins and restarts, so
+an app's browser login persists while native exchange is unavailable. Signing out or changing accounts closes
 live and retained guests; deliberate sign-out also requests revocation of the server CLI parent.
 Canceling sign-in or disposing the plugin closes its local guests without logging
 out an existing server session. Other platforms do not expose the app panel.
@@ -130,6 +136,27 @@ agents are not migrated into this type.
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
   sign-out, and disposal.
+  `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
+  sign-in before any plugin session exists, using this plugin's bundled native
+  grant, at the build URL like the Settings card; that credential is separate
+  from the Settings session. The grant exists only while this plugin is
+  enabled, so with it turned off that sign-in refuses before opening the
+  browser.
+  A successful first-run sign-in continues into the app-owned setup steps
+  described in [identity](../../../docs/identity.md): the app reads the key
+  bound to the account, the destinations saved to it (this plugin's
+  known-communities list route, never through the Settings session's client)
+  and the communities it owns through this plugin's bundled grant
+  (`src/features/identity/builderlab-account.ts`, reusing the
+  `communities/` routes and parsers); a linked account is asked for that
+  key, otherwise the user creates a key or brings one they already have, and
+  that key is then bound to the account through the same native signer and
+  backed up (an imported key only once the user agrees);
+  starting over creates a new key and unlinks the lost one before binding it.
+  Key backup hands the sign-in to the native uploader, and the same portal is
+  asked which keys the account holds a backup of; Welcome back
+  restores the linked key from one through native recovery's own browser
+  sign-in.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with
@@ -176,4 +203,12 @@ verifies the returned session credential with `/v1/auth/me` using the
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
 `true` enables remote agents. Otherwise, Settings and the Agents provider show
 “Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
+this capability.
+
+The plugin also offers Builderlab as a Decisions API provider. It reads
+`capabilities.can_use_builderlab_decisions` the same way, but only explicit
+`true` registers the provider, and only while the user is signed in. Otherwise
+Builderlab is not listed in Settings > Decisions API and no decision request
+goes to it. While it is registered, it answers unless the user chose another
+provider; when it goes away, TypeSafe answers. Sign out and back in to refresh
 this capability.

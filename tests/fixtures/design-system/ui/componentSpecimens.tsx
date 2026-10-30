@@ -821,6 +821,14 @@ function TabsSpecimen() {
         items={DESTINATIONS}
       />
       <Tabs
+        label="Small segmented filters"
+        variant="segmented"
+        size="sm"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={DESTINATIONS}
+      />
+      <Tabs
         label="Icon segmented filters"
         variant="segmented-icons"
         value={panelDestination}
@@ -2165,6 +2173,13 @@ function LoadingRegionSpecimen() {
       </Button>
       <LoadingRegion pending={pending} label="Refreshing…">
         <Input aria-label="Existing name" defaultValue="Saved name" />
+      </LoadingRegion>
+      <LoadingRegion
+        pending={pending}
+        label="Refreshing quiet name…"
+        statusVisibility="screen-reader"
+      >
+        <Input aria-label="Quiet name" defaultValue="Saved name" />
       </LoadingRegion>
     </SpecimenFrame>
   );

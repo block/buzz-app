@@ -432,6 +432,10 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     if (pointerVisit === "back") {
       const rect = await avatar.boundingBox();
       await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      // Complete this hover while Profile is still open. Otherwise its timer
+      // can fire after Escape and legitimately count as a fresh hover visit.
+      await page.clock.runFor(300);
+      await expect(preview).toBeHidden();
     }
     await page.getByRole("region", { name: "Profile details" }).press("Escape");
     await expect(panel).toHaveCount(0);
@@ -863,10 +867,11 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       expect(await list.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
-      // This read-only fixture has a notice before the first group. Once that
-      // content scrolls out, the heading pins without an extra padding slide.
+      // Short result viewports let headings scroll away so they cannot cover
+      // actions. This read-only fixture has a notice before the first group.
       await expect(list).toHaveCSS("padding-top", "0px");
       const firstHeading = list.getByRole("heading").first();
+      await expect(firstHeading).toHaveCSS("position", "static");
       const headingBounds = await firstHeading.boundingBox();
       const leadingContent = Math.round(headingBounds.y - listBounds.y);
       for (const scrollTop of [0, 1, 8, 16]) {
@@ -876,10 +881,9 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
         await expect
           .poll(() => list.evaluate((el) => el.scrollTop))
           .toBe(leadingContent + scrollTop);
-        // Sticky headings snap to whole pixels inside a fractional frame.
         await expect
           .poll(async () => Math.round((await firstHeading.boundingBox()).y))
-          .toBe(Math.round(listBounds.y));
+          .toBe(Math.round(headingBounds.y) - leadingContent - scrollTop);
       }
       await list.evaluate((el) => {
         el.scrollTop = el.scrollHeight;
@@ -913,6 +917,30 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
             .filter((label) => label !== "layout"),
         ),
       ).toEqual(["Member list"]);
+      await list.evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      // With room for a heading and its rows, the heading still pins as soon
+      // as the preceding notice scrolls out, without an extra padding slide.
+      await page.setViewportSize({ width, height: 460 });
+      await expect(firstHeading).toHaveCSS("position", "sticky");
+      const roomyListBounds = await list.boundingBox();
+      const roomyHeadingBounds = await firstHeading.boundingBox();
+      const roomyLeadingContent = Math.round(
+        roomyHeadingBounds.y - roomyListBounds.y,
+      );
+      for (const scrollTop of [0, 1, 8, 16]) {
+        await list.evaluate((el, top) => {
+          el.scrollTop = top;
+        }, roomyLeadingContent + scrollTop);
+        await expect
+          .poll(() => list.evaluate((el) => el.scrollTop))
+          .toBe(roomyLeadingContent + scrollTop);
+        // Sticky headings snap to whole pixels inside a fractional frame.
+        await expect
+          .poll(async () => Math.round((await firstHeading.boundingBox()).y))
+          .toBe(Math.round(roomyListBounds.y));
+      }
       await list.evaluate((el) => {
         el.scrollTop = 0;
       });

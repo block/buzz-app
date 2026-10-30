@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelayRecovery } from "../../features/relay/recovery";
+import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import type {
   ChannelDetails,
   ChannelDetailsDraft,
@@ -54,12 +56,14 @@ export function ChannelGeneralAccess({
   communityReader,
   communityScope,
   capability,
+  recovery,
   channelId,
   channel,
 }: {
   communityReader?: CommunityReader | undefined;
   communityScope?: string | undefined;
   capability: ChannelDetailsCapability;
+  recovery?: RelayRecovery | undefined;
   channelId: string;
   channel?: ChannelSummary;
 }) {
@@ -125,6 +129,7 @@ export function ChannelGeneralAccess({
   return (
     <ChannelGeneralAccessEditor
       capability={capability}
+      recovery={recovery}
       channelId={channelId}
       communityAvatar={communityAvatar}
     />
@@ -133,10 +138,12 @@ export function ChannelGeneralAccess({
 
 function ChannelGeneralAccessEditor({
   capability,
+  recovery,
   channelId,
   communityAvatar,
 }: {
   capability: ChannelDetailsCapability;
+  recovery: RelayRecovery | undefined;
   channelId: string;
   communityAvatar: (size: "compact" | "default") => ReactNode;
 }) {
@@ -148,13 +155,19 @@ function ChannelGeneralAccessEditor({
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
   const lifetime = useRef<AbortController | undefined>(undefined);
   const busy = useRef(false);
   const origin = useRef<HTMLElement | null>(null);
   const section = useRef<HTMLElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
+  const reauthorized = useReauthorizedRetry(recovery, () => {
+    const signal = lifetime.current?.signal;
+    if (signal && !signal.aborted) void load(signal);
+  });
   const load = useCallback(
     async (signal: AbortSignal) => {
+      const failed = reauthorized.begin();
       setLoading(true);
       setError("");
       try {
@@ -164,12 +177,13 @@ function ChannelGeneralAccessEditor({
         if (!signal.aborted) {
           setBase(undefined);
           setError(reason instanceof Error ? reason.message : String(reason));
+          failed(reason);
         }
       } finally {
         if (!signal.aborted) setLoading(false);
       }
     },
-    [capability, channelId],
+    [capability, channelId, reauthorized],
   );
   useEffect(() => {
     const controller = new AbortController();
@@ -177,6 +191,7 @@ function ChannelGeneralAccessEditor({
     setBase(undefined);
     setChoice(undefined);
     setPending(false);
+    setStatus("");
     busy.current = false;
     void load(controller.signal);
     return () => controller.abort();
@@ -199,8 +214,10 @@ function ChannelGeneralAccessEditor({
       (check ? attempt?.status !== "unconfirmed" : !base || !choice || locked)
     )
       return;
+    if (check) section.current?.focus();
     busy.current = true;
     setPending(true);
+    setStatus(check ? "Checking save status…" : "Saving access…");
     setError("");
     // The choices lock while saving; keep keyboard focus in the access region.
     origin.current = section.current;
@@ -209,10 +226,15 @@ function ChannelGeneralAccessEditor({
       if (check) await capability.check(channelId, controller.signal);
       else if (base && choice)
         await capability.save(base, choice, controller.signal);
-      if (!controller.signal.aborted) await load(controller.signal);
+      if (!controller.signal.aborted) {
+        setStatus("Access updated");
+        await load(controller.signal);
+      }
     } catch (reason) {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted) {
+        setStatus("");
         setError(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
       if (!controller.signal.aborted) {
         busy.current = false;
@@ -225,15 +247,12 @@ function ChannelGeneralAccessEditor({
       ref={section}
       aria-label="General access"
       tabIndex={-1}
-      aria-busy={loading || pending}
       className={styles.generalAccess}
     >
-      <div className={styles.accessRow}>
+      <div className={styles.accessRow} aria-busy={loading || pending}>
         <span
           className={`${styles.accessIcon} ${styles.accessEditableIcon}`}
-          aria-hidden={!pending || undefined}
-          role="status"
-          aria-label={pending ? "Saving access" : undefined}
+          aria-hidden="true"
         >
           {pending ? (
             <CircleNotchIcon
@@ -341,6 +360,7 @@ function ChannelGeneralAccessEditor({
           <Button
             disabled={loading || pending}
             onClick={() => {
+              section.current?.focus();
               if (lifetime.current) void load(lifetime.current.signal);
             }}
           >
@@ -396,6 +416,9 @@ function ChannelGeneralAccessEditor({
           )}
         </AlertDialog>
       )}
+      <p role="status" aria-atomic="true" className="sr-only">
+        {status}
+      </p>
     </section>
   );
 }

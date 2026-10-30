@@ -303,6 +303,45 @@ it("applies viewer and owner metadata through the shared view and follows owner 
   names.dispose();
 });
 
+it("preserves agent ownership for an authored alias when the public name is synthetic", () => {
+  const agent = "a".repeat(64),
+    human = "b".repeat(64),
+    owner = "c".repeat(64);
+  const source: NameSource = {
+    profiles: {
+      snapshot: () =>
+        new Map([
+          [
+            agent,
+            {
+              name: agent.slice(0, 10),
+              nameIsFallback: true as const,
+              isAgent: true as const,
+              ownerPubkey: owner,
+            },
+          ],
+          [human, { name: "Honey" }],
+          [owner, { name: "Salman" }],
+        ]),
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+    agentLibrary: {
+      snapshot: () => ({ status: "ready", definitions: [], identities: [] }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      retain: () => () => {},
+    },
+  };
+  const label = createAgentDirectory().scope(
+    source,
+    [agent, human],
+    [{ pubkey: agent, name: "Honey" }],
+  );
+  expect(label(human)?.name).toBe("Honey");
+  expect(label(agent)?.name).toBe("Salman’s Honey");
+});
+
 it("reuses one policy run per candidate scope across mixed case, outside keys, and updates", () => {
   const [a, b, c, d] = ["a", "b", "c", "d"].map((key) => key.repeat(64));
   if (!a || !b || !c || !d) throw new Error("Missing fixture keys");
@@ -372,14 +411,18 @@ it("reuses one policy run per candidate scope across mixed case, outside keys, a
   expect(resolve).toHaveBeenCalledTimes(13);
 });
 
-it.each([
-  '{"about":"Artwork-only agent"}',
-  '{"name":" ","display_name":""}',
-  "malformed",
-  '{"name":"aaaaaaaaaa"}',
-])(
-  "uses saved aliases for unnamed public profiles but respects an explicit key-like name (%s)",
-  (content) => {
+it.each(
+  [
+    '{"about":"Artwork-only agent"}',
+    '{"name":" ","display_name":""}',
+    "malformed",
+    '{"name":"aaaaaaaaaa"}',
+  ].flatMap((content) =>
+    ["Saved Luna", ""].map((alias) => ({ content, alias })),
+  ),
+)(
+  "uses saved aliases for unnamed public profiles but respects an explicit key-like name (%j)",
+  ({ content, alias }) => {
     const key = "a".repeat(64);
     const profiles = foldProfiles([
       {
@@ -401,7 +444,7 @@ it.each([
         snapshot: () => ({
           status: "ready",
           definitions: [],
-          identities: [{ pubkey: key, name: "Saved Luna" }],
+          identities: [{ pubkey: key, name: alias }],
         }),
         subscribe: () => () => {},
         refresh: async () => {},
@@ -409,7 +452,7 @@ it.each([
       },
     };
     expect(agentDirectory.scope(source)(key)?.name).toBe(
-      content === '{"name":"aaaaaaaaaa"}' ? "aaaaaaaaaa" : "Saved Luna",
+      content === '{"name":"aaaaaaaaaa"}' ? "aaaaaaaaaa" : alias || "Agent",
     );
   },
 );

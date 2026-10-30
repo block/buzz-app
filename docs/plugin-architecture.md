@@ -340,6 +340,8 @@ plugin is replaced, so ask for it when acting rather than keeping it. Like any t
 
 Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
 
+A source may also `present` its watches on the Agent Attention page. Given a watch and its display name, it returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a provider has no `present`, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.
+
 Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
 
 Buzz revokes command access on return, failure, cancellation, agent stop, provider unload or community reconnection, and closes the process and its descendants. Successfully emitted output remains queued after a producer returns. The key and MCP connection stay in Buzz; commands retain the app user's operating-system privileges and can use the agent's tools while their run remains active.
@@ -1680,9 +1682,8 @@ lookup runs, the previous one's still-matching rows stay. Names match by the
 channel pickers' rule (`matchName`): exact, prefix, word start, substring,
 then letter runs that each begin a word (`tlp` for `team-launch-planning`), with
 alphabetical ties. Its last rank, letters merely in order, is left out, because
-Enter and Tab pick the first row while the viewer writes prose. Word runs match
-joined channels only: the open-channel lookup, as in Command-K, offers only
-names that contain the typed text. Open channels follow joined ones, as in
+Enter and Tab pick the first row while the viewer writes prose. The same rule
+applies to open channels from the lookup. Open channels follow joined ones, as in
 Command-K, so a late search result never moves the first row; when joined
 matches would fill the 20 rows, five stay reserved for open channels. Namesakes
 include their channel IDs. A query containing a space completes only names it
@@ -1764,6 +1765,9 @@ takes 2 to 10 level labels, lowest first. A `yes_no` answer is a probability;
 a `choice` answer is the picked value with its confidence; a `score` answer is
 where it falls on the 0-based scale (it can be fractional), with a confidence.
 Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
+`community` is the Buzz community (its relay URL) the text comes from. A
+provider that bills the community, such as Builderlab, refuses a request
+without one (`invalid_request`); TypeSafe ignores it.
 
 `decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
 no decision provider is on (`unavailable`), the chosen provider has no
@@ -1773,11 +1777,22 @@ is over 128 KiB (`input_limit`), or the call times out, fails, or returns
 answers that do not fit the questions. A failed call is not retried and never
 falls back to another provider.
 
+Agents ask through the `decisions_ask` tool, which the Agents plugin adds to
+every agent session (`src/features/decisions/agent-tool.ts`). It takes and
+returns TypeSafe's [System One format](https://docs.typesafe.ai/api/system-one.md)
+(`noul`, `choice` and `score` questions with `criteria`), maps it onto
+`decide`, and sends the agent's community. It has no `model`, images, box
+questions or `usage`: the provider the owner chose answers. A failure is a tool
+error that names the reason and what the owner can do about it. Agents on a
+device have at most 4 calls in flight at once, so Attention's classifier keeps
+most of the native client's 16 slots.
+
 ### Decision providers
 
 Providers are plugins too. A plugin offers one with
 `ctx.decisions.registerProvider`; it is listed under Settings > Decisions API
-while the plugin is on, and removed when the plugin stops:
+while the plugin is on, and removed when the plugin stops or calls the function
+`registerProvider` returns:
 
 ```ts
 import type { Context } from "@buzz/author";
@@ -1806,10 +1821,12 @@ the reply. An answer of the wrong type, an unknown choice, a value outside 0 to
 that were not asked are dropped.
 
 The user chooses the provider in Settings > Decisions API, and the choice is
-kept on this device. Until they choose, TypeSafe (`buzz.typesafe/typesafe`)
-answers. Decision text can include private messages, so no other provider gets
-it without that choice: while the chosen provider is not on, decisions are
-`unavailable` and are not sent to another provider. `ctx.decisions.backend()`
+kept on this device. Until they choose, the first default provider that is on
+answers: Builderlab (`block.builderlab/builderlab`), then TypeSafe
+(`buzz.typesafe/typesafe`). The same holds while a chosen default is not on.
+Decision text can include private messages, so no other provider gets it
+without that choice: while a chosen provider that is not a default is not on,
+decisions are `unavailable` and are not sent to another provider. `ctx.decisions.backend()`
 is the answering provider's key (`<plugin id>/<provider id>`), or undefined
 when none is on, and `ctx.decisions.status()` its status. `Decisions` exposes
 no way to choose the provider. `state` and every question go to the provider,
@@ -1818,6 +1835,7 @@ so send only what the decision needs.
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
 | `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
+| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered only while the user is signed in to an account Builderlab allows decisions for | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server allows up to 32 questions per call |
 
 ## In-app keyboard shortcuts
 

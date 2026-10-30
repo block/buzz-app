@@ -21,6 +21,7 @@ const credential = (value: string): Credential =>
       subject: "user",
       email: "a@example.com",
       canUseRemoteAgents: false,
+      canUseBuilderlabDecisions: false,
     }),
   });
 

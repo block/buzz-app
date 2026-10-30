@@ -26,6 +26,12 @@
       max(19.75rem, var(--secondary-panel-width, calc(100% / 2.1)))
     );
 }
+/* Only the board and its dock read the split width. Reset it below them so a
+   resize frame restyles those readers, not the timeline and panels inside. */
+.board > :not([data-panel-dock]),
+.panelStack > * {
+  --secondary-panel-width: initial;
+}
 .sidebar,
 .conversation {
   height: 100%;
@@ -584,6 +590,24 @@ html[data-keyboard-navigation]
 }
 .connect button {
   margin: var(--space-4) 0;
+}
+.failed {
+  height: 100%;
+  background: var(--surface-panel);
+  display: grid;
+  place-items: center;
+  padding: var(--space-section-gap);
+}
+.failed > * {
+  max-inline-size: 28rem;
+}
+.connecting {
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  letter-spacing: var(--text-body--letter-spacing);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 .note {
   font-size: var(--text-caption);

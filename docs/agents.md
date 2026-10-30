@@ -41,8 +41,9 @@ the usual Create agent form, may edit the name, runtime and settings, and create
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even
-when another community is selected. Use `members` separately after creation to add
-it to a conversation. Agent tools do not expose draft approval.
+when another community is selected. Add the agent to a conversation separately
+after creation; see the [shared tool definitions](../src/buzz-mcp/tools.ts) for
+the available operations and arguments. Agent tools do not expose draft approval.
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
@@ -57,14 +58,14 @@ servers do not support these operations.
 
 ## Agent Attention
 
-Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Agent Attention UI plugin (`buzz.watching`, on by default) adds a Watching tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
+Attention itself (the runtime, tools, storage and sources) is core, but it runs on this device only while a plugin that shows it is on. The bundled Attention plugin (`buzz.watching`, on by default) adds an Attention tab to the settings of every agent running on this device, whatever its type. The tab explains Attention, holds the switch that lets this device run the agent's watches, then groups that agent's subscriptions by Interest. It shows instructions, listening and delivery destinations, enabled state and available wake history, and suggests asks while the agent has none. Ask an agent to create watches through its Attention tools; pausing or removing one preserves the other saved objects. Empty Interests remain visible and can be deleted after their watches are removed. Turning the plugin off hides the tab and turns every agent's Attention off on this device; mentions still wake agents, and each agent keeps its saved switch for when the plugin is back on. The former standalone Agent Attention page is gone, so an old link to `buzz.agents/attention` opens as an unavailable destination.
 
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns
 the defaults, migration policy, per-agent settings tabs, model discovery and run
 behavior for its agents. Plugins can add a tab to every local agent with
-`ctx.agents.registerTab`; the Agent Attention UI plugin's Watching tab holds the
+`ctx.agents.registerTab`; the Attention plugin's Attention tab holds the
 device Attention switch.
 
 Attention is shared by every harness, and a harness has no attention code.
@@ -107,24 +108,93 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
-On desktop the GitHub plugin adds `github_watch_pr`, so an agent can wait on a pull
+The GitHub plugin keeps one store of pull request data (`pull-states.ts`), and
+it is the only place the plugin reads pull requests from GitHub. Links, the Solo
+sidebar, the side panel, watches and agents' lookups each ask it for a level:
+`state`, `feedback` (reviews and comments with their text) or `details` (what
+the side panel shows and acts on). It reads
+each pull request once for all of them, in one batched `gh` query, at every
+level asked of it. It drops a level's data at the first read without that
+level, and forgets a pull request nobody follows at the first read 15 minutes
+after its last poll; with no later read, the data stays in memory.
+Each reader also says how often it wants its pull request read again; the
+store reads each one as often as its most eager reader wants, and every poll
+reads all that are due together.
+
+On desktop the GitHub plugin adds `github_pr_state`, so an agent can read a pull
+request's state as its owner's links show it: open, draft, merged or closed,
+checks, failed check names and conflicts, with when it was read. With
+`details: true` it also gives what the side panel shows: title, branches, files
+changed, the review decision and reviewers, unresolved review threads, the
+merge state and auto-merge. The answer is at most a minute old unless the agent
+asks for a fresh read, or the last read failed: then the answer says so, and
+how old it is.
+
+The GitHub plugin also adds `github_watch_pr`, so an agent can wait on a pull
 request without a model checking it. An agent calls it with a pull request URL
 and the id of one of its own Interests, from a thread or a Solo chat. The tool is a
 convenience over `watch_add`: it adds an `attention/github-pr` source watch to that
 Interest through the same attention tool code, and refuses an Interest that does
-not exist. The plugin never writes an Interest. While the app is open the plugin reads the pull
-request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
+not exist. The plugin never writes an Interest. While the app is open the watch asks the store to
+follow the pull request's feedback, which it reads through the signed-in `gh`
+CLI once a minute, also while the window is hidden. It wakes the agent when CI
 settles on the head commit, once per commit and result, or when new feedback has
 been quiet for 90 seconds, and once more when the pull request merges or closes,
 so the agent can finish and retire its Interest. Attention delivers the wake
 in the conversation where it called the tool: no message is sent, and the agent
 is told its text is data. It quotes the failed checks' names and the new
 comments, line by line, each clipped, with GitHub's links. Agents comment as the
-`gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
-that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
-other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
-pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
-or when the agent calls it with `stop: true`.
+`gh` account, as their owner does, so GitHub cannot tell them apart: by default
+a comment of that account that starts with 🤖, as an agent's do, wakes nobody,
+and the owner's other comments wake the agent. A watch is saved in Attention on the device and respects its on/off switch. Device-local GitHub watches saved before Attention are dropped, not imported: they name no Interest. It ends when the
+pull request merges or closes, after 20 wakes, after 30 minutes without a
+successful read, or when the agent calls it with `stop: true`.
+
+Settings → Plugins → GitHub comment authors decides whose feedback wakes agents,
+since anyone can comment on a public pull request. It holds rules, one per
+line, saved on the device. Each starts with `allow` or `deny`, followed by any
+of these conditions, all of which must hold:
+
+- `author:login`, an exact login, or `author:@me`, the signed-in `gh` account.
+  A bot's login ends in `[bot]`.
+- `author:/pattern/`, a JavaScript regular expression the login must match.
+- `org:name`, membership of a GitHub organization, named exactly.
+- `body:/pattern/`, a regular expression the comment's first 1,000 characters
+  must match. That is the most of a comment a wake quotes.
+- `prefix:text`, what the comment starts with, leading space aside. It runs to
+  the end of the line, spaces included, so it comes last.
+
+A bare `allow` or `deny`, with no conditions, matches everyone.
+
+Logins match case aside, so an author pattern always has the `i` flag; a
+pattern may also use `m`, `s` and `u`. Patterns take JavaScript's syntax but not
+backreferences, lookaround or escapes that mean something else alone, such as
+`\c1`, `\U0041` or `\q`, and `src/bundled/github/pattern.ts` matches them
+as an automaton, in time the text's length bounds, so a pattern like
+`/^(a+)+$/` cannot stall the app on a hostile comment. The first rule that matches decides, and
+When no rule matches decides the rest: Wake the agent or Don't wake it.
+Saving compiles every pattern and rejects the rules, naming the line, when one
+is not a rule, or when they name more organizations than one membership read
+can ask about. Saved rules that no longer parse, such as a pattern with
+lookaround an earlier build accepted, stay in Settings with their error, and
+hold all feedback until they are fixed rather than falling back to the defaults. The defaults keep the behavior from before rules: agents'
+comments wake nobody, and everyone else's wake the agent.
+
+```text
+deny author:@me prefix:🤖
+```
+
+with When no rule matches set to Wake the agent. Adding, say,
+`allow org:block` and `allow author:copilot-pull-request-reviewer[bot]` and choosing Don't wake it
+limits feedback to those. Membership is asked of `gh` only for organizations the rules
+name, and kept for an hour; feedback whose author's membership cannot be read
+waits for a later poll, until ten polls in a row fail for that login alone and
+it counts as no member. While GitHub answers no membership read, not even about
+the signed-in account, no failure counts, so an outage holds feedback rather
+than letting it past an `org:` deny rule. A membership hidden from the `gh` account, or a
+misspelled organization, counts as none, and bots and deleted accounts are in
+no organization. Each poll reads the rules again, so a change applies to
+running watches. CI and pull request state are not limited.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
@@ -901,8 +971,10 @@ The Identity Naming plugin (`buzz.identity-naming`) registers its policy with th
 app-owned identity-name service (`features/identity-names`). Each relay session binds
 its own view. A ready local agent takes precedence only in its matching community;
 otherwise a signed public agent profile's name, then the library's saved name, then
-the public profile. With no policy registered, public-profile names and caller
-fallbacks apply. These labels never change identity keys, membership, credentials,
+the public profile. Synthetic profile-name placeholders are excluded from naming
+and collision checks; caller fallbacks apply when no meaningful name is available.
+With no policy registered, public-profile names and caller fallbacks apply.
+These labels never change identity keys, membership, credentials,
 or runtime admission. Messages, mention choices, activity, conversation labels and
 new notifications consume this view. Mention parsing still uses signed identity
 evidence before resolving its visible label. The portable policy is specified in
@@ -1006,6 +1078,29 @@ the thinking level and "Default" to its menu and accessible label so the model
 name keeps its room. Goose device defaults have no reset action: omitting a
 model in Goose retains its stored provider model.
 
+### Databricks model names
+
+Goose's Databricks providers list workspace endpoints (`databricks-*`,
+`goose-*`) and Unity Catalog model services (`catalog.schema.model`). The
+pickers show their model names, such as `GPT-6.1 Sol` for
+`system.ai.gpt-6-1-sol`; endpoints without a known prefix keep their IDs. Models
+whose names would read the same keep their IDs. Saved and requested models keep their
+full IDs. An agent's one-line summary shows the ID.
+
+`DATABRICKS_MODEL_FILTER`, read through goose's config (its environment
+variable, else the same key in goose's `config.yaml`), narrows the listing of
+`databricks` and `databricks_v2`: comma-separated patterns, each matched against
+a whole ID, case-sensitively, with `*` for any characters and `?` for one, for
+example `goose-*,acme_models.goose.*`. A listed model matching any
+pattern stays listed. Without patterns, the provider's full listing stays,
+which for `databricks` is still only its `databricks-` and `goose-` endpoints,
+so a filter cannot widen it. A filter that matches nothing lists none. It only hides
+models: a saved model the filter hides is kept, and its menu marks it as a
+"Custom model" in pickers that accept one (profiles, cards, new agents) or an
+"Unavailable model" in the Goose default model picker. Databricks still decides
+access. Buzz does not pass its own `BUZZ_*` variables to goose, so the filter
+uses goose's name.
+
 ## Usage
 
 Usage is a default-off page summarising what the selected community's agents
@@ -1093,7 +1188,7 @@ Use `watch_add` with `type: "source"`, a `provider` in `plugin/source` form and 
 
 Source output accepts the same optional classifier questions as event watches. Classification preserves output ordering and completion until the resulting delivery settles. `agents.attentionProviders()` lists active registered provider keys with their optional `description` and `configExample`, including providers from unrelated plugins. Disabled and unloaded registrations disappear from discovery.
 
-The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Agent Attention UI plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
+The bundled Agents plugin owns the command producer and discovery tool. The GitHub plugin owns the GitHub PR producer. Saved provider IDs remain `attention/command` and `attention/github-pr`, and discovery marks them `builtIn: true`. The bundled Attention plugin owns the per-agent overview and controls for existing watches. The GitHub source uses the same PR parser and feedback policy as `github_watch_pr`; it requires the signed-in `gh` CLI. The tool configures Attention subscriptions rather than owning a separate polling loop. Other plugins can register their own source producers through the same lifecycle. Legacy Monitor command registrations and pending wakes are not imported; recreate needed command watches in Attention.
 
 ## Attention delivery destinations
 

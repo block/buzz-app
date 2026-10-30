@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AgentViewProps } from "../../../features/agents/service";
-import { Button } from "../../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../../shared/InlineReference.module.css";
@@ -15,7 +14,15 @@ const message = (reason: unknown) =>
 
 /** Hosted settings belong to Builderlab, rather than Agents' local config. */
 export function createSettingsTab(client: AgentClient, session: OAuthSession) {
-  function Editor({ pubkey, retry }: { pubkey: string; retry(): void }) {
+  function Editor({
+    pubkey,
+    retry,
+    harnessControl,
+  }: {
+    pubkey: string;
+    retry(): void;
+    harnessControl: ReactNode;
+  }) {
     const [loaded, setLoaded] = useState<{
       agent: RemoteAgent;
       subject: string;
@@ -49,37 +56,19 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
       return () => current.abort();
     }, [pubkey]);
     return (
-      <div className="grid gap-4">
-        {loaded && (
-          <ModelSettings
-            client={client}
-            session={session}
-            agent={loaded.agent}
-            subject={loaded.subject}
-          />
-        )}
-        {!loaded &&
-          (busy ? (
-            <p role="status" className="m-0 text-body-sm text-secondary">
-              Loading settings…
-            </p>
-          ) : (
-            <div>
-              <Button onClick={retry}>Retry</Button>
-            </div>
-          ))}
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
-      </div>
+      <ModelSettings
+        client={client}
+        session={session}
+        settings={loaded ?? { pending: busy, error, retry }}
+        harnessControl={harnessControl}
+      />
     );
   }
   return function Settings({
     agent,
     settingsSection,
     settingsContent,
+    settingsHost,
   }: AgentViewProps) {
     const [revision, setRevision] = useState(0);
     return (
@@ -89,6 +78,7 @@ export function createSettingsTab(client: AgentClient, session: OAuthSession) {
             key={`${agent.pubkey}/${revision}`}
             pubkey={agent.pubkey}
             retry={() => setRevision((value) => value + 1)}
+            harnessControl={settingsHost?.typeControl?.(false)}
           />
         )}
         {settingsSection !== "identity" && (

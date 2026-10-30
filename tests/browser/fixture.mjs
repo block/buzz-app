@@ -87,6 +87,8 @@ export const test = base.extend({
   // Opt-in perf workload: let modeled HTTP pages arrive during wheel input.
   olderPageDelayMs: [null, { option: true }],
   membershipActivity: [false, { option: true }],
+  // Joins newer than all alpha history, by distinct new members.
+  membershipBurst: [0, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   // Rows sharing each history second; above the page size, pages split seconds.
@@ -151,6 +153,7 @@ export const test = base.extend({
       firstSeenHistory,
       olderPageDelayMs,
       membershipActivity,
+      membershipBurst,
       launchAnimation,
       historyCounts,
       historyRowsPerSecond,
@@ -207,6 +210,10 @@ export const test = base.extend({
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
     };
     const readEvents = new Map([
+      ["primary", new Map()],
+      ["secondary", new Map()],
+    ]);
+    const agentRecords = new Map([
       ["primary", new Map()],
       ["secondary", new Map()],
     ]);
@@ -628,6 +635,25 @@ export const test = base.extend({
       history.push(
         membershipEvent("member_joined", 0, 1700000740),
         membershipEvent("member_joined", 1, 1700000741),
+      );
+    }
+    if (membershipBurst) {
+      const history = histories.get(`primary/${channels[0]}`);
+      const start = history.at(-1).created_at + 1;
+      history.push(
+        ...Array.from({ length: membershipBurst }, (_, i) =>
+          sign(
+            40099,
+            [["h", channels[0]]],
+            JSON.stringify({
+              type: "member_joined",
+              actor: viewer,
+              target: getPublicKey(generateSecretKey()),
+            }),
+            relayKey,
+            start + i,
+          ),
+        ),
       );
     }
     let inboxDmAnchor;
@@ -1277,7 +1303,7 @@ export const test = base.extend({
           kinds: [30177],
           limit: 500,
         });
-        return [];
+        return [...agentRecords.get(community).values()];
       }
       if (filter.kinds?.includes(30175) || filter.kinds?.includes(30177)) {
         expect(filter).toEqual({
@@ -1824,6 +1850,21 @@ export const test = base.extend({
         const channel = event.tags.find(([name]) => name === "h")?.[1];
         histories.get(`${community}/${channel}`).push(event);
         relay.publish(community, event);
+        return;
+      }
+      if (event.kind === 30177) {
+        const coordinates = event.tags.filter(([name]) => name === "d");
+        expect(coordinates).toEqual([
+          ["d", expect.stringMatching(/^[0-9a-f]{64}$/)],
+        ]);
+        expect(event.tags).toContainEqual(["runtime", expect.any(String)]);
+        const content = JSON.parse(event.content);
+        expect(content.name.trim()).not.toBe("");
+        expect(content.parallelism).toEqual(expect.any(Number));
+        expect(content.respond_to).toEqual(expect.any(String));
+        agentRecords.get(community).set(coordinates[0][1], event);
+        report.agentPublications ??= [];
+        report.agentPublications.push({ community, event });
         return;
       }
       if ([7, 5, 40003].includes(event.kind)) {
@@ -2719,23 +2760,28 @@ export const test = base.extend({
       const sidebarFailures = [
         ...(report.sidebarSortFailures ?? []),
         ...(report.sidebarMuteFailures ?? []),
-        ...(report.sidebarActivityFailures ?? []),
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarAssignmentFailures ?? []),
         ...(report.sidebarRemovalFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
         ...(report.startupFailures ?? []),
       ];
+      // Activity reads retry a 502 quietly, so their journeys inject a 403.
+      const activityFailures = [...(report.sidebarActivityFailures ?? [])];
       const injectedSidebarFailure = (message, index) => {
-        if (
-          !/^Failed to load resource: the server responded with a status of 502/.test(
+        const status =
+          /^Failed to load resource: the server responded with a status of (502|403)/.exec(
             message,
-          )
-        )
-          return false;
-        const match = sidebarFailures.indexOf(consoleLocations.get(index));
+          )?.[1];
+        const failures =
+          status === "502"
+            ? sidebarFailures
+            : status === "403"
+              ? activityFailures
+              : undefined;
+        const match = failures?.indexOf(consoleLocations.get(index)) ?? -1;
         if (match < 0) return false;
-        sidebarFailures.splice(match, 1);
+        failures?.splice(match, 1);
         return true;
       };
       // Edge 403 pages (e.g. a VPN reconnecting) injected on relay reads.

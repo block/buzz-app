@@ -17,10 +17,15 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { attachmentMessage } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { DraftMentionRoster } from "../messages/draft-mention-roster";
+import {
+  clearAttachmentDraft,
+  type AttachmentDraft,
+} from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
@@ -37,6 +42,7 @@ type Pending = {
   channelId: string;
   recipients: string;
   draft: MentionDraft;
+  attachments: readonly (readonly string[])[];
 };
 const keyFor = (people: readonly Recipient[]) =>
   people
@@ -95,6 +101,7 @@ function savedLegacy(scope: string, viewer?: string) {
       channelId: value.channelId,
       recipients: value.recipients,
       draft: mentionDraft(value.draft),
+      attachments: [],
       people: savedRecipients(scope, viewer),
     };
 }
@@ -112,6 +119,7 @@ function recovered(operations: readonly OutgoingEvent[], viewer?: string) {
     channelId,
     recipients: keyFor(people),
     draft: mentionDraft(value.draft),
+    attachments: item.event.tags.filter(([name]) => name === "imeta"),
     people,
   };
 }
@@ -146,6 +154,9 @@ export function NewMessage({
   );
   const recipientNames = recipients.map((person) => person.name).join(", ");
   const roster = useMemo(() => ({ recipients }), [recipients]);
+  // Text still in the To field may be a recipient not chosen yet, so Send
+  // waits for it to become one or be cleared.
+  const [typed, setTyped] = useState(false);
   const [legacy, setLegacy] = useState(() =>
     savedLegacy(scope, session.viewer),
   );
@@ -158,8 +169,9 @@ export function NewMessage({
     setComposerFocus((request) => request + 1);
   }, []);
   const retiring = useRef<string | undefined>(undefined);
-  const [busy, setBusy] = useState<"sending" | undefined>();
+  const [busy, setBusy] = useState<"uploading" | "sending" | undefined>();
   const [error, setError] = useState("");
+  const [uploadFailed, setUploadFailed] = useState(false);
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
   const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
@@ -179,12 +191,13 @@ export function NewMessage({
     pending && session.directMessages.delivery(pending.id) === "failed";
   const locked = !ready || !!busy || (!!pending && !failed);
   const retire = useCallback(() => {
+    clearAttachmentDraft(session, `${scope}:${draftKey}`);
     retiring.current = undefined;
     prepared.current = undefined;
     setRecipients([]);
     setRestoredDraft(mentionDraft(""));
     setDraftRevision((revision) => revision + 1);
-  }, []);
+  }, [session, scope]);
   useLayoutEffect(() => {
     const confirmed = pending && session.directMessages.delivery(pending.id);
     if (pending) {
@@ -265,30 +278,55 @@ export function NewMessage({
     setRecipients(people);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
+    setUploadFailed(false);
   }
-  async function send(draft: MentionDraft) {
+  async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);
     if (
       attempt.current ||
       !ready ||
       !recipients.length ||
-      !content.trim() ||
+      (!content.trim() && !files?.snapshot().length && !pending) ||
       !session.directMessages.available
     )
       return;
     const controller = new AbortController();
     attempt.current = controller;
-    setBusy("sending");
+    setBusy(
+      files?.snapshot().some((file) => !file.uploaded)
+        ? "uploading"
+        : "sending",
+    );
     setError("");
+    setUploadFailed(false);
     const key = keyFor(recipients);
     let current: Pending | undefined = pending;
+    let preparingFiles = !!files;
     try {
+      // Confirmation-only retries must retain the exact durable event.
+      const uploaded = files
+        ? await files.prepareForSend(controller.signal)
+        : [];
+      controller.signal.throwIfAborted();
+      preparingFiles = false;
+      setBusy("sending");
+      // Compare the complete published metadata; messages.send still validates
+      // every upload against the actual community origin.
+      const attachments = attachmentMessage(
+        "",
+        uploaded,
+        uploaded[0]?.url,
+      ).tags;
       if (current && session.directMessages.delivery(current.id) === "failed")
         validateAgents();
       if (
         current &&
         (current.recipients !== key ||
-          JSON.stringify(current.draft) !== JSON.stringify(draft))
+          JSON.stringify(current.draft) !==
+            JSON.stringify(mentionDraft(draft)) ||
+          (files &&
+            JSON.stringify(current.attachments) !==
+              JSON.stringify(attachments)))
       ) {
         if (session.directMessages.delivery(current.id) !== "failed")
           throw new Error(
@@ -318,7 +356,7 @@ export function NewMessage({
           id,
           content,
           draft.recipients.map((person) => person.pubkey),
-          [],
+          uploaded,
           {
             key: recoveryKey,
             value: JSON.stringify({
@@ -327,7 +365,13 @@ export function NewMessage({
             }),
           },
         );
-        current = { id: messageId, channelId: id, recipients: key, draft };
+        current = {
+          id: messageId,
+          channelId: id,
+          recipients: key,
+          draft,
+          attachments,
+        };
       }
       await session.directMessages.delivered(
         current.id,
@@ -351,7 +395,8 @@ export function NewMessage({
       retire();
       onStarted(current.channelId, current.id);
     } catch (reason) {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted && preparingFiles) setUploadFailed(true);
+      else if (!controller.signal.aborted)
         setError(
           reason instanceof Error
             ? reason.message
@@ -393,7 +438,11 @@ export function NewMessage({
     return match;
   }, [channels, recipients, session.viewer]);
   return (
-    <section className={styles.page} aria-label="New message">
+    <section
+      className={styles.page}
+      aria-label="New message"
+      data-attachment-drop-zone
+    >
       <RecipientPicker
         session={session}
         scope={scope}
@@ -401,6 +450,7 @@ export function NewMessage({
         disabled={locked}
         onChange={change}
         onComplete={focusComposer}
+        onTyped={setTyped}
       />
       <div className={styles.blank} data-new-message-body="">
         {existing ? (
@@ -433,7 +483,16 @@ export function NewMessage({
         ) : null}
       </div>
       <div className={styles.feedback}>
-        {busy && <p role="status">Sending message…</p>}
+        {busy && (
+          <p role="status">
+            {busy === "uploading" ? "Uploading files…" : "Sending message…"}
+          </p>
+        )}
+        {uploadFailed && (
+          <p role="status">
+            A file couldn’t upload. Retry or remove it, then send again.
+          </p>
+        )}
         {!session.directMessages.available && (
           <p role="status">
             Starting direct messages is unavailable on this connection.
@@ -476,14 +535,17 @@ export function NewMessage({
           disabled={!recipients.length}
           submission={{
             draftKey,
+            attachments: true,
+            allowAttachmentOnly: true,
             recoveredDraft: restoredDraft,
             locked,
             disabled:
               !ready ||
               !!busy ||
               !recipients.length ||
+              typed ||
               !session.directMessages.available,
-            submit: (draft) => void send(draft),
+            submit: (draft, files) => void send(draft, files),
           }}
         />
       </DraftMentionRoster.Provider>

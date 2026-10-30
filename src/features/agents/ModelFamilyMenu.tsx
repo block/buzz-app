@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ModelIcon, type ModelChoice } from "./ModelPicker";
+import { modelLogo, type ModelChoice } from "./ModelPicker";
 import { CaretDownIcon, CheckIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
@@ -82,6 +82,9 @@ export function ModelFamilyMenu({
     const family = modelFamily(model);
     families.set(family, [...(families.get(family) ?? []), model]);
   }
+  const hasFamilyLogos = [...families.keys()].some((family) =>
+    modelLogo(family),
+  );
   const selectedLabel = `${selected.label}${inherited ? " · Default" : ""}`;
   const menu = (
     <MenuRoot>
@@ -104,9 +107,7 @@ export function ModelFamilyMenu({
                 {leading}
               </span>
             )}
-            <span className="buzz-select-leading" aria-hidden="true">
-              <ModelIcon model={modelFamily(selected)} />
-            </span>
+            {modelLogo(modelFamily(selected), "buzz-select-leading")}
             {/* Card labels keep Default accessible without crowding the model. */}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>
@@ -134,6 +135,9 @@ export function ModelFamilyMenu({
             onValueChange={(id) => onChange(id)}
           >
             <MenuRadioItem value="" closeOnClick>
+              {hasFamilyLogos && (
+                <span className="buzz-select-leading" aria-hidden="true" />
+              )}
               {defaultChoice.label} · Default
             </MenuRadioItem>
           </MenuRadioGroup>
@@ -145,7 +149,11 @@ export function ModelFamilyMenu({
           .map(([family, choices]) => (
             <MenuSubmenu key={family}>
               <MenuSubmenuTrigger>
-                <ModelIcon model={family} />
+                {hasFamilyLogos && (
+                  <span className="buzz-select-leading" aria-hidden="true">
+                    {modelLogo(family)}
+                  </span>
+                )}
                 {family}
               </MenuSubmenuTrigger>
               <MenuSubmenuPopup aria-label={`${family} models`}>
@@ -169,7 +177,9 @@ export function ModelFamilyMenu({
                         value={model.id}
                         closeOnClick
                       >
-                        {model.label}
+                        {model.unlisted && model.description
+                          ? `${model.label} · ${model.description}`
+                          : model.label}
                       </MenuRadioItem>
                     ),
                   )}

@@ -125,7 +125,7 @@ const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 
 type Config = { reply: string };
-/** Turns on a plugin that shows Attention, as the Agent Attention UI does. */
+/** Turns on a plugin that shows Attention, as the Attention plugin does. */
 const showAttention = (ctx: Context, revision: string) =>
   ctx
     .extend({ pluginOwner: Object.freeze({ id: "buzz.watching", revision }) })
@@ -152,7 +152,7 @@ async function setup({
   answer = undefined as AgentType<Config>["run"],
   pluginActive = (): boolean => true,
   subscribePlugin = (_listener: () => void) => () => {},
-  /** Whether the Agent Attention UI plugin is on once startup is over. */
+  /** Whether the Attention plugin is on once startup is over. */
   attention = true,
   /** Whether another plugin is still starting after setup, so startup is not
    * over. */
@@ -270,7 +270,7 @@ async function setup({
     ...(syncedSettings ? { syncedSettings } : {}),
   };
   plugin.agents.register(type);
-  // The Agent Attention UI plugin starts after the type, then startup is over.
+  // The Attention plugin starts after the type, then startup is over.
   const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
   settled = !starting;
@@ -5408,6 +5408,10 @@ it("runs a watch's classifier after its selectors and passes the event with each
   });
   expect(questions.deploy?.instructions).toContain("\nNo means: ");
   expect(questions.deploy?.instructions).toContain("untrusted data");
+  // The agent's community, which a provider such as Builderlab bills.
+  expect(jev.decide.mock.calls[0]?.[0].community).toBe(
+    "wss://relay.example.test",
+  );
 });
 
 it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {
@@ -11175,6 +11179,7 @@ it("rejects invalid source discovery metadata", async () => {
     { configExample: [] },
     { configExample: { value: 1n } },
     { configExample: circular },
+    { present: "GitHub PR" },
   ])
     expect(() =>
       plugin.agents.addAttentionSource({
@@ -11768,6 +11773,41 @@ it("registers Buzz-owned command sources with saved provider keys", async () => 
   expect(() => registerAttention({ agents: external.agents })).toThrow(
     /built into Buzz/,
   );
+});
+
+it("presents a watch through its provider, and plainly when that fails", async () => {
+  const { service, plugin } = await setup();
+  const watch = {
+    type: "source" as const,
+    interest_id: "release",
+    enabled: true,
+    provider: "attention/github-pr",
+    config: {},
+  };
+  const present = vi.fn((_watch: unknown, title: string) => ({
+    type: `GitHub PR ${title}`,
+  }));
+  plugin
+    .extend({ pluginOwner: { id: "buzz.github", revision: "bundled" } })
+    .agents.addAttentionSource({
+      id: "github-pr",
+      present,
+      run: async () => {},
+    });
+  expect(service.presentWatch(watch, "Release")).toEqual({
+    type: "GitHub PR Release",
+  });
+  expect(present).toHaveBeenCalledWith(watch, "Release");
+  expect(
+    service.presentWatch({ ...watch, provider: "example/other" }, "Release"),
+  ).toBeUndefined();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  present.mockImplementation(() => {
+    throw new Error("broken");
+  });
+  expect(service.presentWatch(watch, "Release")).toBeUndefined();
+  expect(warn).toHaveBeenCalled();
+  warn.mockRestore();
 });
 
 it.each(["command"])(

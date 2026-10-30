@@ -2,6 +2,7 @@ import { createConsola } from "consola";
 import { Context } from "@deepseek-ai/cordis";
 import { HostService } from "../src/features/host/service.ts";
 import { authTagOwner } from "../src/features/agents/owner-attestation.ts";
+import { publishAgentRecord } from "../src/features/agents/relay-removal.ts";
 import { logSocketFrame } from "../src/features/developer/traffic.ts";
 import { getLogger, setLogLevel } from "../src/features/developer/logging.ts";
 import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
@@ -2029,6 +2030,171 @@ test("message/reaction deletions pass real signing and publication without admit
   }
 });
 
+test("agent profile saves publish owner-signed listings through the broker outbox", async () => {
+  const h = await harness(success);
+  let traffic;
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    traffic = await openBrokerSocket(transport);
+    owner = createOutbox(transport.viewer, transport.writer, {
+      load: () => [],
+      save: () => {},
+    });
+    const entry = {
+      pubkey: "ab".repeat(32),
+      name: "Renamed agent",
+      picture: "https://example.com/new.png",
+      runtime: "block.builderlab/builderlab",
+      prior: {
+        content: {
+          name: "Old name",
+          picture: "https://example.com/old.png",
+          parallelism: 2,
+          respond_to: "mentions",
+        },
+        tags: [
+          ["d", "ab".repeat(32)],
+          ["runtime", "block.builderlab/builderlab"],
+          ["legacy-setting", "kept"],
+        ],
+      },
+    };
+    const record = await publishAgentRecord(
+      { outbox: owner.outbox },
+      entry,
+      new AbortController().signal,
+    );
+    expect(h.publications).toHaveLength(1);
+    const published = h.publications[0];
+    expect(verifyEvent(published)).toBe(true);
+    expect(published).toMatchObject({
+      kind: 30177,
+      pubkey: transport.viewer,
+      content: JSON.stringify(record.content),
+    });
+    expect(JSON.parse(published.content)).toEqual({
+      name: entry.name,
+      picture: entry.picture,
+      parallelism: 2,
+      respond_to: "mentions",
+    });
+    expect(published.tags).toEqual([
+      ["d", entry.pubkey],
+      ["runtime", entry.runtime],
+      ["legacy-setting", "kept"],
+      ["client-id", expect.any(String)],
+    ]);
+    expect(owner.outbox.snapshot()).toEqual([]);
+    const stranger = finalizeEvent({ ...published }, generateSecretKey());
+    expect((await h.post("publish", stranger)).status).toBe(400);
+    expect(
+      (await h.post("publish", { ...published, sig: "00".repeat(64) })).status,
+    ).toBe(400);
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    owner?.dispose();
+    traffic?.dispose();
+    await h.close();
+  }
+});
+
+test("agent record signing refuses malformed coordinates, content and timestamps", async () => {
+  const h = await harness(success);
+  const content = { name: "Agent", parallelism: 1, respond_to: "owner-only" };
+  const template = {
+    kind: 30177,
+    created_at: 1700000000,
+    content: JSON.stringify(content),
+    tags: [["d", "ab".repeat(32)]],
+  };
+  try {
+    const signed = await h.post("sign", template);
+    expect(signed.status).toBe(200);
+    expect(verifyEvent(await signed.json())).toBe(true);
+    for (const invalid of [
+      { tags: [] },
+      { tags: [...template.tags, ...template.tags] },
+      { tags: [["d", "AB".repeat(32)]] },
+      { tags: [["d", "agent"]] },
+      { tags: [["d", "ab".repeat(32), "extra"]] },
+      { tags: [null] },
+      { tags: [...template.tags, ["extra", 1]] },
+      { created_at: -1 },
+      { created_at: 1.5 },
+      { content: "not JSON" },
+      { content: "null" },
+      { content: "[]" },
+      ...[
+        { name: "Agent" },
+        { ...content, name: " " },
+        { ...content, parallelism: undefined },
+        { ...content, parallelism: -1 },
+        { ...content, parallelism: 1.5 },
+        { ...content, parallelism: "1" },
+        { ...content, respond_to: undefined },
+        { ...content, respond_to: null },
+        { ...content, respond_to: [] },
+      ].map((body) => ({ content: JSON.stringify(body) })),
+    ])
+      expect((await h.post("sign", { ...template, ...invalid })).status).toBe(
+        400,
+      );
+    expect(h.publications).toEqual([]);
+  } finally {
+    await h.close();
+  }
+});
+
+test.each(["a", "é"])(
+  "agent record signing admits publishable UTF-8 boundary frames with %s content",
+  async (character) => {
+    const h = await harness(success);
+    try {
+      await h.start();
+      const content = (prompt) =>
+        JSON.stringify({
+          name: "Agent",
+          parallelism: 0,
+          respond_to: "owner-only",
+          system_prompt: prompt,
+        });
+      const template = {
+        kind: 30177,
+        created_at: 1700000000,
+        content: content(""),
+        tags: [["d", "ab".repeat(32)]],
+      };
+      const baseline = await h.post("sign", template);
+      expect(baseline.status).toBe(200);
+      const signedTemplate = await baseline.json();
+      const size = (event) =>
+        Buffer.byteLength(JSON.stringify(["EVENT", event]));
+      const room = 64 * 1024 - size(signedTemplate);
+      const bytes = Buffer.byteLength(character);
+      const prompt =
+        character.repeat(Math.floor(room / bytes)) + "a".repeat(room % bytes);
+      const largest = { ...template, content: content(prompt) };
+      const signed = await h.post("sign", largest);
+      expect(signed.status).toBe(200);
+      const event = await signed.json();
+      expect(verifyEvent(event)).toBe(true);
+      expect(size(event)).toBe(64 * 1024);
+      expect((await h.post("publish", event)).status).toBe(200);
+      expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+
+      const oversized = { ...template, content: content(`${prompt}a`) };
+      expect(size({ ...event, content: oversized.content })).toBe(
+        64 * 1024 + 1,
+      );
+      expect((await h.post("sign", oversized)).status).toBe(400);
+      expect(h.publications).toHaveLength(1);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
 test("agent record deletions sign and publish only the viewer's own kind 30177 coordinate", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),
@@ -2149,6 +2315,13 @@ test("status signing and publication preserve scoped replacements and explicit c
           ["expiration", "1700086400"],
         ],
       },
+      {
+        content: "Celebrating",
+        tags: [
+          ["d", "general"],
+          ["emoji", ":party:", "https://emoji.test/party.svg"],
+        ],
+      },
       { content: "", tags: [["d", "general"]] },
     ]) {
       const response = await h.post("sign", {
@@ -2221,7 +2394,7 @@ test("status signing and publication preserve scoped replacements and explicit c
         (await h.post("publish", finalizeEvent(template, secret))).status,
       ).toBe(400);
     }
-    expect(h.publications).toHaveLength(2);
+    expect(h.publications).toHaveLength(3);
   } finally {
     await h.close();
   }

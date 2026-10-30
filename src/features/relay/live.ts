@@ -2,7 +2,7 @@ import {
   verifiedProfileFilter,
   type VerifiedProfileFilter,
   type VerifiedProfileSink,
-} from "./verified-profile";
+} from "./verified-profile.ts";
 import { getLogger } from "../developer/logging.ts";
 import { logSocketFrame, relayLabel } from "../developer/traffic.ts";
 

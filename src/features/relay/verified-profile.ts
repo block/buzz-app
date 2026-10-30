@@ -1,4 +1,4 @@
-import { hasEventProof, type RelayEvent } from "./events";
+import { hasEventProof, type RelayEvent } from "./events.ts";
 
 export const VERIFIED_PROFILE_KIND = 30382;
 export const VERIFIED_PROFILE_BATCH = 128;

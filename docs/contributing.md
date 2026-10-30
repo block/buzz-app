@@ -119,6 +119,17 @@ need their own validation.
   defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
   and passes everything else to `tauri build`. The bundle uses `buzz`, as does
   release bundling with `pnpm tauri build`.
+- On macOS, set `BUZZ_DEV_SIGNING_IDENTITY` in `.env.local` to an installed code
+  signing certificate name or SHA-1 hash (`security find-identity -v -p codesigning`
+  lists them). `just desktop-bundle` passes it to Tauri's macOS signer; the process
+  environment takes precedence, including an empty value to disable this setting.
+  Keep the same certificate and development app identifier across rebuilds. After
+  the first signed build, enter your login Keychain password and choose **Always
+  Allow** when Buzz requests its saved identity; later builds should retain that
+  approval. Ad-hoc signatures change with the binary and cannot retain that trust.
+  An unavailable certificate fails the build rather than silently signing ad-hoc.
+  This setting leaves `just desktop` and release builds unchanged. Explicit Tauri
+  `--config` arguments still merge after the local defaults.
 - For opt-in automation of a disposable macOS native webview, see
   [Native webview automation](native-mcp.md).
 - `just design [args...]`: install locked dependencies, start the standalone

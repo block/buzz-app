@@ -17,6 +17,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
+import { UnreadBadge } from "./UnreadBadge";
 
 afterEach(cleanup);
 
@@ -530,6 +531,33 @@ it("marks a temporary channel with its lifetime and yields the slot to working a
   expect(document.querySelector("[data-channel-temporary]")).toBeNull();
   view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
   expect(document.querySelector("[data-channel-temporary]")).toBeNull();
+});
+
+it("keeps Solo unread labels and markers independent of mute", () => {
+  const state = owner();
+  const view = render(
+    <UnreadBadge
+      session={state.session}
+      channelId="alpha"
+      label="Solo"
+      labelUnread="all"
+    />,
+  );
+  const label = () =>
+    view.container.querySelector("[data-channel-unread-title]");
+  act(() => state.unread(2));
+  expect(label()).toBeInTheDocument();
+  act(() => state.mute(true));
+  expect(label()).toBeInTheDocument();
+  expect(
+    screen.getByRole("img", { name: /2 observed unread/ }),
+  ).toBeInTheDocument();
+  act(() => state.unread(3, 1));
+  expect(label()).toBeInTheDocument();
+  expect(view.container.querySelector("[data-channel-priority]")).toBeNull();
+  act(() => state.unread(0));
+  expect(label()).toBeNull();
+  expect(view.container.querySelector("[data-channel-unread]")).toBeNull();
 });
 
 it("quiets confirmed muted backlog, restores it on unmute, and preserves directed and manual attention", () => {

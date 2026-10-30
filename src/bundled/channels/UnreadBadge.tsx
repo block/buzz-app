@@ -93,8 +93,17 @@ export function UnreadBadge({
   /** Solo labels emphasize every unread message, so attention adds no dot. */
   labelUnread?: "ordinary" | "all";
 }) {
-  const { snapshot, activity, count, manual, unread, ordinary, threadCount } =
-    useUnreadState(session, channelId, dm);
+  const {
+    snapshot,
+    activity,
+    count,
+    manual,
+    unread: quietUnread,
+    ordinary,
+    threadCount,
+  } = useUnreadState(session, channelId, dm);
+  const unread =
+    labelUnread === "all" ? manual || (count ?? 0) > 0 : quietUnread;
   if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (snapshot.attentionCount ?? 0) > 0;
   const showUnreadDot =

@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useMessageReveal } from "./use-message-reveal";
+import styles from "./Messages.module.css";
 
 // Control frame/mutation ordering; browser journeys own real layout and inert focus.
 const frames = new Map<number, FrameRequestCallback>();
@@ -71,8 +72,8 @@ function mount(hold?: () => boolean) {
     return (
       <>
         <div ref={scroller}>
-          <div key={rowKey} data-message-id="target">
-            Target
+          <div key={rowKey} data-message-id="target" data-testid="target">
+            <div data-layout="received">Target</div>
           </div>
         </div>
         <button type="button">Elsewhere</button>
@@ -80,7 +81,7 @@ function mount(hold?: () => boolean) {
     );
   }
   const result = render(<Surface />);
-  const row = screen.getByText("Target");
+  const row = screen.getByTestId("target");
   const outside = screen.getByRole("button", { name: "Elsewhere" });
   return {
     ...result,
@@ -110,6 +111,41 @@ it("notifies reading after the revealed row is verified", async () => {
   await frame();
   expect(positioned).toHaveBeenCalledOnce();
   expect(complete).toHaveBeenCalledOnce();
+});
+
+it("highlights only the verified message, clears on animation end and repeats for a new request", async () => {
+  const { row, next, restart } = mount();
+  const message = screen.getByText("Target");
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  await frame();
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(true);
+  expect(row.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  const end = new Event("animationend", { bubbles: true });
+  Object.defineProperty(end, "pseudoElement", { value: "::after" });
+  message.dispatchEvent(end);
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  restart();
+  await frame();
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
+  next();
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(true);
+});
+
+it.each(["abort", "unmount"])("retires a painted cue on %s", async (end) => {
+  const { request, unmount } = mount();
+  const message = screen.getByText("Target");
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(true);
+  if (end === "abort") request.abort();
+  else unmount();
+  expect(message.classList.contains(styles.returnHighlight ?? "")).toBe(false);
 });
 
 it.each([false, true])(
@@ -210,7 +246,7 @@ it.each([false, true])(
     expect(document.activeElement).toBe(row);
     if (moved) outside.focus();
     await act(async () => remountRow());
-    const replacement = screen.getByText("Target");
+    const replacement = screen.getByTestId("target");
     expect(replacement).not.toBe(row);
     expect(document.activeElement).toBe(moved ? outside : document.body);
     const focus = vi.spyOn(replacement, "focus");
@@ -230,7 +266,7 @@ it("completes after focus leaves another control between replacement reveal and 
   await frame();
   outside.focus();
   await act(async () => remountRow());
-  const replacement = screen.getByText("Target");
+  const replacement = screen.getByTestId("target");
   const focus = vi.spyOn(replacement, "focus");
   await frame();
   expect(document.activeElement).toBe(outside);
@@ -247,7 +283,7 @@ it("retries failed focus recovery on a replacement before completing", async () 
   await frame();
   await frame();
   await act(async () => remountRow());
-  const replacement = screen.getByText("Target");
+  const replacement = screen.getByTestId("target");
   const blocked = vi.spyOn(replacement, "focus").mockImplementation(() => {});
   await frame();
   await frame();

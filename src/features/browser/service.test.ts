@@ -188,9 +188,7 @@ async function openingFixture() {
     };
     const View = panel.component;
     lastView = render(
-      <StrictMode>
-        <View {...lastProps} />
-      </StrictMode>,
+      createElement(StrictMode, null, createElement(View, lastProps)),
     );
     return true;
   });
@@ -258,7 +256,7 @@ it("opens a new browser and permits immediate interaction without a Share click,
   f.view().unmount();
   const View = f.panels.resolve(props.target)?.component;
   if (!View) throw new Error("Missing browser panel");
-  render(<View {...props} />);
+  render(createElement(View, props));
   await screen.findByRole("button", { name: "Share with Tester" });
   expect(f.native.control?.grant).toHaveBeenCalledTimes(1);
 });

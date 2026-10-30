@@ -526,13 +526,6 @@ export const groups: Group[] = [
         "@Sam Rivera could you review the spacing?",
         { mentions: [teammate] },
       ),
-      single(
-        "edited",
-        "Edited content",
-        "The current renderer shows the replacement body without a separate edited badge.",
-        "Updated: the review is now at 3 pm.",
-        { edited: true },
-      ),
     ],
   },
   {

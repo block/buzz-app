@@ -217,6 +217,43 @@ remaining acceptance work and historical evidence.
 
 ## Starting contracts
 
+### Plugin installer
+
+A plugin, such as a catalog or marketplace page, may ask the host to review a plugin
+for installation. Read the optional `pluginInstaller` service with
+`ctx.reflect.get("pluginInstaller")` instead of adding it to required `inject`; the
+lookup returns `undefined` when an older host has not provided it.
+
+```ts
+type PluginInstaller = {
+  installed(): readonly { id: string; revision: string; enabled: boolean }[];
+  subscribe(listener: () => void): () => void;
+  requestInstall(source: {
+    repository: string; // https://, ssh:// or scp-style git URL
+    reference: string; // branch or tag
+    path?: string; // relative folder inside the repository
+    commit?: string; // 40- or 64-hex; install exactly this commit
+  }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+};
+```
+
+`installed()` lists the catalog and keeps the same array until it changes, so it
+works directly as an external-store snapshot with `subscribe`. `requestInstall`
+never installs silently. It opens Settings → Plugins with the Git source prefilled
+and read-only, and the user still chooses **Find**, reviews the existing access
+review, and confirms. The promise resolves with what the user did: `installed`,
+`updated` (an installed plugin was replaced), or `cancelled` (the dialog was
+closed, nothing changed, or the plugin was already current). It resolves
+`unavailable` in the browser build, before plugin settings have loaded, when
+Settings cannot open, or while another request is waiting on the user, and rejects
+for a source outside the accepted grammar. When `commit` is given, the native Git
+import refuses a reference whose tip is any other commit, so a branch that moves
+after a catalog review cannot install unreviewed code. The same request
+arrives from an OS link as
+[`buzz://plugin-install`](deep-links.md#accepted-links).
+
+### Conversation sidebar sections
+
 ### Conversation sidebar sections
 
 A plugin may register a versioned `sidebarSections` contribution. Read it with

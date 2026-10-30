@@ -46,6 +46,10 @@ import { SidebarSectionsService } from "../features/channel-navigation/sidebar-s
 import { bundledPlugins } from "../bundled";
 import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
+import {
+  createPluginInstallRequests,
+  PluginInstallerService,
+} from "../plugins/installer";
 import { withTimeout } from "../plugins/timeout";
 
 export function createServices() {
@@ -68,6 +72,13 @@ export function createServices() {
   const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
   const sidebarSections = new SidebarSectionsService(ctx);
+  const pluginInstallRequests = createPluginInstallRequests();
+  const pluginInstaller = new PluginInstallerService(ctx, {
+    plugins,
+    requests: pluginInstallRequests,
+    openPlugins: () =>
+      navigation.open({ version: 1, kind: "settings", section: "plugins" }),
+  });
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -154,7 +165,17 @@ export function createServices() {
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
   ctx.effect(() =>
-    bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
+    bindDeepLinks(
+      {
+        ...navigationHost,
+        invite: invites.open,
+        pluginInstall: ({ source }) =>
+          void pluginInstaller.requestInstall(source).then((outcome) => {
+            if (outcome === "unavailable") navigationHost.fail("unavailable");
+          }),
+      },
+      communities,
+    ),
   );
   // Search ranks places by how often and how recently they were opened.
   ctx.effect(() =>
@@ -187,6 +208,7 @@ export function createServices() {
     adminAccess,
     pages,
     sidebarSections,
+    pluginInstallRequests,
     panels,
     plugins,
     federatedIdentity,

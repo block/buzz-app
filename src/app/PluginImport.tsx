@@ -20,6 +20,12 @@ import { FolderOpenIcon } from "../shared/design-system/icons/index";
 import { PluginAccessReview } from "./PluginAccessReview";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import type {
+  PluginInstallOutcome,
+  PluginInstallRequest,
+} from "../plugins/installer";
+
+const shortCommit = (commit: string) => commit.slice(0, 12);
 
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
@@ -60,6 +66,8 @@ export function PluginImport({
   reviewRequested = false,
   onReviewHandled,
   returnFocus,
+  request,
+  onRequestSettled,
 }: {
   initialUpdateAvailable?: boolean;
   plugins: PluginManager;
@@ -74,6 +82,11 @@ export function PluginImport({
   reviewRequested?: boolean;
   onReviewHandled?: () => void;
   returnFocus?: () => HTMLElement | null;
+  /** A source to review, prefilled; the user still finds, reviews and confirms it. */
+  request?: PluginInstallRequest | undefined;
+  onRequestSettled?:
+    | ((id: number, outcome: PluginInstallOutcome) => void)
+    | undefined;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
     repository: string,
@@ -98,6 +111,9 @@ export function PluginImport({
   // new install into an update while its enable operation is still pending.
   const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
+  const mounted = useRef(true);
+  const [bound, setBound] = useState<PluginInstallRequest>();
+  const requested = !!bound && !updateId;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [checkedRevision, setCheckedRevision] = useState<string>();
   const [checking, setChecking] = useState(false);
@@ -165,6 +181,46 @@ export function PluginImport({
   const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
+  const lastClaimed = useRef(0);
+  const boundId = useRef<number>(undefined);
+  const settleRequest = useRef(onRequestSettled);
+  useEffect(() => {
+    settleRequest.current = onRequestSettled;
+  });
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      queueMicrotask(() => {
+        if (!mounted.current && boundId.current !== undefined)
+          settleRequest.current?.(boundId.current, "cancelled");
+      });
+    };
+  }, []);
+  const claimRequest = useEffectEvent((next: PluginInstallRequest) => {
+    if (open || loading || discarding || preview || pending.current) {
+      onRequestSettled?.(next.id, "unavailable");
+      return;
+    }
+    boundId.current = next.id;
+    setBound(next);
+    setRepository(next.source.repository);
+    setReference(next.source.reference);
+    setOpen(true);
+  });
+  useEffect(() => {
+    if (updateId || !request || request.id <= lastClaimed.current) return;
+    lastClaimed.current = request.id;
+    claimRequest(request);
+  }, [request, updateId]);
+  function releaseRequest(outcome: PluginInstallOutcome) {
+    if (!bound) return;
+    onRequestSettled?.(bound.id, outcome);
+    boundId.current = undefined;
+    setBound(undefined);
+    setRepository("");
+    setReference("");
+  }
   async function checkSource(operation: () => Promise<string>) {
     if (checkPending.current) return;
     checkPending.current = true;
@@ -224,7 +280,7 @@ export function PluginImport({
 
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
-  const duplicate = updating && !updateId;
+  const duplicate = updating && !updateId && !requested;
   const upToDate =
     // An identical package can still establish a missing source. Native keeps
     // its enabled state and existing rollback target for the same revision.
@@ -275,6 +331,11 @@ export function PluginImport({
       if (current.active) startRequestedReview();
     });
   }, [reviewRequested]);
+
+  const releaseExternally = useEffectEvent(() => void close());
+  useEffect(() => {
+    if (bound && request?.id !== bound.id) releaseExternally();
+  }, [bound, request]);
 
   const blocked = busy || loading || discarding;
   if (!imports) return null;
@@ -353,6 +414,18 @@ export function PluginImport({
       }
     }
   }
+  async function requestedFolder(
+    result: ImportPreview | null,
+    path: string | undefined,
+  ) {
+    if (!result || path === undefined) return result;
+    const candidates = result.candidates.filter((item) => item.path === path);
+    if (candidates.length) return { ...result, candidates };
+    await imports?.discard(result.token).catch(() => {});
+    throw new Error(
+      `This repository has no plugin at ${path}. Nothing was installed.`,
+    );
+  }
   async function dismiss() {
     if (blocked || pending.current || !preview) return;
     pending.current = true;
@@ -383,6 +456,7 @@ export function PluginImport({
       setError(null);
       setDragging(false);
       setShowUnchanged(false);
+      releaseRequest("cancelled");
       setOpen(false);
       onClosed?.();
       return true;
@@ -692,7 +766,7 @@ export function PluginImport({
               {reviewing &&
                 candidate &&
                 !upToDate &&
-                (!existing || !!updateId) && (
+                (!existing || !!updateId || requested) && (
                   <Button
                     ref={installButton}
                     variant="prominent"
@@ -730,6 +804,7 @@ export function PluginImport({
                             ...existing,
                             revision: candidate.revision,
                           });
+                        releaseRequest(existing ? "updated" : "installed");
                         setOpen(false);
                         onClosed?.();
                       } finally {
@@ -831,13 +906,25 @@ export function PluginImport({
                     if (repository.trim())
                       void load(async () => {
                         const signed = await authorizeGit?.(repository);
-                        return signed
-                          ? imports.git(
+                        const commit = bound?.source.commit;
+                        const result = signed
+                          ? await imports.git(
                               signed.repository,
                               reference,
                               signed.token,
+                              ...(commit ? [commit] : []),
                             )
-                          : imports.git(repository, reference);
+                          : commit
+                            ? await imports.git(
+                                repository,
+                                reference,
+                                undefined,
+                                commit,
+                              )
+                            : await imports.git(repository, reference);
+                        return bound
+                          ? requestedFolder(result, bound.source.path)
+                          : result;
                       });
                   }}
                 >
@@ -847,6 +934,7 @@ export function PluginImport({
                         required
                         value={repository}
                         disabled={blocked}
+                        readOnly={!!bound}
                         placeholder="https://github.com/owner/repository"
                         onChange={(event) => setRepository(event.target.value)}
                       />
@@ -855,10 +943,23 @@ export function PluginImport({
                       <Input
                         value={reference}
                         disabled={blocked}
+                        readOnly={!!bound}
                         placeholder="Repository default"
                         onChange={(event) => setReference(event.target.value)}
                       />
                     </Field>
+                    {bound && (
+                      <p className="m-0 break-all text-caption text-muted">
+                        {bound.source.commit
+                          ? `Pinned to commit ${shortCommit(bound.source.commit)}. Nothing is installed unless the fetched repository matches it. `
+                          : ""}
+                        {bound.source.path
+                          ? `Plugin folder: ${bound.source.path}. `
+                          : ""}
+                        Review the source, then choose Find to read it. Nothing
+                        is installed until you confirm.
+                      </p>
+                    )}
                     <p className="m-0 text-caption text-muted">
                       HTTPS or SSH; GitHub owner/repository also works. SSH uses
                       your agent and known hosts. Password prompts and
@@ -982,7 +1083,15 @@ export function PluginImport({
                     </code>
                   </section>
                 )}
-                {reviewing && updating && !updateId && (
+                {reviewing && requested && preview.commit && (
+                  <p className="m-0 break-all text-caption text-muted">
+                    Commit {shortCommit(preview.commit)}
+                    {bound?.source.commit
+                      ? " (matches the requested commit)"
+                      : ""}
+                  </p>
+                )}
+                {reviewing && updating && !updateId && !requested && (
                   <p>
                     This plugin is already installed. Open its details to manage
                     it.
@@ -991,7 +1100,7 @@ export function PluginImport({
                 {reviewing &&
                   candidate &&
                   (existing?.source !== "bundled" || loading) &&
-                  (!existing || !!updateId) && (
+                  (!existing || !!updateId || requested) && (
                     <PluginAccessReview
                       manifest={candidate.manifest}
                       previousManifest={existing?.manifest}

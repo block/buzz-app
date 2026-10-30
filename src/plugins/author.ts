@@ -18,6 +18,12 @@ export type {
   SidebarSections,
 } from "../features/channel-navigation/sidebar-sections-service";
 export type {
+  InstalledPlugin,
+  PluginInstallOutcome,
+  PluginInstallSource,
+  PluginInstaller,
+} from "./installer";
+export type {
   Panel,
   Panels,
   ChannelPanelContext,

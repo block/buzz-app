@@ -806,3 +806,101 @@ it("opens a warm plugin link through the navigation host", async () => {
     t.stop();
   }
 });
+
+const installLink = `buzz://plugin-install?${new URLSearchParams({
+  repository: "https://example.com/team/plugins.git",
+  ref: "v1",
+  path: "dist",
+  commit: "0123456789abcdef0123456789abcdef01234567",
+})}`;
+
+it("hands a plugin install link to the host for review without navigating or binding a community", async () => {
+  const queue: string[] = [];
+  let ping: () => void = () => {};
+  const pluginInstall = vi.fn();
+  const host = createNavigationController(createMemoryHistory());
+  const fail = vi.fn();
+  const stop = bindDeepLinks(
+    { navigation: host.navigation, fail, pluginInstall },
+    {
+      snapshot: () => ({ status: "ready", viewer, selected: elsewhere }),
+      subscribe: () => () => {},
+    },
+    {
+      take: async () => queue.splice(0),
+      watch(fn) {
+        ping = fn;
+        return () => {};
+      },
+    },
+  );
+  try {
+    await settle();
+    queue.push(installLink);
+    ping();
+    await vi.waitFor(() => expect(pluginInstall).toHaveBeenCalledTimes(1));
+    expect(pluginInstall).toHaveBeenCalledWith({
+      source: {
+        repository: "https://example.com/team/plugins.git",
+        reference: "v1",
+        path: "dist",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+      },
+    });
+    expect(fail).not.toHaveBeenCalled();
+    expect(host.navigation.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "home",
+    });
+    queue.push(
+      "buzz://plugin-install?repository=http%3A%2F%2Fexample.com%2Fa&ref=v1",
+    );
+    ping();
+    await vi.waitFor(() =>
+      expect(fail).toHaveBeenCalledWith("invalid-target", undefined),
+    );
+    expect(pluginInstall).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+    host.dispose();
+  }
+});
+
+it("holds a plugin install link until the client is signed in and ready", async () => {
+  const queue = [installLink];
+  let client: Client = { status: "loading", selected: null };
+  const changed = new Set<() => void>();
+  const pluginInstall = vi.fn();
+  const host = createNavigationController(createMemoryHistory());
+  const fail = vi.fn();
+  const stop = bindDeepLinks(
+    { navigation: host.navigation, fail, pluginInstall },
+    {
+      snapshot: () => client,
+      subscribe(fn) {
+        changed.add(fn);
+        return () => changed.delete(fn);
+      },
+    },
+    { take: async () => queue.splice(0), watch: () => () => {} },
+  );
+  try {
+    await vi.waitFor(() => expect(queue).toEqual([]));
+    client = { status: "unavailable", selected: null };
+    for (const fn of changed) fn();
+    expect(pluginInstall).not.toHaveBeenCalled();
+    client = { status: "ready", viewer, selected: null };
+    for (const fn of changed) fn();
+    expect(pluginInstall).toHaveBeenCalledTimes(1);
+    expect(fail).not.toHaveBeenCalled();
+  } finally {
+    stop();
+    host.dispose();
+  }
+});
+
+it("never opens a plugin install link as a destination, and message-style parsing rejects it", () => {
+  expect(deepLinkStep(installLink, client)).toEqual({
+    fail: "invalid-target",
+  });
+});

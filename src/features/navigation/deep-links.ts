@@ -4,6 +4,10 @@
 // handler, so everything here is a no-op outside Tauri.
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { parseInviteLink, type InviteLink } from "../communities/invite-link";
+import {
+  parsePluginInstallLink,
+  type PluginInstallLink,
+} from "../../plugins/install-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
@@ -25,6 +29,8 @@ export type DeepLinkHost = Readonly<{
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
+  /** Plugin installation review belongs to Settings, never to navigation. */
+  pluginInstall?: (link: PluginInstallLink) => void;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
@@ -101,6 +107,7 @@ export function bindDeepLinks(
     | {
         url: string;
         invite: InviteLink | null;
+        install: PluginInstallLink | null;
         viewer: string | undefined;
         selected: string | null;
         reported: boolean;
@@ -116,6 +123,7 @@ export function bindDeepLinks(
     if (
       (incoming.viewer && incoming.viewer !== client.viewer) ||
       (!incoming.invite &&
+        !incoming.install &&
         incoming.selected &&
         incoming.selected !== client.selected)
     ) {
@@ -125,7 +133,14 @@ export function bindDeepLinks(
     }
     if (client.status === "loading")
       return Promise.resolve({ status: "failed", reason: "unavailable" });
-    const invite = incoming.invite;
+    const { invite, install } = incoming;
+    if (install && (!client.viewer || client.status !== "ready"))
+      return Promise.resolve({ status: "failed", reason: "unavailable" });
+    if (install && host.pluginInstall) {
+      held = undefined;
+      host.pluginInstall(install);
+      return Promise.resolve({ status: "cancelled" });
+    }
     if (invite && (!client.viewer || client.status !== "ready")) {
       // Retain the invite through identity setup and client restoration.
       return Promise.resolve({ status: "failed", reason: "unavailable" });
@@ -153,7 +168,10 @@ export function bindDeepLinks(
     held.selected ??= client.selected;
     if (
       (held.viewer && held.viewer !== client.viewer) ||
-      (!held.invite && held.selected && held.selected !== client.selected)
+      (!held.invite &&
+        !held.install &&
+        held.selected &&
+        held.selected !== client.selected)
     ) {
       held = undefined;
       host.fail("denied");
@@ -200,6 +218,7 @@ export function bindDeepLinks(
         held = {
           url,
           invite: parseInviteLink(url),
+          install: parsePluginInstallLink(url),
           viewer: client.viewer,
           selected: client.selected,
           reported: false,
@@ -216,7 +235,10 @@ export function bindDeepLinks(
     const next = communities.snapshot();
     if (
       (client.viewer && client.viewer !== next.viewer) ||
-      (client.selected && client.selected !== next.selected && !held?.invite)
+      (client.selected &&
+        client.selected !== next.selected &&
+        !held?.invite &&
+        !held?.install)
     )
       clientEpoch++;
     client = next;

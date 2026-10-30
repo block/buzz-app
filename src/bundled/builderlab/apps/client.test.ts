@@ -5,8 +5,10 @@ import type {
   HostResponse,
   HostUpload,
 } from "../../../features/host/service";
+import { federatedFixture } from "../../../features/federated-identity/testing";
 import { createOAuthSession } from "../oauth/session";
-import { createAppsClient } from "./client";
+import { createNativeSession } from "../session";
+import { createAppsClient, hostTransport, nativeTransport } from "./client";
 import { controlPlane, isAppUrl } from "./environment";
 
 const BASE = "https://compose-ctrl.builderlabstaging.xyz";
@@ -43,9 +45,8 @@ it.each(["create", "community"] as const)(
     const held = deferred<HostResponse>();
     const request = vi.fn(() => held.promise);
     const client = createAppsClient(
-      { request } as unknown as Host,
       session,
-      BASE,
+      hostTransport({ request } as unknown as Host, BASE),
     );
     const pending =
       operation === "create"
@@ -87,9 +88,8 @@ it("preserves the reserved app ID when sign-out interrupts initialization", asyn
       return held.promise;
     });
   const client = createAppsClient(
-    { request } as unknown as Host,
     session,
-    BASE,
+    hostTransport({ request } as unknown as Host, BASE),
   );
   const pending = client.create("Demo");
   const rejected = expect(pending).rejects.toThrow(
@@ -116,7 +116,10 @@ async function setup(responses: HostResponse[], signedIn = true) {
     return response;
   };
   const host = { request: vi.fn(next), upload: vi.fn(next) } as unknown as Host;
-  return { client: createAppsClient(host, session, BASE), requests };
+  return {
+    client: createAppsClient(session, hostTransport(host, BASE)),
+    requests,
+  };
 }
 
 it("plans and reserves a static app with the Builderlab session", async () => {
@@ -289,6 +292,49 @@ it("uploads the artifact to the app's deploy endpoint", async () => {
       },
     },
   ]);
+});
+
+it("sends an FI build's Apps calls through the native session it never holds", async () => {
+  const h = federatedFixture();
+  h.request.mockResolvedValueOnce(json(200, { subject: "auth0|owner" }));
+  h.publish({ status: "signed-in", revision: "user:1" });
+  const session = createNativeSession(h.service);
+  await expect.poll(() => session.snapshot().status).toBe("signed-in");
+  h.appsRequest.mockResolvedValueOnce(json(200, { apps: [] }));
+  h.appsUpload.mockResolvedValueOnce(json(200, { version_id: "ver-1" }));
+  const client = createAppsClient(session, nativeTransport(h.service));
+  await expect(client.list()).resolves.toEqual({ apps: [] });
+  await expect(
+    client.deploy("demo", "/Users/me/demo/artifact.tar.gz"),
+  ).resolves.toEqual({ version_id: "ver-1" });
+  const headers = {
+    Accept: "application/json",
+    "X-Hotpod-Agent-Client-Version": "0.2.0",
+  };
+  expect(h.appsRequest).toHaveBeenCalledExactlyOnceWith({
+    path: "/v1/agent/apps?scope=owned",
+    method: "GET",
+    headers,
+  });
+  expect(h.appsUpload).toHaveBeenCalledExactlyOnceWith({
+    path: "/v1/agent/apps/demo/deploy",
+    headers,
+    file: {
+      field: "artifact",
+      path: "/Users/me/demo/artifact.tar.gz",
+      name: "artifact.tar.gz",
+      contentType: "application/gzip",
+    },
+  });
+  // Another account starts no call under this operation.
+  h.request.mockResolvedValueOnce(json(200, { subject: "auth0|other" }));
+  h.publish({ revision: "user:2" });
+  await expect
+    .poll(() => session.snapshot().account?.subject)
+    .toBe("auth0|other");
+  await expect(client.list()).rejects.toThrow(/sign-in changed/);
+  expect(h.appsRequest).toHaveBeenCalledOnce();
+  session.dispose();
 });
 
 it("points the agent at Settings when signed out or refused", async () => {

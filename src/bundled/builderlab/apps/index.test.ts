@@ -2,7 +2,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { AddedTool } from "../../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../../buzz-mcp/client";
 import type { HostResponse, HostRequest } from "../../../features/host/service";
+import { federatedFixture } from "../../../features/federated-identity/testing";
 import { createOAuthSession } from "../oauth/session";
+import { createNativeSession } from "../session";
+import { hostTransport, nativeTransport } from "./client";
 import { applyApps } from "./index";
 
 afterEach(() => {
@@ -55,7 +58,9 @@ async function setup(
     host: { request: respond, upload: respond },
     agents: { addTool: (tool: AddedTool) => tools.set(tool.name, tool) },
   };
-  applyApps(ctx as never, session, true, session);
+  applyApps(ctx as never, session, true, (base) =>
+    hostTransport(ctx.host as never, base),
+  );
   const call = (name: string, args: Record<string, unknown>, context = {}) => {
     const tool = tools.get(name);
     if (!tool) throw new Error(`No tool ${name}`);
@@ -63,6 +68,37 @@ async function setup(
   };
   return { ctx, tools, responses, respond, call, session };
 }
+
+it("offers the Apps tools in an FI build, sent through the native session", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlabstaging.xyz");
+  const h = federatedFixture();
+  h.request.mockResolvedValueOnce(json({ subject: "auth0|owner" }));
+  h.publish({ status: "signed-in", revision: "user:1" });
+  const session = createNativeSession(h.service);
+  await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+  h.appsRequest.mockResolvedValueOnce(
+    json({ minimum_client_version: "0.2.0" }),
+  );
+  const tools = new Map<string, AddedTool>();
+  const host = { request: vi.fn(), upload: vi.fn() };
+  applyApps(
+    {
+      panels: { register: vi.fn() },
+      browser: { available: true, View: () => null },
+      host,
+      agents: { addTool: (tool: AddedTool) => tools.set(tool.name, tool) },
+    } as never,
+    session,
+    true,
+    () => nativeTransport(h.service),
+  );
+  await tools.get("apps_contract")?.call({} as BuzzClient, {}, {});
+  expect(h.appsRequest).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ path: "/v1/agent/contract", method: "GET" }),
+  );
+  expect(host.request).not.toHaveBeenCalled();
+  session.dispose();
+});
 
 it("preserves an accepted upload after sign-in changes and starts later tools with the new session", async () => {
   const { ctx, call, session, responses, respond } = await setup();

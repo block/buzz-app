@@ -79,6 +79,14 @@ pub struct HostGrants {
 pub struct FederatedIdentityGrant {
     pub authority: String,
     pub operations: Vec<AuthenticatedOperation>,
+    /// The session may also call the agent API of the Apps control plane
+    /// paired with the authority's origin, which Buzz derives itself.
+    #[serde(
+        default,
+        rename = "appsControlPlane",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub apps_control_plane: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -350,6 +358,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
                         }
                     })
                     .collect(),
+                apps_control_plane: apps_control_plane(origin).is_some(),
             }),
             ..HostGrants::default()
         }
@@ -2149,6 +2158,10 @@ mod tests {
             assert!(operations.contains(&format!("GET {base}v1/auth/me")));
             assert!(operations.contains(&format!("POST {base}v3/beekeeper/register-agent")));
             assert_eq!(operations.len(), super::BUILDERLAB_FI_ROUTES.len());
+            assert_eq!(
+                grant.apps_control_plane,
+                super::apps_control_plane(super::BUILDERLAB_ORIGIN).is_some()
+            );
         }
         assert!(grants.commands.is_empty());
         assert!(manager

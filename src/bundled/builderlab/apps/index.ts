@@ -4,9 +4,13 @@
 import { createElement, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
-import type { OAuthSession } from "../oauth/session";
 import type { BuilderlabSession } from "../session";
-import { createAppsClient, type Audience, type RuntimeProfile } from "./client";
+import {
+  createAppsClient,
+  type AppsTransport,
+  type Audience,
+  type RuntimeProfile,
+} from "./client";
 import {
   appName,
   controlPlane,
@@ -48,9 +52,8 @@ export function applyApps(
   session: BuilderlabSession,
   /** Whether Settings can sign in; otherwise the app's own browser login is used. */
   loginAvailable: boolean,
-  /** The legacy sign-in the control-plane tools authenticate with; an FI
-   * build has none yet, so it offers no tools. */
-  legacy?: OAuthSession,
+  /** How the tools carry `session` to the control plane at `base`. */
+  transport: (base: string) => AppsTransport,
 ) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
@@ -94,8 +97,9 @@ export function applyApps(
     component: AppView,
   });
   const base = controlPlane();
-  if (!base || !legacy) return;
-  const apps = () => createAppsClient(ctx.host, legacy, base);
+  if (!base) return;
+  const carrier = transport(base);
+  const apps = () => createAppsClient(session, carrier);
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",

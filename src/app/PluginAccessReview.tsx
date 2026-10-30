@@ -107,6 +107,19 @@ function hostDeclarations(
         details: <code className={styles.sourcePath}>{operation.path}</code>,
       }),
     ),
+    ...(manifest.host?.federatedIdentity?.appsControlPlane
+      ? [
+          {
+            key: "federated:apps",
+            signature: `Federated authority ${manifest.host.federatedIdentity.authority}: Apps control plane`,
+            title: `Federated authority ${manifest.host.federatedIdentity.authority}:`,
+            label: "Manage Builderlab apps",
+            hint: "Buzz can create, deploy and share apps with your community session for the plugin, including uploading app archives from your home folder.",
+            icon: GlobeIcon,
+            details: <code className={styles.sourcePath}>/v1/agent/</code>,
+          },
+        ]
+      : []),
     ...(manifest.host?.processes ?? []).map((process) => ({
       key: `process:${process.id}`,
       signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} and any further arguments · stdin, full user access`,

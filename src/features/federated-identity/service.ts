@@ -2,7 +2,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { nativeIdentityEnabled } from "../identity/service";
-import type { HostResponse } from "../host/service";
+import type { HostResponse, HostUpload } from "../host/service";
 
 export type SessionSnapshot = Readonly<{
   status:
@@ -28,6 +28,21 @@ export type AuthenticatedRequest = Readonly<{
   headers?: Readonly<Record<string, string>>;
   body?: string;
 }>;
+/** A call to the Apps control plane's agent API; `path` is under `/v1/agent/`. */
+export type AppsRequest = Readonly<{
+  path: string;
+  method?: "GET" | "POST" | "PUT" | "DELETE";
+  headers?: Readonly<Record<string, string>>;
+  body?: string;
+  /** Native deadline in milliseconds, 1–180000. Defaults to 30000. */
+  timeoutMs?: number;
+}>;
+/** An app artifact for `/v1/agent/apps/<app>/deploy`. */
+export type AppsUpload = Readonly<{
+  path: string;
+  headers?: Readonly<Record<string, string>>;
+  file: HostUpload["file"];
+}>;
 export interface FederatedIdentity {
   /** Granted routes are forwarded natively with the session as a Bearer token. */
   readonly apiAvailable: boolean;
@@ -37,6 +52,10 @@ export interface FederatedIdentity {
   cancelSignIn(): Promise<void>;
   signOut(): Promise<void>;
   request(input: AuthenticatedRequest): Promise<HostResponse>;
+  /** Granted Apps control-plane calls, sent natively with the session as
+   * `BBIdentity`, the way `bl apps` authenticates. */
+  appsRequest(input: AppsRequest): Promise<HostResponse>;
+  appsUpload(input: AppsUpload): Promise<HostResponse>;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -151,7 +170,19 @@ export class FederatedIdentityService
     await invoke("federated_identity_cancel_sign_in");
     await this.operation("federated_identity_snapshot");
   }
-  async request(request: AuthenticatedRequest): Promise<HostResponse> {
+  request(request: AuthenticatedRequest) {
+    return this.forward("federated_identity_request", { request });
+  }
+  appsRequest(request: AppsRequest) {
+    return this.forward("federated_identity_apps_request", { request });
+  }
+  appsUpload(upload: AppsUpload) {
+    return this.forward("federated_identity_apps_upload", { upload });
+  }
+  private async forward(
+    command: string,
+    input: Readonly<Record<string, unknown>>,
+  ): Promise<HostResponse> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !nativeIdentityEnabled() || this.shared.closed)
       throw new Error(
@@ -163,12 +194,12 @@ export class FederatedIdentityService
       const registration = this.registration(owner);
       const token = await registration;
       try {
-        return await invoke<HostResponse>("federated_identity_request", {
+        return await invoke<HostResponse>(command, {
           id: owner.id,
           revision: owner.revision,
           registration: token,
           session,
-          request,
+          ...input,
         });
       } catch (error) {
         // Native retires registrations around every plugin lifecycle change,

@@ -15,7 +15,7 @@ pub(crate) const DEADLINE: Duration = Duration::from_secs(30);
 /// An uploaded file, such as an app artifact.
 const MAX_UPLOAD_BYTES: u64 = 100 * 1024 * 1024;
 /// A deploy can wait for its rollout before it answers.
-const UPLOAD_DEADLINE: Duration = Duration::from_secs(180);
+pub(crate) const UPLOAD_DEADLINE: Duration = Duration::from_secs(180);
 /// What an uploaded file's name must end with: archives only, never a key or
 /// a config file a request could carry off.
 const UPLOAD_EXTENSION: &str = ".tar.gz";
@@ -32,7 +32,7 @@ pub(crate) struct HostRequest {
     timeout_ms: Option<u64>,
 }
 
-fn request_deadline(timeout_ms: Option<u64>) -> Result<Duration, String> {
+pub(crate) fn request_deadline(timeout_ms: Option<u64>) -> Result<Duration, String> {
     match timeout_ms {
         None => Ok(DEADLINE),
         Some(value @ 1..=180_000) => Ok(Duration::from_millis(value)),
@@ -58,11 +58,11 @@ pub(crate) struct HostUpload {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct UploadFile {
+pub(crate) struct UploadFile {
     /// The form field it is sent as.
     field: String,
     /// An absolute path to a regular `.tar.gz` file under the home directory.
-    path: String,
+    pub(crate) path: String,
     /// The file name the form gives it.
     name: String,
     content_type: String,
@@ -121,32 +121,42 @@ pub(crate) async fn plugin_host_upload(
             .map_err(|_| "Host request is unavailable")?;
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let path = upload_path(&grants, &url, &upload.file.path, home.as_deref())?;
-        let bytes = tokio::fs::read(&path)
-            .await
-            .map_err(|_| "Could not read the upload file")?;
-        if bytes.len() as u64 > MAX_UPLOAD_BYTES {
-            return Err("The upload file is too large".into());
-        }
-        let (content_type, body) = multipart(&upload.fields, &upload.file, &bytes)?;
-        let mut headers = headers;
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            HeaderValue::from_str(&content_type).map_err(|_| "Invalid upload")?,
-        );
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(UPLOAD_DEADLINE)
-            .build()
-            .map_err(|_| "Host request client is unavailable")?;
-        read_response(client.post(url).headers(headers).body(body)).await
+        send_upload(url, headers, &upload.fields, &upload.file, &path).await
     };
     tokio::time::timeout(UPLOAD_DEADLINE, operation)
         .await
         .map_err(|_| "Host upload timed out")?
 }
 
-/// `path` when it is an absolute `.tar.gz` regular file, not a link, in
-/// `home`, and small enough to upload.
+/// POSTs `file`, read from the checked `path`, with `fields` beside it.
+pub(crate) async fn send_upload(
+    url: reqwest::Url,
+    mut headers: HeaderMap,
+    fields: &BTreeMap<String, String>,
+    file: &UploadFile,
+    path: &std::path::Path,
+) -> Result<HostResponse, String> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|_| "Could not read the upload file")?;
+    if bytes.len() as u64 > MAX_UPLOAD_BYTES {
+        return Err("The upload file is too large".into());
+    }
+    let (content_type, body) = multipart(fields, file, &bytes)?;
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type).map_err(|_| "Invalid upload")?,
+    );
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(UPLOAD_DEADLINE)
+        .build()
+        .map_err(|_| "Host request client is unavailable")?;
+    read_response(client.post(url).headers(headers).body(body)).await
+}
+
+/// `path` once `grants` allow files and `url`'s origin, and it is an archive
+/// `archive_path` accepts.
 fn upload_path(
     grants: &HostGrants,
     url: &reqwest::Url,
@@ -159,6 +169,15 @@ fn upload_path(
     if !allows_origin(grants, url) {
         return Err("Host request origin is not declared".into());
     }
+    archive_path(path, home)
+}
+
+/// `path` when it is an absolute `.tar.gz` regular file, not a link, in
+/// `home`, and small enough to upload.
+pub(crate) fn archive_path(
+    path: &str,
+    home: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
     let invalid = || format!("An upload is a {UPLOAD_EXTENSION} file in your home directory");
     let path = std::path::Path::new(path);
     let home = home

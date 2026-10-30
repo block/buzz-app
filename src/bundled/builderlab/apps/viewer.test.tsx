@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { BrowserViewProps } from "../../../features/browser/api";
 import type { PanelProps } from "../../../features/panels/service";
 import { createOAuthSession } from "../oauth/session";
+import { hostTransport } from "./client";
 import { applyApps } from "./index";
 import { deferred } from "../test-helpers";
 import type { Credential } from "../oauth/browser";
@@ -42,7 +43,9 @@ function setup(loginAvailable = true) {
     agents: { addTool: vi.fn() },
     host: {},
   };
-  applyApps(ctx as never, session, loginAvailable);
+  applyApps(ctx as never, session, loginAvailable, (base) =>
+    hostTransport(ctx.host as never, base),
+  );
   const panel = register.mock.calls[0]?.[0] as {
     matches(target: string): boolean;
     component: ComponentType<PanelProps>;

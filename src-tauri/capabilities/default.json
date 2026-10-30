@@ -42,6 +42,8 @@
     "allow-federated-identity-register",
     "allow-federated-identity-unregister",
     "allow-federated-identity-request",
+    "allow-federated-identity-apps-request",
+    "allow-federated-identity-apps-upload",
     "allow-relay-socket-connect",
     "allow-relay-socket-start",
     "allow-relay-socket-send",

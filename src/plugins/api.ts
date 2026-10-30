@@ -36,6 +36,9 @@ export type PluginManifest = Readonly<{
         method: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
         path: string;
       }>[];
+      /** The session may call the agent API of the Apps control plane Buzz
+       * pairs with the authority's origin, and upload app archives to it. */
+      appsControlPlane?: boolean;
     }>;
     /** Programs the plugin may start with `host.spawn`; the caller's
      * arguments follow the declared ones. */

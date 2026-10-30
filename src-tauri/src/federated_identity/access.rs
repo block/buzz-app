@@ -104,6 +104,66 @@ pub(crate) fn federated_identity_unregister(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&registration);
 }
+/// One registration's call: it must stay live from admission until the
+/// session token is read.
+struct Caller<'a> {
+    registrations: &'a Registrations,
+    registration: String,
+    owner: (String, String),
+}
+impl Caller<'_> {
+    fn live(&self) -> bool {
+        self.registrations
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&self.registration)
+            == Some(&self.owner)
+    }
+    /// The plugin's grant for the configured authority.
+    async fn grant<'h>(
+        &self,
+        manager: tauri::State<'_, PluginManager>,
+        host: &'h FederatedIdentity,
+    ) -> Result<
+        (
+            buzzodz_plugins::FederatedIdentityGrant,
+            &'h super::config::Config,
+        ),
+        String,
+    > {
+        if !self.live() {
+            return Err("Plugin registration retired".into());
+        }
+        let (plugin, artifact) = self.owner.clone();
+        let grants = with_manager(manager, move |manager| {
+            manager.host_grants(&plugin, &artifact)
+        })
+        .await?;
+        let grant = grants
+            .federated_identity
+            .ok_or("Plugin has no authenticated authority grant")?;
+        let config = host
+            .0
+            .config
+            .as_ref()
+            .ok_or("Federated identity is not configured")?;
+        if grant.authority != config.id {
+            return Err("Plugin authority mismatch".into());
+        }
+        Ok((grant, config))
+    }
+    /// Only the account the caller started under may answer: a session
+    /// replaced since then refuses instead of acting for the new account.
+    fn token(&self, host: &FederatedIdentity, session: &str) -> Result<String, String> {
+        if !self.live() {
+            return Err("Plugin registration retired".into());
+        }
+        host.with_session(|token, current, _| (current == session).then(|| token.to_string()))
+            .ok_or("Sign in to your community first")?
+            .ok_or_else(|| "Federated session changed".into())
+    }
+}
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
 pub(crate) async fn federated_identity_request(
@@ -116,77 +176,217 @@ pub(crate) async fn federated_identity_request(
     session: String,
     request: Request,
 ) -> Result<crate::host_request::HostResponse, String> {
-    let live = || {
-        registrations
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&registration)
-            == Some(&(id.clone(), revision.clone()))
+    let caller = Caller {
+        registrations: &registrations,
+        registration,
+        owner: (id, revision),
     };
-    if !live() {
-        return Err("Plugin registration retired".into());
-    }
-    let (plugin, artifact) = (id.clone(), revision.clone());
-    let grants = with_manager(manager, move |manager| {
-        manager.host_grants(&plugin, &artifact)
-    })
-    .await?;
-    let grant = grants
-        .federated_identity
-        .ok_or("Plugin has no authenticated authority grant")?;
-    let config = host
-        .0
-        .config
-        .as_ref()
-        .ok_or("Federated identity is not configured")?;
-    if grant.authority != config.id {
-        return Err("Plugin authority mismatch".into());
-    }
+    let (grant, config) = caller.grant(manager, &host).await?;
     let destination = validate(config, &grant, &request)?;
-    if !live() {
-        return Err("Plugin registration retired".into());
-    }
-    // Only the account the caller started under may answer: a session
-    // replaced since then refuses instead of acting for the new account.
-    let token = host
-        .with_session(|token, current, _| (current == session).then(|| token.clone()))
-        .ok_or("Sign in to your community first")?
-        .ok_or("Federated session changed")?;
+    let token = caller.token(&host, &session)?;
     // A refusal here (including 401) belongs to this call only. Only the
     // adapter's session and assertion routes decide that the session ended,
     // so a 401 asks the session route once.
-    let response = forward(destination, &token, request).await?;
+    let response = forward(
+        destination,
+        &format!("Bearer {token}"),
+        &request.method,
+        &request.headers,
+        request.body,
+        crate::host_request::DEADLINE,
+    )
+    .await?;
     if response.status == 401 {
         host.recheck(&session).await;
     }
     Ok(response)
 }
-async fn forward(
-    destination: url::Url,
-    token: &str,
-    request: Request,
+/// A call to the Apps control plane's agent API, as `plugin_host_request`
+/// would send it, but with the native session.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AppsRequest {
+    path: String,
+    #[serde(default = "method")]
+    method: String,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+    body: Option<String>,
+    timeout_ms: Option<u64>,
+}
+/// An app artifact for the control plane's deploy route.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AppsUpload {
+    path: String,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+    file: crate::host_request::UploadFile,
+}
+/// Sends a granted Apps call with the native session as `BBIdentity`, the
+/// way `bl apps` authenticates; the control plane exchanges it itself.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
+pub(crate) async fn federated_identity_apps_request(
+    manager: tauri::State<'_, PluginManager>,
+    host: tauri::State<'_, FederatedIdentity>,
+    registrations: tauri::State<'_, Registrations>,
+    id: String,
+    revision: String,
+    registration: String,
+    session: String,
+    request: AppsRequest,
 ) -> Result<crate::host_request::HostResponse, String> {
-    let method =
-        reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|_| "Invalid API method")?;
-    let mut headers = reqwest::header::HeaderMap::new();
-    for (name, value) in &request.headers {
-        headers.insert(
+    let deadline = crate::host_request::request_deadline(request.timeout_ms)?;
+    let caller = Caller {
+        registrations: &registrations,
+        registration,
+        owner: (id, revision),
+    };
+    let (grant, config) = caller.grant(manager, &host).await?;
+    let destination = apps_destination(
+        control_plane(config, &grant),
+        &request.path,
+        &request.method,
+    )?;
+    bounded(&request.headers, request.body.as_deref())?;
+    let token = caller.token(&host, &session)?;
+    let response = forward(
+        destination,
+        &format!("BBIdentity {token}"),
+        &request.method,
+        &request.headers,
+        request.body,
+        deadline,
+    )
+    .await?;
+    // As for the identity origin, a 401 asks the session route once.
+    if response.status == 401 {
+        host.recheck(&session).await;
+    }
+    Ok(response)
+}
+/// Uploads an app artifact to its deploy route with the native session. The
+/// file is only ever an archive `plugin_host_upload` would accept.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
+pub(crate) async fn federated_identity_apps_upload(
+    manager: tauri::State<'_, PluginManager>,
+    host: tauri::State<'_, FederatedIdentity>,
+    registrations: tauri::State<'_, Registrations>,
+    id: String,
+    revision: String,
+    registration: String,
+    session: String,
+    upload: AppsUpload,
+) -> Result<crate::host_request::HostResponse, String> {
+    let caller = Caller {
+        registrations: &registrations,
+        registration,
+        owner: (id, revision),
+    };
+    let operation = async {
+        let (grant, config) = caller.grant(manager, &host).await?;
+        if !deploy_route(&upload.path) {
+            return Err("Apps upload is not allowed".to_string());
+        }
+        let destination = apps_destination(control_plane(config, &grant), &upload.path, "POST")?;
+        bounded(&upload.headers, None)?;
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let path = crate::host_request::archive_path(&upload.file.path, home.as_deref())?;
+        let token = caller.token(&host, &session)?;
+        let response = crate::host_request::send_upload(
+            destination,
+            authorized(&upload.headers, &format!("BBIdentity {token}"))?,
+            &BTreeMap::new(),
+            &upload.file,
+            &path,
+        )
+        .await?;
+        if response.status == 401 {
+            host.recheck(&session).await;
+        }
+        Ok(response)
+    };
+    tokio::time::timeout(crate::host_request::UPLOAD_DEADLINE, operation)
+        .await
+        .map_err(|_| "Apps upload timed out")?
+}
+/// The Apps control plane paired with the authority's origin, when granted.
+fn control_plane<'a>(
+    config: &super::config::Config,
+    grant: &buzzodz_plugins::FederatedIdentityGrant,
+) -> Option<&'a str> {
+    grant
+        .apps_control_plane
+        .then(|| buzzodz_plugins::apps_control_plane(&config.identity_origin))
+        .flatten()
+}
+/// `path` on `control_plane`, when it is under the agent API.
+fn apps_destination(
+    control_plane: Option<&str>,
+    path: &str,
+    method: &str,
+) -> Result<url::Url, String> {
+    let origin = control_plane.ok_or("Apps control plane is not granted")?;
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    if path.len() > 2048
+        || !super::config::canonical_path(route)
+        || !route.starts_with("/v1/agent/")
+        || query.contains('#')
+        || !matches!(method, "GET" | "POST" | "PUT" | "DELETE")
+    {
+        return Err("Apps request is not allowed".into());
+    }
+    let destination = url::Url::parse(origin)
+        .and_then(|base| base.join(path))
+        .map_err(|_| "Invalid Apps destination")?;
+    if destination.origin().ascii_serialization() != origin {
+        return Err("Invalid Apps destination".into());
+    }
+    Ok(destination)
+}
+/// `/v1/agent/apps/<app>/deploy`, the only route an artifact goes to.
+fn deploy_route(path: &str) -> bool {
+    path.strip_prefix("/v1/agent/apps/")
+        .and_then(|rest| rest.strip_suffix("/deploy"))
+        .is_some_and(|app| !app.is_empty() && !app.contains(['/', '?']))
+}
+/// `headers` with `authorization` added as a sensitive value.
+fn authorized(
+    headers: &BTreeMap<String, String>,
+    authorization: &str,
+) -> Result<reqwest::header::HeaderMap, String> {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        map.insert(
             reqwest::header::HeaderName::from_bytes(name.as_bytes())
                 .map_err(|_| "Invalid API header")?,
             reqwest::header::HeaderValue::from_str(value).map_err(|_| "Invalid API header")?,
         );
     }
-    let mut bearer = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-        .map_err(|_| "Invalid session")?;
-    bearer.set_sensitive(true);
-    headers.insert(reqwest::header::AUTHORIZATION, bearer);
+    let mut value =
+        reqwest::header::HeaderValue::from_str(authorization).map_err(|_| "Invalid session")?;
+    value.set_sensitive(true);
+    map.insert(reqwest::header::AUTHORIZATION, value);
+    Ok(map)
+}
+async fn forward(
+    destination: url::Url,
+    authorization: &str,
+    method: &str,
+    headers: &BTreeMap<String, String>,
+    body: Option<String>,
+    deadline: std::time::Duration,
+) -> Result<crate::host_request::HostResponse, String> {
+    let method =
+        reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid API method")?;
     crate::host_request::send_request(
         destination,
         method,
-        headers,
-        request.body,
-        crate::host_request::DEADLINE,
+        authorized(headers, authorization)?,
+        body,
+        deadline,
     )
     .await
 }
@@ -223,13 +423,14 @@ fn validate(
             return Err("Adapter endpoints are reserved".into());
         }
     }
-    if request
-        .body
-        .as_ref()
-        .is_some_and(|body| body.len() > 1024 * 1024)
-        || request.headers.len() > 32
-        || request
-            .headers
+    bounded(&request.headers, request.body.as_deref())?;
+    Ok(destination)
+}
+/// Refuses an oversized call, or a header the forwarder sets or forbids.
+fn bounded(headers: &BTreeMap<String, String>, body: Option<&str>) -> Result<(), String> {
+    if body.is_some_and(|body| body.len() > 1024 * 1024)
+        || headers.len() > 32
+        || headers
             .iter()
             .map(|(key, value)| key.len() + value.len())
             .sum::<usize>()
@@ -237,7 +438,7 @@ fn validate(
     {
         return Err("Authenticated request is too large".into());
     }
-    for (name, value) in &request.headers {
+    for (name, value) in headers {
         let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| "Invalid API header")?;
         if matches!(
@@ -261,7 +462,7 @@ fn validate(
         }
         reqwest::header::HeaderValue::from_str(value).map_err(|_| "Invalid API header")?;
     }
-    Ok(destination)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -335,6 +536,26 @@ mod tests {
             .await
             .unwrap_err()
             .contains("not granted"));
+        let apps = || {
+            federated_identity_apps_request(
+                app.state(),
+                app.state(),
+                app.state(),
+                "example.fi".into(),
+                revision.clone(),
+                token.clone(),
+                String::new(),
+                AppsRequest {
+                    path: "/v1/agent/contract".into(),
+                    method: "GET".into(),
+                    headers: BTreeMap::new(),
+                    body: None,
+                    timeout_ms: None,
+                },
+            )
+        };
+        // Without the Apps grant, the control plane is out of reach.
+        assert!(apps().await.unwrap_err().contains("not granted"));
         for header in [
             "Authorization",
             "Nostr-Federated-Identity",
@@ -366,6 +587,7 @@ mod tests {
             .await
             .unwrap_err()
             .contains("retired"));
+        assert!(apps().await.unwrap_err().contains("retired"));
         register(revision.clone(), token.clone()).await.unwrap();
         manager.change("disable", "example.fi").unwrap();
         assert!(request("/api/list", BTreeMap::new()).await.is_err());
@@ -474,13 +696,11 @@ mod tests {
         });
         let response = forward(
             url::Url::parse(&format!("http://{address}/api/v1/buzz/communities/list")).unwrap(),
-            "fixture-session-token",
-            Request {
-                path: "/api/v1/buzz/communities/list".into(),
-                method: "POST".into(),
-                headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
-                body: Some("{}".into()),
-            },
+            "Bearer fixture-session-token",
+            "POST",
+            &BTreeMap::from([("content-type".into(), "application/json".into())]),
+            Some("{}".into()),
+            crate::host_request::DEADLINE,
         )
         .await
         .unwrap();
@@ -490,5 +710,37 @@ mod tests {
         assert!(sent.starts_with("post /api/v1/buzz/communities/list "));
         assert!(sent.contains("authorization: bearer fixture-session-token"));
         assert!(!sent.contains("cookie") && !sent.contains("x-bb-"));
+    }
+    #[test]
+    fn apps_calls_stay_on_the_control_planes_agent_api() {
+        let plane = Some("https://compose.example");
+        assert_eq!(
+            apps_destination(plane, "/v1/agent/apps/a/ready?version_id=v 1", "GET")
+                .unwrap()
+                .as_str(),
+            "https://compose.example/v1/agent/apps/a/ready?version_id=v%201"
+        );
+        assert!(apps_destination(None, "/v1/agent/contract", "GET").is_err());
+        for path in [
+            "/v1/auth/me",
+            "/v1/agent/../auth/me",
+            "/v1/agent//x",
+            "//evil.example/v1/agent/x",
+            "/v1/agent/a%2F..",
+            "/v1/agent/a?b#c",
+            "https://evil.example/v1/agent/x",
+        ] {
+            assert!(apps_destination(plane, path, "GET").is_err(), "{path}");
+        }
+        assert!(apps_destination(plane, "/v1/agent/contract", "PATCH").is_err());
+        assert!(deploy_route("/v1/agent/apps/a/deploy"));
+        for path in [
+            "/v1/agent/apps//deploy",
+            "/v1/agent/apps/a/b/deploy",
+            "/v1/agent/apps/a?x/deploy",
+            "/v1/agent/apps/a/ready",
+        ] {
+            assert!(!deploy_route(path), "{path}");
+        }
     }
 }

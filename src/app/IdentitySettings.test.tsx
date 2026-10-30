@@ -115,6 +115,8 @@ function bound(service: FederatedIdentity): FederatedIdentity {
   const self: FederatedIdentity = {
     apiAvailable: service.apiAvailable,
     request: service.request,
+    appsRequest: service.appsRequest,
+    appsUpload: service.appsUpload,
     snapshot: service.snapshot,
     subscribe: service.subscribe,
     signIn() {

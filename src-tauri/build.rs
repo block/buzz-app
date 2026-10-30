@@ -95,6 +95,8 @@ fn main() {
             "federated_identity_register",
             "federated_identity_unregister",
             "federated_identity_request",
+            "federated_identity_apps_request",
+            "federated_identity_apps_upload",
             "relay_socket_connect",
             "relay_socket_start",
             "relay_socket_send",

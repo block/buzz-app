@@ -3,6 +3,8 @@ import type {
   FederatedIdentity,
   SessionSnapshot,
   AuthenticatedRequest,
+  AppsRequest,
+  AppsUpload,
 } from "./service";
 import type { HostResponse } from "../host/service";
 
@@ -64,10 +66,18 @@ export function federatedFixture(
         throw new Error("Fixture response required");
       },
     ),
+    appsRequest: vi.fn(async (_input: AppsRequest): Promise<HostResponse> => {
+      throw new Error("Fixture response required");
+    }),
+    appsUpload: vi.fn(async (_input: AppsUpload): Promise<HostResponse> => {
+      throw new Error("Fixture response required");
+    }),
   };
   return {
     service,
     publish,
     request: vi.mocked(service.request),
+    appsRequest: vi.mocked(service.appsRequest),
+    appsUpload: vi.mocked(service.appsUpload),
   };
 }

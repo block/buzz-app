@@ -451,17 +451,18 @@ standard endpoints defined by NIP-FI/NIP-FA. NIP-FI defines the
 interoperability with another adapter's enrollment endpoints.
 
 In an FI build, Builderlab's remote-agent, hosted-community, known-community,
-Apps viewer and backup calls go through the native FI session. The renderer
+Apps viewer, Apps agent tool and backup calls go through the native FI session. The renderer
 names only the public session revision. For API calls, native checks the
 plugin's authority/operation grant, enabled artifact revision, live
 registration and that revision; the Apps viewer exchange and backup check only
 that the revision is current. Each sends the adapter session as
-`Authorization: Bearer` to the identity origin only. A 401 fails that call
-without ending the session; native then checks the adapter's `GET /v1/session`
-once and ends the session only if the adapter refuses it there. Builderlab's
-Settings card has no sign-out of its own in an FI build: it links to Identity →
-Organization sign-in, which ends the shared session. Builderlab
-Apps' agent tools still need the legacy login and are absent in FI builds.
+`Authorization: Bearer` to the identity origin only, except the Apps tools,
+which send it as `Authorization: BBIdentity` to the paired Apps control plane
+under the same checks. A 401 fails that call without ending the session;
+native then checks the adapter's `GET /v1/session` once and ends the session
+only if the adapter refuses it there. Builderlab's Settings card has no
+sign-out of its own in an FI build: it links to Identity → Organization
+sign-in, which ends the shared session.
 
 The Node development host retains its supported broker flow.
 

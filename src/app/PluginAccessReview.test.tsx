@@ -121,3 +121,38 @@ it("shows a registered harness title while keeping its exact key in details", as
   fireEvent.click(trigger);
   await waitFor(() => expect(screen.getByText("third/custom")).toBeVisible());
 });
+
+it("discloses the federated Apps control plane as its own grant", () => {
+  render(
+    <PluginAccessReview
+      manifest={{
+        id: "example.apps",
+        name: "Apps",
+        apiVersion: 1,
+        host: {
+          federatedIdentity: {
+            authority: "test",
+            operations: [{ method: "GET", path: "/api/me" }],
+            appsControlPlane: true,
+          },
+        },
+      }}
+      previousManifest={{
+        id: "example.apps",
+        name: "Apps",
+        apiVersion: 1,
+        host: {
+          federatedIdentity: {
+            authority: "test",
+            operations: [{ method: "GET", path: "/api/me" }],
+          },
+        },
+      }}
+    />,
+  );
+  expect(
+    within(
+      screen.getByRole("region", { name: "Added declarations" }),
+    ).getByRole("button", { name: /Manage Builderlab apps/ }),
+  ).toBeVisible();
+});

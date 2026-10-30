@@ -27,6 +27,7 @@ import { brokerApi, createApi } from "./communities/api";
 import { createNativeBackend } from "./communities/native";
 import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
+import { hostTransport, nativeTransport } from "./apps/client";
 
 export const inject = [
   "host",
@@ -84,7 +85,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
           kind: "settings",
           section: "identity",
         });
-  applyApps(ctx, session, loginAvailable, legacy);
+  // An FI build's native session goes as `BBIdentity` from Buzz itself.
+  applyApps(ctx, session, loginAvailable, (base) =>
+    legacy
+      ? hostTransport(ctx.host, base)
+      : nativeTransport(ctx.federatedIdentity),
+  );
   const handoff = (signedIn: boolean) =>
     legacy
       ? handoffBackupSession(

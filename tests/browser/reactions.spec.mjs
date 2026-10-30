@@ -216,7 +216,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     .click();
   await expect(
     root.getByRole("button", {
-      name: ":party:: You",
+      name: ":party:: 2 people",
       exact: true,
     }),
   ).toBeVisible();

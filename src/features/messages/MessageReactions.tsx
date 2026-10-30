@@ -274,7 +274,7 @@ function ReactionEmoji({
     reactorProfiles.snapshot,
     reactorProfiles.snapshot,
   );
-  const grouped = authorIds.length >= 9;
+  const grouped = authorIds.length > 1;
   const own = !!session.viewer && authorIds.includes(session.viewer);
   const users = previewAuthors.map((authorId) =>
     authorId === session.viewer
@@ -330,7 +330,7 @@ function ReactionEmoji({
               if (unavailable) return;
               const losesFocus =
                 own &&
-                (!grouped || authorIds.length === 9) &&
+                authorIds.length === 1 &&
                 event.currentTarget === document.activeElement;
               if (toggle(reaction.content, reaction.emoji) && losesFocus)
                 onFocusedRemoval?.();
@@ -395,25 +395,6 @@ export function MessageReactions(
     session.emoji.snapshot,
   );
   const [pointerInRow, setPointerInRow] = useState(false);
-  const reactionRow = useRef<HTMLDivElement>(null);
-  const focusedReaction = useRef<HTMLButtonElement | null>(null);
-  useLayoutEffect(() => {
-    const previous = focusedReaction.current;
-    if (!previous || previous.isConnected) return;
-    focusedReaction.current = null;
-    if (!active || document.activeElement !== document.body) return;
-    // Grouping can replace the focused control after a local or live update.
-    const replacement = Array.from(
-      reactionRow.current?.querySelectorAll<HTMLButtonElement>(
-        "button[data-reaction]",
-      ) ?? [],
-    ).find(
-      (button) =>
-        button.dataset.reaction === previous.dataset.reaction &&
-        button.dataset.reactionUrl === previous.dataset.reactionUrl,
-    );
-    if (replacement) replacement.focus({ preventScroll: true });
-  });
   const [preview, setPreview] = useState<{
     key: string | null;
     index: number;
@@ -424,46 +405,27 @@ export function MessageReactions(
   const select = (content: string) => {
     return action.toggle(content, catalogEmoji(catalog.entries, content));
   };
-  // Count people, not duplicate events. Large groups share one control and preview.
+  // Count people, not duplicate events. Each emoji shares one control and preview.
   const reactions = useMemo(
     () =>
-      row.reactions.flatMap((reaction) => {
+      row.reactions.map((reaction) => {
         const authorIds = [
           ...new Set(reaction.events.map((event) => event.authorId)),
         ];
         const mine = !!session.viewer && authorIds.includes(session.viewer);
-        return authorIds.length >= 9
-          ? [{ reaction, authorIds, mine }]
-          : authorIds.map((authorId) => ({
-              reaction,
-              authorIds: [authorId],
-              mine,
-            }));
+        return { reaction, authorIds, mine };
       }),
     [row.reactions, session.viewer],
   );
   return (
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
     <div
-      ref={reactionRow}
       className={styles.reactions}
       data-message-reactions={(active && reactions.length > 0) || undefined}
       data-testid="reaction-row"
       data-populated={(active && reactions.length > 0) || undefined}
       role="group"
       aria-label="Reactions"
-      onFocusCapture={(event) => {
-        const button = event.target;
-        focusedReaction.current =
-          button instanceof HTMLButtonElement &&
-          button.hasAttribute("data-reaction")
-            ? button
-            : null;
-      }}
-      onBlurCapture={() => {
-        if (focusedReaction.current?.isConnected)
-          focusedReaction.current = null;
-      }}
       onMouseEnter={() => setPointerInRow(true)}
       onMouseLeave={() => {
         setPointerInRow(false);
@@ -472,11 +434,7 @@ export function MessageReactions(
     >
       {active &&
         reactions.map(({ reaction, authorIds, mine }, index) => {
-          const key = JSON.stringify([
-            reaction.content,
-            reaction.emoji?.url,
-            authorIds.length >= 9 ? null : authorIds[0],
-          ]);
+          const key = JSON.stringify([reaction.content, reaction.emoji?.url]);
           const slideFrom =
             preview?.key === key ? preview.fromIndex : preview?.index;
           const previewSlide =

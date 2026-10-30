@@ -333,6 +333,58 @@ it("plain sends are immediate and do not acquire a palette; only a send retries 
   ).toContainEqual(["emoji", "party", url]);
   expect(reads()).toBe(2);
 });
+it("explicit retries jump background traffic that starves the passive catalog load", async () => {
+  vi.useFakeTimers();
+  try {
+    const catalog = (target: ReturnType<typeof session>) =>
+      target.wire.pending.find((p) => p.filters[0]?.kinds?.includes(30030));
+    // Background profile reads hold the background lane, as on channel open.
+    const busy = (target: ReturnType<typeof session>, key: Key) =>
+      void target.session.profiles
+        .ensure([key.pubkey], "background")
+        .catch(() => {});
+    const h = session();
+    busy(h, member);
+    void h.session.emoji.ensure();
+    // The passive load spends its whole deadline queued, never reaching the relay.
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(catalog(h)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.session.emoji.snapshot()).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("Relay read timed out"),
+    });
+    h.wire.pending.splice(0);
+    busy(h, relay);
+    await vi.advanceTimersByTimeAsync(0);
+    // The refused send's retry dispatches despite the busy lane.
+    expect(() => h.session.messages.send("c", ":party:")).toThrow(
+      /isn't ready/,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    catalog(h)?.respond([set()]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.session.emoji.snapshot().status).toBe("ready");
+    const id = h.session.messages.send("c", ":party:");
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === id)?.event
+        .tags,
+    ).toContainEqual(["emoji", "party", url]);
+    // A retry while the passive load is still queued supersedes it.
+    const queued = session("b");
+    busy(queued, member);
+    void queued.session.emoji.ensure();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(catalog(queued)).toBeUndefined();
+    const retry = queued.session.emoji.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    catalog(queued)?.respond([set()]);
+    await retry;
+    expect(queued.session.emoji.snapshot().status).toBe("ready");
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("a failed refresh keeps a loaded catalog ready and sendable, with its error until a retry", async () => {
   const h = session();
   const ready = h.session.emoji.ensure();

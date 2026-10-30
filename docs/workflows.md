@@ -25,7 +25,8 @@ See the [capability contract](../src/features/workflows/types.ts).
   ownership. All channel workflows includes other owners in participating channels.
   Rows and their details show the owner's current identity name, with an abbreviated
   public-key fallback while a profile is unavailable or nameless, including through
-  the active naming policy. Visible owners hydrate together in background profile
+  the active naming policy. Fallbacks lengthen their suffix to stay distinct across
+  visible owners. Visible owners hydrate together in background profile
   batches of up to 500 identities. Narrow rows reflow their artwork, text, and
   independent controls as text grows. Ownership and management
   permissions remain tied to the signing identity, including agent-owned workflows.

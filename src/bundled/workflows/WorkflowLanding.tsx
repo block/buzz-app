@@ -22,7 +22,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { formatPublicKey } from "../../shared/identity/public-key";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import type {
   WorkflowCapability,
   WorkflowDefinition,
@@ -441,10 +441,12 @@ function WorkflowOwner({
   session,
   owner,
   channelId,
+  keyLabel,
 }: {
   session: RelaySession;
   owner: string;
   channelId: string;
+  keyLabel: string;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [owner]),
@@ -457,15 +459,13 @@ function WorkflowOwner({
   );
   const name = useChannelIdentityNames(session, channelId);
   const profile = profiles.get(owner);
-  const fallback =
-    profile && !profile.nameIsFallback
-      ? profile.name
-      : (formatPublicKey(owner) ?? "Unknown owner");
+  const fallback = profile && !profile.nameIsFallback ? profile.name : keyLabel;
   return <>Owner: {name(owner, fallback)}</>;
 }
 
 function WorkflowCard({
   session,
+  ownerKeyLabels,
   capability,
   channel,
   definition,
@@ -482,6 +482,7 @@ function WorkflowCard({
   onRun,
 }: {
   session: RelaySession | undefined;
+  ownerKeyLabels: ReadonlyMap<string, string>;
   capability: WorkflowCapability;
   channel: ChannelSummary;
   definition: WorkflowDefinition;
@@ -564,14 +565,17 @@ function WorkflowCard({
   const statusId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
+  const keyLabel =
+    ownerKeyLabels.get(definition.owner.toLowerCase()) ?? "Unknown owner";
   const owner = session ? (
     <WorkflowOwner
       session={session}
       owner={definition.owner}
       channelId={definition.channelId}
+      keyLabel={keyLabel}
     />
   ) : (
-    <>Owner: {formatPublicKey(definition.owner) ?? "Unknown owner"}</>
+    <>Owner: {keyLabel}</>
   );
   const runDisabled =
     readonly ||
@@ -946,6 +950,7 @@ function WorkflowListTransition({
 
 function WorkflowCards({
   session,
+  ownerKeyLabels,
   capability,
   channel,
   detailTarget,
@@ -961,6 +966,7 @@ function WorkflowCards({
   onError,
 }: {
   session: RelaySession | undefined;
+  ownerKeyLabels: ReadonlyMap<string, string>;
   capability: WorkflowCapability;
   channel: ChannelSummary | undefined;
   detailTarget: HTMLElement | null;
@@ -1010,6 +1016,7 @@ function WorkflowCards({
           return (
             <WorkflowCard
               session={session}
+              ownerKeyLabels={ownerKeyLabels}
               capability={capability}
               channel={itemChannel}
               showChannel={!channel}
@@ -1485,6 +1492,8 @@ export function WorkflowLanding({
     () => (ownerKey ? ownerKey.split(":") : []),
     [ownerKey],
   );
+  // Fallback keys share one suffix length so visible owners stay distinguishable.
+  const ownerKeyLabels = useMemo(() => publicKeyLabels(ownerIds), [ownerIds]);
   useEffect(() => {
     if (!session) return;
     // Match the profile directory's query batch size and stay within its
@@ -1677,6 +1686,7 @@ export function WorkflowLanding({
               <WorkflowListTransition key={group.key}>
                 <WorkflowCards
                   session={session}
+                  ownerKeyLabels={ownerKeyLabels}
                   capability={capability}
                   channel={group.channel}
                   entries={group.entries}

@@ -275,6 +275,30 @@ it("hydrates distinct displayed workflow owners in one batched profile query", a
   }
 });
 
+it("lengthens fallback key suffixes when visible owners share one", async () => {
+  // Both npubs end in "caj" but differ at the fourth-to-last character.
+  const owners = ["a".repeat(64), `${"b".repeat(60)}d92e`] as const;
+  const fixture = mount(fixtureYaml, owners[0]);
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: {
+        partial: false,
+        items: owners.map((owner, index) => ({
+          ...fixtureDefinition,
+          id: `${index}`,
+          owner,
+        })),
+      },
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Owner: My workflows" }));
+  fireEvent.click(screen.getByRole("radio", { name: "All channel workflows" }));
+  expect(await screen.findByText("Owner: npub…rcaj")).toBeVisible();
+  expect(screen.getByText("Owner: npub…vcaj")).toBeVisible();
+  expect(screen.queryByText("Owner: npub…caj")).toBeNull();
+});
+
 it("delivers a late webhook secret on the landing page after confirmed navigation", async () => {
   const fixture = mount();
   fireEvent.click(

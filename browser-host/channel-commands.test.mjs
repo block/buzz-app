@@ -140,8 +140,9 @@ it("signs a batch invitation of up to 100 distinct people without elevating role
     [h, ...people(2), people(1)[0]],
     [h, ...people(2), ["role", "admin"]],
     [h, ...people(2), ["role", "guest"]],
+    [h, ["role", "member"]],
     [h, people(1)[0], ["role", "bot"]],
-    [h, ...people(1), ["role", "member"], ...people(1)],
+    [h, people(2)[0], ["role", "member"], people(2)[1]],
     [h, ["p", "a".repeat(64), "admin"], ...people(1)],
   ])
     expect(validChannelCommand(invite(tags))).toBe(false);

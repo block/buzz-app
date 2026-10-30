@@ -87,7 +87,8 @@ export function validChannelCommand(event) {
   }
   if (event.kind === 9000) {
     // block/buzz#8575: up to 100 distinct `p` tags. Several people may share
-    // the Bot role a single agent enrollment already signs; never an elevation.
+    // the Bot role a single agent enrollment already signs; one agent keeps
+    // that exact enrollment shape. Never an elevation.
     const role = tags.at(-1)?.[0] === "role" ? tags.at(-1) : undefined;
     const people = tags.slice(1, role ? -1 : undefined);
     return (

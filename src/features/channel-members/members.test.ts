@@ -763,6 +763,8 @@ function batchSetup(applyAll = true) {
   let records: readonly OutgoingEvent[] = [];
   const published: RelayEvent[] = [];
   let onPublish = () => {};
+  let rosterReads = 0;
+  let failRosterRead = 0;
   const publish = vi.fn(async (event: RelayEvent) => {
     onPublish();
     const named = event.tags.flatMap(([tag, value]) =>
@@ -788,8 +790,11 @@ function batchSetup(applyAll = true) {
           await publish(event);
         },
       },
-      query: async (filters) =>
-        [
+      query: async (filters) => {
+        if (filters.some((filter) => filter.kinds?.includes(39002)))
+          if (++rosterReads === failRosterRead)
+            throw new Error("Roster unavailable");
+        return [
           signed(relay, {
             kind: 39000,
             content: "",
@@ -804,7 +809,8 @@ function batchSetup(applyAll = true) {
           roster(relay, id, members, clock),
         ].filter((event) =>
           filters.some((filter) => matchesEvent(event, filter)),
-        ),
+        );
+      },
     },
     {
       outboxStorage: {
@@ -826,6 +832,10 @@ function batchSetup(applyAll = true) {
     /** Runs as the relay receives each write, e.g. another owner's admission. */
     onPublish(run: () => void) {
       onPublish = run;
+    },
+    /** Fails the relay's nth roster read from now. */
+    failRosterRead(nth: number) {
+      failRosterRead = rosterReads + nth;
     },
     admit(key: string) {
       members = [...members, key];
@@ -927,5 +937,31 @@ it("reads the roster again before a later write, so it never names someone admit
   expect(
     t.published[0]?.tags.some(([, value]) => value === t.agent.pubkey),
   ).toBe(false);
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("adds the rest one at a time when the roster can't be read again between writes", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  // The first read precedes the people's write; the second, before the agent's, fails.
+  t.failRosterRead(2);
+  await t.addAll([first, second, t.agent.pubkey]);
+  expect(
+    t.published.map((event) =>
+      event.tags.filter(([tag]) => tag === "p" || tag === "role"),
+    ),
+  ).toEqual([
+    [
+      ["p", first],
+      ["p", second],
+      ["role", "member"],
+    ],
+    [
+      ["p", t.agent.pubkey],
+      ["role", "bot"],
+    ],
+  ]);
+  expect(t.members()).toContain(t.agent.pubkey);
   expect(t.session.memberAdditions.snapshot()).toEqual([]);
 });

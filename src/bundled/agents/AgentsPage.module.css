@@ -155,7 +155,8 @@
   inset-inline: 0;
   bottom: 0;
   z-index: 2;
-  padding: var(--space-5);
+  /* Give the floating surface its own inset, inside the content's border line. */
+  padding: var(--space-5) var(--space-8);
   pointer-events: none;
 }
 .panelFooter:empty {

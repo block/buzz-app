@@ -120,7 +120,7 @@ test("GitHub visits restore through native history and reload; X skips their ret
   // A pasted pull request link is named for it, with the title read.
   await activate(
     page.getByRole("link", {
-      name: "sample/project#42 · Fixture change",
+      name: "project#42 · Fixture change",
       exact: true,
     }),
   );
@@ -382,7 +382,7 @@ async function openGitHub(page, app) {
   // A pasted pull request link is named for it, with the title read.
   await activate(
     page.getByRole("link", {
-      name: "sample/project#43 · Bulk close fixture",
+      name: "project#43 · Bulk close fixture",
       exact: true,
     }),
   );

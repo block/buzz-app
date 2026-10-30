@@ -342,9 +342,11 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     page.locator(`[data-solo-menu-id="${id}"] [data-solo-shared]`),
   ).toBeVisible();
   await action.click();
+  // Base UI focuses the menu on the next frame. Escape before then leaves
+  // focus on the trigger, and the menu keeps focus where it already is.
   await expect(
     page.getByRole("menu", { name: "Actions for Alpha", exact: true }),
-  ).toBeVisible();
+  ).toBeFocused();
   await expect(action).toHaveAttribute("aria-expanded", "true");
   await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.keyboard.press("Escape");

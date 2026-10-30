@@ -62,7 +62,12 @@ behavior on the label, so a rename touches copy only.
   admission as any Solo send: missing tagged agents are added, then the message
   is queued. Nothing about the start is saved separately. A retry in the same
   view reuses the requested channel; after an interruption the chat exists with
-  the text still in its composer. Setup that fails or is interrupted leaves a
+  the text still in its composer. A start the relay refuses makes no chat: the
+  chat and what was sent in it are withdrawn, and an error says why. If New
+  chat is still blank (no text beyond tags, no files, settings and workspace
+  unchanged), the prompt, its mentions and files, the draft settings and the
+  workspace go back into it. A draft begun since is kept, and the prompt is
+  lost. Setup that fails or is interrupted leaves a
   working chat without that setup; it never holds the message. Draft settings
   remain local until first send and use Solo's defaults namespace.
 - New Solo chats are created with the `buzz.solo` label and no `about` text, so

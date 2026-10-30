@@ -1,5 +1,6 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, settlePanelMotion } from "./navigation.mjs";
+import { frames } from "./timeline.mjs";
 import { test, expect } from "./fixture.mjs";
 async function openLifecycle(page, app) {
   await page.goto(app.origin);
@@ -602,4 +603,108 @@ test.describe("Solo chat lifecycle", () => {
     ]);
     expect(app.report.unexpected).toEqual([]);
   });
+});
+
+// Native focus after a signed remote update removes a form is a browser contract.
+// Each surface exercises editor, toolbar and unrelated focus in one lifecycle.
+test.describe("remote archive focus", () => {
+  test.use({ readState: true, threadUnread: true });
+  for (const surface of ["channel", "thread"]) {
+    test(`remote archive keeps keyboard focus in the ${surface} history only when its composer owns it`, async ({
+      page,
+      app,
+    }) => {
+      await page.goto(app.origin);
+      await openPage(page, "Messages");
+      await page
+        .getByRole("navigation", { name: "Subscribed channels" })
+        .locator('button[data-channel-id="alpha"]')
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      if (surface === "thread") {
+        const root = app.histories
+          .get("primary/alpha")
+          .find((event) => event.content === "Thread root 0");
+        await page
+          .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+          .getByRole("button", { name: /^View thread:/ })
+          .click();
+      }
+      const owner =
+        surface === "thread" ? panel : page.locator("[data-channel-history]");
+      const history = owner.getByRole("region", {
+        name:
+          surface === "thread" ? "Thread messages" : "Channel message history",
+        exact: true,
+      });
+      const editor =
+        surface === "thread"
+          ? panel.getByRole("textbox", { name: "Reply to thread", exact: true })
+          : page.getByRole("textbox", { name: "Message #Alpha", exact: true });
+      const form = (surface === "thread" ? panel : page).locator(
+        "[data-composer-surface]",
+      );
+      const notice = owner.getByRole("region", {
+        name: "Archived channel",
+        exact: true,
+      });
+      const elsewhere = page.getByRole("button", {
+        name: "Search Buzz",
+        exact: true,
+      });
+      if (surface === "thread") {
+        await settlePanelMotion(page);
+        await expect(history).toHaveAttribute("aria-busy", "false");
+      }
+      let timestamp = Math.floor(Date.now() / 1000);
+      for (const focus of ["editor", "toolbar", "elsewhere"]) {
+        await expect(editor).toBeVisible();
+        const target =
+          focus === "elsewhere"
+            ? elsewhere
+            : focus === "toolbar"
+              ? form.getByRole("button", { name: "Attach files", exact: true })
+              : editor;
+        await target.focus();
+        await expect(target).toBeFocused();
+        app.relay.publish(
+          "primary",
+          app.signRelay({
+            kind: 39000,
+            tags: [
+              ["d", "alpha"],
+              ["name", "Alpha"],
+              ["t", "stream"],
+              ["archived", "true"],
+            ],
+            content: "",
+            created_at: ++timestamp,
+          }),
+        );
+        await expect(notice).toHaveText("This channel is archived");
+        await expect(editor).toHaveCount(0);
+        await frames(page);
+        await expect(focus === "elsewhere" ? elsewhere : history).toBeFocused();
+        app.relay.publish(
+          "primary",
+          app.signRelay({
+            kind: 39000,
+            tags: [
+              ["d", "alpha"],
+              ["name", "Alpha"],
+              ["t", "stream"],
+            ],
+            content: "",
+            created_at: ++timestamp,
+          }),
+        );
+        await expect(notice).toHaveCount(0);
+      }
+      expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+      expect(app.report.unexpected).toEqual([]);
+    });
+  }
 });

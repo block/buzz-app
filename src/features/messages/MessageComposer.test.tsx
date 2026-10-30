@@ -610,6 +610,31 @@ it("shows a local draft in the cached composer without completion, typing or tra
   }
 });
 
+it.each([true, false])(
+  "reports focused form removal only while it owns focus (focused=%s)",
+  (focused) => {
+    const initial = vi.fn();
+    const latest = vi.fn();
+    const h = mount({ autoFocus: false, onFocusedRemoval: initial });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    try {
+      if (focused) h.input().focus();
+      else outside.focus();
+      h.retarget({ channelName: "Renamed", onFocusedRemoval: latest });
+      expect(initial).not.toHaveBeenCalled();
+      expect(latest).not.toHaveBeenCalled();
+      h.unmount();
+      expect(initial).not.toHaveBeenCalled();
+      expect(latest).toHaveBeenCalledTimes(focused ? 1 : 0);
+      if (!focused) expect(outside).toHaveFocus();
+    } finally {
+      h.unmount();
+      outside.remove();
+    }
+  },
+);
+
 it("an explicit focus request resumes after the draft's retained mention", () => {
   writeView("scope", "draft:channel", {
     text: "@Honey existing prose",

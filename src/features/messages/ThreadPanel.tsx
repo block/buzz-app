@@ -1391,6 +1391,15 @@ function ThreadMessages({
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  const focusArchivedHistory = useCallback(() => {
+    const history = scroller.current;
+    if (
+      session.channels?.get?.(channelId)?.archived &&
+      history?.isConnected &&
+      !history.closest("[inert]")
+    )
+      history.focus({ preventScroll: true });
+  }, [session.channels, channelId]);
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
@@ -1629,6 +1638,7 @@ function ThreadMessages({
       {composerRoot && (
         <MessageComposer
           activityClickOpensPanel={activityClickOpensPanel}
+          onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
           session={session}

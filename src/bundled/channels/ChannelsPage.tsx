@@ -1669,6 +1669,19 @@ function ChannelWorkspace({
       )}
     </ChannelSettingsPanel>
   );
+  const focusArchivedHistory = useCallback(() => {
+    const history = historyContainer.current;
+    if (
+      !currentId ||
+      !queries.channels.get?.(currentId)?.archived ||
+      !history?.isConnected ||
+      history.closest("[inert]")
+    )
+      return;
+    (
+      history.querySelector<HTMLElement>("[data-message-scroller]") ?? history
+    ).focus({ preventScroll: true });
+  }, [currentId, queries.channels]);
   const channelNotice =
     !!current &&
     (current.archived ||
@@ -1769,6 +1782,7 @@ function ChannelWorkspace({
         (!current.readOnly || current.cached) && (
           <ConversationComposer
             key={`composer:${current.id}`}
+            onFocusedRemoval={focusArchivedHistory}
             autoFocus={
               // Conversion remounts the body, but isn't a new conversation opening.
               // Its dialog hands off focus after closing and releasing modality.

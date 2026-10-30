@@ -276,6 +276,8 @@ export type MessageComposerProps = {
   onSend?: (id: string) => void;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
+  /** Before a focused form detaches, its host can hand focus to retained content. */
+  onFocusedRemoval?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
   editMessages?: readonly ChannelMessage[] | undefined;
   onOpenLink?:
@@ -440,6 +442,7 @@ function Composer({
   placeholder,
   onSend,
   onDraftSaved,
+  onFocusedRemoval,
   editMessages,
   onOpenLink,
   canOpenLink,
@@ -917,6 +920,10 @@ function Composer({
   );
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
+  const handOffFocus = useEffectEvent(() => {
+    if (form.current?.contains(document.activeElement)) onFocusedRemoval?.();
+  });
+  useLayoutEffect(() => () => handOffFocus(), []);
   const canAttach = submission
     ? !!submission.attachments && !!session.attachments?.uploadForNewChat
     : !!session.attachments;

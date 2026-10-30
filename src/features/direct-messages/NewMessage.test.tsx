@@ -917,7 +917,7 @@ it("shows the To error only beside a recipient, and clears it once the text beco
   await t.user.keyboard("{Escape}");
   expect(screen.queryByText(/is not a valid recipient/)).toBeNull();
   await t.user.clear(recipient());
-  await t.user.click(screen.getByRole("option", { name: "Person 1" }));
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
   await t.user.type(recipient(), "Person 3");
   await t.user.click(screen.getByRole("textbox"));
   expect(

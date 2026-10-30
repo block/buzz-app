@@ -5,6 +5,7 @@ import { BlockLogoArtwork } from "./BlockLogo";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
 import {
+  BuilderlabLogoArtwork,
   GooseLogoArtwork,
   PiLogoArtwork,
   ClaudeLogoArtwork,
@@ -17,6 +18,18 @@ import {
 } from "./HarnessLogos";
 
 // Brand artwork requested for Harness Settings; general UI glyphs remain Tabler.
+export const BuilderlabLogoIcon = defineIcon("custom", BuilderlabLogoArtwork, {
+  meaning: "Builderlab harness",
+  category: "Custom brand mark",
+  provenance:
+    "Builderlab Event 2026 SVG supplied by Taylor Ho, adapted to currentColor for 16–32px UI use; corners optically rounded, source blur retained, grain and displacement omitted for legibility; see NOTICE.md",
+  intendedSizes: [
+    { width: 16, height: 16 },
+    { width: 18, height: 18 },
+    { width: 20, height: 20 },
+    { width: 32, height: 32 },
+  ],
+});
 export const GooseLogoIcon = defineIcon("custom", GooseLogoArtwork, {
   meaning: "Goose harness",
   category: "Custom brand mark",
@@ -366,7 +379,7 @@ export const OneDriveLogoIcon = defineIcon("custom", OneDriveLogoArtwork, {
   intendedSizes: [{ width: 14, height: 14 }],
 });
 export const BlockLogoIcon = defineIcon("custom", BlockLogoArtwork, {
-  meaning: "Builderlab settings",
+  meaning: "Block, Inc. corporate mark",
   category: "Custom brand mark",
   provenance:
     "Block, Inc. corporate mark, current-color grid from the Builderlab Buzz site's block-logo.svg.",

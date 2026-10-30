@@ -306,6 +306,8 @@ export type MessageComposerProps = {
     disabled: boolean;
     /** Files upload before the conversation exists; submit sends them. */
     attachments?: boolean;
+    /** DMs can start with files alone; named Solo chats still require text. */
+    allowAttachmentOnly?: boolean;
     submit: (draft: MentionDraft, attachments: AttachmentDraft) => void;
   };
 };
@@ -1962,11 +1964,12 @@ function Composer({
       setError(recipientHint);
       return;
     }
-    // A new conversation is named from its message, so media alone cannot start it.
+    // Named conversations require text unless their owner explicitly permits files alone.
     if (
       !draft.trim() &&
       !chatCards?.length &&
-      (!!submission || (!attachments.items.length && !gifs?.length))
+      ((!!submission && !submission.allowAttachmentOnly) ||
+        (!attachments.items.length && !gifs?.length))
     )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
@@ -2930,7 +2933,7 @@ function Composer({
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
                   !chatCards?.length &&
-                  (!!submission ||
+                  ((!!submission && !submission.allowAttachmentOnly) ||
                     (!attachments.items.length && !gifs?.length)) &&
                   !(
                     editing.target &&

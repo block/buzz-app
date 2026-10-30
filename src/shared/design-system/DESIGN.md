@@ -307,15 +307,18 @@ focus is deliberate, so it opens hints and previews at once, and anything that
 opens on hover also opens with Enter; Escape dismisses them all. Every hover
 surface belongs to exactly one bucket, and the timings live in
 `ui/hoverIntent.ts`. The components accept a bucket, never a delay: to change a
-timing, change the bucket for everyone. Submenus inside an open menu are the one
-exception and open on hover at once, as menus conventionally do.
+timing, change the bucket for everyone.
+
+Inside an open menu, submenus open immediately. A side explanation for grouped
+unavailable choices uses `PopoverTrigger openOnHover="control"` (0.05s). Keep
+each disabled choice keyboard reachable and connected to the shared description.
 
 | Bucket | Use for | Timing | API |
 | --- | --- | --- | --- |
 | Familiar hint | Naming an icon whose meaning is already obvious: back/forward, close, window controls, sidebar and pane toggles, new (+), more (…), send, attach, copy, download, refresh, delete, mute, reply, add reaction, bold/italic. An obvious icon stays familiar when its hint also shows a shortcut; a disabled one switches to helpful | Rests 0.5s | `Tooltip hint="familiar"`; `Button`/`IconButton` `title` with `hint="familiar"` |
-| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled, an error, a truncated value | Rests 0.25s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
+| Helpful hint | Naming an icon people may not recognize, or adding information the control does not show: an unfamiliar control’s shortcut, why it is disabled (use Hover control for side explanations of grouped unavailable choices in an open menu), an error, a truncated value | Rests 0.25s | `Tooltip`, or `title` on `Button`/`IconButton` (the default) |
 | Preview | Rich content about an object: a profile, link, channel, activity, typing participants, who reacted | Rests 0.3s | `PreviewCard`; `PopoverTrigger openOnHover="preview"` |
-| Hover control | A control that expands in place under the pointer: video volume, playback speed | Rests 0.05s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
+| Hover control | A control that expands in place under the pointer: video volume, playback speed; side explanations for grouped unavailable choices in an open menu | Rests 0.05s | `PopoverTrigger` or `MenuTrigger` with `openOnHover="control"` |
 | No hover | A control whose visible text already says what it does | None | Omit `title` |
 
 Hints share the app's `TooltipProvider`: once one is showing, its neighbors open

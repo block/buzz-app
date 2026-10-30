@@ -1682,9 +1682,8 @@ lookup runs, the previous one's still-matching rows stay. Names match by the
 channel pickers' rule (`matchName`): exact, prefix, word start, substring,
 then letter runs that each begin a word (`tlp` for `team-launch-planning`), with
 alphabetical ties. Its last rank, letters merely in order, is left out, because
-Enter and Tab pick the first row while the viewer writes prose. Word runs match
-joined channels only: the open-channel lookup, as in Command-K, offers only
-names that contain the typed text. Open channels follow joined ones, as in
+Enter and Tab pick the first row while the viewer writes prose. The same rule
+applies to open channels from the lookup. Open channels follow joined ones, as in
 Command-K, so a late search result never moves the first row; when joined
 matches would fill the 20 rows, five stay reserved for open channels. Namesakes
 include their channel IDs. A query containing a space completes only names it

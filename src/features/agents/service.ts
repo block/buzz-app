@@ -2339,16 +2339,22 @@ export class AgentsService extends Service implements Agents {
     | {
         identities: readonly AgentIdentity[];
         state: Pick<AgentsSnapshot, "status" | "error">;
+        hosted: readonly Agent[];
         value: LocalAgentsSnapshot;
       }
     | undefined;
-  /** Every live agent, in any community, for names and mentions. `snapshot`
-   * holds only the selected community's, with their settings. */
+  /** Local identities in every community, plus completed hosted choices in the
+   * selected community. Hosted choices grant no local custody. */
   local = (): LocalAgentsSnapshot => {
     const { identities, state } = this;
+    const hosted = state.agents.filter(
+      (agent) => agent.place === "hosted" && !agent.unfinished,
+    );
     const cached = this.localCache;
     if (
       cached?.identities === identities &&
+      cached.hosted.length === hosted.length &&
+      hosted.every((agent, index) => agent === cached.hosted[index]) &&
       cached.state.status === state.status &&
       cached.state.error === state.error
     )
@@ -2368,9 +2374,24 @@ export class AgentsService extends Service implements Agents {
             }),
           ),
       ),
+      ...(hosted.length
+        ? {
+            hosted: Object.freeze(
+              hosted.map(({ pubkey, name, relay, owner, picture }) =>
+                Object.freeze({
+                  pubkey,
+                  name,
+                  relayUrl: relay,
+                  owner,
+                  ...(picture ? { picture } : {}),
+                }),
+              ),
+            ),
+          }
+        : {}),
       ...(state.error ? { error: state.error } : {}),
     });
-    this.localCache = { identities, state, value };
+    this.localCache = { identities, state, hosted, value };
     return value;
   };
 

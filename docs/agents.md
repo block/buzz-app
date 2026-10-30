@@ -361,6 +361,10 @@ from its saved identities (deleted ones omitted), so it carries Agents' own
 loading and error state. Agents' `snapshot()` is different: it holds only the
 selected community's agents, with their settings.
 
+The source can also carry a separate `hosted` array of completed owned agents
+shown in the selected community. These are DM eligibility evidence for
+`agentChoices`, not local identities for name precedence or process control.
+
 `app/services.ts` composes consumers before Agents exists, through
 `createLocalAgents()`. Until `bind` connects `agents.local`, the snapshot is
 `unavailable`; unbinding returns it there. Two consumers read it directly:
@@ -403,6 +407,17 @@ sources, deduplicated by public key:
   the host's saved Buzz library plus the owner's relay-published records; and
 - the viewer's local agents for this exact community, flagged `managed` with a
   `managedName`.
+
+The same app-owned source also supplies completed hosted agents shown in the
+selected community, separately from local identities. The projection checks their
+owner and community and gives hosted choices `messageable: true`. As with local
+agents, archived identities remain in `identities`; `selectable` and each action's
+existing archive policy govern forward-looking choices.
+`canMessageAgent` accepts that flag or local `managed` evidence. Profile Message,
+search, the DM picker and fresh-send validation use this predicate; hosted agents
+never gain local custody or template-management status from it. Library presence
+alone does not grant DM eligibility. Existing DMs can reopen without agent-control
+evidence, through the normal relay-confirmed DM open.
 
 A snapshot exposes `identities`, `selectable`, `archives`, `definitions`, `status`,
 `pending`, `complete` and a separate `templates` projection. `status: ready` means

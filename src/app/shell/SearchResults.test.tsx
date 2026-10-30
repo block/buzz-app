@@ -3294,7 +3294,12 @@ function peopleSession(
     username?: string;
     isAgent?: true;
   }[] = [],
-  agents: readonly { pubkey: string; name: string; managed: boolean }[] = [],
+  agents: readonly {
+    pubkey: string;
+    name: string;
+    managed: boolean;
+    messageable?: true;
+  }[] = [],
 ) {
   const people = vi.fn(async () => ({ people: directory, hasMore: false }));
   const open = vi.fn(async (_pubkeys: readonly string[]) => "started-dm");
@@ -3321,6 +3326,53 @@ function peopleSession(
     } as typeof session,
   };
 }
+
+it("starts a hosted agent DM from search without local management", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    hosted = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  const t = peopleSession(
+    owner.session,
+    [],
+    [
+      {
+        pubkey: hosted.pubkey,
+        name: "Hosted helper",
+        managed: false,
+        messageable: true,
+      },
+    ],
+  );
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="Hosted helper"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("option", { name: /Hosted helper/ }),
+    );
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledWith("started-dm"),
+    );
+    expect(t.open).toHaveBeenCalledWith(
+      [hosted.pubkey],
+      expect.any(AbortSignal),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it("keeps the directory's order for tied people, as New message does", async () => {
   const relay = keypair(),

@@ -22,7 +22,10 @@ See the [capability contract](../src/features/workflows/types.ts).
   Owner and Status use inline radios;
   Trigger and Channels use inline checkboxes. Popups have no Clear action.
   My workflows is the default and matches the current viewer's saved workflow
-  ownership. All channel workflows includes other owners in participating channels.
+  ownership. All channel workflows includes other owners in participating channels;
+  the Owner trigger names whichever option is selected. When only My workflows
+  hides other owners' workflows, the empty state says so and offers All channel
+  workflows.
   Rows and their details show the owner's current identity name, with an abbreviated
   public-key fallback while a profile is unavailable or nameless, including through
   the active naming policy. Fallbacks lengthen their suffix to stay distinct across

@@ -1075,6 +1075,7 @@ function WorkflowFilterMenu<Value extends string>({
   onChange,
   triggerRef,
   icon,
+  showDefault = false,
 }: {
   label: string;
   value: Value;
@@ -1085,9 +1086,12 @@ function WorkflowFilterMenu<Value extends string>({
   onChange: (value: Value) => void;
   triggerRef: RefObject<HTMLButtonElement | null>;
   icon: ReactNode;
+  /** Name the default option on the trigger instead of the bare filter label. */
+  showDefault?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const active = value !== options[0].value;
+  const named = active || showDefault;
   const selectedLabel =
     options.find((option) => option.value === value)?.label ?? label;
   return (
@@ -1095,13 +1099,13 @@ function WorkflowFilterMenu<Value extends string>({
       <PopoverRoot open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           ref={triggerRef}
-          aria-label={active ? `${label}: ${selectedLabel}` : label}
-          aria-description={active ? selectedLabel : undefined}
+          aria-label={named ? `${label}: ${selectedLabel}` : label}
+          aria-description={named ? selectedLabel : undefined}
           render={
             <Button size="sm" variant="subtle">
-              {active && icon}
+              {named && icon}
               <span className="workflow-filter-label">
-                {active ? selectedLabel : label}
+                {named ? selectedLabel : label}
               </span>
               <CaretDownIcon size={16} aria-hidden="true" />
             </Button>
@@ -1390,6 +1394,13 @@ export function WorkflowLanding({
     (channel) => snapshots[channel.id]?.data.items.length,
   );
   const emptyFromFilters = filtered && populated.length > 0;
+  // Only the default My workflows filter hides other owners' workflows.
+  const emptyFromOwnership =
+    emptyFromFilters &&
+    mineOnly &&
+    status === "all" &&
+    triggers.length === 0 &&
+    filter.length === 0;
   const shown = populated.filter((channel) => filter.includes(channel.id));
   useEffect(() => {
     if (filter.length !== shown.length)
@@ -1517,6 +1528,7 @@ export function WorkflowLanding({
             value={mineOnly ? "mine" : "all"}
             options={OWNER_OPTIONS}
             icon={<UserIcon size={16} aria-hidden="true" />}
+            showDefault
             onChange={(value) => setMineOnly(value === "mine")}
           />
           <WorkflowFilterMenu
@@ -1638,14 +1650,31 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title={emptyFromFilters ? "No matching workflows" : "Workflows"}
+          title={
+            emptyFromOwnership
+              ? "You don’t have any workflows yet"
+              : emptyFromFilters
+                ? "No matching workflows"
+                : "Workflows"
+          }
           description={
-            emptyFromFilters
-              ? "Try changing or clearing your filters."
-              : "Automations that keep your community moving."
+            emptyFromOwnership
+              ? "Workflows you own appear here. Other people’s workflows are in All channel workflows."
+              : emptyFromFilters
+                ? "Try changing or clearing your filters."
+                : "Automations that keep your community moving."
           }
           action={
-            emptyFromFilters ? (
+            emptyFromOwnership ? (
+              <Button
+                onClick={() => {
+                  setMineOnly(false);
+                  ownerTriggerRef.current?.focus();
+                }}
+              >
+                Show all channel workflows
+              </Button>
+            ) : emptyFromFilters ? (
               <Button onClick={resetFilters}>Clear filters</Button>
             ) : (
               capability.availability.save && (

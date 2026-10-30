@@ -1009,7 +1009,7 @@ it.each([
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     await user.click(
       within(
-        screen.getByRole("complementary", { name: / identity$/ }),
+        screen.getByRole("region", { name: "Sign in to Builderlab" }),
       ).getByRole("button", { name: "Sign in to Builderlab" }),
     );
     await waitFor(() =>

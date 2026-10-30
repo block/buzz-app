@@ -42,7 +42,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("shares profile sign-in with the footer and restores editing only after authentication", async () => {
+it("shows account status with one footer sign-in action and restores profile controls after authentication", async () => {
   const held = deferred<Credential>();
   const acquire = vi.fn(() => held.promise);
   const session = createOAuthSession(acquire);
@@ -60,21 +60,19 @@ it("shares profile sign-in with the footer and restores editing only after authe
   );
   expect(screen.queryByRole("button", { name: "Edit profile" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
+  expect(screen.getByText("Signed out of Builderlab")).toBeVisible();
   expect(acquire).not.toHaveBeenCalled();
-  const profileSignIn = screen.getAllByRole("button", {
+  const signIn = screen.getByRole("button", {
     name: "Sign in to Builderlab",
-  })[0];
-  if (!profileSignIn) throw new Error("Missing profile sign-in");
-  fireEvent.click(profileSignIn);
+  });
+  fireEvent.click(signIn);
   expect(acquire).toHaveBeenCalledTimes(1);
-  expect(profileSignIn).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByText("Signed out of Builderlab")).toBeNull();
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Cancel sign-in" }),
     ).toBeVisible(),
   );
-  fireEvent.click(profileSignIn);
-  expect(acquire).toHaveBeenCalledTimes(1);
   await act(async () => held.resolve(credential));
   expect(
     await screen.findByRole("button", { name: "Edit profile" }),
@@ -88,7 +86,7 @@ it("shares profile sign-in with the footer and restores editing only after authe
   expect(screen.queryByRole("button", { name: "Message" })).toBeNull();
   expect(
     screen.getAllByRole("button", { name: "Sign in to Builderlab" }),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   session.dispose();
 });
 

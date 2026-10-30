@@ -12,21 +12,17 @@ import { Header } from "../../../shared/design-system/ui/Header";
 import { browserLoginAvailable } from "../oauth/browser";
 import type { OAuthSession } from "../oauth/session";
 
-/** Profile actions share the same explicit sign-in entry point as the pane footer. */
+/** Account status replaces profile actions; the pane footer owns sign-in. */
 export function createProfileActions(session: OAuthSession) {
   return function ProfileActions({ children }: { children: ReactNode }) {
     const login = useSyncExternalStore(session.subscribe, session.snapshot);
     if (login.status === "signed-in") return children;
     return (
-      <Button
-        variant="prominent"
-        size="sm"
-        loading={login.status === "pending"}
-        disabled={!browserLoginAvailable()}
-        onClick={() => void session.signIn()}
-      >
-        Sign in to Builderlab
-      </Button>
+      <span className="text-body-sm text-secondary">
+        {login.status === "pending"
+          ? "Signing in to Builderlab…"
+          : "Signed out of Builderlab"}
+      </span>
     );
   };
 }

@@ -2,6 +2,7 @@
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
 import { decode, npubEncode } from "nostr-tools/nip19";
+import buzzHelp from "../../docs/buzz-help.md?raw";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -76,6 +77,11 @@ const tool = (
 
 export type Tool = ReturnType<typeof tool>;
 export const TOOLS: readonly Tool[] = [
+  tool(
+    "buzz_help",
+    "Read the bundled guide to using Buzz: chats, communities, identity, agents, and settings.",
+    {},
+  ),
   tool(
     "agent_types",
     "List installed local agent types available for agent_create.",
@@ -356,6 +362,9 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async buzz_help() {
+    return buzzHelp.trim();
+  },
   async agent_types({ client }) {
     if (!client.agentTypes)
       throw new Error("Agent creation is unavailable on this host");

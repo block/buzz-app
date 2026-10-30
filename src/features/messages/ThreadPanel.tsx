@@ -883,18 +883,22 @@ function ThreadMessages({
     complete: completeTarget,
     prepare: prepareTarget,
   });
-  // Leaving a visit once it was presented, by navigating on or unmounting,
-  // records where the reader was. A return counts only once restored, so an
-  // unrestored return keeps the place it came back for. New replies don't
-  // record one; a relay rebind does, mid-visit, but restoring that place
-  // leaves the reader where they already are. A reader still shown after its
-  // route is withdrawn records again when it leaves or the next route
-  // arrives, before that route can restore the place.
+  // Leaving a visit once it was presented, by navigating on, hiding or
+  // unmounting, records where the reader was. A return counts only once
+  // restored, so an unrestored return keeps the place it came back for. New
+  // replies don't record one; a relay rebind does, mid-visit, but restoring
+  // that place leaves the reader where they already are. A reader still shown
+  // after its route is withdrawn records again when it leaves, is hidden or
+  // the next route arrives, before that route can restore the place. Once
+  // hidden it records no more: WebKit can show it again at its top.
   const leftTree = useRef(tree);
   leftTree.current = tree;
   const withdrawn = useRef<() => void>(undefined);
   useLayoutEffect(() => {
-    if (!navigation) return withdrawn.current;
+    if (!navigation) {
+      if (!active) withdrawn.current = undefined;
+      return withdrawn.current;
+    }
     withdrawn.current = undefined;
     return () => {
       const presented = returning
@@ -922,7 +926,7 @@ function ThreadMessages({
       record();
       withdrawn.current = record;
     };
-  }, [navigation, returning, rootTarget, revealed]);
+  }, [navigation, active, returning, rootTarget, revealed]);
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
     if (rootTarget && snapshot.status === "error")

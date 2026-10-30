@@ -2006,6 +2006,40 @@ it("a reader still shown after its route is withdrawn records its place when it 
   expect(h.element.scrollTop).toBe(1000);
 });
 
+it.each([
+  ["withdrawn, then hidden", ["navigation", "active"]],
+  ["hidden, then withdrawn", ["active", "navigation"]],
+] as const)(
+  "a reader %s keeps the place it was hidden at",
+  async (_, order) => {
+    const { visit } = visitPlaces();
+    // Rows sit below the scroller top, so a reading away from the end anchors.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 500),
+    );
+    const h = messagesHarness(visit("thread-visit"));
+    h.snapshot.replies = [threadReply("d", row.id)];
+    const props = h.props as ThreadPanelProps;
+    Object.assign(props, { retainThread: true });
+    h.render();
+    expect(h.element.scrollTop).toBe(3400);
+    // Back to the channel withdraws the route and closes the pane around it.
+    for (const prop of order) {
+      Object.assign(props, { [prop]: prop === "active" ? false : undefined });
+      h.rerenderProps();
+    }
+    // Forward shows it again before the route lands; WebKit can show it at the
+    // top, having dropped its scroll offset while hidden.
+    Object.assign(props, { active: true });
+    h.rerenderProps();
+    h.scroll(0);
+    Object.assign(props, { navigation: visit("thread-visit", true) });
+    await act(async () => h.rerenderProps());
+    expect(h.view.retarget).toHaveBeenCalledOnce();
+    expect(h.element.scrollTop).toBe(3400);
+  },
+);
+
 it("a reader first shown while its route retargets stays hidden until the route restores its place", async () => {
   const { places, visit } = visitPlaces();
   places.set("thread-visit:thread", {

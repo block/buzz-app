@@ -511,8 +511,11 @@ test.describe("a join burst longer than a history page", () => {
     page,
     app,
   }) => {
+    // Startup focus would read Alpha before the unread baseline is observed.
+    await holdReadingFocus(page);
     await open(page, app);
     await expect(alpha(page).locator("[data-channel-unread]")).toHaveCount(1);
+    await releaseReadingFocus(page);
     await composer(page).focus();
     const latest = app.histories
       .get(`primary/${alphaId}`)

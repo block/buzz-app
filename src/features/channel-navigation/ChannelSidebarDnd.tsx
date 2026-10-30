@@ -3,6 +3,7 @@ import {
   DragOverlay,
   PointerSensor,
   type CollisionDetection,
+  type Modifier,
   pointerWithin,
   useDndContext,
   useDraggable,
@@ -79,6 +80,24 @@ const sidebarCollisions: CollisionDetection = (args) => {
 // sensors, and re-render every draggable row, on each sidebar render.
 const pointerSensorOptions = { activationConstraint: { distance: 6 } };
 
+// Channel chips are narrower than their source rows. Anchor to the actual grab
+// point so the preview stays beside the pointer that determines the destination.
+const channelPreviewModifiers: Modifier[] = [
+  ({ active, activatorEvent, activeNodeRect, transform }) => {
+    if (
+      active?.data.current?.group ||
+      !activeNodeRect ||
+      !(activatorEvent instanceof PointerEvent)
+    )
+      return transform;
+    return {
+      ...transform,
+      x: transform.x + activatorEvent.clientX - activeNodeRect.left,
+      y: transform.y + activatorEvent.clientY - activeNodeRect.top,
+    };
+  },
+];
+
 /**
  * Pointer moves between sidebar sections (Messages groups, Starred and Channels,
  * or Solo projects and Chats), and reorders saved groups by their header. A drop
@@ -130,7 +149,15 @@ export function ChannelSidebarDnd({
       <Writable.Provider value={writable}>{children}</Writable.Provider>
       {createPortal(
         // The optimistic move relocates the row, so nothing remains to settle back onto.
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay
+          dropAnimation={null}
+          modifiers={channelPreviewModifiers}
+          style={
+            dragging?.group
+              ? {}
+              : { translate: "var(--space-3) var(--space-3)" }
+          }
+        >
           {dragging ? overlay(dragging.id, dragging.group) : null}
         </DragOverlay>,
         document.body,

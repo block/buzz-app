@@ -1861,17 +1861,12 @@ function Composer({
     // pill is always refilled, even after a send, so removed mentions fall back.
     if (routing) {
       if (routed.length || recipients.length) return;
-      const admitted = mentionAdmission(
-        session,
-        channelId,
-        agentChoices,
-        mentionRoster,
-      );
+      // A saved pick is restored whole, however discovery stands; the send
+      // checks each agent and asks the viewer about any it can't reach.
       const chosen = pillKey ? readView<unknown>(scope, pillKey, null) : null;
       const kept = Array.isArray(chosen)
         ? chosen
             .filter(wellFormedRecipient)
-            .filter((person) => admitted(person.pubkey))
             .map(({ pubkey, name }) => ({ pubkey, name }))
         : [];
       if (kept.length) {

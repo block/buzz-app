@@ -10466,6 +10466,49 @@ it("a hidden tab keeps the pill of a draft with prose when the history changes",
   expect(pill("Ada")).toBeInTheDocument();
 });
 
+it("a saved chat's pick is restored whole while agent discovery is incomplete", () => {
+  const viewer = "e".repeat(64);
+  const ada = { pubkey: first.pubkey, name: "Ada" };
+  const bea = { pubkey: second.pubkey, name: "Bea" };
+  const pill = (name: string) =>
+    screen.getByRole("status", { name: `Sending to ${name}. Change agents` });
+  const before = mountSoloChat([first.pubkey, second.pubkey], { viewer });
+  act(() => before.h.commands().audience?.only([ada, bea]));
+  expect(pill("Ada, Bea")).toBeInTheDocument();
+  before.h.unmount();
+  // Bea's profile says agent, but her library hasn't loaded yet.
+  const h = mount({}, undefined, viewer);
+  h.setHistory("ready");
+  h.setLibrary([first], "loading");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  const list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo" as const,
+        members: [first.pubkey, second.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => list },
+    } as unknown as RelaySession,
+  });
+  expect(pill("Ada, Bea")).toBeInTheDocument();
+  h.setLibrary([first, second]);
+  expect(pill("Ada, Bea")).toBeInTheDocument();
+});
+
 it("the pill waits for the chat's history before any stand-in seeds it", () => {
   const { h, viewer } = mountSoloChat([first.pubkey, second.pubkey], {
     history: "loading",

@@ -52,6 +52,18 @@ export function useAppNavigation(
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const settings = target.kind === "settings";
+  const provider = settings ? target.provider : undefined;
+  const providerAvailable = useSyncExternalStore(
+    (listener) =>
+      provider && services.agents
+        ? services.agents.subscribe(listener)
+        : () => {},
+    () =>
+      !!provider &&
+      !!services.agents
+        ?.types()
+        .some((type) => type.key === provider && type.provider),
+  );
   const visibility = useSyncExternalStore(
     services.settingsCards.subscribe,
     () =>
@@ -159,6 +171,15 @@ export function useAppNavigation(
         waiting = true;
       else failure = "unavailable";
     }
+  }
+  if (provider && !failure && !waiting) {
+    const owner = provider.split("/")[0] ?? "";
+    if (
+      startup === "loading" ||
+      plugins.activation[owner]?.status === "starting"
+    )
+      waiting = true;
+    else if (!providerAvailable) failure = "unavailable";
   }
   // Legacy Home resolves to Messages; version-1 placeholder routes resolve to
   // their standalone plugins. Preserve scope so normalization never grants access.
@@ -375,16 +396,41 @@ export function useAppNavigation(
           ? retained.owner.attempt.id
           : state.attempt.id,
     },
+    setSettingsProvider(provider?: string) {
+      const current = navigation.snapshot().entry.target;
+      if (current.kind !== "settings") return;
+      const { provider: closing, ...settings } = current;
+      if (provider)
+        void navigation.open({ ...settings, section: "agents", provider });
+      else if (closing) {
+        const parent = targetKey(settings);
+        navigation.dismiss((target) => {
+          if (target.kind !== "settings" || target.provider !== closing)
+            return false;
+          const { provider: _provider, ...settings } = target;
+          return targetKey(settings) === parent;
+        }, settings);
+      }
+    },
     leaveSettings() {
+      const current = navigation.snapshot().entry.target;
+      if (current.kind !== "settings") return;
+      const { section: _section, provider: _provider, ...dialog } = current;
+      const dialogKey = targetKey(dialog);
+      const dismiss = (fallback: OpenTarget) =>
+        navigation.dismiss((target) => {
+          if (target.kind !== "settings") return false;
+          const { section: _section, provider: _provider, ...dialog } = target;
+          return targetKey(dialog) === dialogKey;
+        }, fallback);
       const previous = lastNonSettings.current;
       if (previous) {
-        if (services.navigationHost.returnTo(previous.entryId)) return;
-        void navigation.open(previous.target, { focus: "preserve" });
+        dismiss(previous.target);
         return;
       }
       const selectedClient = services.communities.snapshot();
       if (!selectedClient.viewer) return;
-      void navigation.open({
+      dismiss({
         version: 1,
         kind: "page",
         pluginId: "buzz.channels",

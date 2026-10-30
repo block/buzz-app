@@ -30,7 +30,6 @@ import { profileTarget } from "../../features/profiles/target";
 import { peopleRelationships } from "../../features/profiles/relationships";
 import { personKey, rankPeople } from "../../features/search/people-rank";
 import {
-  noSearchUsage,
   pickerText,
   readSearchUsage,
   recordChoice,
@@ -39,10 +38,8 @@ import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
 import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
-import { MEMBER_SEARCH_PAGE_SIZE } from "../../features/channel-members/search";
 import {
-  canManageMember,
-  canRemoveMember,
+  authorizeMemberChange,
   type MemberChange,
 } from "../../features/channel-members/administration-protocol";
 import {
@@ -58,7 +55,14 @@ import {
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Button } from "../../shared/design-system/ui/Button";
+import { Button, type ButtonProps } from "../../shared/design-system/ui/Button";
+import { SplitButton } from "../../shared/design-system/ui/SplitButton";
+import {
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -73,23 +77,49 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   ArrowsClockwiseIcon,
   CircleNotchIcon,
-  HashIcon,
   InfoIcon,
   UsersIcon,
   XIcon,
 } from "../../shared/design-system/icons";
-import { MemberRow, useMemberAdministration } from "./MemberAdministration";
+import {
+  MemberRow,
+  useMemberAdministration,
+  memberAccessLabel,
+} from "./MemberAdministration";
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
+import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
+import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
-
-/** How a name matches typed text: the shared person name rule, the same as
- * mentions and New message. */
-const typedMatch = (name: string, needle: string) =>
-  needle ? matchPerson(name, needle) : undefined;
+import {
+  type ChannelLabel,
+  channelIcon,
+  channelText,
+} from "../../features/channels/channel-icon";
 
 const INVITATION_GROUP_SIZE = 4;
+
+const additionRoles = [
+  {
+    role: "member",
+    label: "Participate",
+    action: "Add to participate",
+    description: "Send messages, reply, and react.",
+  },
+  {
+    role: "guest",
+    label: "View only",
+    action: "Add with view-only access",
+    description: "Read messages and threads.",
+  },
+  {
+    role: "admin",
+    label: "Admin",
+    action: "Add as admin",
+    description: "Manage this channel and its members.",
+  },
+] as const;
 
 /** Mounted rows share the same bounded presence owner as message bylines. */
 function MemberAvatar({
@@ -156,6 +186,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   add,
   busy,
   addDisabled,
+  canAddWithRole,
   highlightId,
   highlighted,
   onHighlightMove,
@@ -193,11 +224,30 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   add(key: string): Promise<void>;
   busy: boolean;
   addDisabled: boolean;
+  canAddWithRole: boolean;
   /** Set on rows the search highlight can choose. */
   highlightId?: string | undefined;
   highlighted?: boolean | undefined;
   onHighlightMove?: ((key: string, event: PointerEvent) => void) | undefined;
 }) {
+  const addButtonProps = {
+    variant: "prominent",
+    size: "xs",
+    "aria-label": `Add ${name} (${keyLabel})`,
+    "aria-disabled": busy || undefined,
+    disabled: addDisabled,
+    onBlur: (event) => {
+      if (focusedAdd.current?.button === event.currentTarget)
+        focusedAdd.current = null;
+    },
+    onClick: (event) => {
+      if (busy) return;
+      if (document.activeElement === event.currentTarget)
+        focusedAdd.current = { key: pubkey, button: event.currentTarget };
+      void add(pubkey);
+    },
+    children: busy ? "Adding…" : "Add",
+  } satisfies ButtonProps;
   const avatar = (
     <MemberAvatar
       session={session}
@@ -236,11 +286,6 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
             {qualified && keyLabel && (
               <span className="shrink-0 text-caption text-subtle">
                 {keyLabel}
-              </span>
-            )}
-            {!adding && (roleLabel === "owner" || roleLabel === "admin") && (
-              <span className="shrink-0 text-caption text-subtle">
-                {roleLabel === "owner" ? "Owner" : "Admin"}
               </span>
             )}
           </span>
@@ -294,30 +339,42 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
       }
       invitationAction={
         adding ? (
-          <span className={styles.addAction}>
-            <Button
-              variant="prominent"
-              size="xs"
-              aria-label={`Add ${name} (${keyLabel})`}
-              aria-disabled={busy || undefined}
-              disabled={addDisabled}
-              onBlur={(event) => {
-                if (focusedAdd.current?.button === event.currentTarget)
-                  focusedAdd.current = null;
-              }}
-              onClick={(event) => {
-                if (busy) return;
-                if (document.activeElement === event.currentTarget)
-                  focusedAdd.current = {
-                    key: pubkey,
-                    button: event.currentTarget,
-                  };
-                void add(pubkey);
-              }}
-            >
-              {busy ? "Adding…" : "Add"}
-            </Button>
-          </span>
+          <div
+            className={styles.addAction}
+            data-split={canAddWithRole || undefined}
+          >
+            {canAddWithRole ? (
+              <SplitButton
+                {...addButtonProps}
+                menuLabel={`Add ${name} (${keyLabel}) as`}
+                menuDisabled={busy}
+                menu={
+                  <MenuGroup>
+                    <MenuGroupLabel>Add as</MenuGroupLabel>
+                    {additionRoles.map((option) => (
+                      <MenuItem
+                        key={option.role}
+                        onClick={() =>
+                          onChange({
+                            pubkey,
+                            expectedRole: "absent",
+                            role: option.role,
+                          })
+                        }
+                      >
+                        <ChoiceRow
+                          label={option.label}
+                          description={option.description}
+                        />
+                      </MenuItem>
+                    ))}
+                  </MenuGroup>
+                }
+              />
+            ) : (
+              <Button {...addButtonProps} />
+            )}
+          </div>
         ) : undefined
       }
     >
@@ -457,6 +514,7 @@ function TeamRow({
 /** The one access dialog. Any conversation lists and adds members; a Solo chat
  * adds people under its share rule and can also be shared to a channel. */
 export function ChannelMembersDialog({
+  communityScope,
   session,
   channelId,
   close,
@@ -471,6 +529,7 @@ export function ChannelMembersDialog({
   navigator,
   signal,
 }: {
+  communityScope?: string | undefined;
   session: RelaySession;
   channelId: string;
   close(): void;
@@ -636,6 +695,16 @@ export function ChannelMembersDialog({
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
   const canAdd = canAddPeople || canAddSoloAgents;
+  const readOnlyAccess =
+    !solo &&
+    (channel?.viewerRole === "guest" ||
+      (channel?.readOnly && channel.joinRole === "guest"));
+  const generalAccess =
+    channel &&
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    !channel.cached &&
+    !channel.archived &&
+    (channel.readOnly || session.channelDetails.available);
   // Solo access is verified by the sharing roster read; channels read 39002.
   const rosterBusy = solo ? share.rosterState === "loading" : rosterReading;
   const rosterError = solo
@@ -646,19 +715,17 @@ export function ChannelMembersDialog({
   const text = query.trim();
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new query or explicit refresh rereads stored choice/visit scores.
   const usage = useMemo(
-    () => (solo ? noSearchUsage : readSearchUsage(session.scope)),
-    [session.scope, solo, text, refresh],
+    () => readSearchUsage(session.scope),
+    [session.scope, text, refresh],
   );
   const [invitationPage, setInvitationPage] = useState({
     text,
-    size: MEMBER_SEARCH_PAGE_SIZE,
     revealRelay: false,
     groupSizes: {} as Record<string, number>,
   });
   if (invitationPage.text !== text)
     setInvitationPage({
       text,
-      size: MEMBER_SEARCH_PAGE_SIZE,
       revealRelay: false,
       groupSizes: {},
     });
@@ -677,6 +744,10 @@ export function ChannelMembersDialog({
       lifetime.current = undefined;
     };
   }, [session, channelId]);
+  // A roster refused while signed out reads again once sign-in lands.
+  const reauthorized = useReauthorizedRetry(session.recovery, () =>
+    setRefresh((value) => value + 1),
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries the roster read.
   useEffect(() => {
     void session.archives.ensure();
@@ -684,6 +755,7 @@ export function ChannelMembersDialog({
     let current = true;
     setRosterReading(true);
     setRosterReadError("");
+    const failed = reauthorized.begin();
     void session
       .read([{ kinds: [39002], "#d": [channelId], limit: 1 }], { fresh: true })
       .then(
@@ -702,9 +774,10 @@ export function ChannelMembersDialog({
               "The member list could not be confirmed. Try again.",
             );
         },
-        () => {
-          if (current)
-            setRosterReadError("The member list could not load. Try again.");
+        (error) => {
+          if (!current) return;
+          setRosterReadError("The member list could not load. Try again.");
+          failed(error);
         },
       )
       .finally(() => {
@@ -721,6 +794,11 @@ export function ChannelMembersDialog({
     memberKey,
     !!channel && !channel.cached,
   );
+  if (
+    administration.operation?.change.expectedRole === "absent" &&
+    administration.operation.status === "pending"
+  )
+    busy.add(administration.operation.change.pubkey);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
   useEffect(() => {
     setNameError("");
@@ -843,12 +921,10 @@ export function ChannelMembersDialog({
   );
   // Default suggestions use this client's agents; searches also include the
   // viewer's non-client inventory after people and other community agents.
-  if (text || (!solo && canAdd))
-    for (const agent of solo
-      ? canAddSoloAgents
-        ? agentChoices.selectable
-        : []
-      : agentChoices.selectable.filter((agent) => !!text || agent.managed)) {
+  if (text || canAdd)
+    for (const agent of agentChoices.selectable.filter(
+      (agent) => (!solo || canAddSoloAgents) && (!!text || agent.managed),
+    )) {
       if (
         !text ||
         addable(
@@ -909,25 +985,14 @@ export function ChannelMembersDialog({
     pickerText("channel-members", needle),
     new Set(available.map((person) => personKey(person.pubkey))),
   );
-  // Solo retains its existing combined, name-ranked page.
-  if (solo)
-    available.sort(
-      (a, b) =>
-        (typedMatch(label(a.pubkey, a.name), needle)?.tier ?? 4) -
-        (typedMatch(label(b.pubkey, b.name), needle)?.tier ?? 4),
-    );
-  // Known agents supplement the server page, not its rendering bound. Keep all
-  // matches reachable through the existing More action without mounting them all.
-  const invitationSize =
-    invitationPage.text === text
-      ? invitationPage.size
-      : MEMBER_SEARCH_PAGE_SIZE;
-  const moreCandidates = solo && available.length > invitationSize;
   const offering =
     !initialLoading &&
     canAdd &&
     roleFilter === "All" &&
-    (!!text || (!solo && available.length > 0));
+    (!!text ||
+      (members.size === 1 &&
+        members.has(session.viewer ?? "") &&
+        available.length > 0));
   const invitationGroups = [
     "Your agents",
     "People",
@@ -935,7 +1000,7 @@ export function ChannelMembersDialog({
     "Your other agents",
   ].map((name, index) => {
     const people =
-      !solo && roleFilter === "All"
+      roleFilter === "All"
         ? available.filter((person) => candidateGroup(person) === index)
         : [];
     const ranked = rankPeople(
@@ -985,17 +1050,15 @@ export function ChannelMembersDialog({
       next: ordered[size]?.pubkey,
     };
   });
-  const visibleCandidates = solo
-    ? roleFilter === "All"
-      ? available.slice(0, invitationSize)
-      : []
+  const visibleCandidates = !offering
+    ? []
     : invitationGroups.flatMap((group) => group.people);
   const agentsByMention =
     offering &&
     solo &&
     !canAddSoloAgents &&
     [...candidates.values()].some(agentCandidate);
-  const shareChannels = offering && solo ? share.channels : [];
+  const shareChannels = offering && solo && text ? share.channels : [];
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
   const agentKeys = [
@@ -1011,25 +1074,27 @@ export function ChannelMembersDialog({
     .sort()
     .join(":");
   const ownership = useMemberOwners(session, agentKeys, refresh);
-  const changePermitted =
+  let changePermitted = false;
+  if (
     selection &&
+    (selection.expectedRole !== "absent" ||
+      !archiveHides(session.archives, selection.pubkey, session.viewer)) &&
     administration.status === "ready" &&
-    administration.authority.roles[selection.pubkey] ===
-      selection.expectedRole &&
     administration.operation?.status !== "pending" &&
-    administration.operation?.status !== "uncertain" &&
-    (selection.role === "remove"
-      ? canRemoveMember(
-          administration.authority,
-          session.viewer ?? "",
-          selection.pubkey,
-          ownership.owners.get(selection.pubkey),
-        )
-      : canManageMember(
-          administration.authority,
-          session.viewer ?? "",
-          selection.pubkey,
-        ));
+    administration.operation?.status !== "uncertain"
+  ) {
+    try {
+      authorizeMemberChange(
+        administration.authority,
+        session.viewer ?? "",
+        selection,
+        ownership.owners.get(selection.pubkey),
+      );
+      changePermitted = true;
+    } catch {
+      // A changed roster or authority leaves the confirmation read-only.
+    }
+  }
   const refreshing =
     ownership.busy ||
     rosterBusy ||
@@ -1058,7 +1123,6 @@ export function ChannelMembersDialog({
     setRefresh((value) => value + 1);
     setInvitationPage({
       text,
-      size: MEMBER_SEARCH_PAGE_SIZE,
       revealRelay: false,
       groupSizes: {},
     });
@@ -1093,18 +1157,23 @@ export function ChannelMembersDialog({
     ...visibleCandidates.map((person) => label(person.pubkey, person.name)),
   ])
     shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
-  // A confirmed addition replaces its focused Add button with a member row.
+  // A confirmation can replace its Add button or retire another pending row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
   useLayoutEffect(() => {
     const previous = focusedAdd.current;
-    if (!previous || !memberKey.split(":").includes(previous.key)) return;
+    if (
+      !previous ||
+      (!memberKey.split(":").includes(previous.key) &&
+        (offering || previous.button.isConnected))
+    )
+      return;
     focusedAdd.current = null;
     if (
       document.activeElement === previous.button ||
       document.activeElement === document.body
     )
       input.current?.focus();
-  }, [memberKey]);
+  }, [memberKey, offering]);
   const add = useCallback(
     async (key: string) => {
       const signal = lifetime.current?.signal;
@@ -1136,7 +1205,7 @@ export function ChannelMembersDialog({
           );
         else await session.memberAdditions.add(channelId, key);
         if (!signal.aborted) {
-          if (!solo) recordChoice(session.scope, typed, personKey(key));
+          recordChoice(session.scope, typed, personKey(key));
           if (direct) {
             setSoloAdditions((old) => ({ ...old, [key]: { pending: false } }));
             setQuery("");
@@ -1163,7 +1232,7 @@ export function ChannelMembersDialog({
         if (direct) pending.delete(key);
       }
     },
-    [session, channelId, canAddSoloAgents, place, solo],
+    [session, channelId, canAddSoloAgents, place],
   );
 
   const addTeam = useCallback(
@@ -1353,7 +1422,20 @@ export function ChannelMembersDialog({
         messagePending={openingMessage}
         add={add}
         busy={busy.has(key)}
-        addDisabled={rosterBusy || !!rosterError}
+        addDisabled={
+          rosterBusy ||
+          !!rosterError ||
+          administration.operation?.status === "pending" ||
+          administration.operation?.status === "uncertain"
+        }
+        canAddWithRole={
+          !solo &&
+          session.memberAdministration.available &&
+          administration.status === "ready" &&
+          administration.authority.canManage &&
+          administration.operation?.status !== "pending" &&
+          administration.operation?.status !== "uncertain"
+        }
         highlightId={adding ? highlight.rowId(key) : undefined}
         highlighted={adding && highlight.active === key}
         onHighlightMove={adding ? moveHighlight : undefined}
@@ -1365,6 +1447,13 @@ export function ChannelMembersDialog({
     (known.has(selection.pubkey) || profiles.get(selection.pubkey)?.isAgent);
   const removalTarget = selectedAgent ? "agent" : "member";
   const selectedPicture = selection && profiles.get(selection.pubkey)?.picture;
+  const selectedName =
+    selection &&
+    label(selection.pubkey, candidates.get(selection.pubkey)?.name);
+  const selectedAddition =
+    selection?.expectedRole === "absent"
+      ? additionRoles.find((option) => option.role === selection.role)
+      : undefined;
   /** A name in a channel share's audience; access actions stay on member rows. */
   const audienceRow = (key: string) => (
     <li key={key} className={styles.stagedRow}>
@@ -1380,15 +1469,18 @@ export function ChannelMembersDialog({
       <span className={styles.stagedName}>{share.names(key)}</span>
     </li>
   );
-  const channelTitle = (name: string, detail: string) => (
-    <span className={styles.choice}>
-      <HashIcon size={24} aria-hidden="true" />
-      <span className={styles.stagedName}>
-        <span>#{name}</span>
-        <span className="text-body-sm text-subtle">{detail}</span>
+  const channelTitle = (channel: ChannelLabel, detail: string) => {
+    const Icon = channelIcon(channel);
+    return (
+      <span className={styles.choice}>
+        <Icon size={24} aria-hidden="true" />
+        <span className={styles.stagedName}>
+          <span>{channelText(channel)}</span>
+          <span className="text-body-sm text-subtle">{detail}</span>
+        </span>
       </span>
-    </span>
-  );
+    );
+  };
   const memberCount = (count: number) =>
     `${count} member${count === 1 ? "" : "s"}`;
   const chosen = share.chosen;
@@ -1412,10 +1504,17 @@ export function ChannelMembersDialog({
         selection
           ? selection.role === "remove"
             ? `Remove ${removalTarget} from ${place}`
-            : "Change member role?"
-          : (title ?? (solo ? "Share access" : "Manage members"))
+            : selection.expectedRole === "absent"
+              ? "Add member?"
+              : `Change access to ${memberAccessLabel(selection.role)}?`
+          : (title ??
+            (solo
+              ? "Share access"
+              : readOnlyAccess
+                ? "Channel access"
+                : "Manage members"))
       }
-      height={selection ? "content" : "stable"}
+      height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
       headerGap={
         !selection || selection.role === "remove" ? "compact" : "default"
@@ -1428,14 +1527,12 @@ export function ChannelMembersDialog({
           <span className="flex min-w-0 items-center gap-2">
             <Avatar
               alt=""
-              fallback={label(selection.pubkey)}
+              fallback={selectedName ?? ""}
               src={avatarMedia(selectedPicture, session.media)}
               size="small"
               shape={selectedAgent ? "squircle" : "circle"}
             />
-            <span className="min-w-0 break-words">
-              {label(selection.pubkey)}
-            </span>
+            <span className="min-w-0 break-words">{selectedName}</span>
           </span>
         ) : (
           description
@@ -1485,7 +1582,11 @@ export function ChannelMembersDialog({
             >
               {selection.role === "remove"
                 ? `Remove ${removalTarget}`
-                : `Make ${selection.role}`}
+                : selectedAddition
+                  ? selectedAddition.action
+                  : selection.role === "admin"
+                    ? "Set as admin"
+                    : `Set to ${memberAccessLabel(selection.role).toLowerCase()}`}
             </Button>
           </>
         ) : solo ? (
@@ -1546,7 +1647,8 @@ export function ChannelMembersDialog({
       {selection ? (
         selection.role !== "remove" && (
           <p className="text-body-sm">
-            {`Change this member’s role from ${selection.expectedRole} to ${selection.role}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes their authority in this ${place}.`}`}
+            {selectedAddition?.description ??
+              `Change access from ${memberAccessLabel(selection.expectedRole)} to ${memberAccessLabel(selection.role)}. ${selection.role === "admin" ? `Admins can manage this ${place} and its members.` : `This changes what they can do in this ${place}.`}`}
           </p>
         )
       ) : (
@@ -1659,7 +1761,7 @@ export function ChannelMembersDialog({
             className={`${styles.memberList} buzz-thin-scrollbar`}
             aria-label="Member list"
           >
-            {!canAdd && !(solo && rosterBusy) && (
+            {!canAdd && !readOnlyAccess && !(solo && rosterBusy) && (
               <p className="px-control-inset text-body-sm text-subtle">
                 {channel?.channelType === "dm"
                   ? "DM membership cannot be changed here."
@@ -1696,7 +1798,7 @@ export function ChannelMembersDialog({
                       {
                         value: "channel-participants",
                         title: channelTitle(
-                          chosen.name,
+                          chosen,
                           share.destinationMembers
                             ? memberCount(share.destinationMembers.length)
                             : share.destinationRoster?.id !== chosen.id ||
@@ -1727,7 +1829,7 @@ export function ChannelMembersDialog({
                   />
                 </div>
                 <IconButton
-                  aria-label={`Remove #${chosen.name}`}
+                  aria-label={`Remove ${channelText(chosen)}`}
                   disabled={share.busy}
                   icon={<XIcon size={16} />}
                   onClick={share.removeDestination}
@@ -1778,9 +1880,7 @@ export function ChannelMembersDialog({
                 aria-label={`Not in this ${place}`}
                 {...highlight.listProps}
               >
-                <div
-                  className={`${solo ? styles.groupHeading : "pt-2"} px-control-inset`}
-                >
+                <div className="pt-2 px-control-inset">
                   <InlineHeader title={`Not in this ${place}`} />
                 </div>
                 {teams.length > 0 && (
@@ -1799,66 +1899,54 @@ export function ChannelMembersDialog({
                     ))}
                   </ul>
                 )}
-                {(solo
-                  ? [
-                      {
-                        name: "",
-                        people: visibleCandidates,
-                        more: false,
-                        next: undefined,
-                      },
-                    ]
-                  : invitationGroups
-                ).map((group) =>
+                {invitationGroups.map((group) =>
                   group.people.length > 0 ? (
                     <section
                       key={group.name}
                       aria-label={
                         group.name === "People"
                           ? `People not in this ${place}`
-                          : group.name || undefined
+                          : group.name
                       }
-                      className={group.name ? "pb-4" : undefined}
+                      className="pb-4"
                     >
-                      {group.name && (
-                        <h4
-                          className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
-                        >
-                          {group.name}
-                          {group.name === "Your agents" && (
-                            <AgentCommunityScope
-                              community={community}
-                              scope="Agents"
+                      <h4
+                        className={`${styles.groupHeading} flex items-center gap-2 px-control-inset pb-2 text-caption text-subtle`}
+                      >
+                        {group.name}
+                        {group.name === "Your agents" && (
+                          <AgentCommunityScope
+                            community={community}
+                            scope="Agents"
+                          />
+                        )}
+                        {group.name === "Your other agents" && (
+                          <PopoverRoot>
+                            <PopoverTrigger
+                              openOnHover="preview"
+                              render={
+                                <IconButton
+                                  aria-label="About your other agents"
+                                  variant="ghost"
+                                  size="xs"
+                                  icon={
+                                    <InfoIcon size={16} aria-hidden="true" />
+                                  }
+                                />
+                              }
                             />
-                          )}
-                          {group.name === "Your other agents" && (
-                            <PopoverRoot>
-                              <PopoverTrigger
-                                openOnHover="preview"
-                                render={
-                                  <IconButton
-                                    aria-label="About your other agents"
-                                    variant="ghost"
-                                    size="xs"
-                                    icon={
-                                      <InfoIcon size={16} aria-hidden="true" />
-                                    }
-                                  />
-                                }
-                              />
-                              <PopoverPopup
-                                side="top"
-                                aria-label="About your other agents"
-                              >
-                                <p className="m-0 text-body-sm text-subtle">
-                                  Your agents from other devices or earlier
-                                  setups.
-                                </p>
-                              </PopoverPopup>
-                            </PopoverRoot>
-                          )}
-                        </h4>
-                      )}
+                            <PopoverPopup
+                              side="top"
+                              aria-label="About your other agents"
+                            >
+                              <p className="m-0 text-body-sm text-subtle">
+                                Your agents from other devices or earlier
+                                setups.
+                              </p>
+                            </PopoverPopup>
+                          </PopoverRoot>
+                        )}
+                      </h4>
                       <ul>
                         {group.people.map((person) =>
                           row(
@@ -1939,27 +2027,21 @@ export function ChannelMembersDialog({
                     {search.error}
                   </p>
                 )}
-                {(moreCandidates || search.more) && (
-                  <div
-                    className={`flex justify-center${solo ? "" : " border-t border-standard pt-4"}`}
-                  >
+                {search.more && (
+                  <div className="flex justify-center border-t border-standard pt-4">
                     <Button
-                      variant={solo ? "outline" : "subtle"}
+                      variant="subtle"
                       size="sm"
                       onClick={() => {
-                        setInvitationPage((old) =>
-                          solo
-                            ? {
-                                ...old,
-                                size: invitationSize + MEMBER_SEARCH_PAGE_SIZE,
-                              }
-                            : { ...old, revealRelay: true },
-                        );
-                        if (!moreCandidates) search.next();
+                        setInvitationPage((old) => ({
+                          ...old,
+                          revealRelay: true,
+                        }));
+                        search.next();
                       }}
                       disabled={search.loading}
                     >
-                      {solo ? "Show more results" : "Find more matches"}
+                      Find more matches
                     </Button>
                   </div>
                 )}
@@ -1973,29 +2055,32 @@ export function ChannelMembersDialog({
                   Channels
                 </h3>
                 <ul>
-                  {shareChannels.map((item) => (
-                    <li key={item.id} className={styles.member}>
-                      <div className={styles.profileContent}>
-                        <div className={styles.staticProfile}>
-                          <HashIcon size={24} aria-hidden="true" />
-                          <span className={`${styles.name} text-body-sm`}>
-                            {item.name}
-                          </span>
+                  {shareChannels.map((item) => {
+                    const Icon = channelIcon(item);
+                    return (
+                      <li key={item.id} className={styles.member}>
+                        <div className={styles.profileContent}>
+                          <div className={styles.staticProfile}>
+                            <Icon size={24} aria-hidden="true" />
+                            <span className={`${styles.name} text-body-sm`}>
+                              {item.name}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      <span className={styles.addAction}>
-                        <Button
-                          variant="prominent"
-                          size="xs"
-                          aria-label={`Select #${item.name}`}
-                          disabled={share.busy}
-                          onClick={() => share.choose(item)}
-                        >
-                          Select
-                        </Button>
-                      </span>
-                    </li>
-                  ))}
+                        <span className={styles.addAction}>
+                          <Button
+                            variant="prominent"
+                            size="xs"
+                            aria-label={`Select ${channelText(item)}`}
+                            disabled={share.busy}
+                            onClick={() => share.choose(item)}
+                          >
+                            Select
+                          </Button>
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
             )}
@@ -2065,6 +2150,17 @@ export function ChannelMembersDialog({
                 </p>
               ) : null)}
           </section>
+          {generalAccess && (
+            <ChannelGeneralAccess
+              communityReader={communities}
+              communityScope={communityScope}
+              key={channelId}
+              capability={session.channelDetails}
+              recovery={session.recovery}
+              channelId={channelId}
+              channel={channel}
+            />
+          )}
         </div>
       )}
     </Dialog>

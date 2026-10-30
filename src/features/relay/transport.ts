@@ -60,6 +60,7 @@ import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import {
   subscribeRelayTraffic,
   type LiveCallbacks,
+  type LiveSocket,
   type LiveSubscription,
 } from "./live";
 import { subscribeBrokerTraffic } from "./broker-live";
@@ -1315,6 +1316,7 @@ export async function connectSignedTransport(
   signer: Signer,
   httpOrigin: string,
   relayAuthor: string,
+  socketFactory?: (url: string) => LiveSocket,
 ): Promise<ReadTransport> {
   const viewer = await signer.getPublicKey();
   httpOrigin = relayOrigin(httpOrigin);
@@ -1380,7 +1382,7 @@ export async function connectSignedTransport(
             ...callbacks,
             presence: presence.receive,
           }),
-          undefined,
+          socketFactory,
           owner.live,
         );
       } catch (error) {

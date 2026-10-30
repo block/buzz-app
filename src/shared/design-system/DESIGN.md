@@ -97,6 +97,7 @@ content, local controls, and its states; it must not repeat those outer elements
 Keep object summary before detailed sections. Use panel-style tabs for related
 content on the opaque surface; do not use backdrop/chrome tabs inside it.
 
+Content tabs follow the [navigation history and dismissal contract](../../../docs/navigation-history.md#content-tabs).
 Use the existing panel navigation/subview mechanism for related details. Preserve
 the original panel's scroll and draft state, the host's close/back behavior, and
 focus restoration. Do not create another overlay, navigation history, or global
@@ -145,6 +146,15 @@ A modal interrupts the current task to complete a bounded task. Use the shared
 standalone consequential confirmation. “Modal” is the interaction mode, not another
 component to build. Preserve established stepped confirmations and their dismissal
 policy rather than silently changing semantics during visual adoption.
+
+New addressable dialogs and dialog-navigation changes follow the
+[navigation history and dismissal contract](../../../docs/navigation-history.md): Back closes
+the dialog before leaving its underlying view, Forward can restore it, and
+explicit Close retires its restoration visits. Global/contextual scope does not
+change that rule. Navigation owns history; this shared modal owns controls,
+focus and dismissal guards. Existing dialogs are not automatically migrated by
+using this component. Transient confirmations, menus and popovers do not create
+history visits. Preserve operation/draft lifecycles as specified there.
 
 Compose title and optional useful description together in the shared header
 heading, with Close aligned beside them. This lockup applies to both `Dialog`
@@ -344,7 +354,10 @@ local color override to disguise a blocked action.
 Keep the surface header, content frame, focus and scroll anchor mounted. Reserve
 the content’s approximate final geometry on a first read rather than replacing a
 form with a one-line loading message. LoadingRegion keeps a reserved status line;
-its children own geometry. Unknown fields stay hidden/inert, not editable defaults
+its children own geometry. When field placeholders already convey loading, use
+`statusVisibility="screen-reader"` to retain the delayed announcement without a
+visible status row; supplied error/retry feedback still appears immediately.
+Unknown fields stay hidden/inert, not editable defaults
 from another scope. Avoid decorative shimmer or a skeleton of every control.
 
 Prefer already-verified content for the exact account/community/item while
@@ -876,6 +889,10 @@ extra-small capsule uses `text-caption`. For a caption-sized inline choice such 
 the composer's model name, `size="inline"` keeps a 24px minimum target with 4px
 horizontal padding and icon gap, and 12px icons. Pair it with `variant="ghost"`
 for an unframed label; shared hover, disabled, and keyboard focus still apply.
+Compact Selects use `appearance="link"` for a text-and-caret choice, such as channel access, without a capsule or horizontal
+button inset. It uses regular body-small type and a 24px minimum target with
+the text at its bottom edge, so supporting copy follows without an extra gap;
+it retains the Select's keyboard behavior and focus treatment.
 
 Button defaults to `md` (40px minimum height); IconButton defaults to `sm`
 (32px square with 16px artwork) and a 10px rounded rectangle
@@ -1256,11 +1273,14 @@ body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
-one flexing scrollport. Keep results and their recovery feedback reachable; Members
+one flexing scrollport. Stable flex bodies outside expanded dialogs retain a
+minimum of one control plus the shared body insets before the whole dialog
+scrolls. Expanded dialogs retain their zero body minimum. Keep results and their
+recovery feedback reachable; Members
 administration errors sit outside that scrollport, below its fixed search controls.
 Without footer actions, the flex body omits its bottom padding so
 only the popup supplies the outer bottom gutter. With actions, it retains the
-body-to-footer spacing. The default flow layout and other dialogs remain unchanged.
+body-to-footer spacing. The default flow layout remains unchanged.
 The shared Dialog uses `duration-settle` and `easing-enter` for a subtle upward
 fade, with `duration-fast` on exit. Base UI owns transition presence;
 keep the controlled component mounted while setting `open={false}` for an exit.
@@ -1677,9 +1697,11 @@ pairings in both themes; a numbered step alone does not guarantee contrast.
 For example, warning boundaries use amber-11 in light mode and amber-9 in dark,
 because the lighter amber steps cannot identify a control against a light panel.
 
-Palette values are based on Radix Colors (MIT), with authored neutral ramps and
-documented adjustments in `tokens.css`. These are values, not a component or
-behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
+The utility hues (gray, purple, red, green, amber, blue, cyan and orange) use
+Radix Colors (MIT) values. The six accent families (Honey, Magenta, Iris, Cobalt,
+Citrus and Mono) are Buzz's own values on the same twelve-step structure, and the
+neutral ramps are authored. Step 10 is each accent's hover. These are values, not
+a component or behavior dependency. Base UI remains the component behavior layer, with Sonner owning Toast.
 
 ### Naming and usage
 
@@ -1746,12 +1768,31 @@ Mentions are people, not destinations, so they are chips rather than links.
 Spend the accent on mentions of you, not on mentions in general: ordinary
 mentions repeat in almost every message, so they stay a neutral chip
 (`text-mention` on `affordance-mention`) at every level, matching the composer.
-A mention of you asks for your attention and joins the strong group:
-`text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
-in light mode, and a neutral chip with the prominent mark as ink in dark mode,
-where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
-solid accent bubble (at Buzzin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
-name people as quiet text, never as chips.
+The chip is a see-through overlay, so it works on any bubble: a shade (black 10%,
+14% on hover) on light and mid-tone fills, and a tint (white 16%, 20% on hover)
+on dark ones. The direction follows how light the fill is, not its text color.
+Strength follows the text: a chip under light text needs more to show, so the
+tint is stronger than the shade, and a mid-tone fill with light text takes a
+strong shade (black 16%, 22% on hover).
+A mention of you asks for your attention and joins the strong group in both
+modes: `text-mention-self` on `affordance-mention-self`, the prominent fill and
+its ink, with the accent's own hover step rather than an overlay, which would
+muddy it. Inside your own bubble the `-own` pair wins; on the solid accent
+bubble (at Buzzin’) it overlays the bubble's fill with the bubble's ink. That is
+a shade on every accent except Mono in light mode, whose near-black bubble takes
+a tint. Magenta, Iris and Cobalt carry white text there, so they take the
+strong shade. System notices name people as quiet text, never as chips.
+
+Reactions sit on `affordance-reaction`, a softer overlay than a chip: black 6%
+or white 10%, in the same direction as the chips. Hovering the add control lays
+the same overlay again on top of the strip. Inside your bubble reactions take
+its ink and `affordance-reaction-own`; outside it, under an emoji-only message,
+they keep the standard ink and overlay of the panel they sit on.
+
+Hovering your own message lays a quieter overlay across the whole bubble
+(`affordance-message-own-hover`: black 4% or white 8%), in the same direction as
+its chips, so a bright bubble never takes a white wash in dark mode. Received
+bubbles keep the quiet surface their reaction strip shares and take no hover.
 
 These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

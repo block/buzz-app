@@ -135,6 +135,35 @@ export const fixturePlugins: readonly BundledPlugin[] = [
   soloRegionFixture,
   {
     manifest: {
+      id: "fixture.provider",
+      name: "Provider fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["agents"],
+      apply(ctx) {
+        const state = { readiness: "ready" as const };
+        ctx.agents.register({
+          id: "sample",
+          title: "Fixture provider",
+          defaults: () => ({ config: {} }),
+          provider: {
+            snapshot: () => state,
+            subscribe: () => () => {},
+            check() {},
+            DialogBody: ({ onClose }) => (
+              <button type="button" onClick={onClose}>
+                Done
+              </button>
+            ),
+          },
+        });
+      },
+    },
+  },
+  {
+    manifest: {
       id: "fixture.sidebar-sections",
       name: "Sidebar section fixture",
       apiVersion: 1,
@@ -337,7 +366,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
   {
     manifest: { id: "fixture.delayed", name: "Delayed fixture", apiVersion: 1 },
     module: {
-      inject: ["pages"],
+      inject: ["pages", "agents"],
       async apply(ctx) {
         const gate = window.delayFixture;
         if (gate)
@@ -345,6 +374,18 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             gate.started = true;
             gate.release = resolve;
           });
+        const state = { readiness: "ready" as const };
+        ctx.agents.register({
+          id: "provider",
+          title: "Delayed provider",
+          defaults: () => ({ config: {} }),
+          provider: {
+            snapshot: () => state,
+            subscribe: () => () => {},
+            check() {},
+            DialogBody: () => <p>Delayed provider controls</p>,
+          },
+        });
         ctx.pages.register({
           id: "slow",
           title: "Delayed fixture",

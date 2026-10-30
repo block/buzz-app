@@ -165,11 +165,15 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
   apply({
     host: {},
     panels: { register: () => {} },
-    conversation: { registerChatIcon: () => {}, registerChatMenu: () => {} },
+    conversation: {
+      registerChatIcon: () => {},
+      registerChatMenu: () => {},
+      registerLink: () => {},
+    },
     relay,
     agents: {
       addTool: (added: AddedTool) => {
-        tool = added;
+        if (added.name === "github_link_pr") tool = added;
       },
       relay: () => relay,
     },
@@ -179,7 +183,10 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     key: "a".repeat(64),
     pubkey: "a".repeat(64),
   } as BuzzClient;
-  expect(inject).toHaveBeenCalledWith(["agents", "host"], expect.any(Function));
+  expect(inject).toHaveBeenCalledWith(
+    ["agents", "host", "navigation"],
+    expect.any(Function),
+  );
   expect(tool?.name).toBe("github_link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),

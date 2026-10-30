@@ -1,3 +1,8 @@
+[role="dialog"]:has(.layout > .generalAccess) {
+  /* Reserve room for the access footer as text grows; retain the usual gutter
+     when the viewport has enough height. Narrow windows retain the fallback. */
+  --dialog-top: clamp(1rem, calc(100dvh - 40rem), 8rem);
+}
 .layout {
   display: flex;
   flex-direction: column;
@@ -20,12 +25,15 @@
   flex-shrink: 0;
 }
 .memberList {
+  container: member-list / size;
   display: flex;
   flex-direction: column;
   flex: 1;
-  /* A sticky heading plus one reachable row. */
+  /* Keep a usable results area before the whole layout scrolls. */
   min-height: calc(var(--size-row) * 2);
   overflow: auto;
+  /* Reveal rows below sticky group headings, including their compact actions. */
+  scroll-padding-block-start: calc(var(--space-6) + var(--space-4));
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
   margin-inline: calc(-1 * var(--member-bleed));
@@ -33,6 +41,11 @@
 }
 .memberList > * {
   flex-shrink: 0;
+}
+/* Let the scrollport meet the fixed access divider without a blank gutter. */
+.memberList:has(+ .generalAccess) {
+  padding-block-end: 0;
+  margin-block-end: calc(-1 * var(--space-4));
 }
 /* Headings already provide their top inset; tighten only adjacent member groups. */
 .memberList > section + section:not(.memberGroup) {
@@ -52,6 +65,12 @@
   padding-block-start: var(--space-2);
   padding-inline: var(--space-control-inset);
   background: var(--surface-popover);
+}
+/* Short lists cannot spare room for a wrapped label and a complete action. */
+@container member-list (max-height: 8rem) {
+  .groupHeading {
+    position: static;
+  }
 }
 .listNote {
   padding-inline: var(--space-control-inset);
@@ -157,5 +176,74 @@
 @media (max-width: 480px) {
   .stagedRow {
     flex-wrap: wrap;
+  }
+}
+
+.generalAccess {
+  container-type: inline-size;
+  border-top: 1px solid var(--border-standard);
+  padding: var(--space-2) 0 0 var(--space-row-gap);
+}
+.generalAccess > :where(.accessRow) ~ * {
+  margin-block-start: var(--space-3);
+}
+.accessRow {
+  display: grid;
+  grid-template-columns:
+    var(--size-control-sm) minmax(0, 1fr)
+    auto;
+  align-items: start;
+  gap: var(--space-row-gap);
+  padding-block: var(--space-half);
+}
+.accessIcon {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-sm);
+  min-height: var(--size-control-sm);
+  color: var(--text-subtle);
+}
+.accessRow > .accessIcon {
+  width: 100%;
+}
+/* The 24px link target extends 4px above its 20px text line. */
+.accessEditableIcon {
+  translate: 0 var(--space-half);
+}
+.accessAudience {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: var(--space-1);
+}
+.accessAudience > * {
+  max-width: 100%;
+}
+.accessRole {
+  min-width: 0;
+  align-self: center;
+  margin-inline-start: var(--space-2);
+}
+@media (max-width: 480px) {
+  .member:has(> .addAction[data-split]) .staticProfile > span > span {
+    flex-direction: column;
+    align-items: start;
+    gap: 0;
+  }
+  .member:has(> .addAction[data-split]) .name {
+    max-width: 100%;
+  }
+}
+/* Reflow against the dialog's available space, including enlarged text. */
+@container (max-width: 28rem) {
+  .accessRow {
+    grid-template-columns: var(--size-control-sm) minmax(0, 1fr);
+  }
+  .accessRole {
+    grid-column: 2;
+    justify-self: start;
+    margin-inline-start: 0;
   }
 }

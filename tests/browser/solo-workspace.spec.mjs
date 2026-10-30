@@ -342,9 +342,11 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     page.locator(`[data-solo-menu-id="${id}"] [data-solo-shared]`),
   ).toBeVisible();
   await action.click();
+  // Base UI focuses the menu on the next frame. Escape before then leaves
+  // focus on the trigger, and the menu keeps focus where it already is.
   await expect(
     page.getByRole("menu", { name: "Actions for Alpha", exact: true }),
-  ).toBeVisible();
+  ).toBeFocused();
   await expect(action).toHaveAttribute("aria-expanded", "true");
   await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await page.keyboard.press("Escape");
@@ -371,8 +373,11 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await closeProfile(page).click();
   await expect(alpha).toBeFocused();
-  // Read the running page clock instead of assuming the host clock matches it.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
+  // Hold wall time while pausing so command latency cannot pass the target.
+  const pauseTime = await page.evaluate(() => Date.now());
+  await page.clock.setFixedTime(pauseTime);
+  await page.clock.pauseAt(pauseTime);
+  await page.clock.setSystemTime(pauseTime);
   // Cross the closed trigger, then reopen by keyboard before hover dismissal.
   await alpha.hover();
   await page.mouse.move(0, 0);
@@ -404,6 +409,34 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);
   await expect(badge).toHaveCount(0);
+});
+
+// The minifier wraps a :has() selector list in :is(); WebKit then restyles the
+// whole document on every sidebar activity change.
+test("Solo row status rules keep :has() out of minified :is() lists", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  const wrapped = await page.evaluate(() => {
+    const found = [];
+    const walk = (rules) => {
+      for (const rule of rules) {
+        if (rule.cssRules) walk(rule.cssRules);
+        const selector = rule.selectorText ?? "";
+        if (
+          selector.startsWith(":is(") &&
+          selector.includes(":has(") &&
+          selector.includes("data-solo-shared")
+        )
+          found.push(selector);
+      }
+    };
+    for (const sheet of document.styleSheets) walk(sheet.cssRules);
+    return found;
+  });
+  expect(wrapped).toEqual([]);
 });
 
 // Reading needs real focus inside the chat; a pointer selection leaves it on the row.

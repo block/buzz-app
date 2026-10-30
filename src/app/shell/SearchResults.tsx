@@ -778,7 +778,7 @@ export function SearchResults({
         ? channel.channelType === "solo"
           ? "Archived chat"
           : "Archived channel"
-        : channel.readOnly && !channel.cached
+        : channel.readOnly && !channel.cached && channel.viewerRole !== "guest"
           ? "Public channel · not joined"
           : channel.channelType === "dm"
             ? "Direct message"
@@ -907,7 +907,9 @@ export function SearchResults({
   const recent: SearchDestination[] = channels
     .filter(
       (channel) =>
-        !channel.readOnly && !channel.archived && !sidebarHidden(channel),
+        (!channel.readOnly || channel.viewerRole === "guest") &&
+        !channel.archived &&
+        !sidebarHidden(channel),
     )
     .sort(
       (a, b) =>

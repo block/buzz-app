@@ -41,15 +41,16 @@ export function createNameProvider(
       for (const row of library.identities) {
         const key = row.pubkey.toLowerCase();
         if (!names.has(key)) {
-          const profileName = profiles.get(key)?.name.trim();
+          const profile = profiles.get(key);
+          const profileName = profile?.nameIsFallback
+            ? undefined
+            : profile?.name.trim();
           names.set(
             key,
             // A signed public agent profile is the cross-client name source. The
             // host's saved-library alias remains a fallback; same-community
             // native settings still override it below.
-            profiles.get(key)?.isAgent &&
-              !profiles.get(key)?.nameIsFallback &&
-              profileName
+            profile?.isAgent && profileName
               ? profileName
               : row.name.trim() || profileName || "Agent",
           );
@@ -67,10 +68,9 @@ export function createNameProvider(
       }
     }
     const identities = new Map<string, NamingIdentity>(
-      [...profiles].map(([pubkey, profile]) => [
-        pubkey,
-        { pubkey, ...profile },
-      ]),
+      [...profiles]
+        .filter(([, profile]) => !profile.nameIsFallback)
+        .map(([pubkey, profile]) => [pubkey, { pubkey, ...profile }]),
     );
     for (const [pubkey, name] of names) {
       identities.set(pubkey, {
@@ -100,7 +100,12 @@ export function createNameProvider(
     // supplement display facts only; they never select recipients or grant control.
     const displayed = (displayFacts ?? []).map((fact) => {
       const key = fact.pubkey.toLowerCase();
-      return { ...identities.get(key), ...fact, pubkey: key };
+      return {
+        ...source.profiles.snapshot().get(key),
+        ...identities.get(key),
+        ...fact,
+        pubkey: key,
+      };
     });
     const displayedKeys = new Set(displayed.map((fact) => fact.pubkey));
     const resolved = policy.resolve(

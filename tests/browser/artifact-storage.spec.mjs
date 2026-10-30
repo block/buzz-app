@@ -344,7 +344,53 @@ test("atomically indexes preference changes and preserves newer values during mi
       preferences: [{ id: "task", value: { pinned: true } }],
       marker: "done",
     });
+    const arrivalOrders = [];
+    for (const order of ["sync-first", "import-first"]) {
+      const ordered = window.artifactTest.open("viewer", "relay", "test", {
+        name: order,
+      });
+      const seed = () =>
+        ordered.importBatch({
+          records: [{ id: "task", local: { title: "saved device snapshot" } }],
+          preferences: [{ id: "task", value: false }],
+          marker: "done",
+        });
+      const sync = async () =>
+        ordered.applyBatch({
+          source: "all",
+          refresh: await ordered.beginRefresh("all"),
+          records: [
+            {
+              id: "task",
+              channelId: "channel",
+              type: "test.task",
+              revision: { id: "shared", content: "{}" },
+            },
+          ],
+        });
+      if (order === "sync-first") {
+        await sync();
+        await seed();
+      } else {
+        await seed();
+        await sync();
+      }
+      await ordered.importBatch({
+        records: [{ id: "task", local: { title: "discarded retry" } }],
+        preferences: [{ id: "task", value: true }],
+        marker: "retry",
+      });
+      const entry = await ordered.get("task");
+      arrivalOrders.push({
+        local: entry.record.local,
+        current: entry.record.current,
+        preference: entry.preference,
+        imported: await ordered.imported("done"),
+        retried: await ordered.imported("retry"),
+      });
+    }
     return {
+      arrivalOrders,
       archived: await c.page({ index: "archive", value: "true" }),
       active: await c.page({ index: "archive", value: "false" }),
       row: await c.get("task"),
@@ -354,6 +400,22 @@ test("atomically indexes preference changes and preserves newer values during mi
   expect(result.archived.entries).toHaveLength(1);
   expect(result.row.preference).toEqual({ archived: true, pinned: false });
   expect(result.row.record.local).toEqual({ archived: false });
+  expect(result.arrivalOrders).toEqual([
+    {
+      local: { title: "saved device snapshot" },
+      current: { id: "shared", content: "{}" },
+      preference: false,
+      imported: true,
+      retried: true,
+    },
+    {
+      local: { title: "saved device snapshot" },
+      current: { id: "shared", content: "{}" },
+      preference: false,
+      imported: true,
+      retried: true,
+    },
+  ]);
 });
 
 test("commits delta progress without inferring absence and preserves device data", async ({

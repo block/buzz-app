@@ -1,6 +1,7 @@
 import { defineIcon } from "./createDecorativeIcon";
 export type { DefinedIcon } from "./createDecorativeIcon";
 import { BestieMarkArtwork } from "./BestieMark";
+import { BlockLogoArtwork } from "./BlockLogo";
 import { GitHubIssueArtwork } from "./GitHubIssue";
 import { OneDriveLogoArtwork } from "./OneDriveLogo";
 import {
@@ -9,6 +10,10 @@ import {
   ClaudeLogoArtwork,
   CodexLogoArtwork,
   HermesLogoArtwork,
+  DeepSeekLogoArtwork,
+  GrokLogoArtwork,
+  ZaiLogoArtwork,
+  KimiLogoArtwork,
 } from "./HarnessLogos";
 
 // Brand artwork requested for Harness Settings; general UI glyphs remain Tabler.
@@ -25,6 +30,33 @@ export const PiLogoIcon = defineIcon("custom", PiLogoArtwork, {
   provenance:
     "Official Earendil Pi favicon (MIT), reused from old Buzz by explicit design request; see NOTICE.md",
   intendedSizes: [{ width: 32, height: 32 }],
+});
+
+export const DeepSeekLogoIcon = defineIcon("custom", DeepSeekLogoArtwork, {
+  meaning: "DeepSeek models",
+  category: "Custom brand mark",
+  provenance: "DeepSeek mark (MIT), from Wikimedia Commons; see NOTICE.md",
+  intendedSizes: [{ width: 20, height: 20 }],
+});
+export const GrokLogoIcon = defineIcon("custom", GrokLogoArtwork, {
+  meaning: "Grok models",
+  category: "Custom brand mark",
+  provenance:
+    "Grok mark (public domain), from Wikimedia Commons; see NOTICE.md",
+  intendedSizes: [{ width: 20, height: 20 }],
+});
+export const ZaiLogoIcon = defineIcon("custom", ZaiLogoArtwork, {
+  meaning: "Z.ai / GLM models",
+  category: "Custom brand mark",
+  provenance:
+    "Z.ai favicon (public domain), from Wikimedia Commons; see NOTICE.md",
+  intendedSizes: [{ width: 20, height: 20 }],
+});
+export const KimiLogoIcon = defineIcon("custom", KimiLogoArtwork, {
+  meaning: "Kimi models",
+  category: "Custom brand mark",
+  provenance: "Official Moonshot Kimi favicon, converted to PNG; see NOTICE.md",
+  intendedSizes: [{ width: 20, height: 20 }],
 });
 
 import TablerArrowClockwiseIcon from "@tabler/icons-react/dist/esm/icons/IconRotateClockwise.mjs";
@@ -332,6 +364,13 @@ export const OneDriveLogoIcon = defineIcon("custom", OneDriveLogoArtwork, {
   provenance:
     "Custom current-color outline recreation of the Microsoft OneDrive cloud mark.",
   intendedSizes: [{ width: 14, height: 14 }],
+});
+export const BlockLogoIcon = defineIcon("custom", BlockLogoArtwork, {
+  meaning: "Builderlab settings",
+  category: "Custom brand mark",
+  provenance:
+    "Block, Inc. corporate mark, current-color grid from the Builderlab Buzz site's block-logo.svg.",
+  intendedSizes: [{ width: 18, height: 18 }],
 });
 export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
   meaning: "Open GitHub issue",

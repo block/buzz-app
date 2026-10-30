@@ -1261,10 +1261,9 @@ actors stay separate. Same-adder additions use “added by you” for the viewer
 mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
 IDs, pagination cursors and retention budgets remain per event. Activity spends relay
 page rows like messages, so a shown head or older page that activity leaves short of a
-page (20) of conversational rows fills in the background as Load older would: up to
-five more reads, the first for only the missing rows and each next one at least a page,
-doubling up to 200, within the history row cap. A failed fill read shows as a failed
-Load older. Heads read, cached and saved stay one page. Profiles reuse the
+page (20) of conversational rows reads that page again without activity, shows it, then
+places the relay's activity in the span it covers (at most 500 notices) from a
+background read. A failed fill keeps the page as read. Profiles reuse the
 shared background directory/cache, and reading anchors can resolve a member of a
 group. Activity has no message actions, thread, unread evidence or chat preview.
 A Solo chat omits its owner's additions and removals of agents before its first

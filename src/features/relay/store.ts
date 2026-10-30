@@ -26,8 +26,8 @@ import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import {
+  noticeFilter,
   parseWindow,
-  WINDOW_PAGE_MAX,
   WINDOW_PAGE_SIZE,
   windowFilter,
   type WindowCursor,
@@ -133,13 +133,8 @@ const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on
  * reaching the rows the reader kept across the disconnect. */
 const CATCH_UP_PAGES = 5;
-/** Older reads a window fills with after notices leave it short of a page of
- * conversational rows; see fill. */
-const NOTICE_PAGES = 5;
-type Fill = { rows: number; limit: number; steps: number };
-const conversational = (events: readonly RelayEvent[]) =>
-  events.filter((event) => channelRowKind(event.kind) && event.kind !== 40099)
-    .length;
+const sameCursor = (a: WindowCursor | null, b: WindowCursor | null) =>
+  a?.createdAt === b?.createdAt && a?.eventId === b?.eventId;
 const rowIds = (state: WindowState) =>
   new Set(
     state.events
@@ -626,16 +621,131 @@ export function createChannelStore(
       saveDiscovery();
     }, [channelId]);
   }
+  /** Membership notices spend a window page's rows like messages. When they
+   * leave a page short of a page of conversational rows, the conversation
+   * behind them is read again without notices, and the notices in that span
+   * after it. The window still at that page and its cached head take each read
+   * as it lands. */
+  function fill(
+    channelId: string,
+    from: WindowCursor | null,
+    cursor: WindowCursor | null,
+    events: readonly RelayEvent[],
+    priority: Priority,
+  ) {
+    if (
+      !transport ||
+      !cursor ||
+      !events.some((event) => event.kind === 40099) ||
+      events.filter(
+        (event) => channelRowKind(event.kind) && event.kind !== 40099,
+      ).length >= WINDOW_PAGE_SIZE
+    )
+      return;
+    const source = transport;
+    const generation = epoch;
+    const accessVersion = accessVersions.get(channelId) ?? 0;
+    const current = () =>
+      !disposed &&
+      generation === epoch &&
+      accessVersion === (accessVersions.get(channelId) ?? 0) &&
+      authorized(channelId);
+    const merge = (
+      held: readonly RelayEvent[],
+      added: readonly RelayEvent[],
+    ) => {
+      const ids = new Set(held.map((event) => event.id));
+      return [...held, ...added.filter((event) => !ids.has(event.id))];
+    };
+    /** Adds `added` to the cached head still at `at`, and to the window still
+     * at `at` (or, without `page`, any window that has read back to `at`),
+     * moving both to `page`. A read's bound replaces the head's. */
+    const place = (
+      at: WindowCursor | null,
+      added: readonly RelayEvent[],
+      page?: { cursor: WindowCursor | null; hasMore: boolean },
+    ) => {
+      const bound = added.some((event) => event.kind === 39006);
+      const head = heads.peek(channelId);
+      if (!from && head && sameCursor(head.cursor, at)) {
+        const events = merge(
+          bound
+            ? head.events.filter((event) => event.kind !== 39006)
+            : head.events,
+          added,
+        );
+        const next = {
+          ...head,
+          events,
+          rows: Object.freeze(
+            foldChannelMessages(channelId, source.relayAuthor, events),
+          ),
+          ...(page ? { cursor: page.cursor, hasMore: page.hasMore } : {}),
+        };
+        if (
+          next.rows.length <= maxHistoryRows &&
+          byteSize(next.rows) <= maxHistoryBytes
+        ) {
+          heads.set(channelId, next);
+          save(channelId, next);
+        }
+      }
+      const state = windows.get(channelId);
+      if (
+        !state ||
+        (page
+          ? !sameCursor(state.cursor, at)
+          : (state.floor ?? Infinity) > (at?.createdAt ?? 0))
+      )
+        return;
+      const retained = merge(
+        state.events,
+        added.filter((event) => event.kind !== 39006),
+      );
+      const rows = Object.freeze(
+        foldChannelMessages(channelId, source.relayAuthor, retained),
+      );
+      if (rows.length > maxHistoryRows || byteSize(retained) > maxHistoryBytes)
+        return;
+      state.events = retained;
+      if (page) moveCursor(state, page.cursor);
+      setWindow(state, {
+        rows,
+        ...(page ? { hasMore: page.hasMore && page.cursor !== null } : {}),
+      });
+      void fetchProfiles(rows);
+    };
+    // The page's reader waits on the conversation; the notices can wait.
+    void source
+      .read([windowFilter(channelId, from, WINDOW_PAGE_SIZE, false)], {
+        priority,
+      })
+      .then(async (read) => {
+        if (!current()) return;
+        const page = parseWindow(channelId, from, source.relayAuthor, read);
+        place(cursor, read, page);
+        const since = page.cursor?.createdAt ?? 0;
+        const notices = await source.read(
+          [noticeFilter(channelId, source.relayAuthor, from)],
+          { priority: "background" },
+        );
+        if (current())
+          place(
+            page.cursor,
+            notices.filter((event) => event.created_at >= since),
+          );
+      })
+      .catch(() => {});
+  }
   async function readPage(
     channelId: string,
     cursor: WindowCursor | null,
     settings: ReadOptions,
-    limit?: number,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
     const source = transport;
     const read = (signal?: AbortSignal) =>
-      source.read([windowFilter(channelId, cursor, limit)], {
+      source.read([windowFilter(channelId, cursor)], {
         ...settings,
         ...(signal ? { signal } : {}),
       });
@@ -675,13 +785,34 @@ export function createChannelStore(
         throw new DOMException("Stale request", "AbortError");
       const retained = heads.peek(channelId);
       if (retained?.events === events) return retained;
+      // A re-read head that ends inside the head it replaces keeps that head's
+      // older rows and bound, so rows a fill read are not dropped on revisit.
+      const end = page.cursor;
+      const kept =
+        end && retained?.events.some((event) => event.id === end.eventId)
+          ? retained.events.filter(
+              (event) =>
+                !page.events.some((read) => read.id === event.id) &&
+                (!channelRowKind(event.kind) ||
+                  event.created_at < end.createdAt ||
+                  (event.created_at === end.createdAt &&
+                    event.id > end.eventId)),
+            )
+          : [];
+      const bound = kept.find((event) => event.kind === 39006);
+      const read = bound
+        ? [...events.filter((event) => event.kind !== 39006), ...kept]
+        : events;
+      const parsed = bound
+        ? parseWindow(channelId, null, transport.relayAuthor, read)
+        : page;
       head = {
         rows: Object.freeze(
-          foldChannelMessages(channelId, transport.relayAuthor, page.events),
+          foldChannelMessages(channelId, transport.relayAuthor, parsed.events),
         ),
-        cursor: page.cursor,
-        hasMore: page.hasMore,
-        events,
+        cursor: parsed.cursor,
+        hasMore: parsed.hasMore,
+        events: read,
         savedAt: now(),
         cached: false,
       };
@@ -709,6 +840,7 @@ export function createChannelStore(
       `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
     );
     heads.set(channelId, head);
+    fill(channelId, null, head.cursor, head.events, priority);
     setList(list);
     // Durable message warmth must not wait behind optional name enrichment.
     const savedProfiles =
@@ -724,42 +856,9 @@ export function createChannelStore(
     if (intent === channelId) prepareMedia(channelId);
     return head;
   }
-  /** Membership notices spend relay page rows like messages. A shown read they
-   * leave short of a page of conversational rows goes on in the background as
-   * Load older would: the missing rows first, then at least a page, doubling. */
-  function fill(state: WindowState, events: readonly RelayEvent[], run?: Fill) {
-    const rows = (run?.rows ?? 0) + conversational(events);
-    const steps = run ? run.steps + 1 : 0;
-    if (
-      rows >= WINDOW_PAGE_SIZE ||
-      steps >= NOTICE_PAGES ||
-      (!run && !events.some((event) => event.kind === 40099)) ||
-      state.snapshot.status !== "ready" ||
-      !state.snapshot.hasMore ||
-      state.snapshot.historyLimited ||
-      !state.cursor ||
-      state.controller ||
-      !canReadRemote(state.channelId)
-    )
-      return;
-    const limit = Math.min(
-      run
-        ? Math.min(WINDOW_PAGE_MAX, Math.max(WINDOW_PAGE_SIZE, run.limit * 2))
-        : WINDOW_PAGE_SIZE - rows,
-      maxHistoryRows - state.snapshot.rows.length,
-    );
-    if (limit < 1) return;
-    setWindow(state, { loadingOlder: true, error: undefined });
-    void loadPage(state, state.cursor, { rows, limit, steps });
-  }
-  async function loadPage(
-    state: WindowState,
-    cursor: WindowCursor | null,
-    run?: Fill,
-  ) {
+  async function loadPage(state: WindowState, cursor: WindowCursor | null) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
-    let read: readonly RelayEvent[] | undefined;
     const controller = new AbortController();
     state.controller = controller;
     // Shown rows wait on this head read; a seek must not treat it as the end.
@@ -770,15 +869,11 @@ export function createChannelStore(
         const head = await requestHead(state.channelId, "foreground");
         if (!live(state, generation)) return;
         adoptHead(state, head);
-        read = head.events;
         return;
       }
-      const { page } = await readPage(
-        state.channelId,
-        cursor,
-        { signal: controller.signal },
-        run?.limit,
-      );
+      const { page } = await readPage(state.channelId, cursor, {
+        signal: controller.signal,
+      });
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
       const combined = new Map(
@@ -813,7 +908,7 @@ export function createChannelStore(
         error: undefined,
         freshness: "verified",
       });
-      read = page.events;
+      fill(state.channelId, cursor, page.cursor, page.events, "foreground");
       void fetchProfiles(rows);
     } catch (error) {
       if (isAbort(error) || !live(state, generation)) return;
@@ -844,7 +939,6 @@ export function createChannelStore(
         windows.get(state.channelId) === state
       )
         setWindow(state, { refreshing: undefined });
-      if (read && live(state, generation)) fill(state, read, run);
     }
   }
   async function hydrate() {
@@ -2633,7 +2727,6 @@ export function createChannelStore(
             (previous.cached || now() - previous.savedAt >= FRESH_FOR)
           )
             void loadPage(state, null);
-          else if (state.atHead) fill(state, state.events);
         }
         return;
       }
@@ -3185,7 +3278,6 @@ export function createChannelStore(
           freshness: streamDrops === dropsAtStart ? "verified" : "cached",
           error: undefined,
         });
-        if (retained.atHead) fill(retained, retained.events);
         return true;
       } catch (error) {
         if (!valid())

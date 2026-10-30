@@ -10,6 +10,7 @@ import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
+import { TypingIndicator } from "./TypingIndicator";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -60,7 +61,6 @@ import {
   soloRoster,
   useSoloMembers,
 } from "../solo/people";
-import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
   PaperclipIcon,
@@ -277,7 +277,6 @@ export type MessageComposerProps = {
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
-  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
@@ -476,7 +475,6 @@ function Composer({
   shown = true,
   requireMention = false,
   chatPresentation = false,
-  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
@@ -2703,12 +2701,10 @@ function Composer({
     <div className={styles.composerContext}>
       {!cached && !submission && (
         <TypingIndicator
-          clickOpensPanel={activityClickOpensPanel}
+          audience="humans"
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
-          canOpenActivity={canOpenLink}
-          openActivity={onOpenLink}
         />
       )}
       {host && extensions?.accessories && (

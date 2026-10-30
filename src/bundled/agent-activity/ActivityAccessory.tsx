@@ -11,7 +11,10 @@ import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import type { activityRecords } from "../../features/agents/activity-records";
-import { profileActivityViewTarget } from "../../features/profiles/target";
+import {
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -19,11 +22,14 @@ import {
   OctagonIcon,
   WarningCircleIcon,
   XIcon,
+  ArrowUpRightIcon,
 } from "../../shared/design-system/icons";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import {
+  NavigationCard,
+  NavigationItem,
+} from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { TypingDots } from "../../shared/design-system/ui/TypingDots";
+import { ActivityStepPreview } from "../../features/messages/ActivityStepPreview";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -32,7 +38,8 @@ import {
 import { currentActivity } from "./current-activity";
 import { messageWork } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
-import type { Agents } from "../../features/agents/service";
+import { workStop, type WorkStopAgents } from "../../features/agents/work-stop";
+import { useWorkStops } from "../../features/agents/use-work-stops";
 import {
   requestWork,
   type RequestWork,
@@ -41,16 +48,17 @@ import {
   localWorkLabel,
   type WorkStep,
 } from "../../features/agents/local-activity";
-import { useTypingReplacement } from "../../features/conversation/typing-presentation";
+import {
+  useTypingReplacement,
+  useActivityTypingReplacement,
+} from "../../features/conversation/typing-presentation";
 import styles from "./ActivityAccessory.module.css";
+import messageStyles from "../../features/messages/Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { AgentResponsePreview } from "../../features/messages/AgentResponsePreview";
 
 const noSubscribe = () => () => {};
-/** How long a hosted stop shows as stopping before Stop can be tried again:
- * its provider may never report the turn's end. */
-const HOSTED_STOP_MS = 30_000;
-/** What Stop needs of Agents: a hosted agent's provider stops its turns. */
-export type ActivityAgents = Pick<Agents, "interruptible" | "interrupt">;
+export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 /** Activity belongs to the exact triggering message, not the composer. */
 export function ActivityAccessory(props: ActivityProps) {
@@ -113,21 +121,28 @@ export function ActivityAccessory(props: ActivityProps) {
   };
   const visible = (entry: { agent: string }) =>
     canOpen(profileActivityViewTarget(entry.agent) ?? "");
-  const shown: Entry[] = entries.filter(visible).map((entry) => {
-    return {
-      agent: entry.agent,
-      name: named(entry.agent),
-      picture: profiles.get(entry.agent)?.picture,
-      working: entry.working,
-      state: entry.state,
-      reason: entry.reason,
-      ...(entry.step ? { step: entry.step } : {}),
-      ...(entry.stoppable ? { stoppable: true } : {}),
-      lifecycle: entry.lifecycle,
-      records: entry.selected.records,
-      turns: entry.turns,
-    };
-  });
+  const shown: Entry[] = entries
+    .filter(
+      (entry) =>
+        visible(entry) &&
+        (entry.state === "error" ||
+          !props.representedAgents?.includes(entry.agent)),
+    )
+    .map((entry) => {
+      return {
+        agent: entry.agent,
+        name: named(entry.agent),
+        picture: profiles.get(entry.agent)?.picture,
+        working: entry.working,
+        state: entry.state,
+        reason: entry.reason,
+        ...(entry.step ? { step: entry.step } : {}),
+        ...(entry.stoppable ? { stoppable: true } : {}),
+        lifecycle: entry.lifecycle,
+        records: entry.selected.records,
+        turns: entry.turns,
+      };
+    });
   // When work ends (not when access is revoked), keep the last bubble long
   // enough for the shared leave recipe, then remove it.
   const section = useRef<HTMLElement>(null);
@@ -166,9 +181,13 @@ export function ActivityAccessory(props: ActivityProps) {
   }, [leaving]);
   // The render where work ends keeps the same element (from the last shown
   // entries) so the list never loses and regains its height mid-handoff.
-  const bubble = shown.length
-    ? shown
-    : (leaving ?? (ended ? retained.current : []));
+  const bubble = (
+    shown.length ? shown : (leaving ?? (ended ? retained.current : []))
+  ).filter(
+    (entry) =>
+      entry.state === "error" ||
+      !props.representedAgents?.includes(entry.agent),
+  );
   // Once its live bubble has left, a stopped request stays noted here.
   const noted = bubble.length ? [] : stopped.filter(visible);
   const note = noted.length ? (
@@ -189,22 +208,9 @@ export function ActivityAccessory(props: ActivityProps) {
       <span>{noted.map(({ agent }) => named(agent)).join(", ")} · Stopped</span>
     </div>
   ) : null;
-  if (props.renderMessageSummary) {
-    return (
-      <>
-        {shown.map((entry) => (
-          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
-        ))}
-        <ActivityBubble
-          {...props}
-          entries={bubble}
-          interactive={shown.length > 0}
-        />
-        {note}
-      </>
-    );
-  }
   if (!bubble.length) return note;
+  const primary = bubble[0];
+  if (!primary) return note;
   return (
     <section
       ref={section}
@@ -216,9 +222,23 @@ export function ActivityAccessory(props: ActivityProps) {
       aria-label="Agent activity on this message"
       aria-hidden={shown.length ? undefined : true}
     >
-      <div>
+      <AgentResponsePreview
+        name={primary.name}
+        participants={bubble.map((entry) => ({
+          id: entry.agent,
+          name: entry.name,
+          picture: avatarMedia(entry.picture, session.media),
+        }))}
+        picture={avatarMedia(primary.picture, session.media)}
+        layout={props.messageLayout}
+      >
         {shown.map((entry) => (
-          <TypingReplacement key={entry.agent} {...props} agent={entry.agent} />
+          <TypingReplacement
+            shared
+            key={entry.agent}
+            {...props}
+            agent={entry.agent}
+          />
         ))}
         <ActivityBubble
           key={`${channelId}:${message?.id ?? ""}`}
@@ -226,7 +246,7 @@ export function ActivityAccessory(props: ActivityProps) {
           entries={bubble}
           interactive={shown.length > 0}
         />
-      </div>
+      </AgentResponsePreview>
     </section>
   );
 }
@@ -252,99 +272,51 @@ function ActivityBubble({
   ...props
 }: ActivityProps & { entries: Entry[]; interactive: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  // Agents asked to stop whose work has not stopped yet.
-  const [stops, setStops] = useState<ReadonlySet<string>>(new Set());
-  // The latest stop asked of each agent, so a late timeout knows its own.
-  const attempts = useRef(new Map<string, symbol>());
-  const notify = useToastNotification();
-  // A hosted stop still pending when its activity goes away needs no retry.
-  useEffect(() => {
-    const pending = attempts.current;
-    return () => pending.clear();
-  }, []);
   const message = props.message;
-  const stoppable = (entry: Entry) =>
-    !!message &&
-    (entry.lifecycle
-      ? !!entry.stoppable &&
-        (entry.state === "working" || entry.state === "waiting")
-      : entry.working && !!agents?.interruptible(entry.agent));
-  const forget = (agent: string) => {
-    attempts.current.delete(agent);
-    setStops((prior) => {
-      if (!prior.has(agent)) return prior;
-      const next = new Set(prior);
-      next.delete(agent);
-      return next;
-    });
-  };
-  const stop = (entry: Entry) => {
-    if (!message) return;
-    const attempt = Symbol(entry.agent);
-    attempts.current.set(entry.agent, attempt);
-    setStops((prior) => new Set(prior).add(entry.agent));
-    const newer = () => {
-      const latest = attempts.current.get(entry.agent);
-      return !!latest && latest !== attempt;
-    };
-    // A local request settles as stopped; a hosted turn ends when its
-    // provider reports it, so it shows as stopping until then.
-    const asked = entry.lifecycle
-      ? props.session.agentActivity.interrupt(
-          entry.agent,
-          props.channelId,
-          message.id,
-        )
-      : agents?.interrupt(entry.agent, {
-          channelId: props.channelId,
-          threadRootId: message.threadRootId ?? message.id,
-        });
-    void Promise.resolve(asked).then(
-      (running) => {
-        // A newer stop of this agent reports its own result.
-        if (newer()) return;
-        if (entry.lifecycle) {
-          forget(entry.agent);
-          notify(`Stopped ${entry.name}`, "success");
-        } else if (running === false) {
-          forget(entry.agent);
-          notify(`${entry.name} had nothing running to stop`, "info");
-        } else {
-          notify(`Stopping ${entry.name}`, "success");
-          setTimeout(() => {
-            if (attempts.current.get(entry.agent) !== attempt) return;
-            forget(entry.agent);
-            notify(`${entry.name} hasn’t stopped yet. Try again.`, "error");
-          }, HOSTED_STOP_MS);
-        }
-      },
-      (error: unknown) => {
-        if (newer()) return;
-        forget(entry.agent);
-        notify(
-          `Couldn’t stop ${entry.name}. ${error instanceof Error ? error.message : String(error)}`,
-          "error",
+  const controls = new Map(
+    entries.flatMap((entry) => {
+      const control =
+        message &&
+        workStop(
+          entry,
+          {
+            channelId: props.channelId,
+            messageId: message.id,
+            threadRootId: message.threadRootId ?? message.id,
+          },
+          props.session.agentActivity,
+          agents,
         );
-      },
-    );
-  };
-  // A stop is forgotten once its agent's work here has ended.
-  const live = entries
-    .filter((entry) => entry.working || entry.state === "waiting")
-    .map((entry) => entry.agent)
-    .join(":");
-  useEffect(() => {
-    const agents = new Set(live.split(":"));
-    for (const agent of attempts.current.keys())
-      if (!agents.has(agent)) attempts.current.delete(agent);
-    setStops((prior) =>
-      [...prior].every((agent) => agents.has(agent))
-        ? prior
-        : new Set([...prior].filter((agent) => agents.has(agent))),
-    );
-  }, [live]);
+      return control ? [[entry.agent, control] as const] : [];
+    }),
+  );
+  const { pending: stops, stop } = useWorkStops([...controls.values()]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
+  const retirement = useRef({
+    interactive,
+    onFocusedRemoval: props.onFocusedRemoval,
+  });
+  useLayoutEffect(() => {
+    retirement.current = {
+      interactive,
+      onFocusedRemoval: props.onFocusedRemoval,
+    };
+  });
+  useLayoutEffect(
+    () => () => {
+      // Published content removes this preview immediately, without a leave phase.
+      // Ordinary completion uses the existing interactive=false handoff below.
+      if (!retirement.current.interactive) return;
+      const focused = trigger.current?.ownerDocument.activeElement;
+      if (
+        focused &&
+        (trigger.current?.contains(focused) || popup.current?.contains(focused))
+      )
+        retirement.current.onFocusedRemoval?.();
+    },
+    [],
+  );
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
@@ -399,6 +371,20 @@ function ActivityBubble({
   const otherEntries = entries.filter(
     (entry) => !failedEntries.includes(entry),
   );
+  const current =
+    otherEntries.find((entry) => entry.working && entry.step) ??
+    otherEntries.find((entry) => entry.working);
+  const currentPreview =
+    current && !current.lifecycle
+      ? currentActivity(current.records, current.turns)
+      : undefined;
+  const stepText = current?.step
+    ? label(current)
+    : currentPreview
+      ? [currentPreview.title, currentPreview.detail]
+          .filter(Boolean)
+          .join(" · ")
+      : undefined;
   const avatars = (group: Entry[]) => (
     <AvatarStack
       size="mini"
@@ -414,9 +400,11 @@ function ActivityBubble({
     <span className={styles.summaryGroups}>
       {otherEntries.length > 0 && (
         <span className={styles.summaryActivity} data-thread-working="">
-          {avatars(otherEntries)}
           {(working || waiting) && (
-            <TypingDots size="small" state={stepping ? "working" : "waiting"} />
+            <ActivityStepPreview
+              text={stepText}
+              state={stepping ? "working" : "waiting"}
+            />
           )}
           {unknown && <span>Status unknown</span>}
         </span>
@@ -426,26 +414,16 @@ function ActivityBubble({
           className={`${styles.summaryActivity} ${styles.failure}`}
           data-activity-failure=""
         >
-          {avatars(failedEntries)}
+          {avatars(
+            failedEntries.filter((entry) => entry.agent !== entries[0]?.agent),
+          )}
           <WarningCircleIcon size={12} aria-hidden="true" />
           <span>{failedCount} failed</span>
         </span>
       )}
     </span>
   );
-  const summary = props.renderMessageSummary?.(
-    entries.length
-      ? {
-          participants: entries.map((entry) => entry.agent),
-          content,
-          label: entries
-            .map((entry) => `${entry.name}, ${label(entry)}`)
-            .join("; "),
-          ref: trigger,
-        }
-      : undefined,
-  );
-  if (!entries.length && !summary) return null;
+  if (!entries.length) return null;
   return (
     <PopoverRoot
       open={expanded}
@@ -465,27 +443,18 @@ function ActivityBubble({
             event.preventBaseUIHandler();
             return;
           }
-          if (summary) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          } else if (props.openThread?.()) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          }
         }}
         render={
-          summary ?? (
-            <Button
-              ref={trigger}
-              tabIndex={interactive ? undefined : -1}
-              size="xs"
-              variant="subtle"
-              data-activity-summary=""
-              aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
-            >
-              {content}
-            </Button>
-          )
+          <button
+            ref={trigger}
+            tabIndex={interactive ? undefined : -1}
+            type="button"
+            className={messageStyles.activityBubbleTrigger}
+            data-activity-summary=""
+            aria-label={`View agent activity: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
+          >
+            {content}
+          </button>
         }
       />
       <PopoverPopup
@@ -497,15 +466,43 @@ function ActivityBubble({
       >
         {expanded && (
           <div className={styles.previews}>
+            <NavigationItem
+              variant="option"
+              label="Activity"
+              aria-label="View full activity"
+              trailing={<ArrowUpRightIcon aria-hidden="true" />}
+              disabled={
+                !entries[0] ||
+                !props.canOpen(
+                  profileActivityViewTarget(entries[0].agent, {
+                    transcript: true,
+                  }) ?? "",
+                )
+              }
+              onClick={() => {
+                const target =
+                  entries[0] &&
+                  profileActivityViewTarget(entries[0].agent, {
+                    transcript: true,
+                  });
+                if (
+                  target &&
+                  props.canOpen(target) &&
+                  openProfileTranscript(target, props.open)
+                )
+                  setExpanded(false);
+              }}
+            />
             {entries.map((entry) => {
               // Opens the agent's profile on its Activity tab.
               const target = profileActivityViewTarget(entry.agent);
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
-              const stopping = stops.has(entry.agent);
+              const control = controls.get(entry.agent);
+              const stopping = !!control && stops.has(control.key);
               return (
-                <div key={entry.agent} className={styles.row}>
+                <NavigationCard key={entry.agent}>
                   <NavigationItem
                     variant="option"
                     aria-label={`View activity for ${entry.name}`}
@@ -571,16 +568,16 @@ function ActivityBubble({
                         }}
                       />
                     </span>
-                  ) : stoppable(entry) ? (
+                  ) : control ? (
                     <span className={styles.action}>
                       <Button
                         size="sm"
-                        variant="subtle"
+                        variant="plain"
                         aria-label={`Stop ${entry.name}`}
                         loading={stopping}
                         onClick={(event) => {
                           event.stopPropagation();
-                          stop(entry);
+                          stop(control, entry.name);
                         }}
                       >
                         <OctagonIcon
@@ -591,7 +588,7 @@ function ActivityBubble({
                       </Button>
                     </span>
                   ) : undefined}
-                </div>
+                </NavigationCard>
               );
             })}
           </div>
@@ -644,7 +641,12 @@ function TypingReplacement({
   channelId,
   threadRootId,
   agent,
-}: ComposerAccessoryProps & { agent: string }) {
+  shared = false,
+}: ComposerAccessoryProps & { agent: string; shared?: boolean }) {
+  useActivityTypingReplacement(
+    { session, channelId, threadRootId, pubkey: agent },
+    shared,
+  );
   useTypingReplacement(
     { session, channelId, threadRootId, pubkey: agent },
     true,

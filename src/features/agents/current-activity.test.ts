@@ -78,6 +78,7 @@ it("projects safe brief tool status from exact current owner-visible work only",
   const live = snapshot();
   expect(project(live).get(agent)).toEqual({
     label: "Editing index.html",
+    detailAvailability: "available",
     roots: [root],
   });
   expect(project(live, root).get(agent)?.label).toBe("Editing index.html");
@@ -95,7 +96,11 @@ it("drops owner-only work when not listening without hiding valid public typing"
     currentActivity(live, entries, new Set([agent]), "channel", root).get(
       agent,
     ),
-  ).toEqual({ label: "Working", roots: [root] });
+  ).toEqual({
+    label: "Working",
+    detailAvailability: "typing-only",
+    roots: [root],
+  });
   expect(currentActivity(live, entries, new Set(), "channel").size).toBe(0);
 });
 
@@ -106,7 +111,7 @@ it.each([
   ],
   [{ title: "unknown", kind: "other" }, "Running a tool"],
   [{ status: "pending" }, "Preparing a tool"],
-  [{ status: "completed" }, "Working"],
+  [{ status: "completed" }, "Working", "no-current-step"],
   [
     { rawInput: { path: "C:\\private\\report\u202e.txt" } },
     "Editing report.txt",
@@ -119,9 +124,15 @@ it.each([
     },
     "Reading report.txt",
   ],
-])("keeps compact labels safe: %j", (tool, expected) => {
-  expect(project(snapshot(tool)).get(agent)?.label).toBe(expected);
-});
+])(
+  "keeps compact labels safe: %j",
+  (tool, expected, unavailable = "available") => {
+    expect(project(snapshot(tool)).get(agent)).toMatchObject({
+      label: expected,
+      detailAvailability: unavailable,
+    });
+  },
+);
 
 it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
   "treats inherited dictionary key %s as telemetry, not a label mapping",
@@ -151,7 +162,11 @@ it("does not merge labels or ownership across roots or expired turns", () => {
     currentActivity(live, entries, new Set([agent]), "channel", otherRoot).get(
       agent,
     ),
-  ).toEqual({ label: "Working", roots: [otherRoot] });
+  ).toEqual({
+    label: "Working",
+    detailAvailability: "typing-only",
+    roots: [otherRoot],
+  });
   expect(
     project({
       ...live,

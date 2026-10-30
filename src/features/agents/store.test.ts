@@ -402,6 +402,8 @@ it.each([undefined, null])(
 );
 
 it("keeps a watch's ten latest valid recent events, each clipped", async () => {
+  const key = (n: number) => n.toString(16).padStart(64, "0");
+  const keys = Array.from({ length: 120 }, (_, n) => key(n));
   const storage = memoryStorage();
   const saved = setAttention(
     setAttention(
@@ -428,7 +430,15 @@ it("keeps a watch's ten latest valid recent events, each clipped", async () => {
       lastWokeAt: 9,
       events: [
         ...Array.from({ length: 11 }, (_, at) => ({ at, text: `${at}` })),
-        { id: "e", at: 11, text: "x".repeat(3000), author: pubkey, channel: 7 },
+        {
+          id: "e",
+          at: 11,
+          text: "x".repeat(3000),
+          author: pubkey,
+          channel: 7,
+          mentions: ["bad", 7, null, key(0), ...keys],
+          mentionReferences: "nope",
+        },
         { id: 7, at: 11, text: "id" },
         { at: "12", text: "late" },
         { at: 13, text: "" },
@@ -442,7 +452,14 @@ it("keeps a watch's ten latest valid recent events, each clipped", async () => {
   expect(history?.["watch/messages"]?.lastWokeAt).toBe(9);
   expect(events.map(({ at }) => at)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 11]);
   expect(events.slice(-2)).toEqual([
-    { id: "e", at: 11, text: "x".repeat(2000), author: pubkey },
+    {
+      id: "e",
+      at: 11,
+      text: "x".repeat(2000),
+      author: pubkey,
+      // Unique pubkeys only, at most a hundred.
+      mentions: keys.slice(0, 100),
+    },
     { at: 11, text: "id" },
   ]);
 });

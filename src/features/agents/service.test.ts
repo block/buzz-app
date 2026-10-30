@@ -1116,7 +1116,18 @@ it("delivers mentions and matching watches once, and never the agent's own event
       ["p", bot],
     ],
   });
-  const watched = deploy("w");
+  const carol = "7".repeat(64);
+  const dave = "8".repeat(64);
+  const erin = "9".repeat(64);
+  const watched = deploy("w", {
+    tags: [
+      ["p", carol],
+      ["p", carol],
+      ["p", "not-a-pubkey"],
+      ["mention", dave],
+      ["mention", erin, "extra"],
+    ],
+  });
   emit({ events: [mention, mention, event("x"), watched], channelId: channel });
   emit({ events: [deploy("own", { pubkey: bot })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
@@ -1138,6 +1149,9 @@ it("delivers mentions and matching watches once, and never the agent's own event
         author: watched.pubkey,
         channel,
         text: watched.content,
+        // Only signed, well-formed tags name who it mentions.
+        mentions: [carol],
+        mentionReferences: [dave],
       },
     ]),
   );

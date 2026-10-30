@@ -1066,8 +1066,13 @@ it("lists each recent event apart, shown as a chat message from its author", () 
     [author, { name: "alex" }],
     [casey, { name: "Casey" }],
   ]);
-  // Profile reads fail while the session closes; rows must not leave that unhandled.
-  const ensure = vi.fn(() => Promise.reject(new Error("closed")));
+  // Profile reads fail while the session closes; rows must not leave that
+  // unhandled. A plain function, as a mock would observe the rejection itself.
+  const reads: unknown[][] = [];
+  const ensure = (...args: unknown[]) => {
+    reads.push(args);
+    return Promise.reject(new Error("closed"));
+  };
   const names = {
     resolve: (pubkey: string, fallback?: string) =>
       pubkey === author ? "Alex" : fallback,
@@ -1117,7 +1122,7 @@ it("lists each recent event apart, shown as a chat message from its author", () 
     ),
   ).toEqual(["3".repeat(64), "2".repeat(64), "1".repeat(64)]);
   // Each row reads the profiles it names, so its mentions resolve.
-  expect(ensure).toHaveBeenCalledWith([author, casey], "background");
+  expect(reads).toContainEqual([[author, casey], "background"]);
   for (const item of events)
     expect(within(item).getByText("Alex").tagName).toBe("STRONG");
   // Its tags and the community's channels give a message its references.

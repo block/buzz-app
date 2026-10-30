@@ -247,7 +247,7 @@ when the calling plugin does, and a throwing listener is logged and ignored.
 and read-only, and the user still chooses **Find**, reviews the existing access
 review, and confirms. The promise resolves with what the user did: `installed`,
 `updated` (an installed plugin was replaced), or `cancelled` (the dialog was
-closed, nothing changed, or the plugin was already current). It resolves
+closed, including after reviewing a plugin that was already current). It resolves
 `unavailable` in the browser build, before plugin settings have loaded, when
 Settings cannot open, while another request waits or any plugin review dialog is
 open, without a recent user gesture (where the platform reports user activation),
@@ -255,20 +255,29 @@ or when the calling plugin is throttled. It rejects for a source outside the
 accepted grammar or a caller that is not an installed plugin.
 
 The request is attributed to the calling plugin, and the review says "Requested by
-<plugin name>" ("a link" for an OS link). After a `cancelled` outcome a plugin waits
-5 seconds before its next request, doubling with each consecutive cancel up to 5
-minutes; an install resets it. A plugin may make 20 accepted requests per session.
-A request nobody claims in Settings expires as `cancelled` after a minute, and any
-request is cancelled when Settings closes.
+<plugin name> (<plugin id>)" ("a link" for an OS link). Invisible filler characters
+are stripped from the name, a blank name falls back to the id, and a plugin whose
+name matches another installed plugin's or "a link" is refused as `unavailable`.
+After a `cancelled` outcome a plugin, and separately OS links, wait 5 seconds before
+the next request, doubling with each consecutive cancel up to 5 minutes; an install
+resets it. A plugin may make 20 accepted requests per session. A request nobody
+claims in Settings expires as `cancelled` after a minute, and any request is
+cancelled when Settings closes or the requesting plugin is disabled or removed. The
+handle plugins receive exposes only these three methods; admission state stays in
+the host.
 
 A request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
 including a local folder or an unknown one, is refused with a message naming both
-sources; remove it first to install it from the new one. A plugin already at the
-requested revision resolves `installed`. The source fields are read-only while a
+sources; remove it first to install it from the new one. Dismissing the review of a
+plugin already at the requested revision resolves `cancelled`, because nothing was
+installed. The source fields are read-only while a
 request is open, and the folder source is hidden. When `commit` is given, the native Git
 import refuses a reference whose tip is any other commit, so a branch that moves
-after a catalog review cannot install unreviewed code. The same request
+after a catalog review cannot install unreviewed code, and the review checks the
+fetched commit again before offering to install. Any managed or plugin review dialog
+that is open makes new requests `unavailable`, and a request admitted just before one
+opens is refused when Settings tries to claim it. The same request
 arrives from an OS link as
 [`buzz://plugin-install`](deep-links.md#accepted-links).
 

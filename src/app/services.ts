@@ -50,7 +50,7 @@ import {
   createPluginInstallCore,
   createPluginInstallLinkHandler,
   createPluginInstallRequests,
-  PluginInstallerService,
+  createPluginInstallerService,
 } from "../plugins/installer";
 import { withTimeout } from "../plugins/timeout";
 
@@ -81,7 +81,7 @@ export function createServices() {
     openPlugins: () =>
       navigation.open({ version: 1, kind: "settings", section: "plugins" }),
   });
-  new PluginInstallerService(ctx, { plugins, core: pluginInstallCore });
+  createPluginInstallerService(ctx, { plugins, core: pluginInstallCore });
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);

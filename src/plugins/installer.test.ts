@@ -5,7 +5,7 @@ import {
   createPluginInstallLinkHandler,
   createPluginInstallRequests,
   parsePluginInstallSource,
-  PluginInstallerService,
+  createPluginInstallerService,
   type PluginInstaller,
   type PluginInstallOrigin,
 } from "./installer";
@@ -90,6 +90,16 @@ it.each([
     { repository: "https://github.com/owner/repo/tree/main" },
   ],
   ["a GitHub owner only", { repository: "https://github.com/owner" }],
+  [
+    "a GitHub tree URL on www",
+    { repository: "https://www.github.com/owner/repo/tree/main" },
+  ],
+  [
+    "a GitHub tree URL on a rooted host",
+    { repository: "https://github.com./owner/repo/tree/main" },
+  ],
+  ["a percent-encoded host", { repository: "https://git%68ub.com/o/r.git" }],
+  ["a percent in an ssh host", { repository: "ssh://git@exa%6dple.com/o/r" }],
   ["a short commit", { commit: "abc1234" }],
   ["a non-hex commit", { commit: "g".repeat(40) }],
   ["a 41-character commit", { commit: "a".repeat(41) }],
@@ -128,6 +138,22 @@ it("holds one request at a time and resolves it with the user's outcome", async 
   expect(requests.snapshot()?.id).not.toBe(pending?.id);
   requests.settle(requests.snapshot()?.id ?? 0, "cancelled");
   await expect(next).resolves.toBe("cancelled");
+});
+
+it("refuses to claim a request while a review dialog is open and settles it unavailable", async () => {
+  const requests = createPluginInstallRequests();
+  const waiting = requests.request(base, origin);
+  const id = requests.snapshot()?.id ?? 0;
+  const release = requests.holdReview();
+  expect(requests.claim(id)).toBe(false);
+  await expect(waiting).resolves.toBe("unavailable");
+  expect(requests.snapshot()).toBeUndefined();
+  release();
+  const next = requests.request(base, origin);
+  expect(requests.claim(requests.snapshot()?.id ?? 0)).toBe(true);
+  expect(requests.claim(id)).toBe(false);
+  requests.settle(requests.snapshot()?.id ?? 0, "cancelled");
+  await next;
 });
 
 it("cancels an unclaimed request after its time to live and keeps a claimed one", async () => {
@@ -219,7 +245,7 @@ function setup({
     now: () => clock,
   });
   const root = new Context();
-  const service = new PluginInstallerService(root, {
+  const service = createPluginInstallerService(root, {
     plugins: manager as never,
     core,
   });
@@ -590,4 +616,159 @@ it("stops waiting for settings when disposed", () => {
   t.become(ready([]));
   expect(t.submit).not.toHaveBeenCalled();
   expect(t.listeners.size).toBe(0);
+});
+
+it("keeps host objects out of the handle plugins receive", async () => {
+  const { as, service, core, manager } = setup();
+  const installer = await as("example.market");
+  const reachable = new Set<unknown>();
+  for (const handle of [installer, service]) {
+    let object: object | null = handle as object;
+    while (object && object !== Object.prototype) {
+      for (const key of Reflect.ownKeys(object)) {
+        if (key === "ctx") continue;
+        reachable.add(Reflect.get(object, key, handle));
+      }
+      object = Object.getPrototypeOf(object);
+    }
+  }
+  expect(reachable).not.toContain(core);
+  expect(reachable).not.toContain(manager);
+  for (const value of reachable)
+    if (typeof value === "object" && value)
+      expect(Object.values(value)).not.toContain(core);
+  const names = Object.getOwnPropertyNames(installer);
+  expect(names).not.toContain("host");
+  expect(names).not.toContain("core");
+  expect((installer as unknown as { host?: unknown }).host).toBeUndefined();
+  expect((installer as unknown as { core?: unknown }).core).toBeUndefined();
+});
+
+it("names the requesting plugin by id and strips invisible fillers", async () => {
+  const { requests, as } = setup({
+    plugins: [
+      info("example.market", "r1", true, "\u2800\u3164Market\u200b  Place"),
+      info("example.blank", "r1", true, "\u2800\u3164 \u200b"),
+    ],
+  });
+  const outcome = (await as("example.market")).requestInstall(base);
+  expect(requests.snapshot()?.origin).toEqual({
+    kind: "plugin",
+    id: "example.market",
+    name: "Market Place",
+  });
+  settleRequest(requests, "installed");
+  await outcome;
+  const blank = (await as("example.blank")).requestInstall(base);
+  expect(requests.snapshot()?.origin).toEqual({
+    kind: "plugin",
+    id: "example.blank",
+    name: "example.blank",
+  });
+  settleRequest(requests, "installed");
+  await blank;
+});
+
+it("refuses a requester whose name collides with another plugin or with a link", async () => {
+  const { requests, open, as } = setup({
+    plugins: [
+      info("example.market", "r1", true, "Trusted Tool"),
+      info("example.real", "r1", true, "trusted\u2800  tool"),
+      info("example.fake", "r1", true, "A\u3164 Link"),
+      info("example.unique", "r1", true, "Unique"),
+    ],
+  });
+  await expect((await as("example.market")).requestInstall(base)).resolves.toBe(
+    "unavailable",
+  );
+  await expect((await as("example.fake")).requestInstall(base)).resolves.toBe(
+    "unavailable",
+  );
+  expect(open).not.toHaveBeenCalled();
+  const outcome = (await as("example.unique")).requestInstall(base);
+  expect(open).toHaveBeenCalledOnce();
+  settleRequest(requests, "installed");
+  await outcome;
+});
+
+it("backs OS links off after a cancel as well", async () => {
+  const { requests, core, open, advance } = setup();
+  const first = core.submit(base);
+  settleRequest(requests, "cancelled");
+  await expect(first).resolves.toBe("cancelled");
+  await expect(core.submit(base)).resolves.toBe("unavailable");
+  expect(open).toHaveBeenCalledOnce();
+  advance(5_000);
+  const second = core.submit(base);
+  expect(open).toHaveBeenCalledTimes(2);
+  settleRequest(requests, "cancelled");
+  await second;
+  advance(9_999);
+  await expect(core.submit(base)).resolves.toBe("unavailable");
+  advance(1);
+  const third = core.submit(base);
+  settleRequest(requests, "installed");
+  await third;
+  const after = core.submit(base);
+  expect(requests.snapshot()).toBeDefined();
+  settleRequest(requests, "cancelled");
+  await after;
+});
+
+it("keeps a link's backoff separate from a plugin that shares its id", async () => {
+  const { requests, core, as } = setup();
+  const link = core.submit(base);
+  settleRequest(requests, "cancelled");
+  await link;
+  const outcome = (await as("link")).requestInstall(base);
+  expect(requests.snapshot()?.origin).toMatchObject({ kind: "plugin" });
+  settleRequest(requests, "installed");
+  await outcome;
+});
+
+it("never lets a dismissal that installed nothing forgive the backoff", async () => {
+  const { requests, as, advance } = setup();
+  const installer = await as("example.market");
+  const first = installer.requestInstall(base);
+  settleRequest(requests, "cancelled");
+  await first;
+  advance(5_000);
+  const dismissed = installer.requestInstall(base);
+  settleRequest(requests, "cancelled");
+  await dismissed;
+  advance(5_000);
+  await expect(installer.requestInstall(base)).resolves.toBe("unavailable");
+  advance(5_000);
+  const allowed = installer.requestInstall(base);
+  expect(requests.snapshot()).toBeDefined();
+  settleRequest(requests, "cancelled");
+  await allowed;
+});
+
+it("cancels a waiting request when the requesting plugin is disabled", async () => {
+  const { requests, open, as, fibers } = setup();
+  const installer = await as("example.market");
+  const other = await as("example.other");
+  const outcome = installer.requestInstall(base);
+  expect(requests.snapshot()).toBeDefined();
+  await fibers[1]?.dispose();
+  expect(requests.snapshot()).toBeDefined();
+  await fibers[0]?.dispose();
+  await expect(outcome).resolves.toBe("cancelled");
+  expect(requests.snapshot()).toBeUndefined();
+  expect(open).toHaveBeenCalledOnce();
+  void other;
+});
+
+it("stops watching the requester once its request has settled", async () => {
+  const { requests, as, fibers } = setup();
+  const installer = await as("example.market");
+  const outcome = installer.requestInstall(base);
+  settleRequest(requests, "installed");
+  await outcome;
+  await fibers[0]?.dispose();
+  const next = (await as("example.other")).requestInstall(base);
+  expect(requests.snapshot()).toBeDefined();
+  settleRequest(requests, "installed");
+  await next;
 });

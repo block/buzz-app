@@ -55,7 +55,7 @@ like `buzz://join`, and is not a message-content link or a navigation destinatio
 It holds through identity setup and while plugin settings are still loading, then
 opens Settings → Plugins with the Git source
 prefilled and read-only: `repository` (an `https://` or `ssh://` URL, or an scp-style
-`git@host:path`, without a password, query or fragment), `ref` (required; letters,
+`git@host:path`, without a password, query, fragment, percent-encoded host or GitHub tree path), `ref` (required; letters,
 digits, `.`, `_`, `/` and `-`) and, optionally, `path`, a relative folder inside the
 repository (no `..` segments). Nothing is read from the network until the user
 chooses **Find**, and nothing is installed until the user confirms the existing

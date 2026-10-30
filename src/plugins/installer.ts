@@ -36,15 +36,17 @@ const commit = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const scpRepository = /^git@([A-Za-z0-9.-]+):([A-Za-z0-9._~/+-]+)$/;
 
 function githubTree(host: string, path: string) {
-  return (
-    host.toLowerCase() === "github.com" &&
-    path.split("/").filter(Boolean).length !== 2
-  );
+  const name = host
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^www\./, "");
+  return name === "github.com" && path.split("/").filter(Boolean).length !== 2;
 }
 
 function gitRepository(value: unknown) {
   if (typeof value !== "string" || value.length > 2048) return null;
   if (/[\s\p{Cc}\p{Cf}\P{ASCII}]/u.test(value)) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*%/.test(value)) return null;
   const scp = scpRepository.exec(value);
   if (scp)
     return scp[1]?.startsWith("-") || githubTree(scp[1] ?? "", scp[2] ?? "")
@@ -185,11 +187,19 @@ export function createPluginInstallRequests({
         emit();
       });
     },
-    /** A review dialog took the request; it now lives as long as that dialog. */
+    /**
+     * A review dialog took the request; it now lives as long as that dialog.
+     * Refused, and settled unavailable, while another review dialog is open.
+     */
     claim(id: number) {
-      if (current?.request.id !== id) return;
+      if (current?.request.id !== id) return false;
+      if (reviews > 0) {
+        settle(id, "unavailable");
+        return false;
+      }
       clearTimeout(current.timer);
       current.timer = undefined;
+      return true;
     },
     /** Marks a plugin review dialog as open until the returned function runs. */
     holdReview() {
@@ -209,6 +219,8 @@ export type PluginInstallRequests = ReturnType<
 >;
 
 type Clock = () => number;
+const linkKey = "link";
+const pluginKey = (id: string) => `plugin:${id}`;
 const cooldownMs = 5_000;
 const maxCooldownMs = 5 * 60_000;
 const sessionLimit = 20;
@@ -228,7 +240,10 @@ function createInstallPolicy(now: Clock) {
   return {
     allowed(id: string) {
       const entry = state(id);
-      return entry.accepted < sessionLimit && now() >= entry.until;
+      return (
+        (id === linkKey || entry.accepted < sessionLimit) &&
+        now() >= entry.until
+      );
     },
     accepted(id: string) {
       state(id).accepted++;
@@ -248,13 +263,19 @@ function createInstallPolicy(now: Clock) {
   };
 }
 
+const invisible = /[\p{Cc}\p{Cf}\u115f\u1160\u2800\u3164\uffa0]/gu;
+
 function displayName(name: string, fallback: string) {
   const clean = name
-    .replace(/[\p{Cc}\p{Cf}]/gu, "")
+    .replace(invisible, "")
+    .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);
   return clean || fallback;
 }
+
+const nameKey = (name: string) =>
+  displayName(name, "").normalize("NFKC").toLowerCase();
 
 function installedFrom(
   configuration: ConfigurationState,
@@ -289,38 +310,49 @@ export function createPluginInstallCore({
   requests,
   openPlugins,
   activation = () => globalThis.navigator?.userActivation?.isActive ?? true,
-  now = Date.now,
+  now = () => performance.now(),
 }: InstallHost) {
   const policy = createInstallPolicy(now);
   return {
     async submit(
       source: PluginInstallSource,
-      caller?: Readonly<{ id: string }>,
+      caller?: Readonly<{
+        id: string;
+        /** Runs `end` when the caller goes away; returns a function that stops watching. */
+        lifetime?: (end: () => void) => () => void;
+      }>,
     ): Promise<PluginInstallOutcome> {
       const checked = parsePluginInstallSource(source);
       if (!checked) throw new Error(invalidSource);
-      if (caller && (!activation() || !policy.allowed(caller.id)))
-        return "unavailable";
+      const key = caller ? pluginKey(caller.id) : linkKey;
+      if (caller && !activation()) return "unavailable";
+      if (!policy.allowed(key)) return "unavailable";
       const { configuration } = plugins.snapshot();
       if (!plugins.imports || configuration.status !== "ready")
         return "unavailable";
-      const name =
-        configuration.catalog.plugins.find(
-          (plugin) => plugin.manifest.id === caller?.id,
-        )?.manifest.name ?? "";
-      const outcome = requests.request(
-        checked,
-        caller
-          ? {
-              kind: "plugin",
-              id: caller.id,
-              name: displayName(name, caller.id),
-            }
-          : { kind: "link" },
-      );
+      let origin: PluginInstallOrigin = { kind: "link" };
+      if (caller) {
+        const { plugins: installed } = configuration.catalog;
+        const own = installed.find(
+          (plugin) => plugin.manifest.id === caller.id,
+        );
+        const name = displayName(own?.manifest.name ?? "", caller.id);
+        const wanted = nameKey(name);
+        if (
+          wanted === "a link" ||
+          installed.some(
+            (plugin) =>
+              plugin.manifest.id !== caller.id &&
+              nameKey(plugin.manifest.name) === wanted,
+          )
+        )
+          return "unavailable";
+        origin = { kind: "plugin", id: caller.id, name };
+      }
+      const outcome = requests.request(checked, origin);
       const request = requests.snapshot();
       if (!request || request.source !== checked) return outcome;
-      if (caller) policy.accepted(caller.id);
+      policy.accepted(key);
       void openPlugins().then(
         ({ status }) => {
           if (status !== "opened")
@@ -331,9 +363,16 @@ export function createPluginInstallCore({
         },
         () => requests.settle(request.id, "unavailable"),
       );
-      const result = await outcome;
-      if (caller) policy.finished(caller.id, result);
-      return result;
+      const stopWatching = caller?.lifetime?.(() =>
+        requests.settle(request.id, "cancelled"),
+      );
+      try {
+        const result = await outcome;
+        policy.finished(key, result);
+        return result;
+      } finally {
+        stopWatching?.();
+      }
     },
   };
 }
@@ -383,67 +422,80 @@ export function createPluginInstallLinkHandler({
   };
 }
 
-export class PluginInstallerService extends Service implements PluginInstaller {
-  private cache: {
-    configuration: ConfigurationState;
-    installed: readonly InstalledPlugin[];
-  };
+/**
+ * The handle plugins read from `ctx.reflect`; the host objects live in this
+ * closure so a plugin cannot reach admission or the plugin manager through it.
+ */
+export function createPluginInstallerService(
+  ctx: Context,
+  host: Readonly<{
+    plugins: Pick<PluginManager, "snapshot" | "subscribe">;
+    core: PluginInstallCore;
+  }>,
+): PluginInstaller {
+  const initial = host.plugins.snapshot().configuration;
+  let cache = { configuration: initial, installed: installedFrom(initial) };
 
-  constructor(
-    ctx: Context,
-    private readonly host: Readonly<{
-      plugins: Pick<PluginManager, "snapshot" | "subscribe">;
-      core: PluginInstallCore;
-    }>,
-  ) {
-    super(ctx, "pluginInstaller");
-    const { configuration } = host.plugins.snapshot();
-    this.cache = { configuration, installed: installedFrom(configuration) };
-  }
-
-  installed = () => {
-    const { configuration } = this.host.plugins.snapshot();
-    if (configuration !== this.cache.configuration) {
-      const installed = installedFrom(configuration);
-      const same =
-        installed.length === this.cache.installed.length &&
-        installed.every((plugin, index) => {
-          const before = this.cache.installed[index];
-          return before?.id === plugin.id && before.enabled === plugin.enabled;
-        });
-      this.cache = {
-        configuration,
-        installed: same ? this.cache.installed : installed,
-      };
+  class PluginInstallerService extends Service implements PluginInstaller {
+    constructor() {
+      super(ctx, "pluginInstaller");
     }
-    return this.cache.installed;
-  };
 
-  // Methods, not arrow properties: Cordis gives them the calling plugin's
-  // context, which is how a request is attributed and a subscription is owned.
-  subscribe(listener: () => void) {
-    let last = this.installed();
-    const stop = this.ctx.effect(() =>
-      this.host.plugins.subscribe(() => {
-        const next = this.installed();
-        if (next === last) return;
-        last = next;
-        try {
-          listener();
-        } catch (error) {
-          console.error("A plugin installer listener failed", error);
-        }
-      }),
-    );
-    return () => void stop();
-  }
+    installed = () => {
+      const { configuration } = host.plugins.snapshot();
+      if (configuration !== cache.configuration) {
+        const installed = installedFrom(configuration);
+        const same =
+          installed.length === cache.installed.length &&
+          installed.every((plugin, index) => {
+            const before = cache.installed[index];
+            return (
+              before?.id === plugin.id && before.enabled === plugin.enabled
+            );
+          });
+        cache = {
+          configuration,
+          installed: same ? cache.installed : installed,
+        };
+      }
+      return cache.installed;
+    };
 
-  requestInstall(source: PluginInstallSource): Promise<PluginInstallOutcome> {
-    const owner = this.ctx.pluginOwner;
-    if (!owner)
-      return Promise.reject(
-        new Error("Plugin installs must be requested by an installed plugin"),
+    // Methods, not arrow properties: Cordis gives them the calling plugin's
+    // context, which is how a request is attributed and a subscription is owned.
+    subscribe(listener: () => void) {
+      let last = this.installed();
+      const stop = this.ctx.effect(() =>
+        host.plugins.subscribe(() => {
+          const next = this.installed();
+          if (next === last) return;
+          last = next;
+          try {
+            listener();
+          } catch (error) {
+            console.error("A plugin installer listener failed", error);
+          }
+        }),
       );
-    return this.host.core.submit(source, owner);
+      return () => void stop();
+    }
+
+    requestInstall(source: PluginInstallSource): Promise<PluginInstallOutcome> {
+      const owner = this.ctx.pluginOwner;
+      if (!owner)
+        return Promise.reject(
+          new Error("Plugin installs must be requested by an installed plugin"),
+        );
+      const caller = this.ctx;
+      return host.core.submit(source, {
+        id: owner.id,
+        lifetime: (end) => {
+          const stop = caller.effect(() => end);
+          return () => void stop();
+        },
+      });
+    }
   }
+
+  return new PluginInstallerService();
 }

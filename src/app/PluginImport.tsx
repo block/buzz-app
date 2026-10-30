@@ -30,7 +30,11 @@ const sourceLabel = (repository: string, path: string) =>
   path === "." ? repository : `${repository} · ${path}`;
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 const requester = (origin: PluginInstallRequest["origin"]) =>
-  origin.kind === "plugin" ? origin.name : "a link";
+  origin.kind === "plugin"
+    ? origin.name === origin.id
+      ? origin.id
+      : `${origin.name} (${origin.id})`
+    : "a link";
 
 function importLocation(
   preview: Pick<ImportPreview, "source" | "commit">,
@@ -94,7 +98,7 @@ export function PluginImport({
   onRequestSettled?:
     | ((id: number, outcome: PluginInstallOutcome) => void)
     | undefined;
-  onRequestClaimed?: ((id: number) => void) | undefined;
+  onRequestClaimed?: ((id: number) => boolean) | undefined;
   /** Marks a review dialog as open so a plugin request cannot open a second one. */
   holdReview?: (() => () => void) | undefined;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
@@ -216,7 +220,7 @@ export function PluginImport({
       onRequestSettled?.(next.id, "unavailable");
       return;
     }
-    onRequestClaimed?.(next.id);
+    if (onRequestClaimed && !onRequestClaimed(next.id)) return;
     boundId.current = next.id;
     setBound(next);
     setRepository(next.source.repository);
@@ -315,9 +319,15 @@ export function PluginImport({
               : "an unknown source"
         }; remove it first to install it from ${sourceLabel(preview.source, candidate.path)}.`
       : null;
+  const pinned = requested ? bound?.source.commit : undefined;
+  const pinError =
+    pinned && preview && preview.commit?.toLowerCase() !== pinned
+      ? "This repository is not at the commit that was requested. Nothing was installed."
+      : null;
   const duplicate = updating && !updateId && (!requested || !!conflict);
   const upToDate =
     !conflict &&
+    !pinError &&
     // An identical package can still establish a missing source. Native keeps
     // its enabled state and existing rollback target for the same revision.
     !(updateId && !savedSource) &&
@@ -492,11 +502,7 @@ export function PluginImport({
       setError(null);
       setDragging(false);
       setShowUnchanged(false);
-      releaseRequest(
-        requested && reviewing && upToDate && !conflict
-          ? "installed"
-          : "cancelled",
-      );
+      releaseRequest("cancelled");
       setOpen(false);
       onClosed?.();
       return true;
@@ -807,6 +813,7 @@ export function PluginImport({
                 candidate &&
                 !upToDate &&
                 !conflict &&
+                !pinError &&
                 (!existing || !!updateId || requested) && (
                   <Button
                     ref={installButton}
@@ -814,7 +821,7 @@ export function PluginImport({
                     type="button"
                     disabled={blocked || existing?.source === "bundled"}
                     onClick={async () => {
-                      if (blocked || pending.current) return;
+                      if (blocked || pending.current || pinError) return;
                       const current = lifetime.current;
                       pending.current = true;
                       setLoading(true);
@@ -1134,10 +1141,11 @@ export function PluginImport({
                     Requested by {requester(bound.origin)}.
                   </p>
                 )}
+                {reviewing && pinError && <p className="m-0">{pinError}</p>}
                 {reviewing && requested && preview.commit && (
                   <p className="m-0 break-all text-caption text-muted">
                     Commit {shortCommit(preview.commit)}
-                    {bound?.source.commit
+                    {pinned && !pinError
                       ? " (matches the requested commit)"
                       : ""}
                   </p>

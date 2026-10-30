@@ -502,6 +502,7 @@ function PluginDetails({
           busy={busy}
           source={managed.source}
           entry={managed.entry}
+          holdReview={holdReview}
           returnFocus={() => close.current}
           {...(authorizeGit ? { authorizeGit } : {})}
         />
@@ -1348,6 +1349,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 authorizeGit={authorizePluginGit}
+                holdReview={installRequests?.holdReview}
               />
             )}
             {catalog && (

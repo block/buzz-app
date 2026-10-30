@@ -2007,7 +2007,7 @@ function requestedHarness(
     },
     origin,
   };
-  const claimed = vi.fn();
+  const claimed = vi.fn(() => true);
   const release = vi.fn();
   const holdReview = vi.fn(() => release);
   const element = (
@@ -2276,7 +2276,7 @@ it.each([
   },
 );
 
-it("reports an install as done when the plugin is already at the requested revision", async () => {
+it("reports a dismissed review of an up-to-date plugin as cancelled, since nothing was installed", async () => {
   const { installImport, settled, element } = requestedHarness(
     requestedPreview(pinned),
     { commit: pinned },
@@ -2296,22 +2296,56 @@ it("reports an install as done when the plugin is already at the requested revis
   await screen.findByRole("dialog", { name: "Update Requested" });
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "installed"));
+  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "cancelled"));
+  expect(settled).not.toHaveBeenCalledWith(7, "installed");
   expect(installImport).not.toHaveBeenCalled();
+});
+
+it("refuses a fetched commit that differs from the requested one even if native did not", async () => {
+  const other = "f".repeat(40);
+  const { installImport, settled, element } = requestedHarness(
+    requestedPreview(other),
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review plugin access",
+  });
+  expect(dialog).toHaveTextContent("not at the commit that was requested");
+  expect(dialog).not.toHaveTextContent("matches the requested commit");
+  expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
+  expect(installImport).not.toHaveBeenCalled();
+  expect(settled).not.toHaveBeenCalled();
+});
+
+it("accepts the requested commit however native cases it", async () => {
+  const { installImport, element } = requestedHarness(
+    requestedPreview(pinned.toUpperCase()),
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "matches the requested commit",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() => expect(installImport).toHaveBeenCalled());
 });
 
 it("names who requested the install, and hides the folder source while a request is bound", async () => {
   const plugin = requestedHarness(requestedPreview(pinned));
   const view = render(plugin.element);
   const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
-  expect(dialog).toHaveTextContent("Requested by Market.");
+  expect(dialog).toHaveTextContent("Requested by Market (example.market).");
   expect(
     within(dialog).queryByRole("button", { name: "Browse plugin folder" }),
   ).toBeNull();
   expect(within(dialog).queryByText("Drop a plugin folder here")).toBeNull();
   fireEvent.click(within(dialog).getByRole("button", { name: "Find plugins" }));
   await screen.findByRole("dialog", { name: "Review plugin access" });
-  expect(screen.getByRole("dialog")).toHaveTextContent("Requested by Market.");
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Requested by Market (example.market).",
+  );
   view.unmount();
 
   const link = requestedHarness(requestedPreview(pinned), {}, [], {
@@ -2335,6 +2369,15 @@ it("claims the request, holds a review open while it shows, and releases it on c
   fireEvent.keyDown(dialog, { key: "Escape" });
   await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "cancelled"));
   await waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
+it("does not open a dialog when the request cannot be claimed", async () => {
+  const { claimed, git, element } = requestedHarness(requestedPreview(pinned));
+  claimed.mockReturnValue(false);
+  render(element);
+  await waitFor(() => expect(claimed).toHaveBeenCalledExactlyOnceWith(7));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(git).not.toHaveBeenCalled();
 });
 
 it("carries a pinned commit through the signed community branch", async () => {

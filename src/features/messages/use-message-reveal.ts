@@ -133,7 +133,8 @@ export function useMessageReveal({
         revealed.current = signal;
         cancel();
         highlight.current();
-        highlight.current = highlightMessage(row);
+        // A reveal behind a covering panel is not an arrival the reader sees.
+        if (focus) highlight.current = highlightMessage(row);
         readingPositioned(container);
         complete();
       });

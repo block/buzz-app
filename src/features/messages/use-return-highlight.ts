@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from "react";
-import { highlightMessage } from "./message-highlight";
+import { highlightMessage, messageHighlightSurface } from "./message-highlight";
 
 /** A close-time orientation cue, not a reveal request or a scroll owner. */
 export function useReturnHighlight(
@@ -29,7 +29,7 @@ export function useReturnHighlight(
       const item = [
         ...scroller.querySelectorAll<HTMLElement>("[data-message-id]"),
       ].find((element) => element.dataset.messageId === messageId);
-      const row = item?.querySelector<HTMLElement>(":scope > [data-layout]");
+      const row = item && messageHighlightSurface(item);
       if (!item || !row) return;
       const box = row.getBoundingClientRect();
       const viewport = scroller.getBoundingClientRect();

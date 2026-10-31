@@ -24,7 +24,7 @@ import type {
 
 import { agentDirectory } from "../../features/identity-names/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
-import { keypair, profile } from "../../features/relay/testing";
+import { keypair, profile, signed } from "../../features/relay/testing";
 
 const key = "a".repeat(64);
 afterEach(cleanup);
@@ -579,5 +579,97 @@ it("opens an agent's activity on its type's first tab when the type has no Activ
     expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
   } finally {
     dispose();
+  }
+});
+
+it("shows historical verification time and issuer, discloses cache, and hides disabled marks", async () => {
+  const { eventDto } = await import("../../features/relay/events");
+  const person = keypair();
+  const relayKey = keypair();
+  let live!: LiveCallbacks;
+  let sink:
+    | import("../../features/relay/verified-profile").VerifiedProfileSink
+    | undefined;
+  const owner = createRelaySession({
+    viewer: person.pubkey,
+    relayAuthor: relayKey.pubkey,
+    scope: "wss://relay.example.test",
+    query: async () => [],
+    media: () => undefined,
+    verifiedProfiles: { pubkey: relayKey.pubkey, multipleIssuers: false },
+    readVerifiedProfileAuthority: async () => null,
+    subscribe(callbacks) {
+      live = callbacks;
+      return {
+        update() {},
+        retry() {},
+        dispose() {},
+        syncVerifiedProfiles(_filter, next) {
+          sink = next;
+          return () => {};
+        },
+      };
+    },
+  });
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  try {
+    render(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(person.pubkey) ?? ""}
+        close={() => {}}
+      />,
+    );
+    await waitFor(() => expect(sink).toBeDefined());
+    act(() => {
+      sink?.event(
+        eventDto(
+          signed(relayKey, {
+            kind: 30382,
+            created_at: 1_000_000,
+            content: "",
+            tags: [
+              ["d", person.pubkey],
+              ["p", person.pubkey],
+              ["active", "true"],
+              ["display_name", "Alice"],
+              ["username", "alice"],
+              ["issuer_label", "Example"],
+              ["verified_at", "1000000"],
+              ["full_name", "Alice Example"],
+            ],
+          }),
+        ),
+      );
+      sink?.eose();
+    });
+    expect(await screen.findByRole("heading", { name: "Alice" })).toBeVisible();
+    expect(screen.getByText(/Name verified by Example.*@alice/)).toBeVisible();
+    expect(screen.getByText("Alice Example")).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Info" }));
+    expect(screen.getByText("Name verified by Example")).toBeVisible();
+    expect(screen.getByText(/Last verified/)).toHaveTextContent(/1970/);
+    expect(screen.getByText(/current issuer endorsement/)).toBeVisible();
+    act(() => live.state({ status: "connecting", routes: [] }));
+    expect(screen.getByText(/Cached verification/)).toBeVisible();
+    expect(screen.getByText(/Cached evidence/)).toBeVisible();
+    await act(async () => live.state({ status: "connected", routes: [] }));
+    expect(screen.queryByText("Name verified by Example")).toBeNull();
+    expect(screen.queryByText("Alice Example")).toBeNull();
+    expect(screen.queryByText(/Cached verification/)).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
   }
 });

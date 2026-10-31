@@ -774,7 +774,20 @@ export function createRelaySession(
       traffic?.publishPresence?.(status, signal) ?? Promise.resolve(false),
     notify,
   );
-  const profiles = createProfileDirectory(verified, localViews, notify);
+  const profiles = createProfileDirectory(
+    verified,
+    localViews,
+    notify,
+    transport &&
+      (transport.verifiedProfiles || transport.readVerifiedProfileAuthority)
+      ? {
+          authority: transport.verifiedProfiles,
+          refresh: transport.readVerifiedProfileAuthority?.bind(transport),
+          subscribe: (filter, sink) =>
+            traffic?.syncVerifiedProfiles?.(filter, sink),
+        }
+      : undefined,
+  );
   const emoji = createEmojiDirectory(
     verified,
     notify,
@@ -3148,6 +3161,7 @@ export function createRelaySession(
       memoryConnected = snapshot.status === "connected";
       activity.state(snapshot);
       presence.connected(snapshot.status === "connected");
+      profiles.connected(snapshot.status === "connected");
       if (snapshot.status !== "connected") {
         typing.clear();
         memories.clear();

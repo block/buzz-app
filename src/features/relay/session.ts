@@ -94,7 +94,7 @@ import {
   type RelayEvent,
   type EventData,
 } from "./events";
-import { eventVisibility } from "./event-access";
+import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
   PublishRejected,
@@ -343,7 +343,9 @@ export function createRelaySession(
       ]),
     );
     return eventVisibility(
-      remote ? canReadRemote : canAccess,
+      // Remote visibility filters one accept() batch and is never retained.
+      // Remote access builds the channel's discovery summary: read it once.
+      remote ? accessOnce(canReadRemote) : canAccess,
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>

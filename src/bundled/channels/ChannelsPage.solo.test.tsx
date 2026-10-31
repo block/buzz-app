@@ -12,6 +12,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
+import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -288,7 +289,7 @@ function fixture({
   };
   const abort = new AbortController();
   const complete = vi.fn(() => true);
-  const navigation: PageNavigation = {
+  let navigation: PageNavigation = {
     entryId: "visit",
     target: target?.(scope) ?? conversationTarget(scope, id),
     signal: abort.signal,
@@ -342,11 +343,18 @@ function fixture({
       />
     </ChannelNavigationProvider>
   );
+  let rendered: ReturnType<typeof render> | undefined;
   return {
     navigation,
     mount: () => render(page()),
+    mountWithToasts: () =>
+      (rendered = render(<ToastProvider>{page()}</ToastProvider>)),
+    /** The navigator moved this page's visit to `next`. */
+    show(next: OpenTarget) {
+      navigation = { ...navigation, target: next };
+      rendered?.rerender(<ToastProvider>{page()}</ToastProvider>);
+    },
     mountWithSidebar: () => render(page(true)),
-    mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
     abort,
     archive,
     open,
@@ -526,13 +534,14 @@ it("keeps a new chat out of Back history until something is written in it", asyn
   const input = within(region).getByRole("textbox", {
     name: "Message your agents",
   });
-  await waitFor(() => expect(input).toHaveTextContent("@Scout"));
-  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
-  // Only the automatic tag, shown but not saved: nothing to come back to.
-  expect(readView(f.scope, "solo:new-draft", null)).toBeNull();
-  expect(passes?.()).toBe(true);
   const user = userEvent.setup();
   await user.click(input);
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  // The agent is addressed outside the text, and nothing is saved: nothing
+  // to come back to.
+  expect(input).not.toHaveTextContent("@");
+  expect(readView(f.scope, "solo:new-draft", null)).toBeNull();
+  expect(passes?.()).toBe(true);
   await user.keyboard(" Plan the week");
   expect(passes?.()).toBe(false);
   await user.click(
@@ -541,6 +550,38 @@ it("keeps a new chat out of Back history until something is written in it", asyn
   await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
   // The sent draft is spent; the started chat takes its place.
   expect(passes?.()).toBe(true);
+});
+
+it("gives a new chat that could not be started its draft's place in Back history", async () => {
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
+  let refuse: (reason: unknown) => void = () => {};
+  vi.mocked(f.session.channelWrites.start).mockImplementationOnce(
+    (chat: string) => ({
+      create: f.session.channelWrites.create(chat),
+      ready: new Promise<void>((_resolve, reject) => {
+        refuse = reject;
+      }),
+    }),
+  );
+  f.mountWithToasts();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  const user = userEvent.setup();
+  await user.click(
+    within(region).getByRole("textbox", { name: "Message your agents" }),
+  );
+  await user.keyboard(" Plan the week{Enter}");
+  await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
+  const chat = vi.mocked(f.session.channelWrites.start).mock.lastCall?.[0];
+  expect(chat).toBeDefined();
+  f.show(conversationTarget(f.scope, chat ?? ""));
+  await act(async () => refuse(new ChatNotStarted("relay refused")));
+  // Replacing the never-made chat leaves Back at the draft's opener.
+  await waitFor(() =>
+    expect(f.open).toHaveBeenLastCalledWith(
+      soloDraftTarget(f.scope, { agent }),
+      { replace: true },
+    ),
+  );
 });
 
 it("keeps a written new chat in Back history when its draft cannot be saved", async () => {
@@ -562,11 +603,10 @@ it("keeps a written new chat in Back history when its draft cannot be saved", as
     const input = within(region).getByRole("textbox", {
       name: "Message your agents",
     });
-    await waitFor(() => expect(input).toHaveTextContent("@Scout"));
-    const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
-    expect(passes?.()).toBe(true);
     const user = userEvent.setup();
     await user.click(input);
+    const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+    expect(passes?.()).toBe(true);
     await user.keyboard(" Unsaved but written");
     expect(readView(f.scope, "solo:new-draft", null)).toBeNull();
     expect(passes?.()).toBe(false);

@@ -6,7 +6,6 @@ import { workingAgents } from "./working-agents";
 
 const noSubscribe = () => () => {};
 const noAgents: readonly string[] = [];
-const noProfiles = new Map<string, Profile>();
 
 /** Shared observer/owned-typing signal for Messages and Solo sidebar rows. */
 export function useWorkingAgents(
@@ -67,11 +66,18 @@ export function useWorkingAgents(
   const agents = typingAgents.length
     ? [...new Set([...observed, ...typingAgents])].sort()
     : observed;
+  // Only these agents' profiles: another profile arriving leaves the row alone.
   const agentProfiles = useSyncExternalStore(
     agents.length ? session.profiles.subscribe : noSubscribe,
-    agents.length ? session.profiles.snapshot : () => noProfiles,
+    () =>
+      JSON.stringify(
+        agents.flatMap((agent) => {
+          const profile = session.profiles.snapshot().get(agent);
+          return profile ? [[agent, profile]] : [];
+        }),
+      ),
   );
-  const names = new Map(agentProfiles);
+  const names = new Map<string, Profile>(JSON.parse(agentProfiles));
   for (const agent of library?.identities ?? [])
     if (agents.includes(agent.pubkey) && !names.get(agent.pubkey)?.name)
       names.set(agent.pubkey, { ...names.get(agent.pubkey), name: agent.name });

@@ -204,7 +204,11 @@ export class ClaudeProcess {
         this.lastError ??
         (this.stderr.trim().split("\n").at(-1) ||
           `Claude exited (${code ?? "signal"})`);
-      this.settle({ ok: false, error });
+      this.settle(
+        this.stopped && !this.lastError
+          ? { ok: true, stopped: true }
+          : { ok: false, error },
+      );
       return code;
     });
   }
@@ -531,7 +535,7 @@ export class ClaudeProcess {
     this.stopping = true;
     if (this.protection) {
       this.protectionLifetime.abort();
-      this.lastError = "Protected Claude was stopped";
+      this.stopped = true;
       await this.process.kill();
       await this.exited;
       return;

@@ -472,6 +472,18 @@ it("reviews exact tool input with full native metadata and preceding evidence", 
   }
 });
 
+it("settles a protected turn its owner stopped as stopped, not failed", async () => {
+  const f = fixture();
+  const process = await ClaudeProcess.start(f.spawn, f.launch);
+  const worker = f.processes[0];
+  if (!worker) throw new Error("Claude did not start");
+  worker.hold = true;
+  const sent = process.send("hello");
+  await flush();
+  await process.interrupt();
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
+});
+
 it("checks a long history four at a time and a denial cancels the rest", async () => {
   const f = fixture();
   Object.assign(f.protection, {

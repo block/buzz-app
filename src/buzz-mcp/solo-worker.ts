@@ -68,7 +68,7 @@ const workerTool = (
   description,
   inputSchema: {
     type: "object",
-    properties,
+    properties: { ...properties },
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   },

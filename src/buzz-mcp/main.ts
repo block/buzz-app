@@ -36,7 +36,11 @@ serveStdio(() => {
     { name: "buzz", version: "1" },
     { capabilities: { tools: {} }, instructions: BUZZ_HELP_PROMPT },
   );
-  for (const tool of [...TOOLS, ...SOLO_WORKER_TOOLS])
+  const tools: readonly (
+    | (typeof TOOLS)[number]
+    | (typeof SOLO_WORKER_TOOLS)[number]
+  )[] = [...TOOLS, ...SOLO_WORKER_TOOLS];
+  for (const tool of tools)
     server.registerTool(
       tool.name,
       {

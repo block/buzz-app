@@ -256,16 +256,26 @@ describe("solo_worker_connections", () => {
   });
 
   it("stops using a channel made public, even for a saved retry", async () => {
-    const { call, sign, published } = community((intent) =>
+    const harness = community((intent) =>
       intent.action === "send" ? [{ phase: "accepted" }] : ready(intent, ""),
     );
+    const { call, sign, published, client } = harness;
     const first = await call("solo_worker_send", {
       solo: S,
       worker_epoch: 1,
       text: "go",
     });
     expect(first.retry).toBeDefined();
+    const stale = await client.query([{ kinds: [39000], "#d": [K] }]);
     sign(RELAY, { kind: 39000, content: "", tags: [["d", K], ["public"]] });
+    // A replica that still has the private metadata; only the writer is current.
+    const current = client.query;
+    harness.client.query = async (filters) => {
+      const [filter] = filters as { kinds: number[]; consistency?: string }[];
+      return filter?.kinds.includes(39000) && filter.consistency !== "strong"
+        ? stale
+        : current(filters);
+    };
     const before = published.length;
     await expect(
       call("solo_worker_send", { retry: first.retry }),

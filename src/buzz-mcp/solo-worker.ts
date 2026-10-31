@@ -484,12 +484,14 @@ async function connections(client: BuzzClient, clock: Clock) {
   const found: GrantAck[] = [];
   for (const [stream, owner] of streams) {
     // Requests, retries included, are posted before the owner can refuse
-    // them, so only a channel the relay still marks private may carry them.
+    // them, so only a channel the relay still marks private may carry them:
+    // read from the relay's writer, which a replica may lag.
     const [metadata] = await query({
       kinds: [39000],
       "#d": [stream],
       authors: [relayAuthor],
       limit: 1,
+      consistency: "strong",
     });
     if (
       metadata?.pubkey !== relayAuthor ||

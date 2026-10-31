@@ -1,6 +1,7 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
+import { createThreadNavigation } from "../channel-navigation/recent-threads";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
@@ -1427,6 +1428,10 @@ export function createRelaySession(
     channelKit.capability,
     lifetime.signal,
   );
+  const threadNavigation = createThreadNavigation(
+    transport?.threadNavigation,
+    lifetime.signal,
+  );
   const reminders =
     transport?.reminders && writer
       ? createReminders({
@@ -1960,6 +1965,11 @@ export function createRelaySession(
           () => loadState(sidebarPreferences.queries.snapshot()),
           () => void sidebarPreferences.queries.refresh(),
         ),
+        recoverable(
+          threadNavigation.subscribe,
+          () => loadState(threadNavigation.snapshot()),
+          () => void threadNavigation.refresh(),
+        ),
         // Visibility owns its quiet retries and exhausts without `transient`,
         // so this source only reports `busy`; its retry is not reached.
         recoverable(
@@ -2138,6 +2148,7 @@ export function createRelaySession(
     /** The account's saved main agent, shared by every install. */
     mainAgent,
     soloPreferences: soloPreferences.queries,
+    threadNavigation,
     reminders: reminders?.capability,
     live,
     /** The one automatic retry owner for background reads. Undefined offline. */
@@ -3320,6 +3331,7 @@ export function createRelaySession(
         typing.clear();
         sidebarPreferences.clear();
         soloPreferences.clear();
+        threadNavigation.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -3365,6 +3377,7 @@ export function createRelaySession(
       stopActivityPreferences();
       sidebarPreferences.dispose();
       soloPreferences.dispose();
+      threadNavigation.dispose();
       // Before requests.dispose(): lifecycle rereads retired shared reads
       // until its own controllers abort.
       lifecycle.dispose();

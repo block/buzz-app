@@ -1,4 +1,5 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
+mod thread_navigation;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
 use buzz_credential_store as credentials;
@@ -422,6 +423,9 @@ impl Identity {
 
 // Reject renderer-supplied arbitrary ciphertext/plaintext at the purpose-bound signer.
 fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Result<()> {
+    if thread_navigation::tag(coordinate).is_some() {
+        return thread_navigation::validate(coordinate, value);
+    }
     let invalid = || "Invalid sidebar payload".to_owned();
     let data = value.as_object().ok_or_else(invalid)?;
     if data.get("version").and_then(|v| v.as_u64()) != Some(1) {
@@ -698,7 +702,7 @@ pub(crate) fn sidebar_coordinate(value: &str) -> bool {
             | "channel-sort"
             | "channel-filter"
             | "main-agent"
-    )
+    ) || thread_navigation::tag(value).is_some()
 }
 
 fn valid_read_coordinate(value: &str) -> bool {
@@ -835,10 +839,17 @@ impl IdentityHost {
                 if plaintext.len() > 128 * 1024 {
                     return Err("Sidebar plaintext budget exceeded".into());
                 }
-                decoded.insert(
-                    coordinate,
-                    serde_json::from_str(&plaintext).map_err(|_| "Invalid sidebar record")?,
-                );
+                let value =
+                    serde_json::from_str(&plaintext).map_err(|_| "Invalid sidebar record")?;
+                if let Some(tag) = thread_navigation::tag(&coordinate) {
+                    thread_navigation::validate(&coordinate, &value)?;
+                    if serde_json::to_value(&event.tags).map_err(|_| "Invalid sidebar record")?
+                        != serde_json::json!([["d", coordinate], ["t", tag]])
+                    {
+                        return Err("Invalid thread navigation tags".into());
+                    }
+                }
+                decoded.insert(coordinate, value);
             }
             Ok(serde_json::Value::Object(decoded))
         })
@@ -853,7 +864,8 @@ impl IdentityHost {
             .as_object()
             .and_then(|records| records.iter().next())
             .ok_or("Invalid sidebar record")?;
-        if tags != serde_json::json!([["d", coordinate], ["t", coordinate]]) {
+        let tag = thread_navigation::tag(coordinate).unwrap_or(coordinate);
+        if tags != serde_json::json!([["d", coordinate], ["t", tag]]) {
             return Err("Invalid sidebar record".into());
         }
         validate_sidebar_payload(coordinate, payload)
@@ -885,15 +897,15 @@ impl IdentityHost {
             let public = Keys::new(secret.clone()).public_key();
             let content = nip44::encrypt(&secret, &public, &plaintext, nip44::Version::V2)
                 .map_err(|_| "Could not encrypt sidebar preferences")?;
+            let tag = thread_navigation::tag(&coordinate)
+                .unwrap_or(&coordinate)
+                .to_owned();
             key.sign_bounded(
                 EventTemplate {
                     kind: 30078,
                     created_at,
                     content,
-                    tags: vec![
-                        vec!["d".into(), coordinate.clone()],
-                        vec!["t".into(), coordinate],
-                    ],
+                    tags: vec![vec!["d".into(), coordinate.clone()], vec!["t".into(), tag]],
                 },
                 192 * 1024,
             )

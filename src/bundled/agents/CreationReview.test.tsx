@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   Agent,
+  AgentCreateProps,
   Agents,
   AgentCreationRequest,
   RegisteredAgentType,
@@ -13,7 +14,16 @@ import { CreationReview } from "./CreationReview";
 
 afterEach(cleanup);
 
-function fixture() {
+type Config = { reply: string };
+const Create = ({ config, onChange }: AgentCreateProps<Config>) => (
+  <textarea
+    aria-label="Instructions"
+    value={config.reply}
+    onChange={(event) => onChange({ reply: event.target.value })}
+  />
+);
+
+function fixture(instructions?: string) {
   let requests: readonly AgentCreationRequest[] = [
     {
       id: "draft",
@@ -23,6 +33,7 @@ function fixture() {
       community: "https://relay.example",
       type: "test/echo",
       name: "Child",
+      ...(instructions !== undefined && { instructions }),
     },
   ];
   const listeners = new Set<() => void>();
@@ -35,6 +46,10 @@ function fixture() {
       key: "test/echo",
       title: "Echo",
       defaults: () => ({ config: { reply: "default" } }),
+      adopt: ({ instructions }: { instructions?: string }, config: Config) => ({
+        reply: instructions ?? config.reply,
+      }),
+      Create,
     },
   ] as unknown as readonly RegisteredAgentType[];
   const agents = {
@@ -89,4 +104,18 @@ it("dismisses an unsaved request when the owner closes its review", async () => 
   );
   expect(agents.approveCreation).not.toHaveBeenCalled();
   expect(agents.create).not.toHaveBeenCalled();
+});
+
+it("starts the review with the instructions the agent requested", async () => {
+  const user = userEvent.setup();
+  const agents = fixture("Review PRs.");
+  await screen.findByDisplayValue("Child");
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Review PRs.");
+  await user.click(screen.getByRole("button", { name: /^Create agent$/ }));
+  await waitFor(() =>
+    expect(agents.approveCreation).toHaveBeenCalledWith(
+      "draft",
+      expect.objectContaining({ config: { reply: "Review PRs." } }),
+    ),
+  );
 });

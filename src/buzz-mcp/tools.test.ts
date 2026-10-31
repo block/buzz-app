@@ -3265,6 +3265,25 @@ it("validates creation inputs and reports hosts without agent creation", async (
       "required",
     );
   expect(client.createAgent).not.toHaveBeenCalled();
+  await callTool(client, {}, "agent_create", {
+    type: "x",
+    name: "Child",
+    instructions: "Review PRs.",
+  });
+  expect(client.createAgent).toHaveBeenLastCalledWith({
+    type: "x",
+    name: "Child",
+    instructions: "Review PRs.",
+  });
+  await callTool(client, {}, "agent_create", {
+    type: "x",
+    name: "Child",
+    instructions: " ",
+  });
+  expect(client.createAgent).toHaveBeenLastCalledWith({
+    type: "x",
+    name: "Child",
+  });
 });
 
 it("hands off to the agent in another of its conversations it can see", async () => {

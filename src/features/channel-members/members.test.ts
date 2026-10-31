@@ -1,10 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createRelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
 import { keypair, roster, signed } from "../relay/testing";
 import type { RelayEvent } from "../relay/events";
-import { addChannelMember, canAddMembers } from "./members";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+  canAddMembers,
+} from "./members";
 
 const cleanups: (() => void)[] = [];
 it.each([
@@ -964,4 +968,30 @@ it("adds the rest one at a time when the roster can't be read again between writ
   ]);
   expect(t.members()).toContain(t.agent.pubkey);
   expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("reads the roster again after a write that couldn't be sent", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  const outbox = t.session.outbox;
+  if (!outbox) throw new Error("Outbox unavailable");
+  // Another owner admits the agent while the people's write fails to send.
+  const send = vi.fn<typeof outbox.send>(() => {
+    t.admit(t.agent.pubkey);
+    throw new Error("Outbox storage is full");
+  });
+  const session = Object.create(t.session, {
+    outbox: { value: Object.create(outbox, { send: { value: send } }) },
+  }) as RelaySession;
+  const added = await addChannelMembersAtOnce(
+    session,
+    t.id,
+    [first, second, t.agent.pubkey],
+    new Map(),
+    new AbortController().signal,
+  );
+  // The roster read before the agent's write omits it, so nothing else is sent.
+  expect(send).toHaveBeenCalledOnce();
+  expect(added.size).toBe(0);
 });

@@ -63,6 +63,7 @@ mod microphone;
 
 mod notifications;
 mod os_idle;
+mod page;
 mod repositories_folder;
 mod window_controls;
 mod window_state;
@@ -1055,24 +1056,26 @@ pub fn run() {
             {
                 eprintln!("OAuth callback cleanup failed: {error}");
             }
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                // Processes belong to the page that started them, in its own webview.
+                webview.state::<HostProcesses>().page_load(webview.label());
+                webview.state::<HostMcpServers>().page_load(webview.label());
+                webview.state::<app_agents::AppAgentHost>().page_load(webview.label());
+                webview.state::<relay::Spools>().cancel_page(&webview.state::<relay::Uploads>(), webview.label());
+            }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<NsecBackupHost>().document_load();
-                webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
-                // Processes belong to the page that started them.
                 webview.state::<Huddles>().stop_all();
                 webview.state::<federated_identity::access::Registrations>().clear();
                 webview.state::<federated_identity::socket::Sockets>().clear();
                 webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();
-                webview.state::<HostProcesses>().stop_all();
-                webview.state::<HostMcpServers>().stop_all();
-                webview.state::<app_agents::AppAgentHost>().page_load();
             }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
+            if matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_page(&window.state::<relay::Uploads>(), window.label()); }
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

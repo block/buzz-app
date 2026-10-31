@@ -1091,6 +1091,10 @@
   --text-on-selection-own: var(--neutral-1);
   --surface-message: var(--bubble-received);
   --surface-message-own: var(--bubble-neutral);
+  --surface-message-hover: var(--bubble-hover);
+  --surface-message-own-hover: var(--bubble-own-hover);
+  --bubble-hover: color-mix(in srgb, var(--surface-message) 95%, black);
+  --bubble-own-hover: color-mix(in srgb, var(--surface-message-own) 95%, black);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --affordance-message-own-hover: var(--shade-quiet-fill);
@@ -1124,6 +1128,7 @@
   --icon-status-complete: var(--green-10);
   --icon-subtle: var(--text-subtle);
   --icon-subtle-own: var(--icon-subtle);
+  --text-metadata-own: var(--text-metadata);
   --icon-success: var(--green-11);
   --icon-success-own: var(--icon-success);
   --status-online: var(--green-11);
@@ -1221,6 +1226,10 @@
 .dark {
   --surface-message: var(--bubble-received);
   --surface-message-own: var(--bubble-neutral);
+  --surface-message-hover: var(--bubble-hover);
+  --surface-message-own-hover: var(--bubble-own-hover);
+  --bubble-hover: color-mix(in srgb, var(--surface-message) 95%, white);
+  --bubble-own-hover: color-mix(in srgb, var(--surface-message-own) 95%, white);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
   --affordance-message-own-hover: var(--tint-quiet-fill);
@@ -1265,6 +1274,7 @@
   --icon-status-complete: var(--green-10);
   --icon-subtle: var(--text-subtle);
   --icon-subtle-own: var(--icon-subtle);
+  --text-metadata-own: var(--text-metadata);
   --icon-success: var(--green-11);
   --icon-success-own: var(--icon-success);
   --status-online: var(--green-11);
@@ -1932,6 +1942,7 @@
   --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
   --icon-subtle-own: var(--text-message-link-own);
+  --text-metadata-own: var(--text-message-link-own);
   --icon-success-own: var(--text-message-link-own);
   --icon-categorical-purple-own: var(--text-message-link-own);
 }
@@ -1949,6 +1960,7 @@
   --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
   --icon-subtle-own: var(--text-message-link-own);
+  --text-metadata-own: var(--text-message-link-own);
   --icon-success-own: var(--text-message-link-own);
   --icon-categorical-purple-own: var(--text-message-link-own);
 }

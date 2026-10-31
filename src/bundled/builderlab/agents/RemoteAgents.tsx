@@ -13,7 +13,7 @@ import { IconButton } from "../../../shared/design-system/ui/IconButton";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import styles from "../Settings.module.css";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 import type { AgentClient, RemoteAgent } from "./client";
 
 export function RemoteAgents({
@@ -23,7 +23,7 @@ export function RemoteAgents({
   openAgents,
 }: {
   client: AgentClient;
-  session: OAuthSession;
+  session: BuilderlabSession;
   active(): boolean;
   openAgents?: (() => void) | undefined;
 }) {

@@ -41,8 +41,14 @@ import { addPullStateTool } from "./pull-state-tool";
 import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
 import { stateIcons } from "./pull-state-view";
 import { PullLink } from "./PullLink";
-import { SoloPullIcon, SoloPullLink, SoloPullMenu } from "./SoloPull";
+import {
+  SoloPullIcon,
+  SoloPullLink,
+  SoloPullMenu,
+  SoloPullLauncher,
+} from "./SoloPull";
 import { watchPulls } from "./watcher";
+import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 import { AuthorSettings } from "./AuthorSettings";
 
@@ -68,6 +74,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "object",
     title: "GitHub",
+    channelLauncher: (props) => (
+      <SoloPullLauncher {...props} relay={ctx.relay} pullsFor={pullsFor} />
+    ),
     deferUntilShown: true,
     matches: (target) => !!parseGitHubReference(target),
     component: (props: PanelProps) => {
@@ -108,7 +117,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerLink({
     id: "pull",
     title: "Pull request state",
-    matches: (url) => parseGitHubReference(url)?.kind === "pull",
+    matches: (url) =>
+      parseGitHubReference(url, { pullSubtargets: true })?.kind === "pull",
     // Links claims GitHub at the default band, 0, and a tie falls to the
     // contribution key; only a lower order makes this the pull request
     // renderer whichever plugin registered first. Repositories, issues and
@@ -184,7 +194,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   addPullStateTool(ctx.agents, states);
   // Agents can watch pull requests where the app runs them.
-  ctx.inject(["agents", "host"], (inner) => watchPulls(inner, states, gh));
+  ctx.inject(["agents", "host", "navigation"], (scope) =>
+    watchPulls(scope, states, gh, presentPull(scope.navigation)),
+  );
   // Whose comments and reviews wake them.
   ctx.inject(["settingsCards"], (scope) => {
     scope.settingsCards.register({

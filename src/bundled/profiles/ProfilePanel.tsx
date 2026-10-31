@@ -262,6 +262,9 @@ function ProfileDetails({
     "loading",
   );
   const [attempt, retry] = useState(0);
+  // Retry stays mounted and focusable while its own read is pending.
+  const [retrying, setRetrying] = useState(false);
+  const retryButton = useRef<HTMLButtonElement>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [tab, setTab] = useState<
     "info" | "activity" | "channels" | `agent:${string}`
@@ -317,10 +320,17 @@ function ProfileDetails({
     setStatus("loading");
     void session.profiles.ensure([pubkey]).then(
       () => {
-        if (active) setStatus("ready");
+        if (!active) return;
+        // Retry unmounts on success; hand its focus to the stable region.
+        if (document.activeElement === retryButton.current)
+          region.current?.focus();
+        setStatus("ready");
+        setRetrying(false);
       },
       () => {
-        if (active) setStatus("error");
+        if (!active) return;
+        setStatus("error");
+        setRetrying(false);
       },
     );
     return () => {
@@ -587,7 +597,8 @@ function ProfileDetails({
                   )}
                   <ProfilePublicMetadata nip05={profile?.nip05} />
                   {/* A verified overlay can exist while its kind-0 read failed. */}
-                  {(!profile || (profile.verified && status === "error")) &&
+                  {(!profile ||
+                    (profile.verified && (status === "error" || retrying))) &&
                     (status === "loading" ? (
                       <p role="status">Loading profile…</p>
                     ) : (
@@ -599,10 +610,16 @@ function ProfileDetails({
                     ))}
                   {((!profile && status !== "loading") ||
                     (profile?.verified && status === "error") ||
+                    retrying ||
                     ownership.failed) && (
                     <Button
+                      ref={retryButton}
                       size="compact"
-                      onClick={() => retry((value) => value + 1)}
+                      loading={retrying}
+                      onClick={() => {
+                        setRetrying(true);
+                        retry((value) => value + 1);
+                      }}
                     >
                       Retry profile
                     </Button>

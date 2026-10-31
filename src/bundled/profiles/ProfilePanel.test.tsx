@@ -28,6 +28,16 @@ import { keypair, profile, signed } from "../../features/relay/testing";
 
 const key = "a".repeat(64);
 afterEach(cleanup);
+
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
 it("updates a mounted profile from the shared name view without replacing its identity", async () => {
   let name = "Local name";
   let notify = () => {};
@@ -590,16 +600,19 @@ it("shows historical verification time and issuer, discloses cache, and hides di
   let sink:
     | import("../../features/relay/verified-profile").VerifiedProfileSink
     | undefined;
-  let profileRead = false;
+  // Kind-0 reads wait on the test; the first fails while the projection succeeds.
+  const profileReads: ReturnType<typeof deferred>[] = [];
   const owner = createRelaySession({
     viewer: person.pubkey,
     relayAuthor: relayKey.pubkey,
     scope: "wss://relay.example.test",
-    // The first kind-0 read fails while the verified projection succeeds.
     query: async (filters) => {
-      if (filters.some((filter) => filter.kinds?.includes(0)) && !profileRead) {
-        profileRead = true;
-        throw new Error("profile read rejected");
+      if (filters.some((filter) => filter.kinds?.includes(0))) {
+        const read = deferred();
+        profileReads.push(read);
+        if (profileReads.length === 1)
+          read.reject(new Error("profile read rejected"));
+        await read.promise;
       }
       return [];
     },
@@ -670,9 +683,31 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not load this profile.",
     );
-    await user.click(screen.getByRole("button", { name: "Retry profile" }));
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    const retryButton = screen.getByRole("button", { name: "Retry profile" });
+    // A pending retry keeps its focused control and announces the read.
+    await user.click(retryButton);
+    await waitFor(() => expect(profileReads).toHaveLength(2));
+    expect(retryButton).toHaveFocus();
+    expect(retryButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("Loading profile…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    await act(async () => profileReads[1]?.reject(new Error("still rejected")));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load this profile.",
+    );
+    expect(retryButton).toHaveFocus();
+    expect(retryButton).not.toHaveAttribute("aria-busy");
+    // Success removes Retry and hands its focus to the profile region.
+    await user.click(retryButton);
+    await waitFor(() => expect(profileReads).toHaveLength(3));
+    await act(async () => profileReads[2]?.resolve());
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry profile" })).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Profile details" }),
+    ).toHaveFocus();
     expect(screen.getByText("Name verified by Example")).toBeVisible();
     expect(screen.getByText(/Last verified/)).toHaveTextContent(/1970/);
     expect(screen.getByText(/current issuer endorsement/)).toBeVisible();
@@ -684,6 +719,7 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     expect(screen.queryByText("Alice Example")).toBeNull();
     expect(screen.queryByText(/Cached verification/)).toBeNull();
   } finally {
+    for (const read of profileReads) read.resolve();
     cleanup();
     owner.dispose();
   }

@@ -5993,6 +5993,64 @@ it("a copy of the app that does not hold the agent sends nothing to the classifi
   expect(run).not.toHaveBeenCalled();
 });
 
+it("keeps a watched event to classify while custody is uncertain, and classifies it once held", async () => {
+  vi.useFakeTimers();
+  const jev = fakeJev();
+  const { service, native, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  native.claim.mockClear();
+  native.claim.mockRejectedValue(new Error("Transient native custody failure"));
+  const pending = event("w", { content: "shipping v2" });
+  emit({ events: [pending] });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalled());
+  // A wake while custody is still uncertain classifies nothing.
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(jev.decide).not.toHaveBeenCalled();
+  const reclaimStarted = runnerGate();
+  const reclaim = runnerGate<boolean>();
+  native.claim.mockImplementation(async () => {
+    reclaimStarted.resolve();
+    return reclaim.promise;
+  });
+  try {
+    // The runner's wake interval retries it; no new event re-delivers it.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await reclaimStarted.promise;
+    expect(jev.decide).not.toHaveBeenCalled();
+    reclaim.resolve(true);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(jev.decide).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      event: pending,
+      classifier: { outcome: "passed" },
+    });
+  } finally {
+    reclaim.resolve(false);
+  }
+});
+
+it("drops a watched event to classify while another copy of the app holds the agent", async () => {
+  vi.useFakeTimers();
+  const jev = fakeJev();
+  const { service, native, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  native.claim.mockClear();
+  native.claim.mockResolvedValue(false);
+  emit({ events: [event("w1", { content: "shipping v2" })] });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalled());
+  await vi.advanceTimersByTimeAsync(5_000);
+  native.claim.mockResolvedValue(true);
+  await vi.advanceTimersByTimeAsync(5_000);
+  // Classified results queue in arrival order, so the next event's run is
+  // the barrier: a kept first event would be classified and run before it.
+  const next = event("w2", { content: "shipping v3" });
+  emit({ events: [next] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(jev.decide).toHaveBeenCalledOnce();
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({ event: next });
+});
+
 it("gives the classifier Buzz's thread parent: the marked reply, in any case; a lone root is no reply", async () => {
   const jev = fakeJev();
   const { native, emit } = await classifiedAgent(jev);

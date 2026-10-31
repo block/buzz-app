@@ -570,6 +570,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   agents={services.agents}
                   chatIcons={services.conversation.chatIcons}
                   chatMenus={services.conversation.chatMenus}
+                  conversationSections={
+                    services.conversation.conversationSections
+                  }
                   sidebarSections={services.sidebarSections}
                   target={workspace.target}
                 >

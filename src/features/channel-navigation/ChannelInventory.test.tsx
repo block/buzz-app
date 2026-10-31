@@ -43,6 +43,8 @@ import {
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "../../app/shell/PrimarySidebar.module.css";
+import type { ContributionReader } from "../conversation/contracts";
+import type { ConversationSection } from "../conversation/service";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
   rowRender: vi.fn(),
@@ -110,6 +112,7 @@ function fixture(
     { id: "gamma", name: "gamma", channelType: "stream" },
   ],
   sidebarSections?: SidebarSections,
+  conversationSections?: ContributionReader<ConversationSection>,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -208,6 +211,7 @@ function fixture(
           <PrimarySidebar
             relay={relay}
             navigator={navigator}
+            conversationSections={conversationSections}
             target={{
               version: 1,
               kind: "conversation",
@@ -1872,4 +1876,109 @@ it("opening a shared chat lists it once, with the viewer's chats", async () => {
   const rows = await screen.findAllByRole("button", { name: "beta" });
   expect(rows).toHaveLength(1);
   expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
+});
+
+it("lists a contributed section's sidebar rows above Solo and Team, eight until Show more", async () => {
+  const user = userEvent.setup();
+  const streams = Array.from({ length: 10 }, (_, i) => ({
+    id: `c${i}`,
+    name: `c${i}`,
+    channelType: "stream" as const,
+  }));
+  const chat = { id: "s0", name: "s0", channelType: "solo" as const };
+  const dm = { id: "d0", name: "d0", channelType: "dm" as const };
+  let ids: readonly string[] = [
+    "c9",
+    "s0",
+    "d0",
+    "missing",
+    ...streams.map(({ id }) => id),
+  ];
+  const listeners = new Set<() => void>();
+  const channels = vi.fn(() => ({
+    snapshot: () => ids,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  }));
+  const contribution = {
+    id: "recent",
+    title: "Recent",
+    channels,
+    key: "test.plugin/recent",
+    pluginId: "test.plugin",
+    revision: "1",
+  };
+  const failing = (fail: "factory" | "snapshot") => ({
+    ...contribution,
+    id: fail,
+    key: `test.plugin/${fail}`,
+    channels: () => {
+      if (fail === "factory") throw new Error("factory");
+      return {
+        snapshot: () => {
+          throw new Error("snapshot");
+        },
+        subscribe: () => () => {},
+      };
+    },
+  });
+  // Failing sections are dropped without taking the sidebar down.
+  const contributions = [failing("factory"), contribution, failing("snapshot")];
+  const f = fixture(undefined, "ready", [...streams, chat, dm], undefined, {
+    snapshot: () => contributions,
+    subscribe: () => () => {},
+  });
+  render(f.view("c0"));
+  const container = document;
+  const sections = () =>
+    [...container.querySelectorAll("[data-sidebar-section]")].map((node) =>
+      node.getAttribute("data-sidebar-section"),
+    );
+  const recent = () =>
+    [
+      ...container.querySelectorAll(
+        '[data-sidebar-section="plugin:test.plugin/recent"] [data-channel-id]',
+      ),
+    ].map((row) => row.getAttribute("data-channel-id"));
+  await waitFor(() => expect(sections()[0]).toBe("plugin:test.plugin/recent"));
+  expect(sections()).toContain("channels");
+  expect(channels).toHaveBeenCalledWith(f.session);
+  // One list of Solo, Team and DM rows, above Solo and Team.
+  expect(recent()).toEqual(["c9", "s0", "d0", "c0", "c1", "c2", "c3", "c4"]);
+  const section = container.querySelector(
+    '[data-sidebar-section="plugin:test.plugin/recent"]',
+  );
+  expect(
+    section?.compareDocumentPosition(
+      screen.getByRole("region", { name: "Solo" }),
+    ),
+  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  await user.click(
+    screen.getByRole("button", { name: "Show more conversations in Recent" }),
+  );
+  expect(recent()).toEqual(["c9", "s0", "d0", ...streams.map(({ id }) => id)]);
+  await user.click(
+    screen.getByRole("button", { name: "Show fewer conversations in Recent" }),
+  );
+  expect(recent()).toHaveLength(8);
+  act(() => {
+    ids = ["c3"];
+    for (const listener of listeners) listener();
+  });
+  expect(recent()).toEqual(["c3"]);
+  expect(
+    screen.queryByRole("button", { name: /conversations in Recent/ }),
+  ).not.toBeInTheDocument();
+  // The Solo and Team tabs stay scoped to their own lists.
+  await user.click(screen.getByRole("tab", { name: "Team" }));
+  expect(sections()).not.toContain("plugin:test.plugin/recent");
+  await user.click(screen.getByRole("tab", { name: "All" }));
+  expect(recent()).toEqual(["c3"]);
+  act(() => {
+    ids = ["missing"];
+    for (const listener of listeners) listener();
+  });
+  expect(sections()).not.toContain("plugin:test.plugin/recent");
 });

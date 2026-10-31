@@ -6,6 +6,21 @@ import { useId, type ReactElement, type ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import styles from "./ChannelSidebarRow.module.css";
 
+/** A sidebar row's unread and working indicators, inset to one trailing edge. */
+export function RowIndicators({
+  working = false,
+  children,
+}: {
+  working?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span className={styles.badges} data-working={working || undefined}>
+      {children}
+    </span>
+  );
+}
+
 export function ChannelSidebarRow({
   channel,
   icon,
@@ -67,11 +82,7 @@ export function ChannelSidebarRow({
         </span>
       }
       trailing={
-        badge && (
-          <span className={styles.badges} data-working={working || undefined}>
-            {badge}
-          </span>
-        )
+        badge && <RowIndicators working={working}>{badge}</RowIndicators>
       }
     />
   );

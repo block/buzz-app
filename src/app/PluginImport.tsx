@@ -378,10 +378,13 @@ export function PluginImport({
     });
   }, [reviewRequested]);
 
+  // A request retired by its requester while Find or an install is in flight is
+  // released once that settles; until then it can't be confirmed.
+  const retired = !!bound && request?.id !== bound.id;
   const releaseExternally = useEffectEvent(() => void close());
   useEffect(() => {
-    if (bound && request?.id !== bound.id) releaseExternally();
-  }, [bound, request]);
+    if (retired && !busy && !loading && !discarding) releaseExternally();
+  }, [retired, busy, loading, discarding]);
 
   const blocked = busy || loading || discarding;
   if (!imports) return null;
@@ -819,9 +822,12 @@ export function PluginImport({
                     ref={installButton}
                     variant="prominent"
                     type="button"
-                    disabled={blocked || existing?.source === "bundled"}
+                    disabled={
+                      blocked || retired || existing?.source === "bundled"
+                    }
                     onClick={async () => {
-                      if (blocked || pending.current || pinError) return;
+                      if (blocked || retired || pending.current || pinError)
+                        return;
                       const current = lifetime.current;
                       pending.current = true;
                       setLoading(true);

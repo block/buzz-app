@@ -866,6 +866,67 @@ it("hands a plugin install link to the host for review without navigating or bin
   }
 });
 
+it("revokes a delegated install link when a newer link, navigation or viewer supersedes it", async () => {
+  const queue: string[] = [];
+  let ping: () => void = () => {};
+  let client: Client = { status: "ready", viewer, selected: null };
+  const changed = new Set<() => void>();
+  const revokes: ReturnType<typeof vi.fn>[] = [];
+  const pluginInstall = vi.fn(() => {
+    const revoke = vi.fn();
+    revokes.push(revoke);
+    return revoke;
+  });
+  const host = createNavigationController(createMemoryHistory());
+  const stop = bindDeepLinks(
+    { navigation: host.navigation, fail: vi.fn(), pluginInstall },
+    {
+      snapshot: () => client,
+      subscribe(fn) {
+        changed.add(fn);
+        return () => changed.delete(fn);
+      },
+    },
+    {
+      take: async () => queue.splice(0),
+      watch(fn) {
+        ping = fn;
+        return () => {};
+      },
+    },
+  );
+  const deliver = async (url: string) => {
+    queue.push(url);
+    ping();
+    await settle();
+  };
+  try {
+    await settle();
+    await deliver(installLink);
+    expect(revokes[0]).not.toHaveBeenCalled();
+    await deliver("buzz://settings");
+    expect(revokes[0]).toHaveBeenCalledOnce();
+
+    await deliver(installLink);
+    void host.navigation.open({ version: 1, kind: "home" });
+    await settle();
+    expect(revokes[1]).toHaveBeenCalledOnce();
+
+    await deliver(installLink);
+    client = { status: "ready", viewer: "b".repeat(64), selected: null };
+    for (const fn of changed) fn();
+    expect(revokes[2]).toHaveBeenCalledOnce();
+
+    client = { status: "ready", viewer, selected: null };
+    await deliver(installLink);
+    stop();
+    expect(revokes[3]).toHaveBeenCalledOnce();
+  } finally {
+    stop();
+    host.dispose();
+  }
+});
+
 it("holds a plugin install link until the client is signed in and ready", async () => {
   const queue = [installLink];
   let client: Client = { status: "loading", selected: null };

@@ -383,7 +383,8 @@ export function createPluginInstallCore({
 }
 export type PluginInstallCore = ReturnType<typeof createPluginInstallCore>;
 
-/** Holds an OS link through plugin settings loading, newest link first. */
+/** Holds an OS link through plugin settings loading, newest link first, until
+ * the returned function revokes it. */
 export function createPluginInstallLinkHandler({
   plugins,
   core,
@@ -409,7 +410,10 @@ export function createPluginInstallLinkHandler({
           });
       });
     };
-    if (plugins.snapshot().configuration.status !== "loading") return run();
+    if (plugins.snapshot().configuration.status !== "loading") {
+      run();
+      return () => {};
+    }
     const stop = plugins.subscribe(() => {
       if (plugins.snapshot().configuration.status === "loading") return;
       stop();
@@ -417,6 +421,11 @@ export function createPluginInstallLinkHandler({
       run();
     });
     stopWaiting = stop;
+    return () => {
+      if (stopWaiting !== stop) return;
+      stop();
+      stopWaiting = undefined;
+    };
   };
   return {
     handle,

@@ -30,7 +30,9 @@ export type DeepLinkHost = Readonly<{
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
   /** Plugin installation review belongs to Settings, never to navigation. */
-  pluginInstall?: (link: PluginInstallLink) => void;
+  /** May keep the link waiting; the returned function revokes it once a newer
+   * navigation, link or viewer supersedes it. */
+  pluginInstall?: (link: PluginInstallLink) => (() => void) | undefined;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
@@ -113,6 +115,12 @@ export function bindDeepLinks(
         reported: boolean;
       }
     | undefined;
+  let delegated: (() => void) | undefined;
+  const revoke = () => {
+    const stop = delegated;
+    delegated = undefined;
+    stop?.();
+  };
   let attempt = host.navigation.snapshot().attempt;
   let client = communities.snapshot();
   let clientEpoch = 0;
@@ -138,7 +146,8 @@ export function bindDeepLinks(
       return Promise.resolve({ status: "failed", reason: "unavailable" });
     if (install && host.pluginInstall) {
       held = undefined;
-      host.pluginInstall(install);
+      revoke();
+      delegated = host.pluginInstall(install) ?? undefined;
       return Promise.resolve({ status: "cancelled" });
     }
     if (invite && (!client.viewer || client.status !== "ready")) {
@@ -214,6 +223,7 @@ export function bindDeepLinks(
           }
         }
         if (url === undefined) continue;
+        revoke();
         const client = communities.snapshot();
         held = {
           url,
@@ -233,6 +243,7 @@ export function bindDeepLinks(
   };
   const stopClient = communities.subscribe(() => {
     const next = communities.snapshot();
+    if (client.viewer && client.viewer !== next.viewer) revoke();
     if (
       (client.viewer && client.viewer !== next.viewer) ||
       (client.selected &&
@@ -248,7 +259,10 @@ export function bindDeepLinks(
     const next = host.navigation.snapshot();
     // fail() emits synchronously; its ingress marker distinguishes our failure
     // from a newer user visit, including Back/Forward and Go Home.
-    if (next.attempt.id !== attempt.id && !next.ingress) held = undefined;
+    if (next.attempt.id !== attempt.id && !next.ingress) {
+      held = undefined;
+      revoke();
+    }
     attempt = next.attempt;
   });
   // A broken shell bridge must never keep the app from opening.
@@ -266,6 +280,7 @@ export function bindDeepLinks(
     stopNavigation();
     stopShell();
     held = undefined;
+    revoke();
   };
 }
 

@@ -2103,6 +2103,26 @@ it("shows the native refusal when the reference no longer resolves to the pinned
   expect(discard).not.toHaveBeenCalled();
 });
 
+it("closes a request its requester retired during Find once Find settles, without offering Install", async () => {
+  const harness = requestedHarness(requestedPreview(pinned));
+  let finish: (preview: ImportPreview) => void = () => {};
+  harness.git.mockImplementationOnce(
+    () => new Promise<ImportPreview>((resolve) => (finish = resolve)),
+  );
+  const view = render(harness.element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await waitFor(() => expect(harness.git).toHaveBeenCalledOnce());
+  view.rerender(
+    <PluginImport {...harness.element.props} request={undefined} />,
+  );
+  await act(async () => finish(requestedPreview(pinned)));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(harness.discard).toHaveBeenCalledWith("requested-token");
+  expect(harness.settled).toHaveBeenCalledWith(7, "cancelled");
+  expect(harness.installImport).not.toHaveBeenCalled();
+  expect(harness.release).toHaveBeenCalledOnce();
+});
+
 it("passes no commit for an unpinned request", async () => {
   const { git, element } = requestedHarness(requestedPreview(pinned), {});
   render(element);

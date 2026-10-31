@@ -10,6 +10,9 @@ import {
   type PluginInstallOrigin,
 } from "./installer";
 import type { ConfigurationState, PluginInfo } from "./types";
+import { bindDeepLinks } from "../features/navigation/deep-links";
+import { createNavigationController } from "../features/navigation/controller";
+import { createMemoryHistory } from "../features/navigation/history";
 
 const commit = "0123456789abcdef0123456789abcdef01234567";
 const base = {
@@ -610,6 +613,62 @@ it("submits at once when settings are loaded, and reports a refusal with a retry
   expect(t.submit).toHaveBeenCalledTimes(2);
   await Promise.resolve();
   expect(t.fail).toHaveBeenCalledOnce();
+});
+
+it("revokes only the OS link it was returned for", () => {
+  const revoked = linkHandler({ status: "loading" });
+  revoked.handler.handle({ source: base })();
+  revoked.become(ready([]));
+  expect(revoked.submit).not.toHaveBeenCalled();
+
+  const t = linkHandler({ status: "loading" });
+  const stale = t.handler.handle({ source: base });
+  t.handler.handle({ source: { ...base, reference: "newer" } });
+  stale();
+  t.become(ready([]));
+  expect(t.submit).toHaveBeenCalledExactlyOnceWith({
+    ...base,
+    reference: "newer",
+  });
+});
+
+it("drops an install link waiting for plugin settings once newer navigation wins", async () => {
+  const run = async (navigateFirst: boolean) => {
+    const t = linkHandler({ status: "loading" });
+    t.submit.mockResolvedValue("installed");
+    const host = createNavigationController(createMemoryHistory());
+    const queue = [
+      `buzz://plugin-install?${new URLSearchParams({ repository: base.repository, ref: "v1" })}`,
+    ];
+    const stop = bindDeepLinks(
+      {
+        navigation: host.navigation,
+        fail: vi.fn(),
+        pluginInstall: t.handler.handle,
+      },
+      {
+        snapshot: () => ({
+          status: "ready",
+          viewer: "a".repeat(64),
+          selected: null,
+        }),
+        subscribe: () => () => {},
+      },
+      { take: async () => queue.splice(0), watch: () => () => {} },
+    );
+    try {
+      await vi.waitFor(() => expect(t.listeners.size).toBe(1));
+      if (navigateFirst)
+        void host.navigation.open({ version: 1, kind: "settings" });
+      t.become(ready([]));
+      return t.submit.mock.calls.length;
+    } finally {
+      stop();
+      host.dispose();
+    }
+  };
+  expect(await run(false)).toBe(1);
+  expect(await run(true)).toBe(0);
 });
 
 it("stops waiting for settings when disposed", () => {

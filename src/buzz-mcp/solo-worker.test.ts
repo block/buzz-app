@@ -440,6 +440,30 @@ describe("solo_worker_connections", () => {
       /No owner has authorized you/,
     );
   });
+
+  it("follows the highest revision when acknowledgements share a second", async () => {
+    const harness = community();
+    harness.sign(
+      OWNER,
+      recordTemplate({
+        ...ACK,
+        state: "revoked",
+        grant: { id: "g1", revision: 4 },
+      }),
+      START,
+    );
+    // The relay lists the older revision first.
+    const current = harness.client.query;
+    harness.client.query = async (filters) =>
+      [...(await current(filters))].sort(
+        (a, b) =>
+          (readRecord(a, "grant_ack")?.grant.revision ?? 0) -
+          (readRecord(b, "grant_ack")?.grant.revision ?? 0),
+      );
+    expect(
+      (await harness.call("solo_worker_connections")).connections[0].state,
+    ).toBe("revoked");
+  });
 });
 
 describe("a change", () => {

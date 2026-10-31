@@ -515,9 +515,17 @@ async function connections(client: BuzzClient, clock: Clock) {
       authors: [owner],
       limit: ACK_HORIZON,
     });
-    const ack = events
-      .map((event) => readRecord(event, "grant_ack"))
-      .find((record) => record?.controller === client.pubkey);
+    // The highest revision is the owner's latest word on the grant; records
+    // from the same second come back in no useful order.
+    let ack: GrantAck | undefined;
+    for (const event of events) {
+      const record = readRecord(event, "grant_ack");
+      if (
+        record?.controller === client.pubkey &&
+        (!ack || record.grant.revision > ack.grant.revision)
+      )
+        ack = record;
+    }
     if (ack) found.push(ack);
   }
   return { connections: found, complete };

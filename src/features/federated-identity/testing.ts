@@ -17,6 +17,8 @@ export function federatedFixture(
       id: "test",
       identityOrigin: "https://builderlab.example",
       apiBasePath: "/api/goose/",
+      signIn: "on-demand",
+      organization: null,
     },
     revision: `${revision}:0`,
     email: null,

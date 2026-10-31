@@ -18,6 +18,8 @@ const signedOut: SessionSnapshot = {
     id: "test",
     identityOrigin: "https://identity.example",
     apiBasePath: "/api/",
+    signIn: "on-demand",
+    organization: null,
   },
   revision: "out",
   email: null,

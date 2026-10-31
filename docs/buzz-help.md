@@ -29,6 +29,11 @@ the interface unless an available tool actually supports that action.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- Some organization builds ask you to sign in to your organization when Buzz
+  opens, and again when that sign-in ends. Finish in the browser and Buzz opens.
+  **Not now** opens Buzz anyway, but that organization's communities stay
+  unavailable until you sign in. Sign-in and sign-out also live under
+  **Settings → Buzz → Identity → Organization sign-in**.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community.

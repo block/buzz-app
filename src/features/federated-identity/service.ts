@@ -17,6 +17,10 @@ export type SessionSnapshot = Readonly<{
     id: string;
     identityOrigin: string;
     apiBasePath: string;
+    /** `at-launch` builds sign in before the app opens; see LaunchSignIn. */
+    signIn: "on-demand" | "at-launch";
+    /** Display name for sign-in copy, such as "Block". */
+    organization: string | null;
   }> | null;
   revision: string;
   email: string | null;

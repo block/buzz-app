@@ -8,9 +8,13 @@ const resultText = (content) =>
   content.every((block) => typeof block?.text === "string")
     ? content.map((block) => block.text).join("\n")
     : content;
-// Buzz events carry `Content: <message>` followed by a `Tags:` line.
-const buzzRequest = (value) =>
-  value.match(/^Content: ([\s\S]*?)\nTags: /m)?.[1];
+// Buzz events end with a quoted `Request:` line; older ones carry
+// `Content: <message>` followed by a `Tags:` line.
+const buzzRequest = (value) => {
+  const quoted = value.match(/^Request: (".*")$/m)?.[1];
+  if (quoted) return JSON.parse(quoted);
+  return value.match(/^Content: ([\s\S]*?)\nTags: /m)?.[1];
+};
 // Name a tool call's target; shell commands already show as the input.
 const target = (input) =>
   ["file_path", "description", "pattern", "url", "query"]

@@ -24,6 +24,8 @@ const signedOut: SessionSnapshot = {
   revision: "out",
   email: null,
   failure: null,
+  expiresAt: null,
+  expiring: false,
 };
 const signedIn: SessionSnapshot = {
   ...signedOut,

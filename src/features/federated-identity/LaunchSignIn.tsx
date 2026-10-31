@@ -9,7 +9,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../../shared/design-system/ui/Button";
-import { launchVisible, setLaunchReady } from "../../app/launch";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import {
+  launchVisible,
+  setLaunchReady,
+  subscribeLaunch,
+} from "../../app/launch";
 import { OnboardingScreen } from "../identity/OnboardingScreen";
 import styles from "../identity/IdentitySetup.module.css";
 import { recoveryMessage } from "./CommunitySignIn";
@@ -103,16 +108,18 @@ export function LaunchSignIn({
     if (showing && launchVisible()) setLaunchReady(true);
   }, [showing]);
 
-  // Return focus to where it was in the app when a session ends mid-run.
+  // Return focus to where it was in the app when a session ends mid-run,
+  // including the app's portaled dialogs. Layout timing stops listening
+  // before the sign-in screen takes focus.
   const focus = useRef<HTMLElement | null>(null);
-  const app = useCallback((element: HTMLDivElement | null) => {
-    if (!element) return;
+  useLayoutEffect(() => {
+    if (showing) return;
     const remember = (event: FocusEvent) => {
       if (event.target instanceof HTMLElement) focus.current = event.target;
     };
-    element.addEventListener("focusin", remember);
-    return () => element.removeEventListener("focusin", remember);
-  }, []);
+    document.addEventListener("focusin", remember);
+    return () => document.removeEventListener("focusin", remember);
+  }, [showing]);
   useLayoutEffect(() => {
     if (!showing && focus.current?.isConnected) focus.current.focus();
   }, [showing]);
@@ -143,7 +150,6 @@ export function LaunchSignIn({
       {opened && (
         // Covered rather than `hidden`: display none would drop scroll offsets.
         <div
-          ref={app}
           className="contents"
           inert={showing}
           style={showing ? { visibility: "hidden" } : undefined}
@@ -152,6 +158,66 @@ export function LaunchSignIn({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * In `at-launch` builds, warns while the organization session nears its end
+ * and lets the person sign in again without leaving the app. If they don't,
+ * LaunchSignIn takes over the window when it ends.
+ */
+export function SignInEnding({ identity }: { identity: FederatedIdentity }) {
+  const state = useSyncExternalStore(
+    identity.subscribe,
+    identity.snapshot,
+    identity.snapshot,
+  );
+  const [renewing, setRenewing] = useState(false);
+  if (
+    !identity.apiAvailable ||
+    state.authority?.signIn !== "at-launch" ||
+    state.status !== "signed-in" ||
+    !state.expiring ||
+    !state.expiresAt
+  )
+    return null;
+  const name = state.authority.organization ?? "organization";
+  const ends = new Date(state.expiresAt).toLocaleString(undefined, {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return (
+    <ToastNotice
+      tone="warning"
+      title={`Your ${name} sign-in ends ${ends}`}
+      description={
+        renewing
+          ? "Finish signing in in your browser."
+          : state.failure
+            ? recoveryMessage(state.failure)
+            : "Sign in again to keep Buzz open."
+      }
+    >
+      {renewing ? (
+        <Button size="sm" onClick={() => void identity.cancelSignIn()}>
+          Cancel
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          onClick={() => {
+            setRenewing(true);
+            void identity
+              .signIn()
+              .catch(() => {})
+              .finally(() => setRenewing(false));
+          }}
+        >
+          Sign in again
+        </Button>
+      )}
+    </ToastNotice>
   );
 }
 
@@ -201,6 +267,10 @@ function SignInScreen({
   dismiss(): void;
 }) {
   const [failure, setFailure] = useState("");
+  // At launch the window is inert under the launch mark, where autofocus
+  // can't land; focus the primary action once the mark leaves.
+  const primary = useRef<HTMLButtonElement>(null);
+  useEffect(() => subscribeLaunch(() => primary.current?.focus()), []);
   const organization = state.authority?.organization ?? null;
   const name = organization ?? "your organization";
   const communities = organization
@@ -264,16 +334,13 @@ function SignInScreen({
           {recoveryMessage(problem)}
         </p>
       )}
-      {checking ? (
-        <Button size="lg" variant="ghost" onClick={dismiss}>
-          Not now
-        </Button>
-      ) : signingIn ? (
+      {signingIn ? (
         <>
           <p role="status" className="sr-only">
             Waiting for you to finish signing in.
           </p>
           <Button
+            ref={primary}
             // Reopening passes through signed out; keep focus on the way back.
             autoFocus
             size="lg"
@@ -298,20 +365,26 @@ function SignInScreen({
       ) : (
         <>
           <Button
+            ref={primary}
             autoFocus
             size="lg"
             variant="prominent"
+            // No way out while it checks: the attempt may go on to open
+            // the browser.
+            loading={checking}
             onClick={() => run(() => identity.signIn())}
           >
-            {unreachable
+            {unreachable || checking
               ? "Try again"
               : organization
                 ? `Sign in with ${organization}`
                 : "Sign in"}
           </Button>
-          <Button size="lg" variant="ghost" onClick={dismiss}>
-            Not now
-          </Button>
+          {!checking && (
+            <Button size="lg" variant="ghost" onClick={dismiss}>
+              Not now
+            </Button>
+          )}
         </>
       )}
     </OnboardingScreen>

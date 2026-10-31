@@ -62,6 +62,7 @@ pub(super) fn record() -> Arc<Session> {
         revision: uuid::Uuid::new_v4().to_string(),
         session_token: "fixture-session-token".into(),
         expires_at: "2099-01-01T00:00:00Z".into(),
+        issued_at: 0,
         email: None,
     };
     let raw = Zeroizing::new(serde_json::to_vec(&record).unwrap());
@@ -186,7 +187,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 5);
+    assert_eq!(public.as_object().unwrap().len(), 7);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 
@@ -621,4 +622,205 @@ async fn sign_out_during_shared_restore_prevents_late_installation() {
     assert!(owner.state().session.is_none());
     assert!(store.raw.lock().unwrap().is_none());
     assert_eq!(settled(served).await.len(), 1);
+}
+
+#[test]
+fn expiry_warning_leads_by_72_hours_or_half_the_lifetime() {
+    const HOUR: i64 = 60 * 60;
+    let issued = 1_000_000;
+    let week = issued + 7 * 24 * HOUR;
+    assert_eq!(warning_at(issued, week), week - 72 * HOUR);
+    let shift = issued + 8 * HOUR;
+    assert_eq!(warning_at(issued, shift), issued + 4 * HOUR);
+    // Records saved before issue time was kept warn 72 hours ahead.
+    assert_eq!(warning_at(0, week), week - 72 * HOUR);
+}
+
+#[test]
+fn expiry_watch_follows_the_wall_clock_across_sleep() {
+    use std::time::Duration;
+    let (warn, expires) = (1_000, 2_000);
+    assert_eq!(
+        due(0, warn, expires, false),
+        Due::Wait(Duration::from_secs(60))
+    );
+    assert_eq!(
+        due(990, warn, expires, false),
+        Due::Wait(Duration::from_secs(10))
+    );
+    assert_eq!(due(warn, warn, expires, false), Due::Warn);
+    assert_eq!(
+        due(1_990, warn, expires, true),
+        Due::Wait(Duration::from_secs(10))
+    );
+    assert_eq!(due(expires, warn, expires, true), Due::Expire);
+    // Waking past both points ends the session without a stale warning.
+    assert_eq!(due(5_000, warn, expires, false), Due::Expire);
+}
+
+fn signed_in_at(
+    store: Arc<Memory>,
+    base: String,
+    email: &str,
+) -> (FederatedIdentity, Arc<Session>) {
+    let host = at_adapter(store.clone(), base);
+    let mut current = record();
+    let session = Arc::get_mut(&mut current).unwrap();
+    session.record.email = Some(email.into());
+    session.raw = Zeroizing::new(serde_json::to_vec(&session.record).unwrap());
+    *store.raw.lock().unwrap() = Some(current.raw.clone());
+    {
+        let mut state = host.state();
+        state.restored = true;
+        host.install_session(&mut state, current.clone());
+    }
+    (host, current)
+}
+
+#[tokio::test]
+async fn the_expiry_watch_warns_then_ends_the_session_at_expiry() {
+    let store = Arc::new(Memory::default());
+    let (host, _) = signed_in_at(
+        store.clone(),
+        "https://identity.example".into(),
+        "a@example.com",
+    );
+    let now = now().unwrap();
+    let mut short = record();
+    let session = Arc::get_mut(&mut short).unwrap();
+    session.record.issued_at = now - 2;
+    session.record.expires_at = chrono::DateTime::from_timestamp(now + 2, 0)
+        .unwrap()
+        .to_rfc3339();
+    session.raw = Zeroizing::new(serde_json::to_vec(&session.record).unwrap());
+    *store.raw.lock().unwrap() = Some(short.raw.clone());
+    let mut changes = host.0.changes.subscribe();
+    {
+        let mut state = host.state();
+        host.reset(&mut state);
+        host.install_session(&mut state, short);
+    }
+    assert!(!host.snapshot().expiring);
+    let warned = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        changes.wait_for(|snapshot| snapshot.expiring),
+    )
+    .await
+    .is_ok();
+    assert!(warned);
+    assert!(host.snapshot().status == Status::SignedIn);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        changes.wait_for(|snapshot| snapshot.status == Status::ReauthenticationRequired),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(host.state().session.is_none());
+    assert!(store.raw.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
+    let (base, server) = adapter(vec![
+        serde_json::json!({"session_token":"renewed-session-token","expires_at":"2099-02-01T00:00:00Z"}),
+        serde_json::json!({"expires_at":"2099-02-01T00:00:00Z","email":"a@example.com"}),
+    ])
+    .await;
+    let store = Arc::new(Memory::default());
+    let (host, old) = signed_in_at(store.clone(), base, "a@example.com");
+    let changes = host.account_changes();
+    let retirements = host.retirements();
+    let revision = host.snapshot().revision;
+    let cancel = {
+        let mut state = host.state();
+        let cancel = state.cancellation.child_token();
+        state.renewal = Some(cancel.clone());
+        cancel
+    };
+    // The old session still lends its token while the browser flow runs.
+    assert_eq!(
+        host.with_session(|token, _, _| token.to_string())
+            .as_deref(),
+        Some("fixture-session-token")
+    );
+    host.finish_login("code", "secret", &revision, &cancel)
+        .await
+        .unwrap();
+    host.renewed(&revision, &cancel, Ok(()));
+    let snapshot = host.snapshot();
+    assert!(snapshot.status == Status::SignedIn);
+    assert_ne!(snapshot.revision, revision);
+    assert_eq!(snapshot.expires_at.as_deref(), Some("2099-02-01T00:00:00Z"));
+    assert!(host.state().renewal.is_none());
+    assert_eq!(
+        host.with_session(|token, _, _| token.to_string())
+            .as_deref(),
+        Some("renewed-session-token")
+    );
+    assert_ne!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
+    assert_eq!(*changes.borrow(), Some(SessionChange::Refreshed));
+    assert_eq!(host.retirements(), retirements);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_canceled_or_failed_renewal_leaves_the_session_intact() {
+    let (base, server) =
+        adapter_with_status(vec![(400, serde_json::json!({"error":"invalid_grant"}))]).await;
+    let store = Arc::new(Memory::default());
+    let (host, old) = signed_in_at(store.clone(), base, "a@example.com");
+    let revision = host.snapshot().revision;
+    let renew = || {
+        let mut state = host.state();
+        let cancel = state.cancellation.child_token();
+        state.renewal = Some(cancel.clone());
+        cancel
+    };
+
+    let canceled = renew();
+    host.cancel_sign_in();
+    assert!(canceled.is_cancelled());
+    let result = host
+        .finish_login("code", "secret", &revision, &canceled)
+        .await;
+    host.renewed(&revision, &canceled, result);
+
+    let failed = renew();
+    let result = host
+        .finish_login("code", "secret", &revision, &failed)
+        .await;
+    assert!(result.is_err());
+    host.renewed(&revision, &failed, result);
+
+    let snapshot = host.snapshot();
+    assert!(snapshot.status == Status::SignedIn);
+    assert_eq!(snapshot.revision, revision);
+    assert!(snapshot.failure.is_some());
+    assert!(host.state().renewal.is_none());
+    assert!(Arc::ptr_eq(host.state().session.as_ref().unwrap(), &old));
+    assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_renewal_into_another_account_retires_derived_state() {
+    let (base, server) = adapter(vec![
+        serde_json::json!({"session_token":"other-session-token","expires_at":"2099-02-01T00:00:00Z"}),
+        serde_json::json!({"expires_at":"2099-02-01T00:00:00Z","email":"b@example.com"}),
+    ])
+    .await;
+    let store = Arc::new(Memory::default());
+    let (host, _) = signed_in_at(store, base, "a@example.com");
+    let changes = host.account_changes();
+    let retirements = host.retirements();
+    let revision = host.snapshot().revision;
+    let cancel = host.state().cancellation.child_token();
+    host.finish_login("code", "secret", &revision, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(*changes.borrow(), Some(SessionChange::AccountChanged));
+    assert_eq!(host.retirements(), retirements + 1);
+    assert_eq!(host.snapshot().email.as_deref(), Some("b@example.com"));
+    server.await.unwrap();
 }

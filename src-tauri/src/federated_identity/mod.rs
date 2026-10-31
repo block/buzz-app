@@ -58,6 +58,9 @@ pub(crate) struct Snapshot {
     revision: String,
     email: Option<String>,
     failure: Option<&'static str>,
+    expires_at: Option<String>,
+    /// The session ends soon; signing in again now keeps the app open.
+    expiring: bool,
 }
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
@@ -69,6 +72,9 @@ pub(crate) struct Record {
     pub(super) revision: String,
     session_token: String,
     expires_at: String,
+    /// Unix seconds at exchange; 0 for records saved before it was kept.
+    #[serde(default)]
+    issued_at: i64,
     email: Option<String>,
 }
 impl Drop for Record {
@@ -97,6 +103,8 @@ struct State {
     closed: bool,
     cancellation: CancellationToken,
     callback: Option<CallbackGuard>,
+    /// A sign-in started while signed in; the current session stays live.
+    renewal: Option<CancellationToken>,
     /// Last account seen signed in this run; tells a refresh from a new account.
     account: Option<Option<String>>,
     /// Bumped with every explicit sign-out, close or change of account, under
@@ -167,6 +175,8 @@ impl FederatedIdentity {
             revision: uuid::Uuid::new_v4().to_string(),
             email: None,
             failure: None,
+            expires_at: None,
+            expiring: false,
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
@@ -185,6 +195,7 @@ impl FederatedIdentity {
                 retirements: 0,
                 cancellation: CancellationToken::new(),
                 callback: None,
+                renewal: None,
                 account: None,
             }),
             operation: AsyncMutex::new(()),
@@ -248,6 +259,57 @@ impl FederatedIdentity {
         state.account = Some(email);
         self.signal(change);
     }
+    /// Make `session` current and watch for its expiry. The caller publishes.
+    fn install_session(&self, state: &mut State, session: Arc<Session>) {
+        state.snapshot.status = Status::SignedIn;
+        state.snapshot.revision = session.record.revision.clone();
+        state.snapshot.email = session.record.email.clone();
+        state.snapshot.failure = None;
+        state.snapshot.expires_at = Some(session.record.expires_at.clone());
+        state.snapshot.expiring = false;
+        self.signed_in(state, session.record.email.clone());
+        self.watch_expiry(&session, state.cancellation.clone());
+        state.session = Some(session);
+    }
+    /// Warn before the session ends, then end it at its expiry instead of
+    /// waiting for the next assertion or 401 to notice.
+    fn watch_expiry(&self, session: &Arc<Session>, cancel: CancellationToken) {
+        let Ok(expires) = expiry(&session.record.expires_at) else {
+            return;
+        };
+        let warn = warning_at(session.record.issued_at, expires);
+        let revision = session.record.revision.clone();
+        let owner = Arc::downgrade(&self.0);
+        tokio::spawn(async move {
+            let mut warned = false;
+            loop {
+                let Ok(now) = now() else { return };
+                let wait = match due(now, warn, expires, warned) {
+                    Due::Expire => break,
+                    Due::Warn => {
+                        warned = true;
+                        let Some(owner) = owner.upgrade() else { return };
+                        let owner = FederatedIdentity(owner);
+                        let mut state = owner.state();
+                        if state.closed || state.snapshot.revision != revision {
+                            return;
+                        }
+                        state.snapshot.expiring = true;
+                        owner.publish(&state);
+                        continue;
+                    }
+                    Due::Wait(wait) => wait,
+                };
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = tokio::time::sleep(wait) => {}
+                }
+            }
+            if let Some(owner) = owner.upgrade() {
+                FederatedIdentity(owner).restore().await;
+            }
+        });
+    }
     /// Lend the current session token to `use_session` without letting it escape.
     #[allow(dead_code)] // Consumed by the agent token client.
     pub(crate) fn with_session<T>(
@@ -302,6 +364,19 @@ impl FederatedIdentity {
         status: Status,
         failure: Option<&'static str>,
     ) -> Option<Arc<Session>> {
+        self.reset(state);
+        state.snapshot.revision = uuid::Uuid::new_v4().to_string();
+        state.snapshot.status = status;
+        state.snapshot.email = None;
+        state.snapshot.failure = failure;
+        state.snapshot.expires_at = None;
+        state.snapshot.expiring = false;
+        let session = state.session.take();
+        self.publish(state);
+        session
+    }
+    /// End work tied to the current session, without changing the snapshot.
+    fn reset(&self, state: &mut State) {
         self.0
             .assertions
             .lock()
@@ -310,14 +385,8 @@ impl FederatedIdentity {
         state.cancellation.cancel();
         // Synchronous cleanup lets a replacement login register immediately.
         state.callback.take();
+        state.renewal = None;
         state.cancellation = CancellationToken::new();
-        state.snapshot.revision = uuid::Uuid::new_v4().to_string();
-        state.snapshot.status = status;
-        state.snapshot.email = None;
-        state.snapshot.failure = failure;
-        let session = state.session.take();
-        self.publish(state);
-        session
     }
     pub(crate) fn close(&self) {
         self.clear_discoveries();
@@ -539,13 +608,7 @@ impl FederatedIdentity {
         };
         state.restored = true;
         match result {
-            Ok(Some(session)) => {
-                state.snapshot.status = Status::SignedIn;
-                state.snapshot.revision = session.record.revision.clone();
-                state.snapshot.email = session.record.email.clone();
-                self.signed_in(&mut state, session.record.email.clone());
-                state.session = Some(session);
-            }
+            Ok(Some(session)) => self.install_session(&mut state, session),
             Ok(None) => state.snapshot.status = Status::SignedOut,
             Err(failure) => {
                 if failure.session_denied {
@@ -577,25 +640,56 @@ impl FederatedIdentity {
             return self.snapshot();
         }
         let observed = self.restore_locked(attempt).await;
-        let (revision, cancel) = {
+        let (revision, cancel, renewing) = {
             let mut state = self.state();
             if state.closed
                 || state.snapshot.revision != observed
                 || !state.restored
-                || state.session.is_some()
+                || state.renewal.is_some()
                 || self.0.config.is_none()
             {
                 return state.snapshot.clone();
             }
-            // Admission and retirement are atomic with cancellation/sign-out.
-            self.retire_state(&mut state, Status::SigningIn, None);
-            (state.snapshot.revision.clone(), state.cancellation.clone())
+            if state.session.is_some() {
+                // Signing in again keeps the current session live until the
+                // new one is installed; ending that session ends this attempt.
+                let cancel = state.cancellation.child_token();
+                state.renewal = Some(cancel.clone());
+                state.snapshot.failure = None;
+                self.publish(&state);
+                (state.snapshot.revision.clone(), cancel, true)
+            } else {
+                // Admission and retirement are atomic with cancellation/sign-out.
+                self.retire_state(&mut state, Status::SigningIn, None);
+                (
+                    state.snapshot.revision.clone(),
+                    state.cancellation.clone(),
+                    false,
+                )
+            }
         };
         let result = self.login(app, &revision, &cancel, operation).await;
-        if let Err(failure) = result {
+        if renewing {
+            self.renewed(&revision, &cancel, result);
+        } else if let Err(failure) = result {
             self.change_current(&revision, Status::SignedOut, Some(failure.code));
         }
         self.snapshot()
+    }
+    /// A renewal ended; on failure the current session stays as it was.
+    fn renewed(&self, revision: &str, cancel: &CancellationToken, result: Result<(), Failure>) {
+        let mut state = self.state();
+        // Canceled, replaced or ended: whoever did that already settled it.
+        if cancel.is_cancelled() || state.closed || state.snapshot.revision != revision {
+            return;
+        }
+        state.renewal = None;
+        if let Err(failure) = result {
+            if failure.code != "sign-in-canceled" {
+                state.snapshot.failure = Some(failure.code);
+            }
+        }
+        self.publish(&state);
     }
     async fn login<R: tauri::Runtime>(
         &self,
@@ -709,6 +803,7 @@ impl FederatedIdentity {
             revision: uuid::Uuid::new_v4().to_string(),
             session_token: exchange.session_token.clone(),
             expires_at: exchange.expires_at.clone(),
+            issued_at: now()?,
             email: None,
         };
         record.email = tokio::select! {
@@ -726,8 +821,15 @@ impl FederatedIdentity {
         let raw = Zeroizing::new(serde_json::to_vec(&record).map_err(|_| "storage-corrupt")?);
         let session = Arc::new(Session { record, raw });
         let saved = session.clone();
-        self.storage(move |store| store.compare(None, Some(&saved.raw)))
-            .await?;
+        // A renewal replaces the current session's record in one step.
+        let replacing = self.state().session.clone();
+        self.storage(move |store| {
+            store.compare(
+                replacing.as_ref().map(|session| session.raw.as_slice()),
+                Some(&saved.raw),
+            )
+        })
+        .await?;
         if !self.current(revision) {
             self.remove(session).await?;
             return Err("session-changed".into());
@@ -735,11 +837,10 @@ impl FederatedIdentity {
         let installed = {
             let mut state = self.state();
             if state.snapshot.revision == revision && !state.closed {
-                state.snapshot.status = Status::SignedIn;
-                state.snapshot.revision = session.record.revision.clone();
-                state.snapshot.email = session.record.email.clone();
-                self.signed_in(&mut state, session.record.email.clone());
-                state.session = Some(session.clone());
+                if state.session.is_some() {
+                    self.reset(&mut state);
+                }
+                self.install_session(&mut state, session.clone());
                 self.publish(&state);
                 true
             } else {
@@ -754,7 +855,10 @@ impl FederatedIdentity {
     }
     pub(crate) fn cancel_sign_in(&self) {
         let mut state = self.state();
-        if state.snapshot.status == Status::SigningIn {
+        if let Some(renewal) = state.renewal.take() {
+            renewal.cancel();
+            state.callback.take();
+        } else if state.snapshot.status == Status::SigningIn {
             self.retire_state(&mut state, Status::SignedOut, None);
         }
     }
@@ -795,6 +899,38 @@ impl FederatedIdentity {
             self.change_current(&revision, Status::Unavailable, Some(failure.code));
         }
         self.snapshot()
+    }
+}
+
+/// When to warn that a session ends: 72 hours ahead, so a weekend can't
+/// swallow the warning, but no earlier than halfway through its lifetime.
+fn warning_at(issued: i64, expires: i64) -> i64 {
+    const LEAD: i64 = 72 * 60 * 60;
+    let lead = if issued > 0 {
+        LEAD.min((expires - issued).max(0) / 2)
+    } else {
+        LEAD
+    };
+    expires - lead
+}
+#[derive(Debug, PartialEq, Eq)]
+enum Due {
+    Warn,
+    Expire,
+    Wait(std::time::Duration),
+}
+/// The expiry watch's next step at wall-clock `now`. Waits are capped
+/// because the monotonic clock stops while the machine sleeps; after a wake
+/// the wall clock decides.
+fn due(now: i64, warn: i64, expires: i64, warned: bool) -> Due {
+    const POLL: i64 = 60;
+    if now >= expires {
+        Due::Expire
+    } else if !warned && now >= warn {
+        Due::Warn
+    } else {
+        let next = if warned { expires } else { warn };
+        Due::Wait(std::time::Duration::from_secs((next - now).min(POLL) as u64))
     }
 }
 

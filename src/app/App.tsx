@@ -58,7 +58,10 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
-import { LaunchSignIn } from "../features/federated-identity/LaunchSignIn";
+import {
+  LaunchSignIn,
+  SignInEnding,
+} from "../features/federated-identity/LaunchSignIn";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
@@ -516,6 +519,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
     <ToastProvider
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
     >
+      <SignInEnding identity={services.federatedIdentity} />
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell

@@ -1,13 +1,30 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { LaunchSignIn } from "./LaunchSignIn";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { LaunchSignIn, SignInEnding } from "./LaunchSignIn";
 import type { SessionSnapshot } from "./service";
 import { federatedFixture } from "./testing";
 afterEach(cleanup);
+// Lets a test say when the launch mark has left.
+const launch = vi.hoisted(() => new Set<() => void>());
+vi.mock("../../app/launch", async (actual) => ({
+  ...(await actual<typeof import("../../app/launch")>()),
+  subscribeLaunch: (listener: () => void) => {
+    launch.add(listener);
+    return () => launch.delete(listener);
+  },
+}));
 
 function launchFixture(organization: string | null = "Block") {
   const h = federatedFixture();
@@ -234,8 +251,117 @@ it("says it is signing in before the browser opens, and while a retry checks", a
   await user.click(screen.getByRole("button", { name: "Try again" }));
   h.set({ status: "restoring", failure: null });
   expect(screen.getByText("Checking your sign-in…")).toBeVisible();
+  // The check may go on to open the browser, so it can't be dismissed.
+  expect(
+    screen.queryByRole("button", { name: "Not now" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Try again" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Try again" })).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
   expect(screen.queryByLabelText("Draft")).not.toBeInTheDocument();
   await act(async () => release());
   h.set({ status: "signed-in" });
   expect(screen.getByLabelText("Draft")).toBeVisible();
+});
+
+it("returns focus to an app dialog portaled outside the app", async () => {
+  const user = userEvent.setup();
+  const h = launchFixture();
+  render(
+    <LaunchSignIn identity={h.service}>
+      <Workspace />
+      {createPortal(<input aria-label="Search Buzz" />, document.body)}
+    </LaunchSignIn>,
+  );
+  h.set({ status: "signed-in" });
+  const search = screen.getByLabelText("Search Buzz");
+  await user.type(search, "query");
+
+  h.set({ status: "reauthentication-required" });
+  await user.click(await screen.findByRole("button", { name: "Cancel" }));
+  await user.click(await screen.findByRole("button", { name: "Not now" }));
+  expect(search).toHaveFocus();
+  expect(search).toHaveValue("query");
+});
+
+it("focuses the sign-in action once the launch mark leaves", async () => {
+  const h = launchFixture();
+  render(
+    <LaunchSignIn identity={h.service}>
+      <Workspace />
+    </LaunchSignIn>,
+  );
+  h.set({ status: "signed-out" });
+  const reopen = await screen.findByRole("button", {
+    name: "Open the sign-in page again",
+  });
+  // Under the launch mark the window is inert and autofocus doesn't land.
+  reopen.blur();
+  act(() => {
+    for (const listener of launch) listener();
+  });
+  expect(reopen).toHaveFocus();
+});
+
+function expiringFixture() {
+  const h = launchFixture();
+  h.publish({
+    status: "signed-in",
+    expiresAt: "2099-01-02T15:00:00Z",
+    expiring: true,
+  });
+  render(
+    <ToastProvider>
+      <SignInEnding identity={h.service} />
+    </ToastProvider>,
+  );
+  return h;
+}
+
+it("warns before the session ends and signs in again without leaving the app", async () => {
+  const h = expiringFixture();
+  let release = () => {};
+  vi.mocked(h.service.signIn).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(h.service.snapshot());
+      }),
+  );
+  // Canceling a renewal leaves the current session as it was.
+  vi.mocked(h.service.cancelSignIn).mockImplementation(async () => {});
+  expect(
+    await screen.findByText(/^Your Block sign-in ends /),
+  ).toBeInTheDocument();
+  // Clicks without focus moves: jsdom hands Sonner a non-element focus origin.
+  fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+  expect(h.service.signIn).toHaveBeenCalledOnce();
+  expect(
+    await screen.findByText("Finish signing in in your browser."),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
+  await act(async () => release());
+  expect(
+    await screen.findByRole("button", { name: "Sign in again" }),
+  ).toBeInTheDocument();
+});
+
+it("warns only in at-launch builds, once the session is ending", () => {
+  const onDemand = federatedFixture();
+  const early = launchFixture();
+  for (const h of [onDemand, early])
+    h.publish({
+      status: "signed-in",
+      expiresAt: "2099-01-02T15:00:00Z",
+      expiring: h === onDemand,
+    });
+  render(
+    <ToastProvider>
+      <SignInEnding identity={onDemand.service} />
+      <SignInEnding identity={early.service} />
+    </ToastProvider>,
+  );
+  expect(screen.queryByText(/sign-in ends/)).not.toBeInTheDocument();
 });

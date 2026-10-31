@@ -25,6 +25,10 @@ export type SessionSnapshot = Readonly<{
   revision: string;
   email: string | null;
   failure: string | null;
+  /** When the signed-in session ends (RFC 3339). */
+  expiresAt: string | null;
+  /** The session ends soon; signing in again now keeps the app open. */
+  expiring: boolean;
 }>;
 export type AuthenticatedRequest = Readonly<{
   path: string;
@@ -60,6 +64,8 @@ export class FederatedIdentityService
       revision: "",
       email: null,
       failure: nativeIdentityEnabled() ? null : "desktop-required",
+      expiresAt: null,
+      expiring: false,
     }) as SessionSnapshot,
     listeners: new Set<() => void>(),
     epoch: 0,

@@ -1131,6 +1131,8 @@ async fn retirement_survives_a_crash_after_session_persistence_before_the_watche
         let (release, released) = std::sync::mpsc::channel();
         *f.session_store.compare_gate.lock().unwrap() = Some((held, released));
         let identity = f.tokens.0.identity.clone();
+        // A fresh sign-in; one started while signed in replaces the session.
+        identity.retire(super::super::Status::SigningIn, None);
         let revision = identity.snapshot().revision;
         let cancel = identity.state().cancellation.clone();
         let login = tokio::spawn(async move {

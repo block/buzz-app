@@ -481,6 +481,14 @@ navigation survive, and focus returns to where it was. An explicit sign-out
 shows the screen without opening the browser. A saved session that cannot be
 checked (network or secure storage) offers Try again, and the screen stays up
 while it checks.
+
+Before the session expires, a persistent warning names when it ends and offers
+**Sign in again**. It appears 72 hours ahead, or halfway through a shorter
+session. Signing in again keeps the current session working until the new one
+is exchanged; Cancel or a failure leaves it in place, and a different account
+retires derived agent grants as any account change does. At expiry, native ends
+the session itself rather than waiting for the next relay assertion or 401, and
+the screen above takes over.
 On-demand builds are unchanged.
 
 The Node development host retains its supported broker flow.

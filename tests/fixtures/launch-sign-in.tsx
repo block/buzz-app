@@ -23,6 +23,8 @@ let state: SessionSnapshot = {
   revision: "launch",
   email: null,
   failure: null,
+  expiresAt: null,
+  expiring: false,
 };
 const listeners = new Set<() => void>();
 const publish = (patch: Partial<SessionSnapshot>) => {

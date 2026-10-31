@@ -1728,8 +1728,16 @@ attachments, chat cards or GIFs is refused with a visible error and nothing is l
 its space are omitted when empty). It also registers a completion provider that lists
 commands by name while the caret ends a leading `/token`. Choosing a row inserts
 `/name ` and never runs it. The existing completion host supplies arrow, Enter, Tab
-and Escape handling. Other result variants (`ui`, cancelled) and availability that
-depends on a relay round trip are not part of this contract yet.
+and Escape handling. A `ui` result and availability that depends on a relay round
+trip are not part of this contract yet.
+
+A command that runs an action the app confirms first (archiving a channel) calls
+`confirmChannelAction(action, channelId)` from its context, which shows the app's own
+confirmation and resolves `"completed"` once the action ran or `"cancelled"` when the
+user declined, and rejects with the failure. The context omits it where the app has
+no confirmation host, so a command must fail visibly without it. `{ cancelled: true }`
+is a third result: the host keeps the draft and shows nothing, because declining is
+neither success nor failure. It carries no `send`, `done`, `notice` or `after`.
 
 `buzz.commands` also ships the channel membership commands, each over the service the
 channel UI already uses and each throwing on failure so the draft stays:
@@ -1741,6 +1749,10 @@ channel UI already uses and each throwing on failure so the draft stays:
 | `/join #channel` | any | always | joins when not a member, then opens the channel |
 | `/leave` (alias `/part`) | channel, thread | a regular channel the viewer is listed in | leaves, then opens the nearest listed channel, else the empty channels page |
 | `/who` (alias `/members`) | any | always | opens the conversation's member panel |
+| `/rename <name>` | channel, thread | the viewer is owner or admin of a regular channel | renames through the channel details capability after reading the verified details |
+| `/archive` | channel, thread | the viewer is owner or admin of a regular channel | asks the app's archive confirmation; a declined one keeps the draft quietly |
+| `/mute` | any | always | toggles the sidebar mute and says which state it is now in |
+| `/dm @user… [message]` (alias `/msg`) | any | always | opens the direct message with the leading mentions, sends the message first when there is one, then opens it |
 
 `/invite` and `/remove` set `mentionsAreArguments` and take only @mentions: every
 mentioned person must be named in the text, and no mention, or text that is not a
@@ -1748,6 +1760,16 @@ mention, is rejected with the usage. They act on people in order. When some fail
 command reports a failure that names who was added or removed and who was not, and
 keeps the draft, so rerunning finishes the rest. It never reports full success for a
 partial result. `/join` takes one channel picked from the `#` list.
+
+`/rename` applies the channel settings field's rules (leading `#` and surrounding
+whitespace removed, 1 to 120 characters); a mention, a channel link or a second
+line is rejected rather than becoming part of the name. `/dm` takes the leading
+mentions as the people (one to eight others, and only agents the viewer may message)
+and the rest as the message. It opens the conversation, sends the message and waits
+for delivery before navigating. When the send fails the draft stays and nothing
+opens; a failed event the outbox proves undelivered is dismissed so rerunning does
+not duplicate it, while an unconfirmed one stays and the error says it may have been
+sent.
 
 ### Composer completion providers
 

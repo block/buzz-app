@@ -143,10 +143,12 @@ import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import {
+  isAvailable,
   recognizeSlashCommand,
   runSlashCommand,
   runsInScope,
   scopeRefusal,
+  unavailableRefusal,
 } from "../conversation/slash-command";
 import type {
   ComposerInputElement,
@@ -518,9 +520,13 @@ function Composer({
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
+  const commandRunning = useRef(false);
+  // A command that changes access (`/leave`) makes its own destination
+  // read-only; that must not cancel the run that caused it.
   useLayoutEffect(() => {
-    if (disabled || !active) sendAttempt.current?.abort();
-  }, [disabled, active]);
+    if (requestedDisabled || !active || (readOnly && !commandRunning.current))
+      sendAttempt.current?.abort();
+  }, [requestedDisabled, readOnly, active]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
@@ -2378,6 +2384,17 @@ function Composer({
         throw new Error(scopeRefusal(command.command));
       if (
         command &&
+        !isAvailable(command.command, {
+          session,
+          scope,
+          channelId,
+          threadRootId,
+          conversation: slashScope,
+        })
+      )
+        throw new Error(unavailableRefusal(command.command));
+      if (
+        command &&
         (capturedAttachments.length ||
           captured.chatCards?.length ||
           captured.gifs?.length)
@@ -2385,10 +2402,12 @@ function Composer({
         throw new Error(
           "Commands can't be sent with attachments. Remove the attachments to run it.",
         );
+      const argumentMentions = !!command?.command.mentionsAreArguments;
       const bringable = new Set(
         (agents?.joinable() ?? []).map((agent) => agent.pubkey),
       );
       if (
+        !argumentMentions &&
         capturedRecipients.some(
           (p) => archivedMention(session, p.pubkey) && !bringable.has(p.pubkey),
         )
@@ -2429,7 +2448,7 @@ function Composer({
           recipients,
           routing && !captured.recipients.length,
         );
-      } else if (recipients.length) {
+      } else if (recipients.length && !argumentMentions) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
         const lookup = oldAgents.find(captured.recipients);
         const old = lookup instanceof Promise ? await lookup : lookup;
@@ -2526,18 +2545,24 @@ function Composer({
       if (command) {
         setSending(true);
         setError(undefined);
-        const result = await runSlashCommand(command.command, {
-          session,
-          scope,
-          channelId,
-          threadRootId,
-          args: command.args,
-          recipients: captured.recipients.map(({ pubkey, name }) => ({
-            pubkey,
-            name,
-          })),
-          signal: attempt.signal,
-        });
+        commandRunning.current = true;
+        let result: Awaited<ReturnType<typeof runSlashCommand>>;
+        try {
+          result = await runSlashCommand(command.command, {
+            session,
+            scope,
+            channelId,
+            threadRootId,
+            args: command.args,
+            recipients: captured.recipients.map(({ pubkey, name }) => ({
+              pubkey,
+              name,
+            })),
+            signal: attempt.signal,
+          });
+        } finally {
+          commandRunning.current = false;
+        }
         attempt.signal.throwIfAborted();
         if (valueRef.current !== captured) return;
         if (viewRevision(scope, draftKey) !== savedRevision) {
@@ -2547,8 +2572,13 @@ function Composer({
         if (result.done) {
           settle(mentionDraft(""));
           setNotice(result.notice);
+          result.after?.();
           return;
         }
+        if (!permitted.current)
+          throw new Error(
+            `/${command.command.name} can't send here any more. Your draft is kept.`,
+          );
         body = result.send;
       }
       const content =

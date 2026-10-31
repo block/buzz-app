@@ -207,26 +207,13 @@ export function useLinkedMessageByline(
     id ? session : undefined,
     channelId,
   );
-  // A fallback profile name is a key fragment, whichever resolver returns it.
-  const fragment = useSyncExternalStore(
-    (id && session?.profiles.subscribe) || noop,
-    () => {
-      const profile = id ? session?.profiles.snapshot().get(id) : undefined;
-      return profile?.nameIsFallback ? profile.name : "";
-    },
-    () => "",
-  );
   useEffect(() => {
     if (id && session)
       void session.profiles.ensure([id], "background").catch(() => {});
   }, [session, id]);
-  // An author with no name yet keeps the channel presentation, never a key.
-  const resolved = id ? resolveName(id, "") : "";
-  const name = author?.workflow
-    ? "Workflow"
-    : resolved === fragment
-      ? ""
-      : resolved;
+  // An author with no name yet keeps the channel presentation, never a key:
+  // the names view drops fallback (key-fragment) profile names itself.
+  const name = author?.workflow ? "Workflow" : id ? resolveName(id, "") : "";
   return channel && name ? `${name} in #${channel}` : undefined;
 }
 

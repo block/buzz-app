@@ -248,8 +248,8 @@ it("never names an author by a key fragment, and names them once their profile d
     ]),
     agents: [{ pubkey: agent, name: "Builder" }],
   });
-  // The app's names view hands back the fragment for a profile with no name.
-  expect(app.session.names.resolve(alice)).toBe(alice.slice(0, 10));
+  // The app's names view drops the fragment of a profile with no name.
+  expect(app.session.names.resolve(alice, "")).toBe("");
   render(
     <>
       {link(app.session, href(id(1)))}

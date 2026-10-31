@@ -402,6 +402,48 @@ const editor = () => ({
   read: vi.fn(async () => head),
   save: vi.fn(async () => edited),
 });
+it("keeps a self-retired draft retired when editing precedes the loaded render's effects", async () => {
+  writeView(scope, `canvas-draft-v1:${channelId}`, {
+    content: "Recovered",
+    base: head.id,
+  });
+  const canvas = editor();
+  render(
+    <div data-panel-workspace data-testid="workspace">
+      <button type="button">Canvas tab</button>
+      <div data-testid="canvas-mount" />
+    </div>,
+  );
+  const host = screen.getByTestId("workspace");
+  const tab = screen.getByRole("button", { name: "Canvas tab" });
+  tab.focus();
+  // Focus handoff precedes retirement's passive effect. Send a native input
+  // within that handoff; nesting RTL's act wrapper inside the effect is invalid.
+  host.addEventListener("focusin", (event) => {
+    if (!(event.target instanceof HTMLTextAreaElement)) return;
+    Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set?.call(event.target, "Saved");
+    event.target.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  render(
+    <CanvasEditor
+      canvas={canvas}
+      profiles={profiles}
+      scope={scope}
+      channelId={channelId}
+    />,
+    { container: screen.getByTestId("canvas-mount") },
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Canvas Markdown" }),
+    ).toHaveValue("Saved"),
+  );
+  expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+  expect(canvas.read).toHaveBeenCalledOnce();
+});
 async function twoEditors(third?: ReturnType<typeof editor>) {
   const saved = edited;
   const first = editor();

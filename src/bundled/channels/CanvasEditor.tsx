@@ -155,7 +155,9 @@ export function CanvasEditor({
   const dirty = differs(draft);
   const edited = dirty && draft !== adopted;
   useEffect(() => {
-    if (draftRevision !== null) retiredDraft.current = false;
+    // An edit can retire the draft before this render's passive effect runs.
+    if (draftRevision !== null && viewRevision(scope, key) !== null)
+      retiredDraft.current = false;
     else if (!retiredDraft.current)
       retiredDraft.current = retirement.current = true;
     if (!retirement.current || !loaded || busy) return;

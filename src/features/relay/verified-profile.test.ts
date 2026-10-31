@@ -520,6 +520,14 @@ it("keeps batch membership and checked status stable when subjects are added or 
       [alice.pubkey, bob.pubkey],
     ]);
     expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("checked");
+    // A full replacement response that omits alice cannot reconfirm her.
+    const replacement = active()[0];
+    assert(replacement);
+    replacement.sink.event(projection(10, bob.pubkey));
+    replacement.sink.event(projection(11, bob.pubkey));
+    replacement.sink.eose();
+    expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("cached");
+    expect(h.directory.snapshot().get(bob.pubkey)?.status).toBe("checked");
     h.directory.ensure(
       Array.from({ length: 1022 }, (_, index) =>
         (index + 1).toString(16).padStart(64, "0"),

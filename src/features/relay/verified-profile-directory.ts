@@ -145,6 +145,8 @@ export function createVerifiedProfileDirectory(
             for (const subject of chunk) {
               if (wanted.has(subject) && (seen.has(subject) || complete))
                 checked.add(subject);
+              // An incomplete replacement cannot confirm inherited status.
+              else checked.delete(subject);
               if (complete && !seen.has(subject)) heads.delete(subject);
             }
             changed();
@@ -167,8 +169,8 @@ export function createVerifiedProfileDirectory(
       const currentAuthority = authority;
       // Membership is stable: new subjects fill an open batch or a new one, and
       // evicted subjects leave membership but stay on the wire until their batch
-      // is rebuilt. A rebuilt batch keeps checked status, since its replacement
-      // REQ covers the same keys.
+      // is rebuilt. A rebuilt batch keeps checked status until its replacement
+      // REQ responds; an incomplete response clears it for omitted keys.
       const assigned = new Set<string>();
       const open: Batch[] = [];
       for (const batch of batches) {

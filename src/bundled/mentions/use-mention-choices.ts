@@ -18,6 +18,7 @@ import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import { directoryChanges, mentionCandidates } from "./mention-candidates";
 import { useListedChannel } from "../../features/relay/listed-channel";
+import { useNamesRevision } from "../../features/identity-names/react";
 import {
   exactMention,
   matchingMentions,
@@ -26,7 +27,6 @@ import {
 } from "./mention-ranking";
 type Person = ReturnType<typeof useMentionDirectory>["people"][number];
 const none: readonly Person[] = [];
-const noSubscribe = () => () => {};
 // Derived once per cached candidate list (see mentionCandidates), so a
 // keystroke reuses labels and keys instead of renaming every member.
 const labeled = new WeakMap<
@@ -224,10 +224,7 @@ export function useMentionChoices(
   );
   const archives = useMentionArchives(session, open);
   // Labels come from names scopes directly: watch every name change while open.
-  const names = useSyncExternalStore(
-    (open && session.names?.subscribe) || noSubscribe,
-    () => session.names?.snapshot() ?? 0,
-  );
+  const names = useNamesRevision(session.names, open);
   const [installed, install] = useState<{
     session: ComposerSession;
     key: string;

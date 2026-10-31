@@ -3,8 +3,8 @@ import { useMentionArchives } from "./use-mention-archives";
 import { useContext, type ReactNode } from "react";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import { archivedMention } from "./mention-admission";
-import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { useIdentityNames } from "../identity-names/react";
+import { useLayoutEffect, useMemo, useRef } from "react";
+import { useIdentityNames, useNamesRevision } from "../identity-names/react";
 import { useListedChannel } from "../relay/listed-channel";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -22,8 +22,6 @@ import {
 import { messageLinkParts } from "./message-link-parts";
 import { messageReferences } from "./message-references";
 import { EditableInput, type EditableInputProps } from "./EditableInput";
-
-const noSubscribe = () => () => {};
 
 /** Decorations never change source text or infer notification recipients from names. */
 export function RichComposerInput({
@@ -58,10 +56,7 @@ export function RichComposerInput({
     draft.recipients.map(({ pubkey, name }) => [pubkey, name]),
   );
   // Chip facts come from names.lookup, not only resolved labels.
-  const names = useSyncExternalStore(
-    (recipientKey !== "[]" && session.names?.subscribe) || noSubscribe,
-    () => session.names?.snapshot() ?? 0,
-  );
+  const names = useNamesRevision(session.names, recipientKey !== "[]");
   const { profiles, qualifiers, labels } = useMemo(() => {
     void archives;
     void names;

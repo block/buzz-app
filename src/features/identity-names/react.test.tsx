@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, it } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
 import { useIdentityNames } from "./react";
@@ -114,6 +115,45 @@ it("shows a name change made between render and subscribe", () => {
       <Renamer />
     </>,
   );
+  expect(screen.getByText("Ana")).toBeInTheDocument();
+  names.dispose();
+});
+
+it("shows a name change made between two of its own labels", () => {
+  const { names, set } = fixture();
+  let renamed = false;
+  function Author() {
+    const resolve = useIdentityNames(names);
+    const first = resolve(a, "Member");
+    if (!renamed) {
+      renamed = true;
+      set(a, "Ana");
+    }
+    return (
+      <span>
+        {first} {resolve(c, "Member")}
+      </span>
+    );
+  }
+  render(<Author />);
+  expect(screen.getByText("Ana Member")).toBeInTheDocument();
+  names.dispose();
+});
+
+it("follows label changes under StrictMode double rendering", () => {
+  const { names, publish } = fixture();
+  function Author() {
+    const resolve = useIdentityNames(names);
+    return <span>{resolve(a, "Member")}</span>;
+  }
+  render(
+    <StrictMode>
+      <Author />
+    </StrictMode>,
+  );
+  publish(b, "Alex");
+  expect(screen.getByText(`Alex · ${suffix(a)}`)).toBeInTheDocument();
+  publish(a, "Ana");
   expect(screen.getByText("Ana")).toBeInTheDocument();
   names.dispose();
 });

@@ -36,6 +36,13 @@ const subscribe = (notify: () => void) => {
 };
 const snapshot = () => floating()?.matches ?? false;
 
+// Deferred controls attach their listeners after the entry that mounted them.
+// The last pointer position lets that entry reveal over geometry-limited areas.
+let lastPointer: { x: number; y: number } | undefined;
+const trackPointer = (event: PointerEvent) => {
+  lastPointer = { x: event.clientX, y: event.clientY };
+};
+
 const awaitingKeyboard = new Set<() => void>();
 const activateKeyboardActions = (event: KeyboardEvent) => {
   if (event.key !== "Tab" || event.metaKey || event.ctrlKey) return;
@@ -76,6 +83,11 @@ export function useMessageActionBarReady(
     row.addEventListener("pointerenter", activate);
     row.addEventListener("focusin", activate);
     query.addEventListener("change", modalityChanged);
+    // Identical listeners are registered once and stay for the page's life.
+    window.addEventListener("pointermove", trackPointer, {
+      capture: true,
+      passive: true,
+    });
     if (awaitingKeyboard.size === 0)
       window.addEventListener("keydown", activateKeyboardActions, true);
     awaitingKeyboard.add(activate);
@@ -115,8 +127,14 @@ export function useFloatingActionBar(
         : null;
     // The byline spans the row. Only the width of its text, or of the content
     // directly beneath it when wider, reveals actions; placement ignores it.
-    const overByline = (byline: Element, x: number) => {
+    // An active hover also crosses the gap down to that content.
+    const overByline = (x: number, y: number, retain: boolean) => {
+      const byline = row.querySelector("[data-message-byline]");
+      if (!byline) return false;
+      const area = byline.getBoundingClientRect();
       const below = row.querySelector(contentSelector)?.getBoundingClientRect();
+      const bottom = retain && below?.height ? below.top : area.bottom;
+      if (y < area.top || y > bottom) return false;
       let left = below?.width ? below.left : Infinity;
       let right = below?.width ? below.right : -Infinity;
       for (const part of byline.children) {
@@ -134,8 +152,10 @@ export function useFloatingActionBar(
       )
         return false;
       if (bar.contains(target) || contentAt(target)) return true;
-      const byline = target.closest("[data-message-byline]");
-      if (byline && row.contains(byline) && overByline(byline, event.clientX))
+      if (
+        row.contains(target) &&
+        overByline(event.clientX, event.clientY, hovered)
+      )
         return true;
       // Retain only an active hover: content gaps and the tapered route to the
       // toolbar are pass-through geometry, never activation or hit surfaces.
@@ -181,7 +201,11 @@ export function useFloatingActionBar(
         !row.querySelector(
           ":is([data-media-timecode], [data-message-reactions]):hover",
         )) ||
-      bar.matches(":hover");
+      bar.matches(":hover") ||
+      // Controls mount on entry, after the pointer has already arrived.
+      (!!lastPointer &&
+        !!row.querySelector("[data-message-byline]:hover") &&
+        overByline(lastPointer.x, lastPointer.y, false));
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>

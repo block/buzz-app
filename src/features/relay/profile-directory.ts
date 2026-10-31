@@ -120,7 +120,7 @@ export function createProfileDirectory(
         id,
         Object.freeze({
           ...base,
-          name: `${value.displayName} · ${value.issuerLabel}`,
+          name: value.displayName,
           username: value.username,
           verified: value,
         }),

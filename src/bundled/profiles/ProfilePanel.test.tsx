@@ -654,10 +654,8 @@ it("shows historical verification time and issuer, discloses cache, and hides di
       );
       sink?.eose();
     });
-    expect(
-      await screen.findByRole("heading", { name: "Alice · Example" }),
-    ).toBeVisible();
-    expect(screen.getByText(/Name verified.*@alice/)).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Alice" })).toBeVisible();
+    expect(screen.getByText(/Name verified by Example.*@alice/)).toBeVisible();
     expect(screen.getByText("Alice Example")).toBeVisible();
     await userEvent.setup().click(screen.getByRole("tab", { name: "Info" }));
     expect(screen.getByText("Name verified by Example")).toBeVisible();

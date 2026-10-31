@@ -442,8 +442,8 @@ function ProfileDetails({
                   <CheckCircleIcon aria-hidden="true" />
                 )}{" "}
                 {profile.verified.status === "checked"
-                  ? "Name verified"
-                  : "Cached verification"}{" "}
+                  ? `Name verified by ${profile.verified.issuerLabel}`
+                  : `Cached verification from ${profile.verified.issuerLabel}`}{" "}
                 · @{profile.verified.username}
               </p>
             )}

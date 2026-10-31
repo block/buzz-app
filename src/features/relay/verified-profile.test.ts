@@ -294,7 +294,7 @@ it("overlays verified names, qualifies collisions, preserves kind 0 details, and
     sink.event(projection());
     sink.eose();
     const profile = directory.queries.snapshot().get(alice.pubkey);
-    expect(profile?.name).toBe("Alice · Example");
+    expect(profile?.name).toBe("Alice");
     expect(profile?.about).toBe("About Alice");
     expect(profile?.picture).toBe("https://example.test/alice.png");
     expect(profile?.verified?.status).toBe("checked");
@@ -483,7 +483,7 @@ it("wires session profile demand, live updates, disconnection, and refreshed dis
     sink.event(projection());
     sink.eose();
     expect(owner.session.profiles.snapshot().get(alice.pubkey)?.name).toBe(
-      "Alice · Example",
+      "Alice",
     );
     expect(
       owner.session.profiles.snapshot().get(alice.pubkey)?.verified?.status,

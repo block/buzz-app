@@ -32,6 +32,7 @@ export function ProfileFields({
   showAvatar = true,
   autoFocus = false,
   nameRef,
+  verifiedName,
 }: {
   profile: PersonalProfile;
   onChange(profile: PersonalProfile): void;
@@ -42,6 +43,8 @@ export function ProfileFields({
   /** Focuses the display name on mount, for pages whose only task is this form. */
   autoFocus?: boolean;
   nameRef?: Ref<HTMLInputElement>;
+  /** A relay-verified name replaces the editable display name. */
+  verifiedName?: { name: string; issuerLabel: string } | undefined;
 }) {
   return (
     <div className="grid gap-4">
@@ -55,14 +58,20 @@ export function ProfileFields({
           onChange={(picture) => onChange({ ...profile, picture })}
         />
       )}
-      <Field label="Display name">
+      <Field
+        label="Display name"
+        description={
+          verifiedName ? `Verified by ${verifiedName.issuerLabel}` : undefined
+        }
+      >
         <Input
           ref={nameRef}
           autoComplete="nickname"
           autoFocus={autoFocus}
           required
           disabled={disabled}
-          value={profile.name}
+          readOnly={!!verifiedName}
+          value={verifiedName?.name ?? profile.name}
           maxLength={100}
           onChange={(event) =>
             onChange({ ...profile, name: event.target.value })

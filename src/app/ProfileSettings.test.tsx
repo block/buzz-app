@@ -126,6 +126,69 @@ it("loads and publishes the selected community profile before updating the local
   expect(inspect).toHaveBeenCalledWith("community-id");
 });
 
+it("shows the verified name read-only and keeps the signed name when saving", async () => {
+  const service = communities();
+  service.snapshot().selected = "community-id";
+  const verified = {
+    displayName: "Verified Name",
+    username: "verified",
+    issuerLabel: "Block",
+    verifiedAt: 1,
+    status: "checked" as const,
+    multipleIssuers: false,
+  };
+  const profiles = new Map([[viewer, { name: "Verified Name", verified }]]);
+  const ensure = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(service.relay, "snapshot").mockReturnValue({
+    status: "ready",
+    viewer,
+    scope: "community-id",
+    generation: 1,
+    session: {
+      viewer,
+      profiles: {
+        snapshot: () => profiles,
+        subscribe: () => () => {},
+        ensure,
+      },
+    },
+  } as unknown as ReturnType<Communities["relay"]["snapshot"]>);
+  vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: {},
+    profile: { name: "Signed name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockRejectedValue(new Error("stop"));
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={service}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+
+  const name = await screen.findByLabelText("Display name");
+  await waitFor(() => expect(name).toHaveValue("Verified Name"));
+  expect(name).toHaveAttribute("readonly");
+  expect(screen.getByText("Verified by Block")).toBeVisible();
+  expect(ensure).toHaveBeenCalledWith([viewer]);
+  await user.type(
+    screen.getByLabelText("Profile description (optional)"),
+    "Bio",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Signed name", picture: "", about: "Bio" },
+      {},
+    ),
+  );
+});
+
 it("keeps a newer profile seed when an older community publication finishes last", async () => {
   const service = communities();
   const olderPublication = deferred();

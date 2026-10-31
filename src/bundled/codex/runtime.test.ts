@@ -2501,7 +2501,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it.each(["v2", "v3", "v5", "v6", "v7", "v15", "v16"])(
+it.each(["v2", "v3", "v5", "v6", "v7", "v15", "v16", "v17"])(
   "starts fresh instead of restoring a %s binding, whose tools are out of date",
   async (version) => {
     const f = fixture();

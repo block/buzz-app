@@ -61,9 +61,11 @@ community, named by pubkey or exact name, and returns a request ID and
 `saved: false`. It refuses with an error, creating no request, when the
 requester is no longer running here, no such agent exists, a name names several,
 or the agent is hosted. An agent can ask to delete itself, and an agent whose
-earlier Delete did not finish can be asked about again. The owner sees a
-confirmation naming the agent and who asked; focus starts on **Cancel**, so
-only an explicit **Delete** removes anything. **Delete** runs
+earlier Delete did not finish can be asked about again. Asking again about an
+agent with a request already waiting returns that request's ID and queues
+nothing. The owner sees a confirmation naming the agent, with the end of its
+pubkey so a later rename cannot hide which agent it is, and who asked. Focus
+starts on **Cancel**, so only an explicit **Delete** removes anything. **Delete** runs
 [Delete agent](#relay-scoped-archive-display) for the agent in every community
 it is in and shows each step as it runs; the dialog cannot be dismissed
 meanwhile. A failure appears in the dialog, which stays open, and the request
@@ -75,9 +77,10 @@ stay.
 
 The tool is one of the Buzz tools, not a plugin's, so adding it does not restart
 every session through `addedKey`. Codex keeps the persisted tool list of a
-resumed thread, so the Codex storage version changed, and each Codex agent starts
-one new thread, losing that thread's context once, the first time it runs on an
-app that has the tool. Other running sessions keep the tools they started with
+resumed thread, so the Codex storage version changed. Each saved Codex
+conversation, up to 200 per agent, starts a new thread and loses that thread's
+context once, the first time it runs on an app that has the tool, and each
+agent's saved conversation list starts empty. Other running sessions keep the tools they started with
 until replaced; **Start a new session** picks it up.
 
 ## Product help for agents

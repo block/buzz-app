@@ -10,6 +10,7 @@ import { DeleteReview } from "./DeleteReview";
 afterEach(cleanup);
 
 const child = "c".repeat(64);
+const TITLE = "Delete Child (…cccccc)?";
 
 function fixture(
   change: Partial<AgentDeleteRequest> = {},
@@ -39,7 +40,7 @@ function fixture(
       return () => listeners.delete(listener);
     },
     deleteRequests: () => requests,
-    memberships: () => Array.from({ length: communities }),
+    memberships: vi.fn(() => Array.from({ length: communities })),
     approveDelete: vi.fn(
       approve ??
         (async () => {
@@ -55,7 +56,7 @@ function fixture(
 }
 
 const openOnDelete = async (user: ReturnType<typeof userEvent.setup>) => {
-  await screen.findByRole("alertdialog", { name: "Delete Child?" });
+  await screen.findByRole("alertdialog", { name: TITLE });
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
   );
@@ -77,7 +78,7 @@ it("opens on Cancel so Enter dismisses without deleting", async () => {
   const user = userEvent.setup();
   const { agents } = fixture();
   const dialog = await screen.findByRole("alertdialog", {
-    name: "Delete Child?",
+    name: TITLE,
   });
   expect(dialog).toHaveAccessibleDescription(/Parent asked to delete it\./);
   await waitFor(() =>
@@ -100,6 +101,7 @@ it("deletes only on the owner's Delete, shows progress, and cannot be dismissed 
   });
   const remove = await openOnDelete(user);
   expect(remove).toHaveFocus();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
   expect(agents.approveDelete).not.toHaveBeenCalled();
   await user.keyboard("{Enter}");
   await waitFor(() =>
@@ -112,9 +114,10 @@ it("deletes only on the owner's Delete, shows progress, and cannot be dismissed 
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
   act(() => progress?.("Leaving relay.example"));
-  expect(await screen.findByRole("status")).toHaveTextContent(
+  expect(screen.getByRole("status")).toHaveTextContent(
     "Leaving relay.example…",
   );
+  expect(agents.memberships).toHaveBeenCalledOnce();
   await user.keyboard("{Escape}");
   expect(agents.dismissDelete).not.toHaveBeenCalled();
   expect(screen.getByRole("alertdialog")).toBeVisible();
@@ -151,7 +154,7 @@ it("keeps the dialog open on failure, then finishes on another Delete with Space
   expect(remove).toBeEnabled();
   expect(remove).not.toHaveAttribute("aria-busy", "true");
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
   remove.focus();
   await user.keyboard(" ");
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
@@ -182,7 +185,7 @@ it.each([
   async (change, communities, text) => {
     fixture(change, communities);
     expect(
-      await screen.findByRole("alertdialog", { name: "Delete Child?" }),
+      await screen.findByRole("alertdialog", { name: TITLE }),
     ).toHaveAccessibleDescription(text);
   },
 );

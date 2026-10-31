@@ -31,7 +31,9 @@ function DeleteConfirm({
   const [step, setStep] = useState<string>();
   const [error, setError] = useState("");
   const removing = step !== undefined;
-  const several = agents.memberships(request.agent).length > 1;
+  const [several] = useState(
+    () => agents.memberships(request.agent).length > 1,
+  );
   const confirm = async () => {
     setStep("Starting");
     setError("");
@@ -45,7 +47,7 @@ function DeleteConfirm({
   };
   return (
     <AlertDialog
-      title={`Delete ${request.agentName}?`}
+      title={`Delete ${request.agentName} (…${request.agent.slice(-6)})?`}
       description={`${
         request.requester === request.agent
           ? "It asked to be deleted."
@@ -74,13 +76,16 @@ function DeleteConfirm({
           >
             Delete
           </Button>
+          <p role="status" className="sr-only">
+            {removing ? `${step}…` : ""}
+          </p>
         </>
       }
     >
       {removing || error ? (
         <>
           {removing && (
-            <p role="status" className="m-0 text-body-sm text-secondary">
+            <p aria-hidden="true" className="m-0 text-body-sm text-secondary">
               {step}…
             </p>
           )}

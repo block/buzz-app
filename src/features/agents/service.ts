@@ -1847,6 +1847,12 @@ export class AgentsService extends Service implements Agents {
       },
       deleteAgent: async (agent, { agent: target }) => {
         const { identity, binding } = this.ownedAgent(agent, target, true);
+        const asked = this.deletions.find(
+          (request) =>
+            request.requester === agent.pubkey &&
+            request.agent === identity.pubkey,
+        );
+        if (asked) return { requestId: asked.id, saved: false };
         if (this.pending() >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();

@@ -10784,6 +10784,14 @@ it("submits an unsaved deletion request and deletes only after the owner approve
   ]);
   expect(native.beginDelete).not.toHaveBeenCalled();
   expect(service.find(sibling)).toMatchObject({ name: "Child" });
+  expect(
+    JSON.parse(
+      (await callTool(client, {}, "agent_delete", {
+        agent: sibling,
+      })) as string,
+    ),
+  ).toEqual(result);
+  expect(service.deleteRequests()).toHaveLength(1);
   const progress = vi.fn();
   await service.approveDelete(result.requestId, progress);
   expect(progress.mock.calls).toEqual([
@@ -10845,9 +10853,11 @@ it("keeps a deletion request whose Delete did not finish, and finishes it when a
   expect(service.deleteRequests()).toHaveLength(1);
   expect(service.find(sibling)).toMatchObject({ deleting: true });
   expect(native.forget).not.toHaveBeenCalled();
-  await expect(handle.deleteAgent({ agent: "Child" })).resolves.toMatchObject({
+  await expect(handle.deleteAgent({ agent: "Child" })).resolves.toEqual({
+    requestId,
     saved: false,
   });
+  expect(service.deleteRequests()).toHaveLength(1);
   await service.approveDelete(requestId);
   expect(service.find(sibling)).toBeUndefined();
   expect(service.deleteRequests()).toEqual([]);
@@ -10861,13 +10871,13 @@ it("shares one bound across creation, change and deletion requests, and releases
   const handle = plugin.agents.handle(bot);
   if (!handle?.deleteAgent || !handle.updateAgent || !handle.createAgent)
     throw new Error("Missing request handles");
-  for (let i = 0; i < 6; i++)
+  for (let i = 0; i < 8; i++)
     await handle.updateAgent({ agent: sibling, name: `Kid ${i}` });
-  for (let i = 0; i < 6; i++)
+  for (let i = 0; i < 7; i++)
     await handle.createAgent({ type: "example/echo", name: `New ${i}` });
-  for (let i = 0; i < 4; i++) await handle.deleteAgent({ agent: sibling });
+  await handle.deleteAgent({ agent: sibling });
   const full = "pending agent requests";
-  await expect(handle.deleteAgent({ agent: sibling })).rejects.toThrow(full);
+  await expect(handle.deleteAgent({ agent: bot })).rejects.toThrow(full);
   await expect(
     handle.updateAgent({ agent: sibling, name: "Kid" }),
   ).rejects.toThrow(full);
@@ -10897,8 +10907,18 @@ it("lets an agent ask to delete itself", async () => {
 });
 
 describe("refuses deletion requests it cannot honor", () => {
+  const stranger = "7".repeat(64);
+  const abroad = "8".repeat(64);
   async function requester() {
-    const ready = await setup();
+    const ready = await setup({
+      identities: [
+        { ...here(stranger), owner: "f".repeat(64), name: "Foreign" },
+        {
+          ...here(abroad, "wss://other.example.test"),
+          name: "Abroad",
+        },
+      ],
+    });
     await ready.service.create({ type: "example/echo", name: "Parent" });
     await ready.service.create({ type: "example/echo", name: "Child" });
     await vi.waitFor(() =>
@@ -10910,11 +10930,15 @@ describe("refuses deletion requests it cannot honor", () => {
   }
 
   it.each([
-    ["an unknown name", "Nobody", "no agent here"],
-    ["an unknown pubkey", "e".repeat(64), "no agent here"],
-  ])("%s", async (_, target, message) => {
+    ["an unknown name", "Nobody"],
+    ["an unknown pubkey", "e".repeat(64)],
+    ["another owner's agent by name", "Foreign"],
+    ["another owner's agent by pubkey", stranger],
+    ["an agent in another community by name", "Abroad"],
+    ["an agent in another community by pubkey", abroad],
+  ])("%s", async (_, target) => {
     const { service, native, ask } = await requester();
-    await expect(ask({ agent: target })).rejects.toThrow(message);
+    await expect(ask({ agent: target })).rejects.toThrow("no agent here");
     expect(service.deleteRequests()).toEqual([]);
     expect(native.beginDelete).not.toHaveBeenCalled();
   });
@@ -10929,7 +10953,7 @@ describe("refuses deletion requests it cannot honor", () => {
     expect(native.beginDelete).not.toHaveBeenCalled();
   });
 
-  it("a requester that is no longer available", async () => {
+  it("a requester that is no longer running here", async () => {
     const { service, native, connect, ask } = await requester();
     connect(false);
     await expect(ask({ agent: sibling })).rejects.toThrow(
@@ -10937,6 +10961,36 @@ describe("refuses deletion requests it cannot honor", () => {
     );
     expect(service.deleteRequests()).toEqual([]);
     expect(native.beginDelete).not.toHaveBeenCalled();
+  });
+
+  it("a requester whose community is no longer bound, through its run's handle", async () => {
+    const { service, native, run, emit, connect, ctx } = await requester();
+    let delivery!: Delivery<Config>;
+    run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      return new Promise<void>(() => {});
+    });
+    emit({
+      events: [
+        event("1", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+    });
+    try {
+      await vi.waitFor(() => expect(delivery).toBeDefined());
+      connect(false);
+      await expect(
+        delivery.agent.deleteAgent?.({ agent: sibling }),
+      ).rejects.toThrow("The requesting agent is no longer available");
+      expect(service.deleteRequests()).toEqual([]);
+      expect(native.beginDelete).not.toHaveBeenCalled();
+    } finally {
+      await ctx.fiber.dispose();
+    }
   });
 });
 

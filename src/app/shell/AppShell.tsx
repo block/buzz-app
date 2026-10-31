@@ -84,7 +84,7 @@ export function AppShell({
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
-  bindStatusSheet?: ((open: () => boolean) => () => void) | undefined;
+  bindStatusSheet: (open: () => boolean) => () => void;
   appearance: Appearance;
   /** Managed plugin recommendations awaiting review, pointed out beside Plugins. */
   pluginRecommendations?: number;

@@ -10,6 +10,7 @@ import {
   useCallback,
   useLayoutEffect,
   useContext,
+  useEffect,
   useMemo,
   useState,
   useRef,
@@ -63,7 +64,18 @@ export function useChannelMenuActions() {
   );
 }
 
-type LifecycleCallbacks = { close(): void; completed(): void };
+const connectionChanged =
+  "The connection changed before this finished. Check the channel before trying again.";
+
+type LifecycleCallbacks = {
+  close(): void;
+  completed(): void;
+  /** Returns true when it takes over reporting the failure, which is otherwise
+   * shown as a toast. */
+  failed?(message: string): boolean;
+  /** The user confirmed: the operation now belongs to the session. */
+  began?(): void;
+};
 
 type PreparingDm = { existing: Set<string>; members: Set<string | undefined> };
 type State = {
@@ -119,6 +131,14 @@ type Handoff = State & {
     origin?: AbortSignal,
     callbacks?: LifecycleCallbacks,
   ): void;
+  /** Asks the same confirmation as the menus and settles when it ends:
+   * `completed` after the action ran, `cancelled` when declined, a rejection
+   * with the failure. `origin` aborting retires an unconfirmed dialog. */
+  confirmLifecycle(
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+    origin: AbortSignal,
+  ): Promise<"completed" | "cancelled">;
   beginLifecycle(): void;
   closeLifecycle(): void;
   /** Unarchives through the same gate as every lifecycle action. */
@@ -165,6 +185,14 @@ export function ChannelNavigationProvider({
     activityAgent.current = undefined;
     setState(restore(connection.session, scope));
   }
+  const confirmations = useRef(new Set<(reason: unknown) => void>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reject pending confirmations when the relay session or scope changes.
+  useEffect(() => {
+    const pending = confirmations.current;
+    return () => {
+      for (const fail of [...pending]) fail(new Error(connectionChanged));
+    };
+  }, [connection.session, scope]);
   const update = useCallback(
     (change: (previous: State) => State) => {
       // Retired page/dialog completions cannot mutate a replacement session.
@@ -265,6 +293,58 @@ export function ChannelNavigationProvider({
               },
         );
       },
+      confirmLifecycle(channel, action, origin) {
+        return new Promise((resolve, reject) => {
+          if (origin.aborted) return reject(origin.reason);
+          if (relay.snapshot().session !== connection.session)
+            return reject(new Error(connectionChanged));
+          let attached = true;
+          let begun = false;
+          const abort = () => {
+            attached = false;
+            if (!begun) fail(origin.reason);
+          };
+          origin.addEventListener("abort", abort, { once: true });
+          const settle = (outcome: () => void) => {
+            origin.removeEventListener("abort", abort);
+            confirmations.current.delete(fail);
+            outcome();
+          };
+          const fail = (reason: unknown) => settle(() => reject(reason));
+          confirmations.current.add(fail);
+          update((previous) => {
+            if (previous.lifecycleDialog) {
+              fail(
+                new Error("Another channel action is waiting for an answer."),
+              );
+              return previous;
+            }
+            return {
+              ...previous,
+              lifecycleDialog: {
+                channel,
+                action,
+                origin,
+                callbacks: {
+                  close: () => settle(() => resolve("cancelled")),
+                  completed: () => settle(() => resolve("completed")),
+                  began: () => {
+                    begun = true;
+                  },
+                  failed: (message) => {
+                    if (!attached) {
+                      fail(origin.reason);
+                      return false;
+                    }
+                    fail(new Error(message));
+                    return true;
+                  },
+                },
+              },
+            };
+          });
+        });
+      },
       beginLifecycle() {
         // A confirmed operation belongs to the session, not its originating visit.
         update((previous) =>
@@ -310,6 +390,7 @@ export function ChannelNavigationProvider({
       mute,
       connection.session,
       connection.viewer,
+      relay,
       update,
       clearPreparingDm,
     ],
@@ -365,7 +446,10 @@ export function ChannelNavigationProvider({
               if (archived) value.undoArchive(archived);
             }}
             lifecycle={connection.session.channelLifecycle}
-            onSubmit={value.beginLifecycle}
+            onSubmit={() => {
+              state.lifecycleDialog?.callbacks?.began?.();
+              value.beginLifecycle();
+            }}
             // Submission closes asynchronously; use the same captured origin
             // as cancellation instead of Base UI's older focus-history entry.
             finalFocus={() => {
@@ -389,7 +473,9 @@ export function ChannelNavigationProvider({
               value.closeLifecycle();
             }}
             failed={(title, message) => {
-              setFailure({ session: connection.session, title, message });
+              const { callbacks } = state.lifecycleDialog ?? {};
+              if (!callbacks?.failed?.(`${title}: ${message}`))
+                setFailure({ session: connection.session, title, message });
               value.closeLifecycle();
             }}
           />

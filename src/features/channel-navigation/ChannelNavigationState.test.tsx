@@ -339,3 +339,185 @@ it("runs a chat archive's Undo through the lifecycle gate, after any action hold
   expect(view.result.current.lifecycleDialog).toBeUndefined();
   expect(run).toHaveBeenCalledTimes(3);
 });
+
+it("settles a requested confirmation as declined, failed or completed, and retires it with its origin", async () => {
+  const outcomes: ("done" | Error)[] = [new Error("Relay refused"), "done"];
+  const run = vi.fn(async () => {
+    const next = outcomes.shift();
+    if (next instanceof Error) throw next;
+  });
+  const view = mount(fixture(run).relay, true);
+  const planning = {
+    id: "a",
+    name: "Planning",
+    channelType: "stream" as const,
+  };
+  const origin = new AbortController();
+  const ask = () =>
+    view.result.current.confirmLifecycle(planning, "archive", origin.signal);
+  const dialog = () =>
+    screen.findByRole("dialog", { name: "Archive channel: Planning" });
+
+  let answer = ask();
+  await dialog();
+  await expect(
+    act(() =>
+      view.result.current.confirmLifecycle(planning, "archive", origin.signal),
+    ),
+  ).rejects.toThrow("Another channel action is waiting for an answer.");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await expect(answer).resolves.toBe("cancelled");
+  expect(run).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(view.result.current.lifecycleDialog).toBeUndefined(),
+  );
+
+  answer = ask();
+  await dialog();
+  fireEvent.click(screen.getByRole("button", { name: "Archive channel" }));
+  await expect(answer).rejects.toThrow("Archive channel failed: Relay refused");
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText("Relay refused")).toBeNull();
+  await waitFor(() =>
+    expect(view.result.current.lifecycleDialog).toBeUndefined(),
+  );
+
+  answer = ask();
+  await dialog();
+  fireEvent.click(screen.getByRole("button", { name: "Archive channel" }));
+  await expect(answer).resolves.toBe("completed");
+  expect(run).toHaveBeenCalledTimes(2);
+  await screen.findByRole("dialog", { name: "Channel archived: Planning" });
+
+  answer = ask();
+  const abandoned = expect(answer).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  await dialog();
+  act(() => origin.abort());
+  await abandoned;
+  await waitFor(() =>
+    expect(view.result.current.lifecycleDialog).toBeUndefined(),
+  );
+  await expect(ask()).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it("lets a confirmed archive finish after its origin is gone: it still completes and toasts, and a failure then is shown as a toast", async () => {
+  const pending: { resolve(): void; reject(error: Error): void }[] = [];
+  const run = vi.fn(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        pending.push({ resolve, reject });
+      }),
+  );
+  const view = mount(fixture(run).relay, true);
+  const planning = {
+    id: "a",
+    name: "Planning",
+    channelType: "stream" as const,
+  };
+  const confirmed = async () => {
+    const origin = new AbortController();
+    const answer = view.result.current.confirmLifecycle(
+      planning,
+      "archive",
+      origin.signal,
+    );
+    const settled = vi.fn();
+    answer.then(settled, settled);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Archive channel" }),
+    );
+    await waitFor(() => expect(run).toHaveBeenCalled());
+    act(() => origin.abort());
+    return { answer, settled };
+  };
+
+  const first = await confirmed();
+  await act(async () => {});
+  expect(first.settled).not.toHaveBeenCalled();
+  expect(screen.queryByText("Archive channel failed")).toBeNull();
+  await act(async () => pending[0]?.resolve());
+  await expect(first.answer).resolves.toBe("completed");
+  await screen.findByText("Channel archived: Planning");
+  await waitFor(() =>
+    expect(view.result.current.lifecycleDialog).toBeUndefined(),
+  );
+
+  const second = await confirmed();
+  await act(async () => pending[1]?.reject(new Error("Relay refused")));
+  expect(await screen.findByText("Relay refused")).toBeTruthy();
+  await expect(second.answer).rejects.toMatchObject({ name: "AbortError" });
+});
+
+it("settles a confirmation asked through a stale handle while another action holds the dialog, instead of waiting forever", async () => {
+  const view = mount(fixture().relay, true);
+  const planning = {
+    id: "a",
+    name: "Planning",
+    channelType: "stream" as const,
+  };
+  const stale = view.result.current;
+  act(() =>
+    view.result.current.openLifecycle(
+      planning,
+      "delete",
+      undefined,
+      undefined,
+      {
+        close() {},
+        completed() {},
+      },
+    ),
+  );
+  await screen.findByRole("dialog", { name: "Delete Planning?" });
+  expect(stale.lifecycleDialog).toBeUndefined();
+  await expect(
+    act(() =>
+      stale.confirmLifecycle(planning, "archive", new AbortController().signal),
+    ),
+  ).rejects.toThrow("Another channel action is waiting for an answer.");
+  expect(view.result.current.lifecycleDialog?.action).toBe("delete");
+});
+
+it.each([
+  ["before the user confirms", false],
+  ["while the confirmed action runs", true],
+] as const)(
+  "rejects a pending confirmation when the relay session is replaced %s, and a later one through the old handle",
+  async (_label, confirmed) => {
+    const run = vi.fn(() => new Promise<void>(() => {}));
+    const relay = fixture(run);
+    const view = mount(relay.relay, true);
+    const planning = {
+      id: "a",
+      name: "Planning",
+      channelType: "stream" as const,
+    };
+    const stale = view.result.current;
+    const answer = view.result.current.confirmLifecycle(
+      planning,
+      "archive",
+      new AbortController().signal,
+    );
+    const rejected = expect(answer).rejects.toThrow(
+      "The connection changed before this finished.",
+    );
+    await screen.findByRole("dialog", { name: "Archive channel: Planning" });
+    if (confirmed) {
+      fireEvent.click(screen.getByRole("button", { name: "Archive channel" }));
+      await waitFor(() => expect(run).toHaveBeenCalled());
+    }
+    act(() => relay.replace());
+    await rejected;
+    await expect(
+      act(() =>
+        stale.confirmLifecycle(
+          planning,
+          "archive",
+          new AbortController().signal,
+        ),
+      ),
+    ).rejects.toThrow("The connection changed before this finished.");
+  },
+);

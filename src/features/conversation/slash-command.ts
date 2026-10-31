@@ -74,8 +74,13 @@ const SCOPE_NOUNS = {
 } as const;
 
 export function scopeRefusal(command: SlashCommand) {
+  const scopes = command.scopes ?? [];
   const where = new Intl.ListFormat("en").format(
-    (command.scopes ?? []).map((scope) => SCOPE_NOUNS[scope]),
+    scopes.map((scope) =>
+      scope === "thread" && !scopes.includes("dm")
+        ? "channel threads"
+        : SCOPE_NOUNS[scope],
+    ),
   );
   return `/${command.name} only works in ${where}.`;
 }
@@ -96,15 +101,25 @@ export async function runSlashCommand(
   }
   const value = (result ?? {}) as Record<string, unknown>;
   if (
-    typeof value.send === "string" &&
-    value.send.trim() &&
+    value.cancelled === true &&
+    value.send === undefined &&
     value.done === undefined &&
     value.notice === undefined &&
     value.after === undefined
   )
+    return { cancelled: true };
+  if (
+    typeof value.send === "string" &&
+    value.send.trim() &&
+    value.done === undefined &&
+    value.notice === undefined &&
+    value.after === undefined &&
+    value.cancelled === undefined
+  )
     return { send: value.send };
   if (
     value.done === true &&
+    value.cancelled === undefined &&
     value.send === undefined &&
     (value.notice === undefined || typeof value.notice === "string") &&
     (value.after === undefined || typeof value.after === "function")

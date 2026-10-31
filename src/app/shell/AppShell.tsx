@@ -53,6 +53,7 @@ export function AppShell({
   settingsCards,
   federatedIdentity,
   accountActions,
+  bindStatusSheet,
   appearance,
   searchServices,
   navigationControls,
@@ -82,6 +83,7 @@ export function AppShell({
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
+  bindStatusSheet?: ((open: () => boolean) => () => void) | undefined;
   appearance: Appearance;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
@@ -459,6 +461,7 @@ export function AppShell({
               <ProfileButton
                 communities={communities}
                 accountActions={accountActions}
+                bindStatusSheet={bindStatusSheet}
                 settingsSelected={selected === "settings"}
                 appearance={appearance}
                 onSettings={(section) =>

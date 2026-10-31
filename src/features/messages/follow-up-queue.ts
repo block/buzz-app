@@ -423,13 +423,23 @@ function createQueue(session: RelaySession) {
         if (!session.outbox)
           throw new Error("Message delivery is unavailable.");
         await session.outbox.ready();
-        const previous = session.outbox
-          .snapshot()
-          .find(
-            (item) => item.recovery?.key === followUpRecovery(entry.id).key,
-          );
+        const previous = await session.outbox.recovery(
+          followUpRecovery(entry.id).key,
+        );
+        if (!previous && entry.deliveryId) {
+          entry.dismissedDelivery = entry.deliveryId;
+          if (!(await clearDismissed(entry))) return;
+        }
         if (previous) {
           entry.deliveryId = previous.event.id;
+          if (
+            !session.outbox
+              .snapshot()
+              .some((item) => item.event.id === previous.event.id)
+          )
+            throw new Error(
+              "This message is owned by another window. Reload to recover its delivery.",
+            );
           if (storage.handoff(entry.channelId)?.id === entry.id) {
             const handoff = {
               id: entry.id,
@@ -732,7 +742,12 @@ function createQueue(session: RelaySession) {
             followUpRecovery(entry.id).key,
           );
           if (!entries.includes(entry)) return;
-          entry.deliveryId ??= receipt?.event.id;
+          if (!receipt && entry.deliveryId) {
+            entry.dismissedDelivery = entry.deliveryId;
+            await clearDismissed(entry);
+            return;
+          }
+          entry.deliveryId = receipt?.event.id;
           entry.sending = !!entry.deliveryId;
           entries = [...entries];
           emit();

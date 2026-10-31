@@ -72,15 +72,34 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
+function fixture(
+  partition = scope,
+  records: readonly OutgoingEvent[] = [],
+  incremental = false,
+) {
   let signGate: Promise<void> | undefined;
   let persisted = structuredClone(records);
   if (records.length || !journals.has(partition))
     journals.set(partition, persisted);
   const publish = vi.fn(async () => {});
   const save = vi.fn(async (value: readonly OutgoingEvent[]) => {
+    if (incremental) {
+      const next = new Map(
+        (journals.get(partition) ?? []).map((item) => [item.event.id, item]),
+      );
+      for (const item of value) {
+        const old = persisted.find(
+          (previous) => previous.event.id === item.event.id,
+        );
+        if (JSON.stringify(old) !== JSON.stringify(item))
+          next.set(item.event.id, structuredClone(item));
+      }
+      for (const old of persisted)
+        if (!value.some((item) => item.event.id === old.event.id))
+          next.delete(old.event.id);
+      journals.set(partition, [...next.values()]);
+    } else journals.set(partition, structuredClone(value));
     persisted = structuredClone(value);
-    journals.set(partition, persisted);
   });
   const owner = createOutbox(
     viewer,
@@ -91,7 +110,17 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
       },
       publish,
     },
-    { load: () => journals.get(partition) ?? [], save },
+    {
+      forget: (id) => {
+        persisted = persisted.filter((item) => item.event.id !== id);
+      },
+      load: (options) => {
+        const records = journals.get(partition) ?? [];
+        if (!options?.readOnly) persisted = structuredClone(records);
+        return records;
+      },
+      save,
+    },
   );
   const listeners = new Set<() => void>();
   let working = true;
@@ -1793,5 +1822,77 @@ it.each([false, true])(
       await followUpStorage(scope).lockChat("chat", async () => {});
       expect(followUpStorage(scope).handoff("chat")?.complete).toBe(true);
     }
+  },
+);
+
+it.each(["send", "storage"])(
+  "revalidates a stale hydrated failed receipt after another window dismisses it (%s)",
+  async (trigger) => {
+    const first = fixture(scope, [], true);
+    await first.owner.ready;
+    const id = first.enqueue();
+    const event = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 1,
+        content: message.text,
+        tags: [
+          ["h", "chat"],
+          ["p", agent],
+        ],
+      },
+      secret,
+    );
+    followUpStorage(scope).sending(id, true);
+    const dismissing = fixture(
+      scope,
+      [
+        {
+          event,
+          signed: event,
+          recovery: followUpRecovery(id),
+          delivery: "failed",
+        },
+      ],
+      true,
+    );
+    const stale = fixture(scope, [], true);
+    cleanup.push(stale.queue.subscribe(() => {}));
+    await Promise.all([dismissing.owner.ready, stale.owner.ready]);
+    const old = stale.owner.outbox.snapshot()[0];
+    if (!old) throw new Error("Missing failed receipt");
+    await followUpStorage(scope).lock(id, async () => {});
+    expect(stale.queue.snapshot()[0]?.deliveryId).toBe(old.event.id);
+    await dismissing.owner.outbox.dismiss(old.event.id);
+    await followUpStorage(scope).lockChat("chat", async () => {});
+    expect(journals.get(scope)).toEqual([]);
+    expect(stale.owner.outbox.snapshot()[0]?.event.id).toBe(old.event.id);
+    if (trigger === "storage") {
+      window.dispatchEvent(new StorageEvent("storage"));
+      await followUpStorage(scope).lock(id, async () => {});
+      await vi.waitFor(() =>
+        expect(stale.queue.snapshot()[0]?.deliveryId).toBeUndefined(),
+      );
+      expect(stale.queue.snapshot()[0]?.sending).toBe(false);
+    }
+    stale.queue.sendNow(id);
+    await vi.waitFor(() => expect(stale.publish).toHaveBeenCalledOnce());
+    expect(stale.send).toHaveBeenCalledOnce();
+    expect(
+      stale.owner.outbox
+        .snapshot()
+        .some((item) => item.event.id === old.event.id),
+    ).toBe(false);
+    await vi.waitFor(() => expect(stale.queue.snapshot()).toEqual([]));
+    expect(followUpStorage(scope).has(id)).toBe(false);
+    expect(
+      journals
+        .get(scope)
+        ?.some(
+          (item) =>
+            item.event.content === message.text &&
+            item.event.id !== old.event.id,
+        ),
+    ).toBe(true);
   },
 );

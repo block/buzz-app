@@ -52,8 +52,14 @@ export async function purgeOutboxStorage(scope: string) {
 export function browserOutboxStorage(scope: string): OutboxStorage {
   let database: Promise<IDBDatabase> | undefined;
   let persisted = new Map<string, OutgoingEvent>();
+  let ownershipRevision = 0;
+  const forgotten = new Map<string, number>();
   const open = () => (database ??= openDatabase());
   return {
+    forget(id) {
+      forgotten.set(id, ++ownershipRevision);
+      persisted.delete(id);
+    },
     async load(options) {
       const db = await open();
       let migrated = false;
@@ -96,6 +102,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       return records;
     },
     async save(operations) {
+      const revision = ownershipRevision;
       const db = await open();
       const next = new Map(operations.map((item) => [item.event.id, item]));
       await new Promise<void>((resolve, reject) => {
@@ -123,7 +130,11 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           if (!next.has(id)) events.delete([scope, id]);
         tx.objectStore("partitions").put(true, scope);
         tx.oncomplete = () => {
-          persisted = next;
+          // A read can relinquish an ID while this transaction is pending.
+          // Do not let completion reclaim deletion ownership of that ID.
+          persisted = new Map(
+            [...next].filter(([id]) => (forgotten.get(id) ?? 0) <= revision),
+          );
           resolve();
         };
         tx.onabort = () =>

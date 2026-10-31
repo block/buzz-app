@@ -314,6 +314,8 @@ function mount(
     media: (url: string) => url,
     outbox: {
       ready: async () => {},
+      recovery: async (key: string) =>
+        pending.find((item) => item.recovery?.key === key),
       recover: async () => {},
       acknowledge: async () => {},
       observeDismiss: () => () => {},

@@ -77,6 +77,8 @@ type SendObserver = (
 ) => ((pending: readonly EventData[]) => void) | undefined;
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
 export interface OutboxStorage {
+  /** Relinquish incremental write ownership after observing external removal. */
+  forget?(id: string): void;
   close?(): void;
   load(options?: {
     readOnly?: boolean;
@@ -149,6 +151,8 @@ export function createOutbox(
       throw new DOMException("Channel addition cancelled", "AbortError");
   };
   let snapshot: readonly OutgoingEvent[] = Object.freeze([]);
+  // Hydrated receipts are observations, not delivery owned by this window.
+  const restoredReceipts = new Set<string>();
   let visible: readonly OutgoingEvent[] = snapshot;
   let finalSnapshot: readonly OutgoingEvent[] | undefined;
   let finalVisible: readonly OutgoingEvent[] | undefined;
@@ -398,6 +402,7 @@ export function createOutbox(
           (item.event.kind === 9007 && confirmedKeep?.(item.event)))
       )
         completed.set(item.event.id, item);
+    for (const item of pending) restoredReceipts.add(item.event.id);
     snapshot = Object.freeze([...pending, ...snapshot]);
     notify();
   }
@@ -660,13 +665,19 @@ export function createOutbox(
     },
     async recovery(key: string) {
       await outbox.ready();
-      const local = snapshot.find((item) => item.recovery?.key === key);
-      return (
-        local ??
-        (await storage.load({ readOnly: true })).find(
-          (item) => item.recovery?.key === key,
-        )
+      const shared = (await storage.load({ readOnly: true })).find(
+        (item) => item.recovery?.key === key,
       );
+      const local = snapshot.find((item) => item.recovery?.key === key);
+      // A local send/retry can still own intent whose save failed or is pending.
+      if (local && !restoredReceipts.has(local.event.id)) return local;
+      if (local && local.event.id !== shared?.event.id) {
+        restoredReceipts.delete(local.event.id);
+        storage.forget?.(local.event.id);
+        snapshot = Object.freeze(snapshot.filter((item) => item !== local));
+        notify();
+      }
+      return shared;
     },
     async recover(id: string, recovery: OutboxRecovery) {
       await outbox.ready();
@@ -693,6 +704,7 @@ export function createOutbox(
         );
       // Protect immediately against dismissal/echo eviction. On save failure keep
       // that protection; a later recovery attempt must persist it again before use.
+      if (!item.recovery) restoredReceipts.delete(id);
       const retained = Object.freeze({ ...item, recovery: saved });
       completed.delete(id);
       snapshot = Object.freeze([
@@ -861,6 +873,7 @@ export function createOutbox(
         !attempts.has(id) &&
         !dismissing.has(id)
       ) {
+        restoredReceipts.delete(id);
         // A profile retry can reuse an older, unguarded saved invitation.
         // Promote that intent before scheduling so signing and publication honor
         // the renewed caller policy, including after the next hydration.

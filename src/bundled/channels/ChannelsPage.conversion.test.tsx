@@ -170,6 +170,7 @@ function fixture() {
     },
     signal: visit.signal,
     forSession: () => navigation,
+    passThrough: () => () => {},
     complete: () => true,
     resolve: () => true,
   };

@@ -5,7 +5,7 @@
 // directory `path` and `files` may read (default: the working directory).
 import { fromJsonSchema, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { nodeClient } from "./node";
+import { nodeClient, relayAuthority } from "./node";
 import { content, errorText } from "./rpc";
 import { BUZZ_HELP_PROMPT } from "./prompt";
 import {
@@ -23,8 +23,10 @@ const env = (name: string) => {
 
 const auth = process.env.BUZZ_AUTH_TAG?.trim();
 const channel = process.env.BUZZ_CHANNEL?.trim();
+const relay = env("BUZZ_RELAY_URL");
 const client = nodeClient({
-  relay: env("BUZZ_RELAY_URL"),
+  relay,
+  relayAuthor: await relayAuthority(relay),
   key: env("BUZZ_PRIVATE_KEY"),
   ...(auth ? { auth } : {}),
   root: process.env.BUZZ_MCP_ROOT?.trim() || process.cwd(),

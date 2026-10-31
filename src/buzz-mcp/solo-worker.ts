@@ -408,7 +408,7 @@ async function connections(client: BuzzClient) {
   const { relayAuthor } = client;
   if (relayAuthor === undefined)
     throw new Error(
-      "This Buzz connection cannot verify channel members, so it cannot find an owner's grant. Use Solo workers from an agent running in Buzz.",
+      "This Buzz connection does not know its relay's key, so it cannot verify channel members or find an owner's grant.",
     );
   const streams = new Map<string, string>();
   const complete = await scan(

@@ -1,6 +1,11 @@
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 import { hoverMessage } from "./message-actions.mjs";
+import {
+  holdReadingFocus,
+  releaseReadingFocus,
+  readJournal,
+} from "./reading.mjs";
 
 test.use({
   productionBroker: true,
@@ -238,4 +243,77 @@ test("a joined guest can read and leave without receiving a composer or Join pro
   ).toBeVisible();
   expect(app.report.lifecyclePublications ?? []).toEqual([]);
   expect(app.report.unexpected).toEqual([]);
+});
+
+// Real navigation focus, settled layout and durable receipt wiring are browser
+// contracts. useReading's tests own dwell timing and visibility permutations.
+const readingTest = test.extend({ pluginFixtures: true });
+readingTest.describe("Guest reading focus", () => {
+  readingTest.use({ readState: true, guestPermalinks: true });
+
+  for (const width of [1440, 600])
+    readingTest(
+      `opening a read-only channel hands focus to history and quiets ordinary unread (${width}px)`,
+      async ({ page, app }) => {
+        const history = app.histories.get(`primary/${readerChannelId}`);
+        const message = history[0];
+        history.splice(1);
+        await page.setViewportSize({ width, height: 950 });
+        await holdReadingFocus(page);
+        await page.goto(app.origin);
+        await openPage(page, "Messages");
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                window.fixtureRelay.snapshot().session.unread.sync()
+                  .completeness,
+            ),
+          )
+          .toBe("snapshot");
+        await releaseReadingFocus(page);
+        if (width < 650)
+          await page
+            .getByRole("button", { name: "Show navigation", exact: true })
+            .click();
+        const channel = page
+          .getByRole("navigation", { name: "Subscribed channels" })
+          .getByRole("button", { name: /^Lifecycle channel/ });
+        await expect(
+          channel.getByText("Lifecycle channel", { exact: true }),
+        ).toHaveCSS("font-weight", "600");
+        expect(
+          (await readJournal(page)).state.frontiers[
+            `activity:${readerChannelId}`
+          ],
+        ).toBeUndefined();
+        await channel.click();
+        const timeline = page.getByRole("region", {
+          name: "Channel message history",
+          exact: true,
+        });
+        await expect(
+          timeline.locator(`[data-message-id="${message.id}"]`),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("region", { name: "Read-only channel", exact: true }),
+        ).toBeVisible();
+        await expect(timeline).toBeFocused();
+        await expect
+          .poll(
+            async () =>
+              (await readJournal(page)).state.frontiers[
+                `activity:${readerChannelId}`
+              ],
+          )
+          .toBe(message.created_at);
+        await expect(
+          page
+            .locator(
+              `nav[aria-label="Subscribed channels"] [data-channel-id="${readerChannelId}"]`,
+            )
+            .getByText("Lifecycle channel", { exact: true }),
+        ).toHaveCSS("font-weight", "400");
+      },
+    );
 });

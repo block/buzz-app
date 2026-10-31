@@ -281,6 +281,7 @@ export function ChannelsPage({
           queries={session.session}
           relay={relay}
           navigation={retireDetail ? undefined : sessionNavigation}
+          opening={retireDetail ? undefined : navigation}
           navigator={navigator}
           viewer={session.viewer}
           panels={panels}
@@ -312,6 +313,7 @@ function ChannelWorkspace({
   scope,
   companion,
   navigation,
+  opening,
   navigator,
   viewer,
   agents,
@@ -325,6 +327,7 @@ function ChannelWorkspace({
   communities?: CommunityReader | undefined;
   scope: string;
   navigation?: PageNavigation | undefined;
+  opening?: PageNavigation | undefined;
   navigator: Navigation;
   viewer?: string | undefined;
   queries: RelaySession;
@@ -366,6 +369,50 @@ function ChannelWorkspace({
   const [composerFocus, setComposerFocus] = useState(0);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
   const historyContainer = useRef<HTMLElement>(null);
+  const historyFocus = useRef<{
+    opening: PageNavigation;
+    request: PageNavigation;
+    origin: Element | null;
+    pending: boolean;
+  }>(undefined);
+  useLayoutEffect(() => {
+    if (!navigation || !opening) {
+      historyFocus.current = undefined;
+      return;
+    }
+    let intent = historyFocus.current;
+    if (intent?.opening === opening) {
+      // A connection snapshot rebinds authority, not the person's opening intent.
+      intent.request = navigation;
+    } else {
+      historyFocus.current = undefined;
+      const target = navigation.target;
+      if (
+        navigation.focus === "preserve" ||
+        target.kind !== "conversation" ||
+        target.messageId ||
+        target.threadRootId ||
+        target.detail ||
+        target.panel
+      )
+        return;
+      // A read-only destination has no composer to accept the opening's focus.
+      intent = {
+        opening,
+        request: navigation,
+        origin: document.activeElement,
+        pending: true,
+      };
+      historyFocus.current = intent;
+    }
+    if (!intent.pending) return;
+    const pending = intent;
+    const moved = (event: FocusEvent) => {
+      if (event.target !== pending.origin) pending.pending = false;
+    };
+    document.addEventListener("focusin", moved, true);
+    return () => document.removeEventListener("focusin", moved, true);
+  }, [navigation, opening]);
   // A visit applied by a header opening must not take that opening's focus.
   const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
   // A started join focuses the composer when membership makes it writable,
@@ -1775,6 +1822,41 @@ function ChannelWorkspace({
     (current.archived ||
       (current.readOnly &&
         (!current.cached || current.viewerRole === "guest")));
+  const contentReady = useCallback(
+    (channelId: string) => {
+      setContentReadyChannel(channelId);
+      const pending = historyFocus.current;
+      if (
+        !pending?.pending ||
+        pending.request !== navigation ||
+        channelId !== currentId
+      )
+        return;
+      const history = historyContainer.current?.querySelector<HTMLElement>(
+        "[data-message-scroller]",
+      );
+      if (!history) return;
+      pending.pending = false;
+      if (
+        !channelNotice ||
+        navigation.signal.aborted ||
+        navigation.focus === "preserve" ||
+        navigator.snapshot().entry.id !== navigation.entryId ||
+        document.activeElement !== pending.origin ||
+        document.visibilityState === "hidden" ||
+        !history.isConnected ||
+        !history.getClientRects().length ||
+        history.closest("[inert], [hidden]")
+      )
+        return;
+      const owner = document.activeElement?.closest(
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
+      );
+      if (!owner || owner.contains(history))
+        history.focus({ preventScroll: true });
+    },
+    [navigation, navigator, currentId, channelNotice],
+  );
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <>
@@ -1790,7 +1872,7 @@ function ChannelWorkspace({
       >
         {current ? (
           <ChannelBody
-            onContentReady={setContentReadyChannel}
+            onContentReady={contentReady}
             viewer={viewer}
             key={current.id}
             cached={cached}

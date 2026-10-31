@@ -571,6 +571,41 @@ it("tells a subscriber when a new conversation's first turn starts working", asy
   expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
 });
 
+it("leaves a protected Buzz tool call to Claude's own tool review", async () => {
+  const f = setup([], { hold: true, nativeHistory: [] });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
+    },
+  };
+  await f.deliver(
+    { type: "mention", event: message("1", "Howzit") },
+    { agent: { ...f.agent, protection } as unknown as Delivery["agent"] },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((worker) => worker.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  try {
+    await mcp(worker, 1, "tools/call", {
+      name: "send",
+      arguments: { text: "Howzit!" },
+    });
+    expect(check.mock.calls.map(([action]) => action.kind)).toEqual([
+      "tool-result",
+    ]);
+  } finally {
+    worker?.finish();
+    await f.runtime.retire(self);
+  }
+});
+
 it("launches unprotected once an agent's protection is cleared", async () => {
   const { runtime, deliver, claudes } = setup([], { hold: true });
   const binding = { provider: "test", policy: {} };

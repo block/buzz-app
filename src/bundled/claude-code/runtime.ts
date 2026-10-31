@@ -921,6 +921,8 @@ export class ClaudeRuntime {
         const client =
           handle &&
           appClient(handle, {
+            // Its PreToolUse hook reviews every tool, Buzz's included.
+            nativeToolGate: true,
             protectionContext: async () => {
               if (!conversation)
                 throw new Error(

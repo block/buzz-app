@@ -43,7 +43,22 @@ export type ComposerSession = Pick<
   typing: Pick<RelaySession["typing"], "snapshot" | "subscribe"> &
     Partial<Pick<RelaySession["typing"], "send">>;
   presence?: Pick<NonNullable<RelaySession["presence"]>, "status"> | undefined;
-  directMessages: Pick<RelaySession["directMessages"], "people">;
+  directMessages: Pick<RelaySession["directMessages"], "people"> &
+    Partial<
+      Pick<
+        RelaySession["directMessages"],
+        "available" | "open" | "delivered" | "delivery"
+      >
+    >;
+  /** Rename and mute for slash commands; a detached editor has neither. */
+  channelDetails?: Pick<
+    RelaySession["channelDetails"],
+    "available" | "load" | "save"
+  >;
+  sidebarPreferences?: Pick<
+    RelaySession["sidebarPreferences"],
+    "muteWritable" | "setMute" | "snapshot"
+  >;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
   channelWrites: Pick<
     RelaySession["channelWrites"],
@@ -52,17 +67,18 @@ export type ComposerSession = Pick<
   /** Join, leave and member removal for slash commands; a detached editor has none. */
   channelLifecycle?: Pick<
     RelaySession["channelLifecycle"],
-    "available" | "run"
+    "available" | "load" | "run"
   >;
   memberAdministration?: Pick<
     RelaySession["memberAdministration"],
     "available" | "refresh" | "run" | "snapshot"
   >;
   outbox:
-    | Pick<
+    | (Pick<
         NonNullable<RelaySession["outbox"]>,
         "supports" | "snapshot" | "subscribe" | "retry"
-      >
+      > &
+        Partial<Pick<NonNullable<RelaySession["outbox"]>, "dismiss">>)
     | undefined;
   attachments:
     | (NonNullable<RelaySession["attachments"]> & {

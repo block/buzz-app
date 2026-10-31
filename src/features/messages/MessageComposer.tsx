@@ -98,6 +98,7 @@ import {
   type RefObject,
 } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
+import { useChannelNavigation } from "../channel-navigation/ChannelNavigationState";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
@@ -570,6 +571,7 @@ function Composer({
   const startsThread =
     !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
   const host = fullSession(session);
+  const channelActions = useChannelNavigation();
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
@@ -2559,11 +2561,29 @@ function Composer({
               name,
             })),
             signal: attempt.signal,
+            confirmChannelAction:
+              channelActions && host
+                ? (action, id) => {
+                    const channel = session.channels
+                      .list()
+                      .channels.find((item) => item.id === id);
+                    return channel
+                      ? channelActions.confirmLifecycle(
+                          channel,
+                          action,
+                          attempt.signal,
+                        )
+                      : Promise.reject(
+                          new Error("This channel is unavailable."),
+                        );
+                  }
+                : undefined,
           });
         } finally {
           commandRunning.current = false;
         }
         attempt.signal.throwIfAborted();
+        if (result.cancelled) return;
         if (valueRef.current !== captured) return;
         if (viewRevision(scope, draftKey) !== savedRevision) {
           setConflict(true);

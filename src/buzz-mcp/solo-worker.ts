@@ -466,17 +466,28 @@ async function connections(client: BuzzClient, clock: Clock) {
     return events;
   };
   const streams = new Map<string, string>();
+  const seen = new Set<string>();
   const complete = await scan(
     query,
-    { kinds: [39002], "#p": [client.pubkey], authors: [relayAuthor] },
+    // From the relay's writer, like the metadata below: a replica may lag
+    // behind a member being added.
+    {
+      kinds: [39002],
+      "#p": [client.pubkey],
+      authors: [relayAuthor],
+      consistency: "strong",
+    },
     (event) => {
       if (event.pubkey !== relayAuthor) return true;
       const stream = event.tags.find((tag) => tag[0] === "d")?.[1];
+      // Newest first, and only a channel's newest roster counts.
+      if (!stream || seen.has(stream)) return true;
+      seen.add(stream);
       const members = new Set(
         event.tags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
       );
       const [other] = [...members].filter((key) => key !== client.pubkey);
-      if (stream && other && members.size === 2 && members.has(client.pubkey))
+      if (other && members.size === 2 && members.has(client.pubkey))
         streams.set(stream, other);
       return true;
     },

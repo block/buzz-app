@@ -223,6 +223,38 @@ describe("solo_worker_connections", () => {
     expect((await call("solo_worker_connections")).connections).toEqual([]);
   });
 
+  it("stops using a channel once someone joins, even for a saved retry", async () => {
+    const harness = community((intent) =>
+      intent.action === "send" ? [{ phase: "accepted" }] : ready(intent, ""),
+    );
+    const { call, sign, published, client } = harness;
+    const first = await call("solo_worker_send", {
+      solo: S,
+      worker_epoch: 1,
+      text: "go",
+    });
+    expect(first.retry).toBeDefined();
+    const stale = await client.query([{ kinds: [39002], "#d": [K] }]);
+    sign(RELAY, {
+      kind: 39002,
+      content: "",
+      tags: [["d", K], ...[H, C, W].map((member) => ["p", member])],
+    });
+    // A replica that still has the two-member roster; only the writer is current.
+    const current = client.query;
+    harness.client.query = async (filters) => {
+      const [filter] = filters as { kinds: number[]; consistency?: string }[];
+      return filter?.kinds.includes(39002) && filter.consistency !== "strong"
+        ? stale
+        : current(filters);
+    };
+    const before = published.length;
+    await expect(
+      call("solo_worker_send", { retry: first.retry }),
+    ).rejects.toThrow(/No owner has authorized you/);
+    expect(published).toHaveLength(before);
+  });
+
   it("ignores an acknowledgement the owner did not sign", async () => {
     const { call, sign } = community(ready, { ack: null });
     sign(AGENT, recordTemplate(ACK));

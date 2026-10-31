@@ -23,6 +23,7 @@ import {
 import type { ClientSnapshot } from "../features/communities/service";
 import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
+import { createPluginInstallRequests } from "../plugins/installer";
 
 afterEach(cleanup);
 vi.mock("../bundled/icons", () => ({
@@ -2372,4 +2373,94 @@ it("routes a managed plugin's updates through the managed review instead of the 
     pinned,
   );
   expect(checkGit).not.toHaveBeenCalled();
+});
+
+function installRequestFixture(imports: object | undefined) {
+  const { cards } = registry([]);
+  const snapshot = {
+    configuration: {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [] },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const plugins = {
+    imports,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    change: vi.fn(async () => true),
+    dismissError: vi.fn(),
+  } as unknown as Parameters<typeof Settings>[0]["plugins"];
+  const requests = createPluginInstallRequests();
+  return { cards, plugins, requests };
+}
+const requestedSource = {
+  repository: "https://example.com/plugins.git",
+  reference: "v1",
+};
+
+it("opens a requested plugin source in Plugins and cancels it when Settings closes", async () => {
+  const { cards, plugins, requests } = installRequestFixture({
+    git: vi.fn(),
+    discard: vi.fn(async () => {}),
+  });
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  const outcome = requests.request(requestedSource, { kind: "link" });
+  const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
+  expect(within(dialog).getByLabelText("Git or GitHub repository")).toHaveValue(
+    "https://example.com/plugins.git",
+  );
+  expect(dialog).toHaveTextContent("Requested by a link.");
+  view.unmount();
+  await expect(outcome).resolves.toBe("cancelled");
+  expect(requests.snapshot()).toBeUndefined();
+});
+
+it("cancels a request nobody claimed when Settings closes", async () => {
+  const { cards, plugins, requests } = installRequestFixture(undefined);
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  const outcome = requests.request(requestedSource, { kind: "link" });
+  expect(requests.snapshot()).toBeDefined();
+  view.unmount();
+  await expect(outcome).resolves.toBe("cancelled");
+});
+
+it("refuses a plugin request while the add dialog is open", async () => {
+  const { cards, plugins, requests } = installRequestFixture({
+    git: vi.fn(),
+    discard: vi.fn(async () => {}),
+  });
+  render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add" }));
+  await screen.findByRole("dialog", { name: "Add a plugin" });
+  await expect(
+    requests.request(requestedSource, { kind: "link" }),
+  ).resolves.toBe("unavailable");
 });

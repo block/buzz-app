@@ -11,7 +11,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PluginManager } from "../plugins/manager";
-import type { Catalog, ImportPreview } from "../plugins/types";
+import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
+import type { PluginInstallRequest } from "../plugins/installer";
 import { PluginImport } from "./PluginImport";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
@@ -1953,3 +1954,501 @@ it.each(["folder", "git"])(
     if (source === "git") expect(authorizeGit).toHaveBeenCalledTimes(3);
   },
 );
+
+const requestedManifest = {
+  id: "example.requested",
+  name: "Requested",
+  apiVersion: 1 as const,
+};
+const pinned = "0123456789abcdef0123456789abcdef01234567";
+function requestedPreview(commit: string | null, paths = ["."]) {
+  return {
+    token: "requested-token",
+    source: "https://example.com/plugins.git",
+    commit,
+    warnings: [],
+    candidates: paths.map((path) => ({
+      path,
+      revision: `revision-${path}`,
+      manifest: requestedManifest,
+    })),
+  };
+}
+function requestedHarness(
+  preview: ImportPreview,
+  source: Partial<{ path: string; commit: string }> = { commit: pinned },
+  plugins: Catalog["plugins"] = [],
+  origin: PluginInstallRequest["origin"] = {
+    kind: "plugin",
+    id: "example.market",
+    name: "Market",
+  },
+  authorizeGit?: (
+    repository: string,
+  ) => Promise<{ repository: string; token: string } | null>,
+) {
+  const git = vi.fn(async () => preview);
+  const discard = vi.fn(async () => {});
+  const installImport = vi.fn(async () => true);
+  const change = vi.fn(async () => true);
+  const settled = vi.fn();
+  const manager = {
+    imports: { git, discard },
+    installImport,
+    change,
+    snapshot: () => ({ error: null }),
+  } as unknown as PluginManager;
+  const request = {
+    id: 7,
+    source: {
+      repository: "https://example.com/plugins.git",
+      reference: "v1",
+      ...source,
+    },
+    origin,
+  };
+  const claimed = vi.fn(() => true);
+  const release = vi.fn();
+  const holdReview = vi.fn(() => release);
+  const element = (
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins }}
+      busy={false}
+      request={request}
+      onRequestSettled={settled}
+      onRequestClaimed={claimed}
+      holdReview={holdReview}
+      {...(authorizeGit ? { authorizeGit } : {})}
+    />
+  );
+  return {
+    git,
+    discard,
+    installImport,
+    change,
+    settled,
+    claimed,
+    release,
+    holdReview,
+    element,
+  };
+}
+
+it("prefills a requested source, reads nothing until Find, and installs only after review is confirmed", async () => {
+  const { git, installImport, change, settled, element } = requestedHarness(
+    requestedPreview(pinned),
+  );
+  render(element);
+  const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
+  expect(within(dialog).getByLabelText("Git or GitHub repository")).toHaveValue(
+    "https://example.com/plugins.git",
+  );
+  expect(
+    within(dialog).getByLabelText("Git or GitHub repository"),
+  ).toHaveAttribute("readonly");
+  expect(within(dialog).getByLabelText("Branch or tag (optional)")).toHaveValue(
+    "v1",
+  );
+  expect(dialog).toHaveTextContent("Pinned to commit 0123456789ab");
+  expect(git).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(git).toHaveBeenCalledWith(
+    "https://example.com/plugins.git",
+    "v1",
+    undefined,
+    pinned,
+  );
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Commit 0123456789ab (matches the requested commit)",
+  );
+  expect(installImport).not.toHaveBeenCalled();
+  expect(settled).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "installed"));
+  expect(installImport).toHaveBeenCalledWith("requested-token", ".");
+  expect(change).toHaveBeenCalledWith("enable", "example.requested");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("shows the native refusal when the reference no longer resolves to the pinned commit", async () => {
+  const { git, discard, installImport, settled, element } = requestedHarness(
+    requestedPreview(pinned),
+  );
+  git.mockRejectedValueOnce(
+    `The repository reference is at commit ${"f".repeat(40)}, not the required commit ${pinned}.`,
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    `not the required commit ${pinned}`,
+  );
+  expect(git).toHaveBeenCalledWith(
+    "https://example.com/plugins.git",
+    "v1",
+    undefined,
+    pinned,
+  );
+  expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
+  expect(
+    screen.queryByRole("dialog", { name: "Review plugin access" }),
+  ).toBeNull();
+  expect(installImport).not.toHaveBeenCalled();
+  expect(settled).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "cancelled"));
+  expect(installImport).not.toHaveBeenCalled();
+  expect(discard).not.toHaveBeenCalled();
+});
+
+it("closes a request its requester retired during Find once Find settles, without offering Install", async () => {
+  const harness = requestedHarness(requestedPreview(pinned));
+  let finish: (preview: ImportPreview) => void = () => {};
+  harness.git.mockImplementationOnce(
+    () => new Promise<ImportPreview>((resolve) => (finish = resolve)),
+  );
+  const view = render(harness.element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await waitFor(() => expect(harness.git).toHaveBeenCalledOnce());
+  view.rerender(
+    <PluginImport {...harness.element.props} request={undefined} />,
+  );
+  await act(async () => finish(requestedPreview(pinned)));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(harness.discard).toHaveBeenCalledWith("requested-token");
+  expect(harness.settled).toHaveBeenCalledWith(7, "cancelled");
+  expect(harness.installImport).not.toHaveBeenCalled();
+  expect(harness.release).toHaveBeenCalledOnce();
+});
+
+it("attempts a retired request's release once when discard fails, and retries on close", async () => {
+  const harness = requestedHarness(requestedPreview(pinned));
+  let finish: (preview: ImportPreview) => void = () => {};
+  harness.git.mockImplementationOnce(
+    () => new Promise<ImportPreview>((resolve) => (finish = resolve)),
+  );
+  harness.discard.mockRejectedValueOnce(new Error("import is busy"));
+  const view = render(harness.element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await waitFor(() => expect(harness.git).toHaveBeenCalledOnce());
+  view.rerender(
+    <PluginImport {...harness.element.props} request={undefined} />,
+  );
+  await act(async () => finish(requestedPreview(pinned)));
+  expect(await screen.findByRole("alert")).toHaveTextContent("import is busy");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+  expect(harness.discard).toHaveBeenCalledOnce();
+  expect(harness.settled).not.toHaveBeenCalled();
+  for (const install of screen.queryAllByRole("button", {
+    name: "Install plugin",
+  }))
+    expect(install).toBeDisabled();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(harness.discard).toHaveBeenCalledTimes(2);
+  expect(harness.settled).toHaveBeenCalledWith(7, "cancelled");
+  expect(harness.installImport).not.toHaveBeenCalled();
+});
+
+it("passes no commit for an unpinned request", async () => {
+  const { git, element } = requestedHarness(requestedPreview(pinned), {});
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(git).toHaveBeenCalledWith("https://example.com/plugins.git", "v1");
+  expect(screen.getByRole("dialog")).not.toHaveTextContent(
+    "matches the requested commit",
+  );
+});
+
+it("selects the requested folder directly and refuses a repository without it", async () => {
+  const found = requestedHarness(requestedPreview(pinned, ["a", "plugins/b"]), {
+    path: "plugins/b",
+  });
+  const view = render(found.element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(screen.getByRole("dialog")).toHaveTextContent("Commit 0123456789ab");
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() =>
+    expect(found.installImport).toHaveBeenCalledWith(
+      "requested-token",
+      "plugins/b",
+    ),
+  );
+  view.unmount();
+
+  const missing = requestedHarness(requestedPreview(pinned, ["a"]), {
+    path: "plugins/b",
+  });
+  render(missing.element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This repository has no plugin at plugins/b. Nothing was installed.",
+  );
+  expect(missing.discard).toHaveBeenCalledWith("requested-token");
+  expect(missing.installImport).not.toHaveBeenCalled();
+});
+
+it("reviews an update for an installed plugin and reports it as updated", async () => {
+  const { installImport, change, settled, element } = requestedHarness(
+    requestedPreview(pinned),
+    { commit: pinned },
+    [
+      {
+        manifest: requestedManifest,
+        source: "external",
+        enabled: false,
+        revision: "older",
+        previous: null,
+        reloadable: true,
+        updateSource: {
+          repository: "https://example.com/plugins.git",
+          reference: "main",
+          path: ".",
+        },
+        error: null,
+      },
+    ],
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Update Requested" });
+  expect(screen.queryByText(/already installed/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Update" }));
+  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "updated"));
+  expect(installImport).toHaveBeenCalledTimes(1);
+  expect(change).not.toHaveBeenCalled();
+});
+
+it("reports cancelled when the dialog closes, and unavailable when Add is already in use", async () => {
+  const first = requestedHarness(requestedPreview(pinned));
+  const view = render(first.element);
+  fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
+  await waitFor(() =>
+    expect(first.settled).toHaveBeenCalledWith(7, "cancelled"),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  expect(screen.getByLabelText("Git or GitHub repository")).toHaveValue("");
+  view.unmount();
+
+  const second = requestedHarness(requestedPreview(pinned));
+  const manager = second.element.props.plugins;
+  const catalog = second.element.props.catalog;
+  const busy = render(
+    <PluginImport plugins={manager} catalog={catalog} busy={false} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  busy.rerender(second.element);
+  await waitFor(() =>
+    expect(second.settled).toHaveBeenCalledWith(7, "unavailable"),
+  );
+  expect(screen.getByLabelText("Git or GitHub repository")).toHaveValue("");
+});
+
+it("keeps a requested source through Strict Mode remounts and cancels it when unmounted", async () => {
+  const { settled, element } = requestedHarness(requestedPreview(pinned));
+  const view = render(<StrictMode>{element}</StrictMode>);
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(settled).not.toHaveBeenCalled();
+  view.unmount();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(settled).toHaveBeenCalledExactlyOnceWith(7, "cancelled");
+});
+
+const installedFrom = (
+  updateSource: PluginInfo["updateSource"],
+  revision = "older",
+): PluginInfo => ({
+  manifest: requestedManifest,
+  source: "external",
+  enabled: true,
+  revision,
+  previous: null,
+  reloadable: true,
+  ...(updateSource === undefined ? {} : { updateSource }),
+  error: null,
+});
+
+it.each([
+  [
+    "another repository",
+    { repository: "https://evil.example/x.git", reference: "main", path: "." },
+    "https://evil.example/x.git",
+  ],
+  [
+    "another folder of the same repository",
+    {
+      repository: "https://example.com/plugins.git",
+      reference: "main",
+      path: "dist",
+    },
+    "https://example.com/plugins.git · dist",
+  ],
+  ["a local folder", { root: "/work/requested", path: "." }, "/work/requested"],
+  ["no recorded source", null, "an unknown source"],
+])(
+  "refuses to replace a plugin installed from %s and installs nothing",
+  async (_name, updateSource, label) => {
+    const { installImport, change, settled, element } = requestedHarness(
+      requestedPreview(pinned),
+      { commit: pinned },
+      [installedFrom(updateSource)],
+    );
+    render(element);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Find plugins" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Already installed",
+    });
+    expect(dialog).toHaveTextContent(
+      `Requested is already installed from ${label}; remove it first to install it from https://example.com/plugins.git.`,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^(Update|Install plugin)$/ }),
+    ).toBeNull();
+    expect(screen.queryByText(/Review plugin access/)).toBeNull();
+    expect(installImport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "cancelled"));
+    expect(installImport).not.toHaveBeenCalled();
+    expect(change).not.toHaveBeenCalled();
+  },
+);
+
+it("reports a dismissed review of an up-to-date plugin as cancelled, since nothing was installed", async () => {
+  const { installImport, settled, element } = requestedHarness(
+    requestedPreview(pinned),
+    { commit: pinned },
+    [
+      installedFrom(
+        {
+          repository: "https://example.com/plugins.git/",
+          reference: "main",
+          path: ".",
+        },
+        "revision-.",
+      ),
+    ],
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Update Requested" });
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "cancelled"));
+  expect(settled).not.toHaveBeenCalledWith(7, "installed");
+  expect(installImport).not.toHaveBeenCalled();
+});
+
+it("refuses a fetched commit that differs from the requested one even if native did not", async () => {
+  const other = "f".repeat(40);
+  const { installImport, settled, element } = requestedHarness(
+    requestedPreview(other),
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review plugin access",
+  });
+  expect(dialog).toHaveTextContent("not at the commit that was requested");
+  expect(dialog).not.toHaveTextContent("matches the requested commit");
+  expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
+  expect(installImport).not.toHaveBeenCalled();
+  expect(settled).not.toHaveBeenCalled();
+});
+
+it("accepts the requested commit however native cases it", async () => {
+  const { installImport, element } = requestedHarness(
+    requestedPreview(pinned.toUpperCase()),
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "matches the requested commit",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() => expect(installImport).toHaveBeenCalled());
+});
+
+it("names who requested the install, and hides the folder source while a request is bound", async () => {
+  const plugin = requestedHarness(requestedPreview(pinned));
+  const view = render(plugin.element);
+  const dialog = await screen.findByRole("dialog", { name: "Add a plugin" });
+  expect(dialog).toHaveTextContent("Requested by Market (example.market).");
+  expect(
+    within(dialog).queryByRole("button", { name: "Browse plugin folder" }),
+  ).toBeNull();
+  expect(within(dialog).queryByText("Drop a plugin folder here")).toBeNull();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Requested by Market (example.market).",
+  );
+  view.unmount();
+
+  const link = requestedHarness(requestedPreview(pinned), {}, [], {
+    kind: "link",
+  });
+  render(link.element);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Requested by a link.",
+  );
+});
+
+it("claims the request, holds a review open while it shows, and releases it on close", async () => {
+  const { claimed, holdReview, release, settled, element } = requestedHarness(
+    requestedPreview(pinned),
+  );
+  render(element);
+  const dialog = await screen.findByRole("dialog");
+  expect(claimed).toHaveBeenCalledExactlyOnceWith(7);
+  expect(holdReview).toHaveBeenCalledOnce();
+  expect(release).not.toHaveBeenCalled();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "cancelled"));
+  await waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
+it("does not open a dialog when the request cannot be claimed", async () => {
+  const { claimed, git, element } = requestedHarness(requestedPreview(pinned));
+  claimed.mockReturnValue(false);
+  render(element);
+  await waitFor(() => expect(claimed).toHaveBeenCalledExactlyOnceWith(7));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(git).not.toHaveBeenCalled();
+});
+
+it("carries a pinned commit through the signed community branch", async () => {
+  const authorizeGit = vi.fn(async () => ({
+    repository: "https://example.com/plugins.git?signed",
+    token: "signed-token",
+  }));
+  const { git, element } = requestedHarness(
+    requestedPreview(pinned),
+    { commit: pinned },
+    [],
+    undefined,
+    authorizeGit,
+  );
+  render(element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("dialog", { name: "Review plugin access" });
+  expect(authorizeGit).toHaveBeenCalledWith("https://example.com/plugins.git");
+  expect(git).toHaveBeenCalledWith(
+    "https://example.com/plugins.git?signed",
+    "v1",
+    "signed-token",
+    pinned,
+  );
+});

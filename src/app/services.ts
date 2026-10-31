@@ -46,6 +46,12 @@ import { SidebarSectionsService } from "../features/channel-navigation/sidebar-s
 import { bundledPlugins } from "../bundled";
 import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
+import {
+  createPluginInstallCore,
+  createPluginInstallLinkHandler,
+  createPluginInstallRequests,
+  createPluginInstallerService,
+} from "../plugins/installer";
 import { withTimeout } from "../plugins/timeout";
 
 export function createServices() {
@@ -68,6 +74,14 @@ export function createServices() {
   const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
   const sidebarSections = new SidebarSectionsService(ctx);
+  const pluginInstallRequests = createPluginInstallRequests();
+  const pluginInstallCore = createPluginInstallCore({
+    plugins,
+    requests: pluginInstallRequests,
+    openPlugins: () =>
+      navigation.open({ version: 1, kind: "settings", section: "plugins" }),
+  });
+  createPluginInstallerService(ctx, { plugins, core: pluginInstallCore });
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -153,8 +167,21 @@ export function createServices() {
   };
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
+  const pluginInstallLinks = createPluginInstallLinkHandler({
+    plugins,
+    core: pluginInstallCore,
+    fail: navigationHost.fail,
+  });
+  ctx.effect(() => pluginInstallLinks.dispose);
   ctx.effect(() =>
-    bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
+    bindDeepLinks(
+      {
+        ...navigationHost,
+        invite: invites.open,
+        pluginInstall: pluginInstallLinks.handle,
+      },
+      communities,
+    ),
   );
   // Search ranks places by how often and how recently they were opened.
   ctx.effect(() =>
@@ -187,6 +214,7 @@ export function createServices() {
     adminAccess,
     pages,
     sidebarSections,
+    pluginInstallRequests,
     panels,
     plugins,
     federatedIdentity,

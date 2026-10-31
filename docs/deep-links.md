@@ -27,6 +27,7 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://connect?relay=<wss-url>`
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
 - `buzz://plugin?id=<plugin id>[&page=<page id>][&route.<key>=<value>...]`
+- `buzz://plugin-install?repository=<git url>&ref=<branch or tag>[&path=<folder>][&commit=<hash>]`
 
 Query-based invite, message and plugin links also accept a single `/` before `?`,
 as supplied by Windows URL activation (for example, `buzz://join/?relay=…&code=…`).
@@ -48,6 +49,27 @@ resolved only once the plugin runtime has settled, so a cold-start link waits fo
 activation rather than failing early. Like the entity links, the form binds to the
 selected community and viewer, and a link is not authorization for anything the
 page itself guards.
+
+`buzz://plugin-install` asks to review a plugin for installation; it is OS-only,
+like `buzz://join`, and is not a message-content link or a navigation destination.
+It holds through identity setup and while plugin settings are still loading, then
+opens Settings → Plugins with the Git source
+prefilled and read-only: `repository` (an `https://` or `ssh://` URL, or an scp-style
+`user@host:path`, without a password, query, fragment, percent-encoded host or GitHub tree path; an SSH user is letters, digits, `.`, `_` and `-` and may not start with `-`), `ref` (required; letters,
+digits, `.`, `_`, `/` and `-`) and, optionally, `path`, a relative folder inside the
+repository (no `..` segments). Nothing is read from the network until the user
+chooses **Find**, and nothing is installed until the user confirms the existing
+access review. `path` selects that plugin folder directly; a repository without it
+is refused. `commit` (40- or 64-hex) pins the reviewed commit: the native Git import
+refuses a reference whose tip is any other commit, so nothing reaches review, and the
+review shows the short commit. Without `commit`, the branch or tag is read as it stands.
+The repository must not carry a password, an ssh user other than `git`, a host
+beginning with `-`, a non-ASCII character, or a GitHub tree URL. The review says
+"Requested by a link", and a plugin already installed from a different source is
+refused rather than replaced. Malformed or repeated parameters fail as
+`invalid-target`; the link does not bind to the selected community. The same request is available to plugins as the optional
+`pluginInstaller` service described in the
+[plugin architecture](plugin-architecture.md).
 
 Entity sections are `files`, `commits`, `issues`, `prs`, `contributors`, and
 `channels`; omitting the section opens the overview. Repository commit links add

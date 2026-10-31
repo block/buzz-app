@@ -711,6 +711,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                     notifications={services.notifications}
                     updates={services.updates}
                     navigation={route.request}
+                    installRequests={services.pluginInstallRequests}
                     navigationPane
                     onDeparturePending={(pending) => {
                       const client = services.communities.snapshot();

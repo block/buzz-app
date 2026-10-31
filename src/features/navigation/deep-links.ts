@@ -4,6 +4,10 @@
 // handler, so everything here is a no-op outside Tauri.
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { parseInviteLink, type InviteLink } from "../communities/invite-link";
+import {
+  parsePluginInstallLink,
+  type PluginInstallLink,
+} from "../../plugins/install-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
@@ -25,6 +29,10 @@ export type DeepLinkHost = Readonly<{
   fail(reason: OpenFailure, retry?: () => Promise<OpenResult>): void;
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
+  /** Plugin installation review belongs to Settings, never to navigation. */
+  /** May keep the link waiting; the returned function revokes it once a newer
+   * navigation, link or viewer supersedes it. */
+  pluginInstall?: (link: PluginInstallLink) => (() => void) | undefined;
 }>;
 type Client = Pick<ClientSnapshot, "status" | "viewer" | "selected">;
 
@@ -101,11 +109,18 @@ export function bindDeepLinks(
     | {
         url: string;
         invite: InviteLink | null;
+        install: PluginInstallLink | null;
         viewer: string | undefined;
         selected: string | null;
         reported: boolean;
       }
     | undefined;
+  let delegated: (() => void) | undefined;
+  const revoke = () => {
+    const stop = delegated;
+    delegated = undefined;
+    stop?.();
+  };
   let attempt = host.navigation.snapshot().attempt;
   let client = communities.snapshot();
   let clientEpoch = 0;
@@ -116,6 +131,7 @@ export function bindDeepLinks(
     if (
       (incoming.viewer && incoming.viewer !== client.viewer) ||
       (!incoming.invite &&
+        !incoming.install &&
         incoming.selected &&
         incoming.selected !== client.selected)
     ) {
@@ -125,7 +141,15 @@ export function bindDeepLinks(
     }
     if (client.status === "loading")
       return Promise.resolve({ status: "failed", reason: "unavailable" });
-    const invite = incoming.invite;
+    const { invite, install } = incoming;
+    if (install && (!client.viewer || client.status !== "ready"))
+      return Promise.resolve({ status: "failed", reason: "unavailable" });
+    if (install && host.pluginInstall) {
+      held = undefined;
+      revoke();
+      delegated = host.pluginInstall(install) ?? undefined;
+      return Promise.resolve({ status: "cancelled" });
+    }
     if (invite && (!client.viewer || client.status !== "ready")) {
       // Retain the invite through identity setup and client restoration.
       return Promise.resolve({ status: "failed", reason: "unavailable" });
@@ -153,7 +177,10 @@ export function bindDeepLinks(
     held.selected ??= client.selected;
     if (
       (held.viewer && held.viewer !== client.viewer) ||
-      (!held.invite && held.selected && held.selected !== client.selected)
+      (!held.invite &&
+        !held.install &&
+        held.selected &&
+        held.selected !== client.selected)
     ) {
       held = undefined;
       host.fail("denied");
@@ -196,10 +223,12 @@ export function bindDeepLinks(
           }
         }
         if (url === undefined) continue;
+        revoke();
         const client = communities.snapshot();
         held = {
           url,
           invite: parseInviteLink(url),
+          install: parsePluginInstallLink(url),
           viewer: client.viewer,
           selected: client.selected,
           reported: false,
@@ -214,9 +243,13 @@ export function bindDeepLinks(
   };
   const stopClient = communities.subscribe(() => {
     const next = communities.snapshot();
+    if (client.viewer && client.viewer !== next.viewer) revoke();
     if (
       (client.viewer && client.viewer !== next.viewer) ||
-      (client.selected && client.selected !== next.selected && !held?.invite)
+      (client.selected &&
+        client.selected !== next.selected &&
+        !held?.invite &&
+        !held?.install)
     )
       clientEpoch++;
     client = next;
@@ -226,7 +259,10 @@ export function bindDeepLinks(
     const next = host.navigation.snapshot();
     // fail() emits synchronously; its ingress marker distinguishes our failure
     // from a newer user visit, including Back/Forward and Go Home.
-    if (next.attempt.id !== attempt.id && !next.ingress) held = undefined;
+    if (next.attempt.id !== attempt.id && !next.ingress) {
+      held = undefined;
+      revoke();
+    }
     attempt = next.attempt;
   });
   // A broken shell bridge must never keep the app from opening.
@@ -244,6 +280,7 @@ export function bindDeepLinks(
     stopNavigation();
     stopShell();
     held = undefined;
+    revoke();
   };
 }
 

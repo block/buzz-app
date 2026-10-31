@@ -15,6 +15,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native build: federated identity authority, adapter prefix and community hosts. See below. |
+| `BUZZ_BUILD_CREDENTIAL_NAMESPACE` | Native build: separates this build's secure-storage items and key files from other Buzz builds. See [credential namespace](#credential-namespace-build-input). |
 | `BUZZ_DEV_OPEN_RELAY` | Development-specific override of that alias: only `1` enables; `0` explicitly opts out. Requires a relay URL and live viewer pin to have an effect. |
 | `BUZZ_DEV_FIRST_RUN_ACCOUNT` | Dev server only: replaces first run's kgoose reads and writes (including the key link, the unlink and the saved-community add), its key backup and backup recovery. Builds define it empty. See [below](#first-run-account-seed-development). |
 | `BUZZ_DEV_VIEWER`, `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS` | Existing public viewer pin, public routing aliases and dev notification override; unchanged. See the [development setup](contributing.md). |
@@ -141,6 +142,25 @@ grant rebuild together; browser-only development needs a Vite restart. Productio
 web and desktop frontend builds substitute the value into compiled code: changing `.env.local`
 or the launched app's environment afterward cannot override it. Rebuild and
 redistribute to change a packaged value.
+
+## Credential namespace build input
+
+Release builds of Buzz share one human key, agent keys and the other
+secure-storage items, so an identity moves between them and signing out in one
+signs out all. A build for another environment, such as a staging community,
+sets `BUZZ_BUILD_CREDENTIAL_NAMESPACE` to a label of lowercase letters, digits
+and inner hyphens (at most 32) to keep its own:
+
+```sh
+BUZZ_BUILD_CREDENTIAL_NAMESPACE=staging bin/pnpm tauri build
+```
+
+The label is appended as `.<label>` to every secure-storage service and to the
+key-store names used for sign-out records, credential locks, key backups and
+federated sessions. Unset or empty keeps the shipping names; `debug` and other values fail
+the native build. It is compiled in with no runtime override, and changing it
+on an installed build leaves that build's saved keys behind. Explicitly
+bringing over an identity from the earlier Buzz app still reads that app's items.
 
 ## First-run account seed (development)
 

@@ -12,6 +12,8 @@ use zeroize::Zeroizing;
 #[cfg(all(not(test), target_os = "macos", debug_assertions))]
 mod dev_helper;
 
+include!(concat!(env!("OUT_DIR"), "/namespaced.rs"));
+
 pub const HUMAN_ACCOUNT: &str = "human";
 pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
 /// The human key's service before 1.0, which reads copy from.
@@ -23,17 +25,17 @@ pub const HUMAN_STORE: &str = human_store(cfg!(debug_assertions));
 
 pub const fn human_service(debug: bool) -> &'static str {
     if debug {
-        "xyz.block.buzz.desktop.identity.debug"
+        namespaced!("xyz.block.buzz.desktop.identity.debug")
     } else {
-        "xyz.block.buzz.desktop.identity"
+        namespaced!("xyz.block.buzz.desktop.identity")
     }
 }
 
 pub const fn human_store(debug: bool) -> &'static str {
     if debug {
-        "dev.local.buzz.foundation.identity.debug"
+        namespaced!("dev.local.buzz.foundation.identity.debug")
     } else {
-        "dev.local.buzz.foundation.identity"
+        namespaced!("dev.local.buzz.foundation.identity")
     }
 }
 

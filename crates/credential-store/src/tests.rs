@@ -302,6 +302,15 @@ fn human_identity_slots_stay_separate() {
 }
 
 #[test]
+fn the_build_namespace_suffixes_key_custody_names() {
+    let expected = match option_env!("BUZZ_BUILD_CREDENTIAL_NAMESPACE") {
+        None | Some("") => "service".to_owned(),
+        Some(namespace) => format!("service.{namespace}"),
+    };
+    assert_eq!(namespaced!("service"), expected);
+}
+
+#[test]
 fn replace_overwrites_or_creates_under_the_shared_lock() {
     let root = tempfile::tempdir().unwrap();
     let store = Memory::default();

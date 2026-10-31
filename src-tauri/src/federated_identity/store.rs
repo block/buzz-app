@@ -3,9 +3,9 @@ use std::{fs, path::PathBuf};
 use zeroize::Zeroizing;
 
 pub(crate) const SERVICE: &str = if cfg!(debug_assertions) {
-    "xyz.block.buzz.desktop.federated-session.debug"
+    buzz_credential_store::namespaced!("xyz.block.buzz.desktop.federated-session.debug")
 } else {
-    "xyz.block.buzz.desktop.federated-session"
+    buzz_credential_store::namespaced!("xyz.block.buzz.desktop.federated-session")
 };
 
 pub(crate) type LoadedRecord = (Option<Zeroizing<Vec<u8>>>, Option<String>);

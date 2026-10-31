@@ -224,6 +224,12 @@ export async function callSoloWorkerTool(
       ...ready,
       note: `${ready.note ? `${ready.note} ` : ""}The owner's Buzz is not ready, so the change was not sent.`,
     });
+  // The change may carry task text, and the channel had time to change while
+  // the owner answered: check again that it is still private to the two of you.
+  if (!(await stillPrivate(client, clock, route)))
+    throw new Error(
+      "The channel is no longer private to you and the owner, so the change was not sent.",
+    );
   const { custody_epoch, valid_until } = ready.result as {
     custody_epoch: string;
     valid_until: number;
@@ -456,15 +462,7 @@ async function connections(client: BuzzClient, clock: Clock) {
     throw new Error(
       "This Buzz connection does not know its relay's key, so it cannot verify channel members or find an owner's grant.",
     );
-  const deadline = clock.now() + WAIT_MS / 1000;
-  const query = async (filter: Record<string, unknown>) => {
-    const events = await by(deadline, clock, client.query([filter]));
-    if (events === LATE)
-      throw new Error(
-        "Finding the owner's grant took too long, so nothing was sent. Try again.",
-      );
-    return events;
-  };
+  const query = bounded(client, clock);
   const streams = new Map<string, string>();
   const seen = new Set<string>();
   const complete = await scan(
@@ -483,32 +481,14 @@ async function connections(client: BuzzClient, clock: Clock) {
       // Newest first, and only a channel's newest roster counts.
       if (!stream || seen.has(stream)) return true;
       seen.add(stream);
-      const members = new Set(
-        event.tags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
-      );
-      const [other] = [...members].filter((key) => key !== client.pubkey);
-      if (other && members.size === 2 && members.has(client.pubkey))
-        streams.set(stream, other);
+      const other = partner(event, client.pubkey);
+      if (other) streams.set(stream, other);
       return true;
     },
   );
   const found: GrantAck[] = [];
   for (const [stream, owner] of streams) {
-    // Requests, retries included, are posted before the owner can refuse
-    // them, so only a channel the relay still marks private may carry them:
-    // read from the relay's writer, which a replica may lag.
-    const [metadata] = await query({
-      kinds: [39000],
-      "#d": [stream],
-      authors: [relayAuthor],
-      limit: 1,
-      consistency: "strong",
-    });
-    if (
-      metadata?.pubkey !== relayAuthor ||
-      channelVisibility(metadata as RelayEvent) !== "private"
-    )
-      continue;
+    if (!(await isPrivate(query, relayAuthor, stream))) continue;
     const events = await query({
       kinds: [9],
       "#h": [stream],
@@ -529,6 +509,69 @@ async function connections(client: BuzzClient, clock: Clock) {
     if (ack) found.push(ack);
   }
   return { connections: found, complete };
+}
+
+type Query = (filter: Record<string, unknown>) => Promise<readonly BuzzEvent[]>;
+
+/** `client.query` under one shared wait, failing once it has passed. */
+function bounded(client: BuzzClient, clock: Clock): Query {
+  const deadline = clock.now() + WAIT_MS / 1000;
+  return async (filter) => {
+    const events = await by(deadline, clock, client.query([filter]));
+    if (events === LATE)
+      throw new Error(
+        "Checking the owner's grant took too long, so nothing was sent. Try again.",
+      );
+    return events;
+  };
+}
+
+/** The other member of a roster listing exactly this agent and one other. */
+function partner(roster: BuzzEvent, agent: string) {
+  const members = new Set(
+    roster.tags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
+  );
+  const [other] = [...members].filter((key) => key !== agent);
+  return members.size === 2 && members.has(agent) ? other : undefined;
+}
+
+/** Whether the relay marks `stream` private. Requests, retries included, are
+ * posted before the owner can refuse them, so only a private channel may
+ * carry them: read from the relay's writer, which a replica may lag. */
+async function isPrivate(query: Query, relayAuthor: string, stream: string) {
+  const [metadata] = await query({
+    kinds: [39000],
+    "#d": [stream],
+    authors: [relayAuthor],
+    limit: 1,
+    consistency: "strong",
+  });
+  return (
+    metadata?.pubkey === relayAuthor &&
+    channelVisibility(metadata as RelayEvent) === "private"
+  );
+}
+
+/** Whether `route`'s channel is still private to this agent and its owner. */
+async function stillPrivate(
+  client: BuzzClient,
+  clock: Clock,
+  { stream, owner }: GrantAck,
+) {
+  const relayAuthor = client.relayAuthor as string;
+  const query = bounded(client, clock);
+  const [roster] = await query({
+    kinds: [39002],
+    "#d": [stream],
+    authors: [relayAuthor],
+    limit: 1,
+    consistency: "strong",
+  });
+  return (
+    roster?.pubkey === relayAuthor &&
+    partner(roster, client.pubkey) === owner &&
+    (await isPrivate(query, relayAuthor, stream))
+  );
 }
 
 function pick(

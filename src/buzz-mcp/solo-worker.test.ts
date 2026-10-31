@@ -316,6 +316,37 @@ describe("solo_worker_connections", () => {
   });
 
   it.each([
+    ["made public", { kind: 39000, tags: [["d", K], ["public"]] }],
+    [
+      "joined by someone else",
+      {
+        kind: 39002,
+        tags: [["d", K], ...[H, C, W].map((member) => ["p", member])],
+      },
+    ],
+  ])(
+    "sends no change once the channel is %s while the owner gets ready",
+    async (_, change) => {
+      const harness = community((intent, id) => {
+        // After discovery, while the owner's Buzz answers readiness.
+        if (intent.action === "readiness")
+          harness.sign(RELAY, { ...change, content: "" }, START + 1);
+        return ready(intent, id);
+      });
+      await expect(
+        harness.call("solo_worker_send", {
+          solo: S,
+          worker_epoch: 1,
+          text: "go",
+        }),
+      ).rejects.toThrow(/no longer private.*not sent/);
+      expect(harness.requests().map(({ action }) => action)).toEqual([
+        "readiness",
+      ]);
+    },
+  );
+
+  it.each([
     ["roster", 39002],
     ["metadata", 39000],
     ["acknowledgement", 9],

@@ -26,10 +26,28 @@ The OS ingress accepts the Buzz link forms and nothing else:
 - `buzz://join?relay=<wss-url>&code=<code>[&policy_receipt=<receipt>]`
 - `buzz://connect?relay=<wss-url>`
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
+- `buzz://plugin?id=<plugin id>[&page=<page id>][&route.<key>=<value>...]`
 
-Both query-based invite and message links also accept a single `/` before `?`,
+Query-based invite, message and plugin links also accept a single `/` before `?`,
 as supplied by Windows URL activation (for example, `buzz://join/?relay=…&code=…`).
 Non-root paths remain unsupported for these forms; channel paths are unchanged.
+
+Plugin page links open a page contributed by an installed, enabled plugin. `id` and
+`page` use the same 1-128 character lowercase token as plugin and page IDs (letters
+`a-z`, digits, `.`, `_`, `-`, not starting with a symbol). Without `page`, the link
+opens the plugin's primary page, or its first page when it has none. Each
+`route.<key>=<value>` parameter (up to 16; keys of 1-64 ASCII letters, digits, `_` or
+`-`; values up to 1,024 characters) becomes a string in the page's route params. The
+page's own `route.validate` decides whether they apply: when the page declares no
+route, or validation fails or throws, the page opens without params, never with
+partial ones. A repeated `id`, `page` or `route.<key>` is ambiguous and rejected like
+any other duplicate. A plugin that is not installed or enabled, or that has no such
+page, fails with the ordinary "This page isn’t available" notice; installing or
+enabling the plugin and choosing **Try again** reopens the same link. The plugin is
+resolved only once the plugin runtime has settled, so a cold-start link waits for
+activation rather than failing early. Like the entity links, the form binds to the
+selected community and viewer, and a link is not authorization for anything the
+page itself guards.
 
 Entity sections are `files`, `commits`, `issues`, `prs`, `contributors`, and
 `channels`; omitting the section opens the overview. Repository commit links add
@@ -52,7 +70,7 @@ link; HTTPS itself is not registered as an OS handler. `buzz://connect`
 community **Open in Buzz**; `name` is ignored) are the same form without a code:
 they open the join dialog with the relay prefilled or, when this device already
 belongs to that community, switch to it. Malformed join or community links,
-incomplete entity links, unknown hosts and oversize links fail as
+incomplete entity or plugin links, unknown hosts and oversize links fail as
 `invalid-target` and show "This destination couldn't open" with **Open Settings**.
 Unsupported links have no Retry action. Nothing is auto-joined. A valid address
 is never authorization:

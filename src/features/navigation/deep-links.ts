@@ -72,7 +72,7 @@ export function deepLinkStep(
     return {
       open: parseOpenTarget({
         version: 1,
-        kind: "conversation",
+        kind: link.format === "plugin" ? "plugin" : "conversation",
         scope: {
           viewer: client.viewer,
           communityOrigin: communityDestination(client.selected).url,

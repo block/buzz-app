@@ -1139,7 +1139,10 @@ export const test = base.extend({
                   ? lifecycleRole === "nonmember"
                     ? "member"
                     : lifecycleRole
-                  : "member",
+                  : // The relay makes a Solo chat's creator its owner.
+                    ownSoloChannels.includes(id)
+                    ? "owner"
+                    : "member",
               ],
               ...(ownSoloChannels.includes(id)
                 ? soloAgents.map(({ pubkey }) => ["p", pubkey, "", "member"])

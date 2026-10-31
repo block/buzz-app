@@ -181,11 +181,14 @@ function session() {
             ];
           if (filter.kinds?.includes(39002))
             return [
-              roster(authority, "one", [
-                viewer.pubkey,
-                mic.pubkey,
-                pinky.pubkey,
-              ]),
+              roster(
+                authority,
+                "one",
+                [viewer.pubkey, mic.pubkey, pinky.pubkey],
+                undefined,
+                // The viewer owns the Solo probe's chat, so it lists in Chats.
+                soloProbe ? { [viewer.pubkey]: "owner" } : {},
+              ),
               roster(authority, "two", [viewer.pubkey]),
             ];
           if (filter.kinds?.includes(39000))

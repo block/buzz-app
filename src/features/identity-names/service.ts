@@ -177,9 +177,6 @@ export function bindNames(
         owner = provider;
         local = provider?.scope(source, candidates, displayFacts);
       }
-      const profile = source.profiles.snapshot().get(pubkey.toLowerCase());
-      if (profile?.verified)
-        return { name: profile.name, source: "public-profile" };
       const label = local?.(pubkey);
       if (label?.name)
         return {
@@ -187,6 +184,7 @@ export function bindNames(
           qualifier: label.qualifier,
           source: "agent-directory",
         };
+      const profile = source.profiles.snapshot().get(pubkey.toLowerCase());
       const name = profile?.nameIsFallback ? undefined : profile?.name;
       return name ? { name, source: "public-profile" } : undefined;
     };

@@ -64,6 +64,8 @@ export function createProfileDirectory(
   let snapshot: ReadonlyMap<string, Profile> = new Map();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
   let unnamed: ReadonlySet<string> = new Set();
+  // Keys with kind-0 metadata. A verified-only overlay must not satisfy ensure.
+  let loaded: ReadonlySet<string> = new Set();
   let controller = new AbortController();
   let closed = false;
   const verified =
@@ -114,6 +116,7 @@ export function createProfileDirectory(
         .filter((item) => item.event.kind === 0 && item.delivery !== "failed")
         .map((item) => item.event) ?? []),
     ]);
+    loaded = new Set(next.keys());
     for (const [id, value] of verified?.snapshot() ?? []) {
       const { nameIsFallback: _fallback, ...base } = next.get(id) ?? {};
       next.set(
@@ -207,7 +210,7 @@ export function createProfileDirectory(
         }
         waiting.add(batch.work);
       }
-      return !batch && (refresh || !snapshot.has(id));
+      return !batch && (refresh || !loaded.has(id));
     });
     for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {
       const authors = missing.slice(offset, offset + PROFILE_PAGE);

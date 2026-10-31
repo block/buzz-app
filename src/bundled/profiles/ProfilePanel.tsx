@@ -585,7 +585,8 @@ function ProfileDetails({
                     />
                   )}
                   <ProfilePublicMetadata nip05={profile?.nip05} />
-                  {!profile &&
+                  {/* A verified overlay can exist while its kind-0 read failed. */}
+                  {(!profile || (profile.verified && status === "error")) &&
                     (status === "loading" ? (
                       <p role="status">Loading profile…</p>
                     ) : (
@@ -595,7 +596,9 @@ function ProfileDetails({
                           : "No profile metadata is available in this community."}
                       </p>
                     ))}
-                  {((!profile && status !== "loading") || ownership.failed) && (
+                  {((!profile && status !== "loading") ||
+                    (profile?.verified && status === "error") ||
+                    ownership.failed) && (
                     <Button
                       size="compact"
                       onClick={() => retry((value) => value + 1)}

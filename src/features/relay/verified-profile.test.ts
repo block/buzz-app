@@ -502,3 +502,92 @@ it("wires session profile demand, live updates, disconnection, and refreshed dis
     owner.dispose();
   }
 });
+
+it("keeps batch membership and checked status stable when subjects are added or evicted", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const first = h.subscriptions[0];
+    assert(first);
+    first.sink.event(projection());
+    first.sink.eose();
+    h.directory.ensure([bob.pubkey]);
+    await Promise.resolve();
+    // The open batch is reissued with the new subject; its replacement covers alice.
+    expect(active().map((item) => item.subjects)).toEqual([
+      [alice.pubkey, bob.pubkey],
+    ]);
+    expect(h.directory.snapshot().get(alice.pubkey)?.status).toBe("checked");
+    h.directory.ensure(
+      Array.from({ length: 1022 }, (_, index) =>
+        (index + 1).toString(16).padStart(64, "0"),
+      ),
+    );
+    await Promise.resolve();
+    const full = active();
+    expect(full.map((item) => item.subjects.length)).toEqual(
+      Array(8).fill(128),
+    );
+    const issued = h.subscriptions.length;
+    // Evicting alice and adding one key reissues only alice's batch.
+    h.directory.ensure(["f".repeat(64)]);
+    await Promise.resolve();
+    const stopped = full.filter((item) => item.stopped);
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]?.subjects).toContain(alice.pubkey);
+    expect(h.subscriptions).toHaveLength(issued + 1);
+    expect(h.subscriptions.at(-1)?.subjects).not.toContain(alice.pubkey);
+    expect(h.subscriptions.at(-1)?.subjects).toContain("f".repeat(64));
+    // A re-wanted evicted subject needs a fresh REQ, not its retired slot.
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    expect(h.subscriptions.at(-1)?.subjects).toContain(alice.pubkey);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("keeps kind-0 enrichment retryable after a verified-only profile loads", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  let sink: VerifiedProfileSink | undefined;
+  let fail = true;
+  const read = vi.fn(async () => {
+    if (fail) throw new Error("profile read rejected");
+    return [
+      eventDto(
+        signed(alice, {
+          kind: 0,
+          tags: [],
+          content: JSON.stringify({ name: "Self name", about: "About Alice" }),
+        }),
+      ),
+    ];
+  });
+  const directory = createProfileDirectory({ read }, undefined, undefined, {
+    authority,
+    subscribe(_filter, next) {
+      sink = next;
+      return () => {};
+    },
+  });
+  try {
+    await expect(directory.ensure([alice.pubkey])).rejects.toThrow(
+      "profile read rejected",
+    );
+    assert(sink);
+    sink.event(projection());
+    sink.eose();
+    expect(directory.queries.snapshot().get(alice.pubkey)?.name).toBe("Alice");
+    fail = false;
+    await directory.ensure([alice.pubkey]);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(directory.queries.snapshot().get(alice.pubkey)).toMatchObject({
+      name: "Alice",
+      about: "About Alice",
+    });
+  } finally {
+    directory.dispose();
+  }
+});

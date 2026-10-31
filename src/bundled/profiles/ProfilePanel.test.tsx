@@ -590,11 +590,19 @@ it("shows historical verification time and issuer, discloses cache, and hides di
   let sink:
     | import("../../features/relay/verified-profile").VerifiedProfileSink
     | undefined;
+  let profileRead = false;
   const owner = createRelaySession({
     viewer: person.pubkey,
     relayAuthor: relayKey.pubkey,
     scope: "wss://relay.example.test",
-    query: async () => [],
+    // The first kind-0 read fails while the verified projection succeeds.
+    query: async (filters) => {
+      if (filters.some((filter) => filter.kinds?.includes(0)) && !profileRead) {
+        profileRead = true;
+        throw new Error("profile read rejected");
+      }
+      return [];
+    },
     media: () => undefined,
     verifiedProfiles: { pubkey: relayKey.pubkey, multipleIssuers: false },
     readVerifiedProfileAuthority: async () => null,
@@ -657,7 +665,14 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     expect(await screen.findByRole("heading", { name: "Alice" })).toBeVisible();
     expect(screen.getByText(/Name verified by Example.*@alice/)).toBeVisible();
     expect(screen.getByText("Alice Example")).toBeVisible();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "Info" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Info" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load this profile.",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry profile" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Retry profile" })).toBeNull();
     expect(screen.getByText("Name verified by Example")).toBeVisible();
     expect(screen.getByText(/Last verified/)).toHaveTextContent(/1970/);
     expect(screen.getByText(/current issuer endorsement/)).toBeVisible();

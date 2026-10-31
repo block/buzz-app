@@ -66,7 +66,17 @@ test("coordination keeps its first line visible throughout expansion and collaps
         failures.push(opening ? "opening" : "closing");
       if (textBox && Math.abs(textBox.left - textEdge) > 0.5)
         failures.push(
-          opening ? "opening shifted text" : "closing shifted text",
+          `${opening ? "opening" : "closing"} shifted text ${JSON.stringify({
+            edge: textEdge,
+            text: textBox.left,
+            panel: panelBox?.left,
+            row: row.getBoundingClientRect().left,
+            rowW: row.getBoundingClientRect().width,
+            scroller: (() => {
+              const s = row.closest('[role="region"]');
+              return s && [s.clientWidth, s.offsetWidth, s.scrollHeight, s.clientHeight];
+            })(),
+          })}`,
         );
       const running = panel
         ?.getAnimations()

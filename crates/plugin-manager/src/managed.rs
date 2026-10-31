@@ -326,6 +326,8 @@ fn text(entry: &mut Map<String, Value>, key: &str) -> Result<String> {
     }
 }
 
+/// A branch or tag name Git accepts (`git check-ref-format`), within a conservative
+/// character set.
 pub fn valid_reference(reference: &str) -> bool {
     !reference.is_empty()
         && !reference.starts_with('-')
@@ -333,6 +335,11 @@ pub fn valid_reference(reference: &str) -> bool {
         && reference
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
+        && !reference.contains("..")
+        && !reference.ends_with('.')
+        && reference
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
 pub fn valid_commit(commit: &str) -> bool {
@@ -562,6 +569,39 @@ mod tests {
             let parsed = parse(&policy(&[text])).unwrap();
             assert_eq!(parsed.plugins[0].path, path);
         }
+    }
+
+    #[test]
+    fn rejects_references_git_would_refuse() {
+        for reference in [
+            "v1..2",
+            "main.",
+            ".hidden",
+            "a/.b",
+            "a.lock",
+            "a/b.lock/c",
+            "a//b",
+            "/main",
+            "main/",
+            "-main",
+            "a b",
+            "",
+        ] {
+            assert!(!valid_reference(reference), "{reference:?} was accepted");
+        }
+        for reference in [
+            "main",
+            "v1.2.3",
+            "release/2026-10",
+            "a.lockfile",
+            "feature/x_y",
+        ] {
+            assert!(valid_reference(reference), "{reference:?} was rejected");
+        }
+        let text = entry("acme.one").replace(r#""reference":"v1""#, r#""reference":"v1..2""#);
+        let parsed = parse(&policy(&[text])).unwrap();
+        assert!(parsed.plugins.is_empty());
+        assert_eq!(parsed.problems.len(), 1);
     }
 
     #[test]

@@ -62,11 +62,14 @@ pub(super) fn record() -> Arc<Session> {
         revision: uuid::Uuid::new_v4().to_string(),
         session_token: "fixture-session-token".into(),
         expires_at: "2099-01-01T00:00:00Z".into(),
-        issued_at: 0,
         email: None,
     };
     let raw = Zeroizing::new(serde_json::to_vec(&record).unwrap());
-    Arc::new(Session { record, raw })
+    Arc::new(Session {
+        record,
+        raw,
+        issued_at: 0,
+    })
 }
 
 #[tokio::test]
@@ -688,7 +691,7 @@ async fn the_expiry_watch_warns_then_ends_the_session_at_expiry() {
     let now = now().unwrap();
     let mut short = record();
     let session = Arc::get_mut(&mut short).unwrap();
-    session.record.issued_at = now - 2;
+    session.issued_at = now - 2;
     session.record.expires_at = chrono::DateTime::from_timestamp(now + 2, 0)
         .unwrap()
         .to_rfc3339();
@@ -747,7 +750,7 @@ async fn signing_in_again_keeps_the_session_until_the_new_one_is_installed() {
     host.finish_login("code", "secret", &revision, &cancel)
         .await
         .unwrap();
-    host.renewed(&revision, &cancel, Ok(()));
+    assert_eq!(host.renewed(&revision, &cancel, Ok(())), Ok(()));
     let snapshot = host.snapshot();
     assert!(snapshot.status == Status::SignedIn);
     assert_ne!(snapshot.revision, revision);
@@ -784,19 +787,20 @@ async fn a_canceled_or_failed_renewal_leaves_the_session_intact() {
     let result = host
         .finish_login("code", "secret", &revision, &canceled)
         .await;
-    host.renewed(&revision, &canceled, result);
+    assert_eq!(host.renewed(&revision, &canceled, result), Ok(()));
 
     let failed = renew();
     let result = host
         .finish_login("code", "secret", &revision, &failed)
         .await;
     assert!(result.is_err());
-    host.renewed(&revision, &failed, result);
+    // Only the caller hears about it; the snapshot's failure is for others.
+    assert!(host.renewed(&revision, &failed, result).is_err());
 
     let snapshot = host.snapshot();
     assert!(snapshot.status == Status::SignedIn);
     assert_eq!(snapshot.revision, revision);
-    assert!(snapshot.failure.is_some());
+    assert!(snapshot.failure.is_none());
     assert!(host.state().renewal.is_none());
     assert!(Arc::ptr_eq(host.state().session.as_ref().unwrap(), &old));
     assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
@@ -822,5 +826,48 @@ async fn a_renewal_into_another_account_retires_derived_state() {
     assert_eq!(*changes.borrow(), Some(SessionChange::AccountChanged));
     assert_eq!(host.retirements(), retirements + 1);
     assert_eq!(host.snapshot().email.as_deref(), Some("b@example.com"));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_renewal_canceled_after_saving_restores_the_session_it_replaced() {
+    let (base, server) = adapter(vec![
+        serde_json::json!({"session_token":"other-session-token","expires_at":"2099-02-01T00:00:00Z"}),
+        serde_json::json!({"expires_at":"2099-02-01T00:00:00Z","email":"b@example.com"}),
+    ])
+    .await;
+    let store = Arc::new(Memory::default());
+    let (host, old) = signed_in_at(store.clone(), base, "a@example.com");
+    let changes = host.account_changes();
+    let retirements = host.retirements();
+    let revision = host.snapshot().revision;
+    let cancel = {
+        let mut state = host.state();
+        let cancel = state.cancellation.child_token();
+        state.renewal = Some(cancel.clone());
+        cancel
+    };
+    let (held, saved) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    *store.compare_gate.lock().unwrap() = Some((held, released));
+    let worker = host.clone();
+    let (login_revision, login_cancel) = (revision.clone(), cancel.clone());
+    let login = tokio::spawn(async move {
+        worker
+            .finish_login("code", "secret", &login_revision, &login_cancel)
+            .await
+    });
+    // The replacement is saved but not installed when the person cancels.
+    tokio::task::spawn_blocking(move || saved.recv().unwrap())
+        .await
+        .unwrap();
+    host.cancel_sign_in();
+    release.send(()).unwrap();
+    assert!(login.await.unwrap().is_err());
+    assert_eq!(host.snapshot().revision, revision);
+    assert!(Arc::ptr_eq(host.state().session.as_ref().unwrap(), &old));
+    assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
+    assert_ne!(*changes.borrow(), Some(SessionChange::AccountChanged));
+    assert_eq!(host.retirements(), retirements);
     server.await.unwrap();
 }

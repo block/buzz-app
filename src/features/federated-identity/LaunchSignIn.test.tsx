@@ -348,6 +348,22 @@ it("warns before the session ends and signs in again without leaving the app", a
   ).toBeInTheDocument();
 });
 
+it("reports only its own renewal's failure", async () => {
+  const h = expiringFixture();
+  // A community refusing access isn't a failed sign-in.
+  h.set({ failure: "authorization-denied" });
+  expect(
+    await screen.findByText("Sign in again to keep Buzz open."),
+  ).toBeInTheDocument();
+  vi.mocked(h.service.signIn).mockRejectedValueOnce(
+    new Error("callback-refused"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+  expect(
+    await screen.findByText("Sign-in did not finish. Try again."),
+  ).toBeInTheDocument();
+});
+
 it("warns only in at-launch builds, once the session is ending", () => {
   const onDemand = federatedFixture();
   const early = launchFixture();

@@ -173,6 +173,9 @@ export function SignInEnding({ identity }: { identity: FederatedIdentity }) {
     identity.snapshot,
   );
   const [renewing, setRenewing] = useState(false);
+  // Only this notice's own attempt; the snapshot's failure can come from a
+  // community refusing access, with no sign-in attempted.
+  const [failure, setFailure] = useState("");
   if (
     !identity.apiAvailable ||
     state.authority?.signIn !== "at-launch" ||
@@ -194,8 +197,8 @@ export function SignInEnding({ identity }: { identity: FederatedIdentity }) {
       description={
         renewing
           ? "Finish signing in in your browser."
-          : state.failure
-            ? recoveryMessage(state.failure)
+          : failure
+            ? recoveryMessage(failure)
             : "Sign in again to keep Buzz open."
       }
     >
@@ -208,9 +211,14 @@ export function SignInEnding({ identity }: { identity: FederatedIdentity }) {
           size="sm"
           onClick={() => {
             setRenewing(true);
+            setFailure("");
             void identity
               .signIn()
-              .catch(() => {})
+              .catch((error: unknown) =>
+                setFailure(
+                  error instanceof Error ? error.message : "sign-in-failed",
+                ),
+              )
               .finally(() => setRenewing(false));
           }}
         >

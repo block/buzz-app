@@ -72,9 +72,6 @@ pub(crate) struct Record {
     pub(super) revision: String,
     session_token: String,
     expires_at: String,
-    /// Unix seconds at exchange; 0 for records saved before it was kept.
-    #[serde(default)]
-    issued_at: i64,
     email: Option<String>,
 }
 impl Drop for Record {
@@ -85,6 +82,9 @@ impl Drop for Record {
 struct Session {
     record: Record,
     raw: Zeroizing<Vec<u8>>,
+    /// Unix seconds at exchange, kept in memory only so the stored record
+    /// stays readable by shipped builds; 0 for a restored session.
+    issued_at: i64,
 }
 #[derive(Clone)]
 struct CallbackGuard(crate::oauth_callback::OAuthCallbackHost, String);
@@ -277,7 +277,7 @@ impl FederatedIdentity {
         let Ok(expires) = expiry(&session.record.expires_at) else {
             return;
         };
-        let warn = warning_at(session.record.issued_at, expires);
+        let warn = warning_at(session.issued_at, expires);
         let revision = session.record.revision.clone();
         let owner = Arc::downgrade(&self.0);
         tokio::spawn(async move {
@@ -558,7 +558,11 @@ impl FederatedIdentity {
                 return Err("storage-corrupt".into());
             }
             let refused = refusal.as_deref() == Some(&record.revision);
-            let session = Arc::new(Session { record, raw });
+            let session = Arc::new(Session {
+                record,
+                raw,
+                issued_at: 0,
+            });
             if refused {
                 self.remove(session).await?;
                 return Ok(None);
@@ -572,6 +576,7 @@ impl FederatedIdentity {
                     Ok(Some(Arc::new(Session {
                         record,
                         raw: session.raw.clone(),
+                        issued_at: 0,
                     })))
                 }
                 Err(failure) if failure.session_denied => {
@@ -627,17 +632,21 @@ impl FederatedIdentity {
         self.publish(&state);
         revision
     }
-    pub(crate) async fn sign_in<R: tauri::Runtime>(&self, app: &tauri::AppHandle<R>) -> Snapshot {
+    /// A renewal that fails returns its failure code; it changes nothing else.
+    pub(crate) async fn sign_in<R: tauri::Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+    ) -> Result<Snapshot, &'static str> {
         let (observed, attempt) = {
             let state = self.state();
             (state.snapshot.clone(), state.restore_attempt)
         };
         if observed.status == Status::SigningIn {
-            return observed;
+            return Ok(observed);
         }
         let operation = self.0.operation.lock().await;
         if !self.current(&observed.revision) {
-            return self.snapshot();
+            return Ok(self.snapshot());
         }
         let observed = self.restore_locked(attempt).await;
         let (revision, cancel, renewing) = {
@@ -648,15 +657,13 @@ impl FederatedIdentity {
                 || state.renewal.is_some()
                 || self.0.config.is_none()
             {
-                return state.snapshot.clone();
+                return Ok(state.snapshot.clone());
             }
             if state.session.is_some() {
                 // Signing in again keeps the current session live until the
                 // new one is installed; ending that session ends this attempt.
                 let cancel = state.cancellation.child_token();
                 state.renewal = Some(cancel.clone());
-                state.snapshot.failure = None;
-                self.publish(&state);
                 (state.snapshot.revision.clone(), cancel, true)
             } else {
                 // Admission and retirement are atomic with cancellation/sign-out.
@@ -670,26 +677,29 @@ impl FederatedIdentity {
         };
         let result = self.login(app, &revision, &cancel, operation).await;
         if renewing {
-            self.renewed(&revision, &cancel, result);
+            self.renewed(&revision, &cancel, result)?;
         } else if let Err(failure) = result {
             self.change_current(&revision, Status::SignedOut, Some(failure.code));
         }
-        self.snapshot()
+        Ok(self.snapshot())
     }
     /// A renewal ended; on failure the current session stays as it was.
-    fn renewed(&self, revision: &str, cancel: &CancellationToken, result: Result<(), Failure>) {
+    fn renewed(
+        &self,
+        revision: &str,
+        cancel: &CancellationToken,
+        result: Result<(), Failure>,
+    ) -> Result<(), &'static str> {
         let mut state = self.state();
         // Canceled, replaced or ended: whoever did that already settled it.
         if cancel.is_cancelled() || state.closed || state.snapshot.revision != revision {
-            return;
+            return Ok(());
         }
         state.renewal = None;
-        if let Err(failure) = result {
-            if failure.code != "sign-in-canceled" {
-                state.snapshot.failure = Some(failure.code);
-            }
+        match result {
+            Err(failure) if failure.code != "sign-in-canceled" => Err(failure.code),
+            _ => Ok(()),
         }
-        self.publish(&state);
     }
     async fn login<R: tauri::Runtime>(
         &self,
@@ -803,7 +813,6 @@ impl FederatedIdentity {
             revision: uuid::Uuid::new_v4().to_string(),
             session_token: exchange.session_token.clone(),
             expires_at: exchange.expires_at.clone(),
-            issued_at: now()?,
             email: None,
         };
         record.email = tokio::select! {
@@ -819,24 +828,32 @@ impl FederatedIdentity {
             .await
             .map_err(|_| Failure::from("storage-unavailable"))?;
         let raw = Zeroizing::new(serde_json::to_vec(&record).map_err(|_| "storage-corrupt")?);
-        let session = Arc::new(Session { record, raw });
-        let saved = session.clone();
+        let session = Arc::new(Session {
+            record,
+            raw,
+            issued_at: now()?,
+        });
+        // A renewal's cancel keeps the revision, so check it at every step.
+        if cancel.is_cancelled() {
+            return Err("sign-in-canceled".into());
+        }
         // A renewal replaces the current session's record in one step.
         let replacing = self.state().session.clone();
+        let (saved, expected) = (session.clone(), replacing.clone());
         self.storage(move |store| {
             store.compare(
-                replacing.as_ref().map(|session| session.raw.as_slice()),
+                expected.as_ref().map(|session| session.raw.as_slice()),
                 Some(&saved.raw),
             )
         })
         .await?;
-        if !self.current(revision) {
-            self.remove(session).await?;
+        if cancel.is_cancelled() || !self.current(revision) {
+            self.unsave(session, replacing).await?;
             return Err("session-changed".into());
         }
         let installed = {
             let mut state = self.state();
-            if state.snapshot.revision == revision && !state.closed {
+            if state.snapshot.revision == revision && !state.closed && !cancel.is_cancelled() {
                 if state.session.is_some() {
                     self.reset(&mut state);
                 }
@@ -848,10 +865,22 @@ impl FederatedIdentity {
             }
         };
         if !installed {
-            self.remove(session).await?;
+            self.unsave(session, replacing).await?;
             return Err("session-changed".into());
         }
         Ok(())
+    }
+    /// Undo saving `session`: put back the record it replaced, if any.
+    async fn unsave(
+        &self,
+        session: Arc<Session>,
+        replaced: Option<Arc<Session>>,
+    ) -> Result<(), Failure> {
+        let Some(replaced) = replaced else {
+            return self.remove(session).await;
+        };
+        self.storage(move |store| store.compare(Some(&session.raw), Some(&replaced.raw)))
+            .await
     }
     pub(crate) fn cancel_sign_in(&self) {
         let mut state = self.state();
@@ -945,7 +974,7 @@ pub(crate) async fn federated_identity_sign_in<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, FederatedIdentity>,
 ) -> Result<Snapshot, String> {
-    Ok(host.sign_in(&app).await)
+    host.sign_in(&app).await.map_err(String::from)
 }
 #[tauri::command]
 pub(crate) fn federated_identity_cancel_sign_in(host: tauri::State<'_, FederatedIdentity>) {

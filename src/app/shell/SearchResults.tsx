@@ -33,7 +33,11 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
-import type { SearchDestination, SearchInputProps } from "./SearchChoices";
+import type {
+  SearchDestination,
+  SearchGroup,
+  SearchInputProps,
+} from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import {
@@ -85,12 +89,18 @@ function conversationName(
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
 
+/** "Search in this conversation" narrows the search and "Show more messages"
+ * extends it; neither is a result. */
+const isSearchAction = (key: string) =>
+  key.startsWith("scope:") || key === "more-messages";
+
 export function SearchResults({
   session,
   inlineSettings,
   query,
   onQueryChange,
   input,
+  open,
   pages,
   scopedChannelId,
   currentChannelId,
@@ -515,6 +525,7 @@ export function SearchResults({
   );
   const choose = (key: string, run: () => void) => () => {
     if (usageScope) recordChoice(usageScope, needle, key);
+    cancelPersonOpen(key);
     run();
   };
   const messageableAgents = new Map(
@@ -799,8 +810,22 @@ export function SearchResults({
     name: string;
     error?: string;
   }>();
-  const personAttempt = useRef<AbortController | undefined>(undefined);
-  useEffect(() => () => personAttempt.current?.abort(), []);
+  const personAttempt = useRef<
+    { key: string; controller: AbortController } | undefined
+  >(undefined);
+  useEffect(() => () => personAttempt.current?.controller.abort(), []);
+  // The newest choice wins: another choice cancels a DM that is still opening.
+  const cancelPersonOpen = (key?: string) => {
+    if (!personAttempt.current || personAttempt.current.key === key) return;
+    personAttempt.current.controller.abort();
+    personAttempt.current = undefined;
+    setPersonOpen(undefined);
+  };
+  // So does closing, or a reopen during the close animation would navigate.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cancelPersonOpen reads only refs and setters.
+  useEffect(() => {
+    if (open === false) cancelPersonOpen();
+  }, [open]);
   const openPerson = async (pubkey: string, name: string, agent: boolean) => {
     if (personAttempt.current) return;
     const existing = session.channels
@@ -836,7 +861,7 @@ export function SearchResults({
       return;
     }
     const controller = new AbortController();
-    personAttempt.current = controller;
+    personAttempt.current = { key: personKey(pubkey), controller };
     setPersonOpen({ name });
     try {
       const channelId = await session.directMessages.open(
@@ -856,7 +881,7 @@ export function SearchResults({
               : "Could not open the conversation. Try again.",
         });
     } finally {
-      if (personAttempt.current === controller)
+      if (personAttempt.current?.controller === controller)
         personAttempt.current = undefined;
     }
   };
@@ -939,7 +964,10 @@ export function SearchResults({
             label: `Search ${currentChannel.channelType === "dm" ? "conversation with" : "in"} ${names.get(currentChannel.id) ?? currentChannel.name}`,
             detail: "Search messages in this conversation",
             icon: ChatCircleIcon,
-            run: () => onScopeChange(currentChannel.id),
+            run: () => {
+              cancelPersonOpen();
+              onScopeChange(currentChannel.id);
+            },
           },
         ]
       : [];
@@ -956,22 +984,44 @@ export function SearchResults({
       label: message.preview,
       detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
       icon: ChatCircleIcon,
-      run: () => openConversation(message.channelId, message.id),
+      run: () => {
+        cancelPersonOpen();
+        openConversation(message.channelId, message.id);
+      },
     };
   });
+  const messageRows: SearchDestination[] = search.hasMore
+    ? [
+        ...messages,
+        {
+          key: "more-messages",
+          label: search.loadingMore
+            ? "Loading more messages…"
+            : "Show more messages",
+          icon: ChatCircleIcon,
+          run: () => {
+            cancelPersonOpen();
+            search.loadMore();
+          },
+        },
+      ]
+    : messages;
   const operatorLookupPending =
     needsPublicLookup &&
     (list.status !== "ready" || operatorPublicChannels.loading);
   const operatorLookupError = needsPublicLookup
     ? operatorPublicChannels.error
     : undefined;
+  const directoryPending = publicChannels.loading || personDirectory.loading;
   const messageEmpty =
     operatorLookupPending || search.loading
       ? "Searching messages…"
       : operatorLookupError || search.error
         ? "Message search is unavailable."
         : query.trim()
-          ? "No matching messages in accessible conversations."
+          ? directoryPending
+            ? undefined
+            : "No matching messages in accessible conversations."
           : scopedChannelId
             ? "Type to search messages in this conversation."
             : "Type to search messages in this community.";
@@ -981,7 +1031,7 @@ export function SearchResults({
     input.current?.focus();
     retry();
   };
-  const groups =
+  const groups: readonly SearchGroup[] =
     pickerPrompt || showAmbiguousPicker
       ? [
           {
@@ -1009,19 +1059,7 @@ export function SearchResults({
               {
                 label: messageOrder,
                 rank: Infinity,
-                destinations: search.hasMore
-                  ? [
-                      ...messages,
-                      {
-                        key: "more-messages",
-                        label: search.loadingMore
-                          ? "Loading more messages…"
-                          : "Show more messages",
-                        icon: ChatCircleIcon,
-                        run: search.loadMore,
-                      },
-                    ]
-                  : messages,
+                destinations: messageRows,
                 empty: messageEmpty,
               },
             ]
@@ -1125,7 +1163,7 @@ export function SearchResults({
                 {
                   label: messageOrder,
                   rank: Infinity,
-                  destinations: messages,
+                  destinations: messageRows,
                   empty:
                     directMessageResults.length ||
                     chatResults.length ||
@@ -1203,6 +1241,27 @@ export function SearchResults({
           : undefined
       }
       groups={groups}
+      open={open}
+      // Enter before any row, or on search actions alone, waits for a
+      // channel or person row, or for the lookups to settle, rather than
+      // opening a message that lands first. A cold joined list has not yet
+      // started the open-channel lookup.
+      pending={
+        (directoryPending ||
+          operatorLookupPending ||
+          search.loading ||
+          (!scopedChannelId &&
+            !!query.trim() &&
+            list.status === "loading" &&
+            !list.channels.length)) &&
+        !groups.some(
+          (group) =>
+            group.rank !== Infinity &&
+            group.destinations !== scopeAction &&
+            group.destinations.length,
+        )
+      }
+      isAction={isSearchAction}
     >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"

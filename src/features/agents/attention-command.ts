@@ -8,6 +8,18 @@ export const bundledAttention = {
   ],
 } as const;
 
+/** The provider a plugin's source `id` names in its watches: a bundled
+ * provider's own name, or the contribution's key. */
+export function attentionProvider(
+  source: Readonly<{ key: string; pluginId: string; id: string }>,
+) {
+  return (
+    bundledAttention.providers.find(
+      ({ plugin, id }) => source.pluginId === plugin && source.id === id,
+    )?.provider ?? source.key
+  );
+}
+
 type Sources = {
   addAttentionSource(source: AttentionSource): void;
 };

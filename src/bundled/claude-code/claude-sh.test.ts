@@ -261,6 +261,26 @@ it("uses an executable matching release without changing its mode", async () => 
   expect(await calls()).toBe(0);
 });
 
+it("downloads again over a matching release it cannot make executable", async () => {
+  const { home, dir, step, selected } = await disk([]);
+  const binary = join(dir, "0.2.0", "claude");
+  await mkdir(dirname(binary), { recursive: true });
+  await writeFile(binary, release("0.2.0"));
+  await chmod(binary, 0o644);
+  const { install, calls } = await downloads(home, release("0.2.0"));
+  // Refuses only the cached file, so the download can still mark its own copy executable.
+  await writeFile(
+    join(home, "bin", "chmod"),
+    '#!/bin/sh\ncase "$2" in */claude) exit 1 ;; esac\nexec /bin/chmod "$@"\n',
+  );
+  await chmod(join(home, "bin", "chmod"), 0o755);
+  await install("0.2.0", sha256(release("0.2.0")));
+  expect(await calls()).toBe(1);
+  expect(await readFile(binary, "utf8")).toBe(release("0.2.0"));
+  await step("use", "0.2.0");
+  expect(await selected()).toBe("0.2.0");
+});
+
 it("downloads again over a release that does not match its checksum", async () => {
   const { home, dir } = await disk([]);
   const binary = join(dir, "0.2.0", "claude");

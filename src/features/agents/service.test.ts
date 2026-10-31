@@ -3403,6 +3403,23 @@ describe("an agent in several communities", () => {
     expect(service.find(bot)?.attention).toEqual({});
   });
 
+  it("reports each community an approved deletion request leaves", async () => {
+    const { service, plugin, select } = await joined();
+    select("https://relay.example.test");
+    await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+    const { requestId } = (await plugin.agents
+      .handle(bot)
+      ?.deleteAgent?.({ agent: "Echo" })) ?? { requestId: "" };
+    const progress = vi.fn();
+    await service.approveDelete(requestId, progress);
+    expect(progress.mock.calls).toEqual([
+      ["Stopping Echo"],
+      ["Leaving other.example.test"],
+      ["Leaving relay.example.test"],
+    ]);
+    expect(service.find(bot)).toBeUndefined();
+  });
+
   it("deletes from every community, the one shown last, and forgets one it could not reach", async () => {
     const { service, leave, select } = await joined();
     select("https://relay.example.test");
@@ -10736,6 +10753,191 @@ it("refuses change drafts it cannot apply", async () => {
     handle.updateAgent({ agent: "Child", name: "Kid" }),
   ).rejects.toThrow("use its pubkey");
   expect(service.updateRequests()).toEqual([]);
+});
+
+it("submits an unsaved deletion request and deletes only after the owner approves", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const client = appClient(handle, {
+    read: vi.fn(),
+    protectionContext: async () => ({ messages: [] }),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  const result = JSON.parse(
+    (await callTool(client, {}, "agent_delete", { agent: "Child" })) as string,
+  );
+  expect(result).toEqual({ requestId: expect.any(String), saved: false });
+  expect(service.deleteRequests()).toEqual([
+    {
+      id: result.requestId,
+      requester: bot,
+      requesterName: "Parent",
+      owner: viewer,
+      community: "https://relay.example.test",
+      agent: sibling,
+      agentName: "Child",
+    },
+  ]);
+  expect(native.beginDelete).not.toHaveBeenCalled();
+  expect(service.find(sibling)).toMatchObject({ name: "Child" });
+  const progress = vi.fn();
+  await service.approveDelete(result.requestId, progress);
+  expect(progress.mock.calls).toEqual([
+    ["Stopping Child"],
+    ["Leaving relay.example.test"],
+  ]);
+  expect(native.beginDelete).toHaveBeenCalledExactlyOnceWith(sibling);
+  expect(service.find(sibling)).toBeUndefined();
+  expect(service.find(bot)).toMatchObject({ name: "Parent" });
+  expect(service.deleteRequests()).toEqual([]);
+  await expect(service.approveDelete(result.requestId)).rejects.toThrow(
+    "No such pending",
+  );
+});
+
+it("discards a dismissed deletion request, but not one being approved", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.deleteAgent) throw new Error("Missing deletion handle");
+  const dismissed = await handle.deleteAgent({ agent: sibling });
+  service.dismissDelete(dismissed.requestId);
+  expect(service.deleteRequests()).toEqual([]);
+  expect(native.beginDelete).not.toHaveBeenCalled();
+  const { requestId } = await handle.deleteAgent({ agent: "Child" });
+  let release: () => void = () => {};
+  leaveChannels.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  const deleting = service.approveDelete(requestId);
+  await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledOnce());
+  service.dismissDelete(requestId);
+  expect(service.deleteRequests()).toHaveLength(1);
+  await expect(service.approveDelete(requestId)).rejects.toThrow(
+    "No such pending",
+  );
+  release();
+  await deleting;
+  expect(service.deleteRequests()).toEqual([]);
+  expect(native.beginDelete).toHaveBeenCalledOnce();
+});
+
+it("keeps a deletion request whose Delete did not finish, and finishes it when approved again", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.deleteAgent) throw new Error("Missing deletion handle");
+  const { requestId } = await handle.deleteAgent({ agent: sibling });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  leaveChannels.mockRejectedValueOnce(new Error("offline"));
+  await expect(service.approveDelete(requestId)).rejects.toThrow(
+    "Child isn't deleted yet",
+  );
+  warn.mockRestore();
+  expect(service.deleteRequests()).toHaveLength(1);
+  expect(service.find(sibling)).toMatchObject({ deleting: true });
+  expect(native.forget).not.toHaveBeenCalled();
+  await expect(handle.deleteAgent({ agent: "Child" })).resolves.toMatchObject({
+    saved: false,
+  });
+  await service.approveDelete(requestId);
+  expect(service.find(sibling)).toBeUndefined();
+  expect(service.deleteRequests()).toEqual([]);
+});
+
+it("shares one bound across creation, change and deletion requests, and releases a deleted agent's", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.deleteAgent || !handle.updateAgent || !handle.createAgent)
+    throw new Error("Missing request handles");
+  for (let i = 0; i < 6; i++)
+    await handle.updateAgent({ agent: sibling, name: `Kid ${i}` });
+  for (let i = 0; i < 6; i++)
+    await handle.createAgent({ type: "example/echo", name: `New ${i}` });
+  for (let i = 0; i < 4; i++) await handle.deleteAgent({ agent: sibling });
+  const full = "pending agent requests";
+  await expect(handle.deleteAgent({ agent: sibling })).rejects.toThrow(full);
+  await expect(
+    handle.updateAgent({ agent: sibling, name: "Kid" }),
+  ).rejects.toThrow(full);
+  await expect(
+    handle.createAgent({ type: "example/echo", name: "New" }),
+  ).rejects.toThrow(full);
+  await service.remove(sibling);
+  expect(service.deleteRequests()).toEqual([]);
+  expect(service.updateRequests()).toEqual([]);
+  await expect(
+    handle.createAgent({ type: "example/echo", name: "New" }),
+  ).resolves.toMatchObject({ requestId: expect.any(String) });
+});
+
+it("lets an agent ask to delete itself", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const { requestId } = (await plugin.agents
+    .handle(bot)
+    ?.deleteAgent?.({ agent: "Parent" })) ?? { requestId: "" };
+  expect(service.deleteRequests()).toMatchObject([
+    { id: requestId, requester: bot, agent: bot },
+  ]);
+  await service.approveDelete(requestId);
+  expect(service.find(bot)).toBeUndefined();
+});
+
+describe("refuses deletion requests it cannot honor", () => {
+  async function requester() {
+    const ready = await setup();
+    await ready.service.create({ type: "example/echo", name: "Parent" });
+    await ready.service.create({ type: "example/echo", name: "Child" });
+    await vi.waitFor(() =>
+      expect(ready.plugin.agents.handle(bot)).toBeDefined(),
+    );
+    const handle = ready.plugin.agents.handle(bot);
+    if (!handle?.deleteAgent) throw new Error("Missing deletion handle");
+    return { ...ready, ask: handle.deleteAgent };
+  }
+
+  it.each([
+    ["an unknown name", "Nobody", "no agent here"],
+    ["an unknown pubkey", "e".repeat(64), "no agent here"],
+  ])("%s", async (_, target, message) => {
+    const { service, native, ask } = await requester();
+    await expect(ask({ agent: target })).rejects.toThrow(message);
+    expect(service.deleteRequests()).toEqual([]);
+    expect(native.beginDelete).not.toHaveBeenCalled();
+  });
+
+  it("an ambiguous name", async () => {
+    const { service, native, ask } = await requester();
+    await service.save(bot, { name: "Child" });
+    await expect(ask({ agent: "Child" })).rejects.toThrow("use its pubkey");
+    await expect(ask({ agent: sibling })).resolves.toMatchObject({
+      saved: false,
+    });
+    expect(native.beginDelete).not.toHaveBeenCalled();
+  });
+
+  it("a requester that is no longer available", async () => {
+    const { service, native, connect, ask } = await requester();
+    connect(false);
+    await expect(ask({ agent: sibling })).rejects.toThrow(
+      "no longer runs here",
+    );
+    expect(service.deleteRequests()).toEqual([]);
+    expect(native.beginDelete).not.toHaveBeenCalled();
+  });
 });
 
 it.each([true, false])(

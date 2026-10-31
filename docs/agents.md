@@ -56,6 +56,30 @@ requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+`agent_delete` asks the owner to delete one of their local agents in the same
+community, named by pubkey or exact name, and returns a request ID and
+`saved: false`. It refuses with an error, creating no request, when the
+requester is no longer running here, no such agent exists, a name names several,
+or the agent is hosted. An agent can ask to delete itself, and an agent whose
+earlier Delete did not finish can be asked about again. The owner sees a
+confirmation naming the agent and who asked; focus starts on **Cancel**, so
+only an explicit **Delete** removes anything. **Delete** runs
+[Delete agent](#relay-scoped-archive-display) for the agent in every community
+it is in and shows each step as it runs; the dialog cannot be dismissed
+meanwhile. A failure appears in the dialog, which stays open, and the request
+stays: **Delete** again finishes it, as on Agents. Closing the dialog discards
+the request. Requests share the creation and change requests' bound of 16, local
+lifetime and discard when the agent is gone. Buzz has no built-in agents, and a
+team's members are deleted as any other: they leave their teams, and the teams
+stay.
+
+The tool is one of the Buzz tools, not a plugin's, so adding it does not restart
+every session through `addedKey`. Codex keeps the persisted tool list of a
+resumed thread, so the Codex storage version changed, and each Codex agent starts
+one new thread, losing that thread's context once, the first time it runs on an
+app that has the tool. Other running sessions keep the tools they started with
+until replaced; **Start a new session** picks it up.
+
 ## Product help for agents
 
 The read-only `buzz_help` tool returns [the Buzz quick guide](buzz-help.md), bundled

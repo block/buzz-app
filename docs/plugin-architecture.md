@@ -1659,13 +1659,31 @@ are not runtime capability negotiation or cross-version compatibility promises.
 ### Slash commands
 
 A plugin that injects `conversation` calls `registerCommand({ id, name, aliases?,
-usage, description, run })`. `name` and each alias are lowercase `[a-z0-9_-]`
+usage, description, scopes?, run })`. `name` and each alias are lowercase `[a-z0-9_-]`
 tokens; `usage` and `description` feed the typeahead. Contributions are keyed
 `${pluginId}/${id}` and removed with their plugin; when two commands claim one name,
 the lowest key wins. `run` receives `{ session, scope, channelId, threadRootId?, args,
-recipients, signal }` and returns `{ send }`, the Markdown the host sends in place of
-the draft. A thrown or rejected `run` keeps the draft and shows its message.
-`signal` aborts when the destination changes or the composer unmounts.
+recipients, signal }` and returns one of two results. `{ send }` is the Markdown the
+host sends in place of the draft. `{ done: true, notice? }` sends nothing: the host
+clears the draft and, when `notice` is set, shows it under the composer in an
+always-present `role="status"` region, so assistive technology announces it politely
+(not as an alert). A blank `notice` counts as none. The notice goes away when the draft
+changes, on the next send attempt, or when the composer shows an error. A thrown or rejected `run` keeps the draft and shows its message as an alert;
+a value that is not an `Error` with a message shows `/name failed`. Any other return
+fails the same way with `/name returned an invalid result` and sends nothing: `send`
+must be non-blank text, `done` must be `true`, and `notice`, if present, a string
+(`done` and `send` together are invalid).
+`signal` aborts when the destination changes or the composer unmounts. The `scope` in
+`run`'s context is the session scope, not a conversation scope.
+
+`scopes` limits where a command is offered and runs: any of `"channel"` (a top-level
+message in a non-DM channel), `"dm"` (a direct message, including a reply in a thread
+there) and `"thread"` (a reply in a thread in a non-DM channel). The three do not
+overlap, so a command for a non-DM channel and its threads lists
+`["channel", "thread"]`, and one for direct messages lists `["dm"]`. Omitted means every
+scope; an empty list or an unknown value is rejected at registration. The host copies
+and freezes the list. Outside its scopes the typeahead hides the command, and running it fails
+visibly with the draft kept, like any other failed command, before `run` is called.
 
 Only composers that pass `slashCommands` run commands: the channel and DM composers
 and the thread composer. Solo chats, message edit, Inbox previews, media review and
@@ -1679,9 +1697,8 @@ attachments, chat cards or GIFs is refused with a visible error and nothing is l
 its space are omitted when empty). It also registers a completion provider that lists
 commands by name while the caret ends a leading `/token`. Choosing a row inserts
 `/name ` and never runs it. The existing completion host supplies arrow, Enter, Tab
-and Escape handling. Result variants that do not send (`done`, `ui`, cancelled),
-per-command availability and `scope`/`context` restrictions are not part of this
-contract yet.
+and Escape handling. Other result variants (`ui`, cancelled) and availability that
+depends on more than the conversation scope are not part of this contract yet.
 
 ### Composer completion providers
 

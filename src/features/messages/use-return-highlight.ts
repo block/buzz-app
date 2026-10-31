@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from "react";
-import styles from "./Messages.module.css";
+import { highlightMessage } from "./message-highlight";
 
 /** A close-time orientation cue, not a reveal request or a scroll owner. */
 export function useReturnHighlight(
@@ -13,13 +13,7 @@ export function useReturnHighlight(
     pending.current();
     if (!messageId) return;
     let row: HTMLElement | undefined;
-    const clear = () => {
-      row?.classList.remove(styles.returnHighlight ?? "");
-      row?.removeEventListener("animationend", finish);
-    };
-    const finish = (event: AnimationEvent) => {
-      if (event.target === row && event.pseudoElement === "::after") clear();
-    };
+    let clear = () => {};
     // Let tab selection and the current close/navigation commit settle first.
     // Check once: hidden, unloaded and offscreen roots get no deferred cue.
     const frame = requestAnimationFrame(() => {
@@ -51,8 +45,7 @@ export function useReturnHighlight(
         box.left >= Math.min(viewport.right, window.innerWidth)
       )
         return;
-      row.classList.add(styles.returnHighlight ?? "");
-      row.addEventListener("animationend", finish);
+      clear = highlightMessage(row);
     });
     pending.current = () => {
       cancelAnimationFrame(frame);

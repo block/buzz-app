@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { readingPositioned } from "./use-reading";
+import { highlightMessage, messageHighlightTarget } from "./message-highlight";
 
 /** One reveal per request signal, never per row/profile/image update. */
 export function useMessageReveal({
@@ -33,6 +34,10 @@ export function useMessageReveal({
   hold?: () => boolean;
 }) {
   const revealed = useRef<AbortSignal | undefined>(undefined);
+  const highlighted = useRef<(() => void) | undefined>(undefined);
+  // A new request or an unmounted reader retires the previous orientation cue.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: request identity owns cue lifetime.
+  useLayoutEffect(() => () => highlighted.current?.(), [messageId, signal]);
   const focused = useRef<{ signal: AbortSignal; row: HTMLElement } | undefined>(
     undefined,
   );
@@ -122,6 +127,14 @@ export function useMessageReveal({
           return;
         }
         revealed.current = signal;
+        const message = messageHighlightTarget(row);
+        if (message)
+          highlighted.current = highlightMessage(
+            message,
+            signal,
+            "linked",
+            container,
+          );
         cancel();
         readingPositioned(container);
         complete();

@@ -193,6 +193,7 @@ export function ConversationTab({
               // Mount the list once, at the message, not while it is sought.
               holding={!!target && inTimeline === undefined}
               inlineTarget={
+                active &&
                 target &&
                 reveal &&
                 reveal.key === revealKey &&

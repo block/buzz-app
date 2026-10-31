@@ -3435,10 +3435,13 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 
 /* Returning from a thread only paints its already-visible origin. The wash
    extends into the feed's inset without changing the row's layout box. */
-.returnHighlight {
+.returnHighlight,
+.linkedHighlight {
+  position: relative;
   isolation: isolate;
 }
-.returnHighlight::after {
+.returnHighlight::after,
+.linkedHighlight::after {
   content: "";
   position: absolute;
   inset-block: 0;
@@ -3447,6 +3450,18 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   border-radius: var(--radius-row);
   background: var(--surface-message-highlight);
   pointer-events: none;
+}
+.linkedHighlight::after {
+  inset-inline: 0;
+  outline: 2px solid var(--border-accent);
+  outline-offset: -2px;
+}
+/* The linked cue supplies the focus boundary instead of a second row outline. */
+[data-message-id]:has(> .linkedHighlight):focus,
+.linkedHighlight:focus {
+  outline: none;
+}
+.returnHighlight::after {
   animation: return-message-highlight calc(var(--duration-settle) * 5) ease-out
     both;
 }

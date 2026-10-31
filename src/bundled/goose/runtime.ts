@@ -115,6 +115,8 @@ type Entry = {
   protected?: boolean;
   worker?: SharedProcess;
   workerKey?: string;
+  /** A replaced provider's worker, which its successor waits out. */
+  stopping?: Promise<void>;
   sessions: AgentSessions;
   config: Config;
   /** The team sections of the latest run; a change reopens idle sessions. */
@@ -204,13 +206,22 @@ export class GooseRuntime {
         const entry = this.agents.get(pubkey);
         entry?.lifetime.abort(new Error("The Goose agent was retired"));
         this.agents.delete(pubkey);
-        await entry?.sessions.shutdown();
-        await entry?.worker?.shutdown();
+        try {
+          await entry?.sessions.shutdown();
+        } finally {
+          await entry?.stopping;
+          await entry?.worker?.shutdown();
+        }
       })();
       this.retirements.set(pubkey, retiring);
     }
-    await retiring;
-    this.retirements.delete(pubkey);
+    try {
+      await retiring;
+    } finally {
+      // A failed retirement is retried by the next one, not kept.
+      if (this.retirements.get(pubkey) === retiring)
+        this.retirements.delete(pubkey);
+    }
   }
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.key));
@@ -818,15 +829,22 @@ export class GooseRuntime {
             return this.goose.get();
           }
           protection.assertAvailable();
-          if (entry.worker && entry.workerKey !== protection.key)
-            throw new Error("Retire the previous protected Goose worker first");
+          // Another key means a replaced provider, which is already stopping
+          // its worker; the replacement starts once that one has exited.
+          if (entry.worker && entry.workerKey !== protection.key) {
+            entry.stopping = entry.worker.shutdown().catch(() => undefined);
+            delete entry.worker;
+          }
           entry.workerKey = protection.key;
           entry.worker ??= new SharedProcess(
             this.desktop,
             (handler) => this.serve(handler),
             protection,
           );
-          return entry.worker.get();
+          const worker = entry.worker;
+          return entry.stopping
+            ? entry.stopping.then(() => worker.get())
+            : worker.get();
         },
       },
       store: localSessions(this.storage, agent),

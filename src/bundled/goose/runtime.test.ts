@@ -296,6 +296,49 @@ it("reads a protected Goose file under containment and reviews the captured text
   }
 });
 
+const protection = (key: string, f: () => ReturnType<typeof setup>) =>
+  ({
+    key,
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable: () => {},
+    check: async () => {},
+    spawn: (options) => f().fake.spawn("goose", options),
+  }) satisfies AgentProtection;
+
+it("starts a replacement provider's Goose worker once the previous one has exited", async () => {
+  const f = setup({ protection: protection("policy-1", () => f) });
+  try {
+    await f.deliver(message("1", "First"));
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+    Object.assign(f.agent, { protection: protection("policy-2", () => f) });
+    await f.deliver(message("2", "Second"));
+    await vi.waitFor(() => expect(f.fake.geese[1]?.turns).toHaveLength(1));
+    expect(f.fake.geese[0]?.killed).toBe(true);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("stops a protected Goose worker and allows a retry when retiring its sessions fails", async () => {
+  const f = setup({ protection: protection("policy-1", () => f) });
+  try {
+    await f.deliver(message("1", "First"));
+    await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+    vi.spyOn(AgentSessions.prototype, "shutdown").mockRejectedValueOnce(
+      new Error("stuck"),
+    );
+    await expect(f.runtime.retire(f.agent.key)).rejects.toThrow("stuck");
+    expect(f.fake.geese[0]?.killed).toBe(true);
+    await f.runtime.retire(f.agent.key);
+    await f.deliver(message("2", "Second"));
+    await vi.waitFor(() => expect(f.fake.geese[1]?.turns).toHaveLength(1));
+  } finally {
+    vi.restoreAllMocks();
+    f.runtime.dispose();
+  }
+});
+
 it.each(["retire", "dispose"] as const)(
   "cancels a pending protected tool before %s completes",
   async (end) => {

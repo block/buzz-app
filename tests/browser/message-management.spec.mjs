@@ -156,9 +156,24 @@ test("manage a channel message, peer unread state, and its thread", async ({
     await row.scrollIntoViewIfNeeded();
     await hoverMessage(row);
     await trigger.click();
-    await page
-      .getByRole("menuitem", { name: "Delete message", exact: true })
-      .click();
+    const deleteItem = page.getByRole("menuitem", {
+      name: "Delete message",
+      exact: true,
+    });
+    const dangerColor = await deleteItem.evaluate((item) => {
+      const reference = document.createElement("span");
+      reference.style.color = "var(--text-danger)";
+      item.append(reference);
+      const color = getComputedStyle(reference).color;
+      reference.remove();
+      return color;
+    });
+    await expect(deleteItem).toHaveCSS("color", dangerColor);
+    await expect(deleteItem.locator(".buzz-menu-icon svg")).toHaveCSS(
+      "color",
+      dangerColor,
+    );
+    await deleteItem.click();
     const confirmation = page.getByRole("alertdialog", {
       name: "Delete message?",
     });

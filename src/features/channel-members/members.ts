@@ -121,8 +121,20 @@ export type MemberAdditionIntent = {
   dismissed?: boolean;
 };
 
-/** Explicit single-person intent. Membership truth and pending writes stay session-owned. */
+/** Explicit single-person intent. Membership truth and pending writes stay
+ * session-owned. Whatever the outcome, settles the batches it may complete. */
 export async function addChannelMember(
+  ...args: Parameters<typeof addOneMember>
+) {
+  const [session, channelId] = args;
+  try {
+    await addOneMember(...args);
+  } finally {
+    await settleBatchAdditions(session, channelId);
+  }
+}
+
+async function addOneMember(
   session: RelaySession,
   channelId: string,
   pubkey: string,
@@ -268,6 +280,40 @@ export async function addChannelMember(
   intent.confirmed = true;
 }
 
+/** A batch is the only durable record of the people it names until each is
+ * in the roster or has their own addition pending, so only then is it
+ * acknowledged. Batches still sending are left to their own sender. */
+export async function settleBatchAdditions(
+  session: RelaySession,
+  channelId: string,
+) {
+  const outbox = session.outbox;
+  if (!outbox) return;
+  const items = outbox
+    .snapshot()
+    .filter(
+      (item) =>
+        !item.acknowledged &&
+        item.event.kind === 9000 &&
+        item.event.tags.some(
+          ([tag, value]) => tag === "h" && value === channelId,
+        ),
+    );
+  const named = (item: OutgoingEvent) =>
+    item.event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : []));
+  const covered = new Set([
+    ...(channelOf(session, channelId)?.members ?? []),
+    ...items.filter((item) => !isBatchAddition(item)).flatMap(named),
+  ]);
+  for (const item of items)
+    if (
+      isBatchAddition(item) &&
+      item.delivery !== "sending" &&
+      named(item).every((key) => covered.has(key))
+    )
+      await outbox.acknowledge(item.event.id).catch(() => {});
+}
+
 /** Most people one kind:9000 may name; see the relay's put-user handler. */
 const batchLimit = 100;
 
@@ -278,7 +324,8 @@ const batchLimit = 100;
  * person each event names. Best effort: only an abort or `beforeDispatch`
  * throws. Everyone not returned is left to `addChannelMember`, which also says
  * why they failed, as is anyone with an earlier single addition pending, so a
- * stale role is never resent. A batch is never resumed and never blocks one.
+ * stale role is never resent. A batch is never resumed and never blocks one;
+ * it stays in Outbox until everyone it names is settled.
  */
 export async function addChannelMembersAtOnce(
   session: RelaySession,
@@ -350,7 +397,7 @@ export async function addChannelMembersAtOnce(
       const role = additionRole(session, channelId, key, soloParticipant);
       groups.set(role, [...(groups.get(role) ?? []), key]);
     }
-  const sent: string[] = [];
+  let sent = false;
   try {
     let roster: ChannelSummary | undefined = before;
     let dispatched = false;
@@ -386,17 +433,17 @@ export async function addChannelMembersAtOnce(
             ),
           );
           if (!id) continue;
-          sent.push(id);
+          sent = true;
           // A refusal or unknown result still leaves the roster to decide.
           await attempt(() => waitForAddition(outbox, id, signal));
         }
-    const after = sent.length
+    const after = sent
       ? await attempt(() => session.channelWrites.refreshMembership(channelId))
       : before;
     for (const key of eligible)
       if (after?.members?.includes(key)) confirmed.add(key);
     return confirmed;
   } finally {
-    for (const id of sent) await outbox.acknowledge(id).catch(() => {});
+    await settleBatchAdditions(session, channelId);
   }
 }

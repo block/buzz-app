@@ -133,34 +133,38 @@ it("routes an ordinary addition retry through fresh membership checks", async ()
   expect(retry).not.toHaveBeenCalled();
 });
 
-it("retries a batch addition per person, then settles it rather than resending it", async () => {
-  const { retry, add, acknowledge } = show({
-    ...invitation,
-    event: {
-      ...invitation.event,
-      tags: [
-        ["h", "channel"],
-        ["p", "one"],
-        ["p", "two"],
-        ["role", "member"],
-      ],
-    },
-    recovery: { key: "member-add:batch:operation", value: "1" },
-  });
-  expect(screen.getByText(/Add 2 people/)).toBeVisible();
-  add.mockImplementation(async (...args: unknown[]) => {
-    if (args[1] === "two") throw new Error("Could not add two");
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  // Settled even when someone fails: they keep their own addition and error.
-  await waitFor(() => expect(acknowledge).toHaveBeenCalledWith("invite"));
-  expect(add.mock.calls).toEqual([
-    ["channel", "one"],
-    ["channel", "two"],
-  ]);
-  expect(await screen.findByText(/Could not add two/)).toBeVisible();
-  expect(retry).not.toHaveBeenCalled();
-});
+it.each(["failed", "accepted"] as const)(
+  "retries a %s batch addition per person, never resending it",
+  async (delivery) => {
+    const { retry, add, acknowledge } = show({
+      ...invitation,
+      delivery,
+      event: {
+        ...invitation.event,
+        tags: [
+          ["h", "channel"],
+          ["p", "one"],
+          ["p", "two"],
+          ["role", "member"],
+        ],
+      },
+      recovery: { key: "member-add:batch:operation", value: "1" },
+    });
+    expect(screen.getByText(/Add 2 people/)).toBeVisible();
+    add.mockImplementation(async (...args: unknown[]) => {
+      if (args[1] === "two") throw new Error("Could not add two");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(/Could not add two/)).toBeVisible();
+    expect(add.mock.calls).toEqual([
+      ["channel", "one"],
+      ["channel", "two"],
+    ]);
+    // Additions settle the batch once everyone is; Retry never clears it.
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+  },
+);
 
 it.each(
   (["failed", "unknown", "admitted"] as const).flatMap((failure) =>

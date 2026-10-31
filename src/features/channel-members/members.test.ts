@@ -769,6 +769,7 @@ function batchSetup(applyAll = true) {
   let onPublish = () => {};
   let rosterReads = 0;
   let failRosterRead = 0;
+  let rosterDown = false;
   const publish = vi.fn(async (event: RelayEvent) => {
     onPublish();
     const named = event.tags.flatMap(([tag, value]) =>
@@ -796,7 +797,7 @@ function batchSetup(applyAll = true) {
       },
       query: async (filters) => {
         if (filters.some((filter) => filter.kinds?.includes(39002)))
-          if (++rosterReads === failRosterRead)
+          if (++rosterReads === failRosterRead || rosterDown)
             throw new Error("Roster unavailable");
         return [
           signed(relay, {
@@ -840,6 +841,10 @@ function batchSetup(applyAll = true) {
     /** Fails the relay's nth roster read from now. */
     failRosterRead(nth: number) {
       failRosterRead = rosterReads + nth;
+    },
+    /** Fails every roster read until restored. */
+    rosterDown(down: boolean) {
+      rosterDown = down;
     },
     admit(key: string) {
       members = [...members, key];
@@ -968,6 +973,33 @@ it("adds the rest one at a time when the roster can't be read again between writ
   ]);
   expect(t.members()).toContain(t.agent.pubkey);
   expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("keeps a batch until everyone it names is in the roster or has their own addition", async () => {
+  const t = batchSetup(false);
+  await t.ready();
+  const [first = "", second = "", third = ""] = people(3);
+  // The relay adds only the first person; then no roster read succeeds, so
+  // nobody else gets a receipt of their own.
+  t.onPublish(() => {
+    t.onPublish(() => {});
+    t.rosterDown(true);
+  });
+  const failed = await Promise.allSettled([
+    t.session.memberAdditions.add(t.id, first),
+    t.session.memberAdditions.add(t.id, second),
+    t.session.memberAdditions.add(t.id, third),
+  ]);
+  expect(failed.every((result) => result.status === "rejected")).toBe(true);
+  expect(t.published).toHaveLength(1);
+  // The saved batch, which a restart restores, is everyone's only record.
+  const [batch] = t.records().filter((item) => !item.acknowledged);
+  expect(batch?.recovery?.key).toMatch(/^member-add:batch:/);
+  expect(batch?.event.id).toBe(t.published[0]?.id);
+  t.rosterDown(false);
+  await t.addAll([first, second, third]);
+  expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
 });
 
 it("reads the roster again after a write that couldn't be sent", async () => {

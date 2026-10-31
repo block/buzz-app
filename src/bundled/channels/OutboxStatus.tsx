@@ -63,7 +63,10 @@ export function OutboxStatus({
             </span>{" "}
             {!isWorkflowOperation(item.event) &&
               !item.guarded &&
-              (item.delivery === "failed" || item.delivery === "unknown") && (
+              (item.delivery === "failed" ||
+                item.delivery === "unknown" ||
+                // A kept batch still names someone unsettled.
+                (isBatchAddition(item) && item.delivery !== "sending")) && (
                 <Button
                   type="button"
                   onClick={async () => {
@@ -84,15 +87,13 @@ export function OutboxStatus({
                             "Reopen Members to check this addition.",
                           );
                         // A stale explicit role must never overwrite a newer
-                        // admission, so each person is checked again.
+                        // admission, so each person is checked again. A batch
+                        // is never resumed; it clears once everyone is settled.
                         const results = await Promise.allSettled(
                           pubkeys.map((pubkey) =>
                             memberAdditions.add(channelId, pubkey),
                           ),
                         );
-                        // Never resumed: each person now has their own addition.
-                        if (isBatchAddition(item))
-                          await outbox.acknowledge(item.event.id);
                         const failed = results.find(
                           (result) => result.status === "rejected",
                         );

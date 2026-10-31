@@ -144,37 +144,44 @@ fn byte_ipc_refuses_headers_http_bad_limits_stale_disabled_and_undeclared_origin
     assert!(!f.root().exists());
 }
 
-#[tokio::test]
-async fn byte_origin_recheck_observes_revocation_and_shared_admission_is_nonqueued() {
+#[test]
+fn byte_origin_recheck_observes_revocation_and_shared_admission_is_nonqueued() {
+    // Hold process-wide fixture serialization outside the async task until it completes.
     let _serial = commands();
-    use tauri::Manager as _;
-    let f = Fixture::new(true, false);
-    let url = reqwest::Url::parse("https://example.test/bytes").unwrap();
-    byte_origin(f.app.state(), "example.bytes", &f.revision, &url)
-        .await
-        .unwrap();
-    f.manager.change("disable", "example.bytes").unwrap();
-    assert!(
-        byte_origin(f.app.state(), "example.bytes", &f.revision, &url)
-            .await
-            .is_err()
-    );
-    let permit = crate::host_files::BYTE_WORK.try_acquire().unwrap();
-    let error = f.save(b"bytes", &digest(b"bytes")).unwrap_err();
-    assert!(error.contains("already under way"));
-    let result = plugin_host_request_bytes(
-        f.app.state(),
-        "example.bytes".into(),
-        f.revision.clone(),
-        ByteRequest {
-            url: url.to_string(),
-            max_bytes: 1,
-            timeout_ms: Some(1),
-        },
-    )
-    .await;
-    assert!(result.err().unwrap().contains("already under way"));
-    drop(permit);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use tauri::Manager as _;
+            let f = Fixture::new(true, false);
+            let url = reqwest::Url::parse("https://example.test/bytes").unwrap();
+            byte_origin(f.app.state(), "example.bytes", &f.revision, &url)
+                .await
+                .unwrap();
+            f.manager.change("disable", "example.bytes").unwrap();
+            assert!(
+                byte_origin(f.app.state(), "example.bytes", &f.revision, &url)
+                    .await
+                    .is_err()
+            );
+            let permit = crate::host_files::BYTE_WORK.try_acquire().unwrap();
+            let error = f.save(b"bytes", &digest(b"bytes")).unwrap_err();
+            assert!(error.contains("already under way"));
+            let result = plugin_host_request_bytes(
+                f.app.state(),
+                "example.bytes".into(),
+                f.revision.clone(),
+                ByteRequest {
+                    url: url.to_string(),
+                    max_bytes: 1,
+                    timeout_ms: Some(1),
+                },
+            )
+            .await;
+            assert!(result.err().unwrap().contains("already under way"));
+            drop(permit);
+        });
 }
 
 #[tokio::test]

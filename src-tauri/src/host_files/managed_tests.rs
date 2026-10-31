@@ -350,50 +350,57 @@ fn links_public_root_and_unexpected_directories_fail_closed() {
     assert!(managed_capacity(&f.root(), 100, 1).is_err());
 }
 
-#[tokio::test]
-async fn timed_out_managed_writer_holds_actual_byte_permit_and_root_lock_through_cleanup() {
+#[test]
+fn timed_out_managed_writer_holds_actual_byte_permit_and_root_lock_through_cleanup() {
+    // Hold process-wide fixture serialization outside the async task until it completes.
     let _serial = commands();
-    let f = Fixture::new(true, false);
-    let root = f.root();
-    let held_root = root.clone();
-    let place = BYTE_WORK.try_acquire().unwrap();
-    let (started, ready) = tokio::sync::oneshot::channel();
-    let (release, released) = std::sync::mpsc::channel();
-    let writer = managed_writer(place, move || {
-        let _lock = managed_lock(&held_root)?;
-        let partial = held_root.join("partial");
-        std::fs::write(&partial, b"partial").unwrap();
-        started.send(()).unwrap();
-        released
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
-        std::fs::remove_file(partial).unwrap();
-        Ok(())
-    });
-    tokio::time::timeout(std::time::Duration::from_secs(5), ready)
-        .await
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .unwrap()
-        .unwrap();
-    // Already elapsed async deadline; the very same production writer keeps ownership.
-    let end = tokio::time::Instant::now();
-    assert!(tokio::time::timeout_at(end, writer).await.is_err());
-    assert!(BYTE_WORK.try_acquire().is_err());
-    assert!(managed_lock(&root).err().unwrap().contains("busy"));
-    assert!(root.join("partial").exists());
-    release.send(()).unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if let Ok(permit) = BYTE_WORK.try_acquire() {
-                drop(permit);
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert!(!root.join("partial").exists());
-    assert!(managed_lock(&root).is_ok());
+        .block_on(async {
+            let f = Fixture::new(true, false);
+            let root = f.root();
+            let held_root = root.clone();
+            let place = BYTE_WORK.try_acquire().unwrap();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (release, released) = std::sync::mpsc::channel();
+            let writer = managed_writer(place, move || {
+                let _lock = managed_lock(&held_root)?;
+                let partial = held_root.join("partial");
+                std::fs::write(&partial, b"partial").unwrap();
+                started.send(()).unwrap();
+                released
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                std::fs::remove_file(partial).unwrap();
+                Ok(())
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(5), ready)
+                .await
+                .unwrap()
+                .unwrap();
+            // Already elapsed async deadline; the very same production writer keeps ownership.
+            let end = tokio::time::Instant::now();
+            assert!(tokio::time::timeout_at(end, writer).await.is_err());
+            assert!(BYTE_WORK.try_acquire().is_err());
+            assert!(managed_lock(&root).err().unwrap().contains("busy"));
+            assert!(root.join("partial").exists());
+            release.send(()).unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if let Ok(permit) = BYTE_WORK.try_acquire() {
+                        drop(permit);
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(!root.join("partial").exists());
+            assert!(managed_lock(&root).is_ok());
+        });
 }
 
 #[cfg(unix)]
@@ -509,13 +516,15 @@ fn save_failure_at(boundary: SaveBoundary) {
         };
         let failure = || std::io::Error::other(format!("injected {boundary:?}"));
         save_managed_with_io(
-            &writer_root,
-            bytes,
-            &digest(bytes),
-            std::time::Instant::now() + SAVE_WINDOW,
-            &manager,
-            "example.bytes",
-            &revision,
+            ManagedSave {
+                root: &writer_root,
+                bytes,
+                hash: &digest(bytes),
+                deadline: std::time::Instant::now() + SAVE_WINDOW,
+                manager: &manager,
+                id: "example.bytes",
+                revision: &revision,
+            },
             |file, bytes| {
                 if boundary == SaveBoundary::BeforeWrite {
                     gate();

@@ -399,13 +399,15 @@ fn save_managed(
 ) -> Result<SavedBytes, String> {
     use std::io::Write as _;
     save_managed_with_io(
-        root,
-        bytes,
-        hash,
-        deadline,
-        manager,
-        id,
-        revision,
+        ManagedSave {
+            root,
+            bytes,
+            hash,
+            deadline,
+            manager,
+            id,
+            revision,
+        },
         |file, bytes| file.write_all(bytes),
         std::fs::File::sync_all,
         |root| {
@@ -418,20 +420,33 @@ fn save_managed(
     )
 }
 
+struct ManagedSave<'a> {
+    root: &'a Path,
+    bytes: &'a [u8],
+    hash: &'a str,
+    deadline: std::time::Instant,
+    manager: &'a buzzodz_plugins::Manager,
+    id: &'a str,
+    revision: &'a str,
+}
+
 // Keep OS operations private and local; admission, result and cleanup stay in one sequence.
 fn save_managed_with_io(
-    root: &Path,
-    bytes: &[u8],
-    hash: &str,
-    deadline: std::time::Instant,
-    manager: &buzzodz_plugins::Manager,
-    id: &str,
-    revision: &str,
+    input: ManagedSave<'_>,
     write: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
     sync_file: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
     sync_directory: impl FnOnce(&Path) -> std::io::Result<()>,
 ) -> Result<SavedBytes, String> {
     use sha2::{Digest as _, Sha256};
+    let ManagedSave {
+        root,
+        bytes,
+        hash,
+        deadline,
+        manager,
+        id,
+        revision,
+    } = input;
     validate_save(bytes, hash)?;
     managed_granted(manager, id, revision)?;
     let _lock = managed_lock(root)?;

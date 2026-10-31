@@ -51,14 +51,12 @@ fn fingerprint<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
 }
 impl HostCalls {
     pub(crate) fn page_load(&self) {
-        match self.claims.lock() {
-            Ok(mut state) => {
-                state.page = state
-                    .page
-                    .and_then(|p| p.checked_add(1))
-                    .filter(|p| *p <= 9_007_199_254_740_991)
-            }
-            Err(_) => {} // Poisoned admission remains permanently unavailable.
+        // Poisoned admission remains permanently unavailable.
+        if let Ok(mut state) = self.claims.lock() {
+            state.page = state
+                .page
+                .and_then(|p| p.checked_add(1))
+                .filter(|p| *p <= 9_007_199_254_740_991)
         }
     }
     fn context(&self, label: &str) -> Result<CallContext, String> {

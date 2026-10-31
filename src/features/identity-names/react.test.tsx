@@ -1,0 +1,137 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, expect, it } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
+import { useIdentityNames } from "./react";
+import { bindNames, type NameSource } from "./service";
+import { createAgentDirectory } from "./testing";
+
+afterEach(cleanup);
+
+const [a, b, c] = ["a", "b", "c"].map((key) => key.repeat(64)) as [
+  string,
+  string,
+  string,
+];
+const suffix = (key: string) => npubEncode(key).slice(-4);
+
+function fixture() {
+  let profiles = new Map([[a, { name: "Alex" }]]);
+  const library = {
+    status: "ready",
+    definitions: [],
+    identities: [],
+  } as const;
+  const listeners = new Set<() => void>();
+  const source: NameSource = {
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      ensure: async () => {},
+    },
+    agentLibrary: {
+      snapshot: () => library,
+      subscribe: () => () => {},
+      refresh: async () => {},
+      retain: () => () => {},
+    },
+  };
+  const names = bindNames(source, {
+    snapshot: () => [createAgentDirectory()],
+    subscribe: () => () => {},
+  });
+  const set = (pubkey: string, name: string) => {
+    profiles = new Map([...profiles, [pubkey, { name }]]);
+    for (const listener of listeners) listener();
+  };
+  return {
+    names,
+    set,
+    publish: (pubkey: string, name: string) => act(() => set(pubkey, name)),
+  };
+}
+
+it("re-renders a names consumer only when a label it resolved changes", () => {
+  const { names, publish } = fixture();
+  let renders = 0;
+  function Author() {
+    renders++;
+    const resolve = useIdentityNames(names);
+    return <span>{resolve(a, "Member")}</span>;
+  }
+  render(<Author />);
+  expect(screen.getByText("Alex")).toBeInTheDocument();
+  const settled = renders;
+  // Another identity's profile leaves this author's label alone.
+  publish(c, "Casey");
+  expect(renders).toBe(settled);
+  // A namesake changes it.
+  publish(b, "Alex");
+  expect(screen.getByText(`Alex · ${suffix(a)}`)).toBeInTheDocument();
+  publish(a, "Ana");
+  expect(screen.getByText("Ana")).toBeInTheDocument();
+  expect(renders).toBe(settled + 2);
+  names.dispose();
+});
+
+it("watches each candidate scope a key was resolved in", () => {
+  const { names, publish } = fixture();
+  const wide = [a, c];
+  const narrow = [a];
+  function Author() {
+    const resolve = useIdentityNames(names);
+    return (
+      <>
+        <span>wide {resolve(a, "Member", wide)}</span>
+        <span>narrow {resolve(a, "Member", narrow)}</span>
+      </>
+    );
+  }
+  render(<Author />);
+  publish(c, "Alex");
+  expect(screen.getByText(`wide Alex · ${suffix(a)}`)).toBeInTheDocument();
+  expect(screen.getByText("narrow Alex")).toBeInTheDocument();
+  names.dispose();
+});
+
+it("shows a name change made between render and subscribe", () => {
+  const { names, set } = fixture();
+  function Author() {
+    const resolve = useIdentityNames(names);
+    return <span>{resolve(a, "Member")}</span>;
+  }
+  function Renamer() {
+    set(a, "Ana");
+    return null;
+  }
+  render(
+    <>
+      <Author />
+      <Renamer />
+    </>,
+  );
+  expect(screen.getByText("Ana")).toBeInTheDocument();
+  names.dispose();
+});
+
+it("re-renders on every name change once it resolves too many labels to watch", () => {
+  const { names, publish } = fixture();
+  const scopes = Array.from({ length: 501 }, () => [a]);
+  let renders = 0;
+  function Author() {
+    renders++;
+    const resolve = useIdentityNames(names);
+    return (
+      <span>{scopes.map((scope) => resolve(a, "Member", scope)).at(-1)}</span>
+    );
+  }
+  render(<Author />);
+  const settled = renders;
+  publish(c, "Casey");
+  expect(renders).toBe(settled + 1);
+  names.dispose();
+});

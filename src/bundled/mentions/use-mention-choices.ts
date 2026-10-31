@@ -12,7 +12,6 @@ import type { MentionRecipient } from "../../features/messages/mention-draft";
 import type { Agent } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
-import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { archivedMention } from "../../features/messages/mention-admission";
@@ -27,6 +26,7 @@ import {
 } from "./mention-ranking";
 type Person = ReturnType<typeof useMentionDirectory>["people"][number];
 const none: readonly Person[] = [];
+const noSubscribe = () => () => {};
 // Derived once per cached candidate list (see mentionCandidates), so a
 // keystroke reuses labels and keys instead of renaming every member.
 const labeled = new WeakMap<
@@ -223,7 +223,11 @@ export function useMentionChoices(
     lifetime,
   );
   const archives = useMentionArchives(session, open);
-  const resolve = useIdentityNames(session.names);
+  // Labels come from names scopes directly: watch every name change while open.
+  const names = useSyncExternalStore(
+    (open && session.names?.subscribe) || noSubscribe,
+    () => session.names?.snapshot() ?? 0,
+  );
   const [installed, install] = useState<{
     session: ComposerSession;
     key: string;
@@ -278,7 +282,7 @@ export function useMentionChoices(
     void channel;
     void agents;
     void archives;
-    void resolve;
+    void names;
     void revision;
     // A closed or disabled chooser shows nothing, so it names nothing.
     if (!open)
@@ -296,7 +300,7 @@ export function useMentionChoices(
     channel,
     agents,
     archives,
-    resolve,
+    names,
     revision,
   ]);
   // Install membership first; agent discovery must not hide known members.

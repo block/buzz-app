@@ -1,7 +1,7 @@
 /* Content only: Settings owns the surface, column, navigation and scrollport. */
 .content {
   min-width: 0;
-  padding-inline: calc(var(--space-4) + 1px);
+  padding-inline: var(--space-4);
 }
 .connection {
   display: grid;
@@ -83,6 +83,6 @@
 }
 @container (max-width: 24rem) {
   .content {
-    padding-inline: calc(var(--space-3) + 1px);
+    padding-inline: var(--space-3);
   }
 }

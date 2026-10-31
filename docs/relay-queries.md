@@ -131,28 +131,40 @@ for those separate requirements.
 
 ## Community emoji
 
-`session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
-member sets. `snapshot()` / `subscribe()` provide an immutable catalog; `ensure()`
+`session.emoji` owns the current community's kind-30030 custom emoji parts.
+A member's emoji span parts so a large palette (100k entries) fits the relay's
+512 KiB frame: part 0 keeps the legacy `d=buzz:custom-emoji`, which older
+clients still read, and part n ≥ 1 is `d=buzz:custom-emoji:n`. Reads take every
+kind 30030 in pages of 100 (newest first, inclusive `until`, deduplicated by id)
+and keep only these coordinates; the live profile route subscribes to the kind
+the same way. `snapshot()` / `subscribe()` provide an immutable catalog; `ensure()`
 is lazy and background-priority, and `refresh()` explicitly retries. The shared
 composer warms it on mount. Opening autocomplete or a picker uses foreground
 demand to promote a pending cold load or retry a failed passive load, without reloading
-a ready catalog. A failed foreground attempt keeps its error and explicit Retry action across autocomplete edits. Budget overflow still waits for explicit Retry. Each author's newest complete set replaces their old
-one (including empty removal sets); the union picks newer sets, then smaller URLs,
-for shortcode conflicts. The directory retains at most 500 member sets / 2 MiB.
-A read that reaches the 500-set cap stays usable with an incompleteness error;
-overflow exposes an error rather than silently evicting replacements. Only an
-explicit retry after overflow starts a fresh bounded catalog read.
+a ready catalog. A failed foreground attempt keeps its error and explicit Retry action across autocomplete edits. Budget overflow still waits for explicit Retry. Each part's newest event replaces the old one
+(including empty removal parts); the union picks newer parts, then smaller URLs,
+for shortcode conflicts. The directory retains at most 5,000 parts / 32 MiB.
+A read that cannot page further (a full page of one second) stays usable with
+an incompleteness error; overflow exposes an error rather than silently
+evicting replacements. Only an explicit retry after overflow starts a fresh
+bounded catalog read. Consumers look shortcodes up with `findCustomEmoji`,
+which indexes each immutable `entries` array once; never scan the catalog per
+render or keystroke.
 
 `snapshot().mine` lists the viewer's own set. When the session has an attachment
 uploader and its writer admits kind 30030, the directory also exposes `upload()`
 (the session uploader, fenced by session lifetime) and `add(name, url)`. `add`
-normalizes the shortcode, freshly reads the viewer's own set, replaces that
-shortcode, and republishes the whole set with a strictly newer `created_at`.
+normalizes the shortcode, freshly reads every one of the viewer's own parts
+(refusing to write if that read cannot complete), and republishes only the
+parts that change, each with a strictly newer `created_at`: the shortcode is
+dropped from any part that held it and added to the lowest such part, else the
+first part with room under a 60 KiB tag budget, else a new part. The part
+gaining the shortcode publishes first.
 Adds within a session run one at a time, so a stale read cannot drop an earlier
 add. The signed echo must match the template before publishing, the accepted set
 joins the palette immediately, and failures surface as the reference
 `Failed to add emoji.` / `Timed out while adding emoji.` copy. The development
-broker admits kind 30030 only for the canonical own-set template
+broker admits kind 30030 only for a canonical own-part template
 (`validEmojiSetTemplate`).
 
 Live kind-30030 updates share the existing profile route, not another socket or

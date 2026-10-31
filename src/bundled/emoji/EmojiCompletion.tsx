@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -14,6 +15,8 @@ import {
   type EmojiMatch,
 } from "./emoji-search";
 
+/** The completion host shows at most 50 items (`completion.ts`). */
+const LIMIT = 50;
 const OPTICAL_SAMPLE_SIZE = 64;
 const OPTICAL_CANVAS_SIZE = 128;
 const opticalCenterCache = new Map<string, number>();
@@ -114,6 +117,11 @@ export function EmojiCompletion({
     session.emoji.snapshot,
   );
   const [attempt, retry] = useState(0);
+  // Filter a (100k-entry) catalog once per change, not on every keystroke.
+  const custom = useMemo(
+    () => catalog.entries.filter((item) => !!session.media(item.url)),
+    [catalog.entries, session],
+  );
   useEffect(() => {
     void session.emoji.ensure("foreground");
   }, [session]);
@@ -121,7 +129,6 @@ export function EmojiCompletion({
     void attempt; // Explicit retry repeats this query even when catalog data is unchanged.
     let live = true;
     let withdraw: (() => void) | false = false;
-    const custom = catalog.entries.filter((item) => !!session.media(item.url));
     const items = (matches: readonly EmojiMatch[]) => {
       const counts = new Map<string, number>();
       for (const item of matches)
@@ -149,10 +156,10 @@ export function EmojiCompletion({
       if (catalog.status === "error") void session.emoji.refresh();
     };
     withdraw = publish({
-      items: items(searchCustomEmoji(query.query, custom)),
+      items: items(searchCustomEmoji(query.query, custom, LIMIT)),
       status: "Searching emoji…",
     });
-    void searchEmoji(query.query, custom)
+    void searchEmoji(query.query, custom, LIMIT)
       .then((matches) => {
         if (!live) return;
         if (withdraw) withdraw();
@@ -173,7 +180,7 @@ export function EmojiCompletion({
         if (!live) return;
         if (withdraw) withdraw();
         withdraw = publish({
-          items: items(searchCustomEmoji(query.query, custom)),
+          items: items(searchCustomEmoji(query.query, custom, LIMIT)),
           status: "Unicode emoji unavailable. Custom matches shown.",
           retry: retrySearch,
         });
@@ -187,6 +194,6 @@ export function EmojiCompletion({
       unsubscribe();
       if (withdraw) withdraw();
     };
-  }, [session, query.query, publish, catalog, attempt]);
+  }, [session, query.query, publish, catalog, custom, attempt]);
   return null;
 }

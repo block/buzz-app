@@ -1,6 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import { normalizeShortcode } from "../../features/relay/emoji";
+import {
+  findCustomEmoji,
+  normalizeShortcode,
+} from "../../features/relay/emoji";
 import styles from "./SidebarGroupIcon.module.css";
 
 type Session = Pick<RelaySession, "emoji" | "media">;
@@ -47,7 +50,7 @@ function CommunityIcon({
   useEffect(() => {
     void session.emoji.ensure();
   }, [session.emoji]);
-  const emoji = catalog.entries.find((entry) => entry.shortcode === shortcode);
+  const emoji = findCustomEmoji(catalog.entries, shortcode);
   if (!emoji)
     return catalog.status === "idle" || catalog.status === "loading" ? (
       <Placeholder />

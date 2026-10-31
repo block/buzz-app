@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { findCustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import styles from "./Status.module.css";
 
@@ -33,11 +34,7 @@ export function StatusEmoji({
   useEffect(() => {
     if (code && !own) void session.emoji.ensure();
   }, [code, own, session]);
-  const custom = code
-    ? catalog.entries.find(
-        (entry) => entry.shortcode.toLowerCase() === code.toLowerCase(),
-      )
-    : undefined;
+  const custom = code ? findCustomEmoji(catalog.entries, code) : undefined;
   const source = own ?? usable(custom?.url);
   const glyph = (text: string) => (
     <span

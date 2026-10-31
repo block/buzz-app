@@ -33,9 +33,8 @@ function subsequenceSpan(query: string, target: string) {
 
 function shortcodeScore(
   query: string,
-  shortcode: string,
+  target: string,
 ): ShortcodeScore | undefined {
-  const target = normalize(shortcode);
   if (query === target) return { tier: 0, score: 0 };
   if (target.startsWith(query)) return { tier: 1, score: 0 };
   const index = target.indexOf(query);
@@ -44,26 +43,51 @@ function shortcodeScore(
   return span === undefined ? undefined : { tier: 3, score: span };
 }
 
-/** Separator-insensitive exact, prefix, substring, then subsequence matches. */
+/** `rankShortcodes` names, computed once for a list ranked on every keystroke. */
+export const normalizedShortcodes = (shortcodes: readonly string[]) =>
+  shortcodes.map(normalize);
+const customNames = new WeakMap<readonly CustomEmoji[], readonly string[]>();
+/** Normalize a (100k-entry) community catalog once, not on every keystroke. */
+function normalizedNames(custom: readonly CustomEmoji[]) {
+  let names = customNames.get(custom);
+  if (!names) {
+    names = normalizedShortcodes(custom.map(({ shortcode }) => shortcode));
+    customNames.set(custom, names);
+  }
+  return names;
+}
+
+/** Separator-insensitive exact, prefix, substring, then subsequence matches.
+ * A limit sorts only the tiers it reaches; `names` supplies pre-normalized shortcodes. */
 export function rankShortcodes<T>(
   query: string,
   items: readonly T[],
   shortcode: (item: T) => string,
+  limit = Number.POSITIVE_INFINITY,
+  names?: readonly string[],
 ) {
   const needle = normalize(query);
   if (!needle) return [];
-  return items
-    .flatMap((item) => {
-      const match = shortcodeScore(needle, shortcode(item));
-      return match ? [{ item, ...match }] : [];
-    })
-    .sort(
+  const tiers: { item: T; tier: number; score: number }[][] = [[], [], [], []];
+  items.forEach((item, index) => {
+    const match = shortcodeScore(
+      needle,
+      names?.[index] ?? normalize(shortcode(item)),
+    );
+    if (match) tiers[match.tier]?.push({ item, ...match });
+  });
+  let ranked: { item: T; tier: number; score: number }[] = [];
+  for (const bucket of tiers) {
+    if (ranked.length >= limit) break;
+    bucket.sort(
       (a, b) =>
-        a.tier - b.tier ||
         a.score - b.score ||
         shortcode(a.item).length - shortcode(b.item).length ||
         shortcode(a.item).localeCompare(shortcode(b.item)),
     );
+    ranked = ranked.concat(bucket);
+  }
+  return Number.isFinite(limit) ? ranked.slice(0, Math.max(0, limit)) : ranked;
 }
 
 /** Data only: never initialize or query Emoji Mart's mutable picker singleton. */
@@ -146,7 +170,14 @@ function rankEmoji(
   limit: number,
 ): readonly EmojiMatch[] {
   if (!normalize(query)) return [];
-  const customCandidates: Standard[] = custom.map(({ shortcode, url }) => ({
+  // Later catalog matches cannot reach a bounded result: see the limit below.
+  const customCandidates: Standard[] = rankShortcodes(
+    query,
+    custom,
+    (item) => item.shortcode,
+    limit,
+    normalizedNames(custom),
+  ).map(({ item: { shortcode, url } }) => ({
     id: `custom/${shortcode}`,
     shortcode,
     name: `:${shortcode}:`,
@@ -166,7 +197,7 @@ function rankEmoji(
   const semanticIds = new Set(semantic.map((item) => item.id));
   const combined = [
     ...semantic,
-    ...rank(customCandidates).map(({ item }) => item),
+    ...customCandidates,
     ...rank(native)
       .map(({ item }) => item)
       .filter((item) => !semanticIds.has(item.id)),

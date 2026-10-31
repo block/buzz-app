@@ -15,6 +15,7 @@ import type {
   ComposerRequest,
   ComposerResponse,
   ComposerSnapshot,
+  ComposerSnapshotUpdate,
 } from "./composer-contract";
 
 /** One unpredictable, native-delivered capability for one room in one main session.
@@ -105,19 +106,33 @@ export function createHuddleComposerOwner(
   const send = (response: ComposerResponse) => {
     if (!closed) channel.postMessage(response);
   };
-  function snapshot(): ComposerSnapshot {
+  let sentEmoji: ComposerSnapshot["emoji"] | undefined;
+  const mediaOf = (urls: Iterable<string | undefined>) => {
     const media = new Map<string, string | undefined>();
-    const remember = (url: string | undefined) => {
+    for (const url of urls)
       if (url) {
         media.set(url, session.media(url));
         media.set(`${url}:small`, session.media(url, "small"));
       }
-    };
+    return media;
+  };
+  function snapshot(): ComposerSnapshotUpdate {
     const profiles = session.profiles.snapshot();
-    for (const profile of profiles.values()) remember(profile.picture);
-    for (const emoji of session.emoji.snapshot().entries) remember(emoji.url);
-    for (const { file } of uploaded.values()) remember(file.url);
-    for (const url of gifUrls) remember(url);
+    const media = mediaOf([
+      ...[...profiles.values()].map((profile) => profile.picture),
+      ...[...uploaded.values()].map(({ file }) => file.url),
+      ...gifUrls,
+    ]);
+    // Typing and profile changes publish often; resend the catalog only when it changes.
+    const emoji = session.emoji.snapshot();
+    const catalog =
+      emoji === sentEmoji
+        ? {}
+        : {
+            emoji,
+            emojiMedia: mediaOf(emoji.entries.map((entry) => entry.url)),
+          };
+    sentEmoji = emoji;
     let writable = true;
     try {
       check(true);
@@ -141,7 +156,7 @@ export function createHuddleComposerOwner(
         ],
       },
       profiles,
-      emoji: session.emoji.snapshot(),
+      ...catalog,
       agents: session.agentChoices.snapshot(),
       library: session.agentLibrary.snapshot(),
       archives: session.archives.snapshot(),
@@ -393,6 +408,7 @@ export function createHuddleComposerOwner(
     )
       return;
     if (data.kind === "hello") {
+      sentEmoji = undefined; // A (re)joining client has no catalog yet.
       if (client !== data.client) {
         reset();
         client = data.client;

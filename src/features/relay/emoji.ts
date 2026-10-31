@@ -3,6 +3,16 @@ import type { EventData } from "./events.ts";
 export type CustomEmoji = Readonly<{ shortcode: string; url: string }>;
 export const EMOJI_SET = "buzz:custom-emoji";
 export const EMOJI_SET_KIND = 30030;
+/** A member's emoji span parts: part 0 keeps the legacy `d`, so older clients
+ * still read it; part n ≥ 1 is `buzz:custom-emoji:n`. One event cannot carry a
+ * large palette under the relay's frame limit, and an edit republishes only its part. */
+export const emojiSetD = (part: number) =>
+  part === 0 ? EMOJI_SET : `${EMOJI_SET}:${part}`;
+export function emojiSetPart(d: string | undefined): number | undefined {
+  if (d === EMOJI_SET) return 0;
+  const part = /^buzz:custom-emoji:([1-9]\d{0,3})$/.exec(d ?? "")?.[1];
+  return part === undefined ? undefined : Number(part);
+}
 const CUSTOM_REACTION = /^:([a-z0-9_-]{1,64}):$/i;
 /** Reaction text stays small, while a valid custom token gets its two delimiters. */
 export function validReactionContent(value: string): boolean {
@@ -28,7 +38,7 @@ export function suggestShortcode(filename: string): string | undefined {
       .replace(/^[_-]+|[_-]+$/g, ""),
   );
 }
-/** Broker admission for a member's own set: one coordinate, canonical unique entries. */
+/** Broker admission for one part of a member's own set: canonical unique entries. */
 export function validEmojiSetTemplate(
   event: unknown,
   now = Math.floor(Date.now() / 1000),
@@ -43,7 +53,7 @@ export function validEmojiSetTemplate(
     !Array.isArray(e.tags) ||
     e.tags[0]?.length !== 2 ||
     e.tags[0][0] !== "d" ||
-    e.tags[0][1] !== EMOJI_SET
+    emojiSetPart(e.tags[0][1]) === undefined
   )
     return false;
   const codes = new Set<string>();
@@ -83,6 +93,26 @@ export const messageParts = (content: string) =>
   content.split(/(https?:\/\/[^\s<>"`]+)/g);
 export const linkPart = (part: string) => /^https?:\/\//.test(part);
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
+const indexes = new WeakMap<
+  readonly CustomEmoji[],
+  ReadonlyMap<string, CustomEmoji>
+>();
+/** A community catalog can hold 100k entries: look shortcodes up through an
+ * index built once per (immutable) entries array, never a linear scan. */
+export function findCustomEmoji(
+  entries: readonly CustomEmoji[],
+  shortcode: string,
+): CustomEmoji | undefined {
+  let index = indexes.get(entries);
+  if (!index) {
+    const built = new Map<string, CustomEmoji>();
+    for (const entry of entries)
+      if (!built.has(entry.shortcode)) built.set(entry.shortcode, entry);
+    index = built;
+    indexes.set(entries, index);
+  }
+  return index.get(shortcode.toLowerCase());
+}
 export function* emojiMatches(
   content: string,
   entries: readonly CustomEmoji[],
@@ -90,9 +120,7 @@ export function* emojiMatches(
   let end = 0;
   for (const match of content.matchAll(shortcodePattern())) {
     if (match.index < end) continue;
-    const emoji = entries.find(
-      (entry) => entry.shortcode === match[2]?.toLowerCase(),
-    );
+    const emoji = findCustomEmoji(entries, match[2] ?? "");
     if (!emoji) continue;
     end = match.index + (match[1]?.length ?? 0);
     yield { emoji, start: match.index, end };

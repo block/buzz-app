@@ -456,7 +456,7 @@ it.each([
     memberSet("", [["emoji", "bee", "data:image/png;base64,AA"]]),
   ],
   ["is cold", "idle", emojiSet],
-  ["is over budget", "error", memberSet("x".repeat(2 * 1024 * 1024))],
+  ["is over budget", "error", memberSet("x".repeat(33 * 1024 * 1024))],
 ])(
   "carries a code's URL forward on a re-save when the catalog %s",
   async (_, state, set) => {

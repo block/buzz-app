@@ -19,9 +19,18 @@ export type ComposerSnapshot = {
   archives: ReturnType<ComposerSession["archives"]["snapshot"]>;
   typing: ReturnType<ComposerSession["typing"]["snapshot"]>;
   media: ReadonlyMap<string, string | undefined>;
+  /** Display URLs for the emoji catalog, kept apart from `media`. */
+  emojiMedia: ReadonlyMap<string, string | undefined>;
   tools: readonly string[];
   completions: readonly string[];
 };
+/** A catalog can hold 100k emoji: an update omits it while unchanged, and
+ * the client keeps the last one it received. */
+export type ComposerSnapshotUpdate = Omit<
+  ComposerSnapshot,
+  "emoji" | "emojiMedia"
+> &
+  Partial<Pick<ComposerSnapshot, "emoji" | "emojiMedia">>;
 export type ComposerOperations = {
   models: {
     args: readonly string[];
@@ -82,7 +91,7 @@ export type ComposerCommand =
   | { kind: "hello" | "bye"; client: string }
   | { kind: "cancel"; client: string; id: number };
 export type ComposerResponse =
-  | { kind: "snapshot"; client: string; value: ComposerSnapshot }
+  | { kind: "snapshot"; client: string; value: ComposerSnapshotUpdate }
   | {
       kind: "result";
       client: string;

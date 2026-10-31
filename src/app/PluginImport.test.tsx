@@ -2123,6 +2123,35 @@ it("closes a request its requester retired during Find once Find settles, withou
   expect(harness.release).toHaveBeenCalledOnce();
 });
 
+it("attempts a retired request's release once when discard fails, and retries on close", async () => {
+  const harness = requestedHarness(requestedPreview(pinned));
+  let finish: (preview: ImportPreview) => void = () => {};
+  harness.git.mockImplementationOnce(
+    () => new Promise<ImportPreview>((resolve) => (finish = resolve)),
+  );
+  harness.discard.mockRejectedValueOnce(new Error("import is busy"));
+  const view = render(harness.element);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  await waitFor(() => expect(harness.git).toHaveBeenCalledOnce());
+  view.rerender(
+    <PluginImport {...harness.element.props} request={undefined} />,
+  );
+  await act(async () => finish(requestedPreview(pinned)));
+  expect(await screen.findByRole("alert")).toHaveTextContent("import is busy");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+  expect(harness.discard).toHaveBeenCalledOnce();
+  expect(harness.settled).not.toHaveBeenCalled();
+  for (const install of screen.queryAllByRole("button", {
+    name: "Install plugin",
+  }))
+    expect(install).toBeDisabled();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(harness.discard).toHaveBeenCalledTimes(2);
+  expect(harness.settled).toHaveBeenCalledWith(7, "cancelled");
+  expect(harness.installImport).not.toHaveBeenCalled();
+});
+
 it("passes no commit for an unpinned request", async () => {
   const { git, element } = requestedHarness(requestedPreview(pinned), {});
   render(element);

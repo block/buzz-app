@@ -379,9 +379,17 @@ export function PluginImport({
   }, [reviewRequested]);
 
   // A request retired by its requester while Find or an install is in flight is
-  // released once that settles; until then it can't be confirmed.
+  // released once that settles; until then it can't be confirmed. Release is
+  // attempted once per request: if discard fails, the error stays up and
+  // closing the dialog retries.
   const retired = !!bound && request?.id !== bound.id;
-  const releaseExternally = useEffectEvent(() => void close());
+  const releaseAttempted = useRef<number>(undefined);
+  const releaseExternally = useEffectEvent(() => {
+    if (!bound || pending.current || releaseAttempted.current === bound.id)
+      return;
+    releaseAttempted.current = bound.id;
+    void close();
+  });
   useEffect(() => {
     if (retired && !busy && !loading && !discarding) releaseExternally();
   }, [retired, busy, loading, discarding]);

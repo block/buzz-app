@@ -73,6 +73,8 @@ function setup(
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
     nativeHistory?: readonly unknown[];
+    /** Raw text after the history, as a line Claude is still writing. */
+    nativeTail?: string;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -83,7 +85,8 @@ function setup(
     if (options.nativeHistory && id === "read-protected")
       spawnOptions?.onStdout?.(
         Buffer.from(
-          options.nativeHistory.map((row) => JSON.stringify(row)).join("\n"),
+          options.nativeHistory.map((row) => JSON.stringify(row)).join("\n") +
+            (options.nativeTail ?? ""),
         ).toString("base64"),
       );
     if (options.title && (id === "workspace" || id === "read")) {
@@ -480,6 +483,72 @@ it("shares projected native history with incoming and combined action reviews", 
       });
     expect(f.fake.processes.some((process) => process.id === "read")).toBe(
       false,
+    );
+  } finally {
+    worker.finish();
+    await f.runtime.retire(self);
+  }
+});
+
+it("reviews a protected transcript whose last line Claude is still writing", async () => {
+  const nativeHistory = [
+    { type: "user", message: { role: "user", content: "Howzit" } },
+  ];
+  const f = setup([], {
+    hold: true,
+    nativeHistory,
+    nativeTail: '\n{"type":"assistant","message":{"content":"Hal',
+  });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
+    },
+  };
+  await f.deliver(
+    { type: "mention", event: message("1", "Howzit") },
+    { agent: { ...f.agent, protection } as unknown as Delivery["agent"] },
+  );
+  await vi.waitFor(() =>
+    expect(f.claudes().some((worker) => worker.prompts.length)).toBe(true),
+  );
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  if (!worker) throw new Error("Claude did not start");
+  try {
+    worker.emit({
+      type: "control_request",
+      request_id: "incoming-review",
+      request: {
+        subtype: "hook_callback",
+        callback_id: "security-incoming",
+        input: {
+          transcript_path: "/native/transcript",
+          hook_event_name: "UserPromptSubmit",
+          prompt: "Howzit",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(worker.received).toContainEqual(
+        expect.objectContaining({
+          type: "control_response",
+          response: expect.objectContaining({
+            request_id: "incoming-review",
+            subtype: "success",
+          }),
+        }),
+      ),
+    );
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: { source: "message", value: nativeHistory[0]?.message },
+      }),
+      expect.anything(),
     );
   } finally {
     worker.finish();

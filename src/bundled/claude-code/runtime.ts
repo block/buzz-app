@@ -1007,11 +1007,17 @@ export class ClaudeRuntime {
                       signal,
                       gate.processProtection,
                     );
-                    const text = new TextDecoder().decode(bytes);
-                    return text
-                      .split("\n")
+                    const lines = new TextDecoder().decode(bytes).split("\n");
+                    // Claude appends to its transcript as it goes, so the last
+                    // line may still be partial; the next hook reads it whole.
+                    const last = lines.pop() ?? "";
+                    const rows = lines
                       .filter((line) => line.trim())
-                      .map((line) => protectionHistoryEntry(JSON.parse(line)));
+                      .map((line) => JSON.parse(line) as unknown);
+                    try {
+                      if (last.trim()) rows.push(JSON.parse(last));
+                    } catch {}
+                    return rows.map(protectionHistoryEntry);
                   },
                 },
               }

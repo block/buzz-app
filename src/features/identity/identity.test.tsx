@@ -776,11 +776,16 @@ it("copies without revealing and cancels a pending export on blur before clipboa
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
-  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  // The macOS app copies through the host clipboard.
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const writes = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "clipboard_write_text");
   vi.mocked(invoke).mockResolvedValueOnce(key);
   render(<PrivateKey identity={identity} />);
   await user.click(screen.getByRole("button", { name: "Copy private key" }));
-  expect(write).toHaveBeenCalledWith(key);
+  expect(writes()).toEqual([["clipboard_write_text", { text: key }]]);
   expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
     "••••••••••••••••",
   );
@@ -791,7 +796,7 @@ it("copies without revealing and cancels a pending export on blur before clipboa
   await act(async () => {
     exported.resolve(key);
   });
-  expect(write).toHaveBeenCalledTimes(1);
+  expect(writes()).toHaveLength(1);
   identity.dispose();
 });
 

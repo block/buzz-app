@@ -56,6 +56,7 @@ import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { avatarMedia } from "../../shared/avatar-source";
+import { writeClipboardText } from "../../shared/clipboard";
 
 const noSubscribe = () => () => {};
 const emptyAgentTypes = Object.freeze([]);
@@ -506,7 +507,7 @@ function ProfileDetails({
                             onClick={() => {
                               setCopyStatus("");
                               void Promise.resolve()
-                                .then(() => navigator.clipboard.writeText(npub))
+                                .then(() => writeClipboardText(npub))
                                 .then(
                                   () => setCopyStatus("Public key copied."),
                                   () =>

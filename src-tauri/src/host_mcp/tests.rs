@@ -59,7 +59,7 @@ async fn answers_a_request_with_the_page_reply() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     assert!(info.url.starts_with("http://127.0.0.1:"));
     let named = initialize(&servers, &info, &mut events).await;
@@ -110,7 +110,7 @@ async fn accepts_a_notification_without_a_body() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     let named = initialize(&servers, &info, &mut events).await;
     let request = post(
@@ -189,7 +189,7 @@ async fn admits_only_the_session_that_initialized() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     // Before `initialize`, discovery needs no session and joins none; a tool
     // call is refused.
@@ -226,7 +226,7 @@ async fn stops_when_a_second_client_initializes() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     initialize(&servers, &info, &mut events).await;
     // Whoever claimed the session, two clients hold the token.
@@ -240,7 +240,7 @@ async fn child_initialization_keeps_parent_callbacks_alive() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, true)
+        .serve(servers.page("main"), "plugin".into(), channel, true)
         .unwrap();
     let parent = initialize(&servers, &info, &mut events).await;
     let request = post(&info, &info.token, "", INITIALIZE);
@@ -306,7 +306,7 @@ async fn releases_a_claim_that_did_not_succeed() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     let claim = || claim(&servers, &info);
     // The page answered with an error.
@@ -350,7 +350,7 @@ async fn keeps_the_session_across_requests() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     let named = initialize(&servers, &info, &mut events).await;
     let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
@@ -371,7 +371,7 @@ async fn holds_the_claim_while_initialize_waits() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     let request = post(&info, &info.token, "", INITIALIZE);
     let client = tokio::spawn({
@@ -406,7 +406,7 @@ async fn refuses_without_starting_oauth() {
     let servers = HostMcpServers::default();
     let (channel, mut events) = channel();
     let info = servers
-        .serve(servers.page(), "plugin".into(), channel, false)
+        .serve(servers.page("main"), "plugin".into(), channel, false)
         .unwrap();
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
     // A wrong token and a web page are both told there is nothing here.
@@ -429,9 +429,18 @@ async fn refuses_without_starting_oauth() {
 async fn stops_with_the_page() {
     let servers = HostMcpServers::default();
     let (events_channel, mut events) = channel();
-    let page = servers.page();
+    let page = servers.page("main");
     let info = servers
-        .serve(page, "plugin".into(), events_channel, false)
+        .serve(page.clone(), "plugin".into(), events_channel, false)
+        .unwrap();
+    let (other_channel, _other_events) = channel();
+    let other = servers
+        .serve(
+            servers.page("agents"),
+            "plugin".into(),
+            other_channel,
+            false,
+        )
         .unwrap();
     let request = post(
         &info,
@@ -444,11 +453,17 @@ async fn stops_with_the_page() {
         async move { send(&info, request).await }
     });
     assert_eq!(next(&mut events).await["type"], "message");
-    servers.stop_all();
+    servers.page_load("main");
     assert_eq!(next(&mut events).await["type"], "closed");
     // The request waiting on the page is dropped, not left hanging.
     assert!(!client.await.unwrap().contains("200 OK"));
     assert!(servers.reply("plugin", info.handle, 0, None).is_err());
     let (late, _events) = channel();
     assert!(servers.serve(page, "plugin".into(), late, false).is_err());
+    // Another webview's server stays up.
+    assert!(!servers
+        .owned("plugin", other.handle)
+        .unwrap()
+        .stop
+        .is_cancelled());
 }

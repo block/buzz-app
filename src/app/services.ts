@@ -2,7 +2,12 @@ import { ArtifactStorageService } from "../features/artifact-storage/service";
 import { createAdminAccess } from "../bundled/admin-access";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
-import { link } from "../features/agents/link";
+import { AGENTS_WEBVIEW, agentsRunApart } from "../features/agents/apart";
+import { eventPort } from "../features/agents/event-port";
+import { lanes } from "../features/agents/lanes";
+import { link, type Link } from "../features/agents/link";
+import { type PageState, servePage } from "../features/agents/page-link";
+import { agentStorageInFiles } from "../features/agents/state";
 import { linkedActivity, serveActivity } from "../features/agents/runner-link";
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
 import {
@@ -57,25 +62,50 @@ export function createServices() {
   const ctx = new Context();
   new HostService(ctx);
   const federatedIdentity = new FederatedIdentityService(ctx);
+  // Agents run in a hidden page of their own where the app opens one; this
+  // page then runs only the plugins' UI entries.
+  const apart = agentsRunApart();
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
+    parts: apart ? "ui" : "both",
   });
   const localAgents = createLocalAgents();
+  // The Manager, which the screens use, reaches the Runner, which runs
+  // agents, over a link: to the agents page, or within this page. Only JSON
+  // crosses. Beside it, the Runner's page shows its local work to this one,
+  // which tells it the communities it follows.
+  const agentsPort = apart
+    ? lanes(eventPort("main", AGENTS_WEBVIEW), ["agents", "page"])
+    : undefined;
   const localActivity = createLocalAgentActivity();
-  // The Manager, which the screens use, and the Runner, which runs agents,
-  // share this page for now. Only JSON crosses the link between them.
-  const agentsLink = new MessageChannel();
-  const runnerLink = link(
-    agentsLink.port1,
-    serveActivity(localActivity.reader),
-  );
-  const managerLink = link(agentsLink.port2);
-  const runnerActivity = linkedActivity(managerLink);
+  let pageState: PageState | undefined;
+  const pageListeners = new Set<() => void>();
+  let pageLink: Link;
+  let runnerPage: Link | undefined;
+  if (agentsPort)
+    pageLink = link(
+      agentsPort.page,
+      servePage({
+        snapshot: () => pageState,
+        subscribe(listener) {
+          pageListeners.add(listener);
+          return () => {
+            pageListeners.delete(listener);
+          };
+        },
+      }),
+    );
+  else {
+    const channel = new MessageChannel();
+    runnerPage = link(channel.port1, serveActivity(localActivity.reader));
+    pageLink = link(channel.port2);
+  }
+  const runnerActivity = linkedActivity(pageLink);
   ctx.effect(() => () => {
     runnerActivity.stop();
-    managerLink.close();
-    runnerLink.close();
+    pageLink.close();
+    runnerPage?.close();
   });
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
@@ -121,6 +151,22 @@ export function createServices() {
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
+  if (agentsPort) {
+    const follow = () => {
+      const { viewer, memberships, selected } = communities.snapshot();
+      pageState = Object.freeze({
+        storage: agentStorageInFiles() ? "files" : "local",
+        communities: {
+          ...(viewer !== undefined && { viewer }),
+          memberships: memberships.map((membership) => membership.id),
+          selected,
+        },
+      });
+      for (const listener of [...pageListeners]) listener();
+    };
+    follow();
+    ctx.effect(() => communities.subscribe(follow));
+  }
   const agents = new AgentsService(
     ctx,
     communities,
@@ -129,6 +175,8 @@ export function createServices() {
     undefined,
     localActivity,
     decisions,
+    undefined,
+    agentsPort?.agents,
   );
   ctx.effect(() =>
     localAgents.bind({

@@ -70,6 +70,10 @@ fn native_command_permissions_isolate_webviews() {
     let huddle = WebviewWindowBuilder::new(&app, "huddle", WebviewUrl::default())
         .build()
         .unwrap();
+    // The hidden page that runs agents.
+    let agents = WebviewWindowBuilder::new(&app, "agents", WebviewUrl::default())
+        .build()
+        .unwrap();
 
     let application_commands = [
         "federated_identity_snapshot",
@@ -137,6 +141,8 @@ fn native_command_permissions_isolate_webviews() {
         "clipboard_write_text",
         "media_stream_base",
         "get_os_idle_seconds",
+        "agents_port_listen",
+        "agents_port_send",
         "plugin_import_folder",
         "plugin_update_check",
         "plugin_update_preview",
@@ -317,6 +323,7 @@ fn native_command_permissions_isolate_webviews() {
             invoke(main.as_ref(), command, local_origin).is_ok(),
             "{command}"
         );
+        assert!(invoke(agents.as_ref(), command, "https://example.org").is_err());
         assert_eq!(
             invoke(huddle.as_ref(), command, local_origin).is_ok(),
             matches!(command, "media_download" | "clipboard_write_text"),
@@ -335,6 +342,38 @@ fn native_command_permissions_isolate_webviews() {
         );
     }
     assert!(invoke(main.as_ref(), "plugin:window|close", local_origin).is_ok());
+    // The hidden page that runs agents and their plugin hosts gets none of
+    // the screens, windows, account setup or OS shell commands.
+    #[cfg(target_os = "macos")]
+    for command in [
+        "relay_sign",
+        "app_agent_list",
+        "plugin_host_run_command",
+        "decide",
+        "get_os_idle_seconds",
+        "agents_port_listen",
+        "agents_port_send",
+    ] {
+        assert!(
+            invoke(agents.as_ref(), command, local_origin).is_ok(),
+            "{command}"
+        );
+    }
+    for command in [
+        "identity_create",
+        "nsec_restore_begin",
+        "notification_show",
+        "terminal_spawn",
+        "browser_attach",
+        "plugin_import_folder",
+        "plugin:window|close",
+        "plugin:event|listen",
+    ] {
+        assert!(
+            invoke(agents.as_ref(), command, local_origin).is_err(),
+            "{command}"
+        );
+    }
 
     #[cfg(all(feature = "native-mcp", target_os = "macos"))]
     {

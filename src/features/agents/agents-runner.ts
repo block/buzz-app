@@ -14,6 +14,7 @@ import {
   type Checkpoints,
 } from "./catch-up";
 import { originOf, RunnerConnections } from "./connections";
+import { AgentPresence } from "./presence";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import type { LocalAgentActivity } from "./local-activity";
@@ -57,8 +58,6 @@ export type RunnerManager = Pick<
   "createAgent" | "updateAgent" | "templates" | "protection"
 > &
   Readonly<{
-    /** A record or turn in progress changed what the screens show. */
-    changed(): void;
     /** The community's relay, while the viewer is in it. */
     open(origin: string): RelayData | undefined;
     types(): readonly RegisteredAgentType[];
@@ -71,6 +70,9 @@ export type RunnerManager = Pick<
     publishType(key: AgentKey, type: string, config: unknown): Promise<void>;
     /** Where an agent's closed tabs leave the viewer. */
     navigation?: Navigation | undefined;
+    /** Native's memberships may have changed, as when a claim is refused:
+     * the Manager reads them again, and sends them. */
+    refresh(): Promise<void>;
   }>;
 
 export class AgentsRunner {
@@ -81,6 +83,8 @@ export class AgentsRunner {
   readonly runners: AgentRunners;
   /** The Runner's own live session of each community it runs agents in. */
   readonly connections: RunnerConnections;
+  /** Says which agents this copy runs in each community. */
+  readonly presence: AgentPresence;
   /** The agents running here, in every community, and those of them with
    * turns the app left working last time. */
   private state: Readonly<{
@@ -119,7 +123,8 @@ export class AgentsRunner {
   constructor(
     storage: AgentStore,
     private readonly custody:
-      | (NonNullable<RunnerHost["custody"]> & Pick<AgentsNative, "setType">)
+      | (NonNullable<RunnerHost["custody"]> &
+          Pick<AgentsNative, "setType" | "setProtection">)
       | undefined,
     activity: LocalAgentActivity,
     decisions: Decisions | undefined,
@@ -141,7 +146,7 @@ export class AgentsRunner {
       },
       changed: () => {
         for (const listener of [...this.recordListeners]) listener();
-        this.changed();
+        this.update();
       },
       // Its timers waited for this change, saved or failed.
       settled: (key) => this.runners.wake(key),
@@ -154,7 +159,35 @@ export class AgentsRunner {
       changed: (origin, renewed) => {
         this.update();
         if (renewed) this.refreshCore(origin);
-        this.manager.changed();
+      },
+    });
+    this.presence = new AgentPresence({
+      running: () => {
+        const online = new Map<string, Set<string>>();
+        for (const agent of this.state.running) {
+          const origin = originOf(agent.relay);
+          if (
+            origin &&
+            this.connections.binding(agent) &&
+            this.runners.runs(agent.key)
+          )
+            online.set(
+              origin,
+              (online.get(origin) ?? new Set()).add(agent.pubkey),
+            );
+        }
+        return online;
+      },
+      communities: () => this.connections.entries(),
+      // Each pubkey said online there is one membership's, the one there.
+      yielded: (origin, pubkey) => {
+        const key = this.identities.find(
+          (identity) =>
+            identity.pubkey === pubkey &&
+            !identity.deleted &&
+            originOf(identity.relay) === origin,
+        )?.key;
+        return !!key && this.runners.yielded(key);
       },
     });
     this.coreMemory = new CoreMemoryCache((key) =>
@@ -195,7 +228,7 @@ export class AgentsRunner {
             console.warn("Agent turns in progress were not saved", error),
           );
         },
-        changed: () => this.changed(),
+        changed: () => this.update(),
       },
       scope: (agent) => this.connections.binding(agent)?.scope,
       saved: (key) => this.records.saved(key),
@@ -261,7 +294,24 @@ export class AgentsRunner {
       decisions: () => decisions,
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
-      custody,
+      // A claim names the protection the agent is saved with; a refused one
+      // may mean it changed.
+      custody: custody && {
+        ...custody,
+        claim: async (pubkey: string) => {
+          try {
+            return await custody.claim(
+              pubkey,
+              this.identities.find(
+                (agent) => agent.pubkey === pubkey && !agent.deleted,
+              )?.protectionRevision ?? 0,
+            );
+          } catch (error) {
+            void manager.refresh().catch(() => undefined);
+            throw error;
+          }
+        },
+      },
       activity,
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
@@ -350,12 +400,6 @@ export class AgentsRunner {
             console.warn(`Agent ${key} settings were not removed`, error),
           );
   }
-  /** Decides again what runs once a record, a turn in progress or one of its
-   * sessions changed, and lets the Manager show it. */
-  private changed() {
-    this.update();
-    this.manager.changed();
-  }
   /** Agent types were loaded or unloaded. */
   typesChanged() {
     this.update();
@@ -434,6 +478,35 @@ export class AgentsRunner {
       if (current?.type !== type || !this.manager.types().includes(kind))
         throw new Error("The agent's harness changed. Try again.");
       await kind.sessionControls?.run(current, place, action);
+    });
+  }
+  /** Saves `pubkey`'s protection policy, while none of its memberships
+   * runs: each one's sessions are retired first, and it runs again with the
+   * memberships native lists after. */
+  async protect(
+    pubkey: string,
+    revision: number,
+    provider: string,
+    policy: unknown,
+  ) {
+    const setProtection = this.custody?.setProtection?.bind(this.custody);
+    if (!setProtection)
+      throw new Error("Native agent protection is unavailable");
+    const members = this.identities.filter(
+      (agent) => agent.pubkey === pubkey && !agent.deleted,
+    );
+    const agent = members[0];
+    if (!agent) throw new Error("No such agent on this device");
+    const type = this.manager.types().find((type) => type.key === agent.type);
+    const retire = type?.retire?.bind(type);
+    if (!retire)
+      throw new Error(
+        "This runtime cannot safely change protection while Buzz is open",
+      );
+    await this.runners.retype(agent.key, agent.name, async () => {
+      for (const member of members) await retire(member.key);
+      await setProtection(pubkey, revision, provider, policy);
+      await this.manager.refresh();
     });
   }
   /** Gives the agent the type `type`, starting with `config`, while no turn
@@ -569,6 +642,7 @@ export class AgentsRunner {
       ),
     );
     this.runners.catchUp(false);
+    this.presence.announce();
   }
   /** The agents running here, in every community. */
   running() {
@@ -651,6 +725,7 @@ export class AgentsRunner {
   clear() {
     this.connections.clear();
     this.runners.clear();
+    this.presence.clear();
     this.identities = [];
     this.viewer = undefined;
     this.list = undefined;

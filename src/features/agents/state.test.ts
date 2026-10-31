@@ -1,5 +1,11 @@
 import { expect, it, vi } from "vitest";
-import { fileStore, loadAgentStorage, MOVED_KEY } from "./state";
+import {
+  agentStorage,
+  fileStore,
+  loadAgentStorage,
+  MOVED_KEY,
+  readAgentStorage,
+} from "./state";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams, teamSources } from "./team-config";
 
@@ -213,4 +219,17 @@ it("puts back a key whose write failed, so it is not taken as saved and can be s
   await storage.set("a", "new");
   expect(native.saved.get("a")).toBe("new");
   expect(storage.get("a")).toBe("new");
+});
+
+it("reads agent storage another page loaded, without moving localStorage, and fails rather than use another copy", async () => {
+  const native = files({ [MOVED_KEY]: "1", "buzz.agent.v1:aa": "kept" });
+  const storage = await readAgentStorage(native);
+  expect(storage.get("buzz.agent.v1:aa")).toBe("kept");
+  expect(agentStorage()).toBe(storage);
+  await storage.set("buzz.agent.v1:aa", "changed");
+  expect(native.saved.get("buzz.agent.v1:aa")).toBe("changed");
+  expect(native.set).toHaveBeenCalledTimes(1);
+  const unreadable = files();
+  unreadable.load.mockRejectedValue(new Error("No access"));
+  await expect(readAgentStorage(unreadable)).rejects.toThrow("No access");
 });

@@ -297,9 +297,10 @@ agent-record migrations; blank per-agent values inherit them.
 Code that agents need while they run, such as an agent type's runtime, tools,
 wakes and Attention sources, belongs in the plugin's optional `agent` export:
 `export const agent = { inject, apply(ctx) }`, with its own `inject`. `apply`
-stays the plugin's UI. Both parts now start in the same page, under the same
-plugin identity; the plugin is active once both are, and fails if either does.
-This separation lets agents later run apart from the UI page.
+stays the plugin's UI. Both parts start under the same plugin identity; the
+plugin is active once both are, and fails if either does. In the macOS desktop
+app, agent entries run in a hidden agents page and UI entries in the screens'
+page; elsewhere both run in the screens' page.
 
 A harness plugin registers its type from its `agent` entry and presents it
 from `apply`. The `agent` entry registers what runs: `defaults`, `run`,
@@ -345,7 +346,11 @@ other watches keep no such record, so they still match them. The bundled Agent
 Attention UI plugin calls it.
 
 Protection plugins inject `ctx.agentProtection` to register checks and review
-models and save native owner defaults or per-agent policies. An `AgentType`
+models and save native owner defaults or per-agent policies. Register the
+checker and review models from the `agent` entry, which runs beside the agents
+it checks; save policies from either entry. A checker registered from `apply`
+does not reach agents that run in the agents page, so their protected runs stop
+as with a missing provider. An `AgentType`
 declares `protection` / `protectionUnavailable` and retires native sessions with
 `retire(key)`, where `key` is the membership key. Protected runs receive
 `AgentHandle.protection`; missing providers or enforcement stop them. This

@@ -163,6 +163,14 @@ function fakeRunner() {
         _action: SessionControlAction,
       ) => {},
     ),
+    protect: vi.fn(
+      async (
+        _pubkey: string,
+        _revision: number,
+        _provider: string,
+        _policy: unknown,
+      ) => {},
+    ),
     // Saves the config, and the type it is shown with, at once.
     retype: vi.fn(
       async (key: string, type: string, config: unknown, _publish: boolean) => {
@@ -257,6 +265,7 @@ function split(identities: Member[] = []) {
       async (_key: string, _type: string, _config: unknown) => {},
     ),
     finished: vi.fn((_key: string) => {}),
+    refresh: vi.fn(async () => {}),
   };
   const sharesChanged = new Set<() => void>();
   const manager = managerSide(channel.port2, {
@@ -277,6 +286,7 @@ function split(identities: Member[] = []) {
     templates: asks.templates,
     publishType: asks.publishType,
     finished: asks.finished,
+    refresh: asks.refresh,
     shared: (plugin) => shares.get(plugin),
     subscribeShared(listener) {
       sharesChanged.add(listener);
@@ -430,6 +440,7 @@ it("does not take what the Runner decided for a page that reloaded as an answer"
       templates: async () => [],
       publishType: async () => {},
       finished: () => {},
+      refresh: async () => {},
       shared: () => undefined,
       subscribeShared: () => () => {},
     });

@@ -3858,6 +3858,32 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     expect(screen.getByText("(edited)").parentElement?.tagName).toBe("P");
     cleanup();
 
+    render("- one\n- two", true);
+    const item = screen.getByText("(edited)").parentElement;
+    expect(item?.tagName).toBe("LI");
+    expect(item).toHaveTextContent("two (edited)");
+    cleanup();
+
+    render("> quoted line", true);
+    const quoted = screen.getByText("(edited)").parentElement;
+    expect(quoted?.tagName).toBe("P");
+    expect(quoted?.parentElement?.tagName).toBe("BLOCKQUOTE");
+    cleanup();
+
+    // The unboxed table styling selects `table:first-child + .edited:last-child`.
+    render("| Day | Room |\n| --- | --- |\n| Thu | 4B |", true);
+    const afterTable = screen.getByText("(edited)");
+    expect(afterTable.previousElementSibling?.tagName).toBe("TABLE");
+    expect(afterTable.parentElement?.firstElementChild?.tagName).toBe("TABLE");
+    expect(afterTable.nextElementSibling).toBeNull();
+    cleanup();
+
+    render("🎉", true);
+    expect(screen.getByText("(edited)").parentElement).toHaveAttribute(
+      "data-single-emoji",
+    );
+    cleanup();
+
     renderDom(
       <MessageRow
         row={{
@@ -3912,6 +3938,42 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
       name: "Morgarita: Done (edited)",
     });
     expect(within(line).getByText("(edited)")).toBeInTheDocument();
+    fireEvent.click(line);
+    expect(screen.getAllByText("(edited)")).toHaveLength(1);
+    expect(line).not.toContainElement(screen.getByText("(edited)"));
+    cleanup();
+
+    const none: never[] = [];
+    const cards = [
+      {
+        id: "card",
+        title: "Card",
+        key: "fixture.card:card",
+        pluginId: "fixture.card",
+        revision: "one",
+        matches: () => true,
+        component: () => <p>Plugin card</p>,
+      },
+    ];
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Card body", edited: true }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          messages: { snapshot: () => cards, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    // Inside the card's bubble, so above any reactions it holds.
+    expect(screen.getByText("(edited)").parentElement).toBe(
+      screen.getByText("Plugin card").closest("[data-message-action-anchor]"),
+    );
     cleanup();
 
     render("Hi how are ya.", false);

@@ -309,16 +309,26 @@ type HtmlNode = {
   properties?: Record<string, unknown>;
   children?: HtmlNode[];
 };
+/** Lists and quotes the slot descends into, so their last line keeps it. */
+const editedSlotContainers = new Set(["ul", "ol", "li", "blockquote"]);
 /** Leave a slot after the body's last rendered line for the edited marker:
- * inside a closing paragraph, else after the last block, including generated
- * footnotes. Parses are cached by content alone, so every body has the slot
- * and rendering decides whether to fill it. */
+ * inside a closing paragraph, list item or quote line, else after the last
+ * block, including generated footnotes. Parses are cached by content alone, so
+ * every body has the slot and rendering decides whether to fill it. */
 function rehypeEditedSlot() {
   return (tree: HtmlNode) => {
-    const last = tree.children
-      ?.filter((child) => child.type === "element")
-      .at(-1);
-    const parent = last?.tagName === "p" ? last : tree;
+    let parent = tree;
+    for (;;) {
+      const last = parent.children
+        ?.filter((child) => child.type === "element")
+        .at(-1);
+      if (last?.tagName === "p") parent = last;
+      else if (last && editedSlotContainers.has(last.tagName ?? "")) {
+        parent = last;
+        continue;
+      }
+      break;
+    }
     parent.children = [
       ...(parent.children ?? []),
       {
@@ -489,7 +499,7 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
-  /** Mark the body as replaced by its author's edit, after its last line. */
+  /** Mark the body as replaced by an edit, after its last line. */
   edited?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);

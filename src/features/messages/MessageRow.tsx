@@ -450,8 +450,9 @@ function MessageRowContent({
     bodyShown && messageRenderer !== failedRenderer
       ? messageRenderer?.ownsAttachment
       : undefined;
-  // The host's Markdown marks an edit after the caption's last line. Diffs,
-  // plugin cards and captionless rows are marked after the payload instead.
+  // The host's Markdown marks an edit after the caption's last line. Plugin
+  // cards are marked inside their bubble; diffs and captionless rows after the
+  // payload.
   const editedInBody =
     bodyShown &&
     !row.diff &&
@@ -823,6 +824,8 @@ function MessageRowContent({
     !shownRow &&
     !emojiOnly &&
     !row.diff;
+  // A plugin card keeps reactions in its bubble, so its mark goes above them.
+  const editedInBubble = !editedInBody && reactionsInBubble;
   const reactionContent =
     session && scope && extensions ? (
       <MessageReactions
@@ -1078,6 +1081,7 @@ function MessageRowContent({
                   ) : (
                     body
                   )}
+                  {editedInBubble && shown.edited && <EditedMarker />}
                   {reactionsInBubble && reactionContent}
                 </div>
               )}
@@ -1273,7 +1277,9 @@ function MessageRowContent({
                   })}
                 </div>
               )}
-              {!editedInBody && shown.edited && <EditedMarker />}
+              {!editedInBody && !editedInBubble && shown.edited && (
+                <EditedMarker />
+              )}
             </MessageTimestampHint>
           </div>
           {!reactionsInBubble && reactionContent}

@@ -397,7 +397,7 @@ against `/v1/session`; failed reads and unrecognized refusals do not authorize
 replacement. Local expiry, cancellation, and sign-out fence stale work.
 
 FI records use the OS secure-store service
-`dev.local.buzz.foundation.federated-session` (with `.debug` for Rust debug
+`xyz.block.buzz.desktop.federated-session` (with `.debug` for Rust debug
 builds), keyed by profile and deployment fingerprint. Account indices and
 revision-specific refusal markers contain no credential and live outside wiped
 Buzz data. Failed removal of a known record leaves refusal durable before any

@@ -12,7 +12,7 @@ test.use({
 
 // Browser-only: layout clipping can blank both the preview and expanded prose
 // between React states even when the height transition itself runs correctly.
-test("coordination keeps its first line visible throughout expansion and collapse", async ({
+for (let i = 0; i < 20; i++) test(`coordination keeps its first line visible throughout expansion and collapse ${i}`, async ({
   page,
   app,
 }) => {

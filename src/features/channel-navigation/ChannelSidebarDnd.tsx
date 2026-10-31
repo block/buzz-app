@@ -74,6 +74,11 @@ const sidebarCollisions: CollisionDetection = (args) => {
   return [];
 };
 
+// A click must still select the row; only a deliberate pull starts a move.
+// useSensor memoizes on this object, so an inline literal would rebuild the
+// sensors, and re-render every draggable row, on each sidebar render.
+const pointerSensorOptions = { activationConstraint: { distance: 6 } };
+
 /**
  * Pointer moves between sidebar sections (Messages groups, Starred and Channels,
  * or Solo projects and Chats), and reorders saved groups by their header. A drop
@@ -96,10 +101,7 @@ export function ChannelSidebarDnd({
   children: ReactNode;
 }) {
   const [dragging, setDragging] = useState<{ id: string; group: boolean }>();
-  const sensors = useSensors(
-    // A click must still select the row; only a deliberate pull starts a move.
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
+  const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
   return (
     <DndContext
       sensors={sensors}

@@ -432,6 +432,10 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     if (pointerVisit === "back") {
       const rect = await avatar.boundingBox();
       await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      // Complete this hover while Profile is still open. Otherwise its timer
+      // can fire after Escape and legitimately count as a fresh hover visit.
+      await page.clock.runFor(300);
+      await expect(preview).toBeHidden();
     }
     await page.getByRole("region", { name: "Profile details" }).press("Escape");
     await expect(panel).toHaveCount(0);

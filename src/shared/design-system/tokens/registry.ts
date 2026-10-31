@@ -361,6 +361,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-message-hover",
+        variable: "--surface-message-hover",
+        pointsAt:
+          "surface-message mixed 5% toward black in light mode / white in dark mode",
+        use: "Received bubble fill while its actions show; text and media are unchanged.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-message-own-hover",
+        variable: "--surface-message-own-hover",
+        pointsAt:
+          "surface-message-own mixed 5% toward black in light mode / white in dark mode",
+        use: "Own bubble fill while its actions show; text and media are unchanged.",
+        status: "core",
+      },
+      {
         token: "--affordance-message-own-hover",
         variable: "--affordance-message-own-hover",
         pointsAt:

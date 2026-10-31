@@ -26,6 +26,8 @@ pub(crate) struct Authority {
     id: String,
     identity_origin: String,
     api_base_path: String,
+    sign_in: config::SignIn,
+    organization: Option<String>,
 }
 #[derive(Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -132,7 +134,7 @@ impl FederatedIdentity {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&config)
+                serde_json::to_vec(&config.as_ref().map(Config::identity))
                     .map_err(|_| "Invalid federated identity configuration")?
             )
         );
@@ -159,6 +161,8 @@ impl FederatedIdentity {
                 id: c.id.clone(),
                 identity_origin: c.identity_origin.clone(),
                 api_base_path: c.api_base_path.clone(),
+                sign_in: c.sign_in,
+                organization: c.organization.clone(),
             }),
             revision: uuid::Uuid::new_v4().to_string(),
             email: None,

@@ -463,6 +463,26 @@ Settings card has no sign-out of its own in an FI build: it links to Identity â†
 Organization sign-in, which ends the shared session. Builderlab
 Apps' agent tools still need the legacy login and are absent in FI builds.
 
+### Sign in at launch
+
+A build whose descriptor sets `"signIn": "at-launch"` treats organization
+sign-in as part of opening the app. After key setup, the launch mark stays up
+while the saved session is checked. A restored session opens the app directly.
+Otherwise a full-window screen titled "Signing you in to *organization*" opens
+the browser sign-in, and the app opens when it finishes. Cancel or a failed
+sign-in leaves **Sign in with *organization*** and **Not now**; neither reopens
+the browser by itself. Not now opens the app, where protected communities offer
+their usual sign-in recovery.
+
+When the session ends during a run (expiry or the adapter refusing it), the same
+screen covers the app, above any dialog or menu it had open, and starts sign-in
+again. The app stays mounted, covered and inert, so drafts, scroll and
+navigation survive, and focus returns to where it was. An explicit sign-out
+shows the screen without opening the browser. A saved session that cannot be
+checked (network or secure storage) offers Try again, and the screen stays up
+while it checks.
+On-demand builds are unchanged.
+
 The Node development host retains its supported broker flow.
 
 For the community sign-in and recovery UI alone, run the environment-free

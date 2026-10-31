@@ -57,6 +57,7 @@ import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
+import { LaunchSignIn } from "../features/federated-identity/LaunchSignIn";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
@@ -80,10 +81,12 @@ export function App({ services }: { services: AppServices }) {
         <LaunchWindowControls />
         {services.identity ? (
           <IdentitySetup identity={services.identity}>
-            <ConnectedApp services={services} />
-            {!launching && (
-              <LegacyCommunityImport communities={services.communities} />
-            )}
+            <LaunchSignIn identity={services.federatedIdentity}>
+              <ConnectedApp services={services} />
+              {!launching && (
+                <LegacyCommunityImport communities={services.communities} />
+              )}
+            </LaunchSignIn>
           </IdentitySetup>
         ) : (
           <ConnectedApp services={services} />

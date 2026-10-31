@@ -54,7 +54,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
   let persisted = new Map<string, OutgoingEvent>();
   const open = () => (database ??= openDatabase());
   return {
-    async load() {
+    async load(options) {
       const db = await open();
       let migrated = false;
       const records = await new Promise<readonly OutgoingEvent[]>(
@@ -89,9 +89,10 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         },
       );
       // A first save migrates legacy records into the per-event store.
-      persisted = migrated
-        ? new Map(records.map((item) => [item.event.id, item]))
-        : new Map();
+      if (!options?.readOnly)
+        persisted = migrated
+          ? new Map(records.map((item) => [item.event.id, item]))
+          : new Map();
       return records;
     },
     async save(operations) {

@@ -25,6 +25,7 @@ export type FollowUpHandoff = {
   message?: string;
   recipients: readonly string[];
   complete?: true;
+  owner?: string;
 };
 const prefix = "follow-up:";
 export const followUpRecovery = (id: string) => ({
@@ -35,7 +36,34 @@ export const followUpRecovery = (id: string) => ({
 /** Separate view records avoid overwriting another conversation/window's queue. */
 export function followUpStorage(scope: string) {
   const key = (id: string) => prefix + id;
+  let owner: Promise<string> | undefined;
   return {
+    owner() {
+      if (!navigator.locks) throw new Error("Window ownership is unavailable.");
+      owner ??= new Promise<string>((resolve, reject) => {
+        const name = `buzz-follow-up-window:${crypto.randomUUID()}`;
+        void navigator.locks
+          .request(name, () => {
+            resolve(name);
+            // The browser releases this liveness lock when the document closes.
+            return new Promise<void>(() => {});
+          })
+          .catch(reject);
+      });
+      return owner;
+    },
+    async isLive(handoff: FollowUpHandoff) {
+      // Older markers have no owner evidence; explicit dismissal still retires them.
+      if (!handoff.owner || !navigator.locks?.query) return true;
+      return (
+        (await navigator.locks.query()).held?.some(
+          (lock) => lock.name === handoff.owner,
+        ) ?? true
+      );
+    },
+    retire(channelId: string) {
+      clearView(scope, `follow-up-handoff:${channelId}`);
+    },
     load(): SavedFollowUp[] {
       const records: SavedFollowUp[] = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -107,6 +135,8 @@ export function followUpStorage(scope: string) {
         !strings((value as FollowUpHandoff).recipients) ||
         ((value as FollowUpHandoff).message !== undefined &&
           typeof (value as FollowUpHandoff).message !== "string") ||
+        ((value as FollowUpHandoff).owner !== undefined &&
+          typeof (value as FollowUpHandoff).owner !== "string") ||
         ((value as FollowUpHandoff).complete !== undefined &&
           (value as FollowUpHandoff).complete !== true)
       )
@@ -127,13 +157,13 @@ export function followUpStorage(scope: string) {
         run,
       );
     },
-    async tryLock(id: string, run: () => void) {
+    async tryLock(id: string, run: () => void | Promise<void>) {
       if (!navigator.locks) return;
       await navigator.locks.request(
         `buzz-follow-up:${scope}:${id}`,
         { ifAvailable: true },
         (lock) => {
-          if (lock) run();
+          if (lock) return run();
         },
       );
     },

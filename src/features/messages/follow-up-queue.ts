@@ -19,6 +19,7 @@ type Entry = {
   publish(recovery?: OutboxRecovery): string;
   message?: FollowUpMessage;
   restored?: boolean;
+  recovered?: true;
   admitted?: boolean;
   resumedBy?: Set<string>;
   deliveryId?: string | undefined;
@@ -84,11 +85,21 @@ function createQueue(session: RelaySession) {
             ...saved,
             message: saved,
             restored: true,
+            recovered: true,
             ...followUpMessage(session, saved),
           },
       );
       for (const entry of entries) {
-        if (paused.has(entry.id)) {
+        const predecessor = paused.has(entry.id)
+          ? storage.handoff(entry.channelId)
+          : null;
+        if (
+          paused.has(entry.id) &&
+          !(
+            predecessor &&
+            (predecessor.complete || handoffFinished(predecessor))
+          )
+        ) {
           entry.restored = true;
           entry.resumeCancelled = true;
           entry.predecessorRemoved = true;
@@ -371,6 +382,7 @@ function createQueue(session: RelaySession) {
               id: entry.id,
               message: previous.event.id,
               recipients: entry.recipients,
+              owner: await storage.owner(),
             };
             storage.claim(entry.channelId, handoff);
             handoffs.set(entry.channelId, handoff);
@@ -418,7 +430,8 @@ function createQueue(session: RelaySession) {
             (predecessor !== null &&
               !predecessor.complete &&
               !handoffFinished(predecessor) &&
-              predecessor.id !== handoffs.get(entry.channelId)?.id))
+              predecessor.id !== handoffs.get(entry.channelId)?.id &&
+              (await storage.isLive(predecessor))))
         ) {
           entries = entries.map((item) =>
             item === entry
@@ -438,6 +451,7 @@ function createQueue(session: RelaySession) {
         storage.claim(entry.channelId, {
           id: entry.id,
           recipients: entry.recipients,
+          owner: await storage.owner(),
         });
         claimed = true;
         storage.sending(entry.id, true);
@@ -456,6 +470,7 @@ function createQueue(session: RelaySession) {
             id: entry.id,
             message: id,
             recipients: entry.recipients,
+            owner: await storage.owner(),
           };
           handoffs.set(entry.channelId, handoff);
           storage.claim(entry.channelId, handoff);
@@ -585,7 +600,7 @@ function createQueue(session: RelaySession) {
       dispose?.();
     }
   }
-  function remove(id: string, locked = false) {
+  async function remove(id: string, locked = false) {
     const entry = entries.find((item) => item.id === id);
     try {
       if (entry?.deliveryId || (entry?.sending && publishing.has(id))) return;
@@ -596,12 +611,22 @@ function createQueue(session: RelaySession) {
         !locked &&
         !validating.has(id)
       ) {
-        void storage.tryLock(id, () => {
-          remove(id, true);
+        await storage.tryLock(id, async () => {
+          await remove(id, true);
           reconcileDelivery();
           pump();
         });
         return;
+      }
+      if (entry?.message && storage?.isSending(id)) {
+        if (!session.outbox) return;
+        const receipt = await session.outbox.recovery(followUpRecovery(id).key);
+        if (receipt) {
+          entry.deliveryId = receipt.event.id;
+          entry.sending = true;
+          emit();
+          return;
+        }
       }
       if (entry?.message) storage?.remove(id);
       requested.delete(id);
@@ -611,7 +636,6 @@ function createQueue(session: RelaySession) {
         item.id === id
           ? {
               ...item,
-              sending: false,
               error: error instanceof Error ? error.message : String(error),
             }
           : item,
@@ -631,11 +655,12 @@ function createQueue(session: RelaySession) {
           if (!entries.includes(entry) || publishing.has(entry.id)) return;
           await session.outbox?.ready();
           if (!entries.includes(entry)) return;
-          entry.deliveryId ??= session.outbox
-            ?.snapshot()
-            .find(
-              (item) => item.recovery?.key === followUpRecovery(entry.id).key,
-            )?.event.id;
+          if (!session.outbox) return;
+          const receipt = await session.outbox.recovery(
+            followUpRecovery(entry.id).key,
+          );
+          if (!entries.includes(entry)) return;
+          entry.deliveryId ??= receipt?.event.id;
           entry.sending = !!entry.deliveryId;
           entries = [...entries];
           emit();
@@ -749,7 +774,24 @@ function createQueue(session: RelaySession) {
           handoff.recipients.includes(agent)
             ? handoff
             : undefined;
-        if (resumedHandoff) handoffs.set(channelId, resumedHandoff);
+        if (resumedHandoff && storage) {
+          handoffs.set(channelId, resumedHandoff);
+          void storage
+            .lockChat(channelId, async () => {
+              const current = storage.handoff(channelId);
+              if (current?.id !== resumedHandoff.id || current.complete) return;
+              resumedHandoff.owner = await storage.owner();
+              storage.claim(channelId, {
+                ...current,
+                owner: resumedHandoff.owner,
+              });
+            })
+            .catch((error) => {
+              storageError =
+                error instanceof Error ? error.message : String(error);
+              emit();
+            });
+        }
         if (
           !resumedHandoff &&
           !entries.some((entry) => entry.channelId === channelId)
@@ -783,16 +825,44 @@ function createQueue(session: RelaySession) {
     },
     /** A request positively abandoned by the runner is not completion evidence. */
     pauseAfter(agent: string, turns: Readonly<Record<string, string>>) {
-      const abandoned = Object.keys(turns).map(
-        (request) => `${agent}:${request}`,
-      );
+      const channels = new Set(Object.values(turns));
+      for (const channelId of channels) {
+        if (!storage) continue;
+        void storage
+          .lockChat(channelId, async () => {
+            const marker = storage.handoff(channelId);
+            if (
+              marker?.message &&
+              marker.message in turns &&
+              marker.recipients.includes(agent)
+            ) {
+              const recipients = marker.recipients.filter(
+                (recipient) => recipient !== agent,
+              );
+              if (recipients.length)
+                storage.claim(channelId, { ...marker, recipients });
+              else storage.retire(channelId);
+            }
+          })
+          .catch((error) => {
+            storageError =
+              error instanceof Error ? error.message : String(error);
+            emit();
+          });
+      }
       for (const [channelId, handoff] of handoffs)
         if (
           handoff.message &&
           handoff.message in turns &&
           handoff.recipients.includes(agent)
-        )
-          handoffs.delete(channelId);
+        ) {
+          const recipients = handoff.recipients.filter(
+            (recipient) => recipient !== agent,
+          );
+          if (recipients.length)
+            handoffs.set(channelId, { ...handoff, recipients });
+          else handoffs.delete(channelId);
+        }
       for (const [channelId, current] of waits) {
         const remaining = current.filter(
           (wait) =>
@@ -807,7 +877,10 @@ function createQueue(session: RelaySession) {
         else waits.delete(channelId);
       }
       entries = entries.map((entry) => {
-        if (abandoned.some((request) => entry.resumedBy?.has(request))) {
+        if (
+          (entry.recovered || entry.resumedBy) &&
+          channels.has(entry.channelId)
+        ) {
           entry.restored = true;
           entry.resumeCancelled = true;
         }

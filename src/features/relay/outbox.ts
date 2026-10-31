@@ -53,6 +53,8 @@ export interface Outbox {
   observeSend(listener: SendObserver): () => void;
   supports(kind: number): boolean;
   ready(): Promise<void>;
+  /** Fresh shared-journal ownership without importing another window's operations. */
+  recovery(key: string): Promise<OutgoingEvent | undefined>;
   send(
     input: Pick<EventTemplate, "kind" | "content" | "tags"> & {
       /** NIP-AP: created_at of the newest observed head this event replaces. */
@@ -76,7 +78,9 @@ type SendObserver = (
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
 export interface OutboxStorage {
   close?(): void;
-  load(): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
+  load(options?: {
+    readOnly?: boolean;
+  }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
   save(operations: readonly OutgoingEvent[]): void | Promise<void>;
 }
 export class PublishRejected extends Error {
@@ -653,6 +657,16 @@ export function createOutbox(
       await ready;
       if (closed) throw abortError();
       if (storageError) throw new Error(storageError);
+    },
+    async recovery(key: string) {
+      await outbox.ready();
+      const local = snapshot.find((item) => item.recovery?.key === key);
+      return (
+        local ??
+        (await storage.load({ readOnly: true })).find(
+          (item) => item.recovery?.key === key,
+        )
+      );
     },
     async recover(id: string, recovery: OutboxRecovery) {
       await outbox.ready();

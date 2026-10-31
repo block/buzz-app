@@ -296,3 +296,20 @@ it("retires roster-confirmed member recovery without inventing a delivery receip
   expect(h.publish).toHaveBeenCalledOnce();
   expect(restored.publish).not.toHaveBeenCalled();
 });
+
+it("finds another window's durable recovery without importing or publishing its operation", async () => {
+  const store = memory();
+  const reader = setup(store);
+  await reader.outbox.ready();
+  const writer = setup(store);
+  await writer.outbox.ready();
+  const id = writer.outbox.send(input, recovery);
+  await vi.waitFor(() => expect(writer.publish).toHaveBeenCalledOnce());
+  expect(reader.outbox.snapshot()).toEqual([]);
+  expect(await reader.outbox.recovery(recovery.key)).toMatchObject({
+    event: { id },
+    recovery,
+  });
+  expect(reader.outbox.snapshot()).toEqual([]);
+  expect(reader.publish).not.toHaveBeenCalled();
+});

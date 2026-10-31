@@ -6369,7 +6369,10 @@ describe("a turn closing or reloading the app stopped", () => {
     });
     await settle();
     expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    const pause = vi.spyOn(followUpQueue(second.session), "pauseAfter");
     second.service.dismissInterrupted();
+    expect(pause).toHaveBeenCalledWith(bot, { [asked.id]: channel });
+    pause.mockRestore();
     expect(second.service.snapshot().interrupted).toEqual([]);
     expect(readInterrupted(second.storage)).toEqual({});
     second.service.resumeInterrupted();

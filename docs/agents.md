@@ -413,7 +413,9 @@ defers release until availability can be determined. A predecessor removed by an
 window pauses only its successors when this window cannot establish its completion;
 earlier rows continue draining. Automatic release rechecks saved FIFO order under a
 chat-scoped lock. A durable handoff marker records the sent event and its confirmed completion,
-including completion after Resume. It survives removal of the sent row; a
+including completion after Resume. Explicit dismissal or abandonment retires the
+matching marker under the chat lock. A window-liveness Web Lock prevents a closed
+window’s stale marker from pausing fresh rows. It survives removal of the sent row; a
 window that cannot establish that predecessor's completion pauses its competing
 rows for explicit Send rather than starting overlapping work. The paused rows explain that an earlier message was
 handled in another window.

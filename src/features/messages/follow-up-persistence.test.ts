@@ -33,11 +33,17 @@ const message: FollowUpMessage = {
   picks: { [agent]: { model: "model", effort: "high" } },
 };
 const cleanup: (() => void)[] = [];
+const journals = new Map<string, readonly OutgoingEvent[]>();
 beforeEach(() => {
   localStorage.clear();
+  journals.clear();
   const locks = new Map<string, Promise<unknown>>();
   vi.stubGlobal("navigator", {
     locks: {
+      query: async () => ({
+        held: [...locks.keys()].map((name) => ({ name })),
+        pending: [],
+      }),
       request(
         name: string,
         options: unknown,
@@ -69,9 +75,12 @@ afterEach(() => {
 function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
   let signGate: Promise<void> | undefined;
   let persisted = structuredClone(records);
+  if (records.length || !journals.has(partition))
+    journals.set(partition, persisted);
   const publish = vi.fn(async () => {});
   const save = vi.fn(async (value: readonly OutgoingEvent[]) => {
     persisted = structuredClone(value);
+    journals.set(partition, persisted);
   });
   const owner = createOutbox(
     viewer,
@@ -82,7 +91,7 @@ function fixture(partition = scope, records: readonly OutgoingEvent[] = []) {
       },
       publish,
     },
-    { load: () => persisted, save },
+    { load: () => journals.get(partition) ?? [], save },
   );
   const listeners = new Set<() => void>();
   let working = true;
@@ -1462,5 +1471,165 @@ it.each(["abandoned", "removed", "revoked"])(
     expect(deactivate).toHaveBeenCalledOnce();
     await followUpStorage(scope).lockChat("chat", async () => {});
     expect(followUpStorage(scope).handoff("chat")?.complete).not.toBe(true);
+  },
+);
+
+it("keeps a restored mixed resume cohort paused when an unarmed request is abandoned", async () => {
+  const other = "d".repeat(64);
+  fixture().enqueue({ ...message, recipients: [agent, other] });
+  const h = fixture();
+  h.choices(true, [agent, other]);
+  h.finish();
+  h.queue.resumeAfter(agent, { original: "chat" });
+  h.queue.pauseAfter(other, { unsupported: "chat" });
+  h.work("original", "done");
+  await followUpStorage(scope).lockChat("chat", async () => {});
+  expect(h.queue.snapshot()[0]?.restored).toBe(true);
+  expect(h.send).not.toHaveBeenCalled();
+});
+
+it.each(["completion", "activity"])(
+  "keeps a successor automatic when predecessor %s precedes removal",
+  async (evidence) => {
+    const first = fixture();
+    const id = first.enqueue();
+    const second = fixture();
+    cleanup.push(second.queue.subscribe(() => {}));
+    second.enqueue({ ...message, text: "Second" });
+    // Hold the second window busy until it receives the removal notification.
+    first.queue.sendNow(id);
+    await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+    const event = first.send.mock.results[0]?.value as string;
+    if (evidence === "completion") {
+      first.work(event, "done");
+      await followUpStorage(scope).lockChat("chat", async () => {});
+    } else second.work(event, "done");
+    window.dispatchEvent(new StorageEvent("storage"));
+    expect(second.queue.snapshot()[0]?.restored).not.toBe(true);
+    second.finish();
+    await vi.waitFor(() => expect(second.send).toHaveBeenCalledOnce());
+  },
+);
+
+it.each([false, true])(
+  "drains fresh rows after an interrupted handoff is abandoned (resumed: %s)",
+  async (resumed) => {
+    const event = "e".repeat(64);
+    followUpStorage(scope).claim("chat", {
+      id: "old",
+      message: event,
+      recipients: [agent],
+    });
+    const h = fixture();
+    if (resumed) h.queue.resumeAfter(agent, { [event]: "chat" });
+    h.queue.pauseAfter(agent, { [event]: "chat" });
+    await followUpStorage(scope).lockChat("chat", async () => {});
+    h.enqueue();
+    h.finish();
+    await vi.waitFor(() => expect(h.send).toHaveBeenCalledOnce());
+  },
+);
+
+it.each([false, true])(
+  "does not let a closed window's incomplete handoff pause fresh rows (receipt retry: %s)",
+  async (retry) => {
+    const first = fixture();
+    const id = first.enqueue();
+    const set = Storage.prototype.setItem;
+    const failing = retry
+      ? vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+          this: Storage,
+          key,
+          value,
+        ) {
+          if (key.includes("follow-up-handoff:") && JSON.parse(value).message)
+            throw new Error("Event claim failed");
+          set.call(this, key, value);
+        })
+      : undefined;
+    first.finish();
+    if (failing) {
+      await vi.waitFor(() =>
+        expect(first.queue.snapshot()[0]?.error).toBeTruthy(),
+      );
+      failing.mockRestore();
+      first.queue.sendNow(id);
+    }
+    await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+    first.owner.dispose();
+    // A closed document releases its Web Locks, even after a crash.
+    vi.spyOn(navigator.locks, "query").mockResolvedValue({
+      held: [],
+      pending: [],
+    });
+    const next = fixture();
+    next.enqueue();
+    next.finish();
+    await vi.waitFor(() => expect(next.send).toHaveBeenCalledOnce());
+  },
+);
+
+it("keeps cross-window Remove fenced by a receipt absent from the observer snapshot", async () => {
+  const first = fixture();
+  await first.owner.ready;
+  const id = first.enqueue();
+  const second = fixture();
+  await second.owner.ready;
+  cleanup.push(second.queue.subscribe(() => {}));
+  let release!: () => void;
+  first.holdSigning(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  first.save
+    .mockImplementationOnce(async (value) => {
+      journals.set(scope, structuredClone(value));
+    })
+    .mockRejectedValueOnce(new Error("Recovery disk failure"));
+  try {
+    first.queue.sendNow(id);
+    await vi.waitFor(() =>
+      expect(first.queue.snapshot()[0]?.error).toBe("Recovery disk failure"),
+    );
+    window.dispatchEvent(new StorageEvent("storage"));
+    await followUpStorage(scope).lock(id, async () => {});
+    expect(second.queue.snapshot()[0]?.sending).toBe(true);
+    second.queue.remove(id);
+    await followUpStorage(scope).lock(id, async () => {});
+    expect(followUpStorage(scope).has(id)).toBe(true);
+  } finally {
+    release();
+  }
+  await vi.waitFor(() => expect(first.publish).toHaveBeenCalledOnce());
+});
+
+it.each([false, true])(
+  "keeps another window behind a resumed handoff after original owner exits (partial abandonment: %s)",
+  async (abandon) => {
+    const other = "d".repeat(64);
+    const event = "e".repeat(64);
+    followUpStorage(scope).claim("chat", {
+      id: "old",
+      message: event,
+      recipients: [agent, other],
+      owner: "closed-window",
+    });
+    const recovering = fixture();
+    recovering.queue.resumeAfter(agent, { [event]: "chat" });
+    if (abandon) recovering.queue.pauseAfter(other, { [event]: "chat" });
+    await followUpStorage(scope).lockChat("chat", async () => {});
+    const next = fixture();
+    next.enqueue();
+    next.finish();
+    await followUpStorage(scope).lockChat("chat", async () => {});
+    expect(next.send).not.toHaveBeenCalled();
+    expect(next.queue.snapshot()[0]?.restored).toBe(true);
+    expect(followUpStorage(scope).handoff("chat")?.recipients).toContain(agent);
+    if (abandon) {
+      recovering.work(event, "done");
+      await followUpStorage(scope).lockChat("chat", async () => {});
+      expect(followUpStorage(scope).handoff("chat")?.complete).toBe(true);
+    }
   },
 );

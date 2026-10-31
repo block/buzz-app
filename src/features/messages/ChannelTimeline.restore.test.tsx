@@ -255,16 +255,22 @@ it.each([
     });
   },
 );
-it.each([
-  {
-    order: "model first",
-    modelHeight: 2420.234375,
-    renderedHeight: "2420.23px",
-  },
-  { order: "DOM first", modelHeight: 2420.4999, renderedHeight: "2420.5px" },
-])(
-  "preserves a held reader when a resize scroll precedes height reconciliation ($order)",
-  async ({ order, modelHeight, renderedHeight }) => {
+it.each(
+  [
+    {
+      order: "model first",
+      modelHeight: 2420.234375,
+      renderedHeight: "2420.23px",
+    },
+    { order: "DOM first", modelHeight: 2420.4999, renderedHeight: "2420.5px" },
+  ].flatMap((layout) =>
+    ["none", "wheel first", "correction first", "mutation first"].map(
+      (movement) => ({ ...layout, movement }),
+    ),
+  ),
+)(
+  "preserves a held reader when a resize scroll precedes height reconciliation ($order, $movement)",
+  async ({ order, modelHeight, renderedHeight, movement }) => {
     const h = mount(true);
     await frame();
     const region = screen.getByRole("region", {
@@ -298,12 +304,24 @@ it.each([
         }
         // Virtua's native correction can arrive before React publishes its height
         // or before the real MutationObserver reconciles that publication.
+        if (movement !== "none") fireEvent.wheel(region, { deltaY: -50 });
+        if (movement === "wheel first") region.scrollTop -= 50;
+        const before = region.scrollTop;
         region.scrollTop -= 137;
-        fireEvent.scroll(region);
+        region.dispatchEvent(
+          new CustomEvent("virtua-scroll-correction", {
+            detail: { before, after: region.scrollTop },
+          }),
+        );
+        if (movement === "correction first" || movement === "mutation first")
+          region.scrollTop -= 50;
+        if (movement !== "mutation first") fireEvent.scroll(region);
         list.style.height = renderedHeight;
         await Promise.resolve();
       });
-      expect(region.scrollTop).toBe(400);
+      if (movement === "mutation first") fireEvent.scroll(region);
+      const expected = movement === "none" ? 400 : 350;
+      expect(region.scrollTop).toBe(expected);
 
       // With reconciled geometry, the same held pointer must still move freely.
       region.scrollTop -= 50;
@@ -313,7 +331,117 @@ it.each([
         list.style.height = "2500px";
         await Promise.resolve();
       });
-      expect(region.scrollTop).toBe(350);
+      expect(region.scrollTop).toBe(expected - 50);
+    } finally {
+      fireEvent.pointerUp(region);
+    }
+  },
+);
+it("retargets the visible row after movement consumed at a correction boundary", async () => {
+  const h = mount(true);
+  await frame();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  let growth = 0;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const row = this.closest<HTMLElement>("[data-message-id]");
+      const id = row?.dataset.messageId;
+      const top = id === "sent" ? 1200 + growth : id === "older" ? 0 : 520;
+      return new DOMRect(0, row ? top - region.scrollTop : 0, 800, 100);
+    },
+  );
+  region.scrollTop = 1400;
+  fireEvent.scroll(region);
+  fireEvent.pointerDown(region);
+  region.scrollTop = 400;
+  fireEvent.scroll(region);
+  h.pageAroundAnchor();
+  await h.measured();
+  try {
+    fireEvent.wheel(region, { deltaY: 500 });
+    region.scrollTop = 900;
+    scroll.size = 2420;
+    region.scrollTop -= 137;
+    region.dispatchEvent(
+      new CustomEvent("virtua-scroll-correction", {
+        detail: { before: 900, after: region.scrollTop },
+      }),
+    );
+    await act(async () => {
+      screen.getByRole("list").style.height = "2420px";
+    });
+    expect(region.scrollTop).toBe(900);
+    fireEvent.scroll(region);
+    growth = 90;
+    await act(async () => {
+      scroll.size = 2510;
+      screen.getByRole("list").style.height = "2510px";
+    });
+    expect(region.scrollTop).toBe(990);
+  } finally {
+    fireEvent.pointerUp(region);
+  }
+});
+it.each([300, 300.4])(
+  "does not treat browser shrink clamping as movement from a held pointer (%s)",
+  async (clamp) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(
+          0,
+          this.closest("ol") ? 520 - region.scrollTop : 0,
+          800,
+          100,
+        );
+      },
+    );
+    region.scrollTop = 1400;
+    fireEvent.scroll(region);
+    fireEvent.pointerDown(region);
+    region.scrollTop = 400;
+    fireEvent.scroll(region);
+    h.pageAroundAnchor();
+    await h.measured();
+    let maximum = 1400;
+    let offset = region.scrollTop;
+    Object.defineProperty(region, "scrollTop", {
+      configurable: true,
+      get: () => offset,
+      set: (value) => {
+        offset = Math.max(0, Math.min(maximum, value));
+      },
+    });
+    Object.defineProperty(region, "scrollHeight", {
+      configurable: true,
+      get: () => Math.trunc(maximum + 600),
+    });
+    try {
+      maximum = clamp;
+      region.scrollTop = offset;
+      await act(async () => {
+        scroll.size = 900;
+        screen.getByRole("list").style.height = "900px";
+      });
+      expect(region.scrollTop).toBe(clamp);
+      for (let i = 0; i < 2; i++)
+        region.dispatchEvent(
+          new CustomEvent("virtua-scroll-correction", {
+            detail: { before: clamp, after: clamp },
+          }),
+        );
+      maximum = 1400;
+      await act(async () => {
+        scroll.size = 2000;
+        screen.getByRole("list").style.height = "2000px";
+      });
+      expect(region.scrollTop).toBe(400);
     } finally {
       fireEvent.pointerUp(region);
     }
@@ -352,7 +480,13 @@ it("preserves a held reader's logical offset while its DOM lookup is absent", as
   expect(row).not.toBeNull();
   row?.removeAttribute("data-message-id");
   scroll.itemOffset.mockImplementation((index) => index * 100 + 45.5);
+  const before = region.scrollTop;
   region.scrollTop = 423; // Virtua has already applied part of the batch.
+  region.dispatchEvent(
+    new CustomEvent("virtua-scroll-correction", {
+      detail: { before, after: region.scrollTop },
+    }),
+  );
   await act(async () => {
     screen.getByRole("list").style.height = "2210px";
   });
@@ -360,7 +494,13 @@ it("preserves a held reader's logical offset while its DOM lookup is absent", as
 
   // Another virtualized batch must not undo the drag or double-count a jump.
   scroll.itemOffset.mockImplementation((index) => index * 100 + 135.5);
+  const beforeNext = region.scrollTop;
   region.scrollTop += 10;
+  region.dispatchEvent(
+    new CustomEvent("virtua-scroll-correction", {
+      detail: { before: beforeNext, after: region.scrollTop },
+    }),
+  );
   await act(async () => {
     screen.getByRole("list").style.height = "2300px";
   });

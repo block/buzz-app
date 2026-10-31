@@ -580,3 +580,41 @@ test("external removal pauses successors while earlier queued work still drains"
   await expect(queue.getByRole("listitem")).toHaveCount(1);
   await expect(later).toBeVisible();
 });
+
+// Real IndexedDB is required: a read-only cross-window receipt lookup must not
+// move the observer's incremental-write baseline and later delete the receipt.
+test("shared receipt inspection cannot delete another window's journal entry", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await page.waitForFunction(() => !!window.localAgentFixture);
+  const ids = await page.evaluate(async () => {
+    const browserOutboxStorage = window.localAgentFixture.outboxStorage;
+    const scope = `receipt-inspection:${crypto.randomUUID()}`;
+    const sender = browserOutboxStorage(scope);
+    const observer = browserOutboxStorage(scope);
+    try {
+      await sender.load();
+      await observer.load();
+      const first = {
+        event: { id: "first" },
+        delivery: "sending",
+        recovery: { key: "follow-up:first", value: "first" },
+      };
+      const second = { event: { id: "second" }, delivery: "sending" };
+      await sender.save([first]);
+      const inspected = await observer.load({ readOnly: true });
+      if (inspected[0]?.event.id !== "first")
+        throw new Error("Shared receipt was not visible");
+      await observer.save([second]);
+      return (await sender.load({ readOnly: true }))
+        .map((item) => item.event.id)
+        .sort();
+    } finally {
+      sender.close();
+      observer.close();
+    }
+  });
+  expect(ids).toEqual(["first", "second"]);
+});

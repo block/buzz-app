@@ -611,6 +611,8 @@ export class AgentRunners {
     for (const key of keys) {
       const { [key]: turns, ...rest } = this.left;
       if (!turns || !this.runs(key)) continue;
+      const agent = this.host.agent(key);
+      if (agent) this.host.abandonFollowUps?.(agent, turns);
       this.unmark(key, Object.keys(turns));
       this.left = rest;
     }

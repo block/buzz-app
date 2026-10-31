@@ -1,3 +1,4 @@
+import { browserOutboxStorage } from "../../src/features/relay/outbox-storage";
 // Browser-only native boundary and controllable plugin. Production service,
 // composition, admission, activity projection and UI are unchanged.
 import type {
@@ -26,6 +27,7 @@ const pending: {
   finish(result: WorkOutcome): void;
 }[] = [];
 const controls = {
+  outboxStorage: browserOutboxStorage,
   pending: () => pending.map((row) => row.id),
   stopped: () => [...stopped],
   /** Hands over and, like a real harness, reports a first step. */

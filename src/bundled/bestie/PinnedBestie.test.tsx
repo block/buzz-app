@@ -463,7 +463,7 @@ it("keeps a failed DM retry focused and announces another failure", async () => 
   expect(retry).toHaveFocus();
 });
 
-it("restores Bestie threads with Back and Forward and retires every explicitly closed visit", async () => {
+async function threadHistoryFixture() {
   const f = await fixture({ existing: true, withReply: true });
   f.choose(pollen);
   const previous = {
@@ -504,6 +504,12 @@ it("restores Bestie threads with Back and Forward and retires every explicitly c
       f.element({ renderedNavigator: navigator, navigation: pageNavigation() }),
     );
 
+  return { ...f, navigator, bestie, previous, rerender, view, pageNavigation };
+}
+
+it("restores Bestie threads with Back and Forward and retires every explicitly closed visit", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender, bestie } = f;
   await userEvent.click(
     await screen.findByRole("button", { name: "View thread: 1 reply" }),
   );
@@ -512,7 +518,11 @@ it("restores Bestie threads with Back and Forward and retires every explicitly c
     threadTarget.kind === "page"
       ? bestieRoute(threadTarget.route?.params)
       : undefined,
-  ).toEqual({ messageId: f.rootId, threadRootId: f.rootId });
+  ).toEqual({
+    channelId: pollenDM,
+    messageId: f.rootId,
+    threadRootId: f.rootId,
+  });
   rerender();
   expect(await screen.findByLabelText("Thread")).toBeVisible();
 
@@ -550,6 +560,61 @@ it("restores Bestie threads with Back and Forward and retires every explicitly c
   expect(navigator.snapshot().entry.target).toEqual(other);
   act(() => navigator.forward());
   expect(navigator.snapshot().entry.target).toEqual(bestie);
+});
+
+it("retires an old Bestie's thread visits instead of reading them in the replacement DM", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender, bestie, previous } = f;
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  const threadTarget = navigator.snapshot().entry.target;
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  // Repeated visits to A's thread must all retire, not only the current one.
+  act(() => void navigator.open(bestie));
+  rerender();
+  act(() => void navigator.open(threadTarget));
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  const agents = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+  } as const;
+  act(() => void navigator.open(agents));
+  // The page is not mounted while the owner changes Bestie in Agents.
+  f.view.unmount();
+  const readThread = vi.spyOn(f.session, "thread");
+  act(() => f.choose(fizz));
+  act(() => navigator.back());
+  const restored = render(
+    f.element({
+      renderedNavigator: navigator,
+      navigation: f.pageNavigation(),
+    }),
+    { reactStrictMode: true },
+  );
+  expect(
+    await screen.findByRole("textbox", { name: "Message Fizz" }),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(navigator.snapshot().entry.target).toEqual(bestie),
+  );
+  expect(screen.queryByLabelText("Thread")).not.toBeInTheDocument();
+  expect(readThread).not.toHaveBeenCalled();
+  restored.unmount();
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(previous);
+  act(() => navigator.forward());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  act(() => navigator.forward());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  act(() => navigator.forward());
+  expect(navigator.snapshot().entry.target).toEqual(agents);
 });
 
 it("never renders a DM whose signed membership does not match the chosen agent", async () => {

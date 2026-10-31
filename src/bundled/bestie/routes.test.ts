@@ -8,6 +8,7 @@ const page = {
   pageId: "bestie",
 } as const;
 const route = {
+  channelId: "11111111-1111-4111-8111-111111111111",
   messageId: "a".repeat(64),
   threadRootId: "b".repeat(64),
 };
@@ -22,6 +23,10 @@ it.each([
   undefined,
   {},
   { messageId: route.messageId },
+  { messageId: route.messageId, threadRootId: route.threadRootId },
+  { ...route, channelId: "" },
+  { ...route, channelId: "../another-channel" },
+  { ...route, channelId: "a".repeat(257) },
   { ...route, extra: true },
   { ...route, messageId: "not-an-event" },
   { ...route, threadRootId: "A".repeat(64) },

@@ -18,7 +18,10 @@ DM exists, the page asks the shared direct-message service to open one after
 rechecking that the agent remains selectable.
 
 The page uses the ordinary conversation owners for history, drafts, sending,
-threads and unread state. While that exact DM is promoted, Messages omits its
+threads and unread state. Thread visits bind to their originating DM. Restoring
+one after the Bestie or canonical DM changes retires incompatible thread visits
+and shows the current Bestie's chat; it never reads an old thread in the new DM.
+While that exact DM is promoted, Messages omits its
 ordinary row and clears any old device-local hidden-DM intent. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the
 exact roster match releases the promotion and restores the ordinary DM row.

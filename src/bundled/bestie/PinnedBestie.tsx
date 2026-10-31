@@ -318,12 +318,35 @@ function BestieConversation({
       ? bestieRoute(navigation.target.route?.params)
       : undefined;
   const [localThread, setLocalThread] = useState<string>();
-  const thread = routed?.messageId ?? localThread;
+  const thread =
+    routed?.channelId === channel.id ? routed.messageId : localThread;
   const [composerFocus, focusComposer] = useState(0);
   const ownsCurrentVisit =
     !!navigation &&
     !navigation.signal.aborted &&
     navigator.snapshot().entry.id === navigation.entryId;
+  useEffect(() => {
+    if (
+      !routed ||
+      routed.channelId === channel.id ||
+      navigation?.target.kind !== "page" ||
+      navigation.signal.aborted ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    // A pinned page follows the current Bestie; its old threads do not. Retire
+    // incompatible visits rather than handing their messages to another DM.
+    const base = bestieBaseTarget(navigation.target);
+    navigator.dismiss((target) => {
+      if (
+        target.kind !== "page" ||
+        targetKey(bestieBaseTarget(target)) !== targetKey(base)
+      )
+        return false;
+      const route = bestieRoute(target.route?.params);
+      return !!route && route.channelId !== channel.id;
+    }, base);
+  }, [routed, channel.id, navigation, navigator]);
   const openThread = (messageId: string, threadRootId: string) => {
     if (!navigation) {
       setLocalThread(messageId);
@@ -331,7 +354,11 @@ function BestieConversation({
     }
     if (navigation.target.kind !== "page" || !ownsCurrentVisit) return;
     void navigator.open(
-      bestieThreadTarget(navigation.target, { messageId, threadRootId }),
+      bestieThreadTarget(navigation.target, {
+        channelId: channel.id,
+        messageId,
+        threadRootId,
+      }),
     );
   };
   const closeThread = () => {
@@ -341,6 +368,7 @@ function BestieConversation({
         (target) =>
           target.kind === "page" &&
           targetKey(bestieBaseTarget(target)) === targetKey(base) &&
+          bestieRoute(target.route?.params)?.channelId === routed.channelId &&
           bestieRoute(target.route?.params)?.messageId === routed.messageId &&
           bestieRoute(target.route?.params)?.threadRootId ===
             routed.threadRootId,

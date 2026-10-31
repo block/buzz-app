@@ -23,6 +23,7 @@ type Entry = {
   admitted?: boolean;
   resumedBy?: Set<string>;
   deliveryId?: string | undefined;
+  dismissedDelivery?: string | undefined;
   resumeCancelled?: boolean;
   predecessorRemoved?: boolean;
   sending?: boolean;
@@ -106,7 +107,9 @@ function createQueue(session: RelaySession) {
         }
         if (!entry.error)
           entry.sending =
-            saved.find((row) => row.id === entry.id)?.sending === true;
+            !entry.dismissedDelivery &&
+            (!!entry.deliveryId ||
+              saved.find((row) => row.id === entry.id)?.sending === true);
       }
       storageError = undefined;
       refreshSending();
@@ -204,6 +207,42 @@ function createQueue(session: RelaySession) {
         activity.status !== "unavailable")
     );
   }
+  // Called only while owning the saved row (or for an in-memory-only row).
+  async function clearDismissed(entry: Entry) {
+    const dismissed = entry.dismissedDelivery;
+    if (
+      !dismissed ||
+      !entries.includes(entry) ||
+      entry.deliveryId !== dismissed
+    )
+      return false;
+    if (storage && entry.message && storage.has(entry.id)) {
+      const handoff = storage.handoff(entry.channelId);
+      const receipt = await session.outbox?.recovery(
+        followUpRecovery(entry.id).key,
+      );
+      if (
+        (handoff?.id === entry.id &&
+          handoff.message &&
+          handoff.message !== dismissed) ||
+        receipt
+      ) {
+        entry.dismissedDelivery = undefined;
+        entry.deliveryId = receipt?.event.id ?? entry.deliveryId;
+        entry.sending = true;
+        entries = [...entries];
+        emit();
+        return false;
+      }
+      storage.sending(entry.id, false);
+    }
+    entry.deliveryId = undefined;
+    entry.dismissedDelivery = undefined;
+    entry.sending = false;
+    entries = [...entries];
+    emit();
+    return true;
+  }
   function watch() {
     if (stop) return;
     activating = true;
@@ -254,8 +293,21 @@ function createQueue(session: RelaySession) {
         if (handoff.message === item.event.id) handoff.complete = true;
       for (const entry of entries) {
         if (entry.deliveryId !== item.event.id) continue;
-        entry.deliveryId = undefined;
-        entry.sending = false;
+        entry.dismissedDelivery = item.event.id;
+        const clear = () => clearDismissed(entry);
+        if (storage && entry.message)
+          void storage
+            .lockChat(entry.channelId, () => storage.lock(entry.id, clear))
+            .catch((error) => {
+              // Keep dismissal evidence so Send can retry this save under its
+              // lock. The delivery itself is already durably dismissed.
+              entry.sending = false;
+              entry.error =
+                error instanceof Error ? error.message : String(error);
+              entries = [...entries];
+              emit();
+            });
+        else void clear();
       }
       entries = [...entries];
       emit();
@@ -362,6 +414,7 @@ function createQueue(session: RelaySession) {
     let awaitingChoices = false;
     let claimed = false;
     try {
+      if (entry.dismissedDelivery && !(await clearDismissed(entry))) return;
       if (storage && entry.message) {
         if (!storage.has(entry.id)) {
           restore();
@@ -497,7 +550,7 @@ function createQueue(session: RelaySession) {
         item === entry
           ? {
               ...item,
-              sending: !!item.deliveryId,
+              sending: !!item.deliveryId && !item.dismissedDelivery,
               error: error instanceof Error ? error.message : String(error),
             }
           : item,
@@ -546,7 +599,11 @@ function createQueue(session: RelaySession) {
       void storage
         .lockChat(channelId, async () => {
           if (handoffs.get(channelId) !== handoff) return;
-          if (storage.handoff(channelId)?.id === handoff.id)
+          const current = storage.handoff(channelId);
+          if (
+            current?.id === handoff.id &&
+            (!current.message || current.message === handoff.message)
+          )
             storage.claim(channelId, { ...handoff, complete: true });
           if (handoffs.get(channelId) === handoff) handoffs.delete(channelId);
         })
@@ -603,6 +660,17 @@ function createQueue(session: RelaySession) {
   async function remove(id: string, locked = false) {
     const entry = entries.find((item) => item.id === id);
     try {
+      if (entry?.dismissedDelivery) {
+        if (storage && entry.message && !locked) {
+          await storage.lockChat(entry.channelId, () =>
+            storage.lock(id, () => remove(id, true)),
+          );
+          reconcileDelivery();
+          pump();
+          return;
+        }
+        if (!(await clearDismissed(entry))) return;
+      }
       if (entry?.deliveryId || (entry?.sending && publishing.has(id))) return;
       if (
         entry?.message &&
@@ -653,6 +721,10 @@ function createQueue(session: RelaySession) {
       void storage
         .lock(entry.id, async () => {
           if (!entries.includes(entry) || publishing.has(entry.id)) return;
+          if (entry.dismissedDelivery) {
+            await clearDismissed(entry);
+            return;
+          }
           await session.outbox?.ready();
           if (!entries.includes(entry)) return;
           if (!session.outbox) return;

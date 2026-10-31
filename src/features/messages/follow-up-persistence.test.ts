@@ -1039,9 +1039,19 @@ it.each(["loading", "error"])(
   },
 );
 
-it.each([false, true])(
+it.each([
+  "accepted",
+  "failed",
+  "storage-error",
+  "storage-error-remove",
+  "other-handoff",
+  "claim-only",
+  "newer-event",
+  "newer-receipt",
+])(
   "keeps Remove fenced after recovery failure until delivery or failed dismissal (%s)",
-  async (failed) => {
+  async (mode) => {
+    const failed = mode !== "accepted";
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -1099,9 +1109,103 @@ it.each([false, true])(
       await vi.waitFor(() =>
         expect(h.owner.outbox.snapshot()[0]?.delivery).toBe("failed"),
       );
+      const storage = followUpStorage(scope);
+      if (mode === "other-handoff")
+        storage.claim("chat", {
+          id: "other-row",
+          message: "other-event",
+          recipients: [agent],
+        });
+      if (mode === "claim-only")
+        storage.claim("chat", { id, recipients: [agent] });
+      if (mode === "newer-event")
+        storage.claim("chat", {
+          id,
+          message: "newer-event",
+          recipients: [agent],
+        });
+      if (mode === "newer-receipt") {
+        const receipt = h.owner.outbox.snapshot()[0];
+        if (!receipt) throw new Error("Missing failed receipt");
+        storage.retire("chat");
+        Object.assign(h.session, {
+          outbox: {
+            ...h.owner.outbox,
+            recovery: async () => ({
+              ...receipt,
+              event: { ...receipt.event, id: "f".repeat(64) },
+            }),
+          },
+        });
+      }
+      const setItem = Storage.prototype.setItem;
+      let rejectCleanup = mode.startsWith("storage-error");
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+        this: Storage,
+        key,
+        value,
+      ) {
+        if (rejectCleanup && key.includes(`follow-up:${id}`))
+          throw new Error("Cleanup disk failure");
+        setItem.call(this, key, value);
+      });
       await h.owner.outbox.dismiss(
         h.owner.outbox.snapshot()[0]?.event.id ?? "missing",
       );
+      await followUpStorage(scope).lockChat("chat", async () => {});
+      if (mode === "newer-receipt") {
+        expect(storage.isSending(id)).toBe(true);
+        expect(h.queue.snapshot()[0]).toMatchObject({
+          sending: true,
+          deliveryId: "f".repeat(64),
+        });
+        return;
+      }
+      if (mode === "newer-event") {
+        expect(storage.isSending(id)).toBe(true);
+        expect(h.queue.snapshot()[0]?.sending).toBe(true);
+        expect(storage.handoff("chat")?.message).toBe("newer-event");
+        return;
+      }
+      if (mode.startsWith("storage-error")) {
+        expect(storage.isSending(id)).toBe(true);
+        expect(h.queue.snapshot()[0]?.error).toBe(
+          "Could not save queued message delivery. Try again.",
+        );
+        expect(h.queue.snapshot()[0]?.sending).toBe(false);
+        await vi.waitFor(() =>
+          expect(
+            (
+              screen.getByRole("button", {
+                name: "Remove queued message",
+              }) as HTMLButtonElement
+            ).disabled,
+          ).toBe(false),
+        );
+        expect(
+          screen.getByText(
+            "Could not save queued message delivery. Try again.",
+          ),
+        ).not.toBeNull();
+        window.dispatchEvent(new StorageEvent("storage"));
+        await storage.lock(id, async () => {});
+        expect(h.queue.snapshot()[0]?.sending).toBe(false);
+        rejectCleanup = false;
+        h.publish.mockResolvedValue(undefined);
+        if (mode === "storage-error-remove") {
+          h.enqueue({ ...message, text: "Successor" });
+          h.finish();
+          h.queue.remove(id);
+        } else h.queue.sendNow(id);
+        await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+        expect(h.send).toHaveBeenCalledTimes(2);
+        return;
+      }
+      if (mode === "other-handoff")
+        expect(storage.handoff("chat")).toMatchObject({
+          id: "other-row",
+          message: "other-event",
+        });
       expect(
         (
           screen.getByRole("button", {
@@ -1109,10 +1213,15 @@ it.each([false, true])(
           }) as HTMLButtonElement
         ).disabled,
       ).toBe(false);
-      h.queue.remove(id);
+      expect(followUpStorage(scope).isSending(id)).toBe(false);
+      window.dispatchEvent(new StorageEvent("storage"));
+      await followUpStorage(scope).lock(id, async () => {});
+      expect(h.queue.snapshot()[0]?.sending).toBe(false);
+      h.publish.mockResolvedValue(undefined);
+      h.queue.sendNow(id);
     } else h.queue.sendNow(id);
     await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
-    expect(h.send).toHaveBeenCalledOnce();
+    expect(h.send).toHaveBeenCalledTimes(failed ? 2 : 1);
   },
 );
 

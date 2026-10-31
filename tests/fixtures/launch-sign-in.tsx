@@ -1,13 +1,17 @@
 // Public UI state only: no IPC, account credentials, browser handoff or relay.
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
-import { LaunchSignIn } from "../../src/features/federated-identity/LaunchSignIn";
+import {
+  LaunchSignIn,
+  SignInEnding,
+} from "../../src/features/federated-identity/LaunchSignIn";
 import type {
   FederatedIdentity,
   SessionSnapshot,
 } from "../../src/features/federated-identity/service";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { Dialog } from "../../src/shared/design-system/ui/Dialog";
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 
 const params = new URLSearchParams(location.search);
@@ -27,6 +31,8 @@ let state: SessionSnapshot = {
   expiring: false,
 };
 const listeners = new Set<() => void>();
+let renewal: ReturnType<typeof setTimeout> | undefined;
+let finishRenewal: (value?: unknown) => void = () => {};
 const publish = (patch: Partial<SessionSnapshot>) => {
   state = { ...state, ...patch, revision: crypto.randomUUID() };
   for (const listener of listeners) listener();
@@ -41,10 +47,28 @@ const identity: FederatedIdentity = {
     };
   },
   async signIn() {
+    // Signing in again while signed in keeps the app open; the browser
+    // "finishes" after 3 seconds unless canceled.
+    if (state.status === "signed-in") {
+      renewal = setTimeout(
+        () => publish({ expiring: false, expiresAt: null }),
+        3000,
+      );
+      await new Promise((done) => {
+        finishRenewal = done;
+        setTimeout(done, 3000);
+      });
+      return state;
+    }
     publish({ status: "signing-in", failure: null });
     return state;
   },
   async cancelSignIn() {
+    if (state.status === "signed-in") {
+      clearTimeout(renewal);
+      finishRenewal();
+      return;
+    }
     publish({ status: "signed-out", failure: null });
   },
   async signOut() {
@@ -62,6 +86,12 @@ const states: Record<string, Partial<SessionSnapshot>> = {
   Ended: { status: "reauthentication-required", failure: null },
   Unreachable: { status: "unavailable", failure: "network-unavailable" },
   Storage: { status: "unavailable", failure: "storage-denied" },
+  Expiring: {
+    status: "signed-in",
+    failure: null,
+    expiring: true,
+    expiresAt: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
+  },
 };
 
 function Fixture() {
@@ -71,7 +101,8 @@ function Fixture() {
     document.documentElement.dataset.colorMode = theme;
   }, [theme]);
   return (
-    <>
+    <ToastProvider>
+      <SignInEnding identity={identity} />
       <LaunchSignIn identity={identity}>
         <main className="grid min-h-screen place-items-center bg-panel text-primary">
           <textarea aria-label="Draft" placeholder="The app, signed in" />
@@ -101,7 +132,7 @@ function Fixture() {
           ))}
         </aside>
       )}
-    </>
+    </ToastProvider>
   );
 }
 const root = document.getElementById("root");

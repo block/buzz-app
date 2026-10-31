@@ -1195,6 +1195,28 @@ it("contains Codex file-tool reads with its captured policy and reviews the capt
   }
 });
 
+it("leaves a protected Buzz tool call to Codex's own tool review", async () => {
+  const f = protectedPreview();
+  const handle = f.handle;
+  if (!handle?.protection) throw new Error("Missing protected handle");
+  const check = vi.spyOn(handle.protection, "check");
+  try {
+    await f.runtime.run({
+      ...f.delivery("say hi"),
+      agent: handle,
+      config: f.agent.config,
+    });
+    await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+    await f.worker.tool("send", { audience: "everyone", text: "hi" });
+    expect(check.mock.calls.map(([action]) => action.kind)).toEqual([
+      "tool-result",
+    ]);
+    await f.worker.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("discovers protected models from the same engine that runs the selected model", async () => {
   const f = protectedPreview();
   const ordinaryAgent = {

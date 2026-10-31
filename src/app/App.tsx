@@ -22,6 +22,7 @@ import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
@@ -610,6 +611,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }
           >
             <UpdateNotice updates={services.updates} />
+            <RejectedLinkNotice links={services.rejectedLinks} />
             <InterruptedNotice agents={services.agents} />
             <CreationReview agents={services.agents} />
             <UpdateReview agents={services.agents} />

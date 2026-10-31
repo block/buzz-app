@@ -4092,6 +4092,9 @@ it("someone else's Solo chat earns attention only from mentions", async () => {
       messageIds: [ping.id, again.id],
       preview: "@you and this?",
       target: { kind: "thread", channelId: "chat", rootId: update.id },
+      // Opening the row shows the tag it previews, not the oldest unread one.
+      messageId: again.id,
+      rootId: update.id,
       unreadCount: 2,
     }),
   ]);
@@ -4115,6 +4118,8 @@ it("someone else's Solo chat earns attention only from mentions", async () => {
     channelId: "chat",
     messageId: top.id,
   });
+  expect(item.messageId).toBe(top.id);
+  expect(item.rootId).toBeUndefined();
   for (const step of item.readThrough)
     await unread.markThrough(step.target, step.messageId);
   expect(unread.inbox().items).toEqual([

@@ -1057,12 +1057,12 @@ export function createUnread({
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
-            const representative = unread[0] ?? latest;
+            // A shared chat's row opens at its newest tag, which it previews.
+            const representative = guest ? latest : (unread[0] ?? latest);
             const replies = entries.filter(
               (entry) => entry.rootId !== undefined,
             );
             const lastReply = replies[replies.length - 1];
-            // A shared chat's row points at its newest tag, which it previews.
             const pointer = guest ? latest : lastReply;
             const target: ReadTarget = dm
               ? { kind: "channel", channelId: channel.id }

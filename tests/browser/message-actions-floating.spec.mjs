@@ -216,6 +216,8 @@ for (const own of [false, true]) {
     app,
   }) => {
     await open(page, app);
+    // The other speaker's message keeps history from stacking this byline away.
+    app.append("primary", "alpha", "Other speaker", true, !own);
     const event = app.append(
       "primary",
       "alpha",
@@ -245,6 +247,7 @@ for (const own of [false, true]) {
     await shown(actions);
     // Moving down into the bubble must not close and reopen the actions.
     const geometry = await row.evaluate((node) => {
+      const bounds = node.getBoundingClientRect();
       const byline = node
         .querySelector("[data-message-byline]")
         .getBoundingClientRect();
@@ -268,10 +271,11 @@ for (const own of [false, true]) {
         x: bubble.left + 8,
         top: byline.top + byline.height / 2,
         bottom: bubble.top + bubble.height / 2,
+        // Own bylines hug their bubble, so measure the row's side space.
         outside:
-          left - byline.left > byline.right - right
-            ? (byline.left + left) / 2
-            : (right + byline.right) / 2,
+          left - bounds.left > bounds.right - right
+            ? (bounds.left + left) / 2
+            : (right + bounds.right) / 2,
       };
     });
     await page.mouse.move(geometry.x, geometry.top);
@@ -281,7 +285,7 @@ for (const own of [false, true]) {
     });
     await shown(actions);
     expect(await page.evaluate(() => window.__revealChanges)).toBe(0);
-    // Byline space past the text and bubble widths stays inert.
+    // Space past the text and bubble widths at byline height stays inert.
     await page.mouse.move(0, 0);
     await hidden(actions);
     await page.mouse.move(geometry.outside, geometry.top);

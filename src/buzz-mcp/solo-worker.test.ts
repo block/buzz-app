@@ -115,7 +115,6 @@ function community(
   const client: BuzzClient = {
     pubkey: C,
     key: C,
-    owner: H,
     relayAuthor: getPublicKey(RELAY),
     async query(filters: readonly Filter[]) {
       const [filter = {}] = filters as Record<string, unknown>[];
@@ -217,7 +216,7 @@ describe("solo_worker_connections", () => {
     sign(STRANGER, recordTemplate(ACK));
     expect((await call("solo_worker_connections")).connections).toEqual([]);
     await expect(call("solo_worker_readiness")).rejects.toThrow(
-      /owner has not authorized you/,
+      /No owner has authorized you/,
     );
   });
 
@@ -235,19 +234,19 @@ describe("solo_worker_connections", () => {
     expect((await call("solo_worker_connections")).connections).toEqual([]);
   });
 
-  it("finds nothing where the agent's owner is unknown", async () => {
+  it("finds nothing where the relay's roster cannot be checked", async () => {
     const { client } = community();
     await expect(
       callSoloWorkerTool(
-        { ...client, owner: undefined },
+        { ...client, relayAuthor: undefined },
         "solo_worker_connections",
         {},
       ),
-    ).rejects.toThrow(/does not know your owner/);
+    ).rejects.toThrow(/cannot verify channel members/);
   });
 
-  it("ignores a grant from anyone but the agent's owner", async () => {
-    const { call, sign } = community(ready, { ack: null });
+  it("lists each owner's grant, and needs owner to choose between them", async () => {
+    const { call, sign, requests } = community();
     const elsewhere = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
     const stranger = getPublicKey(STRANGER);
     sign(RELAY, {
@@ -263,7 +262,16 @@ describe("solo_worker_connections", () => {
       STRANGER,
       recordTemplate({ ...ACK, owner: stranger, stream: elsewhere }),
     );
-    expect((await call("solo_worker_connections")).connections).toEqual([]);
+    const { connections } = await call("solo_worker_connections");
+    expect(
+      connections.map((found: { owner: string }) => found.owner).sort(),
+    ).toEqual([H, stranger].sort());
+    await expect(call("solo_worker_readiness")).rejects.toThrow(/give owner/);
+    expect(requests()).toEqual([]);
+    expect(await call("solo_worker_readiness", { owner: H })).toMatchObject({
+      phase: "ready",
+    });
+    expect(requests()).toMatchObject([{ owner: H, stream: K }]);
   });
 
   it("reads the acknowledgement from the owner's newest events alone", async () => {
@@ -294,7 +302,7 @@ describe("solo_worker_connections", () => {
       "revoked",
     );
     await expect(call("solo_worker_readiness")).rejects.toThrow(
-      /owner has not authorized you/,
+      /No owner has authorized you/,
     );
   });
 });

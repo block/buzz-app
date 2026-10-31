@@ -10,8 +10,8 @@ deliberately.
 - `tools.ts`: each tool's name, description and schema in `TOOLS`, and its
   behavior in `HANDLERS`.
 - `attention.ts`: the attention tools (`interest_*`, `watch_*`).
-- `solo-worker.ts`: the Solo worker tools (`solo_worker_*`), which ask the
-  agent's owner's Buzz to run its workers; `solo-worker-protocol.ts` is their wire
+- `solo-worker.ts`: the Solo worker tools (`solo_worker_*`), which ask an
+  owner's Buzz to run its workers; `solo-worker-protocol.ts` is their wire
   contract, pinned by `solo-worker-vectors.json`.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.

@@ -46,6 +46,11 @@ const SYSTEM: Clock = {
 };
 
 const str = { type: "string" } as const;
+const owner = {
+  ...str,
+  description:
+    "Owner's public key (hex); needed only with more than one owner.",
+};
 const solo = { ...str, description: "The worker's Solo chat id." };
 const epoch = {
   type: "integer",
@@ -68,7 +73,7 @@ const workerTool = (
   description,
   inputSchema: {
     type: "object",
-    properties: { ...properties },
+    properties: { owner, ...properties },
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   },
@@ -78,7 +83,7 @@ const workerTool = (
 export const SOLO_WORKER_TOOLS = [
   workerTool(
     "solo_worker_connections",
-    "Your owner's grant to run their Nexus workers: the workers and actions it allows. None means your owner has not authorized you yet; only they can, in Buzz.",
+    "The owners whose Nexus workers you may run, each with the workers and actions they allow. None means no owner has authorized you yet; only the owner can, in Buzz.",
     {},
     [],
     { readOnlyHint: true },
@@ -180,15 +185,16 @@ export async function callSoloWorkerTool(
       complete: found.complete,
     });
   const action = name.slice(PREFIX.length) as Action;
-  const route = pick(found, action);
+  const route = pick(found, args.owner, action);
   if (args.retry !== undefined) {
-    if (Object.keys(args).some((key) => key !== "retry"))
+    if (Object.keys(args).some((key) => key !== "retry" && key !== "owner"))
       throw new Error("Give retry on its own.");
     return JSON.stringify(
       await resend(client, route, action, args.retry, clock),
     );
   }
   const request = { ...args };
+  delete request.owner;
   if (action === "read" || action === "list") request.limit ??= 20;
   if (action === "list") request.archived ??= false;
   if (
@@ -393,42 +399,35 @@ function shown(response: Response, request: Intent) {
   };
 }
 
-/** The agent's owner's grants: the latest acknowledgement in each private
- * channel whose only members are this agent and its owner. Authority is the
- * owner's signature there; the roster only says where to look. */
+/** The owners' grants to this agent: the latest acknowledgement in each
+ * private channel whose only members are this agent and its owner. Authority
+ * is the owner's signature there; the relay-signed roster says where to look
+ * and who the other member is, so a connection that cannot verify the roster
+ * finds nothing. */
 async function connections(client: BuzzClient) {
-  const { owner, relayAuthor } = client;
-  if (owner === undefined)
+  const { relayAuthor } = client;
+  if (relayAuthor === undefined)
     throw new Error(
-      "This Buzz connection does not know your owner, so it cannot find their grant. Use Solo workers from an agent running in Buzz.",
+      "This Buzz connection cannot verify channel members, so it cannot find an owner's grant. Use Solo workers from an agent running in Buzz.",
     );
-  const streams = new Set<string>();
+  const streams = new Map<string, string>();
   const complete = await scan(
     client,
-    {
-      kinds: [39002],
-      "#p": [client.pubkey],
-      ...(relayAuthor ? { authors: [relayAuthor] } : {}),
-    },
+    { kinds: [39002], "#p": [client.pubkey], authors: [relayAuthor] },
     (event) => {
-      if (relayAuthor !== undefined && event.pubkey !== relayAuthor)
-        return true;
+      if (event.pubkey !== relayAuthor) return true;
       const stream = event.tags.find((tag) => tag[0] === "d")?.[1];
       const members = new Set(
         event.tags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
       );
-      if (
-        stream &&
-        members.size === 2 &&
-        members.has(client.pubkey) &&
-        members.has(owner)
-      )
-        streams.add(stream);
+      const [other] = [...members].filter((key) => key !== client.pubkey);
+      if (stream && other && members.size === 2 && members.has(client.pubkey))
+        streams.set(stream, other);
       return true;
     },
   );
   const found: GrantAck[] = [];
-  for (const stream of streams) {
+  for (const [stream, owner] of streams) {
     const events = await client.query([
       { kinds: [9], "#h": [stream], authors: [owner], limit: ACK_HORIZON },
     ]);
@@ -440,18 +439,26 @@ async function connections(client: BuzzClient) {
   return { connections: found, complete };
 }
 
-function pick(found: Awaited<ReturnType<typeof connections>>, action: Action) {
+function pick(
+  found: Awaited<ReturnType<typeof connections>>,
+  owner: unknown,
+  action: Action,
+) {
   const active = found.connections.filter(
-    (connection) => connection.state === "active",
+    (connection) =>
+      connection.state === "active" &&
+      (owner === undefined || connection.owner === owner),
   );
   const [route] = active;
   if (!route)
     throw new Error(
-      `Your owner has not authorized you to run their workers${found.complete ? "" : ", as far as could be found"}. Only they can, in Buzz.`,
+      `No owner has authorized you to run their workers${owner === undefined ? "" : " for that owner"}${found.complete ? "" : ", as far as could be found"}. Only the owner can, in Buzz.`,
     );
   if (active.length > 1)
     throw new Error(
-      "Your owner has authorized you in more than one channel; ask them to revoke one.",
+      owner === undefined
+        ? "More than one owner has authorized you: give owner."
+        : "That owner has authorized you in more than one channel; ask them to revoke one.",
     );
   if (!route.operations.includes(action))
     throw new Error(`The owner has not allowed ${PREFIX}${action}.`);

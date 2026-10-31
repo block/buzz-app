@@ -510,6 +510,9 @@ describe("a change", () => {
   });
 });
 
+/** How long a call waits for an answer. */
+const WAIT_MS = 20_000;
+
 describe("answers", () => {
   const settled = {
     phase: "settled",
@@ -553,6 +556,40 @@ describe("answers", () => {
     expect(answer).toMatchObject({ status: "pending" });
     expect(asked).toBe(4);
     expect(clock.now() - start).toBeLessThanOrEqual(23);
+  });
+
+  it("stop at the deadline even when posting never finishes", async () => {
+    const { client, clock } = community();
+    const stalled = {
+      ...client,
+      publish() {
+        void clock.wait(WAIT_MS);
+        return new Promise<never>(() => {});
+      },
+    } as BuzzClient;
+    const answer = JSON.parse(
+      await callSoloWorkerTool(stalled, "solo_worker_list", {}, clock),
+    );
+    expect(answer).toMatchObject({ status: "unsent" });
+    expect(answer.note).toMatch(/did not finish in time/);
+  });
+
+  it("stop at the deadline even when checking for the answer never finishes", async () => {
+    const { client, clock } = community(() => []);
+    const stalled = {
+      ...client,
+      query(filters: readonly Filter[]) {
+        if (!(filters[0] as Record<string, unknown>)["#e"])
+          return client.query(filters);
+        void clock.wait(WAIT_MS);
+        return new Promise<never>(() => {});
+      },
+    } as BuzzClient;
+    expect(
+      JSON.parse(
+        await callSoloWorkerTool(stalled, "solo_worker_list", {}, clock),
+      ),
+    ).toMatchObject({ status: "pending" });
   });
 
   it("report two different answers at one revision as uncertain", async () => {

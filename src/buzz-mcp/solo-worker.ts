@@ -318,9 +318,10 @@ async function exchange(
 ): Promise<Outcome> {
   const id = await intentId(request);
   const retry = MUTATIONS.includes(request.action) ? { retry: request } : {};
-  let posted: BuzzEvent;
+  const deadline = clock.now() + WAIT_MS / 1000;
+  let posted: BuzzEvent | typeof LATE;
   try {
-    posted = await client.publish(recordTemplate(request));
+    posted = await by(deadline, clock, client.publish(recordTemplate(request)));
   } catch (error) {
     return {
       status: "unsent",
@@ -329,20 +330,30 @@ async function exchange(
       note: `Posting the request failed (${error instanceof Error ? error.message : String(error)}). It may still have arrived.`,
     };
   }
+  if (posted === LATE)
+    return {
+      status: "unsent",
+      request: id,
+      ...retry,
+      note: "Posting the request did not finish in time. It may still have arrived.",
+    };
   let answer: Response | undefined;
-  const deadline = clock.now() + WAIT_MS / 1000;
   for (;;) {
-    let events: readonly BuzzEvent[];
+    let events: readonly BuzzEvent[] | typeof LATE;
     try {
-      events = await client.query([
-        {
-          kinds: [9],
-          "#h": [request.stream],
-          "#e": [posted.id],
-          authors: [request.owner],
-          limit: 50,
-        },
-      ]);
+      events = await by(
+        deadline,
+        clock,
+        client.query([
+          {
+            kinds: [9],
+            "#h": [request.stream],
+            "#e": [posted.id],
+            authors: [request.owner],
+            limit: 50,
+          },
+        ]),
+      );
     } catch (error) {
       return {
         status: "pending",
@@ -352,6 +363,7 @@ async function exchange(
         note: `Checking for the answer failed (${error instanceof Error ? error.message : String(error)}). The request was sent and may have run.`,
       };
     }
+    if (events === LATE) break;
     const word = latest(
       events.flatMap((event) => {
         const response = readRecord(event, "response");
@@ -390,6 +402,28 @@ async function exchange(
     ...(answer.reason ? { reason: answer.reason } : {}),
     ...(answer.result ? { result: shown(answer, request) } : {}),
   };
+}
+
+const LATE = Symbol("late");
+
+/** What `work` gives, or `LATE` if it is still unsettled at `deadline`, so a
+ * stalled relay cannot hold a call past its wait. */
+async function by<T>(deadline: number, clock: Clock, work: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<typeof LATE>((resolve) => {
+        timer = setTimeout(
+          resolve,
+          Math.max(0, deadline - clock.now()) * 1000,
+          LATE,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** A read's messages as the agent needs them, not as signed events. */

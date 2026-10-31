@@ -26,8 +26,8 @@ export function createNameProvider(
           string | undefined,
           { displayFacts: unknown; labels: ReturnType<NamingPolicy["resolve"]> }
         >;
-        // Each scope's labels for historical keys outside it. A view can show
-        // many, so they stay out of the LRU above; they last one directory.
+        // Recently used scopes' labels for historical keys outside them (LRU).
+        // A view can show many, so they stay out of the scope LRU above.
         outsiders: Map<
           string | undefined,
           {
@@ -164,10 +164,13 @@ export function createNameProvider(
       const outside = (selected: ReadonlySet<string>, key: string) => {
         const { outsiders } = current(source);
         let scoped = outsiders.get(id);
+        outsiders.delete(id);
         if (!scoped || scoped.displayFacts !== displayFacts) {
           scoped = { displayFacts, labels: new Map() };
-          outsiders.set(id, scoped);
+          if (outsiders.size >= 8)
+            outsiders.delete(outsiders.keys().next().value);
         }
+        outsiders.set(id, scoped);
         if (!scoped.labels.has(key))
           scoped.labels.set(
             key,

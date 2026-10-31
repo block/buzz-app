@@ -382,14 +382,19 @@
   line-height: var(--text-body-sm--line-height);
   cursor: grabbing;
 }
-.channelDragOverlay[data-section-creation-preview] {
-  /* The new-section slot opens below the gap where the pointer first enters. */
-  translate: var(--space-3) calc(-100% - var(--space-3));
-}
 .channelDragOverlay > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.channelDragAnchor > .channelDragOverlay {
+  translate: -50% -50%;
+}
+/* The overlay ignores hit testing, so set the cursor on the actual hit targets.
+ * Its DOM lifetime also resets the cursor on drop, cancellation, and unmount. */
+:root body:has(.sidebarDragOverlay),
+:root body:has(.sidebarDragOverlay) * {
+  cursor: grabbing;
 }
 /* The highlighted destination replaces the preview while it accepts the drop. */
 body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {

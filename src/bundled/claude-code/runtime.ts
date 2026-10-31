@@ -245,6 +245,7 @@ export class ClaudeRuntime {
         created.protected = !!agent.protection;
         continue;
       }
+      entry.protected = !!agent.protection;
       if (
         JSON.stringify(entry.config) !== JSON.stringify(next) ||
         entry.name !== agent.name
@@ -915,7 +916,7 @@ export class ClaudeRuntime {
     // it was given, until it is replaced.
     const tools =
       (cwd: string): ToolServer =>
-      async (conversation, message) => {
+      async (conversation, message, signal) => {
         const handle = entry.handle;
         const client =
           handle &&
@@ -939,6 +940,7 @@ export class ClaudeRuntime {
               ),
             memories: (slug) => this.memories(agent, slug),
             remembered: () => this.forget(agent),
+            signal,
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};

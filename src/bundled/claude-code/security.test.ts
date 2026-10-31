@@ -472,6 +472,52 @@ it("reviews exact tool input with full native metadata and preceding evidence", 
   }
 });
 
+it("checks a long history four at a time and a denial cancels the rest", async () => {
+  const f = fixture();
+  Object.assign(f.protection, {
+    history: async () =>
+      Array.from({ length: 8 }, (_, index) => ({
+        role: "user",
+        content: `message ${index}`,
+      })),
+  });
+  const held: { reject(error: Error): void; signal: AbortSignal }[] = [];
+  f.check.mockImplementation(
+    (_action, signal) =>
+      new Promise<void>((_resolve, reject) => held.push({ reject, signal })),
+  );
+  const process = await ClaudeProcess.start(f.spawn, f.launch);
+  const worker = f.processes[0];
+  if (!worker) throw new Error("Claude did not start");
+  worker.emit({
+    type: "control_request",
+    request_id: "incoming-review",
+    request: {
+      subtype: "hook_callback",
+      callback_id: "security-incoming",
+      input: {
+        session_id: "native-session",
+        transcript_path: "/native/transcript",
+        cwd: "/work",
+        permission_mode: "bypassPermissions",
+        hook_event_name: "UserPromptSubmit",
+        prompt: "Howzit",
+      },
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(f.check).toHaveBeenCalledTimes(4));
+    await flush();
+    expect(f.check).toHaveBeenCalledTimes(4);
+    held[1]?.reject(new Error("Agent action denied by its protection policy"));
+    await vi.waitFor(() => expect(worker.killed).toBe(true));
+    expect(held.every(({ signal }) => signal.aborted)).toBe(true);
+    expect(f.check).toHaveBeenCalledTimes(4);
+  } finally {
+    await process.kill();
+  }
+});
+
 it("Stop revokes a pending approval and never releases its callback", async () => {
   const f = fixture();
   let signal: AbortSignal | undefined;

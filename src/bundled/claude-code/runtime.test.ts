@@ -502,6 +502,21 @@ it("tells a subscriber when a new conversation's first turn starts working", asy
   expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
 });
 
+it("launches unprotected once an agent's protection is cleared", async () => {
+  const { runtime, deliver, claudes } = setup([], { hold: true });
+  const binding = { provider: "test", policy: {} };
+  runtime.sync([
+    { key: self, pubkey: self, config: DEFAULT_CONFIG, protection: binding },
+  ] as Agent[]);
+  runtime.sync([
+    { key: self, pubkey: self, config: DEFAULT_CONFIG },
+  ] as Agent[]);
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await vi.waitFor(() =>
+    expect(claudes().flatMap((process) => process.prompts)).toHaveLength(1),
+  );
+});
+
 it("keeps one agent's memberships in two communities apart", async () => {
   const other = `${self}@other.example`;
   const { runtime, deliver, claudes, agent } = setup([], { hold: true });

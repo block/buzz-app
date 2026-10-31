@@ -6,6 +6,7 @@ import { CLAUDE_HOOK_EVENTS, type ClaudeHook } from "./hooks";
 // same pipe, as the SDK serves an in-process MCP server, so the process holds
 // no Buzz key.
 import { MESSAGE_TOOLS } from "../../buzz-mcp/session-tools";
+import { limited } from "../../features/agents/session-usage";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -58,6 +59,8 @@ export type ClaudeLaunch = Readonly<{
 export type ToolServer = (
   conversation: string | undefined,
   message: unknown,
+  /** Aborts when the process stops, so a stopped turn's tool does not act. */
+  signal: AbortSignal,
 ) => Promise<unknown>;
 /** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
@@ -796,6 +799,7 @@ export class ClaudeProcess {
         mcp_response: await this.tools(
           this.conversation,
           request.message,
+          this.protectionLifetime.signal,
         ).catch((error) => ({
           jsonrpc: "2.0",
           id: (request.message as Message | undefined)?.id ?? 0,
@@ -915,12 +919,30 @@ export class ClaudeProcess {
                 kind === "tool-result" ? "tool-result" : "context",
               ),
             ];
-        for (const source of sources) {
-          await this.protection.gate.check(
-            { ...source, session: this.sessionId ?? "initial" },
-            this.protectionLifetime.signal,
-          );
-        }
+        // One hook must answer within the native watchdog, so check sources
+        // together, below the provider's limit of 16 in-flight checks. The
+        // first denial cancels the rest before another can start.
+        const session = this.sessionId ?? "initial";
+        const denied = new AbortController();
+        const signal = AbortSignal.any([
+          this.protectionLifetime.signal,
+          denied.signal,
+        ]);
+        const { gate } = this.protection;
+        const slot = limited(4);
+        await Promise.all(
+          sources.map((source) =>
+            slot(async () => {
+              signal.throwIfAborted();
+              try {
+                await gate.check({ ...source, session }, signal);
+              } catch (error) {
+                denied.abort();
+                throw error;
+              }
+            }),
+          ),
+        );
         this.protectionLifetime.signal.throwIfAborted();
         response = success(
           tool

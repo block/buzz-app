@@ -410,6 +410,12 @@ export type AgentHandle = Readonly<{
   /** On a run's handle only: wakes this agent in another of its
    * conversations, as `Agents.wake` would, telling it the wake is its own. */
   handoff?(handoff: AgentHandoff): void;
+  /** The owner's teams, as they are on this device. */
+  teams?(): readonly TeamInfo[];
+  /** Owner-reviewed new team, or changes to one of the owner's teams. */
+  proposeTeam?(
+    input: TeamProposal,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Rechecks an operation lifetime after channel startup, before signing. */
   publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
@@ -911,6 +917,38 @@ export type AgentUpdateRequest = AgentUpdate &
     /** Its type when requested, shown as what the review changes from. */
     agentType: string;
   }>;
+/** A team as an agent sees it, its members named. */
+export type TeamInfo = Readonly<{
+  id: string;
+  name: string;
+  instructions: string;
+  members: readonly Readonly<{ pubkey: string; name: string }>[];
+}>;
+/** Without `team`, a new team named `name`. With it, an id or exact name,
+ * changes to that team. `members` are pubkeys or exact names of the owner's
+ * agents here, and replace the team's members. */
+export type TeamProposal = Readonly<{
+  team?: string;
+  name?: string;
+  instructions?: string;
+  members?: readonly string[];
+}>;
+/** An unsaved team request holding the whole team the owner would get. Only
+ * the owner-facing review may approve it. */
+export type TeamRequest = Readonly<{
+  id: string;
+  requester: string;
+  requesterName: string;
+  owner: string;
+  community: string;
+  /** The team it changes and that team's name when requested; absent for a
+   * new team. */
+  team?: string;
+  teamName?: string;
+  name: string;
+  instructions: string;
+  members: readonly string[];
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1099,6 +1137,12 @@ export type Agents = {
   /** Saves the owner-reviewed edit form, the agent's settings with the
    * request's changes, to the request's agent. */
   approveUpdate(id: string, input: NewAgent): Promise<void>;
+  /** Local, unsaved team requests; closing a review discards its request. */
+  teamRequests(): readonly TeamRequest[];
+  dismissTeam(id: string): void;
+  /** Saves the owner-reviewed team form to the request's team, or as a new
+   * one. */
+  approveTeam(id: string, input: TeamChange): Promise<Team>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1507,6 +1551,7 @@ export class AgentsService extends Service implements Agents {
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
+  private teamProposals: readonly TeamRequest[] = [];
   private readonly approving = new Set<string>();
   /** Every saved membership, deleted ones included: native's list is the
    * agent list, and `records` only adds settings to it. */
@@ -1770,7 +1815,7 @@ export class AgentsService extends Service implements Agents {
         if (!kind) throw new Error("That agent type is not available");
         if (kind.remote)
           throw new Error("A hosted agent's key stays with its provider");
-        if (this.requests.length + this.updates.length >= 16)
+        if (this.pendingRequests() >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
         this.requests = [
@@ -1817,7 +1862,7 @@ export class AgentsService extends Service implements Agents {
         if (Object.keys(change).length === 0)
           throw new Error("Propose at least one change");
         this.updateKind(identity, change);
-        if (this.requests.length + this.updates.length >= 16)
+        if (this.pendingRequests() >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
         this.updates = [
@@ -1839,6 +1884,95 @@ export class AgentsService extends Service implements Agents {
       },
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      teams: (agent) => {
+        const binding = this.bindingOf(agent);
+        if (!binding)
+          throw new Error("The requesting agent is no longer available");
+        const names = new Map(
+          this.ownAgents(agent, binding.origin).map((item) => [
+            item.pubkey,
+            item.name,
+          ]),
+        );
+        return this.teamsIn(binding.origin).map(
+          ({ id, name, instructions, members }) => ({
+            id,
+            name,
+            instructions,
+            members: members.flatMap((pubkey) => {
+              const member = names.get(pubkey);
+              return member === undefined ? [] : [{ pubkey, name: member }];
+            }),
+          }),
+        );
+      },
+      proposeTeam: async (agent, proposal) => {
+        const binding = this.bindingOf(agent);
+        if (!binding || !this.liveMember(agent.key))
+          throw new Error("The requesting agent is no longer available");
+        const found = proposal.team?.trim();
+        const matches = found
+          ? this.teamsIn(binding.origin).filter(
+              (item) => item.id === found || item.name === found,
+            )
+          : [];
+        if (found && matches.length === 0)
+          throw new Error("Your owner has no team by that name or id");
+        if (matches.length > 1)
+          throw new Error("Several teams have that name; use its id");
+        const [team] = matches;
+        const owned = this.ownAgents(agent, binding.origin);
+        const members = proposal.members?.map((entry) => {
+          const named = owned.filter(
+            (item) => item.pubkey === entry || item.name === entry,
+          );
+          if (named.length === 0)
+            throw new Error(`Your owner has no agent here named ${entry}`);
+          if (named.length > 1)
+            throw new Error(
+              `Several agents are named ${entry}; use its pubkey`,
+            );
+          return named[0]?.pubkey ?? entry;
+        });
+        const name = (proposal.name ?? team?.name ?? "").trim();
+        if (!name) throw new Error("Name the team");
+        if (
+          team &&
+          proposal.name === undefined &&
+          proposal.instructions === undefined &&
+          members === undefined
+        )
+          throw new Error("Propose at least one change");
+        if (this.pendingRequests() >= 16)
+          throw new Error("Review the pending agent requests first");
+        const id = crypto.randomUUID();
+        this.teamProposals = [
+          ...this.teamProposals,
+          {
+            id,
+            requester: agent.pubkey,
+            requesterName: agent.name,
+            owner: agent.owner,
+            community: binding.origin,
+            ...(team && { team: team.id, teamName: team.name }),
+            name,
+            instructions: proposal.instructions ?? team?.instructions ?? "",
+            // Members in the owner's other communities stay on the team.
+            members: [
+              ...new Set([
+                ...(members ?? team?.members ?? []),
+                ...(members && team
+                  ? team.members.filter(
+                      (pubkey) => !owned.some((item) => item.pubkey === pubkey),
+                    )
+                  : []),
+              ]),
+            ],
+          },
+        ];
+        this.notify();
+        return { requestId: id, saved: false };
+      },
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -1960,12 +2094,17 @@ export class AgentsService extends Service implements Agents {
           const updates = this.updates.filter(
             (request) => request.owner === viewer,
           );
+          const teams = this.teamProposals.filter(
+            (request) => request.owner === viewer,
+          );
           if (
             kept.length !== this.requests.length ||
-            updates.length !== this.updates.length
+            updates.length !== this.updates.length ||
+            teams.length !== this.teamProposals.length
           ) {
             this.requests = kept;
             this.updates = updates;
+            this.teamProposals = teams;
             this.notify();
           }
           this.watch();
@@ -2575,6 +2714,60 @@ export class AgentsService extends Service implements Agents {
     } finally {
       this.approving.delete(id);
     }
+  }
+  teamRequests = () => this.teamProposals;
+  dismissTeam = (id: string) => {
+    if (this.approving.has(id)) return;
+    this.teamProposals = this.teamProposals.filter(
+      (request) => request.id !== id,
+    );
+    this.notify();
+  };
+  async approveTeam(id: string, input: TeamChange) {
+    const request = this.teamProposals.find((item) => item.id === id);
+    if (!request || this.approving.has(id))
+      throw new Error("No such pending team request");
+    this.approving.add(id);
+    try {
+      const { opened, draft, ...change } = input;
+      if (!request.team && draft && !this.teamDrafts.has(draft)) {
+        // A new team goes where its request came from, not to the selected
+        // community.
+        const home = this.newTeamHome(request.community);
+        if (home) this.teamDrafts.set(draft, home);
+        else if (this.teamHome(undefined, draft))
+          throw new Error(
+            `Select ${hostOf({ relay: request.community })} to create this team`,
+          );
+      }
+      const team = await this.saveTeam({
+        ...change,
+        ...(request.team
+          ? { id: request.team, ...(opened && { opened }) }
+          : draft && { draft }),
+      });
+      this.teamProposals = this.teamProposals.filter((item) => item.id !== id);
+      this.notify();
+      return team;
+    } finally {
+      this.approving.delete(id);
+    }
+  }
+  /** The requests awaiting review, which share one bound. */
+  private pendingRequests() {
+    return (
+      this.requests.length + this.updates.length + this.teamProposals.length
+    );
+  }
+  /** The owner's agents in `origin` that `agent` may name. */
+  private ownAgents(agent: Readonly<{ owner: string }>, origin: string) {
+    return this.identities.filter(
+      (identity) =>
+        !identity.deleted &&
+        !identity.deleting &&
+        identity.owner === agent.owner &&
+        originOf(identity.relay) === origin,
+    );
   }
   updateRequests = () => this.updates;
   dismissUpdate = (id: string) => {
@@ -4054,6 +4247,16 @@ export class AgentsService extends Service implements Agents {
           ]
         : [];
     });
+  }
+  /** The teams an agent in `origin` may see: this device's, and the synced
+   * teams homed there. */
+  private teamsIn(origin: string): readonly Team[] {
+    return [
+      ...this.teamList,
+      ...this.synced().flatMap((entry) =>
+        entry.community === origin ? [entry.team] : [],
+      ),
+    ];
   }
   private allTeams(): readonly Team[] {
     return [...this.teamList, ...this.synced().map((entry) => entry.team)];

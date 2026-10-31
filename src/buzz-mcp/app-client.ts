@@ -181,6 +181,17 @@ export function appClient(
           },
         }
       : {}),
+    teams: async () => {
+      check();
+      if (!agent.teams) throw new Error("Teams are unavailable on this host");
+      return agent.teams();
+    },
+    proposeTeam: async (input) => {
+      check();
+      if (!agent.proposeTeam)
+        throw new Error("Team changes are unavailable on this host");
+      return agent.proposeTeam(input);
+    },
     templates: async () => {
       check();
       return agent.templates();

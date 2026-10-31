@@ -343,7 +343,9 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
-    const pending = await reading(page, app, 1400);
+    // Leave enough loaded history above the reader for the full upward drag.
+    // Page tie ordering varies with the fixture's fresh signed identity.
+    const pending = await reading(page, app, 250);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -360,6 +362,9 @@ test.describe("pages inside one second", () => {
       // Geometry can settle while a correction still holds Virtua's range.
       // Wait for that scroll cycle to finish before starting the next one.
       await virtuaIdle(page);
+      expect(
+        await history(page).evaluate((e) => e.scrollTop - e.clientHeight),
+      ).toBeGreaterThan(150);
       // Deliver the programmatic drag's scroll boundary in the same task so
       // Virtua's real directional render unmounts the held row before its idle
       // timer buffers below again. Native event timing is covered by the other

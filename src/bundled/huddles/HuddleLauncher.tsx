@@ -23,12 +23,12 @@ import {
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import styles from "./Huddles.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
+import { showActiveHuddle } from "./show-active-huddle";
 
 type Props = Pick<
   ChannelLauncherProps,
   "context" | "available" | "openMembers"
 > & { relay: RelayData; huddles: Huddles; showWindow(): Promise<void> };
-const focusPlayer = () => document.getElementById("huddle-capsule")?.focus();
 
 export function HuddleLauncher(props: Props) {
   const { context, available, huddles } = props;
@@ -78,10 +78,9 @@ export function HuddleLauncher(props: Props) {
         onClick={() => {
           if (!available()) return;
           if (call.phase === "connecting") void huddles.leave();
-          else if (active) {
-            if (document.getElementById("huddle-capsule")) focusPlayer();
-            else void props.showWindow().catch(() => {});
-          } else if (joinable) void huddles.join(context, incoming.id);
+          else if (active)
+            void showActiveHuddle(props.showWindow).catch(() => {});
+          else if (joinable) void huddles.join(context, incoming.id);
           else void huddles.start(context);
         }}
       />

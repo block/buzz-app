@@ -40,6 +40,14 @@ test("coordination keeps its first line visible throughout expansion and collaps
   const row = thread.locator(`[data-message-id="${event.id}"]`);
   const toggle = row.getByRole("button", { name: /Three café names:/ });
   await expect(toggle).toBeVisible();
+  // settle() tracks vertical reading geometry, not the thread dock's slide.
+  // Its ancestors must finish entering before taking a viewport-X baseline.
+  await row.evaluate(async (row) => {
+    const entering = [];
+    for (let node = row.parentElement; node; node = node.parentElement)
+      entering.push(...node.getAnimations());
+    await Promise.all(entering.map((animation) => animation.finished));
+  });
   await settle(page, thread.getByRole("region", { name: "Thread messages" }));
   const result = await row.evaluate(async (row) => {
     const button = row.querySelector("button[aria-expanded]");

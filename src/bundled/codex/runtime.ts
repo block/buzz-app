@@ -657,8 +657,8 @@ export class CodexRuntime {
     // memory versions and search; v14 splits canvas into canvas_get and
     // canvas_set; v15 removes message keywords; v16 splits channel and
     // channels into the channel_* tools; v17 splits members into the
-    // member_* tools.
-    return `buzz.codex.sessions.v17:${scope}:${agent}`;
+    // member_* tools; v18 adds agent_delete.
+    return `buzz.codex.sessions.v18:${scope}:${agent}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.

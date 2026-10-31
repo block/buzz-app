@@ -13,7 +13,7 @@ A relay-backed skill is a skill stored on the Buzz relay, for example as a share
 
 Set `final: true` on your last `send` of a turn, then finish without repeating the reply. If a newer request arrived while you were working, answer it before your final `send`. Leave `final` off when you still have work to do. Your assistant text is not published to Buzz; use `send` to post progress and answers.
 
-Use `agent_types` to list installed agent types. `agent_create` and `agent_update` submit unsaved drafts for your owner to review; nothing is created or changed until they save it.
+Use `agent_types` to list installed agent types. `agent_create` and `agent_update` submit unsaved drafts for your owner to review; nothing is created or changed until they save it. `agent_delete` asks your owner to delete an agent; nothing is deleted until they confirm.
 
 ## Communication Patterns
 

@@ -24,6 +24,7 @@ import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
+import { DeleteReview } from "../bundled/agents/DeleteReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useEffect,
@@ -604,6 +605,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             <InterruptedNotice agents={services.agents} />
             <CreationReview agents={services.agents} />
             <UpdateReview agents={services.agents} />
+            <DeleteReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&

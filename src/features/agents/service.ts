@@ -407,6 +407,10 @@ export type AgentHandle = Readonly<{
   updateAgent?(
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** An owner-reviewed deletion of one of the owner's agents here. */
+  deleteAgent?(
+    input: AgentDeleteInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** On a run's handle only: wakes this agent in another of its
    * conversations, as `Agents.wake` would, telling it the wake is its own. */
   handoff?(handoff: AgentHandoff): void;
@@ -911,6 +915,18 @@ export type AgentUpdateRequest = AgentUpdate &
     /** Its type when requested, shown as what the review changes from. */
     agentType: string;
   }>;
+/** `agent` is a pubkey or the exact name of one of the owner's agents here. */
+export type AgentDeleteInput = Readonly<{ agent: string }>;
+/** An unsaved deletion request. Only the owner-facing review may approve it. */
+export type AgentDeleteRequest = Readonly<{
+  id: string;
+  requester: string;
+  requesterName: string;
+  owner: string;
+  community: string;
+  agent: string;
+  agentName: string;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1099,6 +1115,12 @@ export type Agents = {
   /** Saves the owner-reviewed edit form, the agent's settings with the
    * request's changes, to the request's agent. */
   approveUpdate(id: string, input: NewAgent): Promise<void>;
+  /** Local, unsaved deletion requests; closing a review discards its request. */
+  deleteRequests(): readonly AgentDeleteRequest[];
+  dismissDelete(id: string): void;
+  /** Runs `remove` for the request's agent once the owner confirms, telling
+   * `progress` each step. A failure keeps the request to approve again. */
+  approveDelete(id: string, progress?: (step: string) => void): Promise<void>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1143,7 +1165,7 @@ export type Agents = {
    * One on another device is deleted there. An agent here leaves every
    * community it is in this way, one at a time; one whose community cannot
    * be reached stays, and the rejection names it. */
-  remove(agent: AgentKey): Promise<void>;
+  remove(agent: AgentKey, progress?: (step: string) => void): Promise<void>;
   /** The communities the owner's agent `pubkey` is in on this device, as
    * Delete leaves them: each one's origin, whether it is connected, and
    * whether a Delete or Remove there started and hasn't finished. */
@@ -1507,6 +1529,7 @@ export class AgentsService extends Service implements Agents {
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
+  private deletions: readonly AgentDeleteRequest[] = [];
   private readonly approving = new Set<string>();
   /** Every saved membership, deleted ones included: native's list is the
    * agent list, and `records` only adds settings to it. */
@@ -1770,7 +1793,7 @@ export class AgentsService extends Service implements Agents {
         if (!kind) throw new Error("That agent type is not available");
         if (kind.remote)
           throw new Error("A hosted agent's key stays with its provider");
-        if (this.requests.length + this.updates.length >= 16)
+        if (this.pending() >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
         this.requests = [
@@ -1789,22 +1812,7 @@ export class AgentsService extends Service implements Agents {
         return { requestId: id, saved: false };
       },
       updateAgent: async (agent, { agent: target, ...proposed }) => {
-        const binding = this.bindingOf(agent);
-        if (!binding || !this.liveMember(agent.key))
-          throw new Error("The requesting agent is no longer available");
-        const matches = this.identities.filter(
-          (identity) =>
-            !identity.deleted &&
-            !identity.deleting &&
-            identity.owner === agent.owner &&
-            originOf(identity.relay) === binding.origin &&
-            (identity.pubkey === target || identity.name === target),
-        );
-        const [identity] = matches;
-        if (!identity)
-          throw new Error("Your owner has no agent here by that name or key");
-        if (matches.length > 1)
-          throw new Error("Several agents have that name; use its pubkey");
+        const { identity, binding } = this.ownedAgent(agent, target, false);
         const name = proposed.name?.trim();
         const change: AgentUpdate = {
           ...(name !== undefined && name !== identity.name && { name }),
@@ -1817,7 +1825,7 @@ export class AgentsService extends Service implements Agents {
         if (Object.keys(change).length === 0)
           throw new Error("Propose at least one change");
         this.updateKind(identity, change);
-        if (this.requests.length + this.updates.length >= 16)
+        if (this.pending() >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
         this.updates = [
@@ -1832,6 +1840,32 @@ export class AgentsService extends Service implements Agents {
             agentName: identity.name,
             agentType: identity.type,
             ...change,
+          },
+        ];
+        this.notify();
+        return { requestId: id, saved: false };
+      },
+      deleteAgent: async (agent, { agent: target }) => {
+        const { identity, binding } = this.ownedAgent(agent, target, true);
+        const asked = this.deletions.find(
+          (request) =>
+            request.requester === agent.pubkey &&
+            request.agent === identity.pubkey,
+        );
+        if (asked) return { requestId: asked.id, saved: false };
+        if (this.pending() >= 16)
+          throw new Error("Review the pending agent requests first");
+        const id = crypto.randomUUID();
+        this.deletions = [
+          ...this.deletions,
+          {
+            id,
+            requester: agent.pubkey,
+            requesterName: agent.name,
+            owner: agent.owner,
+            community: binding.origin,
+            agent: identity.pubkey,
+            agentName: identity.name,
           },
         ];
         this.notify();
@@ -1960,12 +1994,17 @@ export class AgentsService extends Service implements Agents {
           const updates = this.updates.filter(
             (request) => request.owner === viewer,
           );
+          const deletions = this.deletions.filter(
+            (request) => request.owner === viewer,
+          );
           if (
             kept.length !== this.requests.length ||
-            updates.length !== this.updates.length
+            updates.length !== this.updates.length ||
+            deletions.length !== this.deletions.length
           ) {
             this.requests = kept;
             this.updates = updates;
+            this.deletions = deletions;
             this.notify();
           }
           this.watch();
@@ -2620,6 +2659,53 @@ export class AgentsService extends Service implements Agents {
     } finally {
       this.approving.delete(id);
     }
+  }
+  deleteRequests = () => this.deletions;
+  dismissDelete = (id: string) => {
+    if (this.approving.has(id)) return;
+    this.deletions = this.deletions.filter((request) => request.id !== id);
+    this.notify();
+  };
+  async approveDelete(id: string, progress?: (step: string) => void) {
+    const request = this.deletions.find((item) => item.id === id);
+    if (!request || this.approving.has(id))
+      throw new Error("No such pending agent request");
+    if (!this.liveRows(request.agent).length)
+      throw new Error(`${request.agentName} no longer exists`);
+    this.approving.add(id);
+    try {
+      await this.remove(request.agent, progress);
+      this.deletions = this.deletions.filter((item) => item.id !== id);
+      this.notify();
+    } finally {
+      this.approving.delete(id);
+    }
+  }
+  /** Requests waiting for the owner's review, which share one bound. */
+  private pending() {
+    return this.requests.length + this.updates.length + this.deletions.length;
+  }
+  /** The owner's one agent in the requester's community that `target` names
+   * by pubkey or exact name. An unfinished Delete still counts when
+   * `unfinished`. */
+  private ownedAgent(requester: Agent, target: string, unfinished: boolean) {
+    const binding = this.bindingOf(requester);
+    if (!binding || !this.liveMember(requester.key))
+      throw new Error("The requesting agent is no longer available");
+    const matches = this.identities.filter(
+      (identity) =>
+        !identity.deleted &&
+        (unfinished || !identity.deleting) &&
+        identity.owner === requester.owner &&
+        originOf(identity.relay) === binding.origin &&
+        (identity.pubkey === target || identity.name === target),
+    );
+    const [identity] = matches;
+    if (!identity)
+      throw new Error("Your owner has no agent here by that name or key");
+    if (matches.length > 1)
+      throw new Error("Several agents have that name; use its pubkey");
+    return { identity, binding };
   }
   /** The type `change` leaves the agent with, refusing what it cannot apply. */
   private updateKind(identity: AgentIdentity, change: AgentUpdate) {
@@ -3566,13 +3652,16 @@ export class AgentsService extends Service implements Agents {
     return this.retypePlan(identity, kinds.get(identity.type), kind).preview;
   }
 
-  async remove(key: AgentKey): Promise<void> {
+  async remove(
+    key: AgentKey,
+    progress?: (step: string) => void,
+  ): Promise<void> {
     const pubkey = pubkeyOf(key);
     if (!this.identities.some((identity) => identity.pubkey === pubkey))
       return this.removeHosted(pubkey);
     const running = this.deleting.get(pubkey);
     if (running) return running;
-    const work = this.removeLocal(pubkey).finally(() =>
+    const work = this.removeLocal(pubkey, progress).finally(() =>
       this.deleting.delete(pubkey),
     );
     this.deleting.set(pubkey, work);
@@ -3581,11 +3670,12 @@ export class AgentsService extends Service implements Agents {
   /** Keeps its key until each community it is in confirms it left every
    * channel and was archived, so nothing can import it back meanwhile, here
    * or in another copy of the app. The owner signs each step. */
-  private async removeLocal(pubkey: string) {
+  private async removeLocal(pubkey: string, progress?: (step: string) => void) {
     const native = this.native;
     if (!native) throw new Error("Agents run only in the desktop app");
     const identity = this.liveRows(pubkey)[0];
     if (!identity) throw new Error("No such agent on this device");
+    progress?.(`Stopping ${identity.name}`);
     // Saved first, so neither a relaunch nor another copy runs it again.
     await native.beginDelete(pubkey);
     await this.refresh();
@@ -3616,6 +3706,7 @@ export class AgentsService extends Service implements Agents {
       ...here,
     ]) {
       if (left.length && here.includes(member)) continue;
+      progress?.(`Leaving ${hostOf(member)}`);
       const departed = await this.depart(member, true);
       if (departed === "done") continue;
       left.push(member);
@@ -4862,6 +4953,9 @@ export class AgentsService extends Service implements Agents {
         );
       // Nor do change requests, which would hold review slots unseen.
       this.updates = this.updates.filter((request) => live.has(request.agent));
+      this.deletions = this.deletions.filter((request) =>
+        live.has(request.agent),
+      );
       // A deleted agent leaves its teams; the teams stay.
       if (
         this.teamList.some((team) =>

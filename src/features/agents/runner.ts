@@ -9,6 +9,7 @@ import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  AgentDeleteInput,
   AgentUpdateInput,
   AgentHandoff,
   RegisteredAgentType,
@@ -446,6 +447,10 @@ export type RunnerHost = {
   updateAgent(
     agent: Agent,
     input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  deleteAgent(
+    agent: Agent,
+    input: AgentDeleteInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
@@ -2519,6 +2524,10 @@ export class AgentRunners {
         updateAgent: async (input: AgentUpdateInput) => {
           lifetime.throwIfAborted();
           return this.host.updateAgent(agent, input);
+        },
+        deleteAgent: async (input: AgentDeleteInput) => {
+          lifetime.throwIfAborted();
+          return this.host.deleteAgent(agent, input);
         },
         // Only a run hands off: a plugin's wake through `Agents.handle` would
         // read as the agent's own.

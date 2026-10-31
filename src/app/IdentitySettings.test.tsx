@@ -158,11 +158,13 @@ it("shows when the organization sign-in ends", () => {
   render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
     wrapper: ToastProvider,
   });
-  const ends = new Date(expiresAt).toLocaleString(undefined, {
+  const expires = new Date(expiresAt).toLocaleString(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
   });
-  expect(screen.getByText(new RegExp(`^Ends ${ends}\\. `))).toBeVisible();
+  const subtitle = screen.getByText(/^Expires at /);
+  expect(subtitle).toHaveTextContent(`Expires at ${expires}Lets you`);
+  expect(subtitle.querySelector("br")).not.toBeNull();
 });
 
 it("signs in to the organization once when signed out", async () => {

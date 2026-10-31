@@ -61,14 +61,19 @@ export async function relayAuthority(relay: string) {
   }
 }
 
+/** `relayAuthority` that asks again until the relay answers with a key, then
+ * keeps it: a relay unreachable at startup does not disable its tools until restart. */
+export function relayAuthorityLookup(relay: string) {
+  let known: string | undefined;
+  return async () => (known ??= await relayAuthority(relay));
+}
+
 const httpBase = (relay: string) =>
   relay.replace(/^ws/, "http").replace(/\/+$/, "");
 
 export function nodeClient(
   options: Readonly<{
     relay: string;
-    /** The relay's own key, from `relayAuthority`. */
-    relayAuthor?: string | undefined;
     /** The agent's secret key, hex. */
     key: string;
     /** The owner's NIP-OA `auth` tag, as JSON. */
@@ -154,7 +159,6 @@ export function nodeClient(
   return {
     pubkey,
     key: pubkey,
-    relayAuthor: options.relayAuthor,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async searchProfiles(query, limit) {

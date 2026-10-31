@@ -5,7 +5,7 @@
 // directory `path` and `files` may read (default: the working directory).
 import { fromJsonSchema, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { nodeClient, relayAuthority } from "./node";
+import { nodeClient, relayAuthorityLookup } from "./node";
 import { content, errorText } from "./rpc";
 import { BUZZ_HELP_PROMPT } from "./prompt";
 import {
@@ -24,9 +24,9 @@ const env = (name: string) => {
 const auth = process.env.BUZZ_AUTH_TAG?.trim();
 const channel = process.env.BUZZ_CHANNEL?.trim();
 const relay = env("BUZZ_RELAY_URL");
+const relayAuthor = relayAuthorityLookup(relay);
 const client = nodeClient({
   relay,
-  relayAuthor: await relayAuthority(relay),
   key: env("BUZZ_PRIVATE_KEY"),
   ...(auth ? { auth } : {}),
   root: process.env.BUZZ_MCP_ROOT?.trim() || process.cwd(),
@@ -55,7 +55,11 @@ serveStdio(() => {
           return {
             content: content(
               await (isSoloWorkerTool(tool.name)
-                ? callSoloWorkerTool(client, tool.name, args)
+                ? callSoloWorkerTool(
+                    { ...client, relayAuthor: await relayAuthor() },
+                    tool.name,
+                    args,
+                  )
                 : callTool(client, context, tool.name, args)),
             ),
           };

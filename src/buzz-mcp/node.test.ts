@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "nostr-tools/utils";
 import { keypair, signed } from "../features/relay/testing";
-import { nodeClient, relayAuthority } from "./node";
+import { nodeClient, relayAuthority, relayAuthorityLookup } from "./node";
 import { callTool, memoryVersion } from "./tools";
 
 const agent = keypair();
@@ -284,13 +284,13 @@ describe("relayAuthority", () => {
     expect(await relayAuthority("wss://relay.test")).toBeUndefined();
   });
 
-  it("is the client's relay author", () => {
-    const buzz = nodeClient({
-      relay: "wss://relay.test",
-      relayAuthor: key,
-      key: bytesToHex(agent.secret),
-      root: "/",
-    });
-    expect(buzz.relayAuthor).toBe(key);
+  it("asks again after a failed lookup and keeps the key it learns", async () => {
+    const fetch = relay(async () => new Response("no", { status: 503 }));
+    const lookup = relayAuthorityLookup("wss://relay.test");
+    expect(await lookup()).toBeUndefined();
+    fetch.mockImplementation(async () => Response.json({ self: key }));
+    expect(await lookup()).toBe(key);
+    expect(await lookup()).toBe(key);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

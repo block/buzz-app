@@ -7,6 +7,7 @@
 // report what it said.
 import type { BuzzClient, BuzzEvent } from "./client";
 import {
+  ACK_HORIZON,
   ADMISSION_WINDOW,
   type Action,
   answers,
@@ -29,7 +30,7 @@ import {
 /** How long a call waits for the owner's answer, and how often it looks. */
 const WAIT_MS = 20_000;
 const POLL_MS = 1_000;
-/** Events read while finding the agent's control channels. */
+/** Memberships read while finding the agent's control channel. */
 const SCAN_MAX = 500;
 /** Phases after which the owner's Buzz will say more. */
 const INTERIM: readonly Phase[] = ["accepted", "preparing", "stop_pending"];
@@ -45,11 +46,6 @@ const SYSTEM: Clock = {
 };
 
 const str = { type: "string" } as const;
-const owner = {
-  ...str,
-  description:
-    "Owner's public key (hex); needed only with more than one owner.",
-};
 const solo = { ...str, description: "The worker's Solo chat id." };
 const epoch = {
   type: "integer",
@@ -72,7 +68,7 @@ const workerTool = (
   description,
   inputSchema: {
     type: "object",
-    properties: { owner, ...properties },
+    properties,
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   },
@@ -82,7 +78,7 @@ const workerTool = (
 export const SOLO_WORKER_TOOLS = [
   workerTool(
     "solo_worker_connections",
-    "The owners whose Nexus workers you may run, each with the workers and actions they allow. None means no owner has authorized you yet; only the owner can, in Buzz.",
+    "Your owner's grant to run their Nexus workers: the workers and actions it allows. None means your owner has not authorized you yet; only they can, in Buzz.",
     {},
     [],
     { readOnlyHint: true },
@@ -184,19 +180,22 @@ export async function callSoloWorkerTool(
       complete: found.complete,
     });
   const action = name.slice(PREFIX.length) as Action;
-  const route = pick(found, args.owner, action);
+  const route = pick(found, action);
   if (args.retry !== undefined) {
-    if (Object.keys(args).some((key) => key !== "retry" && key !== "owner"))
+    if (Object.keys(args).some((key) => key !== "retry"))
       throw new Error("Give retry on its own.");
     return JSON.stringify(
       await resend(client, route, action, args.retry, clock),
     );
   }
   const request = { ...args };
-  delete request.owner;
   if (action === "read" || action === "list") request.limit ??= 20;
   if (action === "list") request.archived ??= false;
-  if (action === "create" && !route.workers.includes(String(request.worker)))
+  if (
+    action === "create" &&
+    typeof request.worker === "string" &&
+    !route.workers.includes(request.worker)
+  )
     throw new Error("The owner has not allowed you to run that worker.");
   if (!MUTATIONS.includes(action))
     return JSON.stringify(
@@ -319,15 +318,26 @@ async function exchange(
   }
   let answer: Response | undefined;
   for (let waited = 0; ; waited += POLL_MS) {
-    const events = await client.query([
-      {
-        kinds: [9],
-        "#h": [request.stream],
-        "#e": [posted.id],
-        authors: [request.owner],
-        limit: 50,
-      },
-    ]);
+    let events: readonly BuzzEvent[];
+    try {
+      events = await client.query([
+        {
+          kinds: [9],
+          "#h": [request.stream],
+          "#e": [posted.id],
+          authors: [request.owner],
+          limit: 50,
+        },
+      ]);
+    } catch (error) {
+      return {
+        status: "pending",
+        request: id,
+        ...(answer ? { phase: answer.phase } : {}),
+        ...retry,
+        note: `Checking for the answer failed (${error instanceof Error ? error.message : String(error)}). The request was sent and may have run.`,
+      };
+    }
     const word = latest(
       events.flatMap((event) => {
         const response = readRecord(event, "response");
@@ -372,77 +382,76 @@ function shown(response: Response, request: Intent) {
   const { events, ...rest } = response.result as { events: BuzzEvent[] };
   return {
     ...rest,
-    messages: events.map((event) => ({
-      id: event.id,
-      from: event.pubkey === request.owner ? "you" : "worker",
-      at: event.created_at,
-      text: event.content,
-    })),
+    messages: [...events]
+      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))
+      .map((event) => ({
+        id: event.id,
+        from: event.pubkey === request.owner ? "you" : "worker",
+        at: event.created_at,
+        text: event.content,
+      })),
   };
 }
 
-/** The owners' grants to this agent: the latest acknowledgement in each
- * private channel whose only members are this agent and one other. */
+/** The agent's owner's grants: the latest acknowledgement in each private
+ * channel whose only members are this agent and its owner. Authority is the
+ * owner's signature there; the roster only says where to look. */
 async function connections(client: BuzzClient) {
-  const streams = new Map<string, string>();
-  let complete = await scan(
+  const { owner, relayAuthor } = client;
+  if (owner === undefined)
+    throw new Error(
+      "This Buzz connection does not know your owner, so it cannot find their grant. Use Solo workers from an agent running in Buzz.",
+    );
+  const streams = new Set<string>();
+  const complete = await scan(
     client,
-    { kinds: [39002], "#p": [client.pubkey] },
+    {
+      kinds: [39002],
+      "#p": [client.pubkey],
+      ...(relayAuthor ? { authors: [relayAuthor] } : {}),
+    },
     (event) => {
-      if (
-        client.relayAuthor !== undefined &&
-        event.pubkey !== client.relayAuthor
-      )
+      if (relayAuthor !== undefined && event.pubkey !== relayAuthor)
         return true;
       const stream = event.tags.find((tag) => tag[0] === "d")?.[1];
       const members = new Set(
         event.tags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
       );
-      const [other] = [...members].filter((key) => key !== client.pubkey);
-      if (stream && other && members.size === 2 && members.has(client.pubkey))
-        streams.set(stream, other);
+      if (
+        stream &&
+        members.size === 2 &&
+        members.has(client.pubkey) &&
+        members.has(owner)
+      )
+        streams.add(stream);
       return true;
     },
   );
   const found: GrantAck[] = [];
-  for (const [stream, owner] of streams) {
-    let ack: GrantAck | undefined;
-    const scanned = await scan(
-      client,
-      { kinds: [9], "#h": [stream], authors: [owner] },
-      (event) => {
-        const record = readRecord(event, "grant_ack");
-        if (record?.controller !== client.pubkey) return true;
-        ack = record;
-        return false;
-      },
-    );
+  for (const stream of streams) {
+    const events = await client.query([
+      { kinds: [9], "#h": [stream], authors: [owner], limit: ACK_HORIZON },
+    ]);
+    const ack = events
+      .map((event) => readRecord(event, "grant_ack"))
+      .find((record) => record?.controller === client.pubkey);
     if (ack) found.push(ack);
-    else if (!scanned) complete = false;
   }
   return { connections: found, complete };
 }
 
-function pick(
-  found: Awaited<ReturnType<typeof connections>>,
-  owner: unknown,
-  action: Action,
-) {
+function pick(found: Awaited<ReturnType<typeof connections>>, action: Action) {
   const active = found.connections.filter(
-    (connection) =>
-      connection.state === "active" &&
-      (owner === undefined || connection.owner === owner),
+    (connection) => connection.state === "active",
   );
   const [route] = active;
   if (!route)
     throw new Error(
-      `No owner has authorized you to run their workers${owner === undefined ? "" : " for that owner"}${found.complete ? "" : " that could be found"}. Only the owner can, in Buzz.`,
+      `Your owner has not authorized you to run their workers${found.complete ? "" : ", as far as could be found"}. Only they can, in Buzz.`,
     );
   if (active.length > 1)
     throw new Error(
-      owner === undefined
-        ? "More than one owner has authorized you: give owner."
-        : "That owner has authorized you in more than one channel; ask them to revoke one.",
+      "Your owner has authorized you in more than one channel; ask them to revoke one.",
     );
   if (!route.operations.includes(action))
     throw new Error(`The owner has not allowed ${PREFIX}${action}.`);

@@ -131,6 +131,8 @@ describe("records as events", () => {
     ).toBeUndefined();
     const spaced = { ...template, content: JSON.stringify(intent, null, 1) };
     expect(readRecord(signed(CONTROLLER, spaced), "request")).toBeUndefined();
+    const forged = { ...signed(CONTROLLER, template), sig: "0".repeat(128) };
+    expect(readRecord(forged, "request")).toBeUndefined();
   });
 
   it("reads a response only from the owner, naming the requests it answers", () => {
@@ -199,12 +201,27 @@ describe("answers", () => {
     });
 
     it.each([
-      ["the owner without the relay mark", OWNER, [["h", "SOLO"]]],
-      ["the controller", CONTROLLER, [["h", "SOLO"]]],
-      ["another chat", WORKER, [["h", "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"]]],
-    ])("never from %s", (_name, key, tags) => {
+      ["the owner without the relay mark", OWNER, [["h", "SOLO"]], 9],
+      ["the controller", CONTROLLER, [["h", "SOLO"]], 9],
+      [
+        "another chat",
+        WORKER,
+        [["h", "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"]],
+        9,
+      ],
+      [
+        "two chats at once",
+        WORKER,
+        [
+          ["h", "SOLO"],
+          ["h", "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d"],
+        ],
+        9,
+      ],
+      ["a reaction", WORKER, [["h", "SOLO"]], 7],
+    ])("never from %s", (_name, key, tags, kind) => {
       const event = signed(key, {
-        kind: 9,
+        kind,
         content: "x",
         tags: tags.map((tag) =>
           tag.map((part) => (part === "SOLO" ? solo : part)),

@@ -5,6 +5,7 @@ import { respond } from "./rpc";
 import { sessionTools } from "./session-tools";
 import { callSoloWorkerTool, type Clock } from "./solo-worker";
 import {
+  ACK_HORIZON,
   type GrantAck,
   type Intent,
   intentId,
@@ -114,6 +115,7 @@ function community(
   const client: BuzzClient = {
     pubkey: C,
     key: C,
+    owner: H,
     relayAuthor: getPublicKey(RELAY),
     async query(filters: readonly Filter[]) {
       const [filter = {}] = filters as Record<string, unknown>[];
@@ -215,7 +217,7 @@ describe("solo_worker_connections", () => {
     sign(STRANGER, recordTemplate(ACK));
     expect((await call("solo_worker_connections")).connections).toEqual([]);
     await expect(call("solo_worker_readiness")).rejects.toThrow(
-      /No owner has authorized you/,
+      /owner has not authorized you/,
     );
   });
 
@@ -233,6 +235,50 @@ describe("solo_worker_connections", () => {
     expect((await call("solo_worker_connections")).connections).toEqual([]);
   });
 
+  it("finds nothing where the agent's owner is unknown", async () => {
+    const { client } = community();
+    await expect(
+      callSoloWorkerTool(
+        { ...client, owner: undefined },
+        "solo_worker_connections",
+        {},
+      ),
+    ).rejects.toThrow(/does not know your owner/);
+  });
+
+  it("ignores a grant from anyone but the agent's owner", async () => {
+    const { call, sign } = community(ready, { ack: null });
+    const elsewhere = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+    const stranger = getPublicKey(STRANGER);
+    sign(RELAY, {
+      kind: 39002,
+      content: "",
+      tags: [
+        ["d", elsewhere],
+        ["p", stranger],
+        ["p", C],
+      ],
+    });
+    sign(
+      STRANGER,
+      recordTemplate({ ...ACK, owner: stranger, stream: elsewhere }),
+    );
+    expect((await call("solo_worker_connections")).connections).toEqual([]);
+  });
+
+  it("reads the acknowledgement from the owner's newest events alone", async () => {
+    const { call, sign } = community();
+    for (let index = 0; index < ACK_HORIZON; index++)
+      sign(
+        OWNER,
+        { kind: 9, content: `${index}`, tags: [["h", K]] },
+        START + 1,
+      );
+    expect((await call("solo_worker_connections")).connections).toEqual([]);
+    sign(OWNER, recordTemplate(ACK), START + 2);
+    expect((await call("solo_worker_connections")).connections).toHaveLength(1);
+  });
+
   it("follows the newest acknowledgement, so a revoked grant stops working", async () => {
     const { call, sign } = community();
     sign(
@@ -248,7 +294,7 @@ describe("solo_worker_connections", () => {
       "revoked",
     );
     await expect(call("solo_worker_readiness")).rejects.toThrow(
-      /No owner has authorized you/,
+      /owner has not authorized you/,
     );
   });
 });
@@ -309,6 +355,12 @@ describe("a change", () => {
     expect(requests()).toEqual([]);
   });
 
+  it("names a missing worker rather than refusing it", async () => {
+    const { call, requests } = community();
+    await expect(call("solo_worker_create")).rejects.toThrow(/args\.worker/);
+    expect(requests().map((request) => request.action)).toEqual(["readiness"]);
+  });
+
   it("returns a pending request to retry, and a retry sends it unchanged", async () => {
     let settle = false;
     const { call, requests, published } = community((intent) =>
@@ -354,6 +406,21 @@ describe("a change", () => {
       retry: { action: "archive", args: { solo: S } },
     });
     expect(answer.note).toMatch(/may still have arrived/);
+  });
+
+  it("keeps a sent request to retry when checking for its answer fails", async () => {
+    const harness = community();
+    const original = harness.client.query;
+    harness.client.query = (filters) =>
+      harness.published.length === 2
+        ? Promise.reject(new Error("offline"))
+        : original(filters);
+    const answer = await harness.call("solo_worker_archive", { solo: S });
+    expect(answer).toMatchObject({
+      status: "pending",
+      retry: { action: "archive", args: { solo: S } },
+    });
+    expect(answer.note).toMatch(/was sent and may have run/);
   });
 
   it("refuses a retry with other arguments, or for another tool or agent", async () => {
@@ -443,7 +510,7 @@ describe("solo_worker_read", () => {
           kind: 9,
           content: "next",
           tags: [...tags, ["control", "solo_worker", "1", "relay"]],
-          created_at: START,
+          created_at: START + 1,
         },
         OWNER,
       );
@@ -462,8 +529,8 @@ describe("solo_worker_read", () => {
     });
     const answer = await harness.call("solo_worker_read", { solo: S });
     expect(answer.result.messages).toEqual([
-      expect.objectContaining({ from: "you", text: "next" }),
       expect.objectContaining({ from: "worker", text: "done" }),
+      expect.objectContaining({ from: "you", text: "next" }),
     ]);
     expect(harness.requests()[0]?.args).toEqual({ solo: S, limit: 20 });
   });

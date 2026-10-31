@@ -17,6 +17,10 @@ export const READINESS_TTL = 30;
 export const TEXT_MAX = 16_000;
 export const TITLE_MAX = 120;
 export const PAGE_MAX = 50;
+/** The owner's Buzz keeps its latest grant acknowledgement among its newest
+ * this-many events in the control channel, posting it again as needed, so a
+ * controller finds it with one read. */
+export const ACK_HORIZON = 50;
 
 export const ACTIONS = [
   "readiness",
@@ -500,6 +504,7 @@ export function readRecord(event: BuzzEvent, kind: Kind) {
     return undefined;
   let record: Route;
   try {
+    eventDto(event);
     record = CHECKS[kind](parseCanonical(event.content));
   } catch {
     return undefined;
@@ -527,14 +532,16 @@ export function answers(response: Response, intent: Intent, id: string) {
     worker: string;
     events: BuzzEvent[];
   };
-  return events.every(
-    (event) =>
-      event.tags.some(
-        ([name, value]) => name === "h" && value === intent.args.solo,
-      ) &&
+  return events.every((event) => {
+    const channels = event.tags.filter((tag) => tag[0] === "h");
+    return (
+      event.kind === 9 &&
+      channels.length === 1 &&
+      channels[0]?.[1] === intent.args.solo &&
       (event.pubkey === worker ||
-        (event.pubkey === intent.owner && marked(event, "relay"))),
-  );
+        (event.pubkey === intent.owner && marked(event, "relay")))
+    );
+  });
 }
 const routeOf = ({
   owner,

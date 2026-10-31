@@ -216,6 +216,11 @@ for (const own of [false, true]) {
     app,
   }) => {
     await open(page, app);
+    // Keyboard modality mounts every row's controls. Pointer input defers them.
+    await page.mouse.click(2, 2);
+    await expect(page.locator("html")).not.toHaveAttribute(
+      "data-keyboard-navigation",
+    );
     // The other speaker's message keeps history from stacking this byline away.
     app.append("primary", "alpha", "Other speaker", true, !own);
     const event = app.append(
@@ -238,6 +243,9 @@ for (const own of [false, true]) {
     );
     await settle(page);
     await page.mouse.move(0, 0);
+    await expect
+      .poll(() => actions.evaluate((bar) => bar.childElementCount))
+      .toBe(0);
     // First entry straight onto the name, then still, mounts and reveals.
     const name = await row
       .locator("[data-message-byline] strong")
@@ -266,7 +274,9 @@ for (const own of [false, true]) {
       window.__revealChanges = 0;
       new MutationObserver((records) => {
         window.__revealChanges += records.length;
-      }).observe(node, { attributeFilter: ["data-actions-revealed"] });
+      }).observe(node.querySelector("[data-layout]"), {
+        attributeFilter: ["data-actions-revealed"],
+      });
       return {
         x: bubble.left + 8,
         top: byline.top + byline.height / 2,

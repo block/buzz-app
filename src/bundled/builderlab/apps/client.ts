@@ -29,7 +29,7 @@ export type AppsClient = ReturnType<typeof createAppsClient>;
 
 export function createAppsClient(
   host: Host,
-  session: OAuthSession,
+  session: Pick<OAuthSession, "snapshot" | "credential">,
   base: string,
 ) {
   // One client belongs to one tool operation, including all its HTTP steps.

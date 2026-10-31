@@ -151,7 +151,7 @@ function renderers() {
       registerLink: register("buzz.github"),
     },
     relay: {},
-    agents: { addTool: () => {} },
+    agents: { addTool: () => {}, share: () => {} },
     inject: () => {},
   } as never);
   const [links, github] = found;

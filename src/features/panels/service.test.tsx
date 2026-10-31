@@ -41,6 +41,12 @@ it("independently unloads panels without removing the page or shared data", asyn
     addTool: () => {},
     addAttentionSource: () => {},
     presentSource: () => {},
+    share: () => {},
+    shared: () => ({
+      read: () => undefined,
+      watch: () => () => {},
+      call: async () => null,
+    }),
   });
   root.provide("communityReader", {
     subscribe: () => () => {},

@@ -217,8 +217,7 @@ async function setup<Config>(
     subscribe: () => () => {},
   });
   const activity = createLocalAgentActivity();
-  /** Each start's binding lookup: one per start attempt. */
-  const attempts = vi.fn(() => binding);
+  const bindingFor = () => binding;
   const service = new AgentsService(
     ctx,
     communities,
@@ -227,7 +226,7 @@ async function setup<Config>(
     undefined,
     activity,
     undefined,
-    attempts,
+    bindingFor,
   );
   disposals.push(() => ctx.fiber.dispose());
   const plugin = ctx.extend({
@@ -292,7 +291,6 @@ async function setup<Config>(
     transport: counted.state,
     deliveries,
     activity,
-    attempts,
     mention,
   };
 }
@@ -604,7 +602,6 @@ it("refuses to start from deleted synced settings once: no launch, the reason on
     [[settingsSubject, deleted], seeded[1] as [Subject, RelayEvent]],
     synced(),
   );
-  f.attempts.mockClear();
   const sent = f.mention();
   const work = () =>
     f.activity.reader.work().filter((item) => item.messageId === sent.id);
@@ -615,10 +612,15 @@ it("refuses to start from deleted synced settings once: no launch, the reason on
       error: "Settings were deleted — restore from History",
     }),
   ]);
-  // Past the service's next tick, which runs whatever is still queued.
+  // Past the service's next tick, which runs whatever is still queued: the
+  // mention stays refused once, and nothing starts.
   await vi.advanceTimersByTimeAsync(6_000);
-  expect(f.attempts).toHaveBeenCalledTimes(1);
-  expect(work()).toHaveLength(1);
+  expect(work()).toEqual([
+    expect.objectContaining({
+      state: "error",
+      error: "Settings were deleted — restore from History",
+    }),
+  ]);
   expect(f.deliveries).toEqual([]);
   expect(goose.geese).toEqual([]);
   expectOnlyAllowed(f);

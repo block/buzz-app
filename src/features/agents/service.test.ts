@@ -33,6 +33,7 @@ import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type Agents,
   AgentsService,
   type AgentType,
   type ConfigBinding,
@@ -55,6 +56,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
+import type { RuntimeLink } from "./exposed";
 import { readTeams, writeTeams } from "./store";
 import {
   bot,
@@ -165,9 +167,23 @@ async function setup({
 } = {}) {
   const ctx = new Context();
   let settled = false;
+  // As the plugin runtime does, a change of whether startup is over is
+  // published with the plugins' status.
+  const statusListeners = new Set<() => void>();
+  const setSettled = (next: boolean) => {
+    settled = next;
+    for (const listener of [...statusListeners]) listener();
+  };
   ctx.provide("pluginStatus", {
     isActive: pluginActive,
-    subscribe: subscribePlugin,
+    subscribe: (listener: () => void) => {
+      statusListeners.add(listener);
+      const stop = subscribePlugin(listener);
+      return () => {
+        statusListeners.delete(listener);
+        stop();
+      };
+    },
     settled: () => settled,
   });
   const fake = fakeRelay();
@@ -267,7 +283,6 @@ async function setup({
     ...(sessionControls
       ? {
           sessionControls: {
-            scope: () => "thread" as const,
             subscribe: () => () => {},
             ...sessionControls,
           },
@@ -276,23 +291,25 @@ async function setup({
     ...(resumes ? { resumes } : {}),
     ...(syncedSettings ? { syncedSettings } : {}),
   };
-  plugin.agents.register(type);
+  register(plugin.agents, type, sessionControls && (() => "thread" as const));
   // The Attention plugin starts after the type, then startup is over.
   const watching = attention ? showAttention(ctx, "one") : undefined;
   await watching;
-  settled = !starting;
+  setSettled(!starting);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"), {
     // Keep fake-clock advancement unchanged in the timer behavior cases.
     interval: vi.isFakeTimers() ? 50 : 1,
   });
+  // An inactive plugin's type is shown once it is active.
+  if (pluginActive()) await typeShown(service, "example/echo");
+  // And the Runner has the memberships it starts with.
+  await runnerHas(service);
   return {
     activity,
     service,
     typesafe,
     /** Ends startup, as when the last plugin finishes starting. */
-    settleStartup: () => {
-      settled = true;
-    },
+    settleStartup: () => setSettled(true),
     type,
     native,
     storage,
@@ -332,20 +349,48 @@ function runnerGate<T = void>() {
   return { promise, resolve, reject };
 }
 
+/** Registers `type` as a harness plugin does: how it runs from its agent
+ * entry, and how it is managed (with `scope` for its session controls) from
+ * its UI entry. */
+function register<Config>(
+  agents: Pick<Agents, "register" | "present">,
+  type: AgentType<Config>,
+  scope?: (agent: Agent<Config>) => "thread" | "channel",
+) {
+  const { adopt, carry, describeMigration, ...runs } = type;
+  agents.register(runs);
+  agents.present<Config>(type.id, () => ({
+    ...(adopt && { adopt }),
+    ...(carry && { carry }),
+    ...(describeMigration && { describeMigration }),
+    ...(scope && { sessionScope: scope }),
+  }));
+}
+
+/** Waits until the screens show the type `key`, which the Runner tells of
+ * over the link. */
+const typeShown = (service: AgentsService, key: string) =>
+  vi.waitFor(() => {
+    const type = service.types().find((type) => type.key === key);
+    if (!type) throw new Error(`${key} is not shown yet`);
+    return type;
+  });
+
 /** Lets every pending promise chain finish: a macrotask runs only after the
  * microtask queue is empty, so this does not depend on how fast runners are. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 /** The service's synced config state, which tests set as the relay would. */
-const internals = (service: AgentsService) => {
-  const parts = service as unknown as {
-    runner: { configStore: AgentConfigStore };
+const internals = (service: AgentsService) =>
+  service as unknown as {
+    configStore: AgentConfigStore;
     communityConfigs: Map<string, unknown>;
   };
-  return {
-    configStore: parts.runner.configStore,
-    communityConfigs: parts.communityConfigs,
-  };
-};
+/** Settles once the Runner has the synced state the Manager last sent it,
+ * which crosses the link a moment after the Manager has it. */
+const runnerHas = (service: AgentsService) =>
+  (
+    service as unknown as { decided: { decided(): Promise<void> } }
+  ).decided.decided();
 
 /** The events native published as an agent, of `kind`, in order. */
 async function published(native: ReturnType<typeof fakeNative>, kind: number) {
@@ -371,49 +416,96 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-it("shows a type with what its plugin presents, from the handles the type exposes", async () => {
+it("shows a type with what its plugin presents, its UI reaching what the type exposes over the link", async () => {
   const { service, plugin } = await setup();
   const ready = { readiness: "ready" as const };
   let attention: (() => void) | undefined;
-  const handles = { count: 1 };
-  const shown = vi.fn((exposed: typeof handles) => ({
+  let providerChanged = () => {};
+  let count = 1;
+  let countChanged = () => {};
+  const shown = vi.fn((runtime: RuntimeLink) => ({
     icon: () => null,
     tabs: [{ id: "t", title: "T", component: () => null }],
     provider: { DialogBody: () => null },
     // Only what a type shows is taken from `present`.
     run: () => {},
     title: "Wrong",
-    exposed,
+    runtime,
   }));
   plugin.agents.register({
     id: "shown",
     title: "Shown",
     defaults: () => ({ config: {} }),
-    expose: handles,
+    expose: {
+      topics: {
+        count: () => ({
+          get: () => count,
+          subscribe: (listener) => {
+            countChanged = listener;
+            return () => {};
+          },
+        }),
+      },
+      commands: {
+        add: (more) => {
+          count += more as number;
+          countChanged();
+          return count;
+        },
+      },
+    },
     provider: {
       snapshot: () => ready,
-      subscribe: () => () => {},
+      subscribe: (listener) => {
+        providerChanged = listener;
+        return () => {};
+      },
       check: () => {},
       get attentionAction() {
         return attention;
       },
     },
   });
-  const runtimeOnly = service.types().find((t) => t.key === "example/shown");
-  expect(runtimeOnly?.tabs).toBeUndefined();
+  const runtimeOnly = await typeShown(service, "example/shown");
+  expect(runtimeOnly.tabs).toBeUndefined();
   plugin.agents.present("shown", shown as never);
   const type = service.types().find((t) => t.key === "example/shown");
-  expect(shown).toHaveBeenCalledExactlyOnceWith(handles);
+  expect(shown).toHaveBeenCalledOnce();
   expect(type).toMatchObject({ title: "Shown", tabs: [{ id: "t" }] });
   expect(type?.run).toBeUndefined();
   expect(type?.icon).toBeTypeOf("function");
   expect(type?.provider?.DialogBody).toBeTypeOf("function");
-  // The runtime's provider stays live, and readers see one stable type.
+  // The UI reads and changes the runtime over the link, never directly.
+  const runtime = shown.mock.calls[0]?.[0] as RuntimeLink;
+  runtime.watch("count", null, () => {});
+  await vi.waitFor(() => expect(runtime.read("count")).toBe(1));
+  await expect(runtime.call("add", 2)).resolves.toBe(3);
+  expect(runtime.read("count")).toBe(3);
+  // The provider's state, and its attention action, come from the Runner.
+  await vi.waitFor(() => expect(type?.provider?.snapshot()).toEqual(ready));
   expect(type?.provider?.attentionAction).toBeUndefined();
-  attention = () => {};
-  expect(type?.provider?.attentionAction).toBe(attention);
+  attention = vi.fn();
+  providerChanged();
+  await vi.waitFor(() =>
+    expect(type?.provider?.attentionAction).toBeTypeOf("function"),
+  );
+  type?.provider?.attentionAction?.();
+  await vi.waitFor(() => expect(attention).toHaveBeenCalledOnce());
+  // Readers see one stable type.
   expect(service.types().find((t) => t.key === "example/shown")).toBe(type);
   expect(shown).toHaveBeenCalledOnce();
+});
+
+it("refuses a type that runs here and gives what only its UI presents", async () => {
+  const { plugin } = await setup();
+  expect(() =>
+    plugin.agents.register({
+      id: "mixed",
+      title: "Mixed",
+      defaults: () => ({ config: {} }),
+      summary: () => "Mixed",
+    }),
+  ).toThrow("gives summary from its plugin's present");
 });
 
 it("still runs a type whose present throws", async () => {
@@ -427,9 +519,9 @@ it("still runs a type whose present throws", async () => {
   plugin.agents.present("broken", () => {
     throw new Error("no UI");
   });
-  expect(service.types().find((t) => t.key === "example/broken")).toMatchObject(
-    { title: "Broken" },
-  );
+  expect(await typeShown(service, "example/broken")).toMatchObject({
+    title: "Broken",
+  });
   expect(error).toHaveBeenCalledOnce();
   error.mockRestore();
 });
@@ -2021,6 +2113,8 @@ describe("a type without synced settings", () => {
     const save = vi.fn();
     internals(f.service).communityConfigs.set("https://relay.example.test", {
       save,
+      // Running agents are attached as the Runner reports them.
+      attach: async () => {},
     } as never);
     await expect(
       f.service.save(bot, { config: { reply: "local", instructions: "x" } }),
@@ -2066,6 +2160,8 @@ it("fails a Save its home's config channels didn't send, changing nothing here",
   const save = vi.fn(async () => ({}));
   internals(f.service).communityConfigs.set("https://relay.example.test", {
     save,
+    // Running agents are attached as the Runner reports them.
+    attach: async () => {},
   } as never);
   await expect(
     f.service.save(bot, { config: { reply: "x", instructions: "mine" } }),
@@ -2124,7 +2220,8 @@ it("gives running agents a remote instructions revision the way a local save doe
     config: { reply: "local", instructions: "from another device" },
     configBase: { instructions: head.id },
   });
-  // The run then starts from it too.
+  // The run then starts from it too, once the Runner has it.
+  await runnerHas(f.service);
   f.emit({ events: [event("1", { tags: [["p", bot]] })] });
   await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
   expect(f.run.mock.calls[0]?.[0]).toMatchObject({
@@ -2176,6 +2273,7 @@ it("keeps a synced agent off its local row while no channel is bound to it", asy
     }),
   );
   expect(f.service.find(bot)?.config).not.toHaveProperty("instructions");
+  await runnerHas(f.service);
   f.emit({
     events: [
       event("1", {
@@ -2219,6 +2317,7 @@ it("refuses an edit or a retype while the agent's config is moving, keeping the 
       defaults: () => ({ config: {} }),
       run: vi.fn(),
     });
+  await typeShown(f.service, "other/relay");
   mode = "migrating";
   const moving =
     "This agent's config is moving to the community; try again shortly";
@@ -2250,6 +2349,7 @@ it("keeps its type while its synced settings can't be saved as the new type's", 
       defaults: () => ({ config: {} }),
       run: vi.fn(),
     });
+  await typeShown(f.service, "other/relay");
   // Its home's config isn't up, so its other devices couldn't follow.
   await expect(f.service.retype(bot, "other/relay")).rejects.toThrow(
     "Connect to the community to change its type",
@@ -2334,6 +2434,7 @@ it("hands a run the synced settings it starts from, and refuses invalid ones", a
       ) as RelayEvent,
     });
   revise({ effort: "max" });
+  await runnerHas(f.service);
   f.emit({ events: [event("1", { tags: [["p", bot]] })] });
   await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
   expect(f.run.mock.calls[0]?.[0]).toMatchObject({
@@ -2342,6 +2443,7 @@ it("hands a run the synced settings it starts from, and refuses invalid ones", a
   });
   // A value outside the type's allowlist never runs, nor falls back.
   revise({ effort: "xhigh" });
+  await runnerHas(f.service);
   f.emit({
     events: [
       event("2", {
@@ -2770,6 +2872,7 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
     defaults: () => ({ config: {} }),
     run: vi.fn(),
   });
+  await typeShown(service, "other/relay");
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const kept = plugin.agents.handle(bot);
   let continueType = () => {};
@@ -3174,6 +3277,7 @@ describe("an agent in several communities", () => {
           defaults: () => ({ config: {} }),
           run: vi.fn(),
         });
+      await typeShown(f.service, "other/relay");
       await f.service.retype(bot, "other/relay");
       expect(c.get(home)?.exclusive).toHaveBeenCalledWith(
         bot,
@@ -3182,7 +3286,7 @@ describe("an agent in several communities", () => {
       expect(f.native.setType).toHaveBeenCalledWith(bot, "other/relay");
     });
 
-    const relayType = (f: Awaited<ReturnType<typeof joined>>) =>
+    const relayType = async (f: Awaited<ReturnType<typeof joined>>) => {
       f.ctx
         .extend({
           pluginOwner: Object.freeze({ id: "other", revision: "one" }),
@@ -3193,12 +3297,14 @@ describe("an agent in several communities", () => {
           defaults: () => ({ config: {} }),
           run: vi.fn(),
         });
+      await typeShown(f.service, "other/relay");
+    };
 
     it("attaches its config nowhere while its type changes, even where it comes up meanwhile", async () => {
       const c = channels("home synced");
       const f = await joined();
       await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
-      relayType(f);
+      await relayType(f);
       // Home reconnects, and its coordinator isn't up yet.
       const make = coordinators.make;
       let up: (() => void) | undefined;
@@ -3237,7 +3343,7 @@ describe("an agent in several communities", () => {
       const c = channels("home synced", "example/echo");
       const f = await joined();
       await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
-      relayType(f);
+      await relayType(f);
       const store = internals(f.service).configStore;
       const opened = store.state(settings(home)).head?.id;
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -3290,7 +3396,7 @@ describe("an agent in several communities", () => {
       const c = channels("home synced", "example/echo");
       const f = await joined();
       await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
-      relayType(f);
+      await relayType(f);
       c.get(home)?.save.mockResolvedValueOnce({
         settings: { status: "conflict" },
       });
@@ -3334,7 +3440,7 @@ describe("an agent in several communities", () => {
       const c = channels("home synced", "example/echo");
       const f = await joined();
       await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
-      relayType(f);
+      await relayType(f);
       const store = internals(f.service).configStore;
       const side = settings(home);
       store.applyRead(side, store.capture(side), {
@@ -3354,7 +3460,7 @@ describe("an agent in several communities", () => {
       const c = channels("home synced", "example/echo");
       const f = await joined();
       await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
-      relayType(f);
+      await relayType(f);
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       f.native.setType.mockRejectedValueOnce(new Error("busy"));
       const store = internals(f.service).configStore;
@@ -3721,12 +3827,13 @@ it("keeps an agent running while its community reconnects, and stops it on disco
   reconnecting();
   expect(service.find(bot)).toBeUndefined();
   expect(running()).toEqual([bot]);
+  // The screens see what runs once the Runner sends it over the link.
   connect(false);
-  expect(running()).toEqual([]);
+  await vi.waitFor(() => expect(running()).toEqual([]));
   connect(true);
-  expect(running()).toEqual([bot]);
+  await vi.waitFor(() => expect(running()).toEqual([bot]));
   leave("https://relay.example.test");
-  expect(running()).toEqual([]);
+  await vi.waitFor(() => expect(running()).toEqual([]));
   expect(service.relay(bot)).toBeUndefined();
 });
 
@@ -3980,9 +4087,10 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   const attention = service.find(bot)?.attention;
   await service.save(bot, { config: { reply: "Triage." } });
   const other = vi.fn<(delivery: Delivery<{ prompt: string }>) => void>();
-  ctx
-    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
-    .agents.register<{ prompt: string; model: string }>({
+  register<{ prompt: string; model: string }>(
+    ctx.extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+      .agents,
+    {
       id: "relay",
       title: "Relay",
       defaults: () => ({ config: { prompt: "", model: "small" } }),
@@ -4008,7 +4116,8 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
         { id: "destination", label: "Destination only", isOverride: false },
       ],
       run: other,
-    });
+    },
+  );
   // Not while a turn, or the work it handed off, is still going.
   let finish = () => {};
   run.mockImplementationOnce(async ({ workingUntil }) =>
@@ -4033,6 +4142,7 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
       { id: "sessions", label: "Sessions", outcome: "reset" },
     ],
   });
+  await typeShown(service, "other/relay");
   expect(native.setType).not.toHaveBeenCalled();
   await expect(service.retype(bot, "other/relay")).rejects.toThrow(
     "Echo is answering",
@@ -4996,6 +5106,7 @@ it("keeps an agent created while identities are still loading", async () => {
       defaults: () => ({ config: { reply: "ok" } }),
     });
   await vi.waitFor(() => expect(native.list).toHaveBeenCalled());
+  await typeShown(service, "example/echo");
   await service.create({ type: "example/echo", name: "Echo" });
   release([]);
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
@@ -6685,7 +6796,9 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(second.run).not.toHaveBeenCalled();
 
     second.service.resumeInterrupted();
-    expect(second.service.snapshot().interrupted).toEqual([]);
+    await vi.waitFor(() =>
+      expect(second.service.snapshot().interrupted).toEqual([]),
+    );
     await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
     expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     expect(second.run.mock.calls[0]?.[0]).toMatchObject({ channelId: channel });
@@ -6725,7 +6838,9 @@ describe("a turn closing or reloading the app stopped", () => {
     await settle();
     expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
     second.service.dismissInterrupted();
-    expect(second.service.snapshot().interrupted).toEqual([]);
+    await vi.waitFor(() =>
+      expect(second.service.snapshot().interrupted).toEqual([]),
+    );
     expect(readInterrupted(second.storage)).toEqual({});
     second.service.resumeInterrupted();
     await settle();
@@ -6795,10 +6910,12 @@ describe("a turn closing or reloading the app stopped", () => {
     await settle();
     expect(resumedOf(app.run)).toEqual(["Echo, go on (resumed)"]);
     expect(names(app.service.snapshot().interrupted)).toEqual(["Birch"]);
+    const dismissed = { [bot]: { [asked.id]: channel } };
+    expect(readInterrupted(app.storage)).not.toEqual(dismissed);
     app.service.dismissInterrupted();
-    expect(readInterrupted(app.storage)).toEqual({
-      [bot]: { [asked.id]: channel },
-    });
+    await vi.waitFor(() =>
+      expect(readInterrupted(app.storage)).toEqual(dismissed),
+    );
   });
 
   it("stays saved when it cannot be read again, and is given on the next try", async () => {
@@ -7634,8 +7751,11 @@ it("wakes nothing from the time no plugin showed its attention", async () => {
     await settle();
     vi.setSystemTime((start + 5) * 1000);
     await watching?.dispose();
+    // The Runner hears over the link that Attention is hidden.
+    await runnerHas(service);
     history.push(posted("while hidden", start + 5));
     await showAttention(ctx, "two");
+    await runnerHas(service);
     // A reconnect a minute later catches up from when it was shown again.
     vi.setSystemTime((start + 60) * 1000);
     history.push(posted("after", start + 30));
@@ -9169,15 +9289,18 @@ it("refuses drafts through a delivery handle its replaced type kept", async () =
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });
   await f.service.create({ type: "example/echo", name: "Child" });
-  f.ctx
-    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
-    .agents.register<{ prompt: string }>({
+  register<{ prompt: string }>(
+    f.ctx.extend({
+      pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+    }).agents,
+    {
       id: "relay",
       title: "Relay",
       defaults: () => ({ config: { prompt: "" } }),
       adopt: (carry, saved) => ({ prompt: carry.instructions ?? saved.prompt }),
       run: vi.fn(),
-    });
+    },
+  );
   let delivery!: Delivery<Config>;
   const delivered = new Promise<void>((resolve) =>
     f.run.mockImplementationOnce((accepted) => {
@@ -9195,6 +9318,7 @@ it("refuses drafts through a delivery handle its replaced type kept", async () =
       }),
     ],
   });
+  await typeShown(f.service, "other/relay");
   try {
     await delivered;
     await vi.waitFor(() =>
@@ -9423,6 +9547,8 @@ it("wakes nothing from the time no plugin showed its attention, across a restart
     await settle();
     vi.setSystemTime((start + 5) * 1000);
     await first.watching?.dispose();
+    // The Runner hears over the link that Attention is hidden.
+    await runnerHas(first.service);
     await settle();
     first.connect(false);
     // The app starts again with the plugin still off, then it is turned on.
@@ -9435,6 +9561,7 @@ it("wakes nothing from the time no plugin showed its attention, across a restart
     });
     await settle();
     await showAttention(second.ctx, "two");
+    await runnerHas(second.service);
     vi.setSystemTime((start + 60) * 1000);
     second.history.push(posted("after", start + 30));
     second.recover();
@@ -9456,6 +9583,8 @@ it("wakes nothing from the time no plugin showed its attention when it is shown 
     await settle();
     vi.setSystemTime((start + 5) * 1000);
     await first.watching?.dispose();
+    // The Runner hears over the link that Attention is hidden.
+    await runnerHas(first.service);
     await settle();
     first.connect(false);
     // The app starts again with the plugin off, and it is turned on while
@@ -9471,6 +9600,7 @@ it("wakes nothing from the time no plugin showed its attention when it is shown 
     second.emit({ events: [posted("live while hidden", start + 20)] });
     await settle();
     await showAttention(second.ctx, "two");
+    await runnerHas(second.service);
     vi.setSystemTime((start + 60) * 1000);
     second.history.push(posted("after", start + 30));
     second.recover();
@@ -9497,6 +9627,8 @@ it("wakes only a watch with no hidden stream for an event heard while Attention 
     await first.service.save(bot, { attentionEnabled: true, attention });
     await settle();
     await first.watching?.dispose();
+    // The Runner hears over the link that Attention is hidden.
+    await runnerHas(first.service);
     await settle();
     first.connect(false);
     vi.setSystemTime((start + 20) * 1000);
@@ -9510,6 +9642,7 @@ it("wakes only a watch with no hidden stream for an event heard while Attention 
     second.emit({ events: [posted("live while hidden", start + 20)] });
     await settle();
     await showAttention(second.ctx, "two");
+    await runnerHas(second.service);
     await vi.waitFor(() => expect(second.run).toHaveBeenCalled());
     await settle();
     expect(
@@ -9536,10 +9669,13 @@ it("wakes nothing from the time Attention was hidden after it was shown during s
     await settle();
     vi.setSystemTime((start + 5) * 1000);
     await watching?.dispose();
+    // The Runner hears over the link that Attention is hidden.
+    await runnerHas(service);
     await settle();
     history.push(posted("while hidden", start + 10));
     vi.setSystemTime((start + 20) * 1000);
     await showAttention(ctx, "two");
+    await runnerHas(service);
     vi.setSystemTime((start + 60) * 1000);
     history.push(posted("after", start + 30));
     recover();
@@ -9563,6 +9699,7 @@ it("wakes a watch for an event heard during startup before Attention is shown", 
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run).not.toHaveBeenCalled();
   await showAttention(ctx, "two");
+  await runnerHas(service);
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "watch",
@@ -9591,6 +9728,7 @@ it("hears an event held during startup after what it missed while closed", async
     second.emit({ events: [posted("live", start + 20)] });
     await settle();
     await showAttention(second.ctx, "two");
+    await runnerHas(second.service);
     await vi.waitFor(() => expect(heard(second.run)).toHaveLength(2));
     expect(heard(second.run)).toEqual(["missed", "live"]);
   } finally {
@@ -9610,6 +9748,7 @@ it("wakes nothing for an event heard during startup when it ends without Attenti
   settleStartup();
   await vi.advanceTimersByTimeAsync(5_000);
   await showAttention(ctx, "two");
+  await runnerHas(service);
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run).not.toHaveBeenCalled();
 });
@@ -9628,6 +9767,7 @@ it("turning the saved switch off cancels a startup-held event", async () => {
   await vi.advanceTimersByTimeAsync(1_000);
   await service.save(bot, { attentionEnabled: true });
   await showAttention(ctx, "two");
+  await runnerHas(service);
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run).not.toHaveBeenCalled();
 });
@@ -9638,11 +9778,14 @@ it("turns every agent's attention off while no plugin shows it, keeps its switch
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
   await watching?.dispose();
+  // The Runner hears over the link that Attention is hidden.
+  await runnerHas(service);
   expect(service.find(bot)?.attentionEnabled).toBe(false);
   emit({ events: [deploy("w")] });
   await vi.advanceTimersByTimeAsync(5_000);
   expect(run).not.toHaveBeenCalled();
   await showAttention(ctx, "two");
+  await runnerHas(service);
   expect(service.find(bot)?.attentionEnabled).toBe(true);
   emit({ events: [deploy("w2")] });
   await vi.advanceTimersByTimeAsync(5_000);
@@ -9657,12 +9800,15 @@ it("keeps timers and the Attention tools off while no plugin shows Attention", a
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true, attention: tick });
   await watching?.dispose();
+  // The Runner hears over the link that Attention is hidden.
+  await runnerHas(service);
   await vi.advanceTimersByTimeAsync(120_000);
   expect(run).not.toHaveBeenCalled();
   const { attention } = await handleOf(run, emit);
   expect(attention.enabled()).toBe(false);
   run.mockClear();
   await showAttention(ctx, "two");
+  await runnerHas(service);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "timer",
@@ -9769,7 +9915,7 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     },
   ]);
   const { templates } = await handleOf(run, emit);
-  expect(templates()).toEqual([
+  await expect(templates()).resolves.toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });
@@ -9980,8 +10126,11 @@ describe("Attention plugin sources", () => {
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(1));
     await watching?.dispose();
+    // The Runner hears over the link that Attention is hidden.
+    await runnerHas(service);
     await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1));
     await showAttention(ctx, "two");
+    await runnerHas(service);
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(2));
     await service.save(bot, { attentionEnabled: false });
   });
@@ -10008,6 +10157,7 @@ describe("Attention plugin sources", () => {
     expect(produce).not.toHaveBeenCalled();
     active = true;
     for (const listener of listeners) listener();
+    await typeShown(service, "example/echo");
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot, 0));
     await service.save(bot, { attentionEnabled: true, attention: watches });
@@ -10670,9 +10820,10 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
   const { service, native, plugin, ctx } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
   await service.create({ type: "example/echo", name: "Child" });
-  ctx
-    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
-    .agents.register<{ prompt: string; model: string }>({
+  register<{ prompt: string; model: string }>(
+    ctx.extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+      .agents,
+    {
       id: "relay",
       title: "Relay",
       defaults: () => ({ config: { prompt: "", model: "small" } }),
@@ -10682,7 +10833,8 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
       }),
       carry: ({ prompt }) => ({ instructions: prompt }),
       run: vi.fn(),
-    });
+    },
+  );
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
   if (!handle) throw new Error("Missing handle");
@@ -10691,6 +10843,7 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
     protectionContext: async () => ({ messages: [] }),
     memories: async () => ({ entries: [], partial: false }),
   });
+  await typeShown(service, "other/relay");
   const result = JSON.parse(
     (await callTool(client, {}, "agent_update", {
       agent: "Child",
@@ -11350,8 +11503,10 @@ it.each(["abort", "community"])(
     } finally {
       release();
     }
+    // The save answers over the Runner link, so the refusal can come first.
+    const refused = expect(pending).rejects.toThrow();
     await ownerSave;
-    await expect(pending).rejects.toThrow();
+    await refused;
     expect(service.find(bot)?.attention["interest/revoked"]).toBeUndefined();
   },
 );
@@ -11415,17 +11570,19 @@ it.each(["before", "during"])(
   "withholds connection memory when its agent type changes %s the read",
   async (phase) => {
     const { service, plugin, ctx, session } = await setup();
-    ctx
-      .extend({
+    register(
+      ctx.extend({
         pluginOwner: Object.freeze({ id: "replacement", revision: "one" }),
-      })
-      .agents.register({
+      }).agents,
+      {
         id: "echo",
         title: "Replacement",
         defaults: () => ({ config: {} }),
         adopt: () => ({}),
         run: vi.fn(),
-      });
+      },
+    );
+    await typeShown(service, "replacement/echo");
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
     let request!: import("../host/service").McpHandler;
@@ -11498,12 +11655,17 @@ it.each(["before", "during"])(
 
 it("discovers only active source providers and forgets unloaded registrations", async () => {
   let active = false;
-  let changed = () => {};
+  const listeners = new Set<() => void>();
+  const changed = () => {
+    for (const listener of [...listeners]) listener();
+  };
   const { service, plugin } = await setup({
     pluginActive: () => active,
     subscribePlugin: (listener) => {
-      changed = listener;
-      return () => {};
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   });
   const configExample = { topic: "releases" };
@@ -12306,7 +12468,7 @@ it.each(["spawn", "exit"])(
 
 it("lets an installed harness dispatch only its own hooks through the plugin API", async () => {
   const { plugin, ctx, type } = await setup();
-  plugin.agents.register({
+  register(plugin.agents, {
     ...type,
     id: "hooked",
     hooks: { events: ["BeforeTool"] },
@@ -12414,7 +12576,7 @@ it("reports unsupported hooks when their harness registers later", async () => {
     });
   await fiber.await();
   try {
-    plugin.agents.register({
+    register(plugin.agents, {
       ...type,
       id: "later",
       hooks: { events: ["BeforeTool"] },
@@ -12572,6 +12734,8 @@ describe("synced teams", () => {
     await vi.waitFor(() =>
       expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
     );
+    // The Runner has the team over the link.
+    await runnerHas(f.service);
     await handleOf(f.run, f.emit);
     const roster = f.run.mock.calls.at(-1)?.[0].team;
     expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
@@ -12595,6 +12759,8 @@ describe("synced teams", () => {
     await vi.waitFor(() =>
       expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
     );
+    // The Runner has the team over the link.
+    await runnerHas(f.service);
     await handleOf(f.run, f.emit);
     const roster = f.run.mock.calls.at(-1)?.[0].team;
     expect(roster).toContain(`- Sky (${npubEncode(hostedKey)})\n`);
@@ -12619,6 +12785,7 @@ describe("synced teams", () => {
     );
     const roster = async (id: string) => {
       const runs = f.run.mock.calls.length;
+      await runnerHas(f.service);
       f.emit({
         events: [
           event(id, {

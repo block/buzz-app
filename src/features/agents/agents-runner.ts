@@ -1,13 +1,12 @@
 // The Runner: the part of agents that runs them. It decides which agents run,
 // and owns the agent runners and the agent storage they keep, which is
-// records, catch-up progress, turns in progress and synced config copies.
+// records, catch-up progress and turns in progress.
 // What it needs from the Manager, the part the screens use, it asks through
 // `RunnerManager`; those facts and requests are what will cross the agents
 // link when the Runner moves to its own page.
 import { bytesToHex } from "nostr-tools/utils";
-import { AgentConfigStore } from "./agent-config";
 import { excerpt, mentionFacts, type ClassifierContext } from "./classifier";
-import type { Start } from "./agent-start";
+import { applySynced, type Synced } from "./agent-start";
 import {
   readCheckpoints,
   splitLegacyCheckpoints,
@@ -22,20 +21,23 @@ import { pubkeyOf, type AgentKey } from "./membership";
 import { migrateWatchFilters } from "./migrate-filter";
 import { migrateWatchKeywords } from "./migrate-keywords";
 import { migrateAgentStorage } from "./migrate-storage";
-import type { AgentIdentity } from "./native";
 import { ownerReads } from "./reads";
-import { AgentRecords, EMPTY, type Member } from "./records";
+import { AgentRecords, EMPTY, type Member, type RecordEdit } from "./records";
 import { AgentRunners, type Connection, type RunnerHost } from "./runner";
+import type { AgentsNative } from "./native";
 import type {
   Agent,
   AgentWake,
   HandoffSource,
   RegisteredAgentType,
+  SessionControlAction,
+  SessionPlace,
 } from "./service";
 import { soloChat } from "./solo-chat";
 import { nameSoloChat } from "./solo-chat-name";
 import type { AgentStore } from "./state";
-import type { AgentRecord } from "./store";
+import type { AgentRecord, Team } from "./store";
+import { type Teammate, teamPrompt } from "./team-prompt";
 import { relayPartition } from "../relay/partition";
 import type { RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
@@ -45,21 +47,16 @@ import type { Decisions } from "../decisions/service";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { Navigation } from "../navigation/controller";
 
+/** Whether a plugin that shows Attention is on, and whether the Manager's
+ * plugins have finished starting. Attention runs only while it is shown. */
+export type Attention = Readonly<{ shown: boolean; settled: boolean }>;
+
 /** What the Runner asks of the Manager. */
 export type RunnerManager = Pick<
   RunnerHost,
-  | "team"
-  | "createAgent"
-  | "updateAgent"
-  | "templates"
-  | "classifier"
-  | "attentionShown"
-  | "pluginsSettled"
-  | "protection"
+  "createAgent" | "updateAgent" | "templates" | "protection"
 > &
   Readonly<{
-    /** Who runs which agent changed. */
-    ownershipChanged(): void;
     /** A record or turn in progress changed what the screens show. */
     changed(): void;
     /** The community's relay, while the viewer is in it. */
@@ -67,11 +64,11 @@ export type RunnerManager = Pick<
     types(): readonly RegisteredAgentType[];
     /** The settings a new agent of this type starts with. */
     defaults(pubkey: string, type: RegisteredAgentType): AgentRecord;
-    /** What the agent starts with: `local`, its home record's config, with
-     * each synced side's confirmed copy over it. */
-    resolve(agent: Agent, local: unknown): Start<unknown>;
     /** A run of the agent ended. */
     finished(key: AgentKey): void;
+    /** Saves the agent's synced settings as `type`'s, before its type
+     * changes here to `type` with `config`. */
+    publishType(key: AgentKey, type: string, config: unknown): Promise<void>;
     /** Where an agent's closed tabs leave the viewer. */
     navigation?: Navigation | undefined;
   }>;
@@ -84,21 +81,46 @@ export class AgentsRunner {
   readonly runners: AgentRunners;
   /** The Runner's own live session of each community it runs agents in. */
   readonly connections: RunnerConnections;
-  /** Confirmed synced config copies, the only synced launch source. */
-  readonly configStore: AgentConfigStore;
   /** The agents running here, in every community, and those of them with
    * turns the app left working last time. */
   private state: Readonly<{
     running: readonly Agent[];
     interrupted: readonly Agent[];
   }> = { running: [], interrupted: [] };
-  /** The memberships it last decided from. */
+  /** Which memberships this copy runs, which another copy holds, and which
+   * are changing type. */
+  private held: RunnerStatus = {
+    runs: EMPTY_KEYS,
+    yielded: EMPTY_KEYS,
+    transitioning: EMPTY_KEYS,
+  };
+  /** The type each retyped agent has, until the memberships the Manager
+   * sends say so too. */
+  private readonly retyped = new Map<string, string>();
+  /** The memberships it last decided from, and their viewer. */
   private identities: readonly Member[] = [];
+  private viewer: string | undefined;
+  /** The last full list it forgot records by. */
+  private list: string | undefined;
   private readonly listeners = new Set<() => void>();
+  private readonly recordListeners = new Set<() => void>();
+  private readonly typeListeners = new Set<() => void>();
+  /** The owner's teams, and who rosters name in each community by origin,
+   * as the Manager last sent them. */
+  private teams: readonly Team[] = [];
+  private teammates: Readonly<Record<string, readonly Teammate[]>> = {};
+  /** Whether a plugin shows Attention, and whether the Manager's plugins
+   * have finished starting, as the Manager last sent them. */
+  private attention: Attention = { shown: false, settled: false };
+  /** What each membership starts with from the synced store, as the
+   * Manager last sent it. */
+  private synced: Readonly<Record<AgentKey, Synced>> = {};
 
   constructor(
     storage: AgentStore,
-    private readonly custody: RunnerHost["custody"],
+    private readonly custody:
+      | (NonNullable<RunnerHost["custody"]> & Pick<AgentsNative, "setType">)
+      | undefined,
     activity: LocalAgentActivity,
     decisions: Decisions | undefined,
     private readonly manager: RunnerManager,
@@ -117,19 +139,23 @@ export class AgentsRunner {
             console.warn(`Agent type ${type} has invalid defaults`, error);
           }
       },
-      changed: () => manager.changed(),
+      changed: () => {
+        for (const listener of [...this.recordListeners]) listener();
+        this.changed();
+      },
       // Its timers waited for this change, saved or failed.
       settled: (key) => this.runners.wake(key),
     });
     void splitLegacyCheckpoints(storage);
-    this.configStore = new AgentConfigStore(storage);
     this.connections = new RunnerConnections({
       open: (origin) => manager.open(origin),
       listen: (session, origin, connection) =>
         this.listen(session, origin, connection),
-      // The Manager's own session may change first: what runs is shown and
-      // reconciled again once this one has.
-      changed: () => manager.changed(),
+      changed: (origin, renewed) => {
+        this.update();
+        if (renewed) this.refreshCore(origin);
+        this.manager.changed();
+      },
     });
     this.coreMemory = new CoreMemoryCache((key) =>
       ownerReads(this.relay(key), pubkeyOf(key)),
@@ -137,10 +163,7 @@ export class AgentsRunner {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
-      ownershipChanged: () => {
-        this.notify();
-        manager.ownershipChanged();
-      },
+      ownershipChanged: () => this.status(),
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
       member: (agent, event) => this.member(agent, event),
@@ -172,12 +195,12 @@ export class AgentsRunner {
             console.warn("Agent turns in progress were not saved", error),
           );
         },
-        changed: () => manager.changed(),
+        changed: () => this.changed(),
       },
       scope: (agent) => this.connections.binding(agent)?.scope,
       saved: (key) => this.records.saved(key),
-      attentionShown: () => manager.attentionShown(),
-      pluginsSettled: () => manager.pluginsSettled(),
+      attentionShown: () => this.attention.shown,
+      pluginsSettled: () => this.attention.settled,
       record: (key) => {
         const member = this.liveMember(key);
         if (!member) throw new Error("No such agent on this device");
@@ -197,11 +220,27 @@ export class AgentsRunner {
       timers: (key) => this.records.timersOf(key),
       progress: (key, ran) => this.records.progress(key, ran),
       start: (agent) =>
-        manager.resolve(
-          agent,
-          (this.records.saved(agent.pubkey) ?? agent).config,
+        applySynced(
+          (this.records.saved(agent.pubkey) ?? agent).config as object,
+          // Each membership the Manager sends comes with what it starts
+          // with from the synced store.
+          this.synced[agent.key] ?? { ok: true, revisions: [] },
+          manager.types().find((type) => type.key === agent.type)
+            ?.syncedSettings?.withSynced as
+            | ((
+                config: object,
+                synced: Readonly<Record<string, string>>,
+              ) => object)
+            | undefined,
         ),
-      team: (key) => manager.team(key),
+      team: (key) => {
+        const member = this.liveMember(key);
+        const origin = member && originOf(member.relay);
+        // Only teammates in the same community, where it can reach them.
+        return member && origin
+          ? teamPrompt(this.teams, this.teammates[origin] ?? [], member.pubkey)
+          : "";
+      },
       protection: (agent) => manager.protection?.(agent),
       agentTypes: () =>
         manager
@@ -217,7 +256,8 @@ export class AgentsRunner {
         const session = this.connections.binding(agent)?.session;
         return session && channelTabs(session, manager.navigation);
       },
-      classifier: () => manager.classifier(),
+      classifier: () =>
+        decisions?.status() === "ready" ? "available" : "unavailable",
       decisions: () => decisions,
       context: (agent, event) => this.context(agent, event),
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
@@ -253,31 +293,215 @@ export class AgentsRunner {
     });
   }
 
-  /** Hears each change to what runs here or who holds it. */
+  /** Hears each change to what runs here, which of it was interrupted, who
+   * holds it, or which is changing type. */
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
+  /** Hears each change to a record. */
+  subscribeRecords(listener: () => void) {
+    this.recordListeners.add(listener);
+    return () => {
+      this.recordListeners.delete(listener);
+    };
+  }
   private notify() {
     for (const listener of [...this.listeners]) listener();
   }
-  /** Connects each community where the viewer has an agent. */
-  watch(identities: readonly AgentIdentity[], viewer: string | undefined) {
+  /** The memberships on this device, as the Manager last sent them, and
+   * whether they are all of them (`loaded`): connects each community where
+   * the viewer has an agent, decides again what runs, and forgets records
+   * no membership keeps. */
+  members(
+    identities: readonly Member[],
+    viewer: string | undefined,
+    loaded: boolean,
+  ) {
+    // Only a new list can name a record no membership keeps.
+    const list = JSON.stringify(identities);
+    const listed = loaded && list !== this.list;
+    if (loaded) this.list = list;
+    for (const identity of identities)
+      if (this.retyped.get(identity.pubkey) === identity.type)
+        this.retyped.delete(identity.pubkey);
+    this.identities = this.overlaid(identities);
+    this.viewer = viewer;
     this.connections.watch(identities, viewer);
+    this.update();
+    if (listed) this.forget();
+  }
+  /** Removes the settings whose agent is gone, or that a community it left
+   * kept: they do nothing. Its home record keeps its config while it is
+   * anywhere. */
+  private forget() {
+    const live = new Set(
+      this.identities
+        .filter((saved) => !saved.deleted)
+        .flatMap((saved) => [saved.key, saved.pubkey]),
+    );
+    for (const key of this.records.keys())
+      if (!live.has(key))
+        void this.records
+          .edit(key, { kind: "remove" })
+          .catch((error) =>
+            console.warn(`Agent ${key} settings were not removed`, error),
+          );
+  }
+  /** Decides again what runs once a record, a turn in progress or one of its
+   * sessions changed, and lets the Manager show it. */
+  private changed() {
+    this.update();
+    this.manager.changed();
+  }
+  /** Agent types were loaded or unloaded. */
+  typesChanged() {
+    this.update();
+    for (const listener of [...this.typeListeners]) listener();
+  }
+  /** The agent types registered here. */
+  types() {
+    return this.manager.types();
+  }
+  /** Hears each change to the agent types. */
+  subscribeTypes(listener: () => void) {
+    this.typeListeners.add(listener);
+    return () => {
+      this.typeListeners.delete(listener);
+    };
+  }
+  /** The viewer joined or left a community: connects or lets go of it. A
+   * new viewer waits for the memberships the Manager sends with it. */
+  communitiesChanged(viewer: string | undefined) {
+    if (viewer !== this.viewer) return;
+    this.connections.watch(this.identities, this.viewer);
+    this.update();
+  }
+  /** Gives the turns the app left `keys` working on last time again. */
+  resumeInterrupted(keys: readonly AgentKey[]) {
+    this.runners.resumeInterrupted(keys);
+    this.update();
+  }
+  /** The owner's teams, or who their rosters name, changed. */
+  setTeams(
+    teams: readonly Team[],
+    teammates: Readonly<Record<string, readonly Teammate[]>>,
+  ) {
+    this.teams = teams;
+    this.teammates = teammates;
+  }
+  /** Whether a plugin shows Attention, or startup is over, changed. */
+  setAttention(attention: Attention) {
+    this.attention = attention;
+  }
+  /** What each membership starts with from the synced store changed. */
+  setSynced(synced: Readonly<Record<AgentKey, Synced>>) {
+    this.synced = synced;
+  }
+  /** Forgets the turns the app left `keys` working on last time. */
+  dismissInterrupted(keys: readonly AgentKey[]) {
+    this.runners.dismissInterrupted(keys);
+    this.update();
+  }
+  /** Applies the Manager's edit. Its config waits for no change of type: one
+   * sent once that began would write the old type's config over the new. */
+  async edit(key: AgentKey, edit: RecordEdit) {
+    if (
+      edit.kind === "settings" &&
+      edit.change.config !== undefined &&
+      this.runners.transitioning(key)
+    )
+      throw new Error(`${edit.member.name}'s provider is already changing`);
+    await this.records.edit(key, edit);
+  }
+  /** Runs `action` on the agent's session in `place`, while this copy holds
+   * the agent with the type `type`, as the owner last saw it. */
+  async session(
+    key: AgentKey,
+    type: string,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const kind = this.manager.types().find((entry) => entry.key === type);
+    if (!kind?.sessionControls || this.agent(key)?.type !== type)
+      throw new Error(
+        "Use session controls in the Buzz app that runs this agent.",
+      );
+    await this.runners.control(key, async () => {
+      const current = this.agent(key);
+      if (current?.type !== type || !this.manager.types().includes(kind))
+        throw new Error("The agent's harness changed. Try again.");
+      await kind.sessionControls?.run(current, place, action);
+    });
+  }
+  /** Gives the agent the type `type`, starting with `config`, while no turn
+   * of it works and this copy holds it. With `publish`, its synced settings
+   * are saved as the new type's first. It shows with the new type once that
+   * config is saved; when the save fails, it keeps its type. */
+  async retype(key: AgentKey, type: string, config: unknown, publish: boolean) {
+    const member = this.liveMember(key);
+    const custody = this.custody;
+    if (!member || !custody) throw new Error("No such agent on this device");
+    const { pubkey, name } = member;
+    const retyping = this.runners.retype(key, name, async () => {
+      // Its other devices take the type its synced settings name.
+      if (publish) await this.manager.publishType(key, type, config);
+      await custody.setType(pubkey, type);
+      try {
+        await this.records.change(
+          pubkey,
+          (saved) => ({
+            ...(saved ?? this.records.settingsOf(member)),
+            config,
+          }),
+          () => {
+            this.retyped.set(pubkey, type);
+            this.identities = this.overlaid(this.identities);
+          },
+        );
+      } catch (error) {
+        try {
+          await custody.setType(pubkey, member.type);
+        } catch (rollback) {
+          throw new AggregateError(
+            [error, rollback],
+            `Could not save or restore ${name}'s provider`,
+          );
+        }
+        throw error;
+      }
+    });
+    this.status();
+    try {
+      await retyping;
+    } finally {
+      this.status();
+    }
+  }
+  /** The types of retyped agents the Manager does not show yet, by pubkey. */
+  retypes(): Readonly<Record<string, string>> {
+    return Object.fromEntries(this.retyped);
+  }
+  private overlaid(identities: readonly Member[]) {
+    if (!this.retyped.size) return identities;
+    return identities.map((identity) => {
+      const type = this.retyped.get(identity.pubkey);
+      return type && type !== identity.type ? { ...identity, type } : identity;
+    });
   }
   /** Decides which agents run: each of the viewer's agents whose community is
    * joined and not disconnected. A reconnect does not stop one. An unfinished
    * Delete or Remove stops it, and its types' plugins stop what they keep for
    * it. Then each runner goes on with what it can do now. */
-  update(identities: readonly Member[], viewer: string | undefined) {
-    this.identities = identities;
+  private update() {
+    const { identities, viewer } = this;
     const live = identities.filter(
       (identity) => !identity.deleted && !identity.deleting,
     );
     const running: Agent[] = [];
-    const shown = this.manager.attentionShown();
+    const shown = this.attention.shown;
     for (const identity of live) {
       const status = this.connections
         .relay(originOf(identity.relay))
@@ -331,7 +555,12 @@ export class AgentsRunner {
         ? prior.interrupted
         : Object.freeze(interrupted),
     };
-    if (this.state.running !== prior.running) this.notify();
+    if (
+      !this.status() &&
+      (this.state.running !== prior.running ||
+        this.state.interrupted !== prior.interrupted)
+    )
+      this.notify();
     this.runners.resume(
       new Set(
         running
@@ -348,6 +577,32 @@ export class AgentsRunner {
   /** The running agents with turns the app left working last time. */
   interrupted() {
     return this.state.interrupted;
+  }
+  /** Which memberships this copy runs, which another copy holds, and which
+   * are changing type. */
+  runnerStatus() {
+    return this.held;
+  }
+  /** Reads again who holds each membership and which is changing type, and
+   * says so when that changed. */
+  private status() {
+    const keys = this.identities
+      .filter((identity) => !identity.deleted)
+      .map((identity) => identity.key);
+    const next: RunnerStatus = {
+      runs: keys.filter((key) => this.runners.runs(key)),
+      yielded: keys.filter((key) => this.runners.yielded(key)),
+      transitioning: keys.filter((key) => this.runners.transitioning(key)),
+    };
+    const prior = this.held;
+    const changed =
+      !sameKeys(next.runs, prior.runs) ||
+      !sameKeys(next.yielded, prior.yielded) ||
+      !sameKeys(next.transitioning, prior.transitioning);
+    if (!changed) return false;
+    this.held = Object.freeze(next);
+    this.notify();
+    return true;
   }
   /** A running agent, in any community. */
   agent(key: AgentKey) {
@@ -396,7 +651,16 @@ export class AgentsRunner {
   clear() {
     this.connections.clear();
     this.runners.clear();
+    this.identities = [];
+    this.viewer = undefined;
+    this.list = undefined;
+    this.retyped.clear();
     this.state = { running: [], interrupted: [] };
+    this.held = {
+      runs: EMPTY_KEYS,
+      yielded: EMPTY_KEYS,
+      transitioning: EMPTY_KEYS,
+    };
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -546,6 +810,17 @@ const PARENT_LOOKUP_MS = 5_000;
 const same = (next: readonly Agent[], prior: readonly Agent[]) =>
   next.length === prior.length &&
   next.every((agent, index) => agent === prior[index]);
+/** Which memberships this copy runs, which another copy holds, and which are
+ * changing type. */
+export type RunnerStatus = Readonly<{
+  runs: readonly AgentKey[];
+  yielded: readonly AgentKey[];
+  transitioning: readonly AgentKey[];
+}>;
+const EMPTY_KEYS: readonly AgentKey[] = Object.freeze([]);
+const sameKeys = (next: readonly AgentKey[], prior: readonly AgentKey[]) =>
+  next.length === prior.length &&
+  next.every((key, index) => key === prior[index]);
 /** A membership as it runs here. */
 /** `shown`: whether a plugin shows Attention, without which it is off. */
 function view(identity: Member, record: AgentRecord, shown: boolean): Agent {

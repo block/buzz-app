@@ -114,6 +114,7 @@ export type {
   Agents,
   AgentAddedTab,
   AgentType,
+  AgentPresentation,
   AgentSession,
   AgentSessions,
 } from "../features/agents/service";
@@ -153,3 +154,5 @@ export type {
   SessionSnapshot,
   AuthenticatedRequest,
 } from "../features/federated-identity/service";
+export type { RuntimeLink } from "../features/agents/exposed";
+export type { Json, Served, Topic, Command } from "../features/agents/link";

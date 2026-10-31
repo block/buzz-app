@@ -144,6 +144,15 @@ export const fixturePlugins: readonly BundledPlugin[] = [
       inject: ["agents"],
       apply(ctx) {
         const state = { readiness: "ready" as const };
+        ctx.agents.present("sample", () => ({
+          provider: {
+            DialogBody: ({ onClose }) => (
+              <button type="button" onClick={onClose}>
+                Done
+              </button>
+            ),
+          },
+        }));
         ctx.agents.register({
           id: "sample",
           title: "Fixture provider",
@@ -152,11 +161,6 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             snapshot: () => state,
             subscribe: () => () => {},
             check() {},
-            DialogBody: ({ onClose }) => (
-              <button type="button" onClick={onClose}>
-                Done
-              </button>
-            ),
           },
         });
       },
@@ -425,6 +429,9 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             gate.release = resolve;
           });
         const state = { readiness: "ready" as const };
+        ctx.agents.present("provider", () => ({
+          provider: { DialogBody: () => <p>Delayed provider controls</p> },
+        }));
         ctx.agents.register({
           id: "provider",
           title: "Delayed provider",
@@ -433,7 +440,6 @@ export const fixturePlugins: readonly BundledPlugin[] = [
             snapshot: () => state,
             subscribe: () => () => {},
             check() {},
-            DialogBody: () => <p>Delayed provider controls</p>,
           },
         });
         ctx.pages.register({

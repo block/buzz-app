@@ -8,7 +8,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { Navigation } from "../../features/navigation/controller";
 import { BestiePage } from "./index";
-import { bestieFixture, cleanups, HOME } from "./testing";
+import { bestieFixture, cleanups, stubHome } from "./testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -28,11 +28,7 @@ beforeEach(() => {
     configurable: true,
     value: "MacIntel",
   });
-  let next = 0;
-  const randomUUID = crypto.randomUUID.bind(crypto);
-  vi.spyOn(crypto, "randomUUID").mockImplementation(() =>
-    next++ === 0 ? HOME : randomUUID(),
-  );
+  stubHome();
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(async () => {

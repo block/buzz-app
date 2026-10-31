@@ -42,7 +42,7 @@ function community() {
   return { relay, session, set };
 }
 
-it("hears a session while it is live, and says each time it starts or ends", () => {
+it("hears a session while it is live, and says each time its connection changes", () => {
   const { relay, session, set } = community();
   const stopLive = vi.fn();
   const listen = vi.fn(() => stopLive);
@@ -54,18 +54,61 @@ it("hears a session while it is live, and says each time it starts or ends", () 
   });
   connections.watch([identity], viewer);
   expect(connections.binding(identity)).toBeUndefined();
+  expect(changed).toHaveBeenLastCalledWith("https://relay.example", false);
+  // A session that starts after it began watching may have missed changes.
   set(true);
   expect(listen).toHaveBeenCalledWith(
     session,
     "https://relay.example",
     expect.objectContaining({ epoch: 0 }),
   );
-  expect(changed).toHaveBeenCalledTimes(1);
-  // The same session again changes nothing.
+  expect(changed).toHaveBeenLastCalledWith("https://relay.example", true);
+  // The same session again starts nothing.
   set(true);
-  expect(changed).toHaveBeenCalledTimes(1);
+  expect(listen).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenLastCalledWith("https://relay.example", false);
   set(false);
   expect(stopLive).toHaveBeenCalled();
   expect(connections.binding(identity)).toBeUndefined();
-  expect(changed).toHaveBeenCalledTimes(2);
+  expect(changed).toHaveBeenCalledTimes(4);
+});
+
+it("does not call a session it found live when it began watching renewed", () => {
+  const { relay, set } = community();
+  set(true);
+  const changed = vi.fn();
+  const connections = new RunnerConnections({
+    open: () => relay,
+    listen: () => () => {},
+    changed,
+  });
+  connections.watch([identity], viewer);
+  expect(connections.entries()).toEqual([
+    ["https://relay.example", expect.objectContaining({ scope: "scope" })],
+  ]);
+  expect(changed).toHaveBeenCalledExactlyOnceWith(
+    "https://relay.example",
+    false,
+  );
+});
+
+it("calls a community joined again renewed, since it may have missed changes", () => {
+  const { relay, set } = community();
+  set(true);
+  let open: RelayData | undefined = relay;
+  const changed = vi.fn();
+  const connections = new RunnerConnections({
+    open: () => open,
+    listen: () => () => {},
+    changed,
+  });
+  connections.watch([identity], viewer);
+  open = undefined;
+  connections.watch([identity], viewer);
+  expect(connections.entries()).toEqual([]);
+  const again = community();
+  again.set(true);
+  open = again.relay;
+  connections.watch([identity], viewer);
+  expect(changed).toHaveBeenLastCalledWith("https://relay.example", true);
 });

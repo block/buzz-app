@@ -8,6 +8,8 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
+import type { Served } from "../../features/agents/link";
+import { runtimeLink } from "../../features/agents/plugin-testing";
 import { agent, apply } from "./index";
 import type { SoloPull, SoloPulls } from "./solo-pull";
 import { SoloPullIcon, SoloPullLink, SoloPullMenu } from "./SoloPull";
@@ -161,6 +163,7 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     { id: team, channelType: "stream" },
   ]);
   let tool: AddedTool | undefined;
+  let served: Served | undefined;
   const agents = {
     addTool: (added: AddedTool) => {
       if (added.name === "github_link_pr") tool = added;
@@ -168,6 +171,10 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     relay: () => relay,
     // The agent side also lets agents follow pull requests.
     addAttentionSource: () => {},
+    share: (shared: Served) => {
+      served = shared;
+    },
+    shared: () => runtimeLink(served),
   };
   apply({
     host: {},

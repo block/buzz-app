@@ -53,6 +53,7 @@ export function AppShell({
   settingsCards,
   federatedIdentity,
   accountActions,
+  bindStatusSheet,
   appearance,
   pluginRecommendations = 0,
   searchServices,
@@ -83,6 +84,7 @@ export function AppShell({
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
+  bindStatusSheet?: ((open: () => boolean) => () => void) | undefined;
   appearance: Appearance;
   /** Managed plugin recommendations awaiting review, pointed out beside Plugins. */
   pluginRecommendations?: number;
@@ -462,6 +464,7 @@ export function AppShell({
               <ProfileButton
                 communities={communities}
                 accountActions={accountActions}
+                bindStatusSheet={bindStatusSheet}
                 settingsSelected={selected === "settings"}
                 appearance={appearance}
                 pluginRecommendations={pluginRecommendations}

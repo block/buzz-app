@@ -79,6 +79,7 @@ function mount(notifications?: unknown) {
   const listeners = new Set<() => void>();
   let snapshot: unknown = { status: "connecting" };
   const submit = vi.fn(() => Promise.resolve());
+  const registerCommand = vi.fn();
   const stop: (() => void)[] = [];
   const ctx = {
     relay: {
@@ -91,7 +92,7 @@ function mount(notifications?: unknown) {
     notifications: notifications ?? { register: () => ({ submit }) },
     pages: { register: vi.fn() },
     navigation: {},
-    conversation: { registerMessageAction: vi.fn() },
+    conversation: { registerMessageAction: vi.fn(), registerCommand },
     effect: (body: () => () => void) => void stop.push(body()),
   };
   apply(ctx as unknown as Parameters<typeof apply>[0]);
@@ -107,7 +108,7 @@ function mount(notifications?: unknown) {
   const dispose = () => {
     for (const body of stop.splice(0)) body();
   };
-  return { submit, connect, dispose };
+  return { submit, connect, dispose, registerCommand };
 }
 
 const at = (seconds: number) => vi.setSystemTime(seconds * 1000);
@@ -127,6 +128,50 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("owns /remind, a command for every composer scope", () => {
+  const { registerCommand } = mount();
+  expect(registerCommand).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      id: "remind",
+      name: "remind",
+      usage: "/remind me <what> <when>",
+    }),
+  );
+  expect(registerCommand.mock.calls[0]?.[0]).not.toHaveProperty("scopes");
+});
+
+it("saves a /remind run through the registered command to the connected community's reminders", async () => {
+  const model = session(Promise.resolve([]));
+  const { connect, registerCommand } = mount();
+  const command = registerCommand.mock.calls[0]?.[0];
+  const run = (args: string) =>
+    command.run({
+      session: {},
+      scope: `origin:${viewer}`,
+      channelId: "c",
+      args,
+      recipients: [],
+      signal: new AbortController().signal,
+    });
+
+  await expect(run("me stretch in 1 hour")).rejects.toThrow(
+    "Reminders are not available right now.",
+  );
+  connect(`origin:${viewer}`, model.capability);
+  await flush();
+  await expect(run("me stretch in 1 hour")).resolves.toEqual({
+    done: true,
+    notice: expect.stringMatching(/^Reminder set for /),
+  });
+  expect(model.capability.snapshot().reminders).toEqual([
+    expect.objectContaining({
+      note: "stretch",
+      notBefore: 100 + 3600,
+      status: "pending",
+    }),
+  ]);
 });
 
 it("notifies a reminder from slow history even after a live update moved the clock", async () => {
@@ -566,7 +611,10 @@ async function launch(options: Launch) {
   });
   ctx.provide("relay", connection as never);
   ctx.provide("pages", { register() {} } as never);
-  ctx.provide("conversation", { registerMessageAction() {} } as never);
+  ctx.provide("conversation", {
+    registerMessageAction() {},
+    registerCommand() {},
+  } as never);
   owner.session.channels.ensureList();
   const shape = options.roster ?? "one";
   const filler = (page: number, count: number) =>

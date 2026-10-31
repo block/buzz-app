@@ -177,18 +177,38 @@ it("keeps watching after an older resolve callback runs", () => {
 
 it("re-renders on every name change once it resolves too many labels to watch", () => {
   const { names, publish } = fixture();
-  const scopes = Array.from({ length: 501 }, () => [a]);
+  const fallbacks = Array.from({ length: 501 }, (_, i) => `Member ${i}`);
   let renders = 0;
   function Author() {
     renders++;
     const resolve = useIdentityNames(names);
     return (
-      <span>{scopes.map((scope) => resolve(a, "Member", scope)).at(-1)}</span>
+      <span>{fallbacks.map((fallback) => resolve(a, fallback)).at(-1)}</span>
     );
   }
   render(<Author />);
   const settled = renders;
   publish(c, "Casey");
   expect(renders).toBe(settled + 1);
+  names.dispose();
+});
+
+it("re-renders once and starts over when a label's candidate list changes", () => {
+  const { names, publish } = fixture();
+  let renders = 0;
+  function Author({ members }: { members: readonly string[] }) {
+    renders++;
+    const resolve = useIdentityNames(names);
+    return <span>{resolve(a, "Member", members)}</span>;
+  }
+  const view = render(<Author members={[a]} />);
+  view.rerender(<Author members={[a, c]} />);
+  const settled = renders;
+  publish(c, "Casey");
+  expect(renders).toBe(settled + 1);
+  publish(b, "Blair");
+  expect(renders).toBe(settled + 1);
+  publish(c, "Alex");
+  expect(screen.getByText(`Alex · ${suffix(a)}`)).toBeInTheDocument();
   names.dispose();
 });

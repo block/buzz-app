@@ -6,7 +6,7 @@ import type { IdentityNameView } from "./service";
 const noSubscribe = () => () => {};
 const watched = 500;
 /** The interface arrives through the captured session, never a global lookup.
- * Pass stable `candidates` and `displayFacts` arrays: each new one is watched separately. */
+ * Pass stable `candidates` and `displayFacts` arrays: a new one re-renders on the next name change. */
 export function useIdentityNames(names: IdentityNameView | undefined) {
   // Re-render only when a label this component resolved changes: one arriving
   // profile should not repaint every name on screen.
@@ -46,17 +46,10 @@ export function useNamesRevision(
 }
 
 /** The labels one consumer rendered at its current version. The version moves
- * when a name change would alter one of them, or there were too many to watch. */
+ * when a name change would alter one of them, or they could not all be watched. */
 function watchLabels(names: IdentityNameView | undefined) {
   type Args = Parameters<IdentityNameView["resolve"]>;
   const shown = new Map<string, { args: Args; label: string | undefined }>();
-  const ids = new WeakMap<object, number>();
-  let next = 0;
-  const id = (value: object | undefined) => {
-    if (!value) return 0;
-    if (!ids.has(value)) ids.set(value, ++next);
-    return ids.get(value);
-  };
   let overflow = false;
   let version = 0;
   let recorded = 0;
@@ -70,10 +63,16 @@ function watchLabels(names: IdentityNameView | undefined) {
         overflow = false;
         recorded = rendered;
       }
+      if (!names || overflow) return;
       const [pubkey, fallback, candidates, displayFacts] = args;
-      const key = `${pubkey}\n${fallback}\n${id(candidates)}\n${id(displayFacts)}`;
-      if (!names || shown.has(key)) return;
-      if (shown.size < watched) shown.set(key, { args, label });
+      const key = `${pubkey}\n${fallback}`;
+      const entry = shown.get(key);
+      // One name in two scopes, such as after a member joins, would grow the
+      // record with every new list: re-render on the next change instead.
+      if (entry)
+        overflow ||=
+          entry.args[2] !== candidates || entry.args[3] !== displayFacts;
+      else if (shown.size < watched) shown.set(key, { args, label });
       else overflow = true;
     },
     version() {

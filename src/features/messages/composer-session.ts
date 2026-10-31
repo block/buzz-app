@@ -49,6 +49,25 @@ export type ComposerSession = Pick<
     RelaySession["channelWrites"],
     "refreshMembership" | "addAgents"
   >;
+  /** Join and leave for slash commands, and the hidden direct messages the
+   * sidebar leaves out; a detached editor has none. */
+  channelLifecycle?: Pick<RelaySession["channelLifecycle"], "available"> & {
+    run(
+      action: "join" | "leave",
+      channelId: string,
+      signal?: AbortSignal,
+    ): Promise<void>;
+    snapshot(): Pick<
+      ReturnType<RelaySession["channelLifecycle"]["snapshot"]>,
+      "hidden"
+    >;
+  };
+  /** Saved sidebar arrangement, for commands that follow the sidebar's order. */
+  sidebarPreferences?: Pick<RelaySession["sidebarPreferences"], "snapshot">;
+  memberAdministration?: Pick<
+    RelaySession["memberAdministration"],
+    "available" | "refresh" | "run" | "snapshot"
+  >;
   outbox:
     | Pick<
         NonNullable<RelaySession["outbox"]>,

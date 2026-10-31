@@ -1,3 +1,5 @@
+import { emptyChannelsTarget, successorChannel } from "./channel-successor";
+import { sidebarListed, sidebarNeighbors } from "./sidebar-order";
 import { revealCreatedChannel } from "./created-channel";
 import {
   useCallback,
@@ -13,7 +15,6 @@ import {
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { inTeamInventory } from "./team-inventory";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -247,9 +248,7 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      !channel.huddle &&
-      !channel.metadataPending &&
-      inTeamInventory(channel) &&
+      sidebarListed(channel) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||
@@ -992,27 +991,10 @@ export function ChannelInventory({
     if (!lifecycleCallbacks) return;
     const dialogId = lifecycleDialog?.channel.id;
     if (!dialogId) lifecycleNeighbors.current = undefined;
-    const at = sections.findIndex((section) =>
-      section.rows.some((row) => row.id === dialogId),
-    );
-    const placement = sections[at];
-    if (dialogId && placement) {
-      const shown = (section: typeof placement) =>
-        sidebar.collapsed.includes(section.key)
-          ? []
-          : section.rows.map((row) => row.id);
-      const own = shown(placement);
-      const index = Math.max(own.indexOf(dialogId), 0);
-      lifecycleNeighbors.current = {
-        id: dialogId,
-        ids: [
-          ...own.slice(index + 1),
-          ...own.slice(0, index).reverse(),
-          ...sections.slice(at + 1).flatMap(shown),
-          ...sections.slice(0, at).flatMap(shown).reverse(),
-        ],
-      };
-    }
+    const ids = dialogId
+      ? sidebarNeighbors(sections, sidebar.collapsed, dialogId)
+      : undefined;
+    if (dialogId && ids) lifecycleNeighbors.current = { id: dialogId, ids };
     lifecycleCallbacks.current = lifecycleDialog
       ? {
           close: () => {
@@ -1035,13 +1017,13 @@ export function ChannelInventory({
               return;
             }
             // Its neighbor takes its place, so the sidebar stays where it is.
-            const listed = sections.flatMap((section) => section.rows);
-            const next =
-              (lifecycleNeighbors.current?.id === id
+            const next = successorChannel(
+              lifecycleNeighbors.current?.id === id
                 ? lifecycleNeighbors.current.ids
-                : []
-              ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
-              listed.find((channel) => channel.id !== id)?.id;
+                : [],
+              sections.flatMap((section) => section.rows.map((row) => row.id)),
+              id,
+            );
             if (next) lifecycleFocus.current = next;
             // Confirmed access loss can already have removed current from the roster.
             if (
@@ -1052,13 +1034,7 @@ export function ChannelInventory({
               if (next) select(next);
               else {
                 writeView(scope, "selected-channel", undefined);
-                void navigator.open({
-                  version: 1,
-                  kind: "page",
-                  pluginId: "buzz.channels",
-                  pageId: "channels",
-                  route: { version: 1, params: "empty" },
-                });
+                void navigator.open(emptyChannelsTarget());
               }
             }
           },

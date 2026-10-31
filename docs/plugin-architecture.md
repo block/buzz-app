@@ -1692,6 +1692,28 @@ must be non-blank text, `done` must be `true`, and `notice`, if present, a strin
 `signal` aborts when the destination changes or the composer unmounts. The `scope` in
 `run`'s context is the session scope, not a conversation scope.
 
+A `done` result may also carry `after`, a function the host calls once, after it has
+cleared the draft and shown the notice. When the draft changed while the command ran, or
+another writer saved over it, the host keeps that newer draft, shows the notice and
+still calls `after`, because the command's work is done. Use it for navigation: opening another
+conversation unmounts the composer and aborts `signal`, so a command navigates from
+`after`, not from inside `run`. The one exception is a command whose own change removes
+its composer; it navigates from inside `run` (see below). `after` is valid only on
+`done`; a `send` result that carries one is an invalid result.
+
+A run is cancelled (its `signal` aborts) only when the composer unmounts or its
+destination changes (another channel, thread or reply target), or when the host
+disables it. The destination merely becoming unwritable does not cancel it: a command
+that changes access, such as `/leave`, makes its own channel read-only, and its `done`
+result still clears the draft and runs `after`. When that change also removes the
+composer (the channel leaves the roster), the host cannot show a notice under it: it
+clears the spent draft and shows the notice as a toast instead, and `after` does not
+run. That is why such a command, once its change is confirmed, navigates from inside
+`run`. If `run` throws after the composer is gone, the host shows the error as a toast
+unless it is an `AbortError`, which stays silent. A
+`send` result to a destination that has become unwritable fails visibly with the draft
+kept; it is never published.
+
 `scopes` limits where a command is offered and runs: any of `"channel"` (a top-level
 message in a non-DM channel), `"dm"` (a direct message, including a reply in a thread
 there) and `"thread"` (a reply in a thread in a non-DM channel). The three do not
@@ -1700,6 +1722,24 @@ overlap, so a command for a non-DM channel and its threads lists
 scope; an empty list or an unknown value is rejected at registration. The host copies
 and freezes the list. Outside its scopes the typeahead hides the command, and running it fails
 visibly with the draft kept, like any other failed command, before `run` is called.
+
+`available?({ session, scope, channelId, threadRootId?, conversation })` is the
+"hidden when" check for anything `scopes` cannot say, such as the viewer's role in the
+channel. It is synchronous and cheap: it reads state the session already holds and
+never awaits. Omitted means available. A throw, or any return other than `true`,
+counts as unavailable. The typeahead hides an unavailable command and re-evaluates
+when the channel list changes, so a role change shows or hides it live. Running one
+anyway (typed by hand, or through a hidden alias) fails with `/name isn't available
+here` before `run`, and the draft is kept. Aliases never list but resolve like the
+name, with the same `scopes` and `available`.
+
+`mentionsAreArguments?: true` marks a command whose @mentions are its arguments
+(`/invite @user`) rather than people a message notifies. Only then does the host skip
+what a send to those people asks first (the old-agent prompt, the non-member prompt,
+the archived-recipient check). Without it, the mentions of a command draft are
+admitted like any message's, so `/shrug @someone hi` still asks before it notifies a
+non-member. The value must be `true` or omitted; registration rejects anything else. The check only decides what is offered;
+`run` still verifies what it changes, because the relay is the authority.
 
 Only composers that pass `slashCommands` run commands: the channel and DM composers
 and the thread composer. Solo chats, message edit, Inbox previews, media review and
@@ -1714,7 +1754,32 @@ its space are omitted when empty). It also registers a completion provider that 
 commands by name while the caret ends a leading `/token`. Choosing a row inserts
 `/name ` and never runs it. The existing completion host supplies arrow, Enter, Tab
 and Escape handling. Other result variants (`ui`, cancelled) and availability that
-depends on more than the conversation scope are not part of this contract yet.
+depends on a relay round trip are not part of this contract yet.
+
+`buzz.commands` also ships the channel membership commands, each over the service the
+channel UI already uses and each throwing on failure so the draft stays:
+
+| Command | Scopes | Offered when | Result |
+| --- | --- | --- | --- |
+| `/invite @user…` | channel, thread | the viewer may add members | adds each person; says who is already in |
+| `/remove @user…` (hidden alias `/kick`) | channel, thread | the viewer is owner or admin of a regular channel | removes each person after refreshing roles; confirms from the operation state; someone already out is reported, not failed |
+| `/join #channel` | any | always | joins when not a member, then opens the channel |
+| `/leave` (alias `/part`) | channel, thread | a regular channel the viewer is listed in | leaves, then (only if the viewer is still on that channel) opens the channel that takes its place in the sidebar, else the empty channels page; toasts `Channel left: <name>` |
+| `/who` (alias `/members`) | any | always | opens the conversation's member panel |
+
+`/invite` and `/remove` set `mentionsAreArguments` and take only @mentions: every
+mentioned person must be named in the text, and no mention, or text that is not a
+mention, is rejected with the usage. They act on people in order. When some fail the
+command reports a failure that names who was added or removed and who was not, and
+keeps the draft, so rerunning finishes the rest. It never reports full success for a
+partial result. `/join` takes one channel picked from the `#` list.
+
+`/leave` picks its successor from the sidebar's own order, read through
+`features/channel-navigation/sidebar-order.ts`, which the sidebar's leave flow uses too:
+huddle, still-loading, hidden and Solo channels and hidden direct messages are skipped,
+each section sorts as the sidebar sorts it, and a collapsed section is not preferred. Direct
+messages are ordered by their stored names, not the resolved labels the sidebar shows.
+Unlike the sidebar's Leave action, `/leave` asks no confirmation.
 
 ### Composer completion providers
 

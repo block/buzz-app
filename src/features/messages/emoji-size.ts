@@ -1,14 +1,13 @@
-import type { CustomEmoji } from "../relay/emoji";
+import { findCustomEmoji, type CustomEmoji } from "../relay/emoji";
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const emojiPresentation =
   /\p{Extended_Pictographic}|\p{Regional_Indicator}|[\d#*]\uFE0F?\u20E3/u;
 
 function renderedEmoji(value: string, entries: readonly CustomEmoji[]): string {
-  const custom = new Set(entries.map((entry) => entry.shortcode.toLowerCase()));
   return value.replace(
     /:([a-z0-9_-]{1,64}):/gi,
     (literal, shortcode: string) =>
-      custom.has(shortcode.toLowerCase()) ? "😀" : literal,
+      findCustomEmoji(entries, shortcode) ? "😀" : literal,
   );
 }
 

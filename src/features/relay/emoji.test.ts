@@ -86,9 +86,7 @@ it("unions latest complete member sets; empty replacements and ties survive stal
   const h = session();
   const loading = h.session.emoji.ensure();
   const pending = h.wire.next();
-  expect(pending.filters).toEqual([
-    { kinds: [30030], "#d": [EMOJI_SET], limit: 500 },
-  ]);
+  expect(pending.filters).toEqual([{ kinds: [30030], limit: 100 }]);
   expect(h.query.mock.calls[0]?.[3]).toBe("background");
   h.live.receive([
     set(member, 3, []),
@@ -532,14 +530,21 @@ it("active catalog demand bypasses queued warm-up and recovers a cold failure wi
     vi.useRealTimers();
   }
 });
-it("exposes read-cap and retained-byte limits rather than evicting replacement evidence", async () => {
+it("exposes stalled reads and retained-byte limits rather than evicting replacement evidence", async () => {
+  // A full page of one second cannot page further with an inclusive `until`.
   const reader = {
-    read: vi.fn(async () => Array(500).fill(set()) as RelayEvent[]),
+    read: vi.fn(
+      async (_filters: unknown) => Array(100).fill(set()) as RelayEvent[],
+    ),
   };
   const directory = createEmojiDirectory(reader);
   owners.push(directory);
   await directory.queries.ensure();
-  // A capped read is incomplete, but still resolves the shortcodes it holds.
+  expect(reader.read.mock.calls.map(([filters]) => filters)).toEqual([
+    [{ kinds: [30030], limit: 100 }],
+    [{ kinds: [30030], limit: 100, until: 1 }],
+  ]);
+  // A stalled read is incomplete, but still resolves the shortcodes it holds.
   expect(directory.queries.snapshot()).toMatchObject({
     status: "ready",
     entries: [{ shortcode: "party", url }],
@@ -547,7 +552,7 @@ it("exposes read-cap and retained-byte limits rather than evicting replacement e
   });
   expect(directory.tags(":party:")).toEqual([["emoji", "party", url]]);
   directory.accept([
-    set(member, 2, [["emoji", "party", "x".repeat(2 * 1024 * 1024)]]),
+    set(member, 2, [["emoji", "party", "x".repeat(32 * 1024 * 1024)]]),
   ]);
   expect(directory.queries.snapshot()).toMatchObject({
     status: "error",
@@ -558,12 +563,12 @@ it("exposes read-cap and retained-byte limits rather than evicting replacement e
   await directory.queries.ensure();
   await directory.queries.ensure("foreground");
   expect(() => directory.tags(":party:")).toThrow(/Retry message preparation/);
-  expect(reader.read).toHaveBeenCalledTimes(1);
+  expect(reader.read).toHaveBeenCalledTimes(2);
   directory.accept([set(member, 1)]);
   expect(directory.queries.snapshot().entries).toEqual([]);
   reader.read.mockResolvedValueOnce([set(member, 3, [])]);
   await directory.queries.refresh();
-  expect(reader.read).toHaveBeenCalledTimes(2);
+  expect(reader.read).toHaveBeenCalledTimes(3);
   expect(directory.queries.snapshot()).toMatchObject({
     status: "ready",
     entries: [],
@@ -680,7 +685,7 @@ it("adding republishes the viewer's own set, replaces one shortcode and reaches 
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   const own = h.ownRead();
   expect(own.filters).toEqual([
-    { kinds: [30030], "#d": [EMOJI_SET], authors: [viewer.pubkey], limit: 1 },
+    { kinds: [30030], authors: [viewer.pubkey], limit: 100 },
   ]);
   own.respond([
     set(viewer, 5, [
@@ -750,7 +755,7 @@ it("removes only from the fresh own set and preserves another member's colliding
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   const read = h.ownRead();
   expect(read.filters).toEqual([
-    { kinds: [30030], "#d": [EMOJI_SET], authors: [viewer.pubkey], limit: 1 },
+    { kinds: [30030], authors: [viewer.pubkey], limit: 100 },
   ]);
   // A newer own set has an entry absent from the initial catalog.
   read.respond([
@@ -879,7 +884,7 @@ it("maps an add that outlives its deadline to the reference timeout copy", async
     const h = authoring();
     const adding = h.emoji.add?.("party", url);
     await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
-    expect(timeout).toHaveBeenCalledWith(12_000);
+    expect(timeout).toHaveBeenCalledWith(30_000);
     deadline.abort(new DOMException("timed out", "TimeoutError"));
     await expect(adding).rejects.toThrow("Timed out while adding emoji.");
     expect(h.publish).not.toHaveBeenCalled();

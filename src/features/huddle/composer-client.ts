@@ -135,7 +135,10 @@ export function createHuddleComposerClient(token: string) {
     const result: ComposerSession = {
       viewer: initial.viewer,
       scope: initial.scope,
-      media: (url, size) => value().media.get(size ? `${url}:${size}` : url),
+      media: (url, size) => {
+        const key = size ? `${url}:${size}` : url;
+        return value().media.get(key) ?? value().emojiMedia.get(key);
+      },
       names,
       channels: {
         list: () => value().channels,
@@ -260,7 +263,10 @@ export function createHuddleComposerClient(token: string) {
       return;
     }
     if (response.kind === "snapshot") {
-      data = response.value;
+      const { emoji, emojiMedia, ...rest } = response.value;
+      const kept = emoji && emojiMedia ? { emoji, emojiMedia } : data;
+      if (!kept) return; // The owner sends the catalog with its first snapshot.
+      data = { ...rest, emoji: kept.emoji, emojiMedia: kept.emojiMedia };
       session ??= build(data);
       clearTimeout(deadline);
       changed();

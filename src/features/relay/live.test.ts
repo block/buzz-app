@@ -2466,7 +2466,6 @@ it("requests statuses and community emoji on the profile route and delivers veri
     },
     {
       kinds: [30030],
-      "#d": ["buzz:custom-emoji"],
       since: expect.any(Number),
       limit: 500,
     },

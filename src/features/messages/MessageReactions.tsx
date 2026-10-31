@@ -22,7 +22,7 @@ import type {
   MessageReaction,
   Profile,
 } from "../relay/contracts";
-import type { CustomEmoji } from "../relay/emoji";
+import { findCustomEmoji, type CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { selectProfiles } from "../relay/profile-selection";
@@ -113,19 +113,10 @@ function ReactionLabel({
   );
 }
 
-const catalogIndexes = new WeakMap<
-  readonly CustomEmoji[],
-  ReadonlyMap<string, CustomEmoji>
->();
-/** Every row looks up its quick reactions on each render; index each catalog snapshot once. */
+/** Every row looks up its quick reactions on each render; the catalog is indexed once. */
 function catalogEmoji(entries: readonly CustomEmoji[], content: string) {
-  if (!content.startsWith(":")) return undefined;
-  let index = catalogIndexes.get(entries);
-  if (!index) {
-    index = new Map(entries.map((entry) => [`:${entry.shortcode}:`, entry]));
-    catalogIndexes.set(entries, index);
-  }
-  return index.get(content.toLowerCase());
+  const code = /^:([^:\s]+):$/.exec(content)?.[1];
+  return code ? findCustomEmoji(entries, code) : undefined;
 }
 
 /** PR 1's quick-control slot. The emoji contribution continues to own its picker. */

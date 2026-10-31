@@ -6,7 +6,7 @@ import { pickerIcons } from "../../shared/design-system/icons/svg";
 import data from "@emoji-mart/data";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import type { CustomEmoji } from "../../features/relay/emoji";
-import { rankShortcodes } from "./emoji-search";
+import { normalizedShortcodes, rankShortcodes } from "./emoji-search";
 
 const martSearch = SearchIndex.search;
 const resolvedTheme = (value: unknown): "light" | "dark" =>
@@ -561,18 +561,16 @@ export function mountEmojiMart({
     close();
   }
   active = dismiss;
-  // Keep Mart's word-prefix results first, then fill its result limit with the
-  // composer's fuzzy shortcode matches (`pointup`, `bufo_pray`, `bfpray`).
-  SearchIndex.search = async (value, options) => {
-    const results: { id: string }[] | null | undefined = await martSearch(
-      value,
-      options,
-    );
-    const limit = options?.maxResults || 90; // Mart's own default limit
-    if (!results || results.length >= limit) return results;
-    const found = new Set(results.map(({ id }) => id));
+  type Candidate = {
+    emoji: { id: string; search?: string };
+    shortcode: string;
+  };
+  let candidates:
+    | { list: readonly Candidate[]; names: readonly string[] }
+    | undefined;
+  function candidateEmoji() {
     const emojis: Record<string, { id: string; search?: string }> = Data.emojis;
-    const candidates = [
+    const list = [
       ...Object.values(emojis).map((emoji) => ({
         emoji,
         shortcode: values.get(emoji.id)?.shortcode ?? emoji.id,
@@ -583,13 +581,34 @@ export function mountEmojiMart({
         return emoji ? [{ emoji, shortcode }] : [];
       }),
       // Mart leaves unsupported emoji in its dictionary without search terms.
-    ].filter(({ emoji }) => emoji.search && !found.has(emoji.id));
+    ].filter(({ emoji }) => emoji.search);
+    return { list, names: normalizedShortcodes(list.map((c) => c.shortcode)) };
+  }
+  // Keep Mart's word-prefix results first, then fill its result limit with the
+  // composer's fuzzy shortcode matches (`pointup`, `bufo_pray`, `bfpray`).
+  SearchIndex.search = async (value, options) => {
+    const results: { id: string }[] | null | undefined = await martSearch(
+      value,
+      options,
+    );
+    const limit = options?.maxResults || 90; // Mart's own default limit
+    if (!results || results.length >= limit) return results;
+    const found = new Set(results.map(({ id }) => id));
+    // The dictionary is fixed while mounted; a 100k-entry community catalog is
+    // collected once, not on every keystroke.
+    candidates ??= candidateEmoji();
     const fuzzy = rankShortcodes(
       String(value).replaceAll(":", ""),
-      candidates,
+      candidates.list,
       ({ shortcode }) => shortcode,
+      limit + found.size,
+      candidates.names,
     );
-    const extra = new Set(fuzzy.map(({ item }) => item.emoji));
+    const extra = new Set(
+      fuzzy
+        .map(({ item }) => item.emoji)
+        .filter((emoji) => !found.has(emoji.id)),
+    );
     return [...results, ...extra].slice(0, limit);
   };
   // Search also caches results after deletion/replacement; recreate rather than update.

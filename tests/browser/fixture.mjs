@@ -1318,11 +1318,7 @@ export const test = base.extend({
           );
       }
       if (filter.kinds?.includes(30030)) {
-        expect(filter).toEqual({
-          kinds: [30030],
-          "#d": ["buzz:custom-emoji"],
-          limit: 500,
-        });
+        expect(filter).toEqual({ kinds: [30030], limit: 100 });
         return sidebarIcons
           ? [
               sign(

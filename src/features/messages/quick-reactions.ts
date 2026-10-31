@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { validReactionContent, type CustomEmoji } from "../relay/emoji";
+import {
+  findCustomEmoji,
+  validReactionContent,
+  type CustomEmoji,
+} from "../relay/emoji";
 
 type Entry = { emoji: string; count: number; used: number };
 const defaults = ["👍", "❤️", "😂"];
@@ -31,7 +35,8 @@ export function quickReactions(scope: string, catalog: readonly CustomEmoji[]) {
     .filter(
       (emoji) =>
         !emoji.startsWith(":") ||
-        catalog.some((entry) => emoji.toLowerCase() === `:${entry.shortcode}:`),
+        (emoji.endsWith(":") &&
+          findCustomEmoji(catalog, emoji.slice(1, -1)) !== undefined),
     )
     .slice(0, 3);
 }

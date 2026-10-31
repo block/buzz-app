@@ -58,7 +58,7 @@ it("shares a background catalog read across icons, resolves case, and renders li
   );
   expect(h.read).toHaveBeenCalledOnce();
   expect(h.read).toHaveBeenCalledWith(
-    [{ kinds: [30030], "#d": ["buzz:custom-emoji"], limit: 500 }],
+    [{ kinds: [30030], limit: 100 }],
     expect.objectContaining({ priority: "background" }),
   );
   expect(view.container.querySelectorAll("img")).toHaveLength(0);

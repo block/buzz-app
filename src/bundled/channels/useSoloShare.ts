@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -199,9 +200,12 @@ export function useSoloShare({
         .catch(() => {});
   }, [session, destinationProfileKeys]);
   const resolveName = useIdentityNames(session.names);
-  const displayKeys = [
-    ...new Set([...(source?.members ?? []), ...(destinationMembers ?? [])]),
-  ];
+  const displayKeys = useMemo(
+    () => [
+      ...new Set([...(source?.members ?? []), ...(destinationMembers ?? [])]),
+    ],
+    [source?.members, destinationMembers],
+  );
   const labels = new Map(
     displayKeys.map((key) => [
       key,

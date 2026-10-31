@@ -84,6 +84,7 @@ function conversationName(
 
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
+const noMembers: readonly string[] = [];
 
 export function SearchResults({
   session,
@@ -949,7 +950,7 @@ export function SearchResults({
       displayId,
       profiles.get(displayId)?.name ?? displayId.slice(0, 10),
       list.channels.find((channel) => channel.id === message.channelId)
-        ?.members ?? [],
+        ?.members ?? noMembers,
     );
     return {
       key: message.id,

@@ -8,6 +8,11 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { nodeClient } from "./node";
 import { content, errorText } from "./rpc";
 import { BUZZ_HELP_PROMPT } from "./prompt";
+import {
+  callSoloWorkerTool,
+  isSoloWorkerTool,
+  SOLO_WORKER_TOOLS,
+} from "./solo-worker";
 import { callTool, TOOLS } from "./tools";
 
 const env = (name: string) => {
@@ -31,17 +36,22 @@ serveStdio(() => {
     { name: "buzz", version: "1" },
     { capabilities: { tools: {} }, instructions: BUZZ_HELP_PROMPT },
   );
-  for (const tool of TOOLS)
+  for (const tool of [...TOOLS, ...SOLO_WORKER_TOOLS])
     server.registerTool(
       tool.name,
       {
         description: tool.description,
         inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema),
+        ...("annotations" in tool ? { annotations: tool.annotations } : {}),
       },
       async (args) => {
         try {
           return {
-            content: content(await callTool(client, context, tool.name, args)),
+            content: content(
+              await (isSoloWorkerTool(tool.name)
+                ? callSoloWorkerTool(client, tool.name, args)
+                : callTool(client, context, tool.name, args)),
+            ),
           };
         } catch (error) {
           return {

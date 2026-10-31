@@ -43,8 +43,12 @@ async function fixture() {
 it("loads automatically, refreshes and hides account data on sign-out", async () => {
   const h = await fixture();
   render(<RemoteAgents {...h} active={() => true} />);
-  expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
-  expect(screen.getByText(row.agent_pubkey)).toBeInTheDocument();
+  expect(
+    await screen.findByText("Helper", { exact: true }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Active", { exact: true })).toBeVisible();
+  expect(screen.queryByText(row.agent_pubkey)).not.toBeInTheDocument();
+  expect(screen.getByText("1 hosted agent")).toBeVisible();
   expect(document.body).not.toHaveTextContent("secret");
   h.request.mockResolvedValue(response([]));
   await userEvent
@@ -56,6 +60,47 @@ it("loads automatically, refreshes and hides account data on sign-out", async ()
     screen.queryByRole("region", { name: "Remote agents" }),
   ).not.toBeInTheDocument();
 });
+it("opens Agents only while active and explains an unfinished agent setup", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValue(response([{ ...row, status: 1 }]));
+  const openAgents = vi.fn();
+  let active = true;
+  render(<RemoteAgents {...h} active={() => active} openAgents={openAgents} />);
+  expect(
+    await screen.findByText("Setup incomplete", { exact: true }),
+  ).toBeVisible();
+  expect(screen.getByText("Helper", { exact: true })).toBeVisible();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Open Agents" }));
+  expect(openAgents).toHaveBeenCalledTimes(1);
+  active = false;
+  await user.click(screen.getByRole("button", { name: "Open Agents" }));
+  expect(openAgents).toHaveBeenCalledTimes(1);
+});
+
+it("provides an actionable empty state and explains an unavailable Agents destination", async () => {
+  const h = await fixture();
+  h.request.mockResolvedValue(response([]));
+  const openAgents = vi.fn();
+  const view = render(
+    <RemoteAgents {...h} active={() => true} openAgents={openAgents} />,
+  );
+  await screen.findByText("No remote agents yet.");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Open Agents" }));
+  expect(openAgents).toHaveBeenCalledTimes(1);
+  view.rerender(<RemoteAgents {...h} active={() => true} />);
+  expect(
+    screen.queryByRole("button", { name: "Open Agents" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Enable the Agents plugin to create and manage hosted agents.",
+    ),
+  ).toBeVisible();
+});
+
 it("shows a held loading state and retries a failed read", async () => {
   const h = await fixture();
   const held = deferred<HostResponse>();
@@ -68,7 +113,9 @@ it("shows a held loading state and retries a failed read", async () => {
   await act(async () => held.resolve(response([], 400)));
   expect(screen.getByRole("alert")).toHaveTextContent("HTTP 400");
   await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByText("Helper · Active")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Helper", { exact: true }),
+  ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 it.each(["sign-out", "unmount"])(
@@ -81,7 +128,9 @@ it.each(["sign-out", "unmount"])(
     if (action === "sign-out") act(() => h.session.signOut());
     else mounted.unmount();
     await act(async () => held.resolve(response([row])));
-    expect(screen.queryByText("Helper · Active")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Helper", { exact: true }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   },
 );

@@ -1,0 +1,88 @@
+/* Content only: Settings owns the surface, column, navigation and scrollport. */
+.content {
+  min-width: 0;
+  padding-inline: calc(var(--space-4) + 1px);
+}
+.connection {
+  display: grid;
+  gap: var(--space-3);
+}
+.collection {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.community {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-block: var(--space-4);
+  border-bottom: 1px solid var(--border-standard);
+}
+.communityIdentity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+.communityIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: calc(var(--space-4) * 2 + var(--space-1));
+  height: calc(var(--space-4) * 2 + var(--space-1));
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  color: var(--text-subtle);
+}
+.communityActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+.accountRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+.accountRow > dd {
+  min-width: 0;
+  margin: 0;
+}
+.accountValue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.sectionFacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.creationForm {
+  margin-block-start: var(--space-4);
+}
+.sectionAction {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-start: var(--space-4);
+}
+@container (max-width: 24rem) {
+  .content {
+    padding-inline: calc(var(--space-3) + 1px);
+  }
+}

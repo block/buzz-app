@@ -16,6 +16,8 @@ import { HostService, type HostResponse } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import { PanelsService } from "../../features/panels/service";
 import { BrowserService } from "../../features/browser/service";
+import { PagesService } from "../../features/pages/service";
+import { provideNavigation } from "../../features/navigation/service";
 import type { BrowserPlatform } from "../../features/browser/platform";
 import {
   AgentsService,
@@ -36,16 +38,17 @@ const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
 function provideKnownCommunities(root: Context, viewer: string) {
+  const snapshot: ReturnType<KnownCommunities["snapshot"]> = {
+    status: "ready",
+    relayAvailable: true,
+    profile: { name: "", picture: "" },
+    sync: { known: [], outbox: [] },
+    viewer,
+    selected: null,
+    memberships: [],
+  };
   const knownCommunities: KnownCommunities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-      sync: { known: [], outbox: [] },
-      viewer,
-      selected: null,
-      memberships: [],
-    }),
+    snapshot: () => snapshot,
     subscribe: vi.fn(() => vi.fn()),
     pending: () => [],
     apply: vi.fn(async () => {}),
@@ -79,6 +82,8 @@ afterEach(() => {
 
 /** What the plugin's Apps panel needs: panels, and no native browser. */
 function provideApps(root: Context) {
+  new PagesService(root);
+  provideNavigation(root);
   new PanelsService(root);
   new BrowserService(root, { available: false } as BrowserPlatform);
 }
@@ -367,6 +372,17 @@ it.each([
     root.provide("relay", community.relay as never);
     provideKnownCommunities(root, community.viewer);
     provideAgents(root, community);
+
+    vi.spyOn(root.pages, "snapshot").mockReturnValue([
+      {
+        key: "buzz.agents/agents",
+        pluginId: "buzz.agents",
+        revision: "bundled",
+        id: "agents",
+        title: "Agents",
+        component: () => null,
+      },
+    ]);
     const backupCalls = () =>
       native.invoke.mock.calls.filter(([command]) =>
         command.startsWith("nsec_backup_"),
@@ -408,11 +424,22 @@ it.each([
         expect(
           await screen.findByText("No hosted communities yet"),
         ).toBeInTheDocument();
-        expect(screen.getByText(/Buzz identity connected/)).toBeVisible();
+        expect(
+          screen.getByRole("region", { name: "Linked Buzz profile" }),
+        ).toBeVisible();
         expect(
           screen.getAllByRole("button", { name: "Sign out" }),
         ).toHaveLength(1);
         expect(fetch).not.toHaveBeenCalled();
+      }
+      if (canUseRemoteAgents) {
+        await user.click(screen.getByRole("button", { name: "Open Agents" }));
+        expect(root.navigation.snapshot().entry.target).toEqual({
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.agents",
+          pageId: "agents",
+        });
       }
       if (live === "0") {
         await linkFinished.promise;
@@ -636,7 +663,7 @@ it.each([
       expect(
         await screen.findByText("No remote agents yet."),
       ).toBeInTheDocument();
-      expect(screen.getByText("Signed in as a@example.com.")).toHaveRole(
+      expect(screen.getByText("a@example.com", { exact: true })).toHaveRole(
         "status",
       );
       expect(document.body).not.toHaveTextContent("private-token");

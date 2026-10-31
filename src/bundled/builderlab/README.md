@@ -5,7 +5,9 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 ## Getting started
 
 1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
-2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
+2. To host a community, expand **Create a community** under **Hosted communities**, enter an address and choose **Create community**. Then use **Copy address**, open the community picker and choose **Join a community**. Each community’s actions menu contains transfer and archival controls; archived communities also offer deletion when available.
+   Account and Buzz identity status appear above hosting. The linked identity shows its name, avatar, bio and shortened public key from the selected community, or the local default in Personal space; the source is labelled and unavailable profiles never borrow another community’s data. Expand **Identity details** to inspect the full public key. **Unpair** is under **Account actions** at the bottom, below remote agents, and still requires confirmation. Identity mismatch and recovery guidance remain visible.
+   **Remote agents** summarizes your hosted agents and provides **Open Agents** when the Agents plugin is enabled; creation and editing stay in Agents.
 3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab (hosted)** as the **Harness**.
 4. Choose a model and thinking level, optionally add instructions, then create the agent.
 5. Edit model settings and instructions later in **Identity**.

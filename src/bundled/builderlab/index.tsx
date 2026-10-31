@@ -3,6 +3,7 @@ import type { PluginModule } from "../../plugins/api";
 import { handoffBackupSession } from "../../features/identity/backup";
 import { nativeIdentityEnabled } from "../../features/identity/service";
 import { Login } from "./login/Login";
+import { LinkedIdentity } from "./LinkedIdentity";
 import {
   browserCredential,
   browserLoginAvailable,
@@ -16,7 +17,7 @@ import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
-import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import styles from "./Settings.module.css";
 import { BlockLogoIcon } from "../../shared/design-system/icons";
 import { HostedCommunities } from "./communities/HostedCommunities";
 import { brokerApi, createApi } from "./communities/api";
@@ -32,6 +33,8 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
+  "navigation",
+  "pages",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
@@ -173,17 +176,58 @@ export const apply: PluginModule["apply"] = (ctx) => {
       : null;
   const Communities = ({ active }: { active(): boolean }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
-    if (!communities) return null;
+    const identity = (pubkey: string) => (
+      <LinkedIdentity
+        pubkey={pubkey}
+        communities={ctx.knownCommunities}
+        relay={ctx.relay}
+      />
+    );
+    if (!communities) return <Agents active={active} />;
     if (communities === brokerApi)
-      return <HostedCommunities api={communities} active={active} />;
+      return (
+        <HostedCommunities
+          api={communities}
+          active={active}
+          renderIdentity={identity}
+          afterHosting={<Agents active={active} />}
+        />
+      );
     return state.status === "signed-in" ? (
       <HostedCommunities
         key={state.account?.subject}
         api={communities}
         active={active}
         sharedSignIn
+        renderIdentity={identity}
+        afterHosting={<Agents active={active} />}
       />
-    ) : null;
+    ) : (
+      <Agents active={active} />
+    );
+  };
+  const Agents = ({ active }: { active(): boolean }) => {
+    const pages = useSyncExternalStore(ctx.pages.subscribe, ctx.pages.snapshot);
+    return (
+      <RemoteAgents
+        client={agents}
+        session={session}
+        active={active}
+        openAgents={
+          pages.some((page) => page.key === "buzz.agents/agents")
+            ? () => {
+                if (!active()) return;
+                void ctx.navigation.open({
+                  version: 1,
+                  kind: "page",
+                  pluginId: "buzz.agents",
+                  pageId: "agents",
+                });
+              }
+            : undefined
+        }
+      />
+    );
   };
   ctx.settingsCards.register({
     id: "login",
@@ -195,10 +239,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
         <Header
           id="builderlab-title"
           title="Builderlab"
-          subtitle="One Builderlab account for hosted communities, remote agents and apps."
+          subtitle="Connect your account to host communities and run agents with Builderlab."
         />
         <InlineHeader title="Account" />
-        <SettingsGroup layout="form">
+        <div className={styles.content}>
           <Login
             showHeading={false}
             session={session}
@@ -210,9 +254,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
             }
             active={active}
           />
-        </SettingsGroup>
+        </div>
         <Communities active={active} />
-        <RemoteAgents client={agents} session={session} active={active} />
       </section>
     ),
   });

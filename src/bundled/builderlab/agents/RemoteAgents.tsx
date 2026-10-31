@@ -9,9 +9,10 @@ import {
   RobotIcon,
 } from "../../../shared/design-system/icons";
 import { Button } from "../../../shared/design-system/ui/Button";
+import { IconButton } from "../../../shared/design-system/ui/IconButton";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
-import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
+import styles from "../Settings.module.css";
 import type { OAuthSession } from "../oauth/session";
 import type { AgentClient, RemoteAgent } from "./client";
 
@@ -19,26 +20,32 @@ export function RemoteAgents({
   client,
   session,
   active,
+  openAgents,
 }: {
   client: AgentClient;
   session: OAuthSession;
   active(): boolean;
+  openAgents?: (() => void) | undefined;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   const [revision, setRevision] = useState(0);
   if (login.status === "signed-in" && !login.account?.canUseRemoteAgents)
     return (
-      <EmptyState
-        icon={<RobotIcon />}
-        title="Coming soon"
-        description="Builderlab remote agents are not available for your account yet."
-      />
+      <section className="mt-section-gap" aria-label="Remote agents">
+        <InlineHeader title="Remote agents" />
+        <EmptyState
+          icon={<RobotIcon />}
+          title="Coming soon"
+          description="Builderlab remote agents are not available for your account yet."
+        />
+      </section>
     );
   return login.status === "signed-in" ? (
     <AgentList
       key={`${login.account?.subject}:${revision}`}
       client={client}
       active={active}
+      openAgents={openAgents}
       refresh={() => {
         if (active()) setRevision((value) => value + 1);
       }}
@@ -50,10 +57,12 @@ function AgentList({
   client,
   active,
   refresh,
+  openAgents,
 }: {
   client: AgentClient;
   active(): boolean;
   refresh(): void;
+  openAgents?: (() => void) | undefined;
 }) {
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
@@ -91,12 +100,28 @@ function AgentList({
     >
       <InlineHeader
         title="Remote agents"
-        subtitle="Create, edit and delete agents in the Agents tab."
+        subtitle={
+          <>
+            Manage hosted agents and their settings in Agents.
+            {agents && agents.length > 0 && (
+              <>
+                {" "}
+                ·{" "}
+                <span>
+                  {agents.length} hosted{" "}
+                  {agents.length === 1 ? "agent" : "agents"}
+                </span>
+              </>
+            )}
+          </>
+        }
         actions={
-          <Button variant="ghost" size="sm" loading={loading} onClick={refresh}>
-            <ArrowsClockwiseIcon aria-hidden="true" />{" "}
-            {error ? "Retry" : "Refresh agents"}
-          </Button>
+          <IconButton
+            aria-label={error ? "Retry" : "Refresh agents"}
+            loading={loading}
+            onClick={refresh}
+            icon={<ArrowsClockwiseIcon aria-hidden="true" />}
+          />
         }
       />
       {loading && (
@@ -113,28 +138,64 @@ function AgentList({
         <EmptyState
           icon={<RobotIcon />}
           title="No remote agents yet."
-          description="Your Builderlab account’s agents will appear here."
+          description={
+            openAgents
+              ? "Create your first hosted agent in Agents."
+              : "Enable the Agents plugin to create and manage hosted agents."
+          }
           level={4}
+          action={
+            openAgents ? (
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (active()) openAgents();
+                }}
+              >
+                Open Agents
+              </Button>
+            ) : undefined
+          }
         />
       )}
       {agents && agents.length > 0 && (
-        <SettingsGroup>
-          <ul className="m-0 list-none p-0">
+        <div className={styles.content}>
+          <ul className={styles.collection} aria-label="Hosted agents">
             {agents.map((agent) => (
-              <li
-                key={agent.id}
-                className="flex min-w-0 flex-col gap-1 border-b border-line py-4"
-              >
-                <p className="m-0 text-label">
-                  {agent.name} · {agent.status}
-                </p>
-                <span className="break-all text-mono text-muted">
-                  {agent.pubkey}
-                </span>
+              <li key={agent.id} className={styles.community}>
+                <div className={styles.communityIdentity}>
+                  <span className={styles.communityIcon} aria-hidden="true">
+                    <RobotIcon size={20} />
+                  </span>
+                  <div className="grid min-w-0 gap-1">
+                    <p className="m-0 text-label">{agent.name}</p>
+                    <p className="m-0 text-caption text-muted">
+                      {agent.status === "Unattested"
+                        ? "Setup incomplete"
+                        : agent.status}
+                    </p>
+                  </div>
+                </div>
               </li>
             ))}
           </ul>
-        </SettingsGroup>
+          <div className={styles.sectionAction}>
+            {openAgents ? (
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (active()) openAgents();
+                }}
+              >
+                Open Agents
+              </Button>
+            ) : (
+              <p className="text-body-sm text-secondary">
+                Enable the Agents plugin to manage hosted agents.
+              </p>
+            )}
+          </div>
+        </div>
       )}
     </section>
   );

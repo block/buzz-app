@@ -780,7 +780,8 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Builderlab").click();
-  await button(page, "Delete").click();
+  await button(page, "Actions for north").click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /Permanently delete north/ });
   await dialog
     .getByLabel("Type the exact host")

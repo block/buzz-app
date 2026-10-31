@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode, useState } from "react";
+import userEvent from "@testing-library/user-event";
 import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
 import { brokerApi, DELETION_PENDING_KEY } from "./api";
@@ -68,6 +69,38 @@ const renderCard = () =>
       <HostedCommunities api={brokerApi} active={() => true} />
     </StrictMode>,
   );
+
+async function creationInput() {
+  const trigger = await screen.findByRole("button", {
+    name: "Create a community",
+  });
+  if (trigger.getAttribute("aria-expanded") !== "true")
+    fireEvent.click(trigger);
+  return screen.findByRole("textbox", { name: "Community address" });
+}
+
+async function communityMenu(index = 0) {
+  const triggers = await screen.findAllByRole("button", {
+    name: /^Actions for /,
+  });
+  const trigger = triggers[index];
+  if (!trigger) throw new Error("Missing community actions");
+  if (trigger.getAttribute("aria-expanded") !== "true")
+    await userEvent.setup().click(trigger);
+  return screen.findByRole("menu");
+}
+
+async function communityAction(name: string, index = 0) {
+  return within(await communityMenu(index)).findByRole("menuitem", {
+    name,
+  });
+}
+
+async function unpairIdentity() {
+  return within(
+    await screen.findByRole("region", { name: "Account actions" }),
+  ).findByRole("button", { name: "Unpair identity" });
+}
 
 function RerenderingParent() {
   const [, rerender] = useState(0);
@@ -204,6 +237,38 @@ it("pauses create and offers a switch when the account uses another identity", a
   );
 });
 
+it("keeps identity details optional and preserves a collapsed creation draft", async () => {
+  renderCard();
+  await screen.findByText("Buzz identity connected");
+  expect(
+    screen.getByRole("button", { name: "Identity details" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect(await unpairIdentity()).toBeVisible();
+  expect(
+    screen
+      .getByRole("region", { name: "Account actions" })
+      .compareDocumentPosition(
+        screen.getByRole("button", { name: "Create a community" }),
+      ) & Node.DOCUMENT_POSITION_PRECEDING,
+  ).not.toBe(0);
+  fireEvent.click(screen.getByRole("button", { name: "Identity details" }));
+  expect(screen.getByText(npubEncode(local))).toBeVisible();
+  expect(screen.getByRole("button", { name: "Unpair identity" })).toBeVisible();
+  const input = await creationInput();
+  fireEvent.change(input, { target: { value: "draft" } });
+  const disclosure = screen.getByRole("button", {
+    name: "Create a community",
+  });
+  fireEvent.click(disclosure);
+  expect(
+    screen.queryByRole("textbox", { name: "Community address" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(disclosure);
+  expect(
+    screen.getByRole("textbox", { name: "Community address" }),
+  ).toHaveValue("draft");
+});
+
 it("checks availability after a pause and creates a valid community", async () => {
   routes["/api/builderlab/availability"] = () => ({ available: true });
   routes["/api/builderlab/create"] = () => ({
@@ -212,7 +277,7 @@ it("checks availability after a pause and creates a valid community", async () =
   const writeText = vi.fn(async () => {});
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   renderCard();
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await creationInput();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "North" } });
@@ -292,7 +357,7 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
     correlation_id: "corr-1",
   });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+  await userEvent.setup().click(await communityAction("Archive"));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Archive",
@@ -304,7 +369,7 @@ it("archives and transfers after confirmation, surfacing friendly errors", async
       { community_id: "c1" },
     ]),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Transfer" }));
+  await userEvent.setup().click(await communityAction("Transfer"));
   const recipient = npubEncode(other);
   fireEvent.change(screen.getByPlaceholderText("npub1…"), {
     target: { value: recipient },
@@ -336,7 +401,7 @@ it("attributes transfer limit_reached to the recipient, not this owner's quota",
   routes["/api/builderlab/transfer"] = () =>
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Transfer" }));
+  await userEvent.setup().click(await communityAction("Transfer"));
   fireEvent.change(screen.getByPlaceholderText("npub1…"), {
     target: { value: npubEncode(other) },
   });
@@ -534,7 +599,7 @@ it("does not bind after the card is deactivated during Switch", async () => {
 });
 
 async function typeName(value: string) {
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await creationInput();
   await waitFor(() => expect(input).toBeEnabled());
   fireEvent.change(input, { target: { value } });
 }
@@ -642,7 +707,7 @@ it("drops a failed copy handoff when the identity is unpaired", async () => {
   routes["/api/builderlab/identity"] = () => ({
     error: { code: "missing_mapping", setup_needed: true },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Unpair identity" }));
+  fireEvent.click(await unpairIdentity());
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Unpair identity",
@@ -755,7 +820,7 @@ it("completes a transfer when the following refresh fails", async () => {
     community: { id: "c1" },
   });
   renderCard();
-  fireEvent.click(await screen.findByRole("button", { name: "Transfer" }));
+  await userEvent.setup().click(await communityAction("Transfer"));
   fireEvent.change(screen.getByPlaceholderText("npub1…"), {
     target: { value: npubEncode(other) },
   });
@@ -770,7 +835,7 @@ it("completes a transfer when the following refresh fails", async () => {
   // The transferred row is no longer offered as owned.
   expect(screen.queryByText("north")).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Transfer" }),
+    screen.queryByRole("button", { name: "Actions for north" }),
   ).not.toBeInTheDocument();
   routes["/api/builderlab/list"] = () => ({
     communities: [],
@@ -799,7 +864,7 @@ it.each([
       community: { id: "c1", archived_at: after },
     });
     renderCard();
-    fireEvent.click(await screen.findByRole("button", { name: action }));
+    await userEvent.setup().click(await communityAction(action));
     routes["/api/builderlab/list"] = () => ({
       error: { code: "relay_unavailable" },
     });
@@ -811,11 +876,9 @@ it.each([
     expect(
       await screen.findByText(/The change was saved, but the list could not/),
     ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: next })).toBeEnabled(),
-    );
+    expect(await communityAction(next)).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: action }),
+      screen.queryByRole("menuitem", { name: action }),
     ).not.toBeInTheDocument();
     // Copy is offered only for an active community.
     expect(
@@ -828,7 +891,7 @@ it.each([
         screen.queryByText(/The change was saved/),
       ).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: next })).toBeEnabled();
+    expect(await communityAction(next)).toBeEnabled();
     expect(
       calls.filter(([url]) => url === `/api/builderlab/${kind}`),
     ).toHaveLength(1);
@@ -939,15 +1002,13 @@ it.each([
               { ...listed.communities[0], archived_at: "2026-09-24" },
             ],
           });
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await userEvent.setup().click(await communityAction("Archive"));
     fireEvent.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: "Archive",
       }),
     );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Unarchive" })).toBeEnabled(),
-    );
+    expect(await communityAction("Unarchive")).toBeEnabled();
     await act(async () =>
       clipboard.release(schedule === "late success" ? "resolve" : "reject"),
     );
@@ -992,17 +1053,14 @@ it("keeps a failed copy handoff for another address when a community is archived
   routes["/api/builderlab/list"] = () => ({
     error: { code: "relay_unavailable" },
   });
-  fireEvent.click(
-    screen.getAllByRole("button", { name: "Archive" })[0] as HTMLElement,
-  );
+  await userEvent.setup().click(await communityAction("Archive"));
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", {
       name: "Archive",
     }),
   );
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Unarchive" })).toBeEnabled(),
-  );
+  expect(await communityAction("Unarchive", 1)).toBeEnabled();
+  await userEvent.setup().keyboard("{Escape}");
   expect(
     screen.getByText("wss://south.communities.buzz.xyz"),
   ).toBeInTheDocument();
@@ -1062,7 +1120,7 @@ const accepted = (request: Record<string, string | number>) => ({
 });
 
 async function openDeletion() {
-  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await userEvent.setup().click(await communityAction("Delete"));
   return screen.findByRole("dialog", { name: /Permanently delete north/ });
 }
 
@@ -1168,7 +1226,7 @@ it("retains the uncertain UUID through unpair and same-owner rebind", async () =
   routes["/api/builderlab/list"] = () => ({
     error: { code: "missing_mapping", setup_needed: true },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Unpair identity" }));
+  fireEvent.click(await unpairIdentity());
   const dialog = await screen.findByRole("alertdialog");
   fireEvent.click(
     within(dialog).getByRole("button", { name: "Unpair identity" }),
@@ -1259,7 +1317,7 @@ it("does not offer Connect or stale owner actions on an initial unauthorized loa
     screen.queryByRole("button", { name: "Connect Buzz identity" }),
   ).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("button", { name: "Actions for north" }),
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(bytes);
   expect(deletionPosts()).toHaveLength(0);
@@ -1341,7 +1399,8 @@ it("restores an accepted archived row only after its bound abort on Refresh", as
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await waitFor(() => expect(deletionPosts()).toHaveLength(2));
   expect(deletionPosts()[1]?.[1]).toEqual(original);
-  expect(await screen.findByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(await communityAction("Delete")).toBeEnabled();
+  await userEvent.setup().keyboard("{Escape}");
   expect(
     screen.getByText(/North\.communities\.buzz\.xyz · Archived/),
   ).toBeVisible();
@@ -1383,7 +1442,7 @@ it("shows the server's limit_reached message when quota is absent", async () => 
   routes["/api/builderlab/create"] = () =>
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await creationInput();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "north" } });
@@ -1409,7 +1468,7 @@ it("uses valid projected limit for a server limit_reached create error", async (
   routes["/api/builderlab/create"] = () =>
     Response.json({ error: { code: "limit_reached" } }, { status: 409 });
   renderCard();
-  const input = await screen.findByPlaceholderText("north-star");
+  const input = await creationInput();
   await waitFor(() => expect(input).toBeEnabled());
   vi.useFakeTimers();
   fireEvent.change(input, { target: { value: "north" } });
@@ -1474,11 +1533,9 @@ it("keeps deletion hidden when the capability is absent", async () => {
   });
   routes["/api/builderlab/list"] = () => ({ communities: [archived] });
   renderCard();
+  expect(await communityAction("Unarchive")).toBeVisible();
   expect(
-    await screen.findByRole("button", { name: "Unarchive" }),
-  ).toBeVisible();
-  expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("menuitem", { name: "Delete" }),
   ).not.toBeInTheDocument();
 });
 
@@ -1527,9 +1584,7 @@ it("replays an aborted 202 with the stored UUID and restores the archived row", 
   ]);
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
   expect(screen.queryByText("Deletion started")).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled(),
-  );
+  expect(await communityAction("Delete")).toBeEnabled();
 });
 
 it("clears a fresh must_archive rejection and restores deletion after remount", async () => {
@@ -1548,11 +1603,11 @@ it("clears a fresh must_archive rejection and restores deletion after remount", 
     "Archive the community before deleting it",
   );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
-  expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(await communityAction("Delete")).toBeEnabled();
 
   view.unmount();
   renderCard();
-  expect(await screen.findByRole("button", { name: "Delete" })).toBeEnabled();
+  expect(await communityAction("Delete")).toBeEnabled();
   expect(
     screen.queryByText("Deletion status is unknown"),
   ).not.toBeInTheDocument();
@@ -1667,7 +1722,11 @@ it("retains another owner's recovery envelope without showing or dispatching it"
     screen.queryByText("33333333-3333-4333-8333-333333333333"),
   ).not.toBeInTheDocument();
   expect(calls.map(([url]) => url)).not.toContain("/api/builderlab/delete");
-  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(await communityAction("Delete")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await userEvent.setup().keyboard("{Escape}");
   expect(
     screen.getByText(
       `A deletion request from ${npubEncode(other)} is still pending on this device. Switch to that Buzz identity and use Check deletion status before starting another deletion here. If you no longer have that identity, contact support.`,
@@ -1704,8 +1763,9 @@ it("does not reveal another owner's blocked notice when deletion is unavailable"
   renderCard();
   await screen.findByText(npubEncode(local));
   expect(screen.queryByText(/A deletion request from/)).not.toBeInTheDocument();
+  await communityMenu();
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("menuitem", { name: "Delete" }),
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);
@@ -1862,7 +1922,10 @@ it("explains a same-owner envelope saved for another origin without asking to sw
   expect(
     screen.queryByText(/Switch to that Buzz identity/),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(await communityAction("Delete")).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(deletionPosts()).toHaveLength(0);
 });
@@ -2065,11 +2128,7 @@ it("disables deletion for every row when a pending slot exists in another mounte
       { status: 503 },
     );
   render(<HostedCommunities api={brokerApi} active={() => true} />);
-  fireEvent.click(
-    (
-      await screen.findAllByRole("button", { name: "Delete" })
-    )[0] as HTMLElement,
-  );
+  await userEvent.setup().click(await communityAction("Delete"));
   const dialog = await screen.findByRole("dialog", {
     name: /Permanently delete north/,
   });
@@ -2091,10 +2150,17 @@ it("disables deletion for every row when a pending slot exists in another mounte
   });
   render(<HostedCommunities api={brokerApi} active={() => true} />);
   await waitFor(() =>
-    expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(3),
+    expect(
+      screen.getAllByRole("button", { name: /^Actions for / }),
+    ).toHaveLength(3),
   );
-  for (const button of screen.getAllByRole("button", { name: "Delete" }))
-    expect(button).toBeDisabled();
+  for (let index = 0; index < 3; index++) {
+    expect(await communityAction("Delete", index)).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await userEvent.setup().keyboard("{Escape}");
+  }
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBe(original);
   expect(
     calls.filter(([url]) => url === "/api/builderlab/delete"),
@@ -2315,7 +2381,7 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
   );
   routes["/api/builderlab/list"] = () => ({ communities: [archived, second] });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await userEvent.setup().click(await communityAction("Delete"));
   const secondDialog = await screen.findByRole("dialog", {
     name: /Permanently delete south/,
   });
@@ -2350,7 +2416,7 @@ it("stops accepted-row replay when the card retires mid-Refresh", async () => {
   );
   expect(deletionPosts()).toHaveLength(beforeReplay + 1);
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("button", { name: "Actions for north" }),
   ).not.toBeInTheDocument();
   expect(screen.getByText("Deletion started")).toBeVisible();
   expect(
@@ -2381,7 +2447,7 @@ it("shows a Refresh replay error without uncovering an accepted row", async () =
   );
   expect(screen.getByText("Deletion started")).toBeVisible();
   expect(
-    screen.queryByRole("button", { name: "Delete" }),
+    screen.queryByRole("button", { name: "Actions for north" }),
   ).not.toBeInTheDocument();
   expect(localStorage.getItem(DELETION_PENDING_KEY)).toBeNull();
 });

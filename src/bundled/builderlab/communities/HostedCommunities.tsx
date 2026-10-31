@@ -1,4 +1,5 @@
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
+import styles from "../Settings.module.css";
 import {
   type ReactNode,
   useCallback,
@@ -11,6 +12,14 @@ import {
 import { npubEncode } from "nostr-tools/nip19";
 import { AlertDialog } from "../../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../../shared/design-system/ui/Button";
+import { Accordion } from "../../../shared/design-system/ui/Accordion";
+import { IconButton } from "../../../shared/design-system/ui/IconButton";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../../shared/design-system/ui/Menu";
 import { Checkbox } from "../../../shared/design-system/ui/Checkbox";
 import { Dialog } from "../../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../../shared/design-system/ui/EmptyState";
@@ -18,12 +27,13 @@ import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { Field } from "../../../shared/design-system/ui/Field";
 import { Input } from "../../../shared/design-system/ui/Input";
 import {
+  CopyIcon,
+  DotsThreeIcon,
   ArchiveIcon,
   ArrowSquareOutIcon,
   ArrowsClockwiseIcon,
   ArrowsLeftRightIcon,
   BoxArrowUpIcon,
-  CheckCircleIcon,
   CircleNotchIcon,
   LinkBreakIcon,
   GlobeIcon,
@@ -70,11 +80,16 @@ export function HostedCommunities({
   api,
   active,
   sharedSignIn = false,
+  renderIdentity,
+  afterHosting,
 }: {
   api: Api;
   active(): boolean;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
+  renderIdentity?: (pubkey: string) => ReactNode;
+  /** Related content precedes account-wide consequential actions. */
+  afterHosting?: ReactNode;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -83,6 +98,8 @@ export function HostedCommunities({
   const [identityLoadFailed, setIdentityLoadFailed] = useState(false);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [quotaState, setQuotaState] = useState<Quota | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const createId = useId();
   // This device's key: undefined while loading, null when it could not be read.
   const [local, setLocal] = useState<string | null>();
   const [unsupported, setUnsupported] = useState("");
@@ -429,15 +446,7 @@ export function HostedCommunities({
   };
 
   return (
-    <section
-      aria-labelledby="hosted-communities-title"
-      className={sectionClassName}
-    >
-      <InlineHeader
-        id="hosted-communities-title"
-        title="Communities"
-        subtitle="Create and manage Block-hosted communities. Other relays don’t require a Builderlab account."
-      />
+    <section aria-label="Builderlab hosting" className={sectionClassName}>
       {failure}
       {unsupported ? (
         <p className={`${sectionClassName} text-body-sm text-muted`}>
@@ -500,8 +509,10 @@ export function HostedCommunities({
         )
       ) : (
         <>
-          {!sharedSignIn && <InlineHeader title="Account" />}
-          <SettingsGroup layout="form">
+          <InlineHeader
+            title={sharedSignIn ? "Buzz identity" : "Account and Buzz identity"}
+          />
+          <div className={`${styles.content} ${styles.connection}`}>
             {!sharedSignIn && (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -600,58 +611,50 @@ export function HostedCommunities({
                 </Button>
               </section>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-body-sm">
-                  <CheckCircleIcon size={16} aria-hidden="true" />
-                  Buzz identity connected{" "}
-                  <span className="break-all font-mono text-muted">
-                    {npub(bound)}
-                  </span>
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    setConfirm({
-                      title: "Unpair this Buzz identity?",
-                      description:
-                        "Your Builderlab account will no longer be connected to this Buzz key. You can reconnect any key later, but community actions stay unavailable until you do.",
-                      action: "Unpair identity",
-                      run: async () => {
-                        check(
-                          await api.call("unbind"),
-                          "Could not unpair the Buzz identity.",
-                        );
-                        setPendingDeletion(null);
-                        setIdentity(null);
-                        await settle();
-                      },
-                    })
-                  }
-                >
-                  <LinkBreakIcon aria-hidden="true" /> Unpair identity
-                </Button>
+              <div className="grid gap-3">
+                {bound && renderIdentity ? (
+                  renderIdentity(bound)
+                ) : (
+                  <p className="m-0 text-body-sm">Buzz identity connected</p>
+                )}
+                <Accordion
+                  variant="form"
+                  keepMounted
+                  items={[
+                    {
+                      value: "identity",
+                      title: "Identity details",
+                      content: (
+                        <div className="grid gap-3">
+                          <p className="m-0 break-all text-mono text-muted">
+                            {npub(bound)}
+                          </p>
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
               </div>
             )}
-          </SettingsGroup>
+          </div>
           <div className="mt-section-gap">
             <InlineHeader
-              title="Your communities"
-              subtitle={
-                quotaState
-                  ? `${quotaState.used} of ${quotaState.limit} used`
-                  : undefined
-              }
+              title="Hosted communities"
+              subtitle="Communities hosted by Builderlab."
               actions={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void run("refresh", () => load(true))}
-                >
-                  <ArrowsClockwiseIcon aria-hidden="true" /> Refresh
-                </Button>
+                <div className={styles.sectionFacts}>
+                  {quotaState && (
+                    <span className="text-caption text-muted">
+                      {quotaState.used} of {quotaState.limit} used
+                    </span>
+                  )}
+                  <IconButton
+                    aria-label="Refresh"
+                    disabled={busy}
+                    onClick={() => void run("refresh", () => load(true))}
+                    icon={<ArrowsClockwiseIcon aria-hidden="true" />}
+                  />
+                </div>
               }
             />
           </div>
@@ -723,14 +726,14 @@ export function HostedCommunities({
                 title="No hosted communities yet"
                 description={
                   ready
-                    ? "Create a community below to give your team a place to connect."
+                    ? "Choose Create a community to give your team a place to connect."
                     : "Communities hosted by this account will appear here."
                 }
               />
             ) : null
           ) : (
-            <SettingsGroup>
-              <ul className="m-0 list-none p-0">
+            <div className={styles.content}>
+              <ul className={styles.collection}>
                 {[...communities]
                   .sort(
                     (a, b) =>
@@ -747,111 +750,129 @@ export function HostedCommunities({
                     return (
                       <li
                         key={community.id ?? community.normalized_host ?? index}
-                        className={`flex flex-wrap items-center justify-between gap-3 border-b border-line py-4${archived ? " opacity-70" : ""}`}
+                        className={styles.community}
                       >
-                        <div className="min-w-0">
-                          <p className="m-0 text-label">{name}</p>
-                          <p className="m-0 text-body-sm text-muted">
-                            {community.normalized_host}
-                            {archived ? " · Archived" : ""}
-                          </p>
+                        <div className={styles.communityIdentity}>
+                          <span
+                            className={styles.communityIcon}
+                            aria-hidden="true"
+                          >
+                            <GlobeIcon size={20} />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="m-0 text-label">{name}</p>
+                            <p className="m-0 text-caption text-muted">
+                              {community.normalized_host}
+                              {archived ? " · Archived" : ""}
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {archived ? (
-                            <>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={
-                                  busy || !community.id || deletionPending
-                                }
-                                onClick={() =>
-                                  setConfirm({
-                                    title: `Unarchive ${name}?`,
-                                    description:
-                                      "This address becomes connectable again. Connections that closed during archival will not reconnect automatically.",
-                                    action: "Unarchive",
-                                    run: () =>
-                                      mutate(
-                                        "unarchive",
-                                        community,
-                                        "Could not unarchive the community.",
-                                      ),
-                                  })
-                                }
-                              >
-                                <BoxArrowUpIcon aria-hidden="true" /> Unarchive
-                              </Button>
-                              {deletionEnabled &&
-                                ready &&
-                                community.id &&
-                                community.normalized_host && (
-                                  <Button
-                                    variant="prominent"
-                                    size="sm"
-                                    disabled={
-                                      busy ||
-                                      Boolean(pendingDeletion) ||
-                                      Boolean(blockedOwner)
-                                    }
-                                    onClick={() => setDeleteTarget(community)}
-                                  >
-                                    <TrashIcon aria-hidden="true" /> Delete
-                                  </Button>
-                                )}
-                            </>
-                          ) : (
-                            <>
-                              {url && ready && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={busy}
-                                  onClick={() => void copy(url)}
-                                >
-                                  {shown?.copied && shown.url === url
-                                    ? "Copied"
-                                    : "Copy address"}
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={busy || !community.id}
-                                onClick={() => setTransfer(community)}
-                              >
-                                <ArrowsLeftRightIcon aria-hidden="true" />{" "}
-                                Transfer
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={busy || !community.id}
-                                onClick={() =>
-                                  setConfirm({
-                                    title: `Archive ${name}?`,
-                                    description:
-                                      "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
-                                    action: "Archive",
-                                    run: () =>
-                                      mutate(
-                                        "archive",
-                                        community,
-                                        "Could not archive the community.",
-                                      ),
-                                  })
-                                }
-                              >
-                                <ArchiveIcon aria-hidden="true" /> Archive
-                              </Button>
-                            </>
+                        <div className={styles.communityActions}>
+                          {!archived && url && ready && (
+                            <IconButton
+                              aria-label={
+                                shown?.copied && shown.url === url
+                                  ? "Copied"
+                                  : "Copy address"
+                              }
+                              variant="subtle"
+                              disabled={busy}
+                              onClick={() => void copy(url)}
+                              icon={<CopyIcon aria-hidden="true" />}
+                            />
                           )}
+                          <MenuRoot>
+                            <MenuTrigger
+                              render={
+                                <IconButton
+                                  aria-label={`Actions for ${name}`}
+                                  disabled={busy}
+                                  icon={<DotsThreeIcon aria-hidden="true" />}
+                                />
+                              }
+                            />
+                            <MenuPopup align="end" size="compact">
+                              {archived ? (
+                                <>
+                                  <MenuItem
+                                    disabled={
+                                      busy || !community.id || deletionPending
+                                    }
+                                    onClick={() =>
+                                      setConfirm({
+                                        title: `Unarchive ${name}?`,
+                                        description:
+                                          "This address becomes connectable again. Connections that closed during archival will not reconnect automatically.",
+                                        action: "Unarchive",
+                                        run: () =>
+                                          mutate(
+                                            "unarchive",
+                                            community,
+                                            "Could not unarchive the community.",
+                                          ),
+                                      })
+                                    }
+                                  >
+                                    <BoxArrowUpIcon aria-hidden="true" />{" "}
+                                    Unarchive
+                                  </MenuItem>
+                                  {deletionEnabled &&
+                                    ready &&
+                                    community.id &&
+                                    community.normalized_host && (
+                                      <MenuItem
+                                        tone="danger"
+                                        disabled={
+                                          busy ||
+                                          Boolean(pendingDeletion) ||
+                                          Boolean(blockedOwner)
+                                        }
+                                        onClick={() =>
+                                          setDeleteTarget(community)
+                                        }
+                                      >
+                                        <TrashIcon aria-hidden="true" /> Delete
+                                      </MenuItem>
+                                    )}
+                                </>
+                              ) : (
+                                <>
+                                  <MenuItem
+                                    disabled={busy || !community.id}
+                                    onClick={() => setTransfer(community)}
+                                  >
+                                    <ArrowsLeftRightIcon aria-hidden="true" />{" "}
+                                    Transfer
+                                  </MenuItem>
+                                  <MenuItem
+                                    disabled={busy || !community.id}
+                                    onClick={() =>
+                                      setConfirm({
+                                        title: `Archive ${name}?`,
+                                        description:
+                                          "New and existing connections stop and the address stays reserved. Archiving can’t be undone from here without unarchiving, and the community keeps counting toward your quota — it isn’t deleted.",
+                                        action: "Archive",
+                                        run: () =>
+                                          mutate(
+                                            "archive",
+                                            community,
+                                            "Could not archive the community.",
+                                          ),
+                                      })
+                                    }
+                                  >
+                                    <ArchiveIcon aria-hidden="true" /> Archive
+                                  </MenuItem>
+                                </>
+                              )}
+                            </MenuPopup>
+                          </MenuRoot>
                         </div>
                       </li>
                     );
                   })}
               </ul>
-            </SettingsGroup>
+            </div>
           )}
           {shown?.copied && (
             <p role="status" className="text-body-sm text-muted">
@@ -876,31 +897,88 @@ export function HostedCommunities({
               </div>
             </div>
           )}
-          <CreateCommunity
-            api={api}
-            enabled={ready && quotaState?.canCreate !== false}
-            atLimit={
-              quotaState?.canCreate === false
-                ? quotaLimitMessage(quotaState.limit)
-                : null
-            }
-            busy={busy}
-            creating={action === "create"}
-            onCreate={(name) =>
-              run("create", async () => {
-                const reply = check(
-                  await api.call("create", { name }),
-                  "Could not create the community.",
-                  quotaState?.limit,
-                );
-                // Hand off the address before refreshing, so a failed refresh cannot lose it.
-                const url = reply.community && relayUrl(reply.community);
-                if (url) await copy(url);
-                await settle();
-              })
-            }
-          />
+          {quotaState?.canCreate === false && (
+            <p className="text-body-sm text-muted">
+              {quotaLimitMessage(quotaState.limit)}
+            </p>
+          )}
+          <div className={styles.content}>
+            <div className={styles.sectionAction}>
+              <Button
+                size="sm"
+                aria-expanded={showCreate}
+                aria-controls={createId}
+                onClick={() => {
+                  if (activeRef.current()) setShowCreate(!showCreate);
+                }}
+              >
+                Create a community
+              </Button>
+            </div>
+            <div
+              id={createId}
+              hidden={!showCreate}
+              className={styles.creationForm}
+            >
+              <CreateCommunity
+                api={api}
+                enabled={ready && quotaState?.canCreate !== false}
+                busy={busy}
+                creating={action === "create"}
+                onCreate={(name) =>
+                  run("create", async () => {
+                    const reply = check(
+                      await api.call("create", { name }),
+                      "Could not create the community.",
+                      quotaState?.limit,
+                    );
+                    // Hand off the address before refreshing, so a failed refresh cannot lose it.
+                    const url = reply.community && relayUrl(reply.community);
+                    if (url) await copy(url);
+                    await settle();
+                  })
+                }
+              />
+            </div>
+          </div>
         </>
+      )}
+      {afterHosting}
+      {auth && ready && (
+        <section className="mt-section-gap" aria-label="Account actions">
+          <InlineHeader
+            title="Account actions"
+            subtitle="Disconnecting this identity pauses community actions until you reconnect."
+          />
+          <div className={styles.content}>
+            <Button
+              aria-label="Unpair identity"
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                if (!activeRef.current()) return;
+                setConfirm({
+                  title: "Unpair this Buzz identity?",
+                  description:
+                    "Your Builderlab account will no longer be connected to this Buzz key. You can reconnect any key later, but community actions stay unavailable until you do.",
+                  action: "Unpair identity",
+                  run: async () => {
+                    check(
+                      await api.call("unbind"),
+                      "Could not unpair the Buzz identity.",
+                    );
+                    setPendingDeletion(null);
+                    setIdentity(null);
+                    await settle();
+                  },
+                });
+              }}
+            >
+              <LinkBreakIcon aria-hidden="true" /> Unpair
+            </Button>
+          </div>
+        </section>
       )}
       {deleteTarget && bound && (
         <DeleteCommunityDialog
@@ -1091,14 +1169,12 @@ function DeleteCommunityDialog({
 function CreateCommunity({
   api,
   enabled,
-  atLimit,
   busy,
   creating,
   onCreate,
 }: {
   api: Api;
   enabled: boolean;
-  atLimit: string | null;
   busy: boolean;
   creating: boolean;
   onCreate(name: string): Promise<boolean>;
@@ -1133,22 +1209,15 @@ function CreateCommunity({
   }, [api, enabled, name, valid, attempt]);
   return (
     <form
-      className={sectionClassName}
       onSubmit={(event) => {
         event.preventDefault();
         if (enabled && valid && available)
           void onCreate(name).then((ok) => ok && setName(""));
       }}
     >
-      <InlineHeader
-        title="Create a community"
-        subtitle="Choose the address your team will use to connect."
-      />
       <SettingsGroup layout="form">
-        {atLimit && <p className="text-body-sm text-muted">{atLimit}</p>}
         <Field
           label="Community address"
-          labelVisibility="hidden"
           invalid={Boolean(name) && !valid}
           error={
             name && !valid

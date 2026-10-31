@@ -26,6 +26,8 @@ const W = getPublicKey(WORKER);
 const K = "7d3c1b52-9a0e-4f61-8d2b-3c5e6f708192";
 const S = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 const START = 1_790_000_000;
+/** How long discovery, and then each answer, may take. */
+const WAIT_MS = 20_000;
 const ROUTE = {
   v: 1,
   owner: H,
@@ -71,7 +73,11 @@ const ready: Owner = (intent) =>
  * Buzz answers requests as `owner` says. */
 function community(
   owner: Owner = ready,
-  options: { roster?: string[]; ack?: GrantAck | null } = {},
+  options: {
+    roster?: string[];
+    ack?: GrantAck | null;
+    visibility?: "private" | "public" | null;
+  } = {},
 ) {
   let now = START;
   const clock: Clock = {
@@ -110,6 +116,12 @@ function community(
       ]),
     ],
   });
+  if (options.visibility !== null)
+    sign(RELAY, {
+      kind: 39000,
+      content: "",
+      tags: [["d", K], [options.visibility ?? "private"]],
+    });
   if (options.ack !== null) sign(OWNER, recordTemplate(options.ack ?? ACK));
   const published: BuzzEvent[] = [];
   const client: BuzzClient = {
@@ -235,6 +247,56 @@ describe("solo_worker_connections", () => {
     expect((await call("solo_worker_connections")).connections).toEqual([]);
   });
 
+  it.each([
+    ["public", "public"],
+    ["without visibility", null],
+  ] as const)("ignores a channel that is %s", async (_, visibility) => {
+    const { call } = community(ready, { visibility });
+    expect((await call("solo_worker_connections")).connections).toEqual([]);
+  });
+
+  it("stops using a channel made public, even for a saved retry", async () => {
+    const { call, sign, published } = community((intent) =>
+      intent.action === "send" ? [{ phase: "accepted" }] : ready(intent, ""),
+    );
+    const first = await call("solo_worker_send", {
+      solo: S,
+      worker_epoch: 1,
+      text: "go",
+    });
+    expect(first.retry).toBeDefined();
+    sign(RELAY, { kind: 39000, content: "", tags: [["d", K], ["public"]] });
+    const before = published.length;
+    await expect(
+      call("solo_worker_send", { retry: first.retry }),
+    ).rejects.toThrow(/No owner has authorized you/);
+    expect(published).toHaveLength(before);
+  });
+
+  it.each([
+    ["roster", 39002],
+    ["metadata", 39000],
+    ["acknowledgement", 9],
+  ])(
+    "fails without posting when the %s read never finishes",
+    async (_, kind) => {
+      const { client, clock, published } = community();
+      const stalled = {
+        ...client,
+        query(filters: readonly Filter[]) {
+          if (!(filters[0] as { kinds: number[] }).kinds.includes(kind))
+            return client.query(filters);
+          void clock.wait(WAIT_MS);
+          return new Promise<never>(() => {});
+        },
+      } as BuzzClient;
+      await expect(
+        callSoloWorkerTool(stalled, "solo_worker_readiness", {}, clock),
+      ).rejects.toThrow(/took too long/);
+      expect(published).toEqual([]);
+    },
+  );
+
   it("finds nothing where the relay's roster cannot be checked", async () => {
     const { client } = community();
     await expect(
@@ -258,6 +320,11 @@ describe("solo_worker_connections", () => {
         ["p", stranger],
         ["p", C],
       ],
+    });
+    sign(RELAY, {
+      kind: 39000,
+      content: "",
+      tags: [["d", elsewhere], ["private"]],
     });
     sign(
       STRANGER,
@@ -382,6 +449,14 @@ describe("a change", () => {
       issued_at: behind,
       admit_before: behind + 30,
     });
+  });
+
+  it("keeps why readiness got no answer when it sends no change", async () => {
+    const { call, requests } = community(() => []);
+    const answer = await call("solo_worker_stop", { solo: S, worker_epoch: 1 });
+    expect(answer).toMatchObject({ status: "pending" });
+    expect(answer.note).toMatch(/may be closed.*change was not sent/);
+    expect(requests().map((request) => request.action)).toEqual(["readiness"]);
   });
 
   it("sends nothing when the owner's Buzz is not ready", async () => {
@@ -509,9 +584,6 @@ describe("a change", () => {
     ).rejects.toThrow(/worker_epoch is required/);
   });
 });
-
-/** How long a call waits for an answer. */
-const WAIT_MS = 20_000;
 
 describe("answers", () => {
   const settled = {

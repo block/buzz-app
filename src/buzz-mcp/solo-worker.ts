@@ -5,6 +5,8 @@
 // owner; the answer counts only when the owner's Buzz signs it there. The
 // owner's Buzz decides everything: these tools find the channel, ask and
 // report what it said.
+import { channelVisibility } from "../features/relay/channel-details-protocol";
+import type { RelayEvent } from "../features/relay/events";
 import type { BuzzClient, BuzzEvent } from "./client";
 import {
   ACK_HORIZON,
@@ -170,7 +172,7 @@ export async function callSoloWorkerTool(
   );
   if (extra.length)
     throw new Error(`${extra.join(", ")} cannot be used with ${name}.`);
-  const found = await connections(client);
+  const found = await connections(client, clock);
   if (name === "solo_worker_connections")
     return JSON.stringify({
       connections: found.connections.map(
@@ -220,7 +222,7 @@ export async function callSoloWorkerTool(
   if (ready.phase !== "ready" || !ready.result)
     return JSON.stringify({
       ...ready,
-      note: "The owner's Buzz is not ready, so nothing was sent.",
+      note: `${ready.note ? `${ready.note} ` : ""}The owner's Buzz is not ready, so the change was not sent.`,
     });
   const { custody_epoch, valid_until } = ready.result as {
     custody_epoch: string;
@@ -445,18 +447,27 @@ function shown(response: Response, request: Intent) {
 
 /** The owners' grants to this agent: the latest acknowledgement in each
  * private channel whose only members are this agent and its owner. Authority
- * is the owner's signature there; the relay-signed roster says where to look
- * and who the other member is, so a connection that cannot verify the roster
- * finds nothing. */
-async function connections(client: BuzzClient) {
+ * is the owner's signature there; the relay-signed roster and metadata say
+ * where to look, who the other member is and that the channel is still
+ * private, so a connection that cannot verify them finds nothing. */
+async function connections(client: BuzzClient, clock: Clock) {
   const { relayAuthor } = client;
   if (relayAuthor === undefined)
     throw new Error(
       "This Buzz connection does not know its relay's key, so it cannot verify channel members or find an owner's grant.",
     );
+  const deadline = clock.now() + WAIT_MS / 1000;
+  const query = async (filter: Record<string, unknown>) => {
+    const events = await by(deadline, clock, client.query([filter]));
+    if (events === LATE)
+      throw new Error(
+        "Finding the owner's grant took too long, so nothing was sent. Try again.",
+      );
+    return events;
+  };
   const streams = new Map<string, string>();
   const complete = await scan(
-    client,
+    query,
     { kinds: [39002], "#p": [client.pubkey], authors: [relayAuthor] },
     (event) => {
       if (event.pubkey !== relayAuthor) return true;
@@ -472,9 +483,25 @@ async function connections(client: BuzzClient) {
   );
   const found: GrantAck[] = [];
   for (const [stream, owner] of streams) {
-    const events = await client.query([
-      { kinds: [9], "#h": [stream], authors: [owner], limit: ACK_HORIZON },
-    ]);
+    // Requests, retries included, are posted before the owner can refuse
+    // them, so only a channel the relay still marks private may carry them.
+    const [metadata] = await query({
+      kinds: [39000],
+      "#d": [stream],
+      authors: [relayAuthor],
+      limit: 1,
+    });
+    if (
+      metadata?.pubkey !== relayAuthor ||
+      channelVisibility(metadata as RelayEvent) !== "private"
+    )
+      continue;
+    const events = await query({
+      kinds: [9],
+      "#h": [stream],
+      authors: [owner],
+      limit: ACK_HORIZON,
+    });
     const ack = events
       .map((event) => readRecord(event, "grant_ack"))
       .find((record) => record?.controller === client.pubkey);
@@ -515,15 +542,13 @@ function pick(
 
 /** Visits matching events newest first; false when the budget ran out. */
 async function scan(
-  client: BuzzClient,
+  query: (filter: Record<string, unknown>) => Promise<readonly BuzzEvent[]>,
   filter: Record<string, unknown>,
   visit: (event: BuzzEvent) => boolean,
 ) {
   let count = 0;
   for (let cursor = {}; ; ) {
-    const page = await client.query([
-      { ...filter, ...cursor, limit: PAGE_MAX },
-    ]);
+    const page = await query({ ...filter, ...cursor, limit: PAGE_MAX });
     for (const event of page) {
       if (++count > SCAN_MAX) return false;
       if (!visit(event)) return true;

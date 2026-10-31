@@ -78,8 +78,8 @@ export function apply(ctx: Context) {
     headers: { Authorization: "Bearer sample" },
     body: "{}",
   }).then((response) => void response.status);
-  // Positive detection is necessary: older requestOnce can ignore new options.
-  if (host.requestOnceEligibility === true && typeof host.requestOnce === "function") {
+  // Final synchronous eligibility is part of the optional protected method.
+  if (typeof host.requestOnce === "function") {
     const options: HostRequestOnceOptions = {
       callId: "12345678-1234-4234-8234-123456789abc",
       isEligible: () => true,
@@ -89,8 +89,6 @@ export function apply(ctx: Context) {
     const invalid: HostRequestOnceOptions = { callId: options.callId, isEligible: async () => true };
     void invalid;
   }
-  // @ts-expect-error Support indication is immutable.
-  host.requestOnceEligibility = true;
   const bytes: HostByteRequest = { url: "https://api.example.com/bytes", maxBytes: 1024 };
   void host.requestBytes?.(bytes).then((response: HostByteResponse) => {
     const body: Uint8Array = response.body;

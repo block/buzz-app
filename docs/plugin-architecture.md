@@ -1113,12 +1113,11 @@ automatically opt in; there is no endpoint-specific URL or content logic. Check 
 before starting work; missing native context also rejects without falling back to
 ordinary `request`. A compatible frontend **and** native release are required.
 
-For a final caller-policy check, first positively detect
-`host.requestOnceEligibility === true && typeof host.requestOnce === "function"`.
-Checking `requestOnce` alone is insufficient: older frontends can silently ignore
-unknown options. If support is absent, refuse work that depends on this check;
-do not fall back to ordinary requests. The minimum compatible released version
-is not yet established; the indicator does not prove native compatibility.
+For a final caller-policy check, first detect
+`typeof host.requestOnce === "function"`; synchronous eligibility is part of this
+optional method's contract. If absent, refuse work that depends on it; do not fall
+back to ordinary requests. The minimum compatible released version is not yet
+established; method availability does not prove native compatibility.
 
 Pass `isEligible: () => boolean` alongside `callId` (the exported
 `HostRequestOnceOptions` type). The host calls it synchronously after native
@@ -1147,7 +1146,9 @@ Native retains at most 1024 compact digest claims per process, with no eviction 
 rearming on completion, unload, grant change or page load; capacity/poison/generation
 exhaustion fails closed. Old boot/page envelopes reject after restart/reload. Fiber
 disposal blocks new cooperative calls and suppresses late success, but cannot undo
-an admitted upstream request. This is **same-envelope host dispatch protection**,
+an admitted upstream request. An in-place fiber restart creates a fresh activation;
+old in-flight calls remain inactive. Restart must not be used to retry an unknown
+submission. This is **same-envelope host dispatch protection**,
 not durable exactly-once execution, server/proxy deduplication, spend approval,
 upstream cancellation, a malicious-plugin sandbox or deduplication of fresh authorities.
 Plugin persistence and non-resuming approval policy remain the caller's responsibility.

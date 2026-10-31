@@ -149,9 +149,6 @@ export interface Host {
     input: HostRequest,
     options: HostRequestOnceOptions,
   ) => Promise<HostResponse>;
-  /** Check === true AND requestOnce is a function before relying on isEligible.
-   * Does not establish native compatibility or authorize a request. */
-  readonly requestOnceEligibility?: true;
   /** No automatic replay protection or text/array fallback. */
   requestBytes?: (input: HostByteRequest) => Promise<HostByteResponse>;
   /** Requires host.managedFiles, not host.files. Keep bytes immutable through
@@ -467,8 +464,6 @@ export class HostService extends Service implements Host {
     }).catch(rethrow);
   }
 
-  readonly requestOnceEligibility = true as const;
-
   async requestOnce(
     input: HostRequest,
     { callId, isEligible }: HostRequestOnceOptions,
@@ -481,12 +476,12 @@ export class HostService extends Service implements Host {
       throw new Error(
         "Protected requests require POST and a canonical UUID callId",
       );
+    let state = callContexts.get(ctx.fiber);
     const active = () => {
-      if (ctx.fiber.uid === null || callContexts.get(ctx.fiber)?.disposed)
+      if (ctx.fiber.uid === null || state?.disposed)
         throw new Error("Protected request owner is inactive; outcome unknown");
     };
     active();
-    let state = callContexts.get(ctx.fiber);
     if (!state) {
       state = {
         context: invoke<CallContext>("plugin_host_call_context").catch(rethrow),
@@ -497,6 +492,8 @@ export class HostService extends Service implements Host {
       ctx.effect(
         () => () => {
           lifetime.disposed = true;
+          if (callContexts.get(ctx.fiber) === lifetime)
+            callContexts.delete(ctx.fiber);
         },
         "protected host calls",
       );

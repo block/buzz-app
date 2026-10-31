@@ -690,6 +690,117 @@ it("passes recorded POST identity unchanged, shares context only within its call
   }
 });
 
+it.each(["restart", "config update"] as const)(
+  "starts fresh protected authority after a real Cordis %s on the same fiber",
+  async (change) => {
+    const { host, fiber } = await oncePlugin();
+    const uid = fiber.uid;
+    vi.mocked(invoke).mockImplementation(async (command) =>
+      command === "plugin_host_call_context" ? onceContext : onceReply,
+    );
+    try {
+      await expect(host.requestOnce?.(onceInput, { callId })).resolves.toEqual(
+        onceReply,
+      );
+      if (change === "restart") await fiber.restart();
+      else await fiber.update({ revision: "next" });
+      expect(fiber.uid).toBe(uid);
+      const nextId = "abcdefab-1234-4234-8234-123456789abd";
+      await expect(
+        host.requestOnce?.(onceInput, { callId: nextId }),
+      ).resolves.toEqual(onceReply);
+      const requests = protectedInvokes().map(
+        ([, body]) =>
+          body as {
+            once: { activation: string; callId: string };
+          },
+      );
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.once.callId).toBe(nextId);
+      expect(requests[1]?.once.activation).not.toBe(
+        requests[0]?.once.activation,
+      );
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([name]) => name === "plugin_host_call_context"),
+      ).toHaveLength(2);
+    } finally {
+      await fiber.dispose();
+    }
+  },
+);
+
+it.each(["context", "reply"] as const)(
+  "does not revive a captured protected lifetime waiting for %s after Cordis restart",
+  async (phase) => {
+    const { host, fiber } = await oncePlugin();
+    let release!: (value: typeof onceContext | typeof onceReply) => void;
+    const held = new Promise<typeof onceContext | typeof onceReply>(
+      (resolve) => {
+        release = resolve;
+      },
+    );
+    let started!: () => void;
+    const dispatched = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let holding = true;
+    vi.mocked(invoke).mockImplementation((command) => {
+      if (command === "plugin_host_call_context")
+        return holding && phase === "context"
+          ? held
+          : Promise.resolve(onceContext);
+      if (holding && phase === "reply") {
+        started();
+        return held;
+      }
+      return Promise.resolve(onceReply);
+    });
+    const stale = host.requestOnce?.(onceInput, { callId });
+    const refused = expect(stale).rejects.toThrow("inactive");
+    try {
+      if (phase === "reply") await dispatched;
+      await fiber.restart();
+      holding = false;
+      const nextId = "abcdefab-1234-4234-8234-123456789abd";
+      await expect(
+        host.requestOnce?.(onceInput, { callId: nextId }),
+      ).resolves.toEqual(onceReply);
+      release(phase === "context" ? onceContext : onceReply);
+      await refused;
+      // Finishing the old call cannot discard or rebind the new activation.
+      await expect(
+        host.requestOnce?.(onceInput, {
+          callId: "abcdefab-1234-4234-8234-123456789abe",
+        }),
+      ).resolves.toEqual(onceReply);
+      const requests = protectedInvokes().map(
+        ([, body]) =>
+          body as {
+            once: { activation: string; callId: string };
+          },
+      );
+      expect(requests).toHaveLength(phase === "context" ? 2 : 3);
+      const fresh = requests.filter(({ once }) => once.callId !== callId);
+      expect(fresh[1]?.once.activation).toBe(fresh[0]?.once.activation);
+      if (phase === "reply")
+        expect(fresh[0]?.once.activation).not.toBe(
+          requests[0]?.once.activation,
+        );
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([name]) => name === "plugin_host_call_context"),
+      ).toHaveLength(2);
+    } finally {
+      release(phase === "context" ? onceContext : onceReply);
+      await refused;
+      await fiber.dispose();
+    }
+  },
+);
+
 it.each([
   undefined,
   { boot: "not-a-uuid", page: 1 },
@@ -1030,14 +1141,11 @@ const protectedInvokes = () =>
     .mocked(invoke)
     .mock.calls.filter(([name]) => name === "plugin_host_request");
 
-it("final eligibility advertises explicit support and checks once after deferred context before one exact POST", async () => {
+it("final eligibility checks once after deferred context before one exact POST", async () => {
   const { host, fiber } = await oncePlugin();
   const held = deferredOnceContext();
   const isEligible = vi.fn(() => true);
   try {
-    expect(
-      "requestOnceEligibility" in host && host.requestOnceEligibility,
-    ).toBe(true);
     const options = { callId, isEligible };
     const request = host.requestOnce?.(onceInput, options);
     expect(isEligible).not.toHaveBeenCalled();

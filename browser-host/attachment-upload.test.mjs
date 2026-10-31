@@ -1,3 +1,4 @@
+import { receiveAttachment } from "./attachment-file.mjs";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
@@ -379,14 +380,9 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
 test("declared and streamed request budgets reject before signing or forwarding", async () => {
   const forward = vi.fn();
   for (const declared of [true, false]) {
-    const req = Readable.from(
-      (function* () {
-        const chunk = Buffer.alloc(1024 * 1024);
-        for (let size = 0; size < UPLOAD_MAX_BYTES; size += chunk.length)
-          yield chunk;
-        yield Buffer.from("x");
-      })(),
-    );
+    // Exceed the real configured budget in one chunk, before spooling to disk.
+    // The meter's cumulative behavior is covered separately with a small limit.
+    const req = Readable.from([Buffer.alloc(UPLOAD_MAX_BYTES + 1)]);
     req.headers = declared
       ? { "content-length": String(UPLOAD_MAX_BYTES + 1) }
       : {};
@@ -396,6 +392,27 @@ test("declared and streamed request budgets reject before signing or forwarding"
     req.destroy();
   }
   expect(forward).not.toHaveBeenCalled();
+});
+
+test("the spool budget counts bytes across chunks", async () => {
+  const req = Readable.from([
+    Buffer.alloc(8),
+    Buffer.alloc(8),
+    Buffer.alloc(1),
+  ]);
+  req.headers = {};
+  try {
+    await expect(
+      receiveAttachment(
+        req,
+        16,
+        new AbortController().signal,
+        () => new Error("size"),
+      ),
+    ).rejects.toThrow("size");
+  } finally {
+    req.destroy();
+  }
 });
 
 test("the whole-operation timeout aborts a stalled body without forwarding", async () => {

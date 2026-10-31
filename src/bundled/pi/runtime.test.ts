@@ -270,6 +270,23 @@ it("contains delegated file reads with the current Pi handle's policy", async ()
   }
 });
 
+it("never opens a protected agent's storage in the shared host before its handle arrives", async () => {
+  const { host, runtime } = setup();
+  runtime.sync([
+    {
+      key: self,
+      pubkey: self,
+      config: DEFAULT_CONFIG,
+      protection: { provider: "test", policy: {} },
+    },
+  ] as unknown as Agent[]);
+  await expect(runtime.places(self)).rejects.toThrow(
+    "The agent isn't connected yet",
+  );
+  expect(host.requests("places")).toEqual([]);
+  expect(host.processes).toEqual([]);
+});
+
 it("hands an owner's mention to its thread's Pi conversation", async () => {
   const { host, deliver, published } = setup();
   const mention = reply("2", "@Pi can you look?");

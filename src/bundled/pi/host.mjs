@@ -86,11 +86,13 @@ export function protectModels(models, inspect, conversationFor) {
           );
         const selected = structuredClone(model),
           content = structuredClone(input);
-        const { signal, apiKey, headers, env, ...data } = options;
+        // Telemetry spans hold functions and only observe the request.
+        const { signal, apiKey, headers, env, telemetry, ...data } = options;
         const settings = structuredClone(data);
         return method.call(target, selected, content, {
           ...settings,
           signal,
+          telemetry,
           apiKey,
           headers: structuredClone(headers),
           env: structuredClone(env),
@@ -928,13 +930,17 @@ export function serve({
             // Given up when the run is stopped, so closing the agent does
             // not wait on Buzz.
             const result = await awaitWithContext(
-              call("tool", {
-                agent: opened.agent,
-                conversation: api.conversationId,
-                context: opened.contexts.get(api.conversationId) ?? {},
-                name: tool.name,
-                arguments: args,
-              }),
+              call(
+                "tool",
+                {
+                  agent: opened.agent,
+                  conversation: api.conversationId,
+                  context: opened.contexts.get(api.conversationId) ?? {},
+                  name: tool.name,
+                  arguments: args,
+                },
+                signalled.abortSignal,
+              ),
               signalled,
             );
             return {

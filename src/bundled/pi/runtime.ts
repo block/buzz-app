@@ -184,6 +184,8 @@ export class PiRuntime {
   private readonly views = new Map<AgentKey, readonly number[]>();
   /** The agents of this type that run here now. */
   private running = new Set<AgentKey>();
+  /** Agents with a protection binding, which never use the shared host. */
+  private bound = new Set<AgentKey>();
   /** Each agent's conversations as Pi's storage and this app run's
    * deliveries know them, by key; read from storage once, when first asked. */
   private readonly known = new Map<
@@ -225,7 +227,7 @@ export class PiRuntime {
     this.pi = new Pi(
       () => this.spawn,
       {
-        tool: (call) => this.tool(call),
+        tool: (call, signal) => this.tool(call, signal),
         hook: (call) => {
           if (!this.agents.has(call.agent))
             throw new Error("Pi hook agent is no longer active");
@@ -243,8 +245,14 @@ export class PiRuntime {
           this.agents.get(agent)?.receipts.get(request)?.prompt?.() ??
           Promise.resolve(undefined),
       },
-      (pubkey) =>
-        (this.agents.get(pubkey)?.handle ?? this.handle(pubkey))?.protection,
+      (pubkey) => {
+        const protection = (
+          this.agents.get(pubkey)?.handle ?? this.handle(pubkey)
+        )?.protection;
+        if (!protection && this.bound.has(pubkey))
+          throw new Error("The agent isn't connected yet. Try again shortly.");
+        return protection;
+      },
     );
     this.setup = new PiSetup(this.pi);
   }
@@ -266,6 +274,9 @@ export class PiRuntime {
     for (const agent of new Set([...this.running, ...this.agents.keys()]))
       if (!current.has(agent)) void this.retire(agent).catch(() => undefined);
     this.running = current;
+    this.bound = new Set(
+      agents.filter((agent) => agent.protection).map((agent) => agent.key),
+    );
     for (const agent of agents) {
       const revision = agent.protectionRevision ?? 0;
       const previous = this.revisions.get(agent.key);
@@ -770,7 +781,7 @@ export class PiRuntime {
   }
 
   /** Runs a Buzz tool for Pi, for the conversation that called it. */
-  async tool(call: ToolCall): Promise<ToolResult> {
+  async tool(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     const entry = this.agents.get(call.agent);
     const client =
       entry?.handle &&
@@ -794,6 +805,7 @@ export class PiRuntime {
             : this.readFile(path, { cwd: entry.config.workspace }),
         memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
+        ...(signal ? { signal } : {}),
       });
     try {
       const reply = await callSessionTool(

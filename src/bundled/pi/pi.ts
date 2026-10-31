@@ -46,7 +46,7 @@ export type PiHookCall = Readonly<{
 }>;
 type Handlers = Readonly<{
   hook?(call: PiHookCall): Promise<unknown>;
-  tool(call: ToolCall): Promise<ToolResult>;
+  tool(call: ToolCall, signal: AbortSignal): Promise<ToolResult>;
   event(event: PiEvent): void;
   prompt?(call: {
     agent: string;
@@ -95,6 +95,7 @@ type ProtectedLaunch = {
 };
 type Connection = {
   lifetime: AbortController;
+  /** Security checks and tool calls the host can cancel, by request id. */
   checks: Map<number | string, AbortController>;
   process: HostProcess;
   calls: Map<
@@ -426,6 +427,13 @@ export class Pi {
     params: unknown,
   ) {
     let message: Message;
+    // A stopped run or a lost host cancels the Buzz tool it called.
+    const controller = new AbortController();
+    const signal = AbortSignal.any([
+      controller.signal,
+      connection.lifetime.signal,
+    ]);
+    if (method === "tool") connection.checks.set(id, controller);
     try {
       message = {
         id,
@@ -433,7 +441,7 @@ export class Pi {
           method === "hook"
             ? ((await this.handlers.hook?.(params as PiHookCall)) ?? null)
             : method === "tool"
-              ? await this.handlers.tool(params as ToolCall)
+              ? await this.handlers.tool(params as ToolCall, signal)
               : ((await this.handlers.prompt?.(
                   params as { agent: string; request: string },
                 )) ?? false),
@@ -443,6 +451,9 @@ export class Pi {
         id,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      if (connection.checks.get(id) === controller)
+        connection.checks.delete(id);
     }
     if (!connection.gone)
       await connection.process

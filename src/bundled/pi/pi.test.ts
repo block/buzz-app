@@ -154,10 +154,42 @@ it("runs the tools the host calls, and sends back each result or error", async (
   await expect(process?.tool(call)).resolves.toMatchObject({
     result: { content: [{ type: "text", text: "sent" }] },
   });
-  expect(tool).toHaveBeenCalledWith(call);
+  expect(tool).toHaveBeenCalledWith(call, expect.any(AbortSignal));
   await expect(process?.tool(call)).resolves.toMatchObject({
     error: "No such channel",
   });
+});
+
+it("cancels a Buzz tool when its run stops or the host goes", async () => {
+  const host = fakeHost();
+  const signals: AbortSignal[] = [];
+  const tool = vi.fn(
+    (_call: unknown, signal: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        signals.push(signal);
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+  );
+  const pi = new Pi(() => host.spawn, { tool, event: vi.fn() });
+  await pi.request("open");
+  const process = host.processes[0];
+  const call = {
+    agent: "a",
+    conversation: 3,
+    context: {},
+    name: "send",
+    arguments: { text: "hi" },
+  };
+  const stopped = process?.tool(call);
+  void process?.tool(call);
+  await vi.waitFor(() => expect(signals).toHaveLength(2));
+  process?.send({ method: "security_cancel", params: { id: "h1" } });
+  await expect(stopped).resolves.toHaveProperty("error");
+  expect(signals.map((signal) => signal.aborted)).toEqual([true, false]);
+  process?.exit(1);
+  await vi.waitFor(() => expect(signals[1]?.aborted).toBe(true));
 });
 
 it("closes the host's stdin to stop it, and refuses requests after", async () => {

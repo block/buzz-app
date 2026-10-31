@@ -916,6 +916,7 @@ function MessageRowContent({
                 className={
                   stackPrevious ? "sr-only select-none" : styles.byline
                 }
+                data-message-byline={stackPrevious ? undefined : ""}
               >
                 {row.workflowOwnerId && workflowOwnerName ? (
                   <WorkflowByline

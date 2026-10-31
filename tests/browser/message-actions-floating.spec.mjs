@@ -208,6 +208,101 @@ for (const own of [true, false]) {
   });
 }
 
+// Browser-only: the byline's reach depends on rendered text and bubble widths,
+// and the deferred controls mount only after real pointer entry.
+for (const own of [false, true]) {
+  test(`the ${own ? "own" : "received"} byline reveals actions within its text or bubble width`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    // Keyboard modality mounts every row's controls. Pointer input defers them.
+    await page.mouse.click(2, 2);
+    await expect(page.locator("html")).not.toHaveAttribute(
+      "data-keyboard-navigation",
+    );
+    // The other speaker's message keeps history from stacking this byline away.
+    app.append("primary", "alpha", "Other speaker", true, !own);
+    const event = app.append(
+      "primary",
+      "alpha",
+      "A bubble wide enough that its actions leave the left side uncovered",
+      true,
+      own,
+    );
+    const next = app.append("primary", "alpha", "Stacked", true, own);
+    const rowFor = (id) =>
+      page.locator(`[data-channel-timeline] [data-message-id="${id}"]`);
+    const row = rowFor(event.id);
+    const actions = actionsFor(row);
+    await expect(
+      rowFor(next.id).locator("[data-stack-previous]"),
+    ).toBeVisible();
+    await expect(rowFor(next.id).locator("[data-message-byline]")).toHaveCount(
+      0,
+    );
+    await settle(page);
+    await page.mouse.move(0, 0);
+    await expect
+      .poll(() => actions.evaluate((bar) => bar.childElementCount))
+      .toBe(0);
+    // First entry straight onto the name, then still, mounts and reveals.
+    const name = await row
+      .locator("[data-message-byline] strong")
+      .first()
+      .boundingBox();
+    await page.mouse.move(name.x + name.width / 2, name.y + name.height / 2);
+    await shown(actions);
+    // Moving down into the bubble must not close and reopen the actions.
+    const geometry = await row.evaluate((node) => {
+      const bounds = node.getBoundingClientRect();
+      const byline = node
+        .querySelector("[data-message-byline]")
+        .getBoundingClientRect();
+      const bubble = node
+        .querySelector("[data-message-action-anchor]")
+        .getBoundingClientRect();
+      let left = bubble.left;
+      let right = bubble.right;
+      for (const part of node.querySelector("[data-message-byline]").children) {
+        const rect = part.getBoundingClientRect();
+        if (!rect.width) continue;
+        left = Math.min(left, rect.left);
+        right = Math.max(right, rect.right);
+      }
+      // A retained reveal is never removed, so it records no mutation at all.
+      window.__revealChanges = 0;
+      new MutationObserver((records) => {
+        window.__revealChanges += records.length;
+      }).observe(node.querySelector("[data-layout]"), {
+        attributeFilter: ["data-actions-revealed"],
+      });
+      return {
+        x: bubble.left + 8,
+        top: byline.top + byline.height / 2,
+        bottom: bubble.top + bubble.height / 2,
+        // Own bylines hug their bubble, so measure the row's side space.
+        outside:
+          left - bounds.left > bounds.right - right
+            ? (bounds.left + left) / 2
+            : (right + bounds.right) / 2,
+      };
+    });
+    await page.mouse.move(geometry.x, geometry.top);
+    await shown(actions);
+    await page.mouse.move(geometry.x, geometry.bottom, {
+      steps: Math.ceil(geometry.bottom - geometry.top),
+    });
+    await shown(actions);
+    expect(await page.evaluate(() => window.__revealChanges)).toBe(0);
+    // Space past the text and bubble widths at byline height stays inert.
+    await page.mouse.move(0, 0);
+    await hidden(actions);
+    await page.mouse.move(geometry.outside, geometry.top);
+    await hidden(actions);
+  });
+}
+
 // Browser-only: caption and attachment content share one raised action position
 // while retaining native hit testing and an uninterrupted pointer path.
 for (const own of [false, true]) {

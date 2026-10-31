@@ -20,6 +20,7 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 function setup(current?: UserStatus) {
   const owner = createRelaySession(null);
@@ -67,6 +68,9 @@ it("calculates the selected preset at save time after a quick choice is edited",
   });
 });
 it("prefills and preserves an existing deadline, and validates a custom date before saving", async () => {
+  // Mid-month, so tomorrow's deadline opens the calendar on the month that shows today.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 9, 14, 12));
   const user = userEvent.setup();
   const now = Date.now();
   const expiresAt = Math.floor(now / 1000) + 86400;

@@ -25,8 +25,13 @@ const prompt = {
     properties: { blocked: { type: "boolean" } },
   },
 };
-function fixture(hold = false, catalogFailure = false) {
+function fixture(
+  hold = false,
+  catalogFailure = false,
+  turnStart?: Promise<void>,
+) {
   let options: HostProcessOptions | undefined;
+  let threads = 0;
   let exit!: (code: number) => void;
   let began!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -34,7 +39,7 @@ function fixture(hold = false, catalogFailure = false) {
   });
   const sent: Wire[] = [];
   const emit = (wire: Wire) => options?.onStdout?.(`${JSON.stringify(wire)}\n`);
-  const process = {
+  const process = () => ({
     write: async (text: string) => {
       const wire: Wire = JSON.parse(text);
       sent.push(wire);
@@ -62,27 +67,35 @@ function fixture(hold = false, catalogFailure = false) {
         result = { data: catalog, nextCursor: null };
       } else if (wire.method === "thread/start")
         result = {
-          thread: { id: "review" },
+          thread: { id: threads++ ? `review-${threads}` : "review" },
           model: params.model || "personal-astra",
         };
-      else if (wire.method === "turn/start") result = { turn: { id: "turn" } };
+      else if (wire.method === "turn/start") {
+        began();
+        await turnStart;
+        result = { turn: { id: "turn" } };
+      } else if (
+        wire.method === "turn/interrupt" ||
+        wire.method === "thread/unsubscribe"
+      )
+        result = {};
       else throw new Error(`Unexpected request: ${wire.method}`);
       emit({ id: wire.id, result });
-      if (wire.method === "turn/start") {
-        began();
-        if (!hold) {
-          emit({
-            method: "item/completed",
-            params: {
-              threadId: "review",
-              item: { type: "agentMessage", text: '{"blocked":false}' },
-            },
-          });
-          emit({
-            method: "turn/completed",
-            params: { threadId: "review", turn: { status: "completed" } },
-          });
-        }
+      if (wire.method === "turn/start" && !hold) {
+        emit({
+          method: "item/completed",
+          params: {
+            threadId: params.threadId,
+            item: { type: "agentMessage", text: '{"blocked":false}' },
+          },
+        });
+        emit({
+          method: "turn/completed",
+          params: {
+            threadId: params.threadId,
+            turn: { status: "completed" },
+          },
+        });
       }
     },
     end: vi.fn(async () => {
@@ -94,17 +107,35 @@ function fixture(hold = false, catalogFailure = false) {
     exited: new Promise<number>((resolve) => {
       exit = resolve;
     }),
-  };
+  });
+  const processes: ReturnType<typeof process>[] = [];
   const spawn = vi.fn<ProtectedSpawn>(async (value) => {
     options = value;
-    return process;
+    const launched = process();
+    processes.push(launched);
+    return launched;
   });
   const params = (method: string) =>
     sent.find((wire) => wire.method === method)?.params as Record<
       string,
       unknown
     >;
-  return { spawn, process, started, sent, emit, exit, params };
+  const requests = (method: string) =>
+    sent.filter((wire) => wire.method === method).map((wire) => wire.params);
+  return {
+    spawn,
+    get process() {
+      const launched = processes.at(-1);
+      if (!launched) throw new Error("No review worker launched");
+      return launched;
+    },
+    started,
+    sent,
+    emit,
+    exit: (code: number) => exit(code),
+    params,
+    requests,
+  };
 }
 
 it("uses Buzz's recommended model and supported low effort for blank review selections", async () => {
@@ -142,7 +173,26 @@ it("uses Buzz's recommended model and supported low effort for blank review sele
     BASH_ENV: null,
     ENV: null,
   });
-  expect(f.process.end).toHaveBeenCalledOnce();
+});
+
+it("runs each review as its own thread on one kept worker", async () => {
+  const f = fixture();
+  const review = () =>
+    reviewModel(f.spawn, { id: "" }, prompt, new AbortController().signal);
+  await review();
+  await expect(review()).resolves.toMatchObject({ text: '{"blocked":false}' });
+  expect(f.spawn).toHaveBeenCalledOnce();
+  expect(f.requests("initialize")).toHaveLength(1);
+  expect(f.requests("thread/start")).toHaveLength(2);
+  await vi.waitFor(() =>
+    expect(f.requests("thread/unsubscribe")).toEqual([
+      { threadId: "review" },
+      { threadId: "review-2" },
+    ]),
+  );
+  expect(f.requests("turn/interrupt")).toEqual([]);
+  expect(f.process.end).not.toHaveBeenCalled();
+  expect(f.process.kill).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -180,7 +230,6 @@ it("rejects a blank default selection if its catalog is unavailable", async () =
     reviewModel(f.spawn, { id: "" }, prompt, new AbortController().signal),
   ).rejects.toThrow("Catalog unavailable");
   expect(f.params("thread/start")).toBeUndefined();
-  expect(f.process.end).toHaveBeenCalledOnce();
 });
 
 it.each(["cancel", "exit"])(
@@ -207,9 +256,60 @@ it.each(["cancel", "exit"])(
     if (mode === "cancel") cancelled.abort();
     else f.exit(1);
     await rejected;
-    expect(f.process.end).toHaveBeenCalledOnce();
+    if (mode === "cancel") {
+      await vi.waitFor(() =>
+        expect(f.requests("thread/unsubscribe")).toEqual([
+          { threadId: "review" },
+        ]),
+      );
+      expect(f.requests("turn/interrupt")).toEqual([
+        { threadId: "review", turnId: "turn" },
+      ]);
+      expect(f.process.end).not.toHaveBeenCalled();
+    } else {
+      // A worker that exited is replaced by the next review.
+      const next = reviewModel(
+        f.spawn,
+        { id: "recommended-model" },
+        prompt,
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(f.spawn).toHaveBeenCalledTimes(2));
+      f.exit(1);
+      await expect(next).rejects.toThrow(/closed|exited/i);
+    }
   },
 );
+
+it("stops a review cancelled while its turn is still starting", async () => {
+  let release!: () => void;
+  const f = fixture(
+    true,
+    false,
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  const cancelled = new AbortController();
+  const review = reviewModel(
+    f.spawn,
+    { id: "recommended-model" },
+    prompt,
+    cancelled.signal,
+  );
+  const rejected = expect(review).rejects.toThrow(/abort/i);
+  await f.started;
+  cancelled.abort();
+  await rejected;
+  expect(f.requests("turn/interrupt")).toEqual([]);
+  release();
+  await vi.waitFor(() =>
+    expect(f.requests("thread/unsubscribe")).toEqual([{ threadId: "review" }]),
+  );
+  expect(f.requests("turn/interrupt")).toEqual([
+    { threadId: "review", turnId: "turn" },
+  ]);
+});
 
 it("preserves the review deadline instead of reporting its connection closure", async () => {
   const deadline = new AbortController();
@@ -233,7 +333,12 @@ it("preserves the review deadline instead of reporting its connection closure", 
     expect(timeout).toHaveBeenCalledWith(60_000);
     deadline.abort(reason);
     await rejected;
-    expect(f.process.end).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(f.requests("turn/interrupt")).toEqual([
+        { threadId: "review", turnId: "turn" },
+      ]),
+    );
+    expect(f.process.end).not.toHaveBeenCalled();
   } finally {
     timeout.mockRestore();
   }

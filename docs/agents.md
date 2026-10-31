@@ -53,13 +53,17 @@ agent's settings and the proposed changes, with the usual type-change preview;
 saving applies what the owner reviewed, and closing the review discards the
 request. A type change carries what the new type adopts, as a manual one does. Change
 requests share the creation requests' local bound and lifetime.
-`teams` lists the owner's teams with their instructions and named members.
-`team_create` and `team_update` submit an unsaved team request: a name,
+`teams` lists the owner's teams an agent there may see, the device's local teams
+and the synced teams homed in its community, with their instructions and named
+members. `team_create` and `team_update` submit an unsaved team request: a name,
 instructions and members, named by pubkey or exact agent name among the owner's
-agents in the same community. `team_update` names a team by id or exact name, and
-absent fields stay as they are, but `members`, when given, replaces the list. The
-owner reviews the Teams form with the proposed team filled in; saving applies what
-they reviewed, and closing the review discards the request. Team requests share
+agents on this device in the same community. `team_update` names one of those
+teams by id or exact name, and absent fields stay as they are, but `members`, when
+given, replaces the list; members it can't name, as hosted ones or ones in other
+communities, stay on the team. The owner reviews the Teams form with the proposed
+team filled in; saving applies what they reviewed, a synced team over the head
+the review opened, and a new team where the request's community puts one. Closing
+the review discards the request. Team requests share
 the agent requests' bound and lifetime. Agents cannot delete teams.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.

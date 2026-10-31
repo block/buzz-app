@@ -54,6 +54,14 @@ test("team changes wait for owner review under the team's current name", async (
           name: "Code reviewers",
           instructions: "Review every pull request.",
           members: [ada, bo],
+          // Saved over the head the review opened.
+          opened: {
+            id: "t1",
+            name: "Reviewers",
+            instructions: "Review every pull request.",
+            members: [ada, "3".repeat(64)],
+            revision: "head",
+          },
         },
       },
     ],

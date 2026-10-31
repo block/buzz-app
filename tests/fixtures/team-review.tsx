@@ -25,7 +25,15 @@ const running = ["Ada", "Bo", "Cy"].map(
       attentionEnabled: true,
     }) as Agent,
 );
-const snapshot = { running };
+// The saved team a change revises, as a synced one with its head.
+const saved = {
+  id: "t1",
+  name: "Reviewers",
+  instructions: "Review every pull request.",
+  members: ["1".repeat(64), "3".repeat(64)],
+  revision: "head",
+};
+const snapshot = { running, teams: [saved] };
 let requests: readonly TeamRequest[] = [
   {
     id: "req",
@@ -56,6 +64,7 @@ const agents = {
     return () => listeners.delete(listener);
   },
   teamRequests: () => requests,
+  memberships: () => [],
   dismissTeam: (id: string) => {
     dismissed.push(id);
     requests = requests.filter((request) => request.id !== id);

@@ -1894,15 +1894,17 @@ export class AgentsService extends Service implements Agents {
             item.name,
           ]),
         );
-        return this.allTeams().map(({ id, name, instructions, members }) => ({
-          id,
-          name,
-          instructions,
-          members: members.flatMap((pubkey) => {
-            const member = names.get(pubkey);
-            return member === undefined ? [] : [{ pubkey, name: member }];
+        return this.teamsIn(binding.origin).map(
+          ({ id, name, instructions, members }) => ({
+            id,
+            name,
+            instructions,
+            members: members.flatMap((pubkey) => {
+              const member = names.get(pubkey);
+              return member === undefined ? [] : [{ pubkey, name: member }];
+            }),
           }),
-        }));
+        );
       },
       proposeTeam: async (agent, proposal) => {
         const binding = this.bindingOf(agent);
@@ -1910,7 +1912,7 @@ export class AgentsService extends Service implements Agents {
           throw new Error("The requesting agent is no longer available");
         const found = proposal.team?.trim();
         const matches = found
-          ? this.allTeams().filter(
+          ? this.teamsIn(binding.origin).filter(
               (item) => item.id === found || item.name === found,
             )
           : [];
@@ -4245,6 +4247,16 @@ export class AgentsService extends Service implements Agents {
           ]
         : [];
     });
+  }
+  /** The teams an agent in `origin` may see: this device's, and the synced
+   * teams homed there. */
+  private teamsIn(origin: string): readonly Team[] {
+    return [
+      ...this.teamList,
+      ...this.synced().flatMap((entry) =>
+        entry.community === origin ? [entry.team] : [],
+      ),
+    ];
   }
   private allTeams(): readonly Team[] {
     return [...this.teamList, ...this.synced().map((entry) => entry.team)];

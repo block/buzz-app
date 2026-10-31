@@ -60,6 +60,14 @@ function Review({ agents, request }: { agents: Agents; request: TeamRequest }) {
       await agents.approveTeam(request.id, {
         ...draft,
         name: draft.name.trim(),
+        // As the Teams editor saves: members listed here, ones the team
+        // already has, and agents here in other communities.
+        members: draft.members.filter(
+          (pubkey) =>
+            here.some((agent) => agent.pubkey === pubkey) ||
+            opened?.members.includes(pubkey) ||
+            agents.memberships(pubkey).length > 0,
+        ),
         ...(opened ? { opened } : { draft: created }),
       });
       setOpen(false);

@@ -12599,6 +12599,64 @@ describe("synced teams", () => {
     expect(error).not.toContain(away);
   });
 
+  it("lets an agent propose changes to its community's synced team and a new synced team", async () => {
+    const team = stored(viewer, [bot]);
+    const f = await ready([], team.storage);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const handle = f.plugin.agents.handle(bot);
+    if (!handle?.proposeTeam || !handle.teams)
+      throw new Error("Missing team handle");
+    expect(handle.teams()).toEqual([
+      {
+        id: draft,
+        name: "Crew",
+        instructions: "Ship it",
+        members: [{ pubkey: bot, name: "Echo" }],
+      },
+    ]);
+    // A change saves over the head the review opened.
+    const change = await handle.proposeTeam({
+      team: "Crew",
+      instructions: "Ship it twice",
+    });
+    const opened = f.service.snapshot().teams.find((t) => t.id === draft);
+    expect(opened?.revision).toBeDefined();
+    await f.service.approveTeam(change.requestId, {
+      name: "Crew",
+      instructions: "Ship it twice",
+      members: [bot],
+      ...(opened && { opened }),
+    });
+    expect(f.saveTeam).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: draft,
+        instructions: "Ship it twice",
+        base: { head: opened?.revision, members: [bot] },
+      }),
+    );
+    // A new team syncs to the request's community.
+    const created = await handle.proposeTeam({ name: "Night", members: [bot] });
+    await f.service.approveTeam(created.requestId, {
+      name: "Night",
+      instructions: "",
+      members: [bot],
+      draft: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    });
+    expect(f.saveTeam).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        name: "Night",
+        members: [bot],
+      }),
+    );
+    expect(f.service.teamRequests()).toEqual([]);
+  });
+
   it("puts set-up hosted agents on a team and names them in its roster", async () => {
     const unfinished = "d".repeat(64);
     const team = stored(viewer, [bot, hostedKey, unfinished]);

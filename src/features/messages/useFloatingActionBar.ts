@@ -14,9 +14,6 @@ import {
 
 const contentSelector =
   "[data-message-action-anchor], [data-message-attachments] > *";
-// The byline row also reveals actions, but never moves them: placement still
-// measures only painted content.
-const revealSelector = `${contentSelector}, [data-message-action-header]`;
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
 // One MediaQueryList for every row: `matchMedia` allocates and evaluates the
@@ -114,8 +111,22 @@ export function useFloatingActionBar(
     if (!floating || !row || !bar) return;
     const contentAt = (target: EventTarget | null) =>
       target instanceof Element && row.contains(target)
-        ? target.closest(revealSelector)
+        ? target.closest(contentSelector)
         : null;
+    // The byline spans the row. Only the width of its text, or of the content
+    // directly beneath it when wider, reveals actions; placement ignores it.
+    const overByline = (byline: Element, x: number) => {
+      const below = row.querySelector(contentSelector)?.getBoundingClientRect();
+      let left = below?.width ? below.left : Infinity;
+      let right = below?.width ? below.right : -Infinity;
+      for (const part of byline.children) {
+        const rect = part.getBoundingClientRect();
+        if (!rect.width) continue;
+        left = Math.min(left, rect.left);
+        right = Math.max(right, rect.right);
+      }
+      return x >= left && x <= right;
+    };
     const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
       if (
         !(target instanceof Element) ||
@@ -123,6 +134,9 @@ export function useFloatingActionBar(
       )
         return false;
       if (bar.contains(target) || contentAt(target)) return true;
+      const byline = target.closest("[data-message-byline]");
+      if (byline && row.contains(byline) && overByline(byline, event.clientX))
+        return true;
       // Retain only an active hover: content gaps and the tapered route to the
       // toolbar are pass-through geometry, never activation or hit surfaces.
       const bounds = contentBounds.current;
@@ -159,9 +173,9 @@ export function useFloatingActionBar(
       );
       return x >= left && x <= right;
     };
-    // The row includes empty space and accessories. Only painted message
-    // content, its byline row and the top-layer toolbar reveal pointer actions.
-    const initialContent = row.querySelector(`:is(${revealSelector}):hover`);
+    // The row includes empty space, bylines and accessories. Only painted
+    // message content and the top-layer toolbar reveal pointer actions.
+    const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
     let hovered =
       (!!initialContent &&
         !row.querySelector(

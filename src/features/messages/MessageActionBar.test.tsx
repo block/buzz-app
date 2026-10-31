@@ -35,7 +35,7 @@ function Row(props: ComponentProps<typeof MessageActionBar>) {
   const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={rowRef} data-testid="message">
-      <div data-message-action-header>
+      <div data-message-byline>
         <span>Message author</span>
       </div>
       <span>Message accessory</span>
@@ -173,7 +173,7 @@ it("defers desktop controls until row interaction and retains them after leaving
   ).toBe(trigger);
 });
 
-it("reveals actions only over message content, its byline or the toolbar, not the row's empty space", () => {
+it("reveals actions only over message content or the toolbar, not the row's empty space", () => {
   pointerMedia();
   render(
     <StrictMode>
@@ -188,11 +188,7 @@ it("reveals actions only over message content, its byline or the toolbar, not th
   fireEvent.pointerEnter(row);
   fireEvent.pointerOver(row);
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
-  for (const content of [
-    "Message author",
-    "Message bubble",
-    "Message attachment",
-  ]) {
+  for (const content of ["Message bubble", "Message attachment"]) {
     const target = screen.getByText(content);
     fireEvent.pointerOver(target, { relatedTarget: row });
     expect(row.hasAttribute("data-actions-revealed")).toBe(true);
@@ -205,6 +201,39 @@ it("reveals actions only over message content, its byline or the toolbar, not th
   }
   fireEvent.pointerOver(screen.getByText("Message accessory"));
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+});
+
+it("reveals actions across the byline only as wide as its text or the content beneath", () => {
+  pointerMedia();
+  render(
+    <StrictMode>
+      <Row copyText={() => "Hello"} />
+    </StrictMode>,
+  );
+  const row = screen.getByTestId("message");
+  fireEvent.pointerEnter(row);
+  const author = screen.getByText("Message author");
+  const byline = author.parentElement as HTMLElement;
+  const span = (left: number, right: number) => () =>
+    new DOMRect(left, 0, right - left, 20);
+  vi.spyOn(author, "getBoundingClientRect").mockImplementation(span(40, 90));
+  vi.spyOn(
+    screen.getByText("Message bubble").parentElement as HTMLElement,
+    "getBoundingClientRect",
+  ).mockImplementation(span(30, 200));
+  for (const [x, revealed] of [
+    [35, true],
+    [150, true],
+    [200, true],
+    [260, false],
+  ] as const) {
+    fireEvent.pointerMove(byline, { clientX: x });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(revealed);
+  }
+  // Wider text than the content keeps its own width.
+  vi.spyOn(author, "getBoundingClientRect").mockImplementation(span(40, 240));
+  fireEvent.pointerMove(byline, { clientX: 230 });
+  expect(row.hasAttribute("data-actions-revealed")).toBe(true);
 });
 
 it("keeps timestamp hover and keyboard focus separate from message actions", () => {

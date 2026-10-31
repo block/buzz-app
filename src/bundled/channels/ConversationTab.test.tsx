@@ -44,6 +44,7 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
     </aside>
   ),
 }));
+const revealSignals = vi.hoisted(() => [] as (AbortSignal | undefined)[]);
 const threadOpeners = vi.hoisted(
   () => [] as ((id: string, root: string, intent?: "reply") => void)[],
 );
@@ -57,11 +58,12 @@ vi.mock("./ChannelBody", () => ({
   }: {
     activityLane?: boolean;
     holding?: boolean;
-    inlineTarget?: { messageId: string };
+    inlineTarget?: { messageId: string; signal: AbortSignal };
     marksRead?: boolean;
     onOpenThread(id: string, root: string, intent?: "reply"): void;
   }) => {
     threadOpeners.push(onOpenThread);
+    revealSignals.push(inlineTarget?.signal);
     return (
       <div
         data-activity-lane={activityLane}
@@ -90,6 +92,7 @@ vi.mock("../../features/messages/MessageComposer", () => ({
 const owners: ReturnType<typeof createOutbox>[] = [];
 afterEach(() => {
   cleanup();
+  revealSignals.length = 0;
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
@@ -549,7 +552,7 @@ function openingAt(rows: { id: string; threadRootId?: string }[]) {
   };
 }
 
-it("a conversation tab opens at its message once the reader finds it", () => {
+it("a retained conversation reveals only while active and preserves request identity", () => {
   const c = openingAt([{ id: "post" }]);
   const tab = {
     id: "conversation:beta",
@@ -558,13 +561,26 @@ it("a conversation tab opens at its message once the reader finds it", () => {
     messageId: "post",
     revealRequest: 1,
   };
-  render(<ConversationTab {...c.props} tab={tab} />);
+  const mounted = render(<ConversationTab {...c.props} tab={tab} />);
   const body = screen.getByText("Conversation content");
   expect(body).toHaveAttribute("data-holding", "true");
   c.settle();
   expect(body).toHaveAttribute("data-holding", "false");
   expect(body).toHaveAttribute("data-target", "post");
   expect(body).toHaveAttribute("data-marks-read", "true");
+  const initialSignal = revealSignals.at(-1);
+  expect(initialSignal).toBeInstanceOf(AbortSignal);
+  mounted.rerender(<ConversationTab {...c.props} tab={tab} active={false} />);
+  expect(body).not.toHaveAttribute("data-target");
+  expect(revealSignals.at(-1)).toBeUndefined();
+  mounted.rerender(<ConversationTab {...c.props} tab={tab} />);
+  expect(screen.getByText("Conversation content")).toBe(body);
+  expect(revealSignals.at(-1)).toBe(initialSignal);
+  mounted.rerender(
+    <ConversationTab {...c.props} tab={{ ...tab, revealRequest: 2 }} />,
+  );
+  expect(body).toHaveAttribute("data-target", "post");
+  expect(revealSignals.at(-1)).not.toBe(initialSignal);
 });
 
 it("a retained conversation tab gives its rows one thread opener that reaches the latest handler", () => {

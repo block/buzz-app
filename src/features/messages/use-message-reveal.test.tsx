@@ -58,10 +58,12 @@ function mount(hold?: () => boolean) {
     signal = request.signal,
     prepare = undefined,
     rowKey = 0,
+    active = true,
   }: {
     signal?: AbortSignal;
     prepare?: () => void;
     rowKey?: number;
+    active?: boolean;
   }) {
     const scroller = useRef<HTMLDivElement>(null);
     const settled = useRef(false);
@@ -69,7 +71,7 @@ function mount(hold?: () => boolean) {
       scroller,
       settled,
       messageId: "target",
-      signal,
+      signal: active ? signal : undefined,
       ready: true,
       complete,
       ...(prepare ? { prepare } : {}),
@@ -97,6 +99,8 @@ function mount(hold?: () => boolean) {
     outside,
     restart: () => result.rerender(<Surface prepare={() => {}} />),
     remountRow: () => result.rerender(<Surface rowKey={1} />),
+    setActive: (active: boolean) =>
+      result.rerender(<Surface active={active} />),
     next: () =>
       result.rerender(<Surface signal={new AbortController().signal} />),
   };
@@ -120,7 +124,7 @@ it("notifies reading after the revealed row is verified", async () => {
 });
 
 it("keeps the verified target highlighted until dismissal and repeats for a new request", async () => {
-  const { row, next, restart, outside } = mount();
+  const { row, next, restart, outside, setActive } = mount();
   const message = screen.getByText("Target");
   await frame();
   await frame();
@@ -128,6 +132,18 @@ it("keeps the verified target highlighted until dismissal and repeats for a new 
   await frame();
   expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
   expect(row.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  setActive(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  setActive(true);
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  next();
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
   const end = new Event("animationend", { bubbles: true });
   Object.defineProperty(end, "pseudoElement", { value: "::after" });
   message.dispatchEvent(end);

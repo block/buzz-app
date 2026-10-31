@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import type { RelayEvent } from "./events";
 import {
+  ceilingCursor,
   locate,
   SEEK_PAGE,
   SEEK_READS,
@@ -63,7 +64,12 @@ describe("locate", () => {
     const hourly = Array.from({ length: 30 * 24 }, (_, i) => T0 + i * 3600);
     const { read, calls } = relay(hourly);
     const from = T0 + 10 * DAY;
-    const located = await locate(read, from, T0 + 30 * DAY, true);
+    const located = await locate(
+      read,
+      ceilingCursor(from),
+      T0 + 30 * DAY,
+      true,
+    );
     expect(located.kind).toBe("segment");
     expect(rowsOf(located)).toContain(from);
     expect(rowsOf(located).some((at) => at < from)).toBe(true);
@@ -76,7 +82,12 @@ describe("locate", () => {
       ...Array.from({ length: 10 }, (_, i) => T0 + 20 * DAY + i * 60),
     ];
     const { read, calls } = relay(times);
-    const located = await locate(read, T0 + 5 * DAY, T0 + 30 * DAY, true);
+    const located = await locate(
+      read,
+      ceilingCursor(T0 + 5 * DAY),
+      T0 + 30 * DAY,
+      true,
+    );
     expect(rowsOf(located)).toContain(T0 + 20 * DAY);
     expect(calls.length).toBeLessThanOrEqual(8);
   });
@@ -88,14 +99,21 @@ describe("locate", () => {
       ...Array.from({ length: 5000 }, (_, i) => from + 5 + i * 17),
     ];
     const { read, calls } = relay(times);
-    const located = await locate(read, from, T0 + 10 * DAY, true);
+    const located = await locate(
+      read,
+      ceilingCursor(from),
+      T0 + 10 * DAY,
+      true,
+    );
     expect(rowsOf(located)).toContain(from + 5);
     expect(calls.length).toBeLessThanOrEqual(SEEK_READS);
   });
 
   it("returns newest when nothing is at or after from", async () => {
     const { read } = relay([T0, T0 + 60, T0 + 120]);
-    await expect(locate(read, T0 + DAY, T0 + 3 * DAY, true)).resolves.toEqual({
+    await expect(
+      locate(read, ceilingCursor(T0 + DAY), T0 + 3 * DAY, true),
+    ).resolves.toEqual({
       kind: "newest",
     });
   });
@@ -107,20 +125,77 @@ describe("locate", () => {
       (_, i) => T0 + Math.floor((i * span) / 3000),
     );
     const { read } = relay(times);
-    const located = await locate(read, 0, T0 + span + DAY, false);
+    const located = await locate(
+      read,
+      ceilingCursor(0),
+      T0 + span + DAY,
+      false,
+    );
     expect(located).toMatchObject({ kind: "segment" });
     expect(rowsOf(located)).toContain(T0);
   });
 
-  it("rejects a burst of more than a page in one second", async () => {
+  it("walks keyset pages through a second with more than a page of rows", async () => {
+    const at = T0 + DAY + 30;
     const times = [
       ...Array.from({ length: 10 }, (_, i) => T0 + i),
-      ...Array.from({ length: 450 }, () => T0 + DAY + 30),
+      ...Array.from({ length: 450 }, () => at),
+    ];
+    const { rows, read } = relay(times);
+    const located = await locate(
+      read,
+      ceilingCursor(T0 + DAY),
+      T0 + 3 * DAY,
+      true,
+    );
+    assert(located.kind === "segment");
+    // The burst's oldest row (last in `created_at DESC, id ASC`) and context.
+    const first = rows.filter((row) => row.created_at === at).at(-1);
+    expect(located.page.events.map((event) => event.id)).toContain(first?.id);
+    expect(rowsOf(located).some((time) => time < T0 + DAY)).toBe(true);
+    expect(located.ceiling?.createdAt).toBe(at);
+  });
+
+  it("fits a second of exactly one page", async () => {
+    const at = T0 + DAY + 30;
+    const times = [
+      ...Array.from({ length: 10 }, (_, i) => T0 + i),
+      ...Array.from({ length: SEEK_PAGE }, () => at),
     ];
     const { read } = relay(times);
-    await expect(
-      locate(read, T0 + DAY, T0 + 3 * DAY, true),
-    ).rejects.toBeInstanceOf(SeekLimitError);
+    const located = await locate(
+      read,
+      ceilingCursor(T0 + DAY),
+      T0 + 3 * DAY,
+      true,
+    );
+    assert(located.kind === "segment");
+    expect(rowsOf(located).filter((time) => time === at)).toHaveLength(
+      SEEK_PAGE,
+    );
+  });
+
+  it("resumes from a cursor inside a crowded second", async () => {
+    const at = T0 + DAY + 30;
+    const times = [
+      ...Array.from({ length: 10 }, (_, i) => T0 + i),
+      ...Array.from({ length: 450 }, () => at),
+    ];
+    const { rows, read } = relay(times);
+    const burst = rows.filter((row) => row.created_at === at);
+    const boundary = burst[300];
+    assert(boundary);
+    const located = await locate(
+      read,
+      { createdAt: at, eventId: boundary.id },
+      T0 + 3 * DAY,
+      true,
+    );
+    assert(located.kind === "segment");
+    const ids = located.page.events.map((event) => event.id);
+    // Rows at or after the cursor start at `boundary`; the next is older.
+    expect(ids).toContain(boundary.id);
+    expect(ids).toContain(burst[301]?.id);
   });
 
   it("throws SeekLimitError past the read budget", async () => {
@@ -141,7 +216,7 @@ describe("locate", () => {
       };
     };
     await expect(
-      locate(overflow, 0, Number.MAX_SAFE_INTEGER - 1, false),
+      locate(overflow, ceilingCursor(0), Number.MAX_SAFE_INTEGER - 1, false),
     ).rejects.toBeInstanceOf(SeekLimitError);
     expect(reads).toBe(SEEK_READS);
   });
@@ -149,7 +224,7 @@ describe("locate", () => {
   it("reads bare probes and one full page", async () => {
     const hourly = Array.from({ length: 30 * 24 }, (_, i) => T0 + i * 3600);
     const { read, calls } = relay(hourly);
-    await locate(read, T0 + 4 * DAY, T0 + 30 * DAY, true);
+    await locate(read, ceilingCursor(T0 + 4 * DAY), T0 + 30 * DAY, true);
     expect(calls.slice(0, -1).every((call) => !call.full)).toBe(true);
     expect(calls.at(-1)?.full).toBe(true);
   });

@@ -23,10 +23,13 @@ function harness({
   count = 300,
   maxHistoryRows,
   prepared,
+  crowd,
 }: {
   count?: number;
   maxHistoryRows?: number;
   prepared?: boolean;
+  /** `count` more messages that all share the second `at`. */
+  crowd?: { at: number; count: number };
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
@@ -34,6 +37,8 @@ function harness({
   const history = Array.from({ length: count }, (_, i) =>
     message(alice, "c", `m${i}`, T0 + i * HOUR),
   );
+  for (let i = 0; i < (crowd?.count ?? 0); i++)
+    history.push(message(alice, "c", `b${i}`, crowd?.at ?? 0));
   const ordered = [...history].sort(newestFirst);
   const reads: ReadFilter[] = [];
   const gate: { hold?: Promise<void> | undefined; failHead?: boolean } = {};
@@ -382,6 +387,34 @@ it("a live row that lands while the last newer page loads is kept", async () => 
   }
   expect(h.window().hasNewer).toBeFalsy();
   expect(h.window().rows.map((row) => row.id)).toContain(fresh.id);
+});
+
+it("seek lands in a second with more than a page of rows", async () => {
+  const at = T0 + 100 * HOUR + 60;
+  const h = setup({ crowd: { at, count: 450 } });
+  await h.open();
+  const id = await h.seek(at - 30);
+  const landed = h.window().rows.find((row) => row.id === id);
+  expect(landed?.createdAt).toBe(at);
+  expect(h.window().hasNewer).toBe(true);
+});
+
+it("loadNewer pages through a second with more than a page of rows", async () => {
+  const at = T0 + 100 * HOUR + 60;
+  const h = setup({ crowd: { at, count: 450 } });
+  await h.open();
+  await h.seek(at - 30);
+  for (let page = 0; page < 20 && h.window().hasNewer; page++) {
+    h.channels.loadNewer?.("c");
+    await vi.waitFor(() => expect(h.window().loadingNewer).toBeFalsy());
+    expect(h.window().error).toBeUndefined();
+  }
+  expect(h.window().hasNewer).toBeFalsy();
+  const ids = h.window().rows.map((row) => row.id);
+  expect(new Set(ids).size).toBe(ids.length);
+  const crowded = h.history.filter((event) => event.created_at === at);
+  expect(crowded.every((event) => ids.includes(event.id))).toBe(true);
+  expect(h.times().at(-1)).toBe(T0 + 299 * HOUR);
 });
 
 it("attach replaces the segment with the head", async () => {

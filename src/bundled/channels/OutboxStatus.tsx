@@ -6,6 +6,15 @@ import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
 import type { Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
+import { isBatchAddition } from "../../features/channel-members/members";
+
+/** A batch names everyone its Retry re-adds. */
+function additionLabel(tags: readonly (readonly string[])[]) {
+  const people = tags.filter(([tag]) => tag === "p");
+  return people.length > 1
+    ? `Add ${people.length} people`
+    : `Add agent ${people[0]?.[1]?.slice(0, 12) ?? ""}`;
+}
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */
 export function OutboxStatus({
@@ -39,7 +48,7 @@ export function OutboxStatus({
           <li key={item.event.id}>
             <span>
               {item.event.kind === 9000
-                ? `Add agent ${item.event.tags.find(([tag]) => tag === "p")?.[1]?.slice(0, 12) ?? ""}`
+                ? additionLabel(item.event.tags)
                 : item.event.content.slice(0, 100)}{" "}
               ·{" "}
               {
@@ -54,7 +63,10 @@ export function OutboxStatus({
             </span>{" "}
             {!isWorkflowOperation(item.event) &&
               !item.guarded &&
-              (item.delivery === "failed" || item.delivery === "unknown") && (
+              (item.delivery === "failed" ||
+                item.delivery === "unknown" ||
+                // A kept batch still names someone unsettled.
+                (isBatchAddition(item) && item.delivery !== "sending")) && (
                 <Button
                   type="button"
                   onClick={async () => {
@@ -66,15 +78,26 @@ export function OutboxStatus({
                         const channelId = item.event.tags.find(
                           ([tag]) => tag === "h",
                         )?.[1];
-                        const pubkey = item.event.tags.find(
-                          ([tag]) => tag === "p",
-                        )?.[1];
-                        if (!channelId || !pubkey)
+                        const pubkeys = item.event.tags.flatMap(
+                          ([tag, value]) =>
+                            tag === "p" && value ? [value] : [],
+                        );
+                        if (!channelId || !pubkeys.length)
                           throw new Error(
                             "Reopen Members to check this addition.",
                           );
-                        // A stale explicit role must never overwrite a newer admission.
-                        await memberAdditions.add(channelId, pubkey);
+                        // A stale explicit role must never overwrite a newer
+                        // admission, so each person is checked again. A batch
+                        // is never resumed; it clears once everyone is settled.
+                        const results = await Promise.allSettled(
+                          pubkeys.map((pubkey) =>
+                            memberAdditions.add(channelId, pubkey),
+                          ),
+                        );
+                        const failed = results.find(
+                          (result) => result.status === "rejected",
+                        );
+                        if (failed) throw failed.reason;
                       } else outbox.retry(item.event.id);
                       setError(undefined);
                     } catch (reason) {

@@ -1782,14 +1782,35 @@ test("member addition works without channel creation, while role elevation remai
       ).toBe("accepted"),
     );
     expect(h.publications).toHaveLength(2);
-    for (const role of ["owner", "admin", "guest"]) {
-      const denied = await h.post("sign", {
+    // block/buzz#8575: one addition may name several people.
+    const people = [
+      ["p", "b".repeat(64)],
+      ["p", "c".repeat(64)],
+    ];
+    for (const role of [[], [["role", "member"]], [["role", "bot"]]]) {
+      const batchId = owner.outbox.send({
         kind: 9000,
         content: "",
-        created_at: 1700000000,
-        tags: [...tags, ["role", role]],
+        tags: [...tags, ...people, ...role],
       });
-      expect(denied.status).toBe(400);
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === batchId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+    }
+    expect(h.publications).toHaveLength(5);
+    for (const role of ["owner", "admin", "guest"]) {
+      for (const named of [tags, [...tags, ...people]]) {
+        const denied = await h.post("sign", {
+          kind: 9000,
+          content: "",
+          created_at: 1700000000,
+          tags: [...named, ["role", role]],
+        });
+        expect(denied.status).toBe(400);
+      }
     }
   } finally {
     owner?.dispose();

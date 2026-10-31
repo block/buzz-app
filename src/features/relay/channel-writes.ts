@@ -3,6 +3,7 @@ import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
+import { isBatchAddition } from "../channel-members/members";
 import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
@@ -492,6 +493,7 @@ export function createChannelWrites(
           (item) =>
             item.event.kind === 9000 &&
             !item.acknowledged &&
+            !isBatchAddition(item) &&
             !["accepted", "seen"].includes(item.delivery) &&
             item.event.tags.some(
               ([name, value]) => name === "h" && value === id,

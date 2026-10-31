@@ -165,10 +165,15 @@ export function buzzLinkTarget(href: string, scope: NavigationScope) {
       scope,
     } as const;
   const { format: _format, ...destination } = link;
-  return parseOpenTarget({
-    version: 1,
-    kind: link.format === "plugin" ? "plugin" : "conversation",
-    scope,
-    ...destination,
-  });
+  // The link was size-checked without its scope, which can push it past the target limit.
+  try {
+    return parseOpenTarget({
+      version: 1,
+      kind: link.format === "plugin" ? "plugin" : "conversation",
+      scope,
+      ...destination,
+    });
+  } catch {
+    return null;
+  }
 }

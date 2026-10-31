@@ -215,6 +215,22 @@ it("parses plugin page links into a plugin target bound to the receiving communi
     scope,
   });
 });
+it("treats a plugin link that only overflows once scoped as unopenable", () => {
+  const params = (last: number) =>
+    [...Array(7)].map((_, i) => `&route.p${i}=${"a".repeat(1024)}`).join("") +
+    `&route.last=${"a".repeat(last)}`;
+  let last = 1024;
+  while (!buzzLinkTarget(plugin + params(last), scope)) last -= 1;
+  const link = plugin + params(last);
+  expect(buzzLinkTarget(link, scope)).not.toBeNull();
+  const wide = {
+    ...scope,
+    communityOrigin: `https://${"c".repeat(200)}.example`,
+  };
+  expect(() => buzzLinkTarget(link, wide)).not.toThrow();
+  expect(buzzLinkTarget(link, wide)).toBeNull();
+});
+
 it("ignores unknown plugin link parameters and accepts the Windows root slash", () => {
   const expected = { format: "plugin", pluginId: "com.example.catalog" };
   expect(parseBuzzLink(`${plugin}&foo=1&foo=2&route=x`)).toEqual(expected);

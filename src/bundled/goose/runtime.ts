@@ -786,6 +786,8 @@ export class GooseRuntime {
         handle &&
         appClient(handle, {
           signal: entry.lifetime.signal,
+          // Its pre-tool check reviews every call, Buzz's extension included.
+          nativeToolGate: true,
           protectionContext: async () => {
             const sessionId =
               conversation && entry.sessions.sessionId(conversation);

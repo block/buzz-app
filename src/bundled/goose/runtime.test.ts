@@ -296,6 +296,36 @@ it("reads a protected Goose file under containment and reviews the captured text
   }
 });
 
+it("leaves a protected Buzz tool call to Goose's own tool review", async () => {
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection: AgentProtection = {
+    key: "policy",
+    stateKey: "revision",
+    assertAvailable() {},
+    check,
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    spawn: (options) => f.fake.spawn("goose", options),
+  };
+  const f = setup({ hold: true, protection });
+  try {
+    await f.deliver(message("1", "Say hi"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    const sessionId = process?.turns[0]?.sessionId;
+    if (!process || !sessionId) throw new Error("Goose turn did not start");
+    await process.mcp(sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Howzit!" },
+    });
+    expect(check.mock.calls.map(([action]) => action.kind)).toEqual([
+      "tool-result",
+    ]);
+    expect(f.published.at(-1)?.content).toBe("Howzit!");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 const protection = (key: string, f: () => ReturnType<typeof setup>) =>
   ({
     key,

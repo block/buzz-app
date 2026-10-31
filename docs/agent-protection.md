@@ -139,7 +139,9 @@ tool execution and tool result passes `AgentHandle.protection`. Their `retire(ke
 method (with the membership key, not its bare public key) must fully end existing native sessions before a policy changes. Missing
 coverage refuses protected runs and session mutations, with the type's explicit
 `protectionUnavailable` reason. Shared Buzz tool dispatch also gates exact input
-snapshots and returned output/errors.
+snapshots and returned output/errors. It does not ask again about a call that a
+runtime's native tool gate already reviewed with identical arguments; a captured
+file body changes them, so that call is still reviewed.
 
 Protected Pi uses one contained
 worker per agent/provider generation and separate durable state per native policy

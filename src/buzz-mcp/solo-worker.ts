@@ -226,15 +226,20 @@ export async function callSoloWorkerTool(
     custody_epoch: string;
     valid_until: number;
   };
-  const now = clock.now();
-  if (valid_until <= now)
-    throw new Error(
-      "The owner's readiness ran out before the request was sent. Try again.",
-    );
+  // Readiness is the owner's clock, so the change is issued on it too: then
+  // skew between the two clocks neither shortens nor stretches that window.
   return JSON.stringify(
     await exchange(
       client,
-      intent(client, route, action, request, now, custody_epoch, valid_until),
+      intent(
+        client,
+        route,
+        action,
+        request,
+        ready.observed_at as number,
+        custody_epoch,
+        valid_until,
+      ),
       clock,
     ),
   );
@@ -298,6 +303,8 @@ type Outcome = Readonly<{
   phase?: Phase;
   reason?: string;
   result?: unknown;
+  /** When the owner's Buzz answered, by its clock. */
+  observed_at?: number;
   /** Present when the outcome is not known: pass it as `retry` to ask again. */
   retry?: Intent;
   note?: string;
@@ -323,7 +330,8 @@ async function exchange(
     };
   }
   let answer: Response | undefined;
-  for (let waited = 0; ; waited += POLL_MS) {
+  const deadline = clock.now() + WAIT_MS / 1000;
+  for (;;) {
     let events: readonly BuzzEvent[];
     try {
       events = await client.query([
@@ -360,7 +368,8 @@ async function exchange(
         note: "The owner's Buzz gave two different answers.",
       };
     answer = word;
-    if ((answer && !INTERIM.includes(answer.phase)) || waited >= WAIT_MS) break;
+    if ((answer && !INTERIM.includes(answer.phase)) || clock.now() >= deadline)
+      break;
     await clock.wait(POLL_MS);
   }
   if (!answer || INTERIM.includes(answer.phase))
@@ -377,6 +386,7 @@ async function exchange(
     status: "answered",
     request: id,
     phase: answer.phase,
+    observed_at: answer.observed_at,
     ...(answer.reason ? { reason: answer.reason } : {}),
     ...(answer.result ? { result: shown(answer, request) } : {}),
   };
@@ -459,6 +469,10 @@ function pick(
       owner === undefined
         ? "More than one owner has authorized you: give owner."
         : "That owner has authorized you in more than one channel; ask them to revoke one.",
+    );
+  if (owner === undefined && !found.complete)
+    throw new Error(
+      "Not every channel could be checked, so another owner may also have authorized you: give owner.",
     );
   if (!route.operations.includes(action))
     throw new Error(`The owner has not allowed ${PREFIX}${action}.`);

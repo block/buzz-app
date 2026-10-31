@@ -183,6 +183,7 @@ function community(
   return {
     call,
     client,
+    clock,
     requests,
     published,
     sign,
@@ -274,6 +275,31 @@ describe("solo_worker_connections", () => {
     expect(requests()).toMatchObject([{ owner: H, stream: K }]);
   });
 
+  it("needs owner when not every channel could be checked", async () => {
+    const { call, sign } = community();
+    for (let index = 0; index < 500; index++)
+      sign(
+        RELAY,
+        {
+          kind: 39002,
+          content: "",
+          tags: [
+            ["d", `other-${index}`],
+            ["p", C],
+          ],
+        },
+        START - 1,
+      );
+    expect(await call("solo_worker_connections")).toMatchObject({
+      connections: [{ owner: H }],
+      complete: false,
+    });
+    await expect(call("solo_worker_readiness")).rejects.toThrow(/give owner/);
+    expect(await call("solo_worker_readiness", { owner: H })).toMatchObject({
+      phase: "ready",
+    });
+  });
+
   it("reads the acknowledgement from the owner's newest events alone", async () => {
     const { call, sign } = community();
     for (let index = 0; index < ACK_HORIZON; index++)
@@ -331,6 +357,30 @@ describe("a change", () => {
       custody_epoch: "c7",
       admit_before: START + 30,
       args: { worker: W, title: "Fix it" },
+    });
+  });
+
+  it("issues the change on the owner's clock, so skew cannot cut its readiness short", async () => {
+    // The owner's clock is 35 seconds behind the agent's.
+    const behind = START - 35;
+    const { call, requests } = community((intent) =>
+      intent.action === "readiness"
+        ? [
+            {
+              phase: "ready",
+              observed_at: behind,
+              result: { custody_epoch: "c7", valid_until: behind + 30 },
+            },
+          ]
+        : [{ phase: "ready", result: { solo: S, worker: W, worker_epoch: 1 } }],
+    );
+    expect(
+      await call("solo_worker_create", { worker: W, title: "Fix it" }),
+    ).toMatchObject({ status: "answered", phase: "ready" });
+    expect(requests()[1]).toMatchObject({
+      action: "create",
+      issued_at: behind,
+      admit_before: behind + 30,
     });
   });
 
@@ -481,6 +531,28 @@ describe("answers", () => {
     expect(answer).toMatchObject({ status: "pending" });
     expect(answer.note).toMatch(/may be closed/);
     expect(answer.retry).toBeUndefined();
+  });
+
+  it("stop waiting after 20 seconds, counting the time spent asking", async () => {
+    const { client, clock } = community(() => []);
+    let asked = 0;
+    const slow = {
+      ...client,
+      async query(filters: readonly Filter[]) {
+        if ((filters[0] as Record<string, unknown>)["#e"]) {
+          asked++;
+          await clock.wait(5_000);
+        }
+        return client.query(filters);
+      },
+    } as BuzzClient;
+    const start = clock.now();
+    const answer = JSON.parse(
+      await callSoloWorkerTool(slow, "solo_worker_list", {}, clock),
+    );
+    expect(answer).toMatchObject({ status: "pending" });
+    expect(asked).toBe(4);
+    expect(clock.now() - start).toBeLessThanOrEqual(23);
   });
 
   it("report two different answers at one revision as uncertain", async () => {

@@ -3821,3 +3821,102 @@ it("shows no agent mark or owner for a person", () => {
     view.unmount();
   }
 });
+
+it("marks an edited body after its last line, and leaves an unedited one unmarked", () => {
+  const render = (content: string, edited: boolean) =>
+    renderDom(
+      <MessageRow
+        row={{ ...row, content, ...(edited ? { edited: true as const } : {}) }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  try {
+    render("First\n\nHi how are ya.", true);
+    const inline = screen.getByText("(edited)");
+    expect(inline.parentElement?.tagName).toBe("P");
+    expect(inline.parentElement).toHaveTextContent("Hi how are ya. (edited)");
+    expect(inline.parentElement?.nextElementSibling).toBeNull();
+    cleanup();
+
+    render("Intro\n\n```\ncode\n```", true);
+    const block = screen.getByText("(edited)");
+    expect(block.previousElementSibling?.tagName).toBe("PRE");
+    expect(block.closest("pre, p")).toBeNull();
+    cleanup();
+
+    render("See the note.[^1]\n\n[^1]: Footnote text.", true);
+    expect(screen.getByText("(edited)").previousElementSibling?.tagName).toBe(
+      "SECTION",
+    );
+    cleanup();
+
+    render("Read [the doc][d].\n\n[d]: https://example.com", true);
+    expect(screen.getByText("(edited)").parentElement?.tagName).toBe("P");
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "",
+          edited: true,
+          attachments: [
+            { url: "https://example.com/notes.txt", kind: "file" as const },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").previousElementSibling).toHaveAttribute(
+      "data-message-attachments",
+    );
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "+changed",
+          edited: true,
+          diff: { filePath: "a.ts", truncated: false },
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").closest("pre")).toBeNull();
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Done", edited: true, audience: "agents" }}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: "Morgarita: Done (edited)",
+    });
+    expect(within(line).getByText("(edited)")).toBeInTheDocument();
+    cleanup();
+
+    render("Hi how are ya.", false);
+    expect(screen.queryByText("(edited)")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});

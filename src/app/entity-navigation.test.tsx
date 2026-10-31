@@ -50,6 +50,23 @@ vi.mock("../plugins/storage", async (original) => {
     },
   };
 });
+// Holds Inbox's module load, so its activation can settle last.
+const inboxGate = vi.hoisted(() => ({
+  value: undefined as Promise<void> | undefined,
+}));
+vi.mock("../plugins/modules", async (original) => {
+  const actual = await original<typeof import("../plugins/modules")>();
+  return {
+    ...actual,
+    createModuleLoader(...args: Parameters<typeof actual.createModuleLoader>) {
+      const load = actual.createModuleLoader(...args);
+      return async (plugin: Parameters<typeof load>[0]) => {
+        if (plugin.manifest.id === "buzz.inbox") await inboxGate.value;
+        return load(plugin);
+      };
+    },
+  };
+});
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
@@ -132,6 +149,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   catalogGate.value = undefined;
+  inboxGate.value = undefined;
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
   window.history.replaceState(null, "", "/");
@@ -289,6 +307,66 @@ it.each([
       });
   },
 );
+
+it("opens Inbox for a malformed launch link when the catalog settles after the client", async () => {
+  let release = () => {};
+  catalogGate.value = new Promise<void>((resolve) => (release = resolve));
+  const { current } = bindCommunityLinks(origin, async () => ["buzz://"]);
+  await waitFor(() =>
+    expect(current.communities.snapshot()).toMatchObject({
+      status: "ready",
+      selected: origin,
+    }),
+  );
+  expect(current.plugins.startup()).toBe("loading");
+  release();
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: {
+          kind: "page",
+          pluginId: "buzz.inbox",
+          pageId: "inbox",
+          scope: { viewer, communityOrigin: origin },
+        },
+      },
+    }),
+  );
+});
+
+it("opens Inbox for a malformed launch link when Inbox activates last", async () => {
+  let release = () => {};
+  inboxGate.value = new Promise<void>((resolve) => (release = resolve));
+  const { current } = bindCommunityLinks(origin, async () => ["buzz://"]);
+  await waitFor(() => {
+    expect(current.communities.snapshot()).toMatchObject({
+      status: "ready",
+      selected: origin,
+    });
+    expect(current.plugins.snapshot().activation).toMatchObject({
+      "buzz.channels": { status: "active" },
+      "buzz.inbox": { status: "starting" },
+    });
+  });
+  expect(current.rejectedLinks.snapshot()).toBeUndefined();
+  release();
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: {
+        target: {
+          kind: "page",
+          pluginId: "buzz.inbox",
+          pageId: "inbox",
+          scope: { viewer, communityOrigin: origin },
+        },
+      },
+    }),
+  );
+});
 
 it("keeps a malformed launch link on the start page when the catalog turning Inbox off settles last", async () => {
   let release = () => {};

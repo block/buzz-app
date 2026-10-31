@@ -171,10 +171,23 @@ export function createServices() {
           : pages.snapshot().some((page) => page.key === "buzz.inbox/inbox")
             ? ("on" as const)
             : ("off" as const),
+      // Both producers emit mid-update: reconciliation before every plugin is
+      // starting, activation before pages publish it. Read once both finish.
       subscribe(listener: () => void) {
-        const stopPlugins = plugins.subscribe(listener);
-        const stopPages = pages.subscribe(listener);
+        let queued = false;
+        let stopped = false;
+        const notify = () => {
+          if (queued) return;
+          queued = true;
+          queueMicrotask(() => {
+            queued = false;
+            if (!stopped) listener();
+          });
+        };
+        const stopPlugins = plugins.subscribe(notify);
+        const stopPages = pages.subscribe(notify);
         return () => {
+          stopped = true;
           stopPlugins();
           stopPages();
         };

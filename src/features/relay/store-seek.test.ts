@@ -22,9 +22,11 @@ const newestFirst = (a: RelayEvent, b: RelayEvent) =>
 function harness({
   count = 300,
   maxHistoryRows,
+  prepared,
 }: {
   count?: number;
   maxHistoryRows?: number;
+  prepared?: boolean;
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
@@ -87,6 +89,7 @@ function harness({
     {
       now: () => (T0 + count * HOUR) * 1000,
       ...(maxHistoryRows ? { maxHistoryRows } : {}),
+      ...(prepared ? { prepared } : {}),
     },
   );
   const channels = owner.session.channels;
@@ -320,6 +323,44 @@ it("a detached segment does not become the channel preview", async () => {
   await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
   expect(preview()).toBe("m299");
 });
+
+it("live messages move the channel preview while detached", async () => {
+  const h = setup();
+  await h.open();
+  const preview = () =>
+    h.channels.list().channels.find((channel) => channel.id === "c")?.preview;
+  await vi.waitFor(() => expect(preview()).toBe("m299"));
+  await h.seek(T0 + 3 * DAY);
+  h.live.receive([message(h.alice, "c", "fresh", T0 + 300 * HOUR)]);
+  await vi.waitFor(() => expect(preview()).toBe("fresh"));
+  expect(h.window().hasNewer).toBe(true);
+});
+
+it.each([
+  ["a page", false],
+  ["a prepared head", true],
+])(
+  "a live row that lands while attach reads %s is kept",
+  async (_, prepared) => {
+    const h = setup({ prepared });
+    await h.open();
+    await h.seek(T0 + 3 * DAY);
+    let release!: () => void;
+    h.gate.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const reads = h.reads.length;
+    h.channels.attach?.("c");
+    // The relay answered before `fresh` was published; it arrives live.
+    await vi.waitFor(() => expect(h.reads.length).toBeGreaterThan(reads));
+    const fresh = message(h.alice, "c", "fresh", T0 + 299 * HOUR + 1800);
+    h.live.receive([fresh]);
+    release();
+    h.gate.hold = undefined;
+    await vi.waitFor(() => expect(h.window().hasNewer).toBeFalsy());
+    expect(h.window().rows.map((row) => row.id)).toContain(fresh.id);
+  },
+);
 
 it("a live row that lands while the last newer page loads is kept", async () => {
   const h = setup();

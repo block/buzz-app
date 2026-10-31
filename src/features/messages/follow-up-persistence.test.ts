@@ -1511,6 +1511,59 @@ it.each(["completion", "activity"])(
   },
 );
 
+it.each(["completion", "activity"])(
+  "pauses successors when %s belongs to an older handoff",
+  async (evidence) => {
+    const first = fixture();
+    const completed = first.enqueue({ ...message, text: "A" });
+    first.queue.sendNow(completed);
+    await vi.waitFor(() => expect(first.queue.snapshot()).toEqual([]));
+    const event = first.send.mock.results[0]?.value as string;
+    if (evidence === "completion") {
+      first.work(event, "done");
+      await followUpStorage(scope).lockChat("chat", async () => {});
+    }
+    const observer = fixture();
+    cleanup.push(observer.queue.subscribe(() => {}));
+    if (evidence === "activity") observer.work(event, "done");
+    const predecessor = observer.enqueue({ ...message, text: "B" });
+    const successor = observer.enqueue({ ...message, text: "C" });
+    const remover = fixture();
+    remover.queue.remove(predecessor);
+    await vi.waitFor(() =>
+      expect(followUpStorage(scope).has(predecessor)).toBe(false),
+    );
+    window.dispatchEvent(new StorageEvent("storage"));
+    expect(observer.queue.snapshot()).toMatchObject([
+      { id: successor, restored: true, predecessorRemoved: true },
+    ]);
+    observer.finish();
+    await followUpStorage(scope).lock(successor, async () => {});
+    expect(observer.send).not.toHaveBeenCalled();
+    observer.queue.sendNow(successor);
+    await vi.waitFor(() => expect(observer.send).toHaveBeenCalledOnce());
+  },
+);
+
+it("requires completion for every coalesced removed predecessor", async () => {
+  const observer = fixture();
+  cleanup.push(observer.queue.subscribe(() => {}));
+  const unknown = observer.enqueue({ ...message, text: "B" });
+  const completed = observer.enqueue({ ...message, text: "C" });
+  const successor = observer.enqueue({ ...message, text: "D" });
+  const storage = followUpStorage(scope);
+  storage.claim("chat", { id: completed, recipients: [agent], complete: true });
+  storage.remove(unknown);
+  storage.remove(completed);
+  window.dispatchEvent(new StorageEvent("storage"));
+  expect(observer.queue.snapshot()).toMatchObject([
+    { id: successor, restored: true, predecessorRemoved: true },
+  ]);
+  observer.finish();
+  await storage.lock(successor, async () => {});
+  expect(observer.send).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   "drains fresh rows after an interrupted handoff is abandoned (resumed: %s)",
   async (resumed) => {

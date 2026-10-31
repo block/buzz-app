@@ -65,19 +65,18 @@ function createQueue(session: RelaySession) {
       const removed = entries.filter(
         (entry) => !saved.some((row) => row.id === entry.id),
       );
-      const paused = new Set(
-        saved
-          .filter((row) =>
-            removed.some(
-              (entry) =>
-                entry.channelId === row.channelId &&
-                entry.createdAt !== undefined &&
-                (row.createdAt > entry.createdAt ||
-                  (row.createdAt === entry.createdAt &&
-                    row.id.localeCompare(entry.id) > 0)),
-            ),
-          )
-          .map((row) => row.id),
+      const predecessors = new Map(
+        saved.map((row) => [
+          row.id,
+          removed.filter(
+            (entry) =>
+              entry.channelId === row.channelId &&
+              entry.createdAt !== undefined &&
+              (row.createdAt > entry.createdAt ||
+                (row.createdAt === entry.createdAt &&
+                  row.id.localeCompare(entry.id) > 0)),
+          ),
+        ]),
       );
       entries = saved.map(
         (saved) =>
@@ -90,14 +89,15 @@ function createQueue(session: RelaySession) {
           },
       );
       for (const entry of entries) {
-        const predecessor = paused.has(entry.id)
+        const removed = predecessors.get(entry.id) ?? [];
+        const predecessor = removed.length
           ? storage.handoff(entry.channelId)
           : null;
         if (
-          paused.has(entry.id) &&
-          !(
-            predecessor &&
-            (predecessor.complete || handoffFinished(predecessor))
+          removed.some(
+            (entry) =>
+              predecessor?.id !== entry.id ||
+              !(predecessor.complete || handoffFinished(predecessor)),
           )
         ) {
           entry.restored = true;

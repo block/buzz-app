@@ -369,11 +369,22 @@ export function createChannelStore(
     });
     notify(listListeners);
   }
-  /** A head read replaces a detached segment: its rows and floor go with it. */
+  /** A head read replaces a detached segment: its rows and floor go with it.
+   * Live rows that arrived above it during the read join the head. */
   function attached(state: WindowState) {
     if (state.ceiling === undefined) return;
     state.ceiling = undefined;
     state.floor = undefined;
+    if (state.above?.size)
+      state.events = [
+        ...new Map(
+          [...state.events, ...state.above.values()].map((event) => [
+            event.id,
+            event,
+          ]),
+        ).values(),
+      ];
+    state.above = undefined;
   }
   function moveCursor(state: WindowState, cursor: WindowCursor | null) {
     state.cursor = cursor;
@@ -591,9 +602,9 @@ export function createChannelStore(
    * than any gap, not overlap with it. The head replaces the rows, so it
    * replaces the snapshot too (a cached head adopted on revisit is re-read). */
   function adoptHead(state: WindowState, head: Head) {
+    state.events = head.events;
     attached(state);
     moveCursor(state, head.cursor);
-    state.events = head.events;
     state.atHead = true;
     state.restored = head.restored === true;
     if (dropped) state.kept = rowIds(state);
@@ -975,14 +986,18 @@ export function createChannelStore(
     return (rows.find((row) => row.createdAt >= from) ?? rows.at(-1))?.id;
   }
   /** Replace a detached window with the head, cancelling its reads. The
-   * segment stays until the head page lands. */
+   * segment stays until the head page lands; live rows wait for it. */
   function reattach(state: WindowState) {
     state.controller?.abort();
     state.controller = undefined;
-    state.above = undefined;
+    const above = new Map<string, RelayEvent>();
+    state.above = above;
     state.generation++;
     setWindow(state, { loadingOlder: false, loadingNewer: undefined });
-    return loadPage(state, null);
+    // A failed read leaves the segment; the next head read has these rows.
+    return loadPage(state, null).finally(() => {
+      if (state.above === above) state.above = undefined;
+    });
   }
   /** Replace the window with a seek page; a null ceiling is the head page. */
   function install(
@@ -3234,6 +3249,16 @@ export function createChannelStore(
       const tail = tails.peek(channelId);
       const state = windows.get(channelId);
       if (tail && state) {
+        // A detached window shows an older segment; live messages still
+        // move its preview.
+        if (state.ceiling !== undefined)
+          state.preview =
+            messagePreview(
+              foldChannelMessages(channelId, transport.relayAuthor, [
+                ...(heads.peek(channelId)?.events ?? []),
+                ...tail.events,
+              ]),
+            ) ?? state.preview;
         const next = { ...tail, preview: state.preview };
         tails.set(channelId, next, tailBytes(next));
       }

@@ -3,6 +3,16 @@ import { isObject, objectBody } from "./body";
 import { hasTag, type ReadFilter, type RelayEvent } from "./events";
 
 export type WindowCursor = Readonly<{ createdAt: number; eventId: string }>;
+/** Whether `event` pages after `cursor`: windows read `created_at DESC, id ASC`. */
+export function olderThan(
+  event: Readonly<{ created_at: number; id: string }>,
+  cursor: WindowCursor,
+) {
+  return (
+    event.created_at < cursor.createdAt ||
+    (event.created_at === cursor.createdAt && event.id > cursor.eventId)
+  );
+}
 export type WindowPage = Readonly<{
   events: RelayEvent[];
   cursor: WindowCursor | null;

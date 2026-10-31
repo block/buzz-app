@@ -28,6 +28,7 @@ import type { ProfileDirectory } from "./profile-directory";
 import {
   NOTICE_PAGE_SIZE,
   noticeFilter,
+  olderThan,
   parseWindow,
   WINDOW_KINDS,
   windowFilter,
@@ -40,7 +41,12 @@ import { relayDebug } from "./debug";
 import { clientMetrics } from "../developer/client-metrics";
 import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
-import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
+import {
+  ceilingCursor,
+  locate,
+  SEEK_PAGE,
+  type SeekRead,
+} from "./history-seek";
 import type { WindowPage } from "./window";
 import { MatchRank, matchRank } from "../search/match";
 
@@ -53,9 +59,9 @@ type WindowState = {
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
   atHead: boolean;
-  /** Detached: rows created at or after this (unix seconds) are not loaded;
-   * the window holds a seek segment below it. Undefined at the head. */
-  ceiling?: number | undefined;
+  /** Detached: rows not older than this window key are not loaded; the
+   * window holds a seek segment below it. Undefined at the head. */
+  ceiling?: WindowCursor | undefined;
   /** Live rows above the ceiling that arrived while a newer page loads: the
    * page that reaches the head may predate them. */
   above?: Map<string, RelayEvent> | undefined;
@@ -406,7 +412,7 @@ export function createChannelStore(
               !channelRowKind(event.kind) ||
               ((floor === undefined || event.created_at >= floor) &&
                 (state.ceiling === undefined ||
-                  event.created_at < state.ceiling)),
+                  olderThan(event, state.ceiling))),
           )
           .map((event) => [event.id, event as import("./events").EventData]),
       );
@@ -1003,7 +1009,7 @@ export function createChannelStore(
   function install(
     state: WindowState,
     page: WindowPage,
-    ceiling: number | null,
+    ceiling: WindowCursor | null,
   ) {
     state.controller?.abort();
     state.controller = undefined;
@@ -2961,7 +2967,12 @@ export function createChannelStore(
       try {
         signal.throwIfAborted();
         const read = seekRead(channelId, controller.signal);
-        let located = await locate(read, from, nowSeconds(), from > 0);
+        let located = await locate(
+          read,
+          ceilingCursor(from),
+          nowSeconds(),
+          from > 0,
+        );
         if (located.kind === "newest" && state.ceiling !== undefined)
           located = {
             kind: "segment",
@@ -3191,7 +3202,7 @@ export function createChannelStore(
           if (
             state.ceiling !== undefined &&
             channelRowKind(event.kind) &&
-            event.created_at >= state.ceiling
+            !olderThan(event, state.ceiling)
           ) {
             state.above?.set(event.id, event);
             continue;

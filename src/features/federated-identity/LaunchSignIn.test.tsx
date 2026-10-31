@@ -362,6 +362,11 @@ it("reports only its own renewal's failure", async () => {
   expect(
     await screen.findByText("Sign-in did not finish. Try again."),
   ).toBeInTheDocument();
+  // A later session's warning doesn't carry the old attempt's failure.
+  h.set({ revision: "next", failure: null });
+  expect(
+    await screen.findByText("Sign in again to keep Buzz open."),
+  ).toBeInTheDocument();
 });
 
 it("warns only in at-launch builds, once the session is ending", () => {

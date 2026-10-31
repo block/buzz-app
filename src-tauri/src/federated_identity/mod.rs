@@ -821,39 +821,52 @@ impl FederatedIdentity {
         };
         // Persistence/install/late cleanup still serialize with sign-out.
         let _operation = self.0.operation.lock().await;
-        if cancel.is_cancelled() || !self.current(revision) {
-            return Err("session-changed".into());
+        {
+            let mut state = self.state();
+            if cancel.is_cancelled() || state.closed || state.snapshot.revision != revision {
+                return Err("session-changed".into());
+            }
+            // Commit point: past here a renewal can't be canceled, only ended
+            // with its session, so nothing below has to undo a cancel.
+            state.renewal = None;
         }
-        let _retiring = agent::AgentTokens::preparing_session(self, record.email.clone())
+        let prepared = agent::AgentTokens::preparing_session(self, record.email.clone())
             .await
             .map_err(|_| Failure::from("storage-unavailable"))?;
+        let abandon = || async {
+            if let Some(prepared) = prepared {
+                prepared.abandon().await;
+            }
+        };
         let raw = Zeroizing::new(serde_json::to_vec(&record).map_err(|_| "storage-corrupt")?);
         let session = Arc::new(Session {
             record,
             raw,
             issued_at: now()?,
         });
-        // A renewal's cancel keeps the revision, so check it at every step.
-        if cancel.is_cancelled() {
-            return Err("sign-in-canceled".into());
-        }
         // A renewal replaces the current session's record in one step.
         let replacing = self.state().session.clone();
         let (saved, expected) = (session.clone(), replacing.clone());
-        self.storage(move |store| {
-            store.compare(
-                expected.as_ref().map(|session| session.raw.as_slice()),
-                Some(&saved.raw),
-            )
-        })
-        .await?;
-        if cancel.is_cancelled() || !self.current(revision) {
+        let written = self
+            .storage(move |store| {
+                store.compare(
+                    expected.as_ref().map(|session| session.raw.as_slice()),
+                    Some(&saved.raw),
+                )
+            })
+            .await;
+        if let Err(failure) = written {
+            abandon().await;
+            return Err(failure);
+        }
+        if !self.current(revision) {
             self.unsave(session, replacing).await?;
+            abandon().await;
             return Err("session-changed".into());
         }
         let installed = {
             let mut state = self.state();
-            if state.snapshot.revision == revision && !state.closed && !cancel.is_cancelled() {
+            if state.snapshot.revision == revision && !state.closed {
                 if state.session.is_some() {
                     self.reset(&mut state);
                 }
@@ -866,20 +879,25 @@ impl FederatedIdentity {
         };
         if !installed {
             self.unsave(session, replacing).await?;
+            abandon().await;
             return Err("session-changed".into());
         }
         Ok(())
     }
-    /// Undo saving `session`: put back the record it replaced, if any.
+    /// The session `session` was saved for ended before it was installed.
+    /// Refuse `session` durably first, so a failure below never lets a restart
+    /// restore it, then put back the record it replaced for whoever ended that
+    /// session to remove. A failure leaves that removal to fail and report it.
     async fn unsave(
         &self,
         session: Arc<Session>,
         replaced: Option<Arc<Session>>,
     ) -> Result<(), Failure> {
+        self.remove(session).await?;
         let Some(replaced) = replaced else {
-            return self.remove(session).await;
+            return Ok(());
         };
-        self.storage(move |store| store.compare(Some(&session.raw), Some(&replaced.raw)))
+        self.storage(move |store| store.compare(None, Some(&replaced.raw)))
             .await
     }
     pub(crate) fn cancel_sign_in(&self) {

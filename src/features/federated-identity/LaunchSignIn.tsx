@@ -173,9 +173,10 @@ export function SignInEnding({ identity }: { identity: FederatedIdentity }) {
     identity.snapshot,
   );
   const [renewing, setRenewing] = useState(false);
-  // Only this notice's own attempt; the snapshot's failure can come from a
-  // community refusing access, with no sign-in attempted.
-  const [failure, setFailure] = useState("");
+  // Only this notice's own attempt, for the session it was made in; the
+  // snapshot's failure can come from a community refusing access.
+  const [attempt, setAttempt] = useState({ revision: "", failure: "" });
+  const failure = attempt.revision === state.revision ? attempt.failure : "";
   if (
     !identity.apiAvailable ||
     state.authority?.signIn !== "at-launch" ||
@@ -210,14 +211,17 @@ export function SignInEnding({ identity }: { identity: FederatedIdentity }) {
         <Button
           size="sm"
           onClick={() => {
+            const { revision } = state;
             setRenewing(true);
-            setFailure("");
+            setAttempt({ revision, failure: "" });
             void identity
               .signIn()
               .catch((error: unknown) =>
-                setFailure(
-                  error instanceof Error ? error.message : "sign-in-failed",
-                ),
+                setAttempt({
+                  revision,
+                  failure:
+                    error instanceof Error ? error.message : "sign-in-failed",
+                }),
               )
               .finally(() => setRenewing(false));
           }}

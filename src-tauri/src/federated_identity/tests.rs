@@ -720,6 +720,8 @@ async fn the_expiry_watch_warns_then_ends_the_session_at_expiry() {
     .unwrap()
     .unwrap();
     assert!(host.state().session.is_none());
+    // The retired record is removed after the retirement is published.
+    let _operation = host.0.operation.lock().await;
     assert!(store.raw.lock().unwrap().is_none());
 }
 
@@ -829,8 +831,17 @@ async fn a_renewal_into_another_account_retires_derived_state() {
     server.await.unwrap();
 }
 
-#[tokio::test]
-async fn a_renewal_canceled_after_saving_restores_the_session_it_replaced() {
+/// Holds `host`'s renewal into b@example.com once its record is saved, runs
+/// `meanwhile`, then lets it finish.
+async fn renewal_held_after_saving(
+    meanwhile: impl FnOnce(&FederatedIdentity, &Memory),
+) -> (
+    FederatedIdentity,
+    Arc<Memory>,
+    Arc<Session>,
+    String,
+    Result<(), Failure>,
+) {
     let (base, server) = adapter(vec![
         serde_json::json!({"session_token":"other-session-token","expires_at":"2099-02-01T00:00:00Z"}),
         serde_json::json!({"expires_at":"2099-02-01T00:00:00Z","email":"b@example.com"}),
@@ -838,8 +849,6 @@ async fn a_renewal_canceled_after_saving_restores_the_session_it_replaced() {
     .await;
     let store = Arc::new(Memory::default());
     let (host, old) = signed_in_at(store.clone(), base, "a@example.com");
-    let changes = host.account_changes();
-    let retirements = host.retirements();
     let revision = host.snapshot().revision;
     let cancel = {
         let mut state = host.state();
@@ -857,17 +866,45 @@ async fn a_renewal_canceled_after_saving_restores_the_session_it_replaced() {
             .finish_login("code", "secret", &login_revision, &login_cancel)
             .await
     });
-    // The replacement is saved but not installed when the person cancels.
     tokio::task::spawn_blocking(move || saved.recv().unwrap())
         .await
         .unwrap();
-    host.cancel_sign_in();
+    meanwhile(&host, &store);
     release.send(()).unwrap();
-    assert!(login.await.unwrap().is_err());
-    assert_eq!(host.snapshot().revision, revision);
-    assert!(Arc::ptr_eq(host.state().session.as_ref().unwrap(), &old));
-    assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
-    assert_ne!(*changes.borrow(), Some(SessionChange::AccountChanged));
-    assert_eq!(host.retirements(), retirements);
+    let result = login.await.unwrap();
     server.await.unwrap();
+    (host, store, old, revision, result)
+}
+
+#[tokio::test]
+async fn a_renewal_past_its_commit_point_ignores_cancel() {
+    let (host, store, old, revision, result) =
+        renewal_held_after_saving(|host, _| host.cancel_sign_in()).await;
+    // Cancel came too late to stop it, so it completes whole.
+    assert!(result.is_ok());
+    let snapshot = host.snapshot();
+    assert!(snapshot.status == Status::SignedIn);
+    assert_ne!(snapshot.revision, revision);
+    assert_eq!(snapshot.email.as_deref(), Some("b@example.com"));
+    let current = host.state().session.clone().unwrap();
+    assert!(!Arc::ptr_eq(&current, &old));
+    assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*current.raw));
+}
+
+#[tokio::test]
+async fn a_renewal_whose_session_ends_while_saving_is_refused_even_if_rollback_fails() {
+    let (host, store, old, _, result) = renewal_held_after_saving(|host, store| {
+        // The session ends (as sign-out does) and storage starts failing.
+        host.retire(Status::SignedOut, None);
+        store.denied.store(true, Ordering::SeqCst);
+    })
+    .await;
+    assert!(result.is_err());
+    assert!(host.state().session.is_none());
+    // The replacement is still stored, but refused before anything else.
+    assert_ne!(store.raw.lock().unwrap().as_deref(), Some(&*old.raw));
+    store.denied.store(false, Ordering::SeqCst);
+    let restarted = at_adapter(store.clone(), "https://identity.example".into());
+    assert!(restarted.restore().await.status == Status::SignedOut);
+    assert!(store.raw.lock().unwrap().is_none());
 }

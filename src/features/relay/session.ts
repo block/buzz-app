@@ -1979,6 +1979,7 @@ export function createRelaySession(
     liveWasConnected = connected;
   });
   const session = Object.freeze({
+    artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
     presence,
     viewer: transport?.viewer,

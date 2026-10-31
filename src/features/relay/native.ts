@@ -1,3 +1,8 @@
+import {
+  artifactIncrementalCapability,
+  artifactIncrementalFailure,
+  createArtifactIncrementalReader,
+} from "./artifact-incremental-reader";
 import { nativeSocket } from "./native-socket";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
@@ -411,6 +416,21 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
+    ...(artifactIncrementalCapability(info)
+      ? {
+          artifactIncremental: createArtifactIncrementalReader(
+            (filter, signal) =>
+              admitSignedRequest(
+                origin,
+                transport.viewer,
+                () => nativeRelayRequest(origin, "/query", [filter]),
+                signal,
+                "background",
+                artifactIncrementalFailure,
+              ),
+          ),
+        }
+      : {}),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);

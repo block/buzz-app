@@ -38,6 +38,8 @@ import {
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
+  attachmentDraftCount,
+  clearAttachmentDraft,
   transferAttachmentDraft,
   type AttachmentDraft,
 } from "../messages/attachment-draft";
@@ -86,6 +88,21 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
     writeView(scope, key, null);
 }
 
+/** Whether New chat holds nothing of the person's since a start cleared it:
+ * tags at most, no files, and its settings and workspace untouched. */
+function blankNewChat(session: RelaySession, scope: string, key: string) {
+  const saved = mentionDraft(readView<unknown>(scope, `${key}:new-draft`, ""));
+  return (
+    (!composerMarkdown(saved).trim() || addressingOnly(saved)) &&
+    !attachmentDraftCount(session, `${scope}:${key}:new-draft`) &&
+    readView(scope, `${key}:settings`, null) === null &&
+    readView(scope, `${key}:new-project`, null) === null
+  );
+}
+/** Open New chats, told when a refused start gives their draft back: their
+ * composer reads it only as it mounts. */
+const restoreListeners = new Set<(scope: string, key: string) => void>();
+
 export function SoloDraft({
   session,
   scope,
@@ -107,8 +124,9 @@ export function SoloDraft({
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
-  /** The started chat `id` was never made, and what was sent in it is lost;
-   * `message` says why. */
+  /** The started chat `id` was never made; `message` says why, and whether
+   * what was sent in it went back to New chat. It does unless a draft was
+   * begun there since or it can't be saved on this device. */
   onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
@@ -171,6 +189,19 @@ export function SoloDraft({
     // A returning draft resumes at its end, not before its first tag.
     input?.setSelectionRange(input.value.length, input.value.length);
   }, [focusRequest]);
+  // The remount replaces the editor; one that had the caret keeps it.
+  const [restored, setRestored] = useState({ count: 0, focus: false });
+  useEffect(() => {
+    const listener = (restoredScope: string, key: string) => {
+      if (restoredScope !== scope || key !== draftKey) return;
+      const focus = !!prompt.current?.contains(document.activeElement);
+      setRestored(({ count }) => ({ count: count + 1, focus }));
+    };
+    restoreListeners.add(listener);
+    return () => {
+      restoreListeners.delete(listener);
+    };
+  }, [scope, draftKey]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
@@ -278,6 +309,7 @@ export function SoloDraft({
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
+      const attached = files.snapshot();
       // The chat lists at once, in its workspace, and its message goes out
       // behind the create, so the agents start on it without waiting for the
       // relay. Its Canvas is saved once the chat exists; until then local
@@ -335,12 +367,43 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
       // Only a start that made no chat ends here; the chat and its messages
-      // are dropped (see channelWrites.start). Any other miss leaves the chat
-      // listed, with its messages' own Retry.
+      // are dropped (see channelWrites.start), and what was sent returns to a
+      // New chat still blank. Any other miss leaves the chat listed, with its
+      // messages' own Retry.
       void ready.catch((reason: unknown) => {
         if (!(reason instanceof ChatNotStarted)) return;
         writeView(scope, `draft:${channelId}`, null);
-        onFailed?.(channelId, `Couldn't start "${name}": ${reason.message}`);
+        clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
+        const blank = blankNewChat(session, scope, draftKey);
+        // The text first: when it can't be saved, an open New chat may hold
+        // unsaved text of its own, so nothing else is given back.
+        const returned =
+          blank && writeView(scope, `${draftKey}:new-draft`, draft);
+        if (returned) {
+          if (source) writeView(scope, draftKey, source);
+          writeView(scope, `${draftKey}:settings`, draftSettings);
+          writeView(scope, `${draftKey}:new-project`, project);
+          attachmentDraft(
+            session,
+            `${scope}:${draftKey}:new-draft`,
+            channelId,
+            true,
+          ).adopt(attached);
+          for (const listener of restoreListeners) listener(scope, draftKey);
+        }
+        const why = /[.!?]$/.test(reason.message)
+          ? reason.message
+          : `${reason.message}.`;
+        onFailed?.(
+          channelId,
+          `Couldn't start "${name}": ${why} ${
+            returned
+              ? "Your message is back in New chat."
+              : blank
+                ? "Your message could not be saved on this device."
+                : "New chat has a newer draft, so your message was not restored."
+          }`,
+        );
       });
     } catch (reason) {
       if (mounted.current)
@@ -353,6 +416,8 @@ export function SoloDraft({
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
+        key={restored.count}
+        focusRequest={restored.focus ? restored.count : 0}
         chatPresentation
         ownSoloConversation
         session={session}

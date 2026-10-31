@@ -158,6 +158,23 @@ it("follows label changes under StrictMode double rendering", () => {
   names.dispose();
 });
 
+it("keeps watching after an older resolve callback runs", () => {
+  const { names, publish } = fixture();
+  const callbacks: ((pubkey: string, fallback: string) => string)[] = [];
+  function Author() {
+    const resolve = useIdentityNames(names);
+    callbacks.push(resolve);
+    return <span>{resolve(a, "Member")}</span>;
+  }
+  render(<Author />);
+  publish(b, "Alex");
+  expect(screen.getByText(`Alex · ${suffix(a)}`)).toBeInTheDocument();
+  callbacks[0]?.(c, "Member");
+  publish(a, "Ana");
+  expect(screen.getByText("Ana")).toBeInTheDocument();
+  names.dispose();
+});
+
 it("re-renders on every name change once it resolves too many labels to watch", () => {
   const { names, publish } = fixture();
   const scopes = Array.from({ length: 501 }, () => [a]);

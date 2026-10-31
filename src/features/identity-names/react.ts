@@ -63,8 +63,9 @@ function watchLabels(names: IdentityNameView | undefined) {
   let seen = names?.snapshot();
   return {
     show(rendered: number, args: Args, label: string | undefined) {
-      // The first label rendered at a new version starts a new record.
-      if (rendered !== recorded) {
+      // The first label rendered at a newer version starts a new record; a
+      // callback kept from an older render adds to the current one.
+      if (rendered > recorded) {
         shown.clear();
         overflow = false;
         recorded = rendered;

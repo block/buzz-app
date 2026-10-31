@@ -4,7 +4,7 @@ import { useContext, type ReactNode } from "react";
 import { DraftMentionRoster } from "./draft-mention-roster";
 import { archivedMention } from "./mention-admission";
 import { useLayoutEffect, useMemo, useRef } from "react";
-import { useIdentityNames, useNamesRevision } from "../identity-names/react";
+import { useNamesRevision } from "../identity-names/react";
 import { useListedChannel } from "../relay/listed-channel";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -49,13 +49,12 @@ export function RichComposerInput({
   );
   const archives = useMentionArchives(session);
   const roster = useContext(DraftMentionRoster)?.recipients;
-  const resolveName = useIdentityNames(session.names);
   // Recipients, not keystrokes, change chip names: typing prose must not
   // copy every profile or scan every member of a large channel.
   const recipientKey = JSON.stringify(
     draft.recipients.map(({ pubkey, name }) => [pubkey, name]),
   );
-  // Chip facts come from names.lookup, not only resolved labels.
+  // Chip labels and facts come from names.lookup.
   const names = useNamesRevision(session.names, recipientKey !== "[]");
   const { profiles, qualifiers, labels } = useMemo(() => {
     void archives;
@@ -94,7 +93,7 @@ export function RichComposerInput({
       labels: new Map(
         recipients.map(([pubkey, name]) => [
           pubkey,
-          resolveName(pubkey, name, candidates, displayFacts),
+          session.names?.lookup(pubkey, candidates, displayFacts)?.name ?? name,
         ]),
       ),
     };
@@ -106,7 +105,6 @@ export function RichComposerInput({
     members,
     archives,
     names,
-    resolveName,
   ]);
   const previous = useRef(labels);
   const revealed = useRef(

@@ -26,6 +26,8 @@ import {
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
+import { attachmentDraft } from "../../features/messages/attachment-draft";
+import type { ComposerSession } from "../../features/messages/composer-session";
 import { readView, writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
@@ -56,9 +58,12 @@ function fixture({
   archived = false,
   viewerNamed = false,
   others = [],
+  agentless = false,
 }: {
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
+  /** No agent can be tagged, so nothing is tagged automatically. */
+  agentless?: boolean;
   /** The viewer's own profile has loaded too. */
   viewerNamed?: boolean;
   /** Someone other than the viewer or its agent created the chat. */
@@ -145,10 +150,12 @@ function fixture({
     },
   );
   // The default agent comes first, so a named agent is distinguishable from it.
-  const agents = [
-    { pubkey: "b".repeat(64), name: "Helper", managed: false },
-    { pubkey: agent, name: "Scout", managed: false },
-  ];
+  const agents = agentless
+    ? []
+    : [
+        { pubkey: "b".repeat(64), name: "Helper", managed: false },
+        { pubkey: agent, name: "Scout", managed: false },
+      ];
   const choices = {
     ...owner.session.agentChoices.snapshot(),
     status: "ready" as const,
@@ -286,6 +293,7 @@ function fixture({
     target: target?.(scope) ?? conversationTarget(scope, id),
     signal: abort.signal,
     forSession: () => navigation,
+    passThrough: vi.fn<PageNavigation["passThrough"]>(() => () => {}),
     complete,
     resolve: () => true,
   };
@@ -335,6 +343,7 @@ function fixture({
     </ChannelNavigationProvider>
   );
   return {
+    navigation,
     mount: () => render(page()),
     mountWithSidebar: () => render(page(true)),
     mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
@@ -508,6 +517,166 @@ it("addresses a Solo draft route's agent in the new chat without tagging the tex
   await user.keyboard("Hello{Enter}");
   await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
   expect(f.send).toHaveBeenCalledWith(expect.any(String), "Hello", [agent]);
+});
+
+it("keeps a new chat out of Back history until something is written in it", async () => {
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
+  f.mount();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  const input = within(region).getByRole("textbox", {
+    name: "Message your agents",
+  });
+  await waitFor(() => expect(input).toHaveTextContent("@Scout"));
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  // Only the automatic tag, shown but not saved: nothing to come back to.
+  expect(readView(f.scope, "solo:new-draft", null)).toBeNull();
+  expect(passes?.()).toBe(true);
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard(" Plan the week");
+  expect(passes?.()).toBe(false);
+  await user.click(
+    within(region).getByRole("button", { name: "Send message" }),
+  );
+  await waitFor(() => expect(f.open).toHaveBeenCalledOnce());
+  // The sent draft is spent; the started chat takes its place.
+  expect(passes?.()).toBe(true);
+});
+
+it("keeps a written new chat in Back history when its draft cannot be saved", async () => {
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
+  const draftStorageKey = `buzz-view.v1:${JSON.stringify([f.scope, "solo:new-draft"])}`;
+  const setItem = Storage.prototype.setItem;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    key: string,
+    value: string,
+  ) {
+    if (key === draftStorageKey)
+      throw new DOMException("Storage is full", "QuotaExceededError");
+    setItem.call(this, key, value);
+  });
+  try {
+    f.mount();
+    const region = await screen.findByRole("region", { name: "New chat" });
+    const input = within(region).getByRole("textbox", {
+      name: "Message your agents",
+    });
+    await waitFor(() => expect(input).toHaveTextContent("@Scout"));
+    const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+    expect(passes?.()).toBe(true);
+    const user = userEvent.setup();
+    await user.click(input);
+    await user.keyboard(" Unsaved but written");
+    expect(readView(f.scope, "solo:new-draft", null)).toBeNull();
+    expect(passes?.()).toBe(false);
+  } finally {
+    vi.mocked(Storage.prototype.setItem).mockRestore();
+  }
+});
+
+it("keeps a saved draft that only tags the default agent in Back history", async () => {
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
+  // A tag the person typed, saved with its editor snapshot.
+  const typed = {
+    text: "@Scout ",
+    recipients: [{ pubkey: agent, name: "Scout", start: 0, end: 6 }],
+    document: {
+      version: 1,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: "@Scout",
+                marks: [
+                  {
+                    type: "recipient",
+                    attrs: { pubkey: agent, name: "Scout" },
+                  },
+                ],
+              },
+              { type: "text", text: " " },
+            ],
+          },
+        ],
+      },
+    },
+  };
+  writeView(f.scope, "solo:new-draft", typed);
+  f.mount();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  await waitFor(() =>
+    expect(
+      within(region).getByRole("textbox", { name: "Message your agents" }),
+    ).toHaveTextContent("@Scout"),
+  );
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  expect(passes?.()).toBe(false);
+  expect(readView(f.scope, "solo:new-draft", null)).toEqual(typed);
+});
+
+it("keeps a linked chat draft in Back history, since it holds its source chat", async () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
+  writeView(f.scope, linkedDraftKey(linked), {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
+  });
+  f.mount();
+  await screen.findByRole("textbox");
+  expect(vi.mocked(f.navigation.passThrough).mock.lastCall?.[0]()).toBe(false);
+});
+
+it("keeps an untagged linked chat draft in Back history until its source is used", async () => {
+  const linked = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({
+    agentless: true,
+    target: (scope) => soloDraftTarget(scope, { linked }),
+  });
+  const link = `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`;
+  writeView(f.scope, linkedDraftKey(linked), {
+    channelId: "33333333-3333-4333-8333-333333333333",
+    link,
+  });
+  f.mount();
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent(link),
+  );
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  expect(
+    readView(f.scope, `${linkedDraftKey(linked)}:new-draft`, null),
+  ).toBeNull();
+  expect(passes?.()).toBe(false);
+  // As a successful start leaves it: source consumed, draft absent.
+  writeView(f.scope, linkedDraftKey(linked), null);
+  expect(passes?.()).toBe(true);
+});
+
+it("counts a new chat's attached file as written", async () => {
+  const f = fixture({ target: soloDraftTarget });
+  f.mount();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
+  expect(passes?.()).toBe(true);
+  Object.assign(f.session, { attachments: { uploadForNewChat: vi.fn() } });
+  attachmentDraft(
+    f.session as unknown as ComposerSession,
+    `${f.scope}:solo:new-draft`,
+    "",
+    true,
+  ).addUploaded({
+    name: "notes.txt",
+    url: "https://media.invalid/notes.txt",
+    type: "text/plain",
+    size: 5,
+    sha256: "f".repeat(64),
+  });
+  expect(passes?.()).toBe(false);
+  expect(region).toBeVisible();
 });
 
 it("a new Solo chat finishing behind Settings stays put and retires its draft", async () => {

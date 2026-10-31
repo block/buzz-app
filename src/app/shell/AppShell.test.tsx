@@ -472,6 +472,64 @@ it("contains a throwing page badge to its own nav row", () => {
   }
 });
 
+it("nests a sidebar page's rows under its entry and contains their errors", () => {
+  const current = createServices();
+  services = current;
+  const page = (
+    id: string,
+    rows: () => ReactNode,
+    placement?: RegisteredPage["placement"],
+  ): RegisteredPage => ({
+    id,
+    key: `example.plugin/${id}`,
+    pluginId: "example.plugin",
+    revision: "1",
+    title: id,
+    component: () => null,
+    primary: true,
+    rows,
+    ...(placement ? { placement } : {}),
+  });
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    render(
+      <ToastProvider>
+        <AppShell
+          pages={[
+            page("broken", () => {
+              throw new Error("broken rows");
+            }),
+            page("nested", () => <button type="button">Pulled in</button>),
+            page(
+              "header",
+              () => <button type="button">Hidden</button>,
+              "toolbar",
+            ),
+          ]}
+          selected="example.plugin/nested"
+          navigationAttempt=""
+          onSelect={() => {}}
+          tone="default"
+          communities={current.communities}
+          accountActions={current.accountActions}
+          appearance={testAppearance}
+        >
+          content
+        </AppShell>
+      </ToastProvider>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Pages" });
+    expect(
+      within(nav)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["broken", "nested", "Pulled in"]);
+    expect(screen.queryByText("Hidden")).not.toBeInTheDocument();
+  } finally {
+    error.mockRestore();
+  }
+});
+
 it("partitions primary pages without duplicate links and preserves exact selection and removal", async () => {
   const current = createServices();
   services = current;

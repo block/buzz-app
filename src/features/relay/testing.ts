@@ -89,12 +89,19 @@ export function roster(
   channelId: string,
   members: readonly string[],
   created_at = 1_700_000_000,
+  /** Signed roster roles, such as a Solo chat's owner. */
+  roles: Readonly<Record<string, string>> = {},
 ): RelayEvent {
   return signed(relay, {
     kind: 39002,
     content: "",
     created_at,
-    tags: [["d", channelId], ...members.map((member) => ["p", member])],
+    tags: [
+      ["d", channelId],
+      ...members.map((member) =>
+        roles[member] ? ["p", member, "", roles[member]] : ["p", member],
+      ),
+    ],
   });
 }
 export function metadata(

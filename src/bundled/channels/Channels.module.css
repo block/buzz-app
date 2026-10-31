@@ -157,7 +157,9 @@
 }
 /* Shorten every painted row symmetrically while preserving icon, label, trailing
    control, and scrollbar positions. Wrapped channel rows paint on the wrapper;
-   direct destination and Solo chat rows paint on the navigation item itself. */
+   direct destination and Solo chat rows paint on the navigation item itself.
+   Icons keep their place from the sidebar edge; trailing controls keep the
+   wrapped rows' inset from the painted fill's end. */
 .channelList [data-variant="row"],
 .sidebarFilter [data-variant="row"] {
   width: calc(
@@ -167,7 +169,7 @@
   );
   margin-inline: var(--channel-row-fill-start) var(--channel-row-fill-end);
   padding-inline: calc(var(--space-2) - var(--channel-row-fill-start))
-    calc(var(--space-1) + var(--space-half) - var(--channel-row-fill-start));
+    calc(var(--space-1) + var(--space-half));
 }
 .channelList [data-variant="row"][data-inset],
 .sidebarFilter [data-variant="row"][data-inset] {

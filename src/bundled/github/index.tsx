@@ -168,7 +168,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (
         !ownSolo(
           session.channels.list().channels.find((item) => item.id === channel),
-          session.viewer,
         )
       )
         throw new Error("Only a Solo chat can be linked to a pull request");

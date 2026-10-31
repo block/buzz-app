@@ -203,7 +203,7 @@ function Provider({
 }) {
   const id = channel?.id;
   const soloConversation = channel?.channelType === "solo";
-  const ownSoloConversation = ownSolo(channel, session.viewer);
+  const ownSoloConversation = ownSolo(channel);
   const value = useMemo(
     () =>
       id

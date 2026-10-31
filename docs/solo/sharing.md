@@ -24,6 +24,10 @@ There are two ways to give access:
 The Solo chat header's **Access** button and the conversation-row **Share…** action
 open the one access dialog every conversation uses (`ChannelMembersDialog`). In a
 Solo chat it is titled **Chat access**, with the chat name as its description.
+The button previews the chat's people like a channel's members button: up to three
+avatars and a count, agents left out, the owner first. Someone else's chat names its
+owner on hover (**Owner's chat**). The viewer's own chat keeps the people icon until
+it is shared with another person.
 Share stays in the same conversation: no metadata change, promotion to a channel,
 Solo removal or automatic navigation to Messages. **Convert to channel** lives only
 in the chat's actions menu. **Copy link** sits at the footer's leading edge and
@@ -89,9 +93,24 @@ leaving the composer stops further grants and sending, not already dispatched
 writes. **Send link only** leaves access unchanged. Solo destinations keep their
 ordinary behavior and don't ask.
 
-Consent covers the full chat history and future messages. Sharing never
-unarchives anyone or removes them from a channel, and future joins or departures
-in the destination channel are not synchronized.
+Consent covers the full chat history and future messages, and says shared chats
+stay out of the recipients' sidebar. Sharing never unarchives anyone or removes
+them from a channel, and future joins or departures in the destination channel
+are not synchronized.
+
+## What shared people see
+
+Sharing gives access, not attention. Someone else's chat never lists in the
+viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
+just because the viewer can open it; they reach it from the card, a link or
+search. Only a tag pulls them in: it alerts like any mention and adds one Inbox
+row per chat, however many tags it holds. While that chat has an unread tag, it
+also shows as a row under Inbox in the sidebar, with the same accent dot a
+mention gives any channel; opened from there, it stays until
+the viewer reads it and moves on, and returns with the next tag. Opening a shared
+chat from its card adds no row: it opens beside the current conversation, which
+stays selected. Replies, ordinary messages and marking a message unread there
+never add a row. See [Relevant replies](../unread.md#relevant-replies).
 
 ## Explicit conversion, separate from Share
 

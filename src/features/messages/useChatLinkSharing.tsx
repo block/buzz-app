@@ -230,7 +230,7 @@ export function useChatLinkSharing(
 
 function consentDescription(pending: Pending | undefined) {
   const consent =
-    "access to the full chat history and future messages. Sending only the link leaves access unchanged.";
+    "access to the full chat history and future messages. Shared chats stay out of their sidebar, so tag someone when you need them. Sending only the link leaves access unchanged.";
   const count = pending?.count;
   if (pending?.dm) {
     const names = pending.names;

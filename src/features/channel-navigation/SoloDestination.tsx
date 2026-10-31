@@ -17,6 +17,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SoloChatMenuItems } from "../../bundled/channels/SoloChatMenu";
 import { SoloChatName } from "../../bundled/channels/SoloChatName";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
+import { RowIndicators } from "../../bundled/channels/ChannelSidebarRow";
 import { ChannelMembersDialog } from "../../bundled/channels/ChannelMembersDialog";
 import { WorkspaceSettings } from "../solo/WorkspaceSettings";
 import { useChannelNavigation } from "./ChannelNavigationState";
@@ -372,7 +373,9 @@ export function RecoveryDestination({ channelId }: { channelId: string }) {
         label={channel.name}
         selected={context.current === channelId}
         trailing={
-          <UnreadBadge session={context.session} channelId={channelId} />
+          <RowIndicators>
+            <UnreadBadge session={context.session} channelId={channelId} />
+          </RowIndicators>
         }
         onClick={() => {
           void context.navigator.open(

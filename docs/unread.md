@@ -246,6 +246,17 @@ quiet, apart from mentions and broadcasts. Explicit per-message unread intent st
 applies to any reply. The same rule feeds channel and thread counts, thread
 activity, per-message attention and the `thread` notification category.
 
+**Someone else's Solo chat.** In a Solo chat the viewer does not own (or whose
+roster has not yet said so), only messages that mention the viewer count;
+top-level messages, replies, conversations and broadcasts stay quiet. Inbox
+groups all of that chat's mentions into one row keyed by the chat, previewing and
+targeting the newest. Explicit per-message unread intent still applies.
+Ownership is the viewer's `owner` role in the relay-signed roster, which every
+chat carries, including older ones without a relay-written creator (`P`). A chat
+this device is starting counts as owned until the relay confirms it.
+Converting the chat to a channel removes the label, so earlier messages count
+for guests from then on (badges only; history never alerts).
+
 **Quiet agent messages.** A message whose signed `audience` tag is `agents` is
 coordination between agents, which people see quietly: the agent harness sends
 progress and agent-to-agent detail with it and the completion message to

@@ -23,6 +23,7 @@ import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
+import { ownSolo } from "../solo/labels";
 import {
   memoryThreadFollows,
   THREAD_FOLLOW_LIMIT,
@@ -296,6 +297,18 @@ export function createUnread({
   }
 
   let bytes = 0;
+  /** Someone else's Solo chats: reachable, but only mentions earn attention.
+   * An unknown creator is not the viewer, so a chat stays quiet while its
+   * metadata loads. */
+  const guestSolos = (list: ReturnType<ChannelQueries["list"]>) =>
+    new Set(
+      list.channels
+        .filter(
+          (channel) => channel.channelType === "solo" && !ownSolo(channel),
+        )
+        .map((channel) => channel.id),
+    );
+  let guests = new Set<string>();
   const allowed = (id: string) =>
     channels
       .list()
@@ -528,7 +541,7 @@ export function createUnread({
    * effect read one set even if replies to one parent disagree on its root. */
   const conversation = (entry: Evidence) => {
     const { parentId, channelId, threadRootId } = entry;
-    if (!parentId) return false;
+    if (!parentId || guests.has(channelId)) return false;
     const explicit = chosen(entry);
     if (explicit !== undefined) return explicit;
     return (
@@ -540,18 +553,26 @@ export function createUnread({
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
    * conversations, or when it is a DM, mentions the viewer, or is broadcast.
-   * Quiet agent messages never count; explicit unread intent still can. */
+   * In someone else's Solo chat only a mention counts: access is not
+   * attention. Quiet agent messages never count; explicit unread intent still
+   * can. */
   const relevant = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
-    (!entry.parentId ||
-      dm ||
-      entry.mentioned ||
-      entry.broadcast ||
-      conversation(entry));
+    (guests.has(entry.channelId)
+      ? entry.mentioned
+      : !entry.parentId ||
+        dm ||
+        entry.mentioned ||
+        entry.broadcast ||
+        conversation(entry));
+  /** A broadcast that earns attention: never in someone else's Solo chat. */
+  const loud = (entry: Evidence) =>
+    entry.broadcast && !guests.has(entry.channelId);
   /** Retained evidence cannot decide this reply's conversation yet. */
   const undecided = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
     !!entry.parentId &&
+    !guests.has(entry.channelId) &&
     !relevant(entry, dm) &&
     chosen(entry) === undefined &&
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
@@ -685,7 +706,7 @@ export function createUnread({
           : undefined;
   }
   function priority(entry: Evidence, dm: boolean) {
-    return !!category(entry, dm) || entry.broadcast;
+    return !!category(entry, dm) || loud(entry);
   }
   function attention(channelId: string, messageId: string): MessageAttention {
     const unknown = Object.freeze({
@@ -836,11 +857,11 @@ export function createUnread({
     // Only unread thread activity is presented; most publishes have none.
     let presented: Map<string, string> | undefined;
     for (const evidence of byChannel.get(channelId) ?? []) {
-      const { event, rootId, mentioned, broadcast } = evidence;
+      const { event, rootId, mentioned } = evidence;
       want(evidence, dm);
       if (
         !rootId ||
-        (!mentioned && !broadcast && !conversation(evidence)) ||
+        (!mentioned && !loud(evidence) && !conversation(evidence)) ||
         !isUnread(evidence, state, dm)
       )
         continue;
@@ -970,6 +991,9 @@ export function createUnread({
           continue;
         const dm = channel.channelType === "dm";
         const session = channel.channelType === "solo";
+        // Someone else's Solo chat contributes only its mentions, all in one
+        // row for the chat, previewing the newest mention.
+        const guest = guests.has(channel.id);
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return entry.event.pubkey !== viewer && !!category(entry, dm);
@@ -981,7 +1005,9 @@ export function createUnread({
         const elsewhere = new Set<string>();
         for (const entry of evidence) {
           const id =
-            dm || (session && !entry.parentId && !roots.has(entry.event.id))
+            dm ||
+            guest ||
+            (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
           if (id !== channel.id) elsewhere.add(id);
@@ -999,20 +1025,21 @@ export function createUnread({
         // A session's top-level row shows its newest message from someone
         // else to everyone, even one that is not Inbox evidence, unless that
         // message is the root of its own thread row.
-        const newest = session
-          ? rows.reduce<RelayEvent | undefined>((best, row) => {
-              const event = events.get(row.id);
-              return event &&
-                !row.threadRootId &&
-                !row.membership &&
-                !row.audience &&
-                row.authorId !== viewer &&
-                !elsewhere.has(row.id) &&
-                (!best || order(event, best) > 0)
-                ? event
-                : best;
-            }, undefined)
-          : undefined;
+        const newest =
+          session && !guest
+            ? rows.reduce<RelayEvent | undefined>((best, row) => {
+                const event = events.get(row.id);
+                return event &&
+                  !row.threadRootId &&
+                  !row.membership &&
+                  !row.audience &&
+                  row.authorId !== viewer &&
+                  !elsewhere.has(row.id) &&
+                  (!best || order(event, best) > 0)
+                  ? event
+                  : best;
+              }, undefined)
+            : undefined;
         for (const [id, entries] of groups) {
           entries.sort((a, b) => order(a.event, b.event));
           const project = (
@@ -1035,15 +1062,17 @@ export function createUnread({
               (entry) => entry.rootId !== undefined,
             );
             const lastReply = replies[replies.length - 1];
+            // A shared chat's row points at its newest tag, which it previews.
+            const pointer = guest ? latest : lastReply;
             const target: ReadTarget = dm
               ? { kind: "channel", channelId: channel.id }
-              : lastReply?.rootId &&
-                  events.has(lastReply.rootId) &&
-                  !tombstones.has(lastReply.rootId)
+              : pointer?.rootId &&
+                  events.has(pointer.rootId) &&
+                  !tombstones.has(pointer.rootId)
                 ? {
                     kind: "thread",
                     channelId: channel.id,
-                    rootId: lastReply.rootId,
+                    rootId: pointer.rootId,
                   }
                 : {
                     kind: "message",
@@ -1066,15 +1095,16 @@ export function createUnread({
                     },
                     messageId: entry.event.id,
                   }));
-            if (!dm && lastReply?.rootId)
-              readThrough.push({
-                target: {
-                  kind: "thread",
-                  channelId: channel.id,
-                  rootId: lastReply.rootId,
-                },
-                messageId: lastReply.event.id,
-              });
+            // Through each thread's latest reply: a shared chat's row can
+            // gather mentions from several threads.
+            if (!dm)
+              for (const [rootId, reply] of new Map(
+                replies.map((entry) => [entry.rootId as string, entry]),
+              ))
+                readThrough.push({
+                  target: { kind: "thread", channelId: channel.id, rootId },
+                  messageId: reply.event.id,
+                });
             return Object.freeze({
               id: `${channel.id}:${id}`,
               channelId: channel.id,
@@ -1262,7 +1292,7 @@ export function createUnread({
         )
         .map((channel) => [
           channel.id,
-          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}`,
+          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${ownSolo(channel)}`,
         ]),
     );
   const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>
@@ -1286,6 +1316,7 @@ export function createUnread({
   let archivedKey = inboxArchiveKey(initialList);
   let cachedChannels = cachedIds(initialList);
   let channelTypes = types(initialList);
+  guests = guestSolos(initialList);
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
     const list = channels.list();
@@ -1302,6 +1333,7 @@ export function createUnread({
     const gained = [...nextTypes.keys()].some((id) => !channelTypes.has(id));
     cachedChannels = cachedIds(list);
     channelTypes = nextTypes;
+    guests = guestSolos(list);
     // Channel archive changes Inbox eligibility, not membership or read intent.
     const nextArchived = inboxArchiveKey(list);
     const archiveChanged = nextArchived !== archivedKey;
@@ -1337,7 +1369,7 @@ export function createUnread({
     const structuralRootId =
       !entry.rootId &&
       (chosen(entry) === true ||
-        ((entry.mentioned || entry.broadcast || conversation(entry)) &&
+        ((entry.mentioned || loud(entry) || conversation(entry)) &&
           isUnread(entry, reads.state(), dm)))
         ? threadRootId
         : undefined;

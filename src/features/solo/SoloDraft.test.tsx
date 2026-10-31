@@ -155,6 +155,7 @@ function setup(available = true) {
         id: "",
         channelType: "solo" as const,
         creator: viewer,
+        viewerRole: "owner",
         members: existing.members,
       },
     ],
@@ -180,6 +181,7 @@ function setup(available = true) {
                 id,
                 channelType: "solo",
                 creator: viewer,
+                viewerRole: "owner",
                 members: existing.members,
               },
             ],
@@ -1129,6 +1131,7 @@ it.each([false, true])(
                 name: "Chosen title",
                 channelType: "solo",
                 creator: viewer.pubkey,
+                viewerRole: "owner",
                 members: [viewer.pubkey],
               })),
           };

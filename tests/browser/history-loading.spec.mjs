@@ -6,6 +6,7 @@ import {
   open,
   settle,
   upper,
+  virtuaIdle,
   wheel,
 } from "./timeline.mjs";
 
@@ -342,7 +343,9 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
-    const pending = await reading(page, app, 1400);
+    // Leave enough loaded history above the reader for the full upward drag.
+    // Page tie ordering varies with the fixture's fresh signed identity.
+    const pending = await reading(page, app, 250);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
@@ -356,9 +359,16 @@ test.describe("pages inside one second", () => {
         .toBeGreaterThan(height);
       await settle(page);
       await expectAnchor(page, held);
-      // Over a viewport at once, Virtua renders upward synchronously: the held
-      // row is gone from the scroll event until Virtua's idle timer buffers
-      // below again, too briefly for polling, so record its removal in page.
+      // Geometry can settle while a correction still holds Virtua's range.
+      // Wait for that scroll cycle to finish before starting the next one.
+      await virtuaIdle(page);
+      expect(
+        await history(page).evaluate((e) => e.scrollTop - e.clientHeight),
+      ).toBeGreaterThan(150);
+      // Deliver the programmatic drag's scroll boundary in the same task so
+      // Virtua's real directional render unmounts the held row before its idle
+      // timer buffers below again. Native event timing is covered by the other
+      // drag journey; this case controls the brief unmount it needs to exercise.
       const row = history(page).locator(`[data-message-id="${held.id}"]`);
       const seen = await history(page).evaluateHandle((e, id) => {
         const seen = { unmounted: false };
@@ -379,6 +389,7 @@ test.describe("pages inside one second", () => {
         });
         observer.observe(e, { childList: true, subtree: true });
         e.scrollTop -= e.clientHeight + 150;
+        e.dispatchEvent(new Event("scroll"));
         return seen;
       }, held.id);
       await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);

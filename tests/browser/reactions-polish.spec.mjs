@@ -419,6 +419,13 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
 
 // Actual popup geometry must follow each emoji bubble.
 test("reaction previews center above each emoji bubble", async ({ page }) => {
+  // Measure settled artwork, not failed inline media retrying under the pointer.
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="8"/></svg>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated");
   const row = page.locator("[data-message-id]").first();
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');

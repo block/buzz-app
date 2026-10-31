@@ -496,6 +496,9 @@ export function SearchResults({
         message.authorId,
         ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
       ]),
+      ...personDirectory.people.flatMap((person) =>
+        person.ownerPubkey ? [person.ownerPubkey] : [],
+      ),
     ]),
   ]
     .sort()
@@ -587,6 +590,7 @@ export function SearchResults({
         pubkey: person.pubkey,
         name: person.name,
         ...(person.isAgent ? { isAgent: true } : {}),
+        ...(person.ownerPubkey ? { ownerPubkey: person.ownerPubkey } : {}),
       }));
     for (const { pubkey, source, agent } of eligible) {
       const dm = relationships.dm(pubkey);

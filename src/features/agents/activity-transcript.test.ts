@@ -1,5 +1,11 @@
 import { expect, it } from "vitest";
-import { activityTranscript, promptSections } from "./activity-transcript";
+import { eventBody } from "../agent-harness/turn-records";
+import {
+  activityTranscript,
+  promptMessage,
+  promptSections,
+  STEER,
+} from "./activity-transcript";
 
 const agent = "a".repeat(64);
 const other = "b".repeat(64);
@@ -528,4 +534,30 @@ it("splits prompt sections and keeps unterminated framing as text", () => {
     { tag: "context", body: "Scope: channel" },
     { tag: "text", body: "intro\n<x>\nopen" },
   ]);
+});
+
+it("reads an event sent as an exact record, in its own or a steer's section", () => {
+  const event = {
+    id: "e".repeat(64),
+    pubkey: "a".repeat(64),
+    kind: 9,
+    created_at: 1,
+    content: "@Claude <b>",
+    tags: [],
+  };
+  const body = eventBody(event, "<b>");
+  const name = (pubkey: string) =>
+    pubkey === event.pubkey ? "Sam" : undefined;
+  for (const tag of ["buzz-event", STEER])
+    expect(
+      promptMessage(promptSections(`<${tag}>\n${body}\n</${tag}>`), name),
+    ).toEqual({ text: "<b>", author: "Sam" });
+  expect(promptMessage([{ tag: "buzz-event", body }])).toEqual({
+    text: "<b>",
+    author: undefined,
+  });
+  // A steer before records wrapped a whole turn, which is not an event.
+  expect(
+    promptMessage([{ tag: STEER, body: "<buzz-event>\nContent: x\n" }]),
+  ).toEqual({ text: "", author: undefined });
 });

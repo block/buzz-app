@@ -97,6 +97,8 @@ const list = (spawn: Spawn, project: string, minutes?: number) =>
 
 const FIELD =
   /^([^/]+\.jsonl):(Session scope|Channel|Thread root|Agent): (.*)$/;
+/** The end of a prompt's thread context, which comes before its own. */
+const CONTEXT_END = /^([^/]+\.jsonl):<\/(?:thread|conversation)-context>$/;
 
 /** Records where each of the session files at `paths` was started, one
  * search for every file: the search stops at a file's first prompt. Returns
@@ -120,6 +122,9 @@ async function search(
   const unread = new Set(code === 2 ? (blamed.length ? blamed : paths) : []);
   const fields = new Map<string, Map<string, string>>();
   for (const line of found) {
+    // Fields before it are quoted messages'.
+    const ended = CONTEXT_END.exec(line)?.[1];
+    if (ended) fields.get(ended)?.clear();
     const [, name, field, value] = FIELD.exec(line) ?? [];
     if (!name || !field || value === undefined) continue;
     const named = fields.get(name) ?? new Map<string, string>();

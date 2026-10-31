@@ -2539,9 +2539,13 @@ function Composer({
           signal: attempt.signal,
         });
         attempt.signal.throwIfAborted();
-        if (valueRef.current !== captured) return;
+        if (valueRef.current !== captured) {
+          if (result.done) setNotice(result.notice);
+          return;
+        }
         if (viewRevision(scope, draftKey) !== savedRevision) {
           setConflict(true);
+          if (result.done) setNotice(result.notice);
           return;
         }
         if (result.done) {

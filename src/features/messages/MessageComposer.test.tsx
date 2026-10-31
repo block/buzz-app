@@ -45,6 +45,7 @@ import type {
   CompletionResult,
   InlineRenderer,
   SlashCommand,
+  SlashCommandResult,
 } from "../conversation/contracts";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
@@ -12863,7 +12864,7 @@ async function commandService(probe?: SlashCommand["run"]) {
   const held = {
     runs: 0,
     signals: [] as AbortSignal[],
-    result: deferred<{ send: string }>(),
+    result: deferred<SlashCommandResult>(),
   };
   const failing: PluginModule = {
     inject: ["conversation"],
@@ -12893,6 +12894,7 @@ async function commandService(probe?: SlashCommand["run"]) {
         run: ({ signal }) => {
           held.runs++;
           held.signals.push(signal);
+          held.result = deferred<SlashCommandResult>();
           return held.result.promise;
         },
       });
@@ -13132,6 +13134,44 @@ it("runs a command that sends nothing: clears the draft, announces its notice po
     ),
   );
   expect(screen.queryByText("Hushed.")).toBeNull();
+  const startHold = async (run: number) => {
+    h.fill("/hold now");
+    h.submit();
+    await waitFor(() => expect(service.held.runs).toBe(run));
+  };
+  await startHold(1);
+  h.fill("my newer draft");
+  await act(async () =>
+    service.held.result.resolve({ done: true, notice: "Held." }),
+  );
+  expect(await screen.findByText("Held.")).toHaveAttribute("role", "status");
+  expect(h.input()).toHaveValue("my newer draft");
+  expect(screen.queryByRole("alert")).toBeNull();
+  h.fill("my later draft");
+  expect(screen.queryByText("Held.")).toBeNull();
+  await startHold(2);
+  h.fill("my newer draft");
+  await act(async () => service.held.result.reject(new Error("Hold failed")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Hold failed");
+  expect(h.input()).toHaveValue("my newer draft");
+  await startHold(3);
+  h.fill("my newest draft");
+  await act(async () => service.held.result.resolve({ send: "late" }));
+  expect(h.messages.send).toHaveBeenCalledTimes(1);
+  expect(h.input()).toHaveValue("my newest draft");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("Held.")).toBeNull();
+  await startHold(4);
+  localStorage.setItem(
+    'buzz-view.v1:["scope","draft:channel"]',
+    JSON.stringify("Saved elsewhere"),
+  );
+  await act(async () =>
+    service.held.result.resolve({ done: true, notice: "Held." }),
+  );
+  expect(await screen.findByText("Held.")).toHaveAttribute("role", "status");
+  expect(screen.getByRole("alert")).toHaveTextContent("changed elsewhere");
+  expect(h.input()).toHaveValue("/hold now");
 });
 
 /** The mounted channel listed as a one-to-one DM. */

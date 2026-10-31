@@ -192,7 +192,6 @@ fn output_size(path: &Path, limit: u64) -> Result<(), &'static str> {
     }
 }
 
-#[cfg(test)]
 use super::upload_spool::private_tempdir_in;
 
 pub(super) async fn prepare_file(
@@ -207,7 +206,6 @@ pub(super) async fn prepare_file(
     prepare_file_with_program(source, size, directory, mode, cancelled, &program).await
 }
 
-#[cfg(test)]
 pub(super) async fn prepare(
     body: Vec<u8>,
     mode: &str,
@@ -218,29 +216,33 @@ pub(super) async fn prepare(
     prepare_with_program(body, mode, cancelled, &program).await
 }
 
-#[cfg(test)]
 async fn prepare_with_program(
     body: Vec<u8>,
     mode: &str,
     cancelled: &mut oneshot::Receiver<()>,
     program: &Path,
 ) -> Result<(Vec<u8>, &'static str), PreparationError> {
-    let directory = private_tempdir_in(&std::env::temp_dir()).map_err(|_| PreparationError::Io)?;
-    let source = directory.path().join("source");
-    std::fs::write(&source, &body).map_err(|_| PreparationError::Io)?;
-    let (output, kind) = prepare_file_with_program(
-        &source,
-        body.len(),
-        directory.path(),
-        mode,
-        cancelled,
-        program,
-    )
-    .await?;
-    Ok((
-        std::fs::read(output).map_err(|_| PreparationError::Io)?,
-        kind,
-    ))
+    let size = body.len();
+    let (directory, source) = tauri::async_runtime::spawn_blocking(move || {
+        let directory = private_tempdir_in(&std::env::temp_dir())?;
+        let source = directory.path().join("source");
+        std::fs::write(&source, body)?;
+        Ok::<_, std::io::Error>((directory, source))
+    })
+    .await
+    .map_err(|_| PreparationError::Io)?
+    .map_err(|_| PreparationError::Io)?;
+    let (output, kind) =
+        prepare_file_with_program(&source, size, directory.path(), mode, cancelled, program)
+            .await?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let _directory = directory;
+        std::fs::read(output)
+    })
+    .await
+    .map_err(|_| PreparationError::Io)?
+    .map_err(|_| PreparationError::Io)?;
+    Ok((bytes, kind))
 }
 
 async fn prepare_file_with_program(

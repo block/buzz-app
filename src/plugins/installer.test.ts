@@ -24,6 +24,8 @@ it("accepts HTTPS, SSH and scp-style repositories and normalizes the commit", ()
     "git@example.com:team/plugins.git",
     "https://github.com/owner/repository",
     "git@github.com:owner/repository.git",
+    "ssh://org-1234@github.com/owner/repository.git",
+    "org-1234@github.com:owner/repository.git",
   ])
     expect(parsePluginInstallSource({ ...base, repository })).toEqual({
       ...base,
@@ -71,13 +73,14 @@ it.each([
   ["a trailing slash path", { path: "a/" }],
   ["an empty path", { path: "" }],
   [
-    "ssh credentials other than git",
-    { repository: "ssh://deploy@example.com/a.git" },
+    "an option-like ssh user",
+    { repository: "ssh://-oProxyCommand@example.com/a.git" },
   ],
   [
-    "a scp user other than git",
-    { repository: "deploy@example.com:team/a.git" },
+    "an ssh user with unusual characters",
+    { repository: "ssh://de%3Bploy@example.com/a.git" },
   ],
+  ["an option-like scp user", { repository: "-oProxy@example.com:team/a.git" }],
   [
     "an option-like https host",
     { repository: "https://-oProxy.example/a.git" },

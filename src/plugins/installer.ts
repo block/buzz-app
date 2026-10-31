@@ -33,7 +33,10 @@ declare module "@deepseek-ai/cordis" {
 const reference = /^[A-Za-z0-9._/-]{1,200}$/;
 const pathSegment = /^[A-Za-z0-9._@+-]{1,100}$/;
 const commit = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const scpRepository = /^git@([A-Za-z0-9.-]+):([A-Za-z0-9._~/+-]+)$/;
+// Enterprise SSH aliases use account users such as `org-123@github.com`.
+const sshUser = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const scpRepository =
+  /^([A-Za-z0-9][A-Za-z0-9._-]{0,63})@([A-Za-z0-9.-]+):([A-Za-z0-9._~/+-]+)$/;
 
 function githubTree(host: string, path: string) {
   const name = host
@@ -49,7 +52,7 @@ function gitRepository(value: unknown) {
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*%/.test(value)) return null;
   const scp = scpRepository.exec(value);
   if (scp)
-    return scp[1]?.startsWith("-") || githubTree(scp[1] ?? "", scp[2] ?? "")
+    return scp[2]?.startsWith("-") || githubTree(scp[2] ?? "", scp[3] ?? "")
       ? null
       : value;
   try {
@@ -60,7 +63,9 @@ function gitRepository(value: unknown) {
       url.hostname.startsWith("-") ||
       url.password ||
       (url.protocol === "https:" && url.username) ||
-      (url.protocol === "ssh:" && url.username && url.username !== "git") ||
+      (url.protocol === "ssh:" &&
+        url.username &&
+        !sshUser.test(url.username)) ||
       url.search ||
       url.hash ||
       url.pathname.replaceAll("/", "") === "" ||

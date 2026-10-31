@@ -11,8 +11,10 @@ import {
   parseMembership,
   POLICY_KEY,
   savePolicy,
+  unresolved,
   type AuthorPolicy,
 } from "./authors";
+import { GitHubError, type GitHubCli } from "./gh";
 import { BODY_CHARS, type Feedback } from "./pull-states";
 
 const rules = (text: string) => parse(text) as AuthorPolicy;
@@ -249,5 +251,56 @@ allow org:Block body:/bug/s`);
       ]),
     );
     expect(parseMembership(null, ["alice"], ["block"])).toBeUndefined();
+  });
+});
+
+describe("names GitHub cannot resolve", () => {
+  it("warns about missing organizations and users, and organizations whose private members the viewer cannot see", async () => {
+    const queries: string[] = [];
+    const gh = (async (query: string) => {
+      queries.push(query);
+      throw new GitHubError(
+        "Could not resolve to an Organization with the login of 'nope'.",
+        "NOT_FOUND",
+        {
+          o0: { viewerIsAMember: true },
+          o1: { viewerIsAMember: false },
+          o2: null,
+          u0: { id: "U_1" },
+          u1: null,
+        },
+      );
+    }) as GitHubCli;
+    const policy = rules(
+      "allow org:Block\nallow org:aaif-goose\nallow org:nope\nallow author:jbg\nallow author:dependabot\nallow author:JBG\nallow author:@me\nallow author:codex[bot]\nallow author:/^x$/",
+    );
+    expect(await unresolved(policy, gh)).toEqual([
+      "org:aaif-goose: you are not a member of aaif-goose, so only its public members match",
+      "org:nope: GitHub has no organization nope, so it matches no one",
+      "author:dependabot: GitHub has no user dependabot; a bot's login ends in [bot]",
+    ]);
+    expect(queries).toEqual([
+      'query{o0:organization(login:"block"){viewerIsAMember} o1:organization(login:"aaif-goose"){viewerIsAMember} o2:organization(login:"nope"){viewerIsAMember} u0:user(login:"jbg"){id} u1:user(login:"dependabot"){id}}',
+    ]);
+  });
+
+  it("says the names went unchecked when GitHub cannot answer, and asks nothing without names", async () => {
+    let asked = 0;
+    const failing = (async () => {
+      asked++;
+      throw new GitHubError("API rate limit exceeded", "RATE_LIMITED", {
+        o0: null,
+      });
+    }) as GitHubCli;
+    expect(await unresolved(rules("allow org:block"), failing)).toEqual([
+      "GitHub could not be asked about the names in these rules: API rate limit exceeded",
+    ]);
+    expect(await unresolved(rules("allow org:block"), undefined)).toEqual([
+      "GitHub could not be asked about the names in these rules: gh is unavailable here",
+    ]);
+    expect(
+      await unresolved(rules(`${DEFAULT_RULES}\nallow author:/^x$/`), failing),
+    ).toEqual([]);
+    expect(asked).toBe(1);
   });
 });

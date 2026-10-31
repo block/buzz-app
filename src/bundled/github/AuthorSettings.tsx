@@ -1,15 +1,43 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header } from "../../shared/design-system/ui/Header";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-import { loadPolicy, open, parse, savePolicy, type Rule } from "./authors";
+import {
+  loadPolicy,
+  open,
+  parse,
+  savePolicy,
+  unresolved,
+  type Rule,
+} from "./authors";
+import type { GitHubCli } from "./gh";
 
 /** Whose pull request comments and reviews wake agents watching it. */
-export function AuthorSettings({ active }: { active(): boolean }) {
+export function AuthorSettings({
+  active,
+  gh,
+}: {
+  active(): boolean;
+  /** Where it can run, the person's gh, which checks the names rules use. */
+  gh?: GitHubCli | undefined;
+}) {
   const [saved, setSaved] = useState(loadPolicy);
+  /** What in the saved rules GitHub cannot resolve. */
+  const [warnings, setWarnings] = useState<string[]>([]);
+  useEffect(() => {
+    let current = true;
+    setWarnings([]);
+    if (gh)
+      void unresolved(saved, gh).then((found) => {
+        if (current) setWarnings(found);
+      });
+    return () => {
+      current = false;
+    };
+  }, [saved, gh]);
   const [draft, setDraft] = useState(saved.text);
   const [fallback, setFallback] = useState(saved.fallback);
   /** Why the rules could not be saved, apart from why they are not rules. */
@@ -58,6 +86,18 @@ export function AuthorSettings({ active }: { active(): boolean }) {
               them, allow only org:name or author:login, and don’t wake them
               when no rule matches.
             </p>
+          )}
+          {warnings.length > 0 && (
+            <div role="status" className="text-body-sm text-subtle">
+              <p className="m-0">
+                These saved rules may not match who you expect:
+              </p>
+              <ul className="m-0 ps-5">
+                {warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
           )}
           <Field
             label="Rules"

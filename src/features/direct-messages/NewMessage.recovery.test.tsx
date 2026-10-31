@@ -1106,8 +1106,12 @@ it("confirms a photo-only uncertain send after session restart without files or 
   const original = t.publish.mock.calls[0]?.[0];
   f.view.unmount();
   f.owner.dispose();
-  t.mount(t.create());
-  await t.user.click(await screen.findByRole("button", { name: "Retry send" }));
+  const passThrough = vi.fn<PageNavigation["passThrough"]>(() => () => {});
+  t.mount(t.create(), undefined, { passThrough } as unknown as PageNavigation);
+  const retry = await screen.findByRole("button", { name: "Retry send" });
+  // The held photo keeps the retry page in Back history.
+  expect(passThrough.mock.lastCall?.[0]()).toBe(false);
+  await t.user.click(retry);
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
   expect(t.publish.mock.calls[1]?.[0]).toEqual(original);
 });

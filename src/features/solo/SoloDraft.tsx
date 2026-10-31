@@ -135,7 +135,7 @@ export function SoloDraft({
     session,
     scope,
     `${draftKey}:new-draft`,
-    linkedSource,
+    { initialDraft: linkedSource },
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the

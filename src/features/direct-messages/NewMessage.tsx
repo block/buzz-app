@@ -155,16 +155,16 @@ export function NewMessage({
   ): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
-  // A message held for delivery or retry is shown even when its draft view is
-  // gone, so it counts as drafted too.
-  const held = useRef<MentionDraft | undefined>(undefined);
-  const heldDraft = useCallback(() => held.current, []);
+  // A message held for delivery or retry stays a Back stop even when its
+  // draft view is gone or it carries only attachments.
+  const held = useRef(false);
+  const holds = useCallback(() => held.current, []);
   const draftEdited = usePassThroughUntilDrafted(
     visit,
     session,
     scope,
     draftKey,
-    heldDraft,
+    { held: holds },
   );
   const [recipients, setRecipients] = useState(() =>
     savedRecipients(scope, session.viewer),
@@ -204,7 +204,7 @@ export function NewMessage({
   } catch {
     /* Readiness presents invalid recovery. */
   }
-  held.current = pending?.draft;
+  held.current = !!pending;
   const failed =
     pending && session.directMessages.delivery(pending.id) === "failed";
   const locked = !ready || !!busy || (!!pending && !failed);

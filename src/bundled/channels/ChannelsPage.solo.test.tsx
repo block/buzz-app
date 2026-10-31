@@ -59,12 +59,9 @@ function fixture({
   archived = false,
   viewerNamed = false,
   others = [],
-  agentless = false,
 }: {
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
-  /** No agent can be tagged, so nothing is tagged automatically. */
-  agentless?: boolean;
   /** The viewer's own profile has loaded too. */
   viewerNamed?: boolean;
   /** Someone other than the viewer or its agent created the chat. */
@@ -151,12 +148,10 @@ function fixture({
     },
   );
   // The default agent comes first, so a named agent is distinguishable from it.
-  const agents = agentless
-    ? []
-    : [
-        { pubkey: "b".repeat(64), name: "Helper", managed: false },
-        { pubkey: agent, name: "Scout", managed: false },
-      ];
+  const agents = [
+    { pubkey: "b".repeat(64), name: "Helper", managed: false },
+    { pubkey: agent, name: "Scout", managed: false },
+  ];
   const choices = {
     ...owner.session.agentChoices.snapshot(),
     status: "ready" as const,
@@ -659,24 +654,9 @@ it("keeps a saved draft that only tags the default agent in Back history", async
   expect(readView(f.scope, "solo:new-draft", null)).toEqual(typed);
 });
 
-it("keeps a linked chat draft in Back history, since it holds its source chat", async () => {
+it("keeps a linked chat draft in Back history until its source is used", async () => {
   const linked = "22222222-2222-4222-8222-222222222222";
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { linked }) });
-  writeView(f.scope, linkedDraftKey(linked), {
-    channelId: "33333333-3333-4333-8333-333333333333",
-    link: `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`,
-  });
-  f.mount();
-  await screen.findByRole("textbox");
-  expect(vi.mocked(f.navigation.passThrough).mock.lastCall?.[0]()).toBe(false);
-});
-
-it("keeps an untagged linked chat draft in Back history until its source is used", async () => {
-  const linked = "22222222-2222-4222-8222-222222222222";
-  const f = fixture({
-    agentless: true,
-    target: (scope) => soloDraftTarget(scope, { linked }),
-  });
   const link = `buzz://message?channel=33333333-3333-4333-8333-333333333333&id=${"e".repeat(64)}`;
   writeView(f.scope, linkedDraftKey(linked), {
     channelId: "33333333-3333-4333-8333-333333333333",

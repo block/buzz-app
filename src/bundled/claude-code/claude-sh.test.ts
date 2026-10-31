@@ -246,6 +246,21 @@ it("uses a downloaded release that matches its checksum without downloading it a
   expect(await selected()).toBe("0.2.0");
 });
 
+// A release this user cannot chmod, such as one another account wrote, is still used.
+it("uses an executable matching release without changing its mode", async () => {
+  const { home, dir } = await disk(["0.2.0"]);
+  const binary = join(dir, "0.2.0", "claude");
+  const { install, calls } = await downloads(home, "unused");
+  await writeFile(join(home, "bin", "chmod"), "#!/bin/sh\nexit 1\n");
+  await chmod(join(home, "bin", "chmod"), 0o755);
+  const { stdout } = await install(
+    "0.2.0",
+    sha256(await readFile(binary, "utf8")),
+  );
+  expect(stdout).toContain("Claude 0.2.0 is already downloaded.");
+  expect(await calls()).toBe(0);
+});
+
 it("downloads again over a release that does not match its checksum", async () => {
   const { home, dir } = await disk([]);
   const binary = join(dir, "0.2.0", "claude");

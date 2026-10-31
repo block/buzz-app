@@ -1680,6 +1680,7 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
+          slashCommands
           activityClickOpensPanel={activityClickOpensPanel}
           onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}

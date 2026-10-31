@@ -101,7 +101,8 @@ viewer's sidebar, bolds, sets the Dock indicator, adds an Inbox row or alerts
 just because the viewer can open it; they reach it from the card, a link or
 search. Only a tag pulls them in: it alerts like any mention and adds one Inbox
 row per chat, however many tags it holds. While that chat has an unread tag, it
-also shows as a row under Inbox in the sidebar; opened from there, it stays until
+also shows as a row under Inbox in the sidebar, with the same accent dot a
+mention gives any channel; opened from there, it stays until
 the viewer reads it and moves on, and returns with the next tag. Opening a shared
 chat from its card adds no row: it opens beside the current conversation, which
 stays selected. Replies, ordinary messages and marking a message unread there

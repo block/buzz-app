@@ -14,6 +14,7 @@ import { ownSolo, soloChatLinkName } from "../../features/solo/labels";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { subscribeView, viewRevision } from "../../shared/view-state";
+import { UnreadBadge } from "../channels/UnreadBadge";
 import { archiveIndex, archiveKey, isArchived, readArchives } from "./archive";
 
 /** Someone else's Solo chats that tagged the viewer, nested under Inbox. A
@@ -104,6 +105,7 @@ function Rows({
         label={soloChatLinkName(channel)}
         title={soloChatLinkName(channel)}
         icon={<ChatCircleIcon size={16} />}
+        trailing={<UnreadBadge session={session} channelId={channel.id} />}
         selected={open === channel.id}
         onClick={() =>
           void navigator.open(conversationTarget(scope, channel.id))

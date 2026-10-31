@@ -119,12 +119,21 @@ it("signs in again when a session ends, keeping the app and its focus", async ()
 
   h.set({ status: "reauthentication-required" });
   expect(h.service.signIn).toHaveBeenCalledOnce();
+  const heading = await screen.findByRole("heading", {
+    name: "Signing you in to your organization",
+  });
+  expect(heading).toBeVisible();
+  // Above any dialog or menu the app had open.
   expect(
-    await screen.findByRole("heading", {
-      name: "Signing you in to your organization",
-    }),
-  ).toBeVisible();
+    screen.getByRole("dialog", { name: "Signing you in to your organization" }),
+  ).toContainElement(heading);
   expect(draft).not.toBeVisible();
+  // The app's window shortcuts don't act behind the screen.
+  const shortcut = vi.fn();
+  window.addEventListener("keydown", shortcut);
+  await user.keyboard("{Meta>}k{/Meta}");
+  window.removeEventListener("keydown", shortcut);
+  expect(shortcut).not.toHaveBeenCalled();
 
   h.set({ status: "signed-in" });
   expect(draft).toBeVisible();
@@ -180,4 +189,53 @@ it("offers a retry when the saved sign-in can't be checked", async () => {
   expect(h.service.signIn).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(h.service.signIn).toHaveBeenCalledOnce();
+});
+
+it("waits for the build's policy before mounting the app, then mounts it once", () => {
+  mounts.mockClear();
+  const h = federatedFixture();
+  const authority = h.service.snapshot().authority;
+  h.publish({ status: "restoring", authority: null });
+  render(
+    <LaunchSignIn identity={h.service}>
+      <Workspace />
+    </LaunchSignIn>,
+  );
+  expect(screen.queryByLabelText("Draft")).not.toBeInTheDocument();
+  act(() => h.publish({ status: "restoring", authority }));
+  act(() => h.publish({ status: "signed-out" }));
+  expect(screen.getByLabelText("Draft")).toBeVisible();
+  expect(mounts).toHaveBeenCalledOnce();
+});
+
+it("says it is signing in before the browser opens, and while a retry checks", async () => {
+  const user = userEvent.setup();
+  const h = launchFixture();
+  let release = () => {};
+  vi.mocked(h.service.signIn).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(h.service.snapshot());
+      }),
+  );
+  render(
+    <LaunchSignIn identity={h.service}>
+      <Workspace />
+    </LaunchSignIn>,
+  );
+  h.set({ status: "signed-out" });
+  // Native has not reported the attempt yet.
+  expect(
+    screen.getByRole("heading", { name: "Signing you in to Block" }),
+  ).toBeVisible();
+  await act(async () => release());
+  h.set({ status: "unavailable", failure: "network-unavailable" });
+
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  h.set({ status: "restoring", failure: null });
+  expect(screen.getByText("Checking your sign-in…")).toBeVisible();
+  expect(screen.queryByLabelText("Draft")).not.toBeInTheDocument();
+  await act(async () => release());
+  h.set({ status: "signed-in" });
+  expect(screen.getByLabelText("Draft")).toBeVisible();
 });

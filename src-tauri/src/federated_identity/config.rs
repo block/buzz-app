@@ -55,7 +55,7 @@ impl Config {
                 name.trim() != name
                     || name.is_empty()
                     || name.chars().count() > 64
-                    || name.chars().any(char::is_control)
+                    || name.chars().any(|c| c.is_control() || is_format(c))
             })
         {
             return Err(INVALID.into());
@@ -188,6 +188,11 @@ pub(crate) fn canonical_relay(raw: &str) -> Result<String, String> {
     ))
 }
 
+/// Invisible characters that reorder or hide text, such as bidi overrides.
+fn is_format(c: char) -> bool {
+    matches!(c, '\u{00ad}' | '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +276,7 @@ mod tests {
             ("organization", serde_json::json!("")),
             ("organization", serde_json::json!(" Block")),
             ("organization", serde_json::json!("Bl\nock")),
+            ("organization", serde_json::json!("Bl\u{202e}ock")),
             ("organization", serde_json::json!("x".repeat(65))),
         ] {
             let mut value = descriptor();

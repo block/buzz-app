@@ -29,7 +29,6 @@ function saved() {
 function runner(storage: ReturnType<typeof memoryStorage>) {
   const manager = {
     ownershipChanged: () => {},
-    changed: () => {},
     open: () => undefined,
     types: () => [],
     defaults: () => {

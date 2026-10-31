@@ -155,6 +155,25 @@ export async function loadAgentStorage(
   }
 }
 
+/** Whether agent storage is the device's files, as `loadAgentStorage` read
+ * them, rather than localStorage. */
+export const agentStorageInFiles = () => loaded !== undefined;
+
+/** Reads agent storage that another page of this app already loaded, and
+ * moved localStorage into: this page moves nothing. It rejects if the files
+ * cannot be read, so this page never writes a copy the other does not. */
+export async function readAgentStorage(
+  files: Native | undefined = isTauri() ? native : undefined,
+): Promise<AgentStore> {
+  if (!files) throw new Error("Agent storage files need the desktop app");
+  loaded = fileStore(
+    new Map(Object.entries(await files.load())),
+    files.set,
+    files.add,
+  );
+  return loaded;
+}
+
 /** Agent storage held in memory and saved through `save`, one write at a
  * time, in order. A failed write puts back the key's saved value, so the
  * copy never keeps what is not saved and the same value can be set again. */

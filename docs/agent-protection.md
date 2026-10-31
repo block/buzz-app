@@ -37,7 +37,9 @@ complete ordinary version-2 multi-community store.
 
 A plugin injects `agentProtection`. `register` installs its checker and native
 process requirements; `registerModels` exposes its runtime's model choices and
-bounded, tool-free completion. `snapshot`, `saveDefaults` and `saveAgent` read
+bounded, tool-free completion. Call both from the plugin's `agent` entry: each
+page that runs agents has its own `agentProtection`, and a run checks its
+actions only with the checkers registered in its page. `snapshot`, `saveDefaults` and `saveAgent` read
 and update owner defaults and per-identity bindings. Saves use native revision
 checks; a plugin cannot replace another provider's existing binding. Defaults
 apply only when committing a new or adopted identity.

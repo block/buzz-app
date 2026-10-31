@@ -16,23 +16,45 @@ use tokio_tungstenite::tungstenite::{
 use tokio_util::sync::CancellationToken;
 
 struct Connection {
+    /// The webview whose page opened it, and alone uses it.
+    webview: String,
     stop: CancellationToken,
     sender: mpsc::Sender<String>,
     start: Option<oneshot::Sender<()>>,
 }
+/// Each page's sockets: a webview that loads another page closes its own,
+/// and leaves another webview's open.
 #[derive(Default)]
 pub(crate) struct Sockets(Arc<Mutex<HashMap<String, Connection>>>);
 impl Sockets {
     pub(crate) fn clear(&self) {
-        for (_, connection) in self
-            .0
+        self.close(|_| true);
+    }
+    /// `webview` started loading another page.
+    pub(crate) fn clear_page(&self, webview: &str) {
+        self.close(|connection| connection.webview == webview);
+    }
+    fn close(&self, closes: impl Fn(&Connection) -> bool) {
+        self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .drain()
-        {
-            connection.stop.cancel();
-        }
+            .retain(|_, connection| {
+                let closed = closes(connection);
+                if closed {
+                    connection.stop.cancel();
+                }
+                !closed
+            });
     }
+}
+/// `id`'s connection, if `webview` opened it.
+fn owned<'a>(
+    live: &'a mut HashMap<String, Connection>,
+    id: &str,
+    webview: &str,
+) -> Option<&'a mut Connection> {
+    live.get_mut(id)
+        .filter(|connection| connection.webview == webview)
 }
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -59,7 +81,8 @@ pub(crate) enum SocketMode {
 }
 
 #[tauri::command]
-pub(crate) async fn relay_socket_connect(
+pub(crate) async fn relay_socket_connect<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     sockets: tauri::State<'_, Sockets>,
     fi: tauri::State<'_, FederatedIdentity>,
     identity: tauri::State<'_, IdentityHost>,
@@ -77,12 +100,18 @@ pub(crate) async fn relay_socket_connect(
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if live.len() >= 16 || live.contains_key(&id) {
+        let page = webview.label();
+        let open = live
+            .values()
+            .filter(|connection| connection.webview == page)
+            .count();
+        if open >= 16 || live.contains_key(&id) {
             return Err("Native sockets are busy".into());
         }
         live.insert(
             id.clone(),
             Connection {
+                webview: page.into(),
                 stop: stop.clone(),
                 sender,
                 start: Some(start),
@@ -198,22 +227,27 @@ pub(crate) async fn relay_socket_connect(
     Ok(SocketMode::Native)
 }
 #[tauri::command]
-pub(crate) fn relay_socket_start(
+pub(crate) fn relay_socket_start<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     sockets: tauri::State<'_, Sockets>,
     id: String,
 ) -> Result<(), String> {
-    sockets
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get_mut(&id)
-        .and_then(|entry| entry.start.take())
-        .ok_or("Native socket retired")?
-        .send(())
-        .map_err(|_| "Native socket retired".into())
+    owned(
+        &mut sockets
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        &id,
+        webview.label(),
+    )
+    .and_then(|entry| entry.start.take())
+    .ok_or("Native socket retired")?
+    .send(())
+    .map_err(|_| "Native socket retired".into())
 }
 #[tauri::command]
-pub(crate) fn relay_socket_send(
+pub(crate) fn relay_socket_send<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     sockets: tauri::State<'_, Sockets>,
     id: String,
     data: String,
@@ -221,29 +255,35 @@ pub(crate) fn relay_socket_send(
     if data.len() > 1024 * 1024 {
         return Err("Socket frame too large".into());
     }
-    sockets
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&id)
-        .ok_or("Native socket retired")?
-        .sender
-        .try_send(data)
-        .map_err(|_| "Socket send queue is full".into())
+    owned(
+        &mut sockets
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        &id,
+        webview.label(),
+    )
+    .ok_or("Native socket retired")?
+    .sender
+    .try_send(data)
+    .map_err(|_| "Socket send queue is full".into())
 }
 #[tauri::command]
-pub(crate) fn relay_socket_close(
+pub(crate) fn relay_socket_close<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
     sockets: tauri::State<'_, Sockets>,
     fi: tauri::State<'_, FederatedIdentity>,
     id: String,
 ) {
-    fi.close_discovery(&id);
-    if let Some(entry) = sockets
+    let mut live = sockets
         .0
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&id)
-    {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if owned(&mut live, &id, webview.label()).is_none() {
+        return;
+    }
+    fi.close_discovery(&id);
+    if let Some(entry) = live.remove(&id) {
         entry.stop.cancel();
     }
 }
@@ -554,5 +594,36 @@ mod tests {
             Some("Federated sign-in is required")
         );
         community.assert_uncarried(&server.heads().await[0]);
+    }
+
+    /// A webview that loads another page closes its own sockets, and leaves
+    /// another webview's open; only the webview that opened one reaches it.
+    #[test]
+    fn a_page_load_closes_only_its_own_webviews_sockets() {
+        let sockets = Sockets::default();
+        let open = |id: &str, webview: &str| {
+            let stop = CancellationToken::new();
+            let (sender, _) = mpsc::channel(1);
+            sockets.0.lock().unwrap().insert(
+                id.into(),
+                Connection {
+                    webview: webview.into(),
+                    stop: stop.clone(),
+                    sender,
+                    start: None,
+                },
+            );
+            stop
+        };
+        let screens = open("a", "main");
+        let agents = open("b", "agents");
+        assert!(owned(&mut sockets.0.lock().unwrap(), "b", "main").is_none());
+        assert!(owned(&mut sockets.0.lock().unwrap(), "b", "agents").is_some());
+        sockets.clear_page("main");
+        assert!(screens.is_cancelled());
+        assert!(!agents.is_cancelled());
+        assert!(sockets.0.lock().unwrap().contains_key("b"));
+        sockets.clear();
+        assert!(agents.is_cancelled());
     }
 }

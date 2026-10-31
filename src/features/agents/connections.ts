@@ -34,6 +34,24 @@ type Entry = {
   binding?: RunnerBinding | undefined;
 };
 
+/** How often a failed connection to an unselected community is tried again. */
+const RETRY_MS = 30_000;
+/** When each community's failed connection was last tried again, by whom
+ * ever asked, so two owners of one session do not each try it. */
+const retried = new WeakMap<RelayData, number>();
+
+/** Tries the community's connection again if it failed, at most every
+ * `RETRY_MS`. */
+export function retryFailed(relay: RelayData, now = Date.now()) {
+  if (
+    relay.snapshot().status !== "error" ||
+    now - (retried.get(relay) ?? 0) < RETRY_MS
+  )
+    return;
+  retried.set(relay, now);
+  relay.retry();
+}
+
 export type ConnectionsHost = Readonly<{
   /** The community's relay, while the viewer is in it. */
   open(origin: string): RelayData | undefined;
@@ -99,6 +117,12 @@ export class RunnerConnections {
     return [...this.bound].map(
       ([origin, entry]) => [origin, entry.binding] as const,
     );
+  }
+  /** Tries again each community whose connection failed but the selected
+   * one, which the screens try again. */
+  reconnect(selected: string | undefined) {
+    for (const [origin, entry] of this.bound)
+      if (origin !== selected) retryFailed(entry.relay);
   }
   clear() {
     for (const origin of [...this.bound.keys()]) this.unbind(origin);

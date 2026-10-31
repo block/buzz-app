@@ -68,6 +68,30 @@ it("restores focus when background recovery removes the Retry button", async () 
   expect(props.retry).not.toHaveBeenCalled();
 });
 
+it("keeps focus on Cancel when background recovery finishes", async () => {
+  const user = userEvent.setup();
+  const props = {
+    create: vi.fn(() => false),
+    close: vi.fn(),
+    refreshing: false,
+    retry: vi.fn(),
+  };
+  const view = render(<CreateSidebarSection {...props} writable={false} />);
+  const input = screen.getByRole("textbox", { name: "Section name" });
+  await waitFor(() => expect(input).toHaveFocus());
+  await user.type(input, "Later");
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  cancel.focus();
+  view.rerender(<CreateSidebarSection {...props} writable />);
+  expect(
+    screen.queryByRole("button", { name: "Retry preferences" }),
+  ).not.toBeInTheDocument();
+  expect(cancel).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(props.close).toHaveBeenCalledOnce();
+  expect(props.create).not.toHaveBeenCalled();
+});
+
 it("offers recovery when preferences become unavailable before the first submission", async () => {
   const create = vi.fn();
   const view = render(

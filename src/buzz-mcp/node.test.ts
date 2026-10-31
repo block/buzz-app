@@ -262,13 +262,12 @@ describe("relayAuthority", () => {
     expect(init.headers).toEqual({ Accept: "application/nostr+json" });
   });
 
-  it("falls back to the advertised pubkey", async () => {
-    relay(async () => Response.json({ pubkey: key }));
-    expect(await relayAuthority("wss://relay.test")).toBe(key);
-  });
-
   it.each([
     ["no key", async () => Response.json({ name: "relay" })],
+    [
+      "only the operator-contact pubkey",
+      async () => Response.json({ pubkey: key }),
+    ],
     ["a malformed key", async () => Response.json({ self: "A".repeat(64) })],
     ["a non-object", async () => Response.json(null)],
     ["a failed answer", async () => new Response("no", { status: 503 })],
@@ -290,6 +289,22 @@ describe("relayAuthority", () => {
     expect(await lookup()).toBeUndefined();
     fetch.mockImplementation(async () => Response.json({ self: key }));
     expect(await lookup()).toBe(key);
+    expect(await lookup()).toBe(key);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a learned key when an overlapping lookup fails later", async () => {
+    let fail = (_: Response) => {};
+    const fetch = relay(async () => Response.json({ self: key }));
+    fetch.mockImplementationOnce(async () => Response.json({ self: key }));
+    fetch.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (fail = resolve)),
+    );
+    const lookup = relayAuthorityLookup("wss://relay.test");
+    const [learned, overlapping] = [lookup(), lookup()];
+    expect(await learned).toBe(key);
+    fail(new Response("no", { status: 503 }));
+    expect(await overlapping).toBe(key);
     expect(await lookup()).toBe(key);
     expect(fetch).toHaveBeenCalledTimes(2);
   });

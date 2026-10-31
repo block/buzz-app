@@ -37,8 +37,9 @@ const MEDIA_FILE_LIMIT = 500 * 1024 * 1024;
 /** Images an agent can be shown. */
 const SHOWN_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
-/** The relay's own key, as its NIP-11 document at `relay` advertises it:
- * what relay-signed records, such as channel rosters, are checked against.
+/** The relay's own key, as its NIP-11 document at `relay` advertises it in
+ * `self` (the operator-contact `pubkey` is not one): what relay-signed records,
+ * such as channel rosters, are checked against.
  * `undefined` when it cannot be learned; the tools that need it then refuse. */
 export async function relayAuthority(relay: string) {
   try {
@@ -48,11 +49,8 @@ export async function relayAuthority(relay: string) {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return undefined;
-    const nip11 = (await response.json()) as {
-      self?: unknown;
-      pubkey?: unknown;
-    } | null;
-    const author = nip11?.self ?? nip11?.pubkey;
+    const nip11 = (await response.json()) as { self?: unknown } | null;
+    const author = nip11?.self;
     return typeof author === "string" && /^[0-9a-f]{64}$/.test(author)
       ? author
       : undefined;
@@ -65,7 +63,13 @@ export async function relayAuthority(relay: string) {
  * keeps it: a relay unreachable at startup does not disable its tools until restart. */
 export function relayAuthorityLookup(relay: string) {
   let known: string | undefined;
-  return async () => (known ??= await relayAuthority(relay));
+  return async () => {
+    if (known) return known;
+    // An overlapping lookup may have learned the key while this one failed.
+    const found = await relayAuthority(relay);
+    known ??= found;
+    return known;
+  };
 }
 
 const httpBase = (relay: string) =>

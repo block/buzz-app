@@ -77,8 +77,9 @@ page, and history is unchanged. A link that launches the app, read before the
 client is first ready, opens Inbox in the selected community with the notice;
 with Inbox turned off, the notice shows over the start page. A repeat replaces
 the notice, and the next link that names a destination clears it. Without an
-identity and selected community a launch link waits for both, and new
-navigation cancels it. A valid link that cannot open yet, or that is
+identity, selected community and settled plugin catalog a launch link waits
+for them, and new navigation cancels it. A malformed link that replaces a valid
+one still waiting for Retry also retires that Retry and its failure. A valid link that cannot open yet, or that is
 not yours, keeps its own failure: `unavailable` with Retry, or `denied`.
 Nothing is auto-joined. A valid address
 is never authorization:

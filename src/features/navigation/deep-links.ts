@@ -27,8 +27,11 @@ export type DeepLinkHost = Readonly<{
   rejected(): void;
   /** A newer link names a destination, so an earlier rejection's notice is stale. */
   accepted(): void;
-  /** Inbox is known to be turned off, so a rejected launch link stays put. */
-  inboxOff(): boolean;
+  /** Whether Inbox can open, as the router will decide once startup settles. */
+  inbox: Readonly<{
+    status(): "loading" | "on" | "off";
+    subscribe(listener: () => void): () => void;
+  }>;
   /** Invite presentation belongs to the community switcher, not navigation. */
   invite?: (invite: InviteLink, viewer: string) => void;
 }>;
@@ -126,9 +129,9 @@ export function bindDeepLinks(
   let running = isReady(client);
   let clientEpoch = 0;
   // A malformed link in a running app explains itself over the page the user
-  // is on. One that launched the app opens Inbox once there is one to show, or,
-  // with Inbox turned off, explains itself over the start page. Until then it
-  // waits like any held link, and newer navigation cancels it.
+  // is on. One that launched the app opens Inbox, or, with Inbox turned off,
+  // explains itself over the start page. Until the client and Inbox both settle
+  // it waits like any held link, and newer navigation cancels it.
   const reject = (client: Client, launch: boolean): Promise<OpenResult> => {
     const scope =
       client.status === "ready" && client.viewer && client.selected
@@ -137,19 +140,25 @@ export function bindDeepLinks(
             communityOrigin: communityDestination(client.selected).url,
           }
         : undefined;
-    if (launch && !scope)
+    const inbox = launch && scope ? host.inbox.status() : "off";
+    if ((launch && !scope) || inbox === "loading")
       return Promise.resolve({ status: "failed", reason: "invalid-target" });
     held = undefined;
     host.rejected();
-    if (!launch || !scope || host.inboxOff())
-      return Promise.resolve({ status: "cancelled" });
-    return host.navigation.open({
-      version: 1,
-      kind: "page",
-      pluginId: "buzz.inbox",
-      pageId: "inbox",
-      scope,
-    });
+    if (scope && inbox === "on")
+      return host.navigation.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.inbox",
+        pageId: "inbox",
+        scope,
+      });
+    // An earlier link's failure card is superseded too: reopen the page under
+    // it, as its Go back does, so no Retry outlives the intent it recovers.
+    const { ingress, entry } = host.navigation.snapshot();
+    return ingress
+      ? host.navigation.open(entry.target)
+      : Promise.resolve({ status: "cancelled" });
   };
   const openHeld = (): Promise<OpenResult> => {
     if (closed || !held) return Promise.resolve({ status: "cancelled" });
@@ -273,6 +282,7 @@ export function bindDeepLinks(
     running ||= isReady(next);
     flush();
   });
+  const stopInbox = host.inbox.subscribe(flush);
   const stopNavigation = host.navigation.subscribe(() => {
     const next = host.navigation.snapshot();
     // fail() emits synchronously; its ingress marker distinguishes our failure
@@ -292,6 +302,7 @@ export function bindDeepLinks(
     if (closed) return;
     closed = true;
     stopClient();
+    stopInbox();
     stopNavigation();
     stopShell();
     held = undefined;

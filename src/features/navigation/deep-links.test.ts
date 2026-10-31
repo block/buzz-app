@@ -145,6 +145,8 @@ function harness(initial: Client, pending: string[] = []) {
   let client = initial;
   const clientListeners = new Set<() => void>();
   const log: string[] = [];
+  let inboxStatus: "loading" | "on" | "off" = "on";
+  const inboxListeners = new Set<() => void>();
   const controller = createNavigationController(createMemoryHistory());
   const host = {
     navigation: {
@@ -167,7 +169,15 @@ function harness(initial: Client, pending: string[] = []) {
     rejected: vi.fn(() => {
       log.push("rejected");
     }),
-    inboxOff: vi.fn(() => false),
+    inbox: {
+      status: vi.fn((): "loading" | "on" | "off" => inboxStatus),
+      subscribe(fn: () => void) {
+        inboxListeners.add(fn);
+        return () => {
+          inboxListeners.delete(fn);
+        };
+      },
+    },
     accepted: vi.fn(),
   };
   const stop = bindDeepLinks(
@@ -201,8 +211,13 @@ function harness(initial: Client, pending: string[] = []) {
       client = { ...client, ...next };
       for (const fn of clientListeners) fn();
     },
+    inbox(status: typeof inboxStatus) {
+      inboxStatus = status;
+      for (const fn of inboxListeners) fn();
+    },
   };
 }
+const inboxOn = { status: () => "on" as const, subscribe: () => () => {} };
 const ready: Client = { status: "ready", viewer, selected: origin };
 const loading: Client = { status: "loading", selected: null };
 const channelOpen = `open:${JSON.stringify({
@@ -239,7 +254,7 @@ it.each([""])(
         fail,
         invite,
         rejected,
-        inboxOff: () => false,
+        inbox: inboxOn,
         accepted: vi.fn(),
       },
       {
@@ -301,7 +316,7 @@ it.each([""])(
         fail,
         invite,
         rejected,
-        inboxOff: () => false,
+        inbox: inboxOn,
         accepted: vi.fn(),
       },
       { snapshot: () => ready, subscribe: () => () => {} },
@@ -378,7 +393,7 @@ it.each([
     expect(t.host.rejected).toHaveBeenCalledTimes(1);
     expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
     expect(t.host.fail).not.toHaveBeenCalled();
-    expect(t.host.inboxOff).not.toHaveBeenCalled();
+    expect(t.host.inbox.status).not.toHaveBeenCalled();
     expect(t.host.navigation.snapshot()).toMatchObject({
       entry: { id: before.entry.id },
       status: "opened",
@@ -409,7 +424,7 @@ it("explains each repeated malformed warm link without adding visits, then opens
 });
 it("explains a malformed launch link over the start page, adding no visit, when Inbox is turned off", async () => {
   const t = harness(loading, ["buzz://"]);
-  t.host.inboxOff.mockReturnValue(true);
+  t.inbox("off");
   await settle();
   const before = t.host.navigation.snapshot();
   t.become(ready);
@@ -419,6 +434,39 @@ it("explains a malformed launch link over the start page, adding no visit, when 
     entry: { id: before.entry.id },
     canGoForward: false,
   });
+  t.stop();
+});
+it.each(["on", "off"] as const)(
+  "holds a malformed launch link until Inbox availability settles (%s)",
+  async (settled) => {
+    const t = harness(loading, ["buzz://"]);
+    t.inbox("loading");
+    await settle();
+    const before = t.host.navigation.snapshot();
+    t.become(ready);
+    expect(t.log).toEqual([]);
+    t.inbox(settled);
+    t.inbox(settled);
+    if (settled === "on") expect(t.log).toEqual(["rejected", inboxOpen]);
+    else {
+      expect(t.log).toEqual(["rejected"]);
+      expect(t.host.navigation.snapshot()).toMatchObject({
+        entry: { id: before.entry.id },
+        canGoForward: false,
+      });
+    }
+    t.stop();
+  },
+);
+it("a newer user visit cancels a malformed launch link waiting for Inbox", async () => {
+  const t = harness(loading, ["buzz://"]);
+  t.inbox("loading");
+  await settle();
+  t.become(ready);
+  await t.host.navigation.open({ version: 1, kind: "home" });
+  t.inbox("on");
+  expect(t.host.rejected).not.toHaveBeenCalled();
+  expect(t.host.navigation.open).toHaveBeenCalledTimes(1);
   t.stop();
 });
 it("never reports a held malformed link as denied when the account changes", async () => {
@@ -603,6 +651,37 @@ it("a malformed newer arrival replaces retained recovery without reviving the ol
     t.stop();
   }
 });
+it("a malformed warm link retires an earlier link's recovery and restores the page under it", async () => {
+  const t = harness(ready);
+  try {
+    await settle();
+    await t.host.navigation.open({ version: 1, kind: "settings" });
+    const before = t.host.navigation.snapshot();
+    t.become({ selected: null });
+    t.arrive(messageLink);
+    await vi.waitFor(() =>
+      expect(t.host.navigation.snapshot().retryable).toBe(true),
+    );
+    t.arrive("buzz://");
+    await vi.waitFor(() => expect(t.host.rejected).toHaveBeenCalledTimes(1));
+    expect(t.host.navigation.snapshot()).toMatchObject({
+      entry: { id: before.entry.id },
+      status: "opened",
+      canGoForward: false,
+    });
+    expect(t.host.navigation.snapshot().ingress).toBeUndefined();
+    expect(t.host.navigation.snapshot().retryable).toBeUndefined();
+    // Selecting a community later revives neither link.
+    t.become(ready);
+    await settle();
+    expect(t.log.filter((entry) => entry.startsWith("open:"))).toEqual([
+      `open:${JSON.stringify({ version: 1, kind: "settings" })}`,
+      `open:${JSON.stringify(before.entry.target)}`,
+    ]);
+  } finally {
+    t.stop();
+  }
+});
 it("a newer in-flight arrival wins when readiness changes during the drain", async () => {
   const t = harness(loading, [messageLink]);
   let release!: (urls: string[]) => void;
@@ -753,7 +832,7 @@ it("still drains once when the shell cannot deliver updates, without aborting st
     ...controller,
     fail: vi.fn(),
     rejected: vi.fn(),
-    inboxOff: () => false,
+    inbox: inboxOn,
     accepted: vi.fn(),
   };
   const stop = bindDeepLinks(
@@ -791,7 +870,7 @@ it("is a no-op in the browser build, where no shell exists", async () => {
   const host = createNavigationController(createMemoryHistory());
   const subscribe = vi.fn(() => () => {});
   const stop = bindDeepLinks(
-    { ...host, rejected: vi.fn(), inboxOff: () => false, accepted: vi.fn() },
+    { ...host, rejected: vi.fn(), inbox: inboxOn, accepted: vi.fn() },
     { snapshot: () => ready, subscribe },
   );
   await settle();
@@ -848,7 +927,7 @@ it("drains URLs arriving between startup take and deferred native watch registra
     ...controller,
     fail: vi.fn(),
     rejected: vi.fn(),
-    inboxOff: () => false,
+    inbox: inboxOn,
     accepted: vi.fn(),
   };
   const stop = bindDeepLinks(host, {

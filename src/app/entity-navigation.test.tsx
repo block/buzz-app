@@ -28,6 +28,28 @@ import type { ReadFilter } from "../features/relay/events";
 const pageFailure =
   /^(This page isn’t available|Can’t connect|You don’t have access to this|This link doesn’t work)$/;
 
+// Holds the plugin catalog read, so a test can settle the client first.
+const catalogGate = vi.hoisted(() => ({
+  value: undefined as Promise<void> | undefined,
+}));
+vi.mock("../plugins/storage", async (original) => {
+  const actual = await original<typeof import("../plugins/storage")>();
+  return {
+    ...actual,
+    createPluginStorage(
+      ...args: Parameters<typeof actual.createPluginStorage>
+    ) {
+      const storage = actual.createPluginStorage(...args);
+      return {
+        ...storage,
+        async getCatalog() {
+          await catalogGate.value;
+          return storage.getCatalog();
+        },
+      };
+    },
+  };
+});
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
     {
@@ -109,6 +131,7 @@ afterEach(async () => {
   services = undefined;
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  catalogGate.value = undefined;
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   localStorage.clear();
   window.history.replaceState(null, "", "/");
@@ -266,6 +289,74 @@ it.each([
       });
   },
 );
+
+it("keeps a malformed launch link on the start page when the catalog turning Inbox off settles last", async () => {
+  let release = () => {};
+  catalogGate.value = new Promise<void>((resolve) => (release = resolve));
+  localStorage.setItem(
+    "buzzodz.plugins.v1",
+    JSON.stringify({ version: 3, enabled: { "buzz.inbox": false } }),
+  );
+  const { current } = bindCommunityLinks(origin, async () => ["buzz://"]);
+  await waitFor(() =>
+    expect(current.communities.snapshot()).toMatchObject({
+      status: "ready",
+      selected: origin,
+    }),
+  );
+  expect(current.plugins.startup()).toBe("loading");
+  expect(current.rejectedLinks.snapshot()).toBeUndefined();
+  const before = current.navigation.snapshot();
+  release();
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("opening"),
+  );
+  expect(current.navigation.snapshot()).toMatchObject({
+    attempt: { id: before.attempt.id },
+    entry: { id: before.entry.id },
+    canGoForward: false,
+  });
+  expect(current.navigation.snapshot().status).not.toBe("failed");
+  expect(current.navigation.snapshot().entry.target).not.toMatchObject({
+    pluginId: "buzz.inbox",
+  });
+});
+
+it("a malformed link in a running app retires an earlier link's Try again", async () => {
+  const queue: string[] = [];
+  const { current, ping } = bindCommunityLinks(origin, async () =>
+    queue.splice(0),
+  );
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  await act(async () => current.communities.select(null));
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).toBe("opened"),
+  );
+  const before = current.navigation.snapshot();
+  await act(async () => {
+    queue.push("buzz://channel/general");
+    ping();
+  });
+  await screen.findByRole("button", { name: "Try again" });
+  await act(async () => {
+    queue.push("buzz://");
+    ping();
+  });
+  await screen.findByRole("dialog", { name: "This link doesn’t work" });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Try again" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(current.navigation.snapshot()).toMatchObject({
+    entry: { id: before.entry.id },
+    canGoForward: before.canGoForward,
+  });
+  expect(current.navigation.snapshot().ingress).toBeUndefined();
+});
 
 const elsewhere = "https://elsewhere.example";
 /** Live App services with community links bound to a controllable shell. */

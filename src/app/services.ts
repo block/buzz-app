@@ -162,11 +162,24 @@ export function createServices() {
     invite: invites.open,
     rejected: rejectedLinks.reject,
     accepted: () => rejectedLinks.clear(),
-    // As the router decides: settled startup with no Inbox page.
-    inboxOff: () =>
-      plugins.startup() !== "loading" &&
-      plugins.snapshot().activation["buzz.inbox"]?.status !== "starting" &&
-      !pages.snapshot().some((page) => page.key === "buzz.inbox/inbox"),
+    // As the router decides: Inbox waits on startup and its own activation.
+    inbox: {
+      status: () =>
+        plugins.startup() === "loading" ||
+        plugins.snapshot().activation["buzz.inbox"]?.status === "starting"
+          ? ("loading" as const)
+          : pages.snapshot().some((page) => page.key === "buzz.inbox/inbox")
+            ? ("on" as const)
+            : ("off" as const),
+      subscribe(listener: () => void) {
+        const stopPlugins = plugins.subscribe(listener);
+        const stopPages = pages.subscribe(listener);
+        return () => {
+          stopPlugins();
+          stopPages();
+        };
+      },
+    },
   };
   ctx.effect(() => bindDeepLinks(deepLinks, communities));
   // Search ranks places by how often and how recently they were opened.

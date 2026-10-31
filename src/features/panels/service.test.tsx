@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
@@ -37,9 +37,10 @@ it("independently unloads panels without removing the page or shared data", asyn
   // Channels adds agent teams; GitHub registers tools and an Attention source.
   root.provide("agents", {
     subscribe: () => () => {},
-    snapshot: () => undefined,
+    snapshot: () => ({ agents: [], running: [], interrupted: [] }),
     addTool: () => {},
     addAttentionSource: () => {},
+    presentSource: () => {},
   });
   root.provide("communityReader", {
     subscribe: () => () => {},
@@ -54,6 +55,13 @@ it("independently unloads panels without removing the page or shared data", asyn
   });
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});
+  // GitHub's agent entry keeps where its pull request watches have read to.
+  const stored = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+    removeItem: (key: string) => stored.delete(key),
+  });
   provideNavigation(root);
   const relay = provideRelay(root);
   const desired = (ids: string[]) => ids.map(plugin);
@@ -95,6 +103,7 @@ it("independently unloads panels without removing the page or shared data", asyn
   } finally {
     await runtime.dispose();
     await root.fiber.dispose();
+    vi.unstubAllGlobals();
   }
 });
 

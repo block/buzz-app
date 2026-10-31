@@ -403,12 +403,16 @@ it("reuses one policy run per candidate scope across mixed case, outside keys, a
     expect(names.scope([digit.repeat(64)])(a)?.name).toBe("Alex");
     expect(scoped(a)?.name).toBe(suffixed(a));
   }
+  // The scope keeps its outside label through them, until the directory changes.
+  expect(scoped(c)?.name).toBe(suffixed(c));
+  expect(names.scope([d, b, a])(c)?.name).toBe(suffixed(c));
   expect(resolve).toHaveBeenCalledTimes(12);
   profiles = new Map([...profiles, [b, { name: "Blake" }]]);
   for (const listener of listeners) listener();
   expect(scoped(a)?.name).toBe("Alex");
   expect(scoped(b)?.name).toBe("Blake");
-  expect(resolve).toHaveBeenCalledTimes(13);
+  expect(scoped(c)?.name).toBe(suffixed(c));
+  expect(resolve).toHaveBeenCalledTimes(14);
 });
 
 it.each(

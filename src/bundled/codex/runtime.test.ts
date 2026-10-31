@@ -1324,6 +1324,35 @@ it("refreshes a cached preview when a replacement provider has another protectio
   expect(f.spawn).not.toHaveBeenCalled();
 });
 
+it("starts a replacement provider's worker once the previous one has exited", async () => {
+  const f = protectedPreview();
+  await f.runtime.preview(f.agent);
+  const previous = f.worker;
+  f.replace();
+  const next = await f.runtime.preview(f.agent);
+  expect(next.models.map((model) => model.id)).toContain("replacement-deep");
+  expect(previous.process.end).toHaveBeenCalledOnce();
+  expect(f.worker.spawn).toHaveBeenCalledOnce();
+});
+
+it("retries a protected retirement that failed", async () => {
+  const f = protectedPreview();
+  await f.runtime.preview(f.agent);
+  f.worker.process.end.mockRejectedValueOnce(new Error("stuck"));
+  f.worker.process.kill.mockRejectedValueOnce(new Error("stuck"));
+  await expect(f.runtime.retire(pubkey)).rejects.toThrow("stuck");
+  await f.runtime.retire(pubkey);
+  f.replace("generation-1");
+  await expect(f.runtime.preview(f.agent)).resolves.toBeDefined();
+});
+
+it("stops a protected worker that served only a preview once its agent goes", async () => {
+  const f = protectedPreview();
+  await f.runtime.preview(f.agent);
+  f.runtime.sync([]);
+  await vi.waitFor(() => expect(f.worker.process.end).toHaveBeenCalledOnce());
+});
+
 it("ignores changes to local Codex model preferences in the composer", async () => {
   const configured = { model: "deep-model" };
   const f = fixture([], undefined, false, configured);

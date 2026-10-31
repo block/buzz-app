@@ -503,8 +503,13 @@ export class CodexRuntime {
       })();
       this.retirements.set(pubkey, retiring);
     }
-    await retiring;
-    this.retirements.delete(pubkey);
+    try {
+      await retiring;
+    } finally {
+      // A failed retirement is retried by the next one, not kept.
+      if (this.retirements.get(pubkey) === retiring)
+        this.retirements.delete(pubkey);
+    }
   }
   sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.key));
@@ -512,6 +517,10 @@ export class CodexRuntime {
       if (!present.has(key)) {
         this.previews.delete(key);
       }
+    // A protected server may serve only a model preview, with no entry.
+    for (const key of this.protectedServers.keys())
+      if (!present.has(key) && !this.entries.has(key))
+        void this.retire(key).catch(() => undefined);
     for (const [key, entry] of this.entries)
       if (!present.has(key)) {
         if (this.protectedServers.has(key)) {
@@ -587,12 +596,10 @@ export class CodexRuntime {
     if (agent?.protection) {
       const protection = agent.protection;
       protection.assertAvailable();
+      // A prior worker with another key belongs to a replaced provider, which
+      // is already stopping it; the replacement starts once it has exited.
       const prior = this.protectedServers.get(agent.key);
-      if (prior) {
-        if (prior.protection?.key !== protection.key)
-          throw new Error("Retire the previous protected Codex worker first");
-        return prior;
-      }
+      if (prior?.protection?.key === protection.key) return prior;
       const host = this.protectionHost;
       if (!host?.serveMcp)
         throw new Error("Protected Codex requires the desktop security host");
@@ -605,6 +612,7 @@ export class CodexRuntime {
         opening: Promise.resolve(rpc),
       };
       server.opening = (async () => {
+        await prior?.rpc.close();
         const bridge = await nativeProtectionBridge(serveMcp, protection);
         rpc.onMessage((wire) => {
           if (wire.method === "connection/closed") {

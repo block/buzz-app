@@ -475,10 +475,12 @@ the browser by itself. Not now opens the app, where protected communities offer
 their usual sign-in recovery.
 
 When the session ends during a run (expiry or the adapter refusing it), the same
-screen covers the app and starts sign-in again. The app stays mounted, hidden
-and inert, so drafts and navigation survive, and focus returns to where it was.
-An explicit sign-out shows the screen without opening the browser. A saved
-session that cannot be checked (network or secure storage) offers Try again.
+screen covers the app, above any dialog or menu it had open, and starts sign-in
+again. The app stays mounted, covered and inert, so drafts, scroll and
+navigation survive, and focus returns to where it was. An explicit sign-out
+shows the screen without opening the browser. A saved session that cannot be
+checked (network or secure storage) offers Try again, and the screen stays up
+while it checks.
 On-demand builds are unchanged.
 
 The Node development host retains its supported broker flow.

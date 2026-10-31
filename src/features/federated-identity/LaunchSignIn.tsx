@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "../../shared/design-system/ui/Button";
 import { launchVisible, setLaunchReady } from "../../app/launch";
 import { OnboardingScreen } from "../identity/OnboardingScreen";
@@ -43,15 +44,28 @@ export function LaunchSignIn({
     identity.snapshot,
     identity.snapshot,
   );
-  // The descriptor is compiled in, so this never changes during a run.
+  // Native sends the build's sign-in policy with its first state, and it
+  // never changes during a run. Until then nothing renders: the launch mark
+  // stays up, and the app mounts once, under the right policy.
+  const unknown =
+    identity.apiAvailable && state.status === "restoring" && !state.authority;
   const required =
     identity.apiAvailable && state.authority?.signIn === "at-launch";
   // "Not now" lasts until a session is established; a later end asks again.
   const [dismissed, setDismissed] = useState(false);
-  if (dismissed && state.status === "signed-in") setDismissed(false);
-  const showing = required && !dismissed && needsSignIn(state);
-  // The app mounts once, after launch settles, and then stays mounted (hidden
-  // and inert) under a later sign-in, so drafts and navigation survive it.
+  // Once asked, the screen stays up while Try again checks the saved sign-in.
+  const [asked, setAsked] = useState(false);
+  if ((dismissed || asked) && state.status === "signed-in") {
+    setDismissed(false);
+    setAsked(false);
+  }
+  const showing =
+    required &&
+    !dismissed &&
+    (needsSignIn(state) || (asked && state.status === "restoring"));
+  if (showing && !asked) setAsked(true);
+  // The app mounts once, after launch settles, and then stays mounted (covered
+  // and inert) under a later sign-in, so drafts, scroll and navigation survive.
   const [opened, setOpened] = useState(false);
   const settled = !showing && state.status !== "restoring";
   if (required && !opened && settled) setOpened(true);
@@ -59,8 +73,13 @@ export function LaunchSignIn({
   // Start the browser sign-in only when this screen is why it opens: the
   // first settled state of the run, and a session ending. Never after a
   // cancel, a failure or a sign-out, which leave the choice to the person.
+  // Until native reports the attempt, the screen already says it is signing in.
   const previous = useRef<SessionSnapshot["status"] | null>(null);
-  useEffect(() => {
+  const [starting, setStarting] = useState<SessionSnapshot["status"] | null>(
+    null,
+  );
+  if (starting && state.status !== starting) setStarting(null);
+  useLayoutEffect(() => {
     const from = previous.current;
     if (state.status === "restoring") return;
     previous.current = state.status;
@@ -71,7 +90,12 @@ export function LaunchSignIn({
         state.status === "reauthentication-required");
     const ended =
       from === "signed-in" && state.status === "reauthentication-required";
-    if (launch || ended) void identity.signIn().catch(() => {});
+    if (!launch && !ended) return;
+    setStarting(state.status);
+    void identity
+      .signIn()
+      .catch(() => {})
+      .finally(() => setStarting(null));
   }, [identity, required, dismissed, state.status]);
 
   // The launch mark covers the window until something is ready to show.
@@ -93,19 +117,37 @@ export function LaunchSignIn({
     if (!showing && focus.current?.isConnected) focus.current.focus();
   }, [showing]);
 
+  if (unknown) return null;
   if (!required) return children;
   return (
     <>
-      {showing && (
-        <SignInScreen
-          identity={identity}
-          state={state}
-          dismiss={() => setDismissed(true)}
-        />
-      )}
+      {showing &&
+        (opened ? (
+          // Mid-run, the app may have dialogs and menus open in portals.
+          <TopLayer>
+            <SignInScreen
+              identity={identity}
+              state={state}
+              starting={!!starting}
+              dismiss={() => setDismissed(true)}
+            />
+          </TopLayer>
+        ) : (
+          <SignInScreen
+            identity={identity}
+            state={state}
+            starting={!!starting}
+            dismiss={() => setDismissed(true)}
+          />
+        ))}
       {opened && (
-        // Preflight's `[hidden]` rule outranks `contents` while it is set.
-        <div ref={app} className="contents" hidden={showing} inert={showing}>
+        // Covered rather than `hidden`: display none would drop scroll offsets.
+        <div
+          ref={app}
+          className="contents"
+          inert={showing}
+          style={showing ? { visibility: "hidden" } : undefined}
+        >
           {children}
         </div>
       )}
@@ -113,13 +155,49 @@ export function LaunchSignIn({
   );
 }
 
+/**
+ * A modal native dialog sits in the browser's top layer, above anything the
+ * app has open, and makes the rest of the window inert until it closes. It
+ * mounts beside the app root, so a modal the app already had open does not
+ * hide it from assistive technology.
+ */
+function TopLayer({ children }: { children: ReactNode }) {
+  // Content mounts once the dialog is open, so its autofocus can land.
+  const [shown, setShown] = useState(false);
+  const open = useCallback((dialog: HTMLDialogElement | null) => {
+    if (!dialog) return;
+    // The app's shortcuts listen on the window; keep them from acting behind.
+    const contain = (event: KeyboardEvent) => event.stopPropagation();
+    dialog.addEventListener("keydown", contain);
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    setShown(true);
+    return () => dialog.removeEventListener("keydown", contain);
+  }, []);
+  return createPortal(
+    <dialog
+      ref={open}
+      aria-labelledby="launch-sign-in-title"
+      className="m-0 h-dvh max-h-none w-screen max-w-none overflow-auto border-0 bg-transparent p-0 backdrop:bg-transparent"
+      // Escape can't dismiss it; the screen offers its own way out.
+      onCancel={(event) => event.preventDefault()}
+      onClose={(event) => event.currentTarget.showModal?.()}
+    >
+      {shown && children}
+    </dialog>,
+    document.body,
+  );
+}
+
 function SignInScreen({
   identity,
   state,
+  starting,
   dismiss,
 }: {
   identity: FederatedIdentity;
   state: SessionSnapshot;
+  starting: boolean;
   dismiss(): void;
 }) {
   const [failure, setFailure] = useState("");
@@ -128,7 +206,8 @@ function SignInScreen({
   const communities = organization
     ? `${organization}’s communities`
     : "your organization’s communities";
-  const signingIn = state.status === "signing-in";
+  const signingIn = starting || state.status === "signing-in";
+  const checking = !signingIn && state.status === "restoring";
   const unreachable = state.status === "unavailable";
   const ended = state.status === "reauthentication-required";
   const stored = unreachable && !!state.failure?.startsWith("storage-");
@@ -147,24 +226,27 @@ function SignInScreen({
       setFailure(error instanceof Error ? error.message : "sign-in-failed"),
     );
   }
-  const title = signingIn
-    ? `Signing you in to ${name}`
-    : stored
-      ? "Couldn’t open your saved sign-in"
-      : unreachable
-        ? `Couldn’t reach ${name} sign-in`
-        : ended
-          ? `Sign in to ${name} again`
-          : `Sign in to ${name}`;
-  const description = signingIn
-    ? "Finish signing in in your browser. Buzz opens as soon as you’re done."
-    : stored
-      ? recoveryMessage(state.failure ?? "")
-      : unreachable
-        ? "Check your connection, then try again."
-        : ended
-          ? `Your sign-in has ended. Sign in again to keep using ${communities}.`
-          : `Buzz uses your ${organization ? `${organization} ` : ""}account to open ${communities}.`;
+  const title =
+    signingIn || checking
+      ? `Signing you in to ${name}`
+      : stored
+        ? "Couldn’t open your saved sign-in"
+        : unreachable
+          ? `Couldn’t reach ${name} sign-in`
+          : ended
+            ? `Sign in to ${name} again`
+            : `Sign in to ${name}`;
+  const description = checking
+    ? "Checking your sign-in…"
+    : signingIn
+      ? "Finish signing in in your browser. Buzz opens as soon as you’re done."
+      : stored
+        ? recoveryMessage(state.failure ?? "")
+        : unreachable
+          ? "Check your connection, then try again."
+          : ended
+            ? `Your sign-in has ended. Sign in again to keep using ${communities}.`
+            : `Buzz uses your ${organization ? `${organization} ` : ""}account to open ${communities}.`;
   return (
     <OnboardingScreen
       labelledBy="launch-sign-in-title"
@@ -182,12 +264,18 @@ function SignInScreen({
           {recoveryMessage(problem)}
         </p>
       )}
-      {signingIn ? (
+      {checking ? (
+        <Button size="lg" variant="ghost" onClick={dismiss}>
+          Not now
+        </Button>
+      ) : signingIn ? (
         <>
           <p role="status" className="sr-only">
             Waiting for you to finish signing in.
           </p>
           <Button
+            // Reopening passes through signed out; keep focus on the way back.
+            autoFocus
             size="lg"
             variant="subtle"
             onClick={() =>

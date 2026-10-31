@@ -152,10 +152,7 @@ export function SoloInventory({
   const conversations = list.channels
     // The viewer's own Solo chats. One shared with them stays out of the
     // sidebar; a mention surfaces it under Inbox instead.
-    .filter(
-      (item) =>
-        eligibleSolo(item, session.viewer) && !regions.excluded.has(item.id),
-    )
+    .filter((item) => eligibleSolo(item) && !regions.excluded.has(item.id))
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -

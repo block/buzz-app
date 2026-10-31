@@ -148,11 +148,7 @@ function ScopedSidebar({
     soloPreferences?.status !== "loading";
   const destination = local
     ? target.kind === "conversation"
-      ? conversationDestination(
-          channelList,
-          target.channelId,
-          connection.viewer,
-        )
+      ? conversationDestination(channelList, target.channelId)
       : target.kind === "page" && target.pluginId === "buzz.channels"
         ? soloDraft(target.route?.params)
           ? "solo"
@@ -378,13 +374,9 @@ function LiveSignIn({
 
 /** Unknown until the channel list can say; a channel outside it is Team's.
  * Someone else's Solo chat has no inventory, so the viewer's place holds. */
-function conversationDestination(
-  list: ChannelList | undefined,
-  id: string,
-  viewer: string | undefined,
-) {
+function conversationDestination(list: ChannelList | undefined, id: string) {
   const channel = list?.channels.find((item) => item.id === id);
   if (!channel && list?.status !== "ready") return undefined;
   if (channel?.channelType !== "solo") return "team";
-  return ownSolo(channel, viewer ?? "") ? "solo" : undefined;
+  return ownSolo(channel) ? "solo" : undefined;
 }

@@ -118,9 +118,16 @@ function setup(
   );
   owners.push(owner);
   const emit = (events: readonly RelayEvent[]) => incoming(events);
-  const grant = (id: string, time = 10) =>
+  /** A role such as "owner" marks the viewer's own Solo chat. */
+  const grant = (id: string, time = 10, role?: string) =>
     emit([
-      roster(relay, id, [viewer.pubkey], time),
+      roster(
+        relay,
+        id,
+        [viewer.pubkey],
+        time,
+        role ? { [viewer.pubkey]: role } : {},
+      ),
       metadata(relay, id, id, time),
     ]);
   const target = { kind: "channel" as const, channelId: "room" };
@@ -2683,7 +2690,7 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
 it("inbox groups a Solo chat's top-level timeline into one conversation, keeping its threads and channel posts separate", async () => {
   const h = setup();
   h.grant("room");
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
@@ -2735,7 +2742,7 @@ it("inbox groups a Solo chat's top-level timeline into one conversation, keeping
 
 it("inbox describes a Solo chat row by its newest top-level message, not only its Inbox evidence", () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
@@ -2769,7 +2776,7 @@ it("inbox describes a Solo chat row by its newest top-level message, not only it
 
 it("inbox describes a row by its newest message within the same second", () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.grant("dm");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
@@ -2804,7 +2811,7 @@ it("inbox describes a row by its newest message within the same second", () => {
 
 it("inbox leaves a Solo chat message its attributed author deleted out of the row's preview", () => {
   const h = setup({}, true, undefined, true);
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
@@ -2845,7 +2852,7 @@ it.each([true, false])(
   "inbox leaves a Solo chat root that has its own thread row out of the timeline row's preview (mentioned root: %s)",
   (mentioned) => {
     const h = setup();
-    h.grant("chat");
+    h.grant("chat", 10, "owner");
     h.emit([
       metadata(h.relay, "chat", "Solo chat", 11, [
         ["t", "stream"],
@@ -2880,7 +2887,7 @@ it.each([true, false])(
 
 it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();
-  h.grant("chat");
+  h.grant("chat", 10, "owner");
   h.emit([
     metadata(h.relay, "chat", "Solo chat", 11, [
       ["t", "stream"],
@@ -4118,7 +4125,7 @@ it("someone else's Solo chat earns attention only from mentions", async () => {
   ).toBe(0);
 });
 
-it("a Solo chat whose creator is unknown stays quiet until it is known to be the viewer's", () => {
+it("a Solo chat whose owner is unknown stays quiet until the roster says it is the viewer's", () => {
   const h = setup();
   h.grant("chat");
   h.emit([
@@ -4134,13 +4141,11 @@ it("a Solo chat whose creator is unknown stays quiet until it is known to be the
     h.session.unread.snapshot({ kind: "channel", channelId: "chat" })
       .observedCount;
   expect(count()).toBe(0);
+  // An older chat without a recorded creator is still the owner's.
   h.emit([
-    metadata(h.relay, "chat", "Chat", 12, [
-      ["t", "stream"],
-      ["private"],
-      ["t", SOLO_LABEL],
-      ["P", h.viewer.pubkey],
-    ]),
+    roster(h.relay, "chat", [h.viewer.pubkey], 12, {
+      [h.viewer.pubkey]: "owner",
+    }),
   ]);
   expect(count()).toBe(1);
 });

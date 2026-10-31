@@ -32,6 +32,7 @@ function fixture() {
     name,
     channelType: "solo",
     creator,
+    viewerRole: creator === viewer ? "owner" : "member",
   });
   const list = {
     status: "ready",

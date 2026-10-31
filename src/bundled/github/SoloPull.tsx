@@ -77,7 +77,7 @@ function SessionPullLink({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const channel = list.channels.find((item) => item.id === channelId);
-  if (!ownSolo(channel, session.viewer)) return null;
+  if (!ownSolo(channel)) return null;
   const change = async (next: string | null) => {
     setBusy(true);
     setError(undefined);
@@ -127,12 +127,7 @@ export function SoloPullMenu({
   const [busy, setBusy] = useState(false);
   const notify = useToastNotification();
   const channel = list.channels.find((item) => item.id === channelId);
-  if (
-    !pull ||
-    !ownSolo(channel, session.viewer) ||
-    channel?.archived ||
-    channel?.readOnly
-  )
+  if (!pull || !ownSolo(channel) || channel?.archived || channel?.readOnly)
     return null;
   return (
     <MenuItem

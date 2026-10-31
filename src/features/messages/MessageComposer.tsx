@@ -2551,7 +2551,7 @@ function Composer({
           throw new Error("This chat is no longer available for sending.");
         if (
           queueFollowUp &&
-          (!ownSolo(destination, session.viewer) ||
+          (!ownSolo(destination) ||
             recipients.some(
               (key) =>
                 archivedMention(session, key) ||

@@ -102,6 +102,7 @@ it("uses the code-point-lowest external region label and excludes no unknown or 
       name: "Multi",
       channelType: "solo",
       creator: h.session.viewer,
+      viewerRole: "owner",
       labels: ["buzz.region:zeta:other", label],
     },
   ]);
@@ -294,6 +295,7 @@ it.each([
         name: "Classify",
         channelType: "solo",
         creator: mode === "shared" ? relay.pubkey : viewer.pubkey,
+        viewerRole: mode === "shared" ? "member" : "owner",
         labels,
         ...(mode === "archived" ? { archived: true as const } : {}),
         ...(mode === "readOnly" ? { readOnly: true as const } : {}),

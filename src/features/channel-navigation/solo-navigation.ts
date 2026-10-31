@@ -309,7 +309,6 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         }
         const placement = projectSoloRegions(
           this.session.channels.list().channels,
-          connection.viewer ?? this.session.viewer ?? "",
           binding
             ? [...this.runtimes.values()]
             : entries.map((source) => ({ source, failed: false })),
@@ -417,11 +416,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           const channel = session.channels
             .list()
             .channels.find((item) => item.id === channelId);
-          if (
-            !ownSolo(channel, binding.viewer) ||
-            channel?.archived ||
-            channel?.readOnly
-          )
+          if (!ownSolo(channel) || channel?.archived || channel?.readOnly)
             throw new Error(
               "Only your own active Solo chats can join this region",
             );

@@ -30,13 +30,10 @@ export function SharedChatRows({
   const connection = useRelayConnection(relay);
   // Held above the session, so a reconnect never drops the row being read.
   const [held, setHeld] = useState<string>();
-  return connection.status === "ready" &&
-    connection.viewer &&
-    connection.scope ? (
+  return connection.status === "ready" && connection.scope ? (
     <Rows
       key={`${connection.scope}:${connection.generation}`}
       session={connection.session}
-      viewer={connection.viewer}
       scope={connection.scope}
       navigator={navigator}
       held={held}
@@ -47,14 +44,12 @@ export function SharedChatRows({
 
 function Rows({
   session,
-  viewer,
   scope,
   navigator,
   held,
   setHeld,
 }: {
   session: RelaySession;
-  viewer: string;
   scope: string;
   navigator: Navigation;
   held: string | undefined;
@@ -89,7 +84,7 @@ function Rows({
       .map((item) => item.channelId),
   );
   const chats = list.channels.filter(
-    (channel) => channel.channelType === "solo" && !ownSolo(channel, viewer),
+    (channel) => channel.channelType === "solo" && !ownSolo(channel),
   );
   // Reading the open chat clears its tag; keep its row until the viewer
   // moves on, so it doesn't vanish underfoot.

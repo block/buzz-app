@@ -2757,6 +2757,7 @@ export function createChannelStore(
         ),
         labels: channel.labels,
         creator: transport.viewer,
+        viewerRole: "owner",
         createdAt,
         updatedAt: createdAt,
         ...(channel.ttlSeconds !== undefined

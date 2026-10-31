@@ -68,6 +68,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       name: "Owned",
       channelType: "solo",
       creator: viewer,
+      viewerRole: "owner",
       labels: ["buzz.solo", label],
     },
     {
@@ -75,6 +76,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       name: "Chat",
       channelType: "solo",
       creator: viewer,
+      viewerRole: "owner",
       labels: ["buzz.solo"],
     },
     { id: "unknown", name: "Unknown", labels: [label] },
@@ -90,6 +92,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       name: "Second",
       channelType: "solo",
       creator: viewer,
+      viewerRole: "owner",
       labels: ["buzz.solo", label],
     },
     // Shared with the viewer: reachable, but never placed in the sidebar.

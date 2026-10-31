@@ -685,7 +685,7 @@ export function ChannelMembersDialog({
   });
   // A Solo owner adds agents directly; people join through sharing.
   const canAddSoloAgents =
-    ownSolo(channel, session.viewer) &&
+    ownSolo(channel) &&
     canShareSoloChat(session, channel) &&
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);

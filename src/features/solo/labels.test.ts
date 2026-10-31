@@ -8,8 +8,6 @@ import {
 } from "./labels";
 
 const id = "22222222-2222-4222-8222-222222222222";
-const owner = "a".repeat(64);
-const guest = "b".repeat(64);
 
 it("names shared chats by their current name, falling back to the short ID", () => {
   expect(soloChatLinkName({ id, name: "Investigate the flaky test" })).toBe(
@@ -27,12 +25,10 @@ it("marks Solo only with its channel label", () => {
   expect(soloLabels(undefined)).toBe(false);
 });
 
-it("files a Solo chat as the viewer's own only when they created it", () => {
-  const solo = { channelType: "solo", creator: owner };
-  expect(ownSolo(solo, owner)).toBe(true);
-  expect(ownSolo(solo, guest)).toBe(false);
-  expect(ownSolo(solo, undefined)).toBe(false);
-  expect(ownSolo({ channelType: "solo" }, owner)).toBe(false);
-  expect(ownSolo({ channelType: "stream", creator: owner }, owner)).toBe(false);
-  expect(ownSolo(undefined, owner)).toBe(false);
+it("files a Solo chat as the viewer's own only when its roster makes them owner", () => {
+  expect(ownSolo({ channelType: "solo", viewerRole: "owner" })).toBe(true);
+  for (const viewerRole of ["admin", "member", "guest", undefined] as const)
+    expect(ownSolo({ channelType: "solo", viewerRole })).toBe(false);
+  expect(ownSolo({ channelType: "stream", viewerRole: "owner" })).toBe(false);
+  expect(ownSolo(undefined)).toBe(false);
 });

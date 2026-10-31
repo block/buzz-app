@@ -12,7 +12,7 @@ channel membership remains access authority.
   remote agents without the owner's encrypted state, reads the same answer.
   Discovery derives `channelType: "solo"` from it alone. A Solo channel gets
   the chat treatment for everyone: a timeline that loads history on scroll and
-  top-level agent replies. It reads, caches and threads like any channel. The creator (the relay-written `P`) also gets the
+  top-level agent replies. It reads, caches and threads like any channel. Its owner (the `owner` role in the relay-signed roster) also gets the
   owner's treatment: the default-agent composer, Share, Chat
   settings and Chat actions. Both come from the channel, in the shared
   conversation scope (`features/conversation/Conversation.tsx`), so every view

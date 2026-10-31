@@ -304,8 +304,7 @@ export function createUnread({
     new Set(
       list.channels
         .filter(
-          (channel) =>
-            channel.channelType === "solo" && !ownSolo(channel, viewer),
+          (channel) => channel.channelType === "solo" && !ownSolo(channel),
         )
         .map((channel) => channel.id),
     );
@@ -1293,7 +1292,7 @@ export function createUnread({
         )
         .map((channel) => [
           channel.id,
-          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${ownSolo(channel, viewer)}`,
+          `${channel.channelType ?? ""}:${!!channel.huddle}:${!!channel.metadataPending}:${ownSolo(channel)}`,
         ]),
     );
   const cachedIds = (list: ReturnType<ChannelQueries["list"]>) =>

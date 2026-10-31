@@ -93,6 +93,7 @@ function relayWith(channels: { id: string; channelType: string }[]) {
       ...channel,
       name: channel.id,
       creator: viewer,
+      viewerRole: "owner",
     })),
   };
   const session = {

@@ -588,6 +588,7 @@ pub fn repository_url(input: &str) -> Result<String> {
 struct Git {
     scratch: tempfile::TempDir,
     deadline: Instant,
+    ssh_auth_sock: Option<PathBuf>,
     /// Repository URL and its NIP-98 token. Git sends the header only to that URL prefix.
     authorization: Option<(String, String)>,
     federated_header: Option<String>,
@@ -598,6 +599,7 @@ impl Git {
         Ok(Self {
             scratch: tempfile::tempdir().map_err(err)?,
             deadline: Instant::now() + Duration::from_secs(60),
+            ssh_auth_sock: None,
             authorization: None,
             federated_header: None,
             retired: None,
@@ -612,6 +614,9 @@ impl Git {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
+        }
+        if let Some(socket) = &self.ssh_auth_sock {
+            command.env("SSH_AUTH_SOCK", socket);
         }
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         command
@@ -659,6 +664,31 @@ impl Git {
             }
         }
         command
+    }
+    #[cfg(any(target_os = "macos", all(test, unix)))]
+    fn use_block_ssh_agent(&mut self, repository: &str, home: &Path) -> Result<()> {
+        use std::os::unix::fs::FileTypeExt;
+
+        let url = url::Url::parse(repository).map_err(err)?;
+        if url.scheme() != "ssh"
+            || url.host_str() != Some("github.com")
+            || url.username() != "org-49461806"
+            || url.port().is_some_and(|port| port != 22)
+            || !url.path().starts_with("/squareup/")
+        {
+            return Ok(());
+        }
+        // Block's SSH config selects this agent, but imports do not execute SSH config.
+        let socket = home.join("Library/Application Support/block-ssh-agent/agent.sock");
+        match fs::metadata(&socket) {
+            Ok(metadata) if metadata.file_type().is_socket() => {
+                self.ssh_auth_sock = Some(socket);
+                Ok(())
+            }
+            Ok(_) => Err("Block SSH agent path is not a socket".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("Cannot read Block SSH agent socket: {error}")),
+        }
     }
     fn run(&self, args: &[&str], limit: u64) -> Result<Vec<u8>> {
         let mut command = self.command();
@@ -941,6 +971,10 @@ pub fn prepare_git_authorized(
         git.federated_header = Some(header.into());
     }
     git.retired = retired;
+    #[cfg(target_os = "macos")]
+    if let Some(home) = dirs::home_dir() {
+        git.use_block_ssh_agent(&url, &home)?;
+    }
     let mut args = vec![
         "clone",
         "--depth=1",
@@ -2033,6 +2067,89 @@ mod tests {
                 .unwrap();
             assert_eq!(error, "Invalid repository authorization");
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn block_agent_socket_reaches_git() {
+        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        let socket = home
+            .path()
+            .join("Library/Application Support/block-ssh-agent/agent.sock");
+        fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let _agent = UnixListener::bind(&socket).unwrap();
+        let mut git = Git::new().unwrap();
+        git.use_block_ssh_agent(
+            "ssh://org-49461806@github.com/squareup/plugin.git",
+            home.path(),
+        )
+        .unwrap();
+
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let executable = bin.join("git");
+        fs::write(&executable, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut command = git.command();
+        command.env("PATH", &bin);
+        let output = git.run_command(command, 1024).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap().trim(),
+            socket.to_str().unwrap()
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn block_agent_selection_is_limited_to_squareup_ssh() {
+        use std::os::unix::net::UnixListener;
+
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        let socket = home
+            .path()
+            .join("Library/Application Support/block-ssh-agent/agent.sock");
+        fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let _agent = UnixListener::bind(&socket).unwrap();
+        for repository in [
+            "https://github.com/squareup/plugin.git",
+            "ssh://git@github.com/squareup/plugin.git",
+            "ssh://org-49461806@github.com/other/plugin.git",
+            "ssh://org-49461806@github.com.example/squareup/plugin.git",
+            "ssh://org-49461806@github.com:2222/squareup/plugin.git",
+        ] {
+            let mut git = Git::new().unwrap();
+            let before = git
+                .command()
+                .get_envs()
+                .map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned())))
+                .collect::<Vec<_>>();
+            git.use_block_ssh_agent(repository, home.path()).unwrap();
+            let after = git
+                .command()
+                .get_envs()
+                .map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned())))
+                .collect::<Vec<_>>();
+            assert_eq!(before, after, "{repository}");
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn block_agent_may_be_absent_but_must_be_a_socket_when_present() {
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        let mut git = Git::new().unwrap();
+        let repository = "ssh://org-49461806@github.com/squareup/plugin.git";
+        git.use_block_ssh_agent(repository, home.path()).unwrap();
+        assert!(git.ssh_auth_sock.is_none());
+        let socket = home
+            .path()
+            .join("Library/Application Support/block-ssh-agent/agent.sock");
+        fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        fs::write(&socket, "").unwrap();
+        assert_eq!(
+            git.use_block_ssh_agent(repository, home.path())
+                .unwrap_err(),
+            "Block SSH agent path is not a socket"
+        );
     }
     #[test]
     fn git_deadline_and_output_limits_fail() {

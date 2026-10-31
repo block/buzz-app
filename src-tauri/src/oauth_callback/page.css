@@ -127,19 +127,24 @@ h1 {
 
 .hint {
   color: var(--text-subtle);
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.125rem minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
 }
 
 .hint-copy {
-  display: grid;
-  min-inline-size: 0;
+  display: contents;
 }
 
 /* Both messages reserve their wrapped size, including before script startup. */
 .hint-copy > span {
-  grid-area: 1 / 1;
+  grid-area: 1 / 1 / 2 / -1;
+  min-inline-size: 0;
+}
+
+#closing-hint {
+  grid-column: 2;
 }
 
 #closing-hint,
@@ -149,9 +154,9 @@ body[data-closing="true"] #close-hint {
 
 /* Same Tabler loader and motion as the shared Button's CircleNotchIcon. */
 #close-spinner {
+  grid-area: 1 / 1;
   inline-size: 1.125rem;
   block-size: 1.125rem;
-  flex-shrink: 0;
   visibility: hidden;
   animation: spin 1s linear infinite;
 }

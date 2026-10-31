@@ -14,6 +14,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
 import { useAgentChoices } from "../../features/agents/use-choices";
+import { canMessageAgent } from "../../features/agents/choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { foldProfiles } from "../../features/relay/profiles";
@@ -519,16 +520,16 @@ export function SearchResults({
     if (usageScope) recordChoice(usageScope, needle, key);
     run();
   };
-  const managedAgents = new Map(
+  const messageableAgents = new Map(
     agents.identities
-      .filter((agent) => agent.managed)
+      .filter(canMessageAgent)
       .map((agent) => [agent.pubkey, agent]),
   );
   const people: (PersonCandidate & { picture?: string | undefined })[] = [];
   if (peopleActive) {
     const relationships = peopleRelationships(
       list.channels,
-      new Set(managedAgents.keys()),
+      new Set(messageableAgents.keys()),
     );
     const knownAgents = knownAgentPubkeys(profiles, {
       definitions: [],
@@ -556,7 +557,10 @@ export function SearchResults({
       sources.set(person.pubkey, cached(person.pubkey) ?? person);
     for (const [pubkey, profile] of profiles)
       if (!sources.has(pubkey) && cached(pubkey)) sources.set(pubkey, profile);
-    for (const agent of [...managedAgents.values(), ...sessionAgents.values()])
+    for (const agent of [
+      ...messageableAgents.values(),
+      ...sessionAgents.values(),
+    ])
       if (!sources.has(agent.pubkey))
         sources.set(agent.pubkey, {
           name: agent.name,
@@ -568,10 +572,11 @@ export function SearchResults({
         !!source.isAgent ||
         knownAgents.has(pubkey) ||
         sessionAgents.has(pubkey);
-      // As in New message, an agent is a destination only when this
-      // community's native control manages it.
+      // As in New message, agent DM eligibility comes from the shared choices.
       return pubkey === session.viewer ||
-        (agent && !managedAgents.has(pubkey) && !sessionAgents.has(pubkey)) ||
+        (agent &&
+          !messageableAgents.has(pubkey) &&
+          !sessionAgents.has(pubkey)) ||
         archiveHides(session.archives, pubkey, session.viewer)
         ? []
         : [{ pubkey, source, agent }];
@@ -590,7 +595,7 @@ export function SearchResults({
     for (const { pubkey, source, agent } of eligible) {
       const dm = relationships.dm(pubkey);
       const agentName =
-        managedAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
+        messageableAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
       people.push({
         pubkey,
         label: resolveName(pubkey, source.name, candidates, displayFacts),
@@ -601,7 +606,7 @@ export function SearchResults({
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
         picture:
           source.picture ??
-          managedAgents.get(pubkey)?.avatar ??
+          messageableAgents.get(pubkey)?.avatar ??
           sessionAgents.get(pubkey)?.avatar,
       });
     }
@@ -623,7 +628,7 @@ export function SearchResults({
     ]),
   );
   // Rank before the limit, so an exact name beyond the first eight still shows.
-  // The relay matches public channels itself; keep its matches, ranked last.
+  // The store matches public channels by the same rule (`matchRank`).
   // The shared search order, with archived channels half a step behind live
   // ones in the same place.
   const rankOf = (label: string, key: string, archived?: boolean) => {
@@ -824,7 +829,9 @@ export function SearchResults({
       !existing &&
       !session.agentChoices
         .snapshot()
-        .identities.some((item) => item.managed && item.pubkey === pubkey)
+        .identities.some(
+          (item) => canMessageAgent(item) && item.pubkey === pubkey,
+        )
     ) {
       setPersonOpen({
         name,

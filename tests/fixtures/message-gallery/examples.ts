@@ -196,6 +196,13 @@ export const groups: Group[] = [
         { authorId: teammate },
       ),
       single(
+        "table-received",
+        "Received standalone table",
+        "A received table owns its surface even while message actions show.",
+        "| Item | State |\n| --- | --- |\n| Review | Ready |",
+        { authorId: teammate },
+      ),
+      single(
         "table-links",
         "Linked table content",
         "A neutral inset surface owns the text and link colors in a colored bubble.",

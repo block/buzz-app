@@ -41,7 +41,8 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { useRecoveryShown } from "../relay/RecoveryNotice";
+import { useRecoveryOwns } from "../relay/RecoveryNotice";
+import { rosterRecovering } from "../relay/live-recovery";
 import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
@@ -151,7 +152,9 @@ export function ChannelInventory({
     contributedSections?.snapshot ?? noSidebarSections,
   );
   const list = useChannelList(queries.channels);
-  const recoveryShown = useRecoveryShown(queries.recovery);
+  const rosterRecovers = useRecoveryOwns(queries, (live) =>
+    rosterRecovering(live.roster),
+  );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
@@ -1474,7 +1477,7 @@ export function ChannelInventory({
             Loading your sidebar…
           </p>
         )}
-        {list.status === "error" && !recoveryShown && (
+        {list.status === "error" && !rosterRecovers && (
           <p role="alert" className={styles.empty}>
             {list.error}
           </p>

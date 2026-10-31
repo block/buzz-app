@@ -18,6 +18,7 @@ import { APPEARANCE_KEY, createAppearance } from "../../shared/theme/service";
 import { ProfileButton } from "./ProfileButton";
 
 const testAppearance = createAppearance(window);
+const noStatusBinding = () => () => {};
 
 afterEach(cleanup);
 
@@ -73,6 +74,7 @@ it("keeps the header cutout and menu status in sync with presence", () => {
     <ProfileButton
       communities={communities}
       accountActions={accountActions}
+      bindStatusSheet={noStatusBinding}
       appearance={testAppearance}
       settingsSelected={false}
       onSettings={() => {}}
@@ -163,6 +165,7 @@ it("checks observed Away despite automatic Online intent and dispatches checked-
     <ProfileButton
       communities={communities}
       accountActions={accountActions}
+      bindStatusSheet={noStatusBinding}
       appearance={testAppearance}
       settingsSelected={false}
       onSettings={() => {}}
@@ -225,6 +228,7 @@ it.each([false, true])(
           <ProfileButton
             communities={communities}
             accountActions={accountActions}
+            bindStatusSheet={noStatusBinding}
             appearance={testAppearance}
             settingsSelected={settings}
             onSettings={() => setSettings(true)}
@@ -290,6 +294,7 @@ it("opens profile settings from the header, selects appearance in a submenu, and
       <ProfileButton
         communities={communities}
         accountActions={accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={appearance}
         settingsSelected={false}
         onSettings={onSettings}
@@ -418,6 +423,7 @@ it("shows the selected community name and authenticated avatar without saving a 
     <ProfileButton
       communities={communities}
       accountActions={accountActions}
+      bindStatusSheet={noStatusBinding}
       appearance={testAppearance}
       settingsSelected={false}
       onSettings={() => {}}
@@ -526,6 +532,7 @@ it.each(["escape", "close button", "reopen", "scope switch"])(
         <ProfileButton
           communities={communities}
           accountActions={accountActions}
+          bindStatusSheet={noStatusBinding}
           appearance={testAppearance}
           settingsSelected={false}
           onSettings={() => {}}
@@ -628,6 +635,7 @@ it.each(["online", "offline"] as const)(
       <ProfileButton
         communities={communities}
         accountActions={accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={testAppearance}
         settingsSelected={false}
         onSettings={() => {}}
@@ -718,6 +726,7 @@ it("drops the previous community profile on switching and uses local defaults on
     <ProfileButton
       communities={communities}
       accountActions={accountActions}
+      bindStatusSheet={noStatusBinding}
       appearance={testAppearance}
       settingsSelected={false}
       onSettings={() => {}}
@@ -817,6 +826,7 @@ it("refreshes the viewer through the real session after roster setup, not a stal
     <ProfileButton
       communities={communities}
       accountActions={accountActions}
+      bindStatusSheet={noStatusBinding}
       appearance={testAppearance}
       settingsSelected={false}
       onSettings={() => {}}
@@ -931,6 +941,7 @@ it("opens a contributed account action and removes it when its registration reti
     <ProfileButton
       communities={communities}
       accountActions={accountActions}
+      bindStatusSheet={noStatusBinding}
       appearance={testAppearance}
       settingsSelected={false}
       onSettings={() => {}}
@@ -995,6 +1006,7 @@ async function statusFeedbackFixture(disconnected = false) {
   render(
     <ProfileButton
       appearance={testAppearance}
+      bindStatusSheet={noStatusBinding}
       communities={
         {
           subscribe,
@@ -1131,6 +1143,7 @@ it.each([
         settingsSelected={false}
         pluginRecommendations={count}
         onSettings={() => {}}
+        bindStatusSheet={noStatusBinding}
       />,
     );
     await user.click(screen.getByRole("button", { name: "Your profile" }));
@@ -1139,3 +1152,113 @@ it.each([
     else expect(item).not.toHaveTextContent("recommended");
   },
 );
+
+it("opens the set-status sheet for a slash command without re-binding on re-render, returns focus to the profile button after the menu and to the composer after the command, and refuses when statuses are not writable or the menu is gone", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const { createStatusSheet } = await import(
+    "../../features/user-status/sheet"
+  );
+  const owner = createRelaySession(null);
+  const user = userEvent.setup();
+  const viewer = "a".repeat(64);
+  const current = vi.fn(async () => undefined);
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const connectionWith = (writable: boolean) => ({
+    scope: "https://status.test",
+    session: {
+      ...owner.session,
+      statuses: { ...owner.session.statuses, writable, current },
+    },
+  });
+  let connection = connectionWith(true);
+  const actions: readonly [] = [];
+  const accountActions = {
+    subscribe,
+    snapshot: () => actions,
+  } as unknown as AccountActionsService;
+  const community = {
+    profile: { name: "Local", picture: "" },
+    viewer,
+    selected: "https://status.test",
+  };
+  const presence = { status: "online", preference: "auto", error: null };
+  const communities = {
+    subscribe,
+    snapshot: () => community,
+    presence: { subscribe, snapshot: () => presence },
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Communities;
+  const { sheet, bind } = createStatusSheet();
+  const binder = vi.fn(bind);
+  const view = render(
+    <>
+      <ProfileButton
+        communities={communities}
+        accountActions={accountActions}
+        appearance={testAppearance}
+        settingsSelected={false}
+        onSettings={() => {}}
+        bindStatusSheet={binder}
+      />
+      <button type="button">Composer</button>
+    </>,
+  );
+  try {
+    const composer = screen.getByRole("button", { name: "Composer" });
+    const trigger = screen.getByRole("button", { name: "Your profile" });
+    const closeSheet = async () => {
+      const dialog = await screen.findByRole("dialog", {
+        name: "Set a status",
+      });
+      await waitFor(() =>
+        expect(dialog).toContainElement(document.activeElement as HTMLElement),
+      );
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Set a status" }),
+        ).not.toBeInTheDocument(),
+      );
+    };
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Set a status" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Set a status" }),
+    ).toBeVisible();
+    await closeSheet();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    act(() => composer.focus());
+    let opened = false;
+    act(() => {
+      opened = sheet.open();
+    });
+    expect(opened).toBe(true);
+    expect(
+      await screen.findByRole("dialog", { name: "Set a status" }),
+    ).toBeVisible();
+    expect(current).toHaveBeenCalledTimes(2);
+    await closeSheet();
+    await waitFor(() => expect(composer).toHaveFocus());
+    expect(binder).toHaveBeenCalledOnce();
+    act(() => {
+      connection = connectionWith(false);
+      for (const listener of listeners) listener();
+    });
+    expect(sheet.open()).toBe(false);
+    expect(
+      screen.queryByRole("dialog", { name: "Set a status" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+  expect(sheet.open()).toBe(false);
+});

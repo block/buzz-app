@@ -26,7 +26,7 @@ import {
   useChannelTabState,
 } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
+import { ChannelMembersTrigger } from "./ChannelMemberAvatars";
 import {
   soloDraft,
   soloDraftTarget,
@@ -2066,14 +2066,9 @@ function ChannelWorkspace({
                     actions={
                       <>
                         {current && (
-                          <IconButton
-                            size="sm"
-                            variant="avatar"
-                            style={{
-                              width: "auto",
-                              minWidth: "var(--size-control-sm)",
-                              paddingInline: "var(--space-1)",
-                            }}
+                          <ChannelMembersTrigger
+                            session={queries}
+                            channelId={current.id}
                             aria-label="Manage members"
                             title="Manage members"
                             aria-haspopup="dialog"
@@ -2081,12 +2076,6 @@ function ChannelWorkspace({
                             aria-expanded={membersOpen}
                             onClick={(event) =>
                               openMembers(event.currentTarget)
-                            }
-                            icon={
-                              <ChannelMemberAvatars
-                                session={queries}
-                                channelId={current.id}
-                              />
                             }
                           />
                         )}

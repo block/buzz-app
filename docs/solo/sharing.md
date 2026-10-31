@@ -24,6 +24,10 @@ There are two ways to give access:
 The Solo chat header's **Access** button and the conversation-row **Share…** action
 open the one access dialog every conversation uses (`ChannelMembersDialog`). In a
 Solo chat it is titled **Chat access**, with the chat name as its description.
+The button previews the chat's people like a channel's members button: up to three
+avatars and a count, agents left out, the owner first. Someone else's chat names its
+owner on hover (**Owner's chat**). The viewer's own chat keeps the people icon until
+it is shared with another person.
 Share stays in the same conversation: no metadata change, promotion to a channel,
 Solo removal or automatic navigation to Messages. **Convert to channel** lives only
 in the chat's actions menu. **Copy link** sits at the footer's leading edge and

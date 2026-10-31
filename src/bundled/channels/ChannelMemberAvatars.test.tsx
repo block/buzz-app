@@ -74,3 +74,56 @@ it("keeps the people preview and overflow current as profiles and membership arr
   expect(screen.queryByTitle("Dana")).not.toBeInTheDocument();
   expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
 });
+
+it("leads a Solo chat with its owner and keeps the people icon until it is shared", () => {
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  let list = {
+    channels: [
+      { id: "chat", channelType: "solo", creator: "me", members: ["me"] },
+    ],
+  };
+  const profiles = new Map([
+    ["me", { name: "Me" }],
+    ["owner", { name: "Owner" }],
+    ["alice", { name: "Alice", picture: "https://example.test/alice.png" }],
+  ]);
+  const choices = { identities: [] };
+  const session = {
+    viewer: "me",
+    channels: { subscribeList: subscribe, list: () => list },
+    profiles: {
+      subscribe,
+      snapshot: () => profiles,
+      ensure: vi.fn().mockResolvedValue(undefined),
+    },
+    agentChoices: { subscribe, snapshot: () => choices },
+    media: (url: string) => url,
+  } as unknown as RelaySession;
+  const { container } = render(
+    <ChannelMemberAvatars session={session} channelId="chat" />,
+  );
+  expect(screen.queryByTitle("Me")).not.toBeInTheDocument();
+  expect(container.querySelector("svg")).toBeInTheDocument();
+
+  // Someone else's chat: the owner leads, ahead of people with photos.
+  act(() => {
+    list = {
+      channels: [
+        {
+          id: "chat",
+          channelType: "solo",
+          creator: "owner",
+          members: ["alice", "me", "owner"],
+        },
+      ],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getAllByTitle(/^(Owner|Alice|Me)$/).map((item) => item.title),
+  ).toEqual(["Owner", "Alice", "Me"]);
+});

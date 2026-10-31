@@ -397,7 +397,7 @@ against `/v1/session`; failed reads and unrecognized refusals do not authorize
 replacement. Local expiry, cancellation, and sign-out fence stale work.
 
 FI records use the OS secure-store service
-`dev.local.buzz.foundation.federated-session` (with `.debug` for Rust debug
+`xyz.block.buzz.desktop.federated-session` (with `.debug` for Rust debug
 builds), keyed by profile and deployment fingerprint. Account indices and
 revision-specific refusal markers contain no credential and live outside wiped
 Buzz data. Failed removal of a known record leaves refusal durable before any
@@ -462,6 +462,34 @@ once and ends the session only if the adapter refuses it there. Builderlab's
 Settings card has no sign-out of its own in an FI build: it links to Identity →
 Organization sign-in, which ends the shared session. Builderlab
 Apps' agent tools still need the legacy login and are absent in FI builds.
+
+### Sign in at launch
+
+A build whose descriptor sets `"signIn": "at-launch"` treats organization
+sign-in as part of opening the app. After key setup, the launch mark stays up
+while the saved session is checked. A restored session opens the app directly.
+Otherwise a full-window screen titled "Signing you in to *organization*" opens
+the browser sign-in, and the app opens when it finishes. Cancel or a failed
+sign-in leaves **Sign in with *organization*** and **Not now**; neither reopens
+the browser by itself. Not now opens the app, where protected communities offer
+their usual sign-in recovery.
+
+When the session ends during a run (expiry or the adapter refusing it), the same
+screen covers the app, above any dialog or menu it had open, and starts sign-in
+again. The app stays mounted, covered and inert, so drafts, scroll and
+navigation survive, and focus returns to where it was. An explicit sign-out
+shows the screen without opening the browser. A saved session that cannot be
+checked (network or secure storage) offers Try again, and the screen stays up
+while it checks.
+
+Before the session expires, a persistent warning names when it ends and offers
+**Sign in again**. It appears 72 hours ahead, or halfway through a shorter
+session. Signing in again keeps the current session working until the new one
+is exchanged; Cancel or a failure leaves it in place, and a different account
+retires derived agent grants as any account change does. At expiry, native ends
+the session itself rather than waiting for the next relay assertion or 401, and
+the screen above takes over.
+On-demand builds are unchanged.
 
 The Node development host retains its supported broker flow.
 

@@ -14,6 +14,7 @@ use std::{
 };
 
 pub mod imports;
+pub mod managed;
 mod migrate_agent_flag;
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -576,6 +577,8 @@ pub struct GitSource {
     pub repository: String,
     pub reference: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -750,6 +753,8 @@ pub enum InstallationResult {
         catalog: Catalog,
         #[serde(rename = "externalPluginsPaused")]
         external_plugins_paused: bool,
+        #[serde(skip_serializing_if = "managed::Managed::is_absent")]
+        managed: managed::Managed,
     },
     Recovery {
         reason: String,
@@ -785,6 +790,7 @@ fn default_home() -> Result<PathBuf> {
 }
 #[derive(Clone)]
 pub struct Manager {
+    home: PathBuf,
     root: PathBuf,
     profile: String,
     safe_mode: bool,
@@ -806,6 +812,7 @@ impl Manager {
         }
         Ok(Self {
             root: home.join("profiles").join(profile),
+            home,
             profile: profile.into(),
             safe_mode,
         })
@@ -816,6 +823,13 @@ impl Manager {
             std::env::var_os("BUZZODZ_HOME").map(PathBuf::from).or(home),
             &std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into()),
             std::env::var("BUZZODZ_SAFE_MODE").as_deref() == Ok("1"),
+        )
+    }
+    /// The managed plugin policy and how each recommendation stands in `catalog`.
+    pub fn managed(&self, catalog: &Catalog) -> managed::Managed {
+        managed::status(
+            managed::path(&self.home, std::env::var_os(managed::PATH_ENV)),
+            catalog,
         )
     }
     fn lock(&self) -> Result<File> {

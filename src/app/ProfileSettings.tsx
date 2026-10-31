@@ -299,7 +299,7 @@ export function ProfileSettings({
                   <AvatarEditor
                     size="compact"
                     value={profile.picture}
-                    name={profile.name}
+                    name={verifiedName?.name ?? profile.name}
                     community={community?.id}
                     {...(thumbnailMedia ? { thumbnailMedia } : {})}
                     disabled={saving || !previewReady}

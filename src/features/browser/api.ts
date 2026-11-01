@@ -19,6 +19,10 @@ export type BrowserViewProps = Readonly<{
    * and restarts (1-64 of a-z, 0-9, `-`, `_`, `.`), where the platform can hold
    * them apart from Buzz's own. Without it each open is a private session. */
   storage?: string;
+  /** Replaces the User-Agent this view's website sees (1-512 printable ASCII),
+   * for sites that refuse the embedded engine's default. Fixed for the view's
+   * lifetime; changing it opens a new session. */
+  userAgent?: string;
   /** Names the view's tab until the website has a title, and while a hidden
    * tab has not opened it yet. */
   label?: string | undefined;

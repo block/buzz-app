@@ -36,6 +36,7 @@ export class BrowserSessions {
     /** Adopts the guest parked under this key instead of opening `url`. */
     park?: string,
     builderlab?: BuilderlabViewerSession,
+    userAgent?: string,
   ): Promise<string | undefined> {
     return this.enqueue(async () => {
       if (!current() || builderlab?.signal.aborted) return undefined;
@@ -51,6 +52,7 @@ export class BrowserSessions {
         bounds,
         storage,
         builderlab,
+        userAgent,
       );
       this.live.push(sessionId);
       if (current() && !builderlab?.signal.aborted) {

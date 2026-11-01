@@ -9,11 +9,11 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { StrictMode } from "react";
+import { StrictMode, useLayoutEffect } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import { clearView, readView, viewRevision, writeView } from "../../shared/view-state";
 import { CanvasEditor } from "./CanvasEditor";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 
@@ -444,6 +444,42 @@ it("keeps a self-retired draft retired when editing precedes the loaded render's
   expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
   expect(canvas.read).toHaveBeenCalledOnce();
 });
+it.each([head, edited])(
+  "reconciles a draft cleared externally before mounting effects with head $content",
+  async (current) => {
+    writeView(scope, `canvas-draft-v1:${channelId}`, {
+      content: "Recovered",
+      base: head.id,
+    });
+    const canvas = editor();
+    canvas.read.mockResolvedValue(current);
+    function Mount() {
+      useLayoutEffect(() => {
+        // A peer clears the recovered draft after render, before passive effects.
+        clearView(scope, `canvas-draft-v1:${channelId}`);
+      }, []);
+      return (
+        <CanvasEditor
+          canvas={canvas}
+          profiles={profiles}
+          scope={scope}
+          channelId={channelId}
+        />
+      );
+    }
+    render(<Mount />);
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toHaveValue(
+        current.content,
+      ),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();
+    expect(viewRevision(scope, `canvas-draft-v1:${channelId}`)).toBeNull();
+    expect(canvas.read).toHaveBeenCalledTimes(2);
+  },
+);
+
 async function twoEditors(third?: ReturnType<typeof editor>) {
   const saved = edited;
   const first = editor();

@@ -100,14 +100,20 @@ function account(responses = {}) {
   };
 }
 async function signIn(h) {
-  const pending = h.builderlab.login(new AbortController().signal);
+  // Observe rejection before the callback's network round trip; still propagate it to the caller.
+  const pending = h.builderlab.login(new AbortController().signal).then(
+    (auth) => ({ auth }),
+    (error) => ({ error }),
+  );
   while (!h.opened()) await new Promise((resolve) => setTimeout(resolve, 5));
   const returnTo = h.opened().searchParams.get("redirect_uri");
   expect(new URL(returnTo).hostname).toBe("127.0.0.1");
   await globalThis.fetch(
     `${returnTo}?state=${h.opened().searchParams.get("state")}&code=one-time`,
   );
-  return pending;
+  const result = await pending;
+  if ("error" in result) throw result.error;
+  return result.auth;
 }
 
 it("completes browser sign-in through a loopback callback without exposing the credential", async () => {
@@ -611,3 +617,38 @@ it.each(["secret\ncredential", "secret credential"])(
     expect(h.builderlab.snapshot().auth).toBeNull();
   },
 );
+
+it("settles the sign-in identity binding before dispatching remote-agent operations", async () => {
+  const started = deferred();
+  const release = deferred();
+  let released = false;
+  const h = account({
+    "/v1/buzz/nostr-identities/challenge": async () => {
+      started.resolve();
+      await release.promise;
+      return Response.json({
+        ...challenge,
+        expires_at: "2099-01-01T00:00:00Z",
+      });
+    },
+    "/v3/beekeeper/list-agents": () => {
+      expect(released).toBe(true);
+      return Response.json({ status: 1, agents: [] });
+    },
+  });
+  await signIn(h);
+  await started.promise;
+  const request = h.builderlab.request(
+    {
+      revision: h.builderlab.snapshot().revision,
+      path: "/v3/beekeeper/list-agents",
+      method: "POST",
+      body: "{}",
+    },
+    new AbortController().signal,
+  );
+  released = true;
+  release.resolve();
+  await expect(request).resolves.toMatchObject({ status: 200 });
+  h.builderlab.signOut();
+});

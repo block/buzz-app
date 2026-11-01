@@ -230,3 +230,31 @@ it("returns accepted deployment IDs without checking readiness under a replaceme
   expect(h.session.snapshot().account?.subject).toBe("B");
   h.session.dispose();
 });
+
+it.each([false, true])(
+  "reports a login failure only if its attempt is still current (canceled: %s)",
+  async (canceled) => {
+    const h = setup();
+    h.events.emit("one", null);
+    const response = deferred<Response>();
+    h.fetch.mockImplementationOnce(() => response.promise);
+    const pending = h.session.signIn();
+    expect(h.session.snapshot().status).toBe("pending");
+    if (canceled) {
+      h.session.cancel();
+      h.events.emit("two", null);
+    }
+    response.resolve(
+      Response.json(
+        { error: "Builderlab authentication canceled" },
+        { status: 502 },
+      ),
+    );
+    await pending;
+    expect(h.session.snapshot()).toEqual({
+      status: "signed-out",
+      ...(canceled ? {} : { error: "Builderlab authentication canceled" }),
+    });
+    h.session.dispose();
+  },
+);

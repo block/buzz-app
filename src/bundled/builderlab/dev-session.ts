@@ -1,0 +1,257 @@
+// Public projection of the development server's login. No credential is held here.
+import type {
+  Host,
+  HostRequest,
+  HostUpload,
+} from "../../features/host/service";
+import type { BuilderlabViewerSession } from "../../features/browser/api";
+import {
+  accountStorage,
+  nativeBuilderlab,
+  type Account,
+  type BuilderlabSession,
+  type Credential,
+  type LoginSnapshot,
+} from "./session";
+import { broker, createApi } from "./communities/api";
+
+export const brokerBuilderlab = () =>
+  import.meta.env.DEV &&
+  import.meta.env.VITE_BUZZ_LIVE === "1" &&
+  !nativeBuilderlab();
+
+type State = {
+  revision: string;
+  pending: boolean;
+  auth: null | {
+    subject: string;
+    email?: string;
+    expiresAt: string;
+    capabilities?: {
+      can_use_remote_agents?: boolean;
+      can_use_builderlab_decisions?: boolean;
+    };
+  };
+};
+
+export function createDevSession() {
+  let state: LoginSnapshot = { status: "pending", checking: true };
+  let owner: (Credential & { revision: string }) | undefined;
+  let viewer: BuilderlabViewerSession | undefined;
+  let lifetime = new AbortController();
+  let disposed = false;
+  let version = 0;
+  let revision: string | undefined;
+  const listeners = new Set<() => void>();
+  const publish = (next: LoginSnapshot) => {
+    state = Object.freeze(next);
+    for (const listener of listeners) listener();
+  };
+  const clear = () => {
+    lifetime.abort();
+    lifetime = new AbortController();
+    owner = undefined;
+    viewer = undefined;
+  };
+  const check = (expected: Credential) => {
+    if (disposed || expected !== owner)
+      throw new DOMException("Builderlab session changed.", "AbortError");
+  };
+  async function project(next: State) {
+    if (disposed) return;
+    revision = next.revision;
+    if (owner?.revision === next.revision && next.auth && !next.pending) return;
+    const at = ++version;
+    clear();
+    if (!next.auth || next.pending) {
+      publish({ status: next.pending ? "pending" : "signed-out" });
+      return;
+    }
+    publish({ status: "pending", checking: true });
+    const storage = await accountStorage(next.auth.subject);
+    if (disposed || version !== at) return;
+    const account: Account = Object.freeze({
+      subject: next.auth.subject,
+      email: next.auth.email ?? "",
+      canUseRemoteAgents:
+        next.auth.capabilities?.can_use_remote_agents === true,
+      canUseBuilderlabDecisions:
+        next.auth.capabilities?.can_use_builderlab_decisions === true,
+    });
+    owner = Object.freeze({ account, revision: next.revision });
+    viewer = {
+      broker: { origin: window.location.origin, revision: next.revision },
+      storage,
+      signal: lifetime.signal,
+    };
+    publish({ status: "signed-in", account });
+  }
+  const events = new EventSource("/api/builderlab/events");
+  events.onmessage = (event) => {
+    void project(JSON.parse(event.data) as State).catch(() => {
+      clear();
+      publish({
+        status: "signed-out",
+        error: "Could not read the development server's Builderlab sign-in.",
+      });
+    });
+  };
+  events.onerror = () => {
+    if (disposed) return;
+    ++version;
+    clear();
+    publish({ status: "pending", checking: true });
+  };
+  async function send(action: string, body: object = {}, signal?: AbortSignal) {
+    const response = await fetch(`/api/builderlab/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
+    });
+    const result = await response.json();
+    if (!response.ok)
+      throw new Error(
+        typeof result.error === "string"
+          ? result.error
+          : "Builderlab request failed.",
+      );
+    return result;
+  }
+  const session: BuilderlabSession = {
+    snapshot: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    credential() {
+      if (!owner || disposed) throw new Error("Sign in to Builderlab first.");
+      return owner;
+    },
+    async request(expected, input) {
+      check(expected);
+      const response = await send("request", {
+        ...input,
+        revision: owner?.revision,
+      });
+      check(expected);
+      return response;
+    },
+    // The server processes 401s and expiry for every consumer together.
+    expired() {},
+    viewerSession() {
+      if (!viewer || disposed) throw new Error("Sign in to Builderlab first.");
+      return viewer;
+    },
+    async ensureSignedIn(signal) {
+      signal.throwIfAborted();
+      if (disposed) throw new Error("Builderlab session is closed.");
+      if (owner) return;
+      await new Promise<void>((resolve, reject) => {
+        const done = () => {
+          if (!disposed && state.status === "pending") return;
+          cleanup();
+          if (owner) resolve();
+          else reject(new Error(state.error ?? "Sign-in canceled."));
+        };
+        const abort = () => {
+          cleanup();
+          reject(signal.reason);
+        };
+        const cleanup = () => {
+          listeners.delete(done);
+          signal.removeEventListener("abort", abort);
+        };
+        listeners.add(done);
+        signal.addEventListener("abort", abort, { once: true });
+        if (state.status !== "pending") void session.signIn();
+      });
+    },
+    async signIn() {
+      if (disposed || state.status === "pending") return;
+      publish({ status: "pending" });
+      try {
+        await send("login");
+      } catch (error) {
+        if (!disposed && !owner)
+          publish({
+            status: "signed-out",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Sign-in failed. Try again.",
+          });
+      }
+    },
+    cancel() {
+      session.signOut();
+    },
+    // Closing Settings or reloading the app does not own the server's login.
+    abandon() {},
+    signOut() {
+      if (disposed) return;
+      const at = ++version;
+      clear();
+      publish({ status: "pending", checking: true });
+      void send("sign-out", { revision }).catch(() => {
+        if (!disposed && version === at)
+          publish({
+            status: "signed-out",
+            error:
+              "Could not sign out on the development server. Reconnect and try again.",
+          });
+      });
+    },
+    dispose() {
+      disposed = true;
+      ++version;
+      events.close();
+      clear();
+      publish({ status: "signed-out" });
+      listeners.clear();
+    },
+  };
+  const transport = async (input: HostRequest | HostUpload) => {
+    const expected = session.credential();
+    const url = new URL(input.url);
+    const response = await send("request", {
+      revision: owner?.revision,
+      target: "apps",
+      path: `${url.pathname}${url.search}`,
+      method: "file" in input ? "POST" : input.method,
+      ...("file" in input ? { file: input.file.path } : { body: input.body }),
+    });
+    // Accepted uploads retain their IDs; the next request checks its original account.
+    if (!("file" in input)) check(expected);
+    return response;
+  };
+  const communities = createApi({
+    ...broker,
+    async auth() {
+      const expected = session.credential();
+      const value = await broker.auth();
+      check(expected);
+      return value;
+    },
+    async send(action, body, signal) {
+      const expected = session.credential();
+      const response = await broker.send(
+        action,
+        { ...body, revision: owner?.revision } as Record<string, string>,
+        signal,
+      );
+      check(expected);
+      return response;
+    },
+  });
+  return {
+    session,
+    communities,
+    apps: { request: transport, upload: transport } satisfies Pick<
+      Host,
+      "request" | "upload"
+    >,
+  };
+}

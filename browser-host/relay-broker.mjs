@@ -959,9 +959,21 @@ export function relayBrokerPlugin({
         if (res.destroyed) release();
         try {
           if (url.pathname.startsWith("/api/builderlab/")) {
-            // Hosted communities plugin only; the session credential never leaves Node.
+            // One development sign-in for hosting, agents and apps; its credential stays in Node.
             const action = url.pathname.slice("/api/builderlab/".length);
             try {
+              if (action === "events" && req.method === "GET") {
+                res.writeHead(200, {
+                  "Content-Type": "text/event-stream",
+                  "Cache-Control": "no-store",
+                });
+                const send = (state) =>
+                  res.write(`data: ${JSON.stringify(state)}\n\n`);
+                const stop = builderlab.subscribe(send);
+                res.once("close", stop);
+                send(builderlab.snapshot());
+                return;
+              }
               if (action === "auth" && req.method === "GET")
                 return json(res, 200, { auth: await builderlab.auth() });
               if (req.method !== "POST")
@@ -970,9 +982,40 @@ export function relayBrokerPlugin({
               req.setEncoding("utf8");
               for await (const part of req) {
                 raw += part;
-                if (raw.length > 4096)
+                if (raw.length > (action === "request" ? 64 * 1024 : 4096))
                   return json(res, 413, { error: "Request too large" });
               }
+              const input = raw ? JSON.parse(raw) : {};
+              if (action === "viewer") {
+                const reply = await builderlab.request(
+                  {
+                    revision: req.headers["x-buzz-builderlab-revision"],
+                    path: "/v1/auth/hosted-site/native-session",
+                    method: "POST",
+                    body: JSON.stringify(input),
+                  },
+                  cancel.signal,
+                );
+                res
+                  .writeHead(reply.status, {
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-store",
+                  })
+                  .end(reply.body);
+                return;
+              }
+              if (action === "request")
+                return json(
+                  res,
+                  200,
+                  await builderlab.request(input, cancel.signal),
+                );
+              // Scoped callers cannot submit an operation for a replacement account.
+              if (
+                input.revision !== undefined &&
+                input.revision !== builderlab.snapshot().revision
+              )
+                return json(res, 409, { error: "Builderlab session changed" });
               if (action === "login")
                 return json(res, 200, {
                   auth: await builderlab.login(cancel.signal),
@@ -983,10 +1026,7 @@ export function relayBrokerPlugin({
               }
               if (action === "bind")
                 return json(res, 200, await builderlab.bind());
-              const result = await builderlab.call(
-                action,
-                raw ? JSON.parse(raw) : {},
-              );
+              const result = await builderlab.call(action, input);
               return result
                 ? json(res, builderlabResponseStatus(result), result)
                 : json(res, 404, { error: "Unknown Builderlab route" });

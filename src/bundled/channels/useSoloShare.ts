@@ -95,14 +95,17 @@ export function useSoloShare({
   const chosen = list.channels.find(
     (item) => item.id === destination && item.id !== channelId,
   );
-  const destinationMembers =
+  const readyMembers =
     chosen &&
     destinationRoster?.id === chosen.id &&
     destinationRoster.status === "ready" &&
-    !chosen.cached &&
-    chosen.members
-      ? [...new Set(chosen.members)]
+    !chosen.cached
+      ? chosen.members
       : undefined;
+  const destinationMembers = useMemo(
+    () => (readyMembers ? [...new Set(readyMembers)] : undefined),
+    [readyMembers],
+  );
   useEffect(() => {
     void rosterReload;
     if (!enabled) return;

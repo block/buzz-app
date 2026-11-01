@@ -1,5 +1,6 @@
 import { inspectProfile } from "../communities/api";
 import { communityDestination } from "../communities/destination";
+import { profileDefault } from "../communities/profile-default";
 import type { Communities } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 
@@ -57,10 +58,17 @@ export async function restoreKnown(
     const client = communities.snapshot();
     if (client.status !== "ready")
       return { ...destination, kind: "unavailable" } as const;
+    // The same portability rule as the join: this relay's /media/ avatar
+    // never seeds the device default other communities are offered.
+    const profile = profileDefault(
+      read.exists ? read.profile : client.profile,
+      client.profile,
+      destination.id,
+    );
     try {
       communities.joined(
         { id: destination.id, name: destination.host },
-        read.exists ? read.profile : client.profile,
+        profile,
       );
     } catch {
       return { ...destination, kind: "unavailable" } as const;

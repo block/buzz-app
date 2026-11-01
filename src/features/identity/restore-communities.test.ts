@@ -128,6 +128,33 @@ it("joins only the destinations that admit the key, and records refusals and fai
   ]);
 });
 
+it("keeps the relay's own /media/ avatar out of the device default it seeds, as the join does", async () => {
+  const hosted: Read = {
+    existing: { name: "Ada", picture: "https://ada.example/media/abc.png" },
+    profile: {
+      name: "Ada",
+      picture: "https://ada.example/media/abc.png",
+      about: "",
+    },
+    exists: true,
+  };
+  vi.mocked(inspectProfile).mockResolvedValue(hosted);
+  const communities = service();
+  const outcomes = await restoreKnown(
+    ["wss://ada.example"],
+    communities,
+    options,
+  );
+  expect(communities.joined.mock.calls).toEqual([
+    [
+      { id: "https://ada.example", name: "ada.example" },
+      { name: "Ada", picture: "", about: "" },
+    ],
+  ]);
+  // The outcome keeps the read as served: that community's own profile step shows it.
+  expect(outcomes).toMatchObject([{ kind: "admitted", read: hosted }]);
+});
+
 it("reads a destination listed twice once and skips one this build cannot open", async () => {
   vi.mocked(inspectProfile).mockResolvedValue(none);
   const outcomes = await restoreKnown(

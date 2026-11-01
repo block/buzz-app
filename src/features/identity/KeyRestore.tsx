@@ -9,8 +9,9 @@ import { recoveryOff } from "./service";
 /**
  * Pause after Welcome back's Restore from backup: native recovery's browser
  * sign-in, then the linked key's backup to install. Where recovery is
- * unavailable or refused, which no retry changes, or no backup holds the
- * linked key, the page offers Enter your private key instead of Try again.
+ * unavailable or refused, which no retry changes, or every backup came back
+ * and none holds the linked key, the page offers Enter your private key
+ * instead of Try again; a backup that failed to come back keeps the retry.
  */
 export function KeyRestore({
   recovery,
@@ -79,7 +80,12 @@ export function KeyRestore({
           ) : state ? (
             <RestoreIdentity
               identity={{
-                beginRecovery: recovery.beginRecovery,
+                // The service keeps a live attempt that recovered something;
+                // a retry over one first cancels it, and only when that held.
+                beginRecovery: async () => {
+                  if (await recovery.cancelRecovery())
+                    await recovery.beginRecovery();
+                },
                 cancelRecovery: leave(onBack),
                 installRecovery: (handle) =>
                   recovery.installRecovery(handle).then(onInstalled),

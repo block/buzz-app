@@ -35,7 +35,10 @@ function Row(props: ComponentProps<typeof MessageActionBar>) {
   const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={rowRef} data-testid="message">
-      <span>Message author</span>
+      <div data-message-byline>
+        <span>Message author</span>
+      </div>
+      <span>Message accessory</span>
       <div data-message-action-anchor>
         <span>Message bubble</span>
       </div>
@@ -196,8 +199,52 @@ it("reveals actions only over message content or the toolbar, not the row's empt
     fireEvent.pointerOut(bar, { relatedTarget: row });
     expect(row.hasAttribute("data-actions-revealed")).toBe(false);
   }
-  fireEvent.pointerOver(screen.getByText("Message author"));
+  fireEvent.pointerOver(screen.getByText("Message accessory"));
   expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+});
+
+it("reveals actions across the byline only as wide as its text or the content beneath", () => {
+  pointerMedia();
+  render(
+    <StrictMode>
+      <Row copyText={() => "Hello"} />
+    </StrictMode>,
+  );
+  const row = screen.getByTestId("message");
+  fireEvent.pointerEnter(row);
+  const author = screen.getByText("Message author");
+  const byline = author.parentElement as HTMLElement;
+  const box =
+    (left: number, top: number, right: number, bottom: number) => () =>
+      new DOMRect(left, top, right - left, bottom - top);
+  vi.spyOn(byline, "getBoundingClientRect").mockImplementation(
+    box(0, 0, 300, 20),
+  );
+  vi.spyOn(author, "getBoundingClientRect").mockImplementation(
+    box(40, 0, 90, 20),
+  );
+  vi.spyOn(
+    screen.getByText("Message bubble").parentElement as HTMLElement,
+    "getBoundingClientRect",
+  ).mockImplementation(box(30, 24, 200, 60));
+  const at = (target: Element, clientX: number, clientY: number) => {
+    fireEvent.pointerMove(target, { clientX, clientY });
+    return row.hasAttribute("data-actions-revealed");
+  };
+  expect(at(byline, 35, 10)).toBe(true);
+  expect(at(byline, 150, 10)).toBe(true);
+  expect(at(byline, 200, 10)).toBe(true);
+  expect(at(byline, 260, 10)).toBe(false);
+  // The gap down to the content retains an active hover but never starts one.
+  expect(at(row, 150, 22)).toBe(false);
+  expect(at(byline, 150, 10)).toBe(true);
+  expect(at(row, 150, 22)).toBe(true);
+  expect(at(row, 260, 22)).toBe(false);
+  // Wider text than the content keeps its own width.
+  vi.spyOn(author, "getBoundingClientRect").mockImplementation(
+    box(40, 0, 240, 20),
+  );
+  expect(at(byline, 230, 10)).toBe(true);
 });
 
 it("keeps timestamp hover and keyboard focus separate from message actions", () => {

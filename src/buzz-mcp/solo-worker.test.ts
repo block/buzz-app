@@ -348,6 +348,38 @@ describe("solo_worker_connections", () => {
     expect(published).toHaveLength(before);
   });
 
+  it.each([
+    ["solo_worker_readiness", {}],
+    ["solo_worker_read", { solo: S }],
+    ["solo_worker_list", {}],
+  ] as const)(
+    "checks the channel again just before the first %s request",
+    async (name, args) => {
+      const harness = community();
+      const { call, sign, requests, client } = harness;
+      // Made public after discovery checked it, while it reads the grant.
+      const current = client.query;
+      let changed = false;
+      harness.client.query = async (filters) => {
+        const [filter] = filters as Record<string, unknown>[];
+        if (!changed && filter?.["#h"] && !filter["#e"]) {
+          changed = true;
+          sign(RELAY, {
+            kind: 39000,
+            content: "",
+            tags: [["d", K], ["public"]],
+          });
+        }
+        return current(filters);
+      };
+      await expect(call(name, args)).rejects.toThrow(
+        /no longer private.*not sent/,
+      );
+      expect(changed).toBe(true);
+      expect(requests()).toEqual([]);
+    },
+  );
+
   it("reads a few candidate channels at a time", async () => {
     const harness = community();
     const { call, sign, client } = harness;
@@ -530,6 +562,28 @@ describe("solo_worker_connections", () => {
     expect(await call("solo_worker_readiness")).toMatchObject({
       phase: "ready",
     });
+  });
+
+  it("says only as far as it could find that its own owner has not authorized it", async () => {
+    const { call, sign } = community(ready, {
+      recorded: getPublicKey(STRANGER),
+    });
+    for (let index = 0; index < 500; index++)
+      sign(
+        RELAY,
+        {
+          kind: 39002,
+          content: "",
+          tags: [
+            ["d", `other-${index}`],
+            ["p", C],
+          ],
+        },
+        START - 1,
+      );
+    await expect(call("solo_worker_readiness")).rejects.toThrow(
+      /Your own owner has not authorized you, as far as could be found/,
+    );
   });
 
   it("reads the acknowledgement from the owner's newest events alone", async () => {

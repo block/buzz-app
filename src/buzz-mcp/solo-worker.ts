@@ -207,6 +207,9 @@ export async function callSoloWorkerTool(
     !route.workers.includes(request.worker)
   )
     throw new Error("The owner has not allowed you to run that worker.");
+  // Discovery checked the channel before reading the grant; check it again
+  // just before the first request, which names the worker and the route.
+  await requirePrivate(client, clock, route);
   if (!MUTATIONS.includes(action))
     return JSON.stringify(
       await exchange(
@@ -612,7 +615,7 @@ function pick(
     throw new Error(
       owner === undefined &&
         found.connections.some((connection) => connection.state === "active")
-        ? "Your own owner has not authorized you. To run another person's workers, give owner."
+        ? `Your own owner has not authorized you${found.complete ? "" : ", as far as could be found"}. To run another person's workers, give owner.`
         : `No owner has authorized you to run their workers${owner === undefined ? "" : " for that owner"}${found.complete ? "" : ", as far as could be found"}. Only the owner can, in Buzz.`,
     );
   if (wanted === undefined)

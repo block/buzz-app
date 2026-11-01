@@ -1791,7 +1791,10 @@ export class AgentRunners {
         unreserve();
         if (trigger.type === "watch" || trigger.type === "source") {
           const [result] = results;
-          if (result)
+          // Kept, as drain keeps its queues, for a wake to classify again.
+          if (result === null && trigger.type === "watch")
+            runner.later.push(job);
+          else if (result)
             this.enqueue(runner, {
               ...job,
               trigger: { ...trigger, classifier: result },
@@ -1825,8 +1828,8 @@ export class AgentRunners {
     })();
     return true;
   }
-  /** The classifier's outcome for one event, or undefined when it does not
-   * pass or should no longer be acted on. */
+  /** The classifier's outcome for one event, undefined when it does not pass
+   * or should no longer be acted on, or null when custody is uncertain. */
   private async classify(
     runner: Runner,
     agent: Agent,
@@ -1835,7 +1838,7 @@ export class AgentRunners {
       | { event: RelayEvent }
       | { source: { provider: string; text: string } },
     live: () => boolean,
-  ): Promise<ClassifierOutcome | undefined> {
+  ): Promise<ClassifierOutcome | undefined | null> {
     const decisions = this.host.decisions();
     if (!decisions) return notRun();
     // A provider still checking its setup, such as reading a saved key, is
@@ -1845,7 +1848,11 @@ export class AgentRunners {
     const status = decisions.status();
     if (status === "needs-setup" || status === "unavailable") return notRun();
     // Only the copy of the app that holds the agent sends its events out.
-    if (!(await this.claim(runner)) || !live()) return undefined;
+    const held = await this.claim(runner);
+    if (!live()) return undefined;
+    // Uncertain custody neither classifies nor discards: it is asked again.
+    if (held === undefined) return null;
+    if (!held) return undefined;
     const facts: ClassifierInput =
       "event" in input
         ? {

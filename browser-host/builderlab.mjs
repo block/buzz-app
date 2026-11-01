@@ -541,7 +541,8 @@ export function createBuilderlab({
         redirect: "error",
         signal: AbortSignal.any([
           signal,
-          session.signal,
+          // A dispatched upload keeps its receipt after sign-out/account switch.
+          ...(input.file ? [] : [session.signal]),
           AbortSignal.timeout(
             input.file || path.endsWith("/initialize") ? 180000 : 60000,
           ),

@@ -1,4 +1,7 @@
 import { expect, it, vi } from "vitest";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { controlPlane } from "../src/bundled/builderlab/apps/environment";
 import { createAgentClient } from "../src/bundled/builderlab/agents/client";
@@ -778,3 +781,76 @@ it("announces a new sign-in atomically as pending, without canceling observers",
   stop();
   h.builderlab.signOut();
 });
+
+it.each(["sign-out", "account-switch", "disconnect"])(
+  "preserves a dispatched Apps upload across %s while retaining disconnect cancellation",
+  async (mode) => {
+    const directory = await mkdtemp(
+      join(await realpath(homedir()), ".buzz-upload-test-"),
+    );
+    const file = join(directory, "artifact.tar.gz");
+    await writeFile(file, "fixture archive");
+    const accepted = deferred();
+    const release = deferred();
+    const receipt = { version_id: "version-A", deployment_id: "deployment-A" };
+    const h = account({
+      "/v1/agent/apps/demo/deploy": (init) => {
+        accepted.resolve(init);
+        return {
+          status: 201,
+          async text() {
+            await release.promise;
+            init.signal.throwIfAborted();
+            return JSON.stringify(receipt);
+          },
+        };
+      },
+    });
+    const caller = new AbortController();
+    try {
+      await signIn(h);
+      const pending = h.builderlab
+        .request(
+          {
+            revision: h.builderlab.snapshot().revision,
+            target: "apps",
+            path: "/v1/agent/apps/demo/deploy",
+            method: "POST",
+            file,
+          },
+          caller.signal,
+        )
+        .then(
+          (result) => ({ result }),
+          (error) => ({ error }),
+        );
+      const upstream = await accepted.promise;
+      expect(upstream.headers.Authorization).toBe("BBIdentity secret");
+      if (mode === "disconnect") caller.abort();
+      else {
+        h.builderlab.signOut();
+        if (mode === "account-switch") {
+          const before = h.opened();
+          const login = h.builderlab.login(new AbortController().signal);
+          await vi.waitFor(() => expect(h.opened()).not.toBe(before));
+          await globalThis.fetch(
+            `${h.opened().searchParams.get("redirect_uri")}?state=${h.opened().searchParams.get("state")}&code=replacement`,
+          );
+          await login;
+        }
+      }
+      expect(upstream.signal.aborted).toBe(mode === "disconnect");
+      release.resolve();
+      const outcome = await pending;
+      if (mode === "disconnect") expect(outcome.error?.name).toBe("AbortError");
+      else {
+        expect(outcome.result?.status).toBe(201);
+        expect(JSON.parse(outcome.result.body)).toEqual(receipt);
+      }
+    } finally {
+      release.resolve();
+      h.builderlab.signOut();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

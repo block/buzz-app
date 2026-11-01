@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createDevSession, brokerBuilderlab } from "./dev-session";
 import { createAgentClient } from "./agents/client";
 import { createAppsClient } from "./apps/client";
+import { applyApps } from "./apps";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { deferred } from "./test-helpers";
 
 class Events {
@@ -165,5 +167,66 @@ it("cancels local viewers on sign-out and reconnects to the authoritative state 
   );
   h.events.emit("two", null);
   expect(h.session.snapshot()).toEqual({ status: "signed-out" });
+  h.session.dispose();
+});
+
+it("returns accepted deployment IDs without checking readiness under a replacement dev account", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://app.builderlabstaging.xyz");
+  const h = setup();
+  const tools = new Map<string, AddedTool>();
+  const ctx = {
+    panels: { register() {} },
+    browser: { available: true, View: () => null },
+    host: {},
+    agents: { addTool: (tool: AddedTool) => tools.set(tool.name, tool) },
+  };
+  applyApps(ctx as never, h.session, true, undefined, h.apps);
+  h.events.emit("one", "A");
+  await signedIn(h.session);
+  const accepted = deferred<void>();
+  const receipt = deferred<Response>();
+  h.fetch.mockResolvedValueOnce(
+    Response.json({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({ minimum_client_version: "0.2.0" }),
+    }),
+  );
+  h.fetch.mockImplementationOnce(() => {
+    accepted.resolve();
+    return receipt.promise;
+  });
+  const tool = tools.get("apps_deploy");
+  if (!tool) throw new Error("Missing apps_deploy tool");
+  const pending = tool.call(
+    {} as never,
+    {},
+    {
+      app_id: "demo",
+      artifact: "/Users/me/artifact.tar.gz",
+    },
+  );
+  try {
+    await accepted.promise;
+    h.events.emit("two", "B");
+    await signedIn(h.session);
+  } finally {
+    receipt.resolve(
+      Response.json({
+        status: 201,
+        headers: {},
+        body: JSON.stringify({ version_id: "v1", deployment_id: "d1" }),
+      }),
+    );
+  }
+  expect(JSON.parse(String(await pending))).toMatchObject({
+    app_id: "demo",
+    version_id: "v1",
+    deployment_id: "d1",
+    ready: false,
+    readiness_error: expect.stringMatching(/sign-in changed/),
+  });
+  expect(h.fetch).toHaveBeenCalledTimes(2);
+  expect(h.session.snapshot().account?.subject).toBe("B");
   h.session.dispose();
 });

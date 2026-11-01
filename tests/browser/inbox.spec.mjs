@@ -588,17 +588,22 @@ test.describe("Inbox Solo chat thread", () => {
     await openPage(page, "Inbox");
     const inbox = page.getByRole("region", { name: "Inbox", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+    // Someone else's chat gathers its tags in one row that opens at the
+    // newest, the reply it previews.
     const row = inbox
       .getByRole("list", { name: "Inbox conversations" })
       .getByRole("listitem")
-      .filter({ hasText: "Unread reply 1" });
+      .filter({ hasText: "Alpha" });
     await row.getByRole("button", { name: /^Open / }).click();
     // A session's thread reply opens its thread tab, not the whole session.
     const detail = inbox.getByRole("region", { name: /^Conversation in / });
     await expect(
       inbox.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab"),
     ).toHaveCount(1);
-    await expect(detail.getByText("Unread reply 1")).toBeVisible();
+    const preview = await row
+      .getByText(/^(Unread reply 1|Broadcast descendant)$/)
+      .textContent();
+    await expect(detail.getByText(preview, { exact: true })).toBeVisible();
     await expect(
       detail.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveCount(0);

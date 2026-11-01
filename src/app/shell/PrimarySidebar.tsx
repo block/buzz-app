@@ -8,6 +8,7 @@ import {
 import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
+import { ownSolo } from "../../features/solo/labels";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
@@ -374,9 +375,11 @@ function LiveSignIn({
   );
 }
 
-/** Unknown until the channel list can say; a channel outside it is Team's. */
+/** Unknown until the channel list can say; a channel outside it is Team's.
+ * Someone else's Solo chat has no inventory, so the viewer's place holds. */
 function conversationDestination(list: ChannelList | undefined, id: string) {
   const channel = list?.channels.find((item) => item.id === id);
   if (!channel && list?.status !== "ready") return undefined;
-  return channel?.channelType === "solo" ? "solo" : "team";
+  if (channel?.channelType !== "solo") return "team";
+  return ownSolo(channel) ? "solo" : undefined;
 }

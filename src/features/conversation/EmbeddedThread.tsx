@@ -41,7 +41,7 @@ export function EmbeddedThread({
         id: channelId,
         name: channelName,
         channelType: channel?.channelType,
-        creator: channel?.creator,
+        viewerRole: channel?.viewerRole,
       }}
     >
       <ConversationThread messageId={messageId} />

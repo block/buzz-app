@@ -53,11 +53,7 @@ export function useSoloOwner(
     session.profiles.snapshot,
   );
   const creator = channel?.creator;
-  if (
-    channel?.channelType !== "solo" ||
-    !creator ||
-    ownSolo(channel, session.viewer)
-  )
+  if (channel?.channelType !== "solo" || !creator || ownSolo(channel))
     return undefined;
   const profile = profiles.get(creator);
   if (!profile || profile.nameIsFallback) return undefined;

@@ -11098,7 +11098,14 @@ it("queues a tagged agent follow-up while agent choices no longer list it", asyn
   // A store snapshot keeps its identity until the store changes.
   const channelList = {
     status: "ready",
-    channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        viewerRole: "owner",
+      },
+    ],
   };
   h.retarget({
     ownSoloConversation: true,
@@ -11154,6 +11161,7 @@ it.each([
       id: "channel",
       channelType: "solo",
       creator: "viewer",
+      viewerRole: "owner",
       archived: false,
       readOnly: false,
     };
@@ -11372,7 +11380,14 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
   // Store snapshots keep their identity until the store changes.
   const presentList = {
     status: "ready",
-    channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        viewerRole: "owner",
+      },
+    ],
   };
   const absentList = { status: "ready", channels: [] };
   h.retarget({

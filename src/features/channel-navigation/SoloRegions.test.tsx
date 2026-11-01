@@ -188,7 +188,7 @@ it("paints the shared card tone and accepted drag target the source chooses", as
     component: ({ ui }) => (
       <>
         <Row ui={ui} channelId="owned" tone="inset" dropTarget />
-        <Row ui={ui} channelId="shared" tone="tonal" />
+        <Row ui={ui} channelId="second" tone="tonal" />
       </>
     ),
   });
@@ -205,12 +205,12 @@ it("paints the shared card tone and accepted drag target the source chooses", as
   ).toHaveAttribute("data-drop-target");
   expect(
     screen
-      .getByRole("button", { name: "Shared" })
+      .getByRole("button", { name: "Second" })
       .closest("[data-navigation-card]"),
   ).not.toHaveAttribute("data-drop-target");
   expect(
     screen
-      .getByRole("button", { name: "Shared" })
+      .getByRole("button", { name: "Second" })
       .closest("[data-navigation-card]"),
   ).toHaveAttribute("data-tone", "tonal");
 });
@@ -298,7 +298,7 @@ it("reads newer presentation state from another host before returning cached acc
   expect(
     stateB.set({
       v: 1,
-      pins: ["shared"],
+      pins: ["second"],
       views: { projects: { closed: true } },
     }),
   ).toBe(true);
@@ -595,9 +595,9 @@ it("replaces personal filing with a reveal chip and rejects a move selected just
 
 it.each([
   ["owned", false],
-  ["shared", false],
+  ["second", false],
   ["owned", true],
-  ["shared", true],
+  ["second", true],
 ] as const)(
   "moves focus from a removed %s Destination to its neighbor (recovery=%s)",
   async (id, recovery) => {
@@ -607,14 +607,14 @@ it.each([
         component: ({ ui }) => (
           <>
             <Row ui={ui} channelId="owned" />
-            <Row ui={ui} channelId="shared" />
+            <Row ui={ui} channelId="second" />
           </>
         ),
       });
     mount(h);
-    const remaining = id === "owned" ? "Shared" : "Owned";
+    const remaining = id === "owned" ? "Second" : "Owned";
     screen
-      .getByRole("button", { name: id === "owned" ? "Owned" : "Shared" })
+      .getByRole("button", { name: id === "owned" ? "Owned" : "Second" })
       .focus();
     await act(() =>
       h.roster(
@@ -658,7 +658,7 @@ it.each(["hidden", "inert"])(
           <div
             {...(attribute === "hidden" ? { hidden: true } : { inert: true })}
           >
-            <Row ui={ui} channelId="shared" />
+            <Row ui={ui} channelId="second" />
           </div>
         </>
       ),
@@ -691,7 +691,7 @@ async function narrowRenameFixture() {
     component: ({ ui }) => (
       <>
         <Row ui={ui} channelId="owned" />
-        <Row ui={ui} channelId="shared" />
+        <Row ui={ui} channelId="second" />
       </>
     ),
   });
@@ -720,7 +720,7 @@ it("keeps the narrow drawer available for double-click rename and cancels the de
 it("opens only the latest narrow mouse selection after the double-click boundary", async () => {
   const { open } = await narrowRenameFixture();
   fireEvent.click(screen.getByRole("button", { name: "Owned" }), { detail: 1 });
-  fireEvent.click(screen.getByRole("button", { name: "Shared" }), {
+  fireEvent.click(screen.getByRole("button", { name: "Second" }), {
     detail: 1,
   });
   await act(() => vi.advanceTimersByTimeAsync(499));
@@ -728,7 +728,7 @@ it("opens only the latest narrow mouse selection after the double-click boundary
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(open).toHaveBeenCalledTimes(1);
   expect(open).toHaveBeenCalledWith(
-    expect.objectContaining({ channelId: "shared" }),
+    expect.objectContaining({ channelId: "second" }),
   );
 });
 
@@ -738,26 +738,26 @@ it("shares delayed activation across source regions", async () => {
     await h.register({
       id: "other",
       title: "Other",
-      component: ({ ui }) => <Row ui={ui} channelId="shared" />,
+      component: ({ ui }) => <Row ui={ui} channelId="second" />,
     });
     h.roster(
       h.session.channels
         .list()
         .channels.map((channel) =>
-          channel.id === "shared"
+          channel.id === "second"
             ? { ...channel, labels: ["buzz.solo", "buzz.region:example:other"] }
             : channel,
         ),
     );
   });
   fireEvent.click(screen.getByRole("button", { name: "Owned" }), { detail: 1 });
-  fireEvent.click(screen.getByRole("button", { name: "Shared" }), {
+  fireEvent.click(screen.getByRole("button", { name: "Second" }), {
     detail: 1,
   });
   await act(() => vi.advanceTimersByTimeAsync(500));
   expect(open).toHaveBeenCalledTimes(1);
   expect(open).toHaveBeenCalledWith(
-    expect.objectContaining({ channelId: "shared" }),
+    expect.objectContaining({ channelId: "second" }),
   );
 });
 
@@ -980,14 +980,14 @@ it("keeps reconnect focus on a nested destination instead of its parent", async 
   await h.register({
     component: ({ ui }) => (
       <Row ui={ui} channelId="owned">
-        <Row ui={ui} channelId="shared" />
+        <Row ui={ui} channelId="second" />
       </Row>
     ),
   });
   mount(h);
-  screen.getByRole("button", { name: "Shared" }).focus();
+  screen.getByRole("button", { name: "Second" }).focus();
   await act(() => h.reconnect());
-  expect(screen.getByRole("button", { name: "Shared" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Second" })).toHaveFocus();
 });
 
 it("moves focus to the region summary after the last row disappears and to Solo after its region disappears", async () => {
@@ -1157,7 +1157,7 @@ it.each(["footer", "row"] as const)(
             : { before: disclosure })}
         >
           <div id="owned-workers">
-            {expanded ? <Row ui={ui} channelId="shared" /> : undefined}
+            {expanded ? <Row ui={ui} channelId="second" /> : undefined}
           </div>
         </Row>
       );
@@ -1174,7 +1174,7 @@ it.each(["footer", "row"] as const)(
     };
     await h.navigate(target);
     const view = mount(h, target);
-    const worker = screen.getByRole("button", { name: /^Shared/ });
+    const worker = screen.getByRole("button", { name: /^Second/ });
     worker.focus();
     const control = screen.getByRole("button", { name: /^Hide 1 worker/ });
     const primary = screen.getByRole("button", { name: "Owned" });
@@ -1186,13 +1186,13 @@ it.each(["footer", "row"] as const)(
     fireEvent.click(control);
     await waitFor(() => expect(control).toHaveFocus());
     expect(
-      screen.queryByRole("button", { name: /^Shared/ }),
+      screen.queryByRole("button", { name: /^Second/ }),
     ).not.toBeInTheDocument();
     expect(control).toHaveAttribute("aria-expanded", "false");
     expect(view.open).not.toHaveBeenCalled();
     await userEvent.setup().keyboard("{Enter}");
     expect(control).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: /^Shared/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Second/ })).toBeVisible();
     expect(view.open).not.toHaveBeenCalled();
     fireEvent.click(primary);
     expect(view.open).toHaveBeenCalledWith(
@@ -1329,18 +1329,18 @@ it.each(["priority", "activity"] as const)(
   async (indicator) => {
     const h = fixture();
     const unread = {
-      ...h.session.unread.snapshot({ kind: "channel", channelId: "shared" }),
+      ...h.session.unread.snapshot({ kind: "channel", channelId: "second" }),
       manual: "none" as const,
       observedCount: 1,
       attentionCount: 1,
     };
     const activity = {
-      ...h.session.unread.activity("shared"),
+      ...h.session.unread.activity("second"),
       items:
         indicator === "activity"
           ? [
               {
-                channelId: "shared",
+                channelId: "second",
                 rootId: "thread",
                 latestMessageId: "reply",
                 authorId: "agent",
@@ -1359,10 +1359,10 @@ it.each(["priority", "activity"] as const)(
       },
     });
     await h.register({
-      component: ({ ui }) => <Row ui={ui} channelId="shared" />,
+      component: ({ ui }) => <Row ui={ui} channelId="second" />,
     });
     mount(h);
-    const row = screen.getByRole("button", { name: /^Shared/ });
+    const row = screen.getByRole("button", { name: /^Second/ });
     expect(row).toContainElement(
       screen.getByRole("img", { name: /^1 observed unread messages/ }),
     );

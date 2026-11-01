@@ -174,9 +174,18 @@ async function setup(
     }
     if (filters.some((filter) => filter.kinds?.includes(39002)))
       await rosterRead;
-    return [roster(relay, id, members, clock), ...stableEvents].filter(
-      (event) => filters.some((filter) => matchesEvent(event, filter)),
-    );
+    // A Solo chat's roster names its owner: the viewer, or the person sharing.
+    const owner = type === "solo" ? viewer.pubkey : person.pubkey;
+    return [
+      roster(
+        relay,
+        id,
+        members,
+        clock,
+        type.includes("solo") ? { [owner]: "owner" } : {},
+      ),
+      ...stableEvents,
+    ].filter((event) => filters.some((filter) => matchesEvent(event, filter)));
   });
   const readAgentLibrary = vi.fn(
     async (): Promise<AgentLibrary> => ({

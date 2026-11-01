@@ -34,7 +34,6 @@ export async function nameSoloChat(
   const solo = () =>
     ownSolo(
       session.channels.list().channels.find((item) => item.id === channel),
-      owner,
     );
   if (!channel || !solo()) return skip("not the owner's Solo chat");
   const name = [...canonicalDetailsName(title.replace(/\s+/g, " "))]

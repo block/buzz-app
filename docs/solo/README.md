@@ -12,18 +12,18 @@ channel membership remains access authority.
   remote agents without the owner's encrypted state, reads the same answer.
   Discovery derives `channelType: "solo"` from it alone. A Solo channel gets
   the chat treatment for everyone: a timeline that loads history on scroll and
-  top-level agent replies. It reads, caches and threads like any channel. The creator (the relay-written `P`) also gets the
+  top-level agent replies. It reads, caches and threads like any channel. Its owner (the `owner` role in the relay-signed roster) also gets the
   owner's treatment: the default-agent composer, Share, Chat
   settings and Chat actions. Both come from the channel, in the shared
   conversation scope (`features/conversation/Conversation.tsx`), so every view
   of a chat (the main reader or a secondary tab) composes under the same rules.
   Other channels are threaded. Conversion to a channel clears the label.
-- **The label decides the sidebar.** Every Solo chat the viewer is a member of
-  lists under Solo: their own and any shared with them, whether added directly or
-  through a shared link's access grant. A shared chat starts in Chats and the
-  viewer may file it in one of their own workspaces; it never lists under Team.
-  Ordinary channels list under Team. Opening a chat without membership adds
-  nothing to the sidebar.
+- **The label decides the sidebar.** Only the viewer's own Solo chats list under
+  Solo. A chat shared with them, whether added directly or through a shared
+  link's access grant, never lists under Solo or Team and stays quiet: no unread
+  bolding, Inbox row or alert unless it tags them (see
+  [Sharing](sharing.md#what-shared-people-see)). Ordinary channels list under
+  Team. Opening a chat without membership adds nothing to the sidebar.
 - **Tags follow company.** Alone with agents, a send must tag one. Once another
   person is a member, people can talk without a tag; agents still answer only
   when tagged. The composer reads "Message your agents" alone and "Message this

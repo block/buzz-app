@@ -82,13 +82,16 @@
   align-items: center;
 }
 .badges {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   padding-inline-end: var(--space-1);
   gap: var(--space-2);
 }
 .badges[data-working] {
   padding-inline-end: 0;
+}
+.badges:empty {
+  display: none;
 }
 .nameContent {
   --user-status-emoji-size: var(--sidenav-emoji-size);

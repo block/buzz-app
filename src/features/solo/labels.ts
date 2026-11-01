@@ -12,20 +12,18 @@ export function soloLabels(labels: readonly string[] | undefined): boolean {
   return !!labels?.includes(SOLO_LABEL);
 }
 
-/** The viewer's own Solo chat: one they created. Anyone else in a shared
- * Solo chat sees its flat treatment and finds it with their own chats. */
+/** The viewer's own Solo chat: the relay-signed roster makes them its owner.
+ * Anyone else in a shared Solo chat sees its flat treatment and finds it where
+ * it was shared. An unknown role is not ownership. */
 export function ownSolo(
   channel:
     | Readonly<{
         channelType?: string | undefined;
-        creator?: string | undefined;
+        viewerRole?: ChannelSummary["viewerRole"];
       }>
     | undefined,
-  viewer: string | undefined,
 ): boolean {
-  return (
-    channel?.channelType === "solo" && !!viewer && channel.creator === viewer
-  );
+  return channel?.channelType === "solo" && channel.viewerRole === "owner";
 }
 
 export function soloChatLinkName(channel: { id: string; name: string }) {
@@ -33,14 +31,9 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
   return channel.name.trim() || channel.id.slice(0, 8);
 }
 
-/** The authorized Solo inventory; unknown metadata never implies Solo. */
-export function eligibleSolo(
-  channel: ChannelSummary,
-  viewer: string | undefined,
-) {
-  return (
-    !channel.archived &&
-    channel.channelType === "solo" &&
-    (!channel.readOnly || ownSolo(channel, viewer))
-  );
+/** The sidebar's Solo inventory: the viewer's own unarchived chats. A chat
+ * shared with the viewer is reachable from where it was shared, never listed;
+ * unknown metadata never implies Solo or ownership. */
+export function eligibleSolo(channel: ChannelSummary) {
+  return !channel.archived && ownSolo(channel);
 }

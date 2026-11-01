@@ -54,6 +54,9 @@ checks, not that an OS banner was displayed or read.
   [workflow mention classifier](unread.md#workflow-mentions) preserves explicit
   template mentions and other recipients; DM and relevant-reply policies still
   apply. This does not change notification settings or suppress all workflows.
+- In someone else's Solo chat only mentions alert; the unread engine decides this
+  ([someone else's Solo chat](unread.md#relevant-replies)), so replies and
+  ordinary messages there stay quiet everywhere.
 - Messages signed `audience=agents` (coordination between agents) never alert,
   even when they mention the viewer. The unread engine applies the same rule
   ([quiet agent messages](unread.md#relevant-replies)), so badges, Inbox, thread

@@ -1622,10 +1622,16 @@ function fixture(
         ...(options.memberAgents === 2 ? [profileAgent.pubkey] : []),
       ],
       10,
+      options.soloChannel ? { [viewer.pubkey]: "owner" } : {},
     ),
     metadata(relayKey, "room", "Design", 10, [
       ...(options.soloChannel
-        ? [["t", "stream"], ["private"], ["t", "buzz.solo"]]
+        ? [
+            ["t", "stream"],
+            ["private"],
+            ["t", "buzz.solo"],
+            ["P", viewer.pubkey],
+          ]
         : [
             ["t", "stream"],
             ...(options.archivedChannel ? [["archived", "true"]] : []),

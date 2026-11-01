@@ -104,12 +104,14 @@ function fixture({
   owners.push(owner);
   const scope = `https://test.example:${viewer.pubkey}`;
   const listeners = new Set<() => void>();
+  const creator = ownedBy ?? (placed ? viewer.pubkey : agent);
   const channel: ChannelSummary = {
     id,
     name: "Planning",
     channelType: type,
     private: true as const,
-    creator: ownedBy ?? (placed ? viewer.pubkey : agent),
+    creator,
+    viewerRole: creator === viewer.pubkey ? "owner" : "member",
     members: [viewer.pubkey, agent, ...people],
     ...(archived && { archived }),
   };

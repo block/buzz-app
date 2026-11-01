@@ -36,7 +36,8 @@ import {
 import { matchPerson } from "../../features/search/person-match";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
 import styles from "./ChannelMembersDialog.module.css";
-import { SoloOwnerAvatar, soloOwnerLabel } from "./ChatSharedMark";
+import { ChannelMembersTrigger } from "./ChannelMemberAvatars";
+import { soloOwnerLabel } from "./ChatSharedMark";
 import {
   authorizeMemberChange,
   type MemberChange,
@@ -81,7 +82,6 @@ import {
   CircleNotchIcon,
   Filter2Icon,
   InfoIcon,
-  UsersIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import {
@@ -414,7 +414,7 @@ export function ChannelMembersButton({
   channelId: string;
   label?: string;
   /** Someone else's Solo chat names its owner on the Access control. */
-  owner?: { name: string; picture?: string | undefined } | undefined;
+  owner?: { name: string } | undefined;
   agents?: Agents | undefined;
   communities?: CommunityReader | undefined;
   navigator?: Navigation | undefined;
@@ -429,21 +429,15 @@ export function ChannelMembersButton({
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>
-      <IconButton
+      <ChannelMembersTrigger
         ref={trigger}
-        size="sm"
+        session={session}
+        channelId={channelId}
         aria-label={owner ? `${label}, ${soloOwnerLabel(owner)}` : label}
         title={owner ? soloOwnerLabel(owner) : label}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
-        icon={
-          owner ? (
-            <SoloOwnerAvatar owner={owner} />
-          ) : (
-            <UsersIcon size="1rem" aria-hidden="true" />
-          )
-        }
       />
       {open && (
         <ChannelMembersDialog
@@ -691,7 +685,7 @@ export function ChannelMembersDialog({
   });
   // A Solo owner adds agents directly; people join through sharing.
   const canAddSoloAgents =
-    ownSolo(channel, session.viewer) &&
+    ownSolo(channel) &&
     canShareSoloChat(session, channel) &&
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);

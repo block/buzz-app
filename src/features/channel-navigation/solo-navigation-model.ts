@@ -28,7 +28,6 @@ export type SoloPlacement = Readonly<{
 /** One projection of the authorized roster, also consumed by every filing guard. */
 export function projectSoloRegions(
   channels: readonly ChannelSummary[],
-  viewer: string,
   sources: readonly Readonly<{
     source: RegisteredSoloSource;
     snapshot?: SoloRegionSnapshot;
@@ -40,7 +39,7 @@ export function projectSoloRegions(
   for (const source of sources)
     groups.set(soloRegionLabelOf(source.source), []);
   for (const channel of channels) {
-    if (!eligibleSolo(channel, viewer)) continue;
+    if (!eligibleSolo(channel)) continue;
     const label = effectiveRegionLabel(channel.labels);
     if (!label) continue;
     if (!groups.has(label)) groups.set(label, []);

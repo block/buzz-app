@@ -940,3 +940,40 @@ it("cancels a pending thread notification when metadata marks its room as a Hudd
   await flush();
   expect(h.show).not.toHaveBeenCalled();
 });
+
+it("someone else's Solo chat alerts only for a tag", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+  const h = await setup();
+  const now = 1_780_000_000;
+  h.emit([
+    metadata(h.relay, "room", "Peer's chat", now - 10, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+      ["P", h.peer.pubkey],
+    ]),
+  ]);
+  const root = message(h.viewer, "room", "My question", now - 5);
+  h.emit([root]);
+  h.emit(
+    [
+      message(h.peer, "room", "Progress update", now),
+      message(h.peer, "room", "Answering you", now, [
+        ["e", root.id, "", "reply"],
+      ]),
+    ],
+    "live",
+  );
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+  h.emit(
+    [
+      message(h.peer, "room", "@you is this right?", now, [
+        ["p", h.viewer.pubkey],
+      ]),
+    ],
+    "live",
+  );
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].body).toBe("@you is this right?");
+});

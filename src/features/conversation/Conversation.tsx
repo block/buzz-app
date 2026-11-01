@@ -110,7 +110,7 @@ type ChannelProps = Pick<Conversation, "session" | "scope" | "extensions"> & {
         name: string;
         channelType?: ChannelSummary["channelType"] | undefined;
         /** Decides whether this is the viewer's own Solo chat; see ownSolo. */
-        creator?: ChannelSummary["creator"] | undefined;
+        viewerRole?: ChannelSummary["viewerRole"] | undefined;
       }
     | undefined;
   /** Presentation name, when the page labels the channel differently. */
@@ -203,7 +203,7 @@ function Provider({
 }) {
   const id = channel?.id;
   const soloConversation = channel?.channelType === "solo";
-  const ownSoloConversation = ownSolo(channel, session.viewer);
+  const ownSoloConversation = ownSolo(channel);
   const value = useMemo(
     () =>
       id

@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { RelaySession } from "../relay/session";
 import { useChannelTabState } from "../../bundled/channels/useChannelTabState";
+import { afterEach, expect, it, vi } from "vitest";
 import { recordReaction } from "../messages/quick-reactions";
 import { readView, writeView } from "../../shared/view-state";
 import { purgeCommunityDeviceState } from "./device-state";
 import { localCommunityNameKey } from "./names";
 import { repositoriesKey } from "./repositories";
+import { tabWorkspaceStorageKey } from "../messages/tab-workspace-lifetime";
 
 // The relay's stores record what they are asked to forget, in order.
 const relay = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ const follows = (scope: string) => `buzz.thread-follows.v1:${scope}`;
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  sessionStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   relay.calls.splice(0);
@@ -61,6 +63,10 @@ afterEach(() => {
 
 it("forgets every store partitioned to the left community and viewer, and nothing else", async () => {
   const scope = `${origin}:${viewer}`;
+  const workspaceKey = tabWorkspaceStorageKey;
+  sessionStorage.setItem(workspaceKey(scope), "left");
+  sessionStorage.setItem(workspaceKey(`${kept}:${viewer}`), "kept");
+  sessionStorage.setItem(workspaceKey(`${origin}:${other}`), "other viewer");
   localStorage.setItem(repositoriesKey(origin, viewer), "/code");
   localStorage.setItem(repositoriesKey(origin, other), "/other-account");
   localStorage.setItem(localCommunityNameKey(origin, viewer), "Local nickname");
@@ -78,6 +84,13 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   localStorage.setItem(follows(scope), "[]");
   localStorage.setItem(follows(`${kept}:${viewer}`), "[]");
   expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([]);
+  expect(sessionStorage.getItem(workspaceKey(scope))).toBeNull();
+  expect(sessionStorage.getItem(workspaceKey(`${kept}:${viewer}`))).toBe(
+    "kept",
+  );
+  expect(sessionStorage.getItem(workspaceKey(`${origin}:${other}`))).toBe(
+    "other viewer",
+  );
   expect(
     localStorage.getItem(localCommunityNameKey(origin, viewer)),
   ).toBeNull();
@@ -179,6 +192,21 @@ it("reports each failed relay store by name, closes heads and still clears the o
     [`Couldn't clear read state for ${origin} on this device`, reads],
     [`Couldn't clear artifacts for ${origin} on this device`, artifacts],
   ]);
+});
+
+it("leave purges live workspace ownership before late writes and same-window rejoin", async () => {
+  const makeSession = () =>
+    ({ scope: `${origin}:${viewer}`, viewer }) as RelaySession;
+  const left = makeSession();
+  const live = renderHook(() => useChannelTabState(left, "alpha"));
+  act(() => live.result.current.openThreadTab("alpha", "root", "root"));
+  const lateSelect = live.result.current.select;
+  expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([]);
+  act(() => lateSelect("thread:alpha:root"));
+  expect(sessionStorage.getItem(tabWorkspaceStorageKey(left.scope))).toBeNull();
+  // Keep the old host mounted: no caller may hand its purged state to the rejoin.
+  const rejoined = renderHook(() => useChannelTabState(makeSession(), "alpha"));
+  expect(rejoined.result.current.tabs).toEqual([]);
 });
 
 it("leave purges retained tab visit addresses before same-window rejoin and rejects late writes", async () => {

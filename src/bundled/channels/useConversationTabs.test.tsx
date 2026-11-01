@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
@@ -1445,6 +1445,7 @@ it.each([
           ],
       keep?.startsWith("buzz.") ? [] : [expect.objectContaining(entry)],
       keep,
+      [],
     );
     expect(onCloseThread).not.toHaveBeenCalled();
     act(() =>
@@ -1892,3 +1893,414 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   });
   expect(rowRenders).toContain(`${roots.r1}:reply`);
 });
+
+it.each(["reconnect", "service-first reconnect", "explicit reopen"])(
+  "a %s preserves intentional access to an unreviewed panel",
+  async (action) => {
+    const scope = `https://handoff.example:${action}`;
+    const makeSession = () =>
+      ({
+        scope,
+        viewer: "viewer",
+        channels: { list: () => ({ channels: [] }) },
+      }) as unknown as RelaySession;
+    const first = makeSession();
+    const mounted = vi.fn();
+    const panel: RegisteredPanel = {
+      key: "fixture/app",
+      pluginId: "fixture",
+      id: "app",
+      revision: "one",
+      title: "App",
+      matches: () => true,
+      keepOpen: true,
+      component: () => {
+        useEffect(() => {
+          mounted();
+        }, []);
+        return <input aria-label="Working draft" />;
+      },
+    };
+    const seed = renderHook(() => useChannelTabState(first, "alpha"));
+    act(() => {
+      seed.result.current.setEntries([
+        { panel, target: "app", channelId: "alpha" },
+      ]);
+      seed.result.current.select("fixture/app:app");
+    });
+    seed.unmount();
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      resolve: () => panel,
+    } as unknown as Panels;
+    let workspace!: ReturnType<typeof useConversationTabs>;
+    function Harness({ queries }: { queries: RelaySession }) {
+      const state = useChannelTabState(queries, "alpha");
+      const current = { id: "alpha", name: "Alpha" };
+      workspace = useConversationTabs({
+        state,
+        session: queries,
+        relay: {
+          snapshot: () => ({ status: "ready", session: queries }),
+        } as unknown as RelayData,
+        panels,
+        current,
+        channels: [current],
+        profiles: new Map(),
+        scope,
+        leadingIds: [],
+        continuingVisit: false,
+        conversationIcon: () => null,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return (
+        <PanelWorkspace
+          value={workspace.selectedTab}
+          select={state.select}
+          items={workspace.items}
+        />
+      );
+    }
+    let view = render(<Harness queries={first} />);
+    const input = screen.getByRole("textbox", { name: "Working draft" });
+    await userEvent.setup().type(input, "Retain this");
+    if (action !== "explicit reopen") {
+      const successor = makeSession();
+      if (action === "service-first reconnect")
+        channelTabs(successor).list("alpha");
+      view.rerender(<Harness queries={successor} />);
+    } else {
+      view.unmount();
+      view = render(<Harness queries={makeSession()} />);
+      expect(
+        screen.getByRole("button", { name: /^Resume$/ }),
+      ).toBeInTheDocument();
+      act(() => {
+        workspace.openConversationLink("alpha", "app");
+      });
+    }
+    expect(
+      screen.queryByRole("button", { name: /^Resume$/ }),
+    ).not.toBeInTheDocument();
+    if (action !== "explicit reopen") {
+      expect(screen.getByRole("textbox", { name: "Working draft" })).toBe(
+        input,
+      );
+      expect(input).toHaveValue("Retain this");
+      expect(mounted).toHaveBeenCalledTimes(1);
+    } else
+      expect(
+        screen.getByRole("textbox", { name: "Working draft" }),
+      ).toBeInTheDocument();
+    view.unmount();
+    sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`);
+  },
+);
+
+it.each(["profile", "thread", "push"])(
+  "preserves pending panel retention and visit addresses on %s",
+  (action) => {
+    const scope = `https://pending-${action}.example:viewer`;
+    const oldVisit = crypto.randomUUID();
+    const makeSession = () =>
+      ({
+        scope,
+        viewer: "viewer",
+        channels: { list: () => ({ channels: [] }) },
+      }) as unknown as RelaySession;
+    const github: RegisteredPanel = {
+      key: "fixture/github",
+      pluginId: "fixture",
+      id: "github",
+      revision: "1",
+      title: "GitHub",
+      matches: (target) => target === "github",
+      restore: "view",
+      component: () => <p>GitHub</p>,
+    };
+    const app: RegisteredPanel = {
+      ...github,
+      key: "fixture/app",
+      id: "app",
+      title: "App",
+      keepOpen: true,
+      matches: (target) => target === "app",
+    };
+    const profile: RegisteredPanel = {
+      ...github,
+      key: "fixture/profile",
+      id: "profile",
+      title: "Profile",
+      matches: (target) => target === "profile",
+    };
+    const tool: RegisteredPanel = {
+      ...github,
+      key: "fixture/tool",
+      id: "tool",
+      title: "Tool",
+      matches: () => false,
+      channelMenu: { label: "Tool", eligible: () => true },
+    };
+    const seed = renderHook(() => useChannelTabState(makeSession(), "alpha"));
+    act(() =>
+      seed.result.current.setEntries([
+        { panel: github, target: "github", channelId: "alpha" },
+        { panel: app, target: "app", channelId: "alpha" },
+        {
+          panel: tool,
+          target: "tool",
+          channelId: "alpha",
+          channelContext: {
+            scope,
+            viewer: "viewer",
+            relayUrl: "wss://pending.example",
+            channelId: "alpha",
+            channelName: "Alpha",
+          },
+        },
+      ]),
+    );
+    act(() =>
+      seed.result.current.enterVisit(`${oldVisit}:detail`, undefined, true, {
+        channelId: "alpha",
+        target: "github",
+      }),
+    );
+    seed.unmount();
+    onTestFinished(() =>
+      sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`),
+    );
+    let available = [profile];
+    const listeners = new Set<() => void>();
+    const panels = {
+      snapshot: () => available,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      resolve: (target: string) =>
+        available.find((panel) => panel.matches(target)),
+    } as unknown as Panels;
+    const session = makeSession();
+    const closed = vi.fn();
+    const h = renderHook(() => {
+      const state = useChannelTabState(session, "alpha");
+      const workspace = useConversationTabs({
+        state,
+        session,
+        panels,
+        relay: {
+          snapshot: () => ({ status: "ready", session }),
+        } as unknown as RelayData,
+        current: { id: "alpha", name: "Alpha" },
+        channels: [],
+        profiles: new Map(),
+        scope,
+        leadingIds: [],
+        continuingVisit: false,
+        conversationIcon: () => null,
+        isLive: () => true,
+        openLink: () => false,
+        onClosePending: closed,
+        onClosePanel: closed,
+      });
+      return { state, workspace };
+    });
+    expect(h.result.current.state.pendingEntries).toHaveLength(3);
+    const opener = h.result.current.workspace.open;
+    act(() => {
+      if (action === "profile")
+        h.result.current.workspace.open({
+          panel: profile,
+          target: "profile",
+          channelId: "alpha",
+        });
+      else if (action === "push")
+        h.result.current.workspace.open(
+          { panel: profile, target: "profile", channelId: "alpha" },
+          true,
+        );
+      else h.result.current.workspace.open(undefined);
+    });
+    expect(h.result.current.workspace.open).toBe(opener);
+    expect(
+      h.result.current.state.pendingEntries?.map((saved) => saved.key),
+    ).toEqual(
+      action === "push" ? [github.key, app.key, tool.key] : [app.key, tool.key],
+    );
+    act(() => {
+      available = [github, app, profile, tool];
+      for (const listener of listeners) listener();
+    });
+    expect(
+      h.result.current.state.entries.map((entry) => entry.panel.key),
+    ).toEqual(
+      action === "push"
+        ? [github.key, app.key, tool.key, profile.key]
+        : action === "profile"
+          ? [app.key, tool.key, profile.key]
+          : [app.key, tool.key],
+    );
+    expect(h.result.current.state.detailVisits("alpha", "github")).toEqual([
+      oldVisit,
+    ]);
+    expect(closed).not.toHaveBeenCalled();
+  },
+);
+
+it.each([undefined, false, true])(
+  "reload keeps unavailable tabs, rechecks channel eligibility and loads background plugins only on selection (deferUntilShown=%s)",
+  async (deferUntilShown) => {
+    const user = userEvent.setup();
+    const scope = `https://restore-${String(deferUntilShown)}.example:viewer`;
+    const makeSession = () =>
+      ({
+        scope,
+        viewer: "viewer",
+        channels: { list: () => ({ channels: [] }) },
+      }) as unknown as RelaySession;
+    const mounted = vi.fn();
+    const app: RegisteredPanel = {
+      key: "example/app",
+      pluginId: "example",
+      id: "app",
+      revision: "1",
+      title: "App",
+      matches: () => true,
+      restore: "view",
+      keepOpen: true,
+      ...(deferUntilShown !== undefined && { deferUntilShown }),
+      component: ({ restored }) => {
+        useEffect(() => {
+          mounted(restored);
+        }, [restored]);
+        return <input aria-label="App draft" />;
+      },
+    };
+    const canvasContext = vi.fn();
+    const canvas: RegisteredPanel = {
+      ...app,
+      key: "example/canvas",
+      id: "canvas",
+      title: "Canvas",
+      matches: () => false,
+      channelMenu: {
+        label: "Canvas",
+        eligible: (channel) => !channel.readOnly,
+      },
+      component: ({ channelContext }) => {
+        canvasContext(channelContext);
+        return <p>Canvas content</p>;
+      },
+    };
+    const queries = makeSession();
+    const seed = renderHook(() => useChannelTabState(makeSession(), "alpha"));
+    act(() => {
+      seed.result.current.setEntries([
+        { panel: app, target: "app", channelId: "alpha" },
+        {
+          panel: canvas,
+          target: "",
+          channelId: "alpha",
+          channelContext: {
+            scope: "old",
+            viewer: "old",
+            relayUrl: "wss://old",
+            channelId: "alpha",
+            channelName: "Old name",
+          },
+        },
+      ]);
+      seed.result.current.moveEntry("example/app:app", "main");
+      seed.result.current.selectMain(undefined);
+      seed.result.current.select("example/canvas:");
+    });
+    seed.unmount();
+    const available = [app, canvas];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      resolve: (target: string) => (target === "app" ? app : undefined),
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "ready", session: queries }),
+    } as unknown as RelayData;
+    let state!: ReturnType<typeof useChannelTabState>;
+    let workspace!: ReturnType<typeof useConversationTabs>;
+    const closed = vi.fn();
+    function Harness({ allowed }: { allowed: boolean }) {
+      state = useChannelTabState(queries, "alpha");
+      const current = {
+        id: "alpha",
+        name: "Current name",
+        ...(!allowed && { readOnly: true as const }),
+      };
+      workspace = useConversationTabs({
+        state,
+        session: queries,
+        relay,
+        panels,
+        current,
+        channels: [current],
+        profiles: new Map(),
+        scope,
+        mainPane: true,
+        leadingIds: [],
+        continuingVisit: false,
+        conversationIcon: () => null,
+        isLive: () => true,
+        openLink: () => false,
+        eligible: (entry) =>
+          !entry.panel.channelMenu ||
+          entry.panel.channelMenu.eligible(current, queries),
+        onClosePending: closed,
+      });
+      return (
+        <>
+          <PanelWorkspace
+            main
+            value={workspace.selectedMain}
+            select={(id) => state.selectMain(id)}
+            items={[
+              { id: "conversation", label: "Channel", content: <p>Channel</p> },
+              ...workspace.mainItems,
+            ]}
+          />
+          <PanelWorkspace
+            value={workspace.selectedTab}
+            select={(id) => state.select(id)}
+            items={workspace.items}
+          />
+        </>
+      );
+    }
+    const view = render(<Harness allowed={false} />);
+    expect(screen.getByRole("tab", { name: "Canvas" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Tab unavailable")).toBeInTheDocument();
+    expect(canvasContext).not.toHaveBeenCalled();
+    expect(mounted).not.toHaveBeenCalled();
+    view.rerender(<Harness allowed />);
+    expect(screen.getByText("Canvas content")).toBeInTheDocument();
+    expect(canvasContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        scope,
+        viewer: "viewer",
+        channelName: "Current name",
+      }),
+    );
+    expect(mounted).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "App" }));
+    expect(mounted).toHaveBeenCalledWith(true);
+    expect(
+      screen.getByRole("textbox", { name: "App draft" }),
+    ).toBeInTheDocument();
+    view.unmount();
+    sessionStorage.removeItem(`buzz-tab-workspaces.v1:${scope}`);
+  },
+);

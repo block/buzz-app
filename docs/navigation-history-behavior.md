@@ -59,13 +59,28 @@ App arrows, supported history shortcuts and mouse Back/Forward use the same
 navigation driver. Browsers retain their physical history entries; the driver
 skips retired entries rather than claiming to delete arbitrary native history.
 The app's traversal affordances account for those skipped entries. The managed
-window is capped at 100 visits, including its persisted dismissal associations;
-older return paths expire and their tab metadata is pruned. Dismissal
-indices are kept in sessionStorage for the browser chain; open tabs themselves
-retain their existing community-session lifetime. After reload the driver knows
-the current visit and its immediate opener. Older visits not revisited since
-reload may remain reachable after closing the same content; workspace restoration
-across refresh is separate from this behavior.
+window is capped at 100 visits; expired and dismissed tab associations are pruned. Dismissal
+indices and known visit targets are kept in sessionStorage for the browser chain.
+Same-window refresh restores addressable conversation, thread, panel and Channel
+settings tabs with their order, panes and selection. Explicit Close can retire
+associated visits made before the refresh; Back/Forward then skips that content.
+Current registrations and channel eligibility still govern restored content.
+Background content waits for selection; missing providers stay closeable and
+unreviewed recovery requires Resume.
+New snapshots retain each panel's keep-open policy, so opening a new transient
+detail also replaces known transient placeholders whose provider is unavailable.
+Retained apps and channel tools survive that replacement. Explicit panel pushes
+append without replacing pending tabs. Replacement preserves history addresses;
+it does not perform an explicit Close.
+
+Recovery is best-effort when storage is unavailable or full. Quit/relaunch,
+cross-device sync, feature-local inspection sub-tabs, drawer visibility and edit
+dialogs are not guaranteed by this layer. Another window keeps its own session
+storage copy; leaving a community revokes its live tab writer and clears this
+window's partition. Each update serializes its full store. A failed workspace save
+removes the older snapshot when storage permits, preventing stale tabs from
+returning; live navigation remains usable. If storage also refuses removal,
+recovery remains best effort.
 
 ## Evidence boundaries
 

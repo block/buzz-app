@@ -82,7 +82,25 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   host.history.replaceState({ ...host.history.state, [KEY]: current }, "");
   let stamp: Stamp = current;
   let returning: string | undefined;
-  const known = new Map<number, NavigationEntry>([[stamp.index, stamp.entry]]);
+  const visitsKey = () => `buzz-navigation-visits:${stamp.chain}`;
+  function readKnown() {
+    const known = new Map<number, NavigationEntry>();
+    try {
+      const saved: unknown = JSON.parse(
+        host.sessionStorage.getItem(visitsKey()) ?? "[]",
+      );
+      if (Array.isArray(saved))
+        for (const raw of saved) {
+          const visit = decode(raw);
+          if (visit?.chain === stamp.chain) known.set(visit.index, visit.entry);
+        }
+    } catch {
+      /* Live traversal still works without saved visits. */
+    }
+    return known;
+  }
+  let known = readKnown();
+  known.set(stamp.index, stamp.entry);
   // Keep the immediate opener across reload so dismissing a restored dialog
   // can return to it without leaving an identical-looking history stop.
   if (stamp.index > 0 && stamp.previous)
@@ -192,6 +210,20 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   function publish() {
     trimWindow();
     snapshot = snapshotOf();
+    try {
+      host.sessionStorage.setItem(
+        visitsKey(),
+        JSON.stringify(
+          [...known].map(([index, entry]) => ({
+            chain: stamp.chain,
+            index,
+            entry,
+          })),
+        ),
+      );
+    } catch {
+      /* Dismissal still works for this document. */
+    }
     controller?.();
   }
   function write(target: OpenTarget, replace: boolean, resolve = false) {
@@ -317,7 +349,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     stamp = next;
     returning = undefined;
     if (newChain) {
-      known.clear();
+      known = readKnown();
       dismissed = readDismissed();
       floor = Math.max(0, end - HISTORY_CAPACITY + 1);
       readWindow();

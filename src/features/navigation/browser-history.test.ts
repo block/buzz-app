@@ -351,6 +351,42 @@ it("coalesces repeated Close requests before browser traversal commits", () => {
   driver.dispose();
 });
 
+it("reload retains older return targets and truncates them with a new history branch", () => {
+  const b = browser();
+  const first = createBrowserHistory(b.host);
+  const home = first.snapshot().current;
+  first.push(settings);
+  const older = first.snapshot().current;
+  first.push({ ...settings, section: "profile" });
+  const discarded = first.snapshot().current;
+  first.dispose();
+  const restored = createBrowserHistory(b.host);
+  expect(restored.returnTo(older.id)).toBe(true);
+  expect(restored.snapshot().current).toEqual(older);
+  restored.push({ ...settings, section: "notifications" });
+  expect(restored.returnTo(discarded.id)).toBe(false);
+  restored.dispose();
+  const again = createBrowserHistory(b.host);
+  expect(again.returnTo(discarded.id)).toBe(false);
+  expect(again.returnTo(home.id)).toBe(true);
+  expect(again.snapshot().current).toEqual(home);
+  again.dispose();
+});
+
+it("corrupt persisted visits never block live traversal", () => {
+  const b = browser();
+  const first = createBrowserHistory(b.host);
+  first.push(settings);
+  first.dispose();
+  const chain = b.host.history.state.buzzNavigationV1.chain;
+  b.host.sessionStorage.setItem(`buzz-navigation-visits:${chain}`, "{");
+  const restored = createBrowserHistory(b.host);
+  expect(restored.snapshot().canGoBack).toBe(true);
+  restored.back();
+  expect(restored.snapshot().current.target).toEqual(homeTarget);
+  restored.dispose();
+});
+
 it("coalesces repeated dismissal before traversal commits and permits a later dismissal", () => {
   const b = browser("", true);
   const driver = createBrowserHistory(b.host);

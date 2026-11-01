@@ -173,14 +173,17 @@ it("never carries a media review across channel navigation or resurrects it on r
   ).toBeUndefined();
 });
 
-it("distinguishes ready communities with the same connection generation", () => {
-  const a = workspace("community-a:viewer", 1);
-  const b = workspace("community-b:viewer", 1);
-  expect(a.key).not.toBe(b.key);
-  expect(a.props.scope).toBe("community-a:viewer");
-  expect(b.props.scope).toBe("community-b:viewer");
-});
-it("distinguishes a replacement session within one scope without changing persisted intent keys", () => {
+it.each(["community-b:viewer", "community-a:another-viewer"])(
+  "remounts for another account/community scope: %s",
+  (scope) => {
+    const a = workspace("community-a:viewer", 1);
+    const b = workspace(scope, 1);
+    expect(a.key).not.toBe(b.key);
+    expect(a.props.scope).toBe("community-a:viewer");
+    expect(b.props.scope).toBe(scope);
+  },
+);
+it("resets the workspace when the connection generation changes", () => {
   const before = workspace("community-a:viewer", 1);
   const after = workspace("community-a:viewer", 2);
   expect(before.key).not.toBe(after.key);

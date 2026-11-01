@@ -1,6 +1,7 @@
 // FOUNDATION: Target-based panel contributions, independent of page layout.
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { ComponentType } from "react";
+import type { DefinedIcon } from "../../shared/design-system/icons";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -49,6 +50,8 @@ export type ChannelLauncherProps = {
   open(target: string): boolean;
 };
 export type PanelProps = {
+  /** Reconstructed after reload. Mounting must not repeat actions or start a live session. */
+  restored?: boolean | undefined;
   /** Supplied only by a channel presentation; sessions decide when to capture it. */
   channelContext?: ChannelPanelContext | undefined;
   close(): void;
@@ -58,6 +61,8 @@ export type PanelProps = {
 export type Panel = Readonly<{
   id: string;
   title: string;
+  /** Static menu/tab identity, available before the panel body mounts. */
+  icon?: DefinedIcon;
   matches: (url: string) => boolean;
   /** Claim strength when several panels match a target; see `MatchOrder`. */
   order?: MatchOrder | undefined;
@@ -80,6 +85,8 @@ export type Panel = Readonly<{
   /** Tabs opened from links stay until closed, like a channel tool's, instead
    * of giving way to the next link or thread. */
   keepOpen?: boolean;
+  /** Safe to mount a restored view. Otherwise the host asks the viewer to resume. */
+  restore?: "view";
   /** Mount tab content on first selection, then retain it for the workspace visit.
    * Component-provided titles and local detail tabs are also deferred. */
   deferUntilShown?: boolean;
@@ -87,6 +94,7 @@ export type Panel = Readonly<{
 }>;
 export type RegisteredPanel = Contribution<Panel>;
 export type PanelOpening = {
+  restored?: boolean;
   channelId: string;
   /** Thread root of the message the opening link was in. */
   rootId?: string;
@@ -206,6 +214,8 @@ export class PanelsService extends Service implements Panels {
       throw new Error("A channel placement must be bottom, side or tab");
     if (panel.keepOpen !== undefined && typeof panel.keepOpen !== "boolean")
       throw new Error("A panel's keepOpen must be a boolean");
+    if (panel.restore !== undefined && panel.restore !== "view")
+      throw new Error("A panel's restore policy must be view");
     if (
       panel.deferUntilShown !== undefined &&
       typeof panel.deferUntilShown !== "boolean"

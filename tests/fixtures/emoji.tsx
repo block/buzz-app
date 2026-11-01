@@ -45,6 +45,9 @@ const grouped = new URLSearchParams(location.search).has("grouped");
 const singleReaction = new URLSearchParams(location.search).has(
   "single-reaction",
 );
+const shortReactions = new URLSearchParams(location.search).has(
+  "short-reactions",
+);
 const long = new URLSearchParams(location.search).has("long");
 const coordination = new URLSearchParams(location.search).has("coordination");
 const participantProfiles = new Map([
@@ -170,7 +173,7 @@ const sessions = ["a", "b"].map((community) => {
     "c",
     grouped
       ? "Thanks, everyone!"
-      : singleReaction
+      : singleReaction || shortReactions
         ? "OK"
         : "Historic :unknown:party: and https://example.test/:party:",
     1,
@@ -178,7 +181,7 @@ const sessions = ["a", "b"].map((community) => {
   );
   const reaction = signed(member, {
     kind: 7,
-    content: singleReaction ? "👍" : ":party:",
+    content: singleReaction || shortReactions ? "👍" : ":party:",
     created_at: 2,
     tags: [
       ["e", root.id],
@@ -204,6 +207,22 @@ const sessions = ["a", "b"].map((community) => {
       tags: [["e", root.id]],
     }),
   );
+  const shortReactionEvents = shortReactions
+    ? [
+        signed(viewer, {
+          kind: 7,
+          content: "👍",
+          created_at: 3,
+          tags: [["e", root.id]],
+        }),
+        signed(member, {
+          kind: 7,
+          content: "+",
+          created_at: 4,
+          tags: [["e", root.id]],
+        }),
+      ]
+    : [];
   const repeatedReactions = new URLSearchParams(location.search).has("repeated")
     ? [member, keypair()].map((key, index) =>
         signed(key, {
@@ -302,6 +321,7 @@ const sessions = ["a", "b"].map((community) => {
   live.receive([
     ...(grouped ? [] : [reaction]),
     ...(wrap ? [...wrapReactions, ownReaction] : []),
+    ...shortReactionEvents,
     ...longReactions,
     ...repeatedReactions,
     ...groupedReactions,
@@ -315,6 +335,7 @@ const sessions = ["a", "b"].map((community) => {
       root,
       ...(grouped ? [] : [reaction]),
       ...(wrap ? [...wrapReactions, ownReaction] : []),
+      ...shortReactionEvents,
       ...longReactions,
       ...repeatedReactions,
       ...groupedReactions,

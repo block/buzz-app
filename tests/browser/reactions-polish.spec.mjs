@@ -417,7 +417,74 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
   }
 });
 
-// Actual popup geometry must follow each emoji bubble.
+// Intrinsic sizing must include multiple reaction types, counts, and the picker.
+test("short bubbles fit a compact counted reaction strip on one line", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/emoji.html?reactions&short-reactions");
+  const message = page.locator("[data-message-id]").first();
+  const row = message.getByTestId("reaction-row");
+  const group = row.getByRole("button", { name: "👍: 2 people" });
+  await expect(group).toBeVisible();
+  for (const [theme, width, scale] of [
+    ["light", 800, 1],
+    ["dark", 520, 2],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.evaluate(
+      ({ theme, scale }) => {
+        document.documentElement.dataset.colorMode = theme;
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        );
+      },
+      { theme, scale },
+    );
+    await expect
+      .poll(() =>
+        row.locator("button").evaluateAll((buttons) => {
+          const boxes = buttons.map((button) => button.getBoundingClientRect());
+          const bubble = buttons[0]
+            .closest("[data-message-action-anchor]")
+            .getBoundingClientRect();
+          return boxes.every(
+            (box) =>
+              box.y === boxes[0].y &&
+              box.right <= bubble.right &&
+              box.width >= box.height,
+          );
+        }),
+      )
+      .toBe(true);
+    await expect(group).toHaveCSS("padding-inline-start", `${4 * scale}px`);
+    await expect(group).toHaveCSS("padding-inline-end", `${4 * scale}px`);
+  }
+  // At enlarged text on a narrow phone, the full strip exceeds the available
+  // bubble width. It must wrap rather than overflow or shrink the controls.
+  await page.setViewportSize({ width: 390, height: 950 });
+  await expect
+    .poll(() =>
+      row.locator("button").evaluateAll((buttons) => {
+        const boxes = buttons.map((button) => button.getBoundingClientRect());
+        const bubble = buttons[0]
+          .closest("[data-message-action-anchor]")
+          .getBoundingClientRect();
+        return {
+          wrapped: new Set(boxes.map((box) => box.y)).size > 1,
+          contained: boxes.every(
+            (box) => box.left >= bubble.left && box.right <= bubble.right,
+          ),
+          fullTargets: boxes.every(
+            (box) => box.width >= 64 && box.height >= 64,
+          ),
+        };
+      }),
+    )
+    .toEqual({ wrapped: true, contained: true, fullTargets: true });
+});
+
+// Actual popup geometry must follow the emoji bubble.
 test("reaction previews center above each emoji bubble", async ({ page }) => {
   // Keep failed-image retries from changing the hovered message's layout.
   await page.route("**/emoji-media/**", (route) =>

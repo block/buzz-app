@@ -1430,6 +1430,7 @@ function AgentsMessageRow(props: MessageRowProps) {
             // One stable anchor survives both animation directions. Not the
             // button: revealing an anchor takes it out of the Tab order.
             data-message-id={row.id}
+            data-message-highlight=""
             // Open, a click anywhere in the box folds it, except on its own
             // controls and links or at the end of a text selection.
             onClick={(event) => {

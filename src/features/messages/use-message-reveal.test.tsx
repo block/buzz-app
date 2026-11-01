@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useMessageReveal } from "./use-message-reveal";
+import styles from "./Messages.module.css";
 
 // Control frame/mutation ordering; browser journeys own real layout and inert focus.
 const frames = new Map<number, FrameRequestCallback>();
@@ -51,10 +58,12 @@ function mount(hold?: () => boolean) {
     signal = request.signal,
     prepare = undefined,
     rowKey = 0,
+    active = true,
   }: {
     signal?: AbortSignal;
     prepare?: () => void;
     rowKey?: number;
+    active?: boolean;
   }) {
     const scroller = useRef<HTMLDivElement>(null);
     const settled = useRef(false);
@@ -62,7 +71,7 @@ function mount(hold?: () => boolean) {
       scroller,
       settled,
       messageId: "target",
-      signal,
+      signal: active ? signal : undefined,
       ready: true,
       complete,
       ...(prepare ? { prepare } : {}),
@@ -71,8 +80,8 @@ function mount(hold?: () => boolean) {
     return (
       <>
         <div ref={scroller}>
-          <div key={rowKey} data-message-id="target">
-            Target
+          <div key={rowKey} data-message-id="target" data-testid="target">
+            <div data-layout="received">Target</div>
           </div>
         </div>
         <button type="button">Elsewhere</button>
@@ -80,7 +89,7 @@ function mount(hold?: () => boolean) {
     );
   }
   const result = render(<Surface />);
-  const row = screen.getByText("Target");
+  const row = screen.getByTestId("target");
   const outside = screen.getByRole("button", { name: "Elsewhere" });
   return {
     ...result,
@@ -90,6 +99,8 @@ function mount(hold?: () => boolean) {
     outside,
     restart: () => result.rerender(<Surface prepare={() => {}} />),
     remountRow: () => result.rerender(<Surface rowKey={1} />),
+    setActive: (active: boolean) =>
+      result.rerender(<Surface active={active} />),
     next: () =>
       result.rerender(<Surface signal={new AbortController().signal} />),
   };
@@ -110,6 +121,92 @@ it("notifies reading after the revealed row is verified", async () => {
   await frame();
   expect(positioned).toHaveBeenCalledOnce();
   expect(complete).toHaveBeenCalledOnce();
+});
+
+it("keeps the verified target highlighted until dismissal and repeats for a new request", async () => {
+  const { row, next, restart, outside, setActive } = mount();
+  const message = screen.getByText("Target");
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  expect(row.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  setActive(false);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  setActive(true);
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  next();
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  const end = new Event("animationend", { bubbles: true });
+  Object.defineProperty(end, "pseudoElement", { value: "::after" });
+  message.dispatchEvent(end);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  fireEvent.click(message);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  fireEvent.click(outside);
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  restart();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+  next();
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  for (const key of ["Tab", "ArrowDown", "a"]) {
+    fireEvent.keyDown(document, { key });
+    expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  }
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
+});
+
+it.each([false, true])(
+  "keeps only undismissed cues through a late row replacement (dismissed: %s)",
+  async (dismissed) => {
+    const { remountRow, complete, outside } = mount();
+    await frame();
+    await frame();
+    await frame();
+    const original = screen.getByText("Target");
+    if (dismissed) fireEvent.click(outside);
+    outside.focus();
+    await act(async () => remountRow());
+    const replacement = screen.getByText("Target");
+    expect(replacement).not.toBe(original);
+    expect(replacement.classList.contains(styles.linkedHighlight ?? "")).toBe(
+      !dismissed,
+    );
+    expect(original.classList.contains(styles.linkedHighlight ?? "")).toBe(
+      false,
+    );
+    expect(document.activeElement).toBe(outside);
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(replacement.classList.contains(styles.linkedHighlight ?? "")).toBe(
+      false,
+    );
+  },
+);
+
+it.each(["abort", "unmount"])("retires a painted cue on %s", async (end) => {
+  const { request, unmount } = mount();
+  const message = screen.getByText("Target");
+  await frame();
+  await frame();
+  await frame();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(true);
+  if (end === "abort") request.abort();
+  else unmount();
+  expect(message.classList.contains(styles.linkedHighlight ?? "")).toBe(false);
 });
 
 it.each([false, true])(
@@ -210,7 +307,7 @@ it.each([false, true])(
     expect(document.activeElement).toBe(row);
     if (moved) outside.focus();
     await act(async () => remountRow());
-    const replacement = screen.getByText("Target");
+    const replacement = screen.getByTestId("target");
     expect(replacement).not.toBe(row);
     expect(document.activeElement).toBe(moved ? outside : document.body);
     const focus = vi.spyOn(replacement, "focus");
@@ -230,7 +327,7 @@ it("completes after focus leaves another control between replacement reveal and 
   await frame();
   outside.focus();
   await act(async () => remountRow());
-  const replacement = screen.getByText("Target");
+  const replacement = screen.getByTestId("target");
   const focus = vi.spyOn(replacement, "focus");
   await frame();
   expect(document.activeElement).toBe(outside);
@@ -247,7 +344,7 @@ it("retries failed focus recovery on a replacement before completing", async () 
   await frame();
   await frame();
   await act(async () => remountRow());
-  const replacement = screen.getByText("Target");
+  const replacement = screen.getByTestId("target");
   const blocked = vi.spyOn(replacement, "focus").mockImplementation(() => {});
   await frame();
   await frame();

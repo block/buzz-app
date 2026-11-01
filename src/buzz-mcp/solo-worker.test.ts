@@ -315,6 +315,74 @@ describe("solo_worker_connections", () => {
     expect(published).toHaveLength(before);
   });
 
+  it("checks the channel again just before posting a saved retry", async () => {
+    const harness = community((intent) =>
+      intent.action === "send" ? [{ phase: "accepted" }] : ready(intent, ""),
+    );
+    const { call, sign, published, client } = harness;
+    const first = await call("solo_worker_send", {
+      solo: S,
+      worker_epoch: 1,
+      text: "go",
+    });
+    expect(first.retry).toBeDefined();
+    // Made public after discovery checked it, while it reads the grant.
+    const current = client.query;
+    let changed = false;
+    harness.client.query = async (filters) => {
+      const [filter] = filters as Record<string, unknown>[];
+      if (!changed && filter?.["#h"] && !filter["#e"]) {
+        changed = true;
+        sign(RELAY, { kind: 39000, content: "", tags: [["d", K], ["public"]] });
+      }
+      return current(filters);
+    };
+    const before = published.length;
+    await expect(
+      call("solo_worker_send", { retry: first.retry }),
+    ).rejects.toThrow(/no longer private.*not sent/);
+    expect(changed).toBe(true);
+    expect(published).toHaveLength(before);
+  });
+
+  it("reads a few candidate channels at a time", async () => {
+    const harness = community();
+    const { call, sign, client } = harness;
+    for (let index = 0; index < 30; index++) {
+      const stream = `other-${index}`;
+      sign(RELAY, {
+        kind: 39002,
+        content: "",
+        tags: [
+          ["d", stream],
+          ["p", getPublicKey(key(10 + index))],
+          ["p", C],
+        ],
+      });
+      sign(RELAY, {
+        kind: 39000,
+        content: "",
+        tags: [["d", stream], ["private"]],
+      });
+    }
+    const current = client.query;
+    let reading = 0;
+    let most = 0;
+    harness.client.query = async (filters) => {
+      const [filter] = filters as { kinds: number[] }[];
+      if (filter?.kinds.includes(39002)) return current(filters);
+      most = Math.max(most, ++reading);
+      await new Promise((resolve) => setTimeout(resolve));
+      reading--;
+      return current(filters);
+    };
+    expect(await call("solo_worker_connections")).toMatchObject({
+      connections: [{ owner: H, stream: K }],
+      complete: true,
+    });
+    expect(most).toBe(8);
+  });
+
   it.each([
     ["made public", { kind: 39000, tags: [["d", K], ["public"]] }],
     [

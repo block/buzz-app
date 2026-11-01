@@ -34,6 +34,8 @@ const WAIT_MS = 20_000;
 const POLL_MS = 1_000;
 /** Memberships read while finding the agent's control channel. */
 const SCAN_MAX = 500;
+/** Candidate channels whose privacy and grant are read at once. */
+const READS_AT_ONCE = 8;
 /** Phases after which the owner's Buzz will say more. */
 const INTERIM: readonly Phase[] = ["accepted", "preparing", "stop_pending"];
 
@@ -225,11 +227,8 @@ export async function callSoloWorkerTool(
       note: `${ready.note ? `${ready.note} ` : ""}The owner's Buzz is not ready, so the change was not sent.`,
     });
   // The change may carry task text, and the channel had time to change while
-  // the owner answered: check again that it is still private to the two of you.
-  if (!(await stillPrivate(client, clock, route)))
-    throw new Error(
-      "The channel is no longer private to you and the owner, so the change was not sent.",
-    );
+  // the owner answered.
+  await requirePrivate(client, clock, route);
   const { custody_epoch, valid_until } = ready.result as {
     custody_epoch: string;
     valid_until: number;
@@ -285,7 +284,7 @@ function intent(
 
 /** Sends a request from an earlier answer again, unchanged, so the owner's
  * Buzz can report what happened to it rather than act twice. */
-function resend(
+async function resend(
   client: BuzzClient,
   route: GrantAck,
   action: Action,
@@ -302,6 +301,8 @@ function resend(
     throw new Error(
       `That retry is not a ${PREFIX}${action} request of yours for this owner.`,
     );
+  // Discovery read other channels after checking this one.
+  await requirePrivate(client, clock, route);
   return exchange(client, request, clock);
 }
 
@@ -486,9 +487,12 @@ async function connections(client: BuzzClient, clock: Clock) {
       return true;
     },
   );
-  const found: GrantAck[] = [];
-  for (const [stream, owner] of streams) {
-    if (!(await isPrivate(query, relayAuthor, stream))) continue;
+  // A few channels at a time, so many of them still fit in the deadline.
+  const candidates = [...streams];
+  const found: (GrantAck | undefined)[] = [];
+  const check = async (index: number) => {
+    const [stream, owner] = candidates[index] as [string, string];
+    if (!(await isPrivate(query, relayAuthor, stream))) return;
     const events = await query({
       kinds: [9],
       "#h": [stream],
@@ -506,9 +510,18 @@ async function connections(client: BuzzClient, clock: Clock) {
       )
         ack = record;
     }
-    if (ack) found.push(ack);
-  }
-  return { connections: found, complete };
+    found[index] = ack;
+  };
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: READS_AT_ONCE }, async () => {
+      while (next < candidates.length) await check(next++);
+    }),
+  );
+  return {
+    connections: found.filter((ack) => ack !== undefined),
+    complete,
+  };
 }
 
 type Query = (filter: Record<string, unknown>) => Promise<readonly BuzzEvent[]>;
@@ -552,8 +565,9 @@ async function isPrivate(query: Query, relayAuthor: string, stream: string) {
   );
 }
 
-/** Whether `route`'s channel is still private to this agent and its owner. */
-async function stillPrivate(
+/** Refuses unless `route`'s channel is still private to this agent and its
+ * owner, just before a request that may carry task text is posted there. */
+async function requirePrivate(
   client: BuzzClient,
   clock: Clock,
   { stream, owner }: GrantAck,
@@ -567,11 +581,14 @@ async function stillPrivate(
     limit: 1,
     consistency: "strong",
   });
-  return (
-    roster?.pubkey === relayAuthor &&
-    partner(roster, client.pubkey) === owner &&
-    (await isPrivate(query, relayAuthor, stream))
-  );
+  if (
+    roster?.pubkey !== relayAuthor ||
+    partner(roster, client.pubkey) !== owner ||
+    !(await isPrivate(query, relayAuthor, stream))
+  )
+    throw new Error(
+      "The channel is no longer private to you and the owner, so the request was not sent.",
+    );
 }
 
 function pick(

@@ -54,6 +54,10 @@ it.each([
 function account(responses = {}) {
   const requests = [];
   let opened;
+  let didOpen;
+  const openedReady = new Promise((resolve) => {
+    didOpen = resolve;
+  });
   const fetch = async (url, init = {}) => {
     const path = new URL(url).pathname.replace("/api/goose", "");
     requests.push({ path, init });
@@ -83,6 +87,7 @@ function account(responses = {}) {
     fetch,
     open: async (url) => {
       opened = new URL(url);
+      didOpen(opened);
     },
   });
   return {
@@ -90,6 +95,7 @@ function account(responses = {}) {
     requests,
     key,
     opened: () => opened,
+    openedReady,
     signs: () => signs,
   };
 }
@@ -539,3 +545,69 @@ it("ends the shared session at its advertised expiry", async () => {
     h.builderlab.signOut();
   }
 });
+
+it("forwards native-validated Decisions through the same server session and community", async () => {
+  const h = account();
+  await signIn(h);
+  await h.builderlab.request(
+    {
+      revision: h.builderlab.snapshot().revision,
+      path: "/v3/builderlab/decisions",
+      method: "POST",
+      community: "buzz.example.com",
+      body: "{}",
+    },
+    new AbortController().signal,
+  );
+  expect(h.requests.at(-1).init.headers).toMatchObject({
+    "X-BB-Session-Credential": "secret",
+    "X-Buzz-Community": "buzz.example.com",
+  });
+  await expect(
+    h.builderlab.request(
+      {
+        revision: h.builderlab.snapshot().revision,
+        path: "/v3/builderlab/decisions",
+        method: "POST",
+        community: "x\r\nforged",
+        body: "{}",
+      },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("Invalid decision community");
+  h.builderlab.signOut();
+});
+
+it("requires the agents OAuth state and reuses their branded callback page", async () => {
+  const h = account();
+  const login = h.builderlab.login(new AbortController().signal);
+  const opened = await h.openedReady;
+  const callback = opened.searchParams.get("redirect_uri");
+  expect(
+    (await globalThis.fetch(`${callback}?state=wrong&code=x`)).status,
+  ).toBe(400);
+  const response = await globalThis.fetch(
+    `${callback}?state=${opened.searchParams.get("state")}&code=x`,
+  );
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain("Signing you in…");
+  expect(response.headers.get("content-security-policy")).toContain(
+    "script-src 'sha256-",
+  );
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  await login;
+  h.builderlab.signOut();
+});
+
+it.each(["secret\ncredential", "secret credential"])(
+  "refuses unsafe credential bytes before any authenticated request",
+  async (session_credential) => {
+    const h = account({
+      "/v1/auth/login/exchange": () =>
+        Response.json({ session_credential, expires_at: "2030" }),
+    });
+    await expect(signIn(h)).rejects.toThrow("empty credential");
+    expect(h.requests.map((entry) => entry.path)).not.toContain("/v1/auth/me");
+    expect(h.builderlab.snapshot().auth).toBeNull();
+  },
+);

@@ -1,3 +1,4 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 // Public projection of the development server's login. No credential is held here.
 import type {
   Host,
@@ -249,6 +250,18 @@ export function createDevSession() {
   return {
     session,
     communities,
+    decide: isTauri()
+      ? async (request: unknown) => {
+          const viewer = session.viewerSession();
+          if (!("broker" in viewer))
+            throw new Error("Development session unavailable");
+          return invoke("decide", {
+            backend: "builderlab",
+            request,
+            broker: viewer.broker,
+          });
+        }
+      : undefined,
     apps: { request: transport, upload: transport } satisfies Pick<
       Host,
       "request" | "upload"

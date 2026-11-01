@@ -982,10 +982,36 @@ export function relayBrokerPlugin({
               req.setEncoding("utf8");
               for await (const part of req) {
                 raw += part;
-                if (raw.length > (action === "request" ? 64 * 1024 : 4096))
+                if (
+                  raw.length >
+                  (action === "decisions"
+                    ? 128 * 1024
+                    : action === "request"
+                      ? 64 * 1024
+                      : 4096)
+                )
                   return json(res, 413, { error: "Request too large" });
               }
               const input = raw ? JSON.parse(raw) : {};
+              if (action === "decisions") {
+                const reply = await builderlab.request(
+                  {
+                    revision: req.headers["x-bb-session-credential"],
+                    path: "/v3/builderlab/decisions",
+                    method: "POST",
+                    body: raw,
+                    community: req.headers["x-buzz-community"],
+                  },
+                  cancel.signal,
+                );
+                res
+                  .writeHead(reply.status, {
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-store",
+                  })
+                  .end(reply.body);
+                return;
+              }
               if (action === "viewer") {
                 const reply = await builderlab.request(
                   {

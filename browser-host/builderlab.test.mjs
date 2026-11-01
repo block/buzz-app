@@ -503,6 +503,35 @@ it("expires every consumer together on 401, while a transient account check pres
   expect(h.builderlab.snapshot()).toMatchObject({ auth: null, pending: false });
 });
 
+it("keeps the shared login and agent requests working after an Apps 401", async () => {
+  const h = account({
+    "/v1/agent/apps": () => Response.json({}, { status: 401 }),
+    "/v3/beekeeper/list-agents": () => Response.json({ agents: [] }),
+  });
+  await signIn(h);
+  const before = h.builderlab.snapshot();
+  const signal = new AbortController().signal;
+  expect(
+    await h.builderlab.request(
+      { revision: before.revision, target: "apps", path: "/v1/agent/apps" },
+      signal,
+    ),
+  ).toMatchObject({ status: 401 });
+  expect(h.builderlab.snapshot()).toEqual(before);
+  expect(
+    await h.builderlab.request(
+      {
+        revision: before.revision,
+        path: "/v3/beekeeper/list-agents",
+        method: "POST",
+        body: "{}",
+      },
+      signal,
+    ),
+  ).toMatchObject({ status: 200 });
+  h.builderlab.signOut();
+});
+
 it.each([
   "/v1/auth/login/exchange",
   "//evil.example/",

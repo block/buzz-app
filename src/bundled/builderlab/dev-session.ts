@@ -173,11 +173,12 @@ export function createDevSession() {
     },
     async signIn() {
       if (disposed || state.status === "pending") return;
+      const at = ++version;
       publish({ status: "pending" });
       try {
         await send("login");
       } catch (error) {
-        if (!disposed && !owner)
+        if (!disposed && version === at && !owner)
           publish({
             status: "signed-out",
             error:

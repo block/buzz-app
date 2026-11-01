@@ -32,6 +32,15 @@ pub(crate) use channel_writes::{
 pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
 mod media_preparation;
+
+/// Agent voice attachments use the same bounded preparation as recorded notes.
+pub(crate) async fn prepare_agent_voice(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    let (_sender, mut cancelled) = oneshot::channel();
+    media_preparation::prepare(bytes, "voice:wav", &mut cancelled)
+        .await
+        .map(|(bytes, _)| bytes)
+        .map_err(|error| format!("Voice note preparation failed: {}", error.code()))
+}
 mod media_spool;
 mod reminders;
 pub(crate) use reminders::{relay_decode_reminders, relay_sign_reminder};

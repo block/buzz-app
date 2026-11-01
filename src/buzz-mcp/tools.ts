@@ -1810,11 +1810,11 @@ class Tools {
     let links = "";
     for (const path of paths) {
       const data = await this.client.read(path);
-      const upload = await this.client.upload(
-        data,
-        sniff(data) ?? "application/octet-stream",
-      );
-      const name = attachmentName(path.split(/[\\/]/).pop() ?? "");
+      const mime = sniff(data) ?? "application/octet-stream";
+      const upload = await this.client.upload(data, mime);
+      let name = attachmentName(path.split(/[\\/]/).pop() ?? "");
+      if (mime === "audio/wav" && upload.type === "video/mp4")
+        name = `voice-note-${name.replace(/^voice-note-/i, "").replace(/\.[^.]+$/, "")}.mp4`;
       tags.push([...imeta(upload), `filename ${name}`]);
       links += `\n${attachmentMarkdown(name, upload)}`;
     }
@@ -1877,7 +1877,7 @@ function imeta(upload: Upload) {
   ];
 }
 
-/** An image or MP4's type, by the file's leading bytes. */
+/** The supported media type, by the file's leading bytes. */
 function sniff(data: Uint8Array) {
   const at = (offset: number, ...bytes: number[]) =>
     bytes.every((byte, index) => data[offset + index] === byte);
@@ -1886,6 +1886,8 @@ function sniff(data: Uint8Array) {
   if (at(0, 0x47, 0x49, 0x46, 0x38)) return "image/gif";
   if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50))
     return "image/webp";
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x41, 0x56, 0x45))
+    return "audio/wav";
   if (at(4, 0x66, 0x74, 0x79, 0x70)) return "video/mp4";
   return undefined;
 }

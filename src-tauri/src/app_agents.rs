@@ -1086,6 +1086,11 @@ async fn upload(
 ) -> Result<Value, String> {
     use base64::Engine;
     use sha2::{Digest, Sha256};
+    let (bytes, mime) = if matches!(mime, "audio/wav" | "audio/x-wav") {
+        (crate::relay::prepare_agent_voice(bytes).await?, "video/mp4")
+    } else {
+        (bytes, mime)
+    };
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let auth = serde_json::to_vec(&agent.upload_auth(key, &sha256)?)
         .map_err(|_| "Could not authorize upload")?;
@@ -1908,8 +1913,8 @@ mod tests {
             loop {
                 let read = socket.read(&mut chunk).await.unwrap();
                 request.extend_from_slice(&chunk[..read]);
-                let text = String::from_utf8_lossy(&request);
-                if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                if let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&request[..end]);
                     let length = head
                         .lines()
                         .find_map(|line| {
@@ -1919,7 +1924,7 @@ mod tests {
                         })
                         .and_then(|value| value.trim().parse::<usize>().ok())
                         .unwrap_or(0);
-                    if rest.len() >= length {
+                    if request.len() - end - 4 >= length {
                         break;
                     }
                 }
@@ -1929,7 +1934,7 @@ mod tests {
                 body.len()
             );
             socket.write_all(reply.as_bytes()).await.unwrap();
-            String::from_utf8(request).unwrap()
+            String::from_utf8_lossy(&request).into_owned()
         });
         (origin, served)
     }
@@ -1952,6 +1957,59 @@ mod tests {
             protection: None,
             protection_revision: 0,
         }
+    }
+
+    #[tokio::test]
+    async fn agent_upload_prepares_wav_before_hashing_and_sending() {
+        use sha2::{Digest, Sha256};
+        let ffmpeg =
+            crate::host_command::resolve_program("ffmpeg", &crate::host_command::effective_path());
+        if std::process::Command::new(&ffmpeg)
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("speech.wav");
+        assert!(std::process::Command::new(ffmpeg)
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=0.1",
+                "-metadata",
+                "comment=private-agent-audio"
+            ])
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success());
+        let bytes = std::fs::read(source).unwrap();
+        let original_hash = format!("{:x}", Sha256::digest(&bytes));
+        let (origin, served) = answer_once("200 OK", "{}").await;
+        let key = Secret::generate().unwrap();
+        upload(&agent_at(origin, &key), &key, bytes, "audio/wav")
+            .await
+            .unwrap();
+        let request = served.await.unwrap();
+        assert!(request.contains("content-type: video/mp4"));
+        assert!(request.contains("ftyp"));
+        assert!(!request.contains("private-agent-audio"));
+        assert!(!request.contains(&original_hash));
+        assert!(upload(
+            &agent_at("http://127.0.0.1:1".into(), &key),
+            &key,
+            b"not WAV".to_vec(),
+            "audio/wav"
+        )
+        .await
+        .unwrap_err()
+        .contains("preparation failed"));
     }
 
     /// Serves `body` as `mime` once, and returns the response to a GET of `path`.

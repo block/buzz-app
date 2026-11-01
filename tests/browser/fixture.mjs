@@ -34,6 +34,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  builderlab: [{}, { option: true }],
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
@@ -95,6 +96,7 @@ export const test = base.extend({
   historyRowsPerSecond: [1, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
+  builderlabLogin: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   localAgentActivity: [false, { option: true, scope: "worker" }],
   pairingFixture: [false, { option: true, scope: "worker" }],
@@ -107,6 +109,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      builderlab,
       liveSetupTimeoutMs,
       actionProfile,
       agentMessageDeletion,
@@ -2308,6 +2311,7 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
+                  builderlab,
                   archiveFile: ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
@@ -2781,6 +2785,7 @@ export const test = base.extend({
         ...(report.sidebarRemovalFailures ?? []),
         ...(report.sidebarPreferenceFailures ?? []),
         ...(report.startupFailures ?? []),
+        ...(report.builderlabFailures ?? []),
       ];
       // Activity reads retry a 502 quietly, so their journeys inject a 403.
       const activityFailures = [...(report.sidebarActivityFailures ?? [])];

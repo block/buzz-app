@@ -14,11 +14,17 @@ class Events {
   constructor(readonly url: string) {
     Events.all.push(this);
   }
-  emit(revision: string, subject: string | null, pending = false) {
+  emit(
+    revision: string,
+    subject: string | null,
+    pending = false,
+    error?: string,
+  ) {
     this.onmessage?.({
       data: JSON.stringify({
         revision,
         pending,
+        ...(error ? { error } : {}),
         auth: subject
           ? {
               subject,
@@ -246,8 +252,8 @@ it.each(["current", "canceled", "disposed"] as const)(
     expect(h.session.snapshot().status).toBe("pending");
     if (mode === "canceled") h.session.cancel();
     if (mode === "disposed") h.session.dispose();
-    h.events.emit("three", null);
     const error = "Builderlab code exchange failed with HTTP 503";
+    h.events.emit("three", null, false, mode === "current" ? error : undefined);
     response.resolve(Response.json({ error }, { status: 502 }));
     await pending;
     expect(h.session.snapshot()).toEqual({
@@ -276,7 +282,7 @@ it("ignores an older login error while preserving a replacement attempt's failur
     );
     await oldLogin;
     expect(h.session.snapshot()).toEqual({ status: "pending" });
-    h.events.emit("five", null);
+    h.events.emit("five", null, false, "New login failed");
   } finally {
     newResponse.resolve(
       Response.json({ error: "New login failed" }, { status: 502 }),
@@ -286,6 +292,27 @@ it("ignores an older login error while preserving a replacement attempt's failur
   expect(h.session.snapshot()).toEqual({
     status: "signed-out",
     error: "New login failed",
+  });
+  h.session.dispose();
+});
+
+it("keeps another page's replacement login pending after this page's late HTTP failure", async () => {
+  const h = setup();
+  h.events.emit("initial", null);
+  const response = deferred<Response>();
+  h.fetch.mockImplementationOnce(() => response.promise);
+  const login = h.session.signIn();
+  h.events.emit("attempt-A", null, true);
+  h.events.emit("failed-A", null, false, "Login A failed");
+  // A different renderer starts B: no second local signIn() occurs here.
+  h.events.emit("attempt-B", null, true);
+  response.resolve(Response.json({ error: "Login A failed" }, { status: 502 }));
+  await login;
+  expect(h.session.snapshot()).toEqual({ status: "pending" });
+  h.events.emit("failed-B", null, false, "Login B failed");
+  expect(h.session.snapshot()).toEqual({
+    status: "signed-out",
+    error: "Login B failed",
   });
   h.session.dispose();
 });

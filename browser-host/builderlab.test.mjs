@@ -326,6 +326,7 @@ it.each(["cancel", "sign-out"])(
     else h.builderlab.signOut();
     release.resolve();
     expect(await pending).toBeInstanceOf(Error);
+    expect(h.builderlab.snapshot()).not.toHaveProperty("error");
     expect(await h.builderlab.auth()).toBeNull();
     await expect(h.builderlab.call("list", {})).rejects.toThrow(
       "Sign in to Builderlab first",
@@ -804,3 +805,59 @@ it.each(["sign-out", "account-switch", "disconnect"])(
     }
   },
 );
+
+it("publishes login failures in the shared revision and clears them on a new attempt or sign-out", async () => {
+  const h = account({
+    "/v1/auth/login/exchange": () => Response.json({}, { status: 503 }),
+  });
+  const states = [];
+  const stop = h.builderlab.subscribe((state) => states.push(state));
+  try {
+    await expect(signIn(h)).rejects.toThrow(
+      "code exchange failed with HTTP 503",
+    );
+    expect(states).toHaveLength(2);
+    expect(states[0]).toMatchObject({ pending: true, auth: null });
+    expect(states[1]).toMatchObject({
+      pending: false,
+      auth: null,
+      error: "Builderlab code exchange failed with HTTP 503",
+    });
+    expect(states[1].revision).not.toBe(states[0].revision);
+    const before = h.opened();
+    const replacement = h.builderlab
+      .login(new AbortController().signal)
+      .catch((error) => error);
+    await vi.waitFor(() => expect(h.opened()).not.toBe(before));
+    expect(h.builderlab.snapshot()).toMatchObject({
+      pending: true,
+      auth: null,
+    });
+    expect(h.builderlab.snapshot()).not.toHaveProperty("error");
+    h.builderlab.signOut();
+    await replacement;
+    expect(h.builderlab.snapshot()).toMatchObject({
+      pending: false,
+      auth: null,
+    });
+    expect(h.builderlab.snapshot()).not.toHaveProperty("error");
+  } finally {
+    stop();
+    h.builderlab.signOut();
+  }
+});
+
+it("redacts the login credential before publishing a shared failure or returning it to HTTP", async () => {
+  const h = account({
+    "/v1/auth/me": () => {
+      throw new Error("Could not check secret");
+    },
+  });
+  try {
+    await expect(signIn(h)).rejects.toThrow("Could not check [redacted]");
+    expect(h.builderlab.snapshot().error).toBe("Could not check [redacted]");
+    expect(JSON.stringify(h.builderlab.snapshot())).not.toContain("secret");
+  } finally {
+    h.builderlab.signOut();
+  }
+});

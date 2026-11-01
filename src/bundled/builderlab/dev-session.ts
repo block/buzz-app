@@ -25,6 +25,7 @@ export const brokerBuilderlab = () =>
 type State = {
   revision: string;
   pending: boolean;
+  error?: string;
   auth: null | {
     subject: string;
     email?: string;
@@ -43,7 +44,6 @@ export function createDevSession() {
   let lifetime = new AbortController();
   let disposed = false;
   let version = 0;
-  let loginAttempt = 0;
   let revision: string | undefined;
   const listeners = new Set<() => void>();
   const publish = (next: LoginSnapshot) => {
@@ -67,7 +67,10 @@ export function createDevSession() {
     const at = ++version;
     clear();
     if (!next.auth || next.pending) {
-      publish({ status: next.pending ? "pending" : "signed-out" });
+      publish({
+        status: next.pending ? "pending" : "signed-out",
+        ...(!next.pending && next.error ? { error: next.error } : {}),
+      });
       return;
     }
     publish({ status: "pending", checking: true });
@@ -174,19 +177,11 @@ export function createDevSession() {
     },
     async signIn() {
       if (disposed || state.status === "pending") return;
-      const at = ++loginAttempt;
       publish({ status: "pending" });
       try {
         await send("login");
-      } catch (error) {
-        if (!disposed && loginAttempt === at && !owner)
-          publish({
-            status: "signed-out",
-            error:
-              error instanceof Error
-                ? error.message
-                : "Sign-in failed. Try again.",
-          });
+      } catch {
+        // The broker's revisioned event stream owns login outcomes across all pages.
       }
     },
     cancel() {
@@ -196,7 +191,6 @@ export function createDevSession() {
     abandon() {},
     signOut() {
       if (disposed) return;
-      ++loginAttempt;
       const at = ++version;
       clear();
       publish({ status: "pending", checking: true });
@@ -211,7 +205,6 @@ export function createDevSession() {
     },
     dispose() {
       disposed = true;
-      ++loginAttempt;
       ++version;
       events.close();
       clear();

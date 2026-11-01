@@ -10,6 +10,19 @@ type Archive = Readonly<{
   reopened?: boolean;
 }>;
 const maxBytes = 512 * 1024;
+const maxEntries = 1000;
+
+// Saving forgets the oldest choices rather than refuse one or save more than
+// readArchives accepts. Archives stay in action order, so the choice just
+// made is last and kept: 4,096 message IDs fit well within the byte bound.
+function bounded(archives: readonly Archive[]) {
+  let bytes = JSON.stringify(archives).length;
+  if (archives.length <= maxEntries && bytes <= maxBytes) return archives;
+  let start = 0;
+  while (archives.length - start > maxEntries || bytes > maxBytes)
+    bytes -= JSON.stringify(archives[start++]).length + 1;
+  return archives.slice(start);
+}
 
 export function readArchives(
   revision: string | null | undefined,
@@ -17,7 +30,7 @@ export function readArchives(
   if (!revision || revision.length > maxBytes) return [];
   try {
     const value: unknown = JSON.parse(revision);
-    if (!Array.isArray(value) || value.length > 1000) return [];
+    if (!Array.isArray(value) || value.length > maxEntries) return [];
     return value.filter(
       (entry): entry is Archive =>
         entry &&
@@ -121,19 +134,28 @@ export function updateArchive(
 ) {
   const revision = viewRevision(scope, archiveKey);
   const archives = readArchives(revision).filter((entry) => !owns(entry, item));
-  if (archived)
+  if (archived) {
+    // The row's time may come from a newer message that is not evidence.
+    const through = Math.max(
+      at,
+      ...item.messages.map(({ createdAt }) => createdAt),
+    );
     archives.push({
       id: item.id,
       channelId: item.channelId,
-      // The row's time may come from a newer message that is not evidence.
-      through: Math.max(at, ...item.messages.map(({ createdAt }) => createdAt)),
-      messageIds: [...item.messageIds],
+      through,
+      // A DM is one row, found by its ID, so it needs only the IDs that would
+      // otherwise renew it: those at the watermark. Other rows follow
+      // regrouped evidence by every ID.
+      messageIds:
+        item.target.kind === "channel"
+          ? item.messages.flatMap(({ id, createdAt }) =>
+              createdAt >= through ? [id] : [],
+            )
+          : [...item.messageIds],
     });
-  if (archives.length > 1000 || JSON.stringify(archives).length > maxBytes)
-    throw new Error(
-      "Inbox archive storage is full. Restore some archived conversations first.",
-    );
-  const result = replaceView(scope, archiveKey, revision, archives);
+  }
+  const result = replaceView(scope, archiveKey, revision, bounded(archives));
   if (result !== "saved")
     throw new Error(
       result === "changed"
@@ -180,7 +202,7 @@ export function reopenArchives(
   )
     return;
   // A newer revision is reconciled by the view subscription, not this stale effect.
-  if (replaceView(scope, archiveKey, revision, retained) === "failed")
+  if (replaceView(scope, archiveKey, revision, bounded(retained)) === "failed")
     throw new Error(
       "Could not save the reopened Inbox conversation on this device. Try again.",
     );

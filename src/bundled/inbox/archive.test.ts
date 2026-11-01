@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { InboxItem } from "../../features/relay/inbox";
 import { keypair, message } from "../../features/relay/testing";
-import { viewRevision } from "../../shared/view-state";
+import { viewRevision, writeView } from "../../shared/view-state";
 import {
   archiveKey,
   archiveIndex,
@@ -543,6 +543,157 @@ it("partitions archives by community and viewer, and never hides a failed save",
   });
   expect(() => updateArchive(h.scope, h.item, true)).toThrow("Could not save");
   expect(h.archived()).toBe(false);
+});
+
+const hex = (value: number) => value.toString(16).padStart(64, "0");
+function thread(
+  h: ReturnType<typeof fixture>,
+  ids: readonly string[],
+): InboxItem {
+  const rootId = ids[0] ?? "";
+  return {
+    ...h.item,
+    id: `room:${rootId}`,
+    rootId,
+    target: { kind: "thread", channelId: "room", rootId },
+    messageIds: ids,
+    messages: ids.map((id) => ({ id, createdAt: 20, mentioned: false })),
+    thread: true,
+  };
+}
+const stored = (scope: string) => readArchives(viewRevision(scope, archiveKey));
+
+it("forgets the oldest choice, never the one just made, instead of refusing one past the bound", () => {
+  const h = fixture();
+  const items = Array.from({ length: 1001 }, (_, index) =>
+    thread(h, [hex(index + 1)]),
+  );
+  // Every earlier choice has a future-dated watermark, later than the one
+  // just made, and the first choice the latest.
+  writeView(
+    h.scope,
+    archiveKey,
+    items.slice(0, -1).map((item, index) => ({
+      id: item.id,
+      channelId: item.channelId,
+      through: 6000 - index,
+      messageIds: item.messageIds,
+    })),
+  );
+  const last = items.at(-1);
+  if (!last) throw new Error("Missing last row");
+  updateArchive(h.scope, last, true);
+  expect(stored(h.scope)).toHaveLength(1000);
+  const index = archiveIndex(stored(h.scope));
+  expect(items.map((item) => isArchived(index, item))).toEqual(
+    items.map((_, position) => position !== 0),
+  );
+});
+
+it("forgets the oldest archive, not every archive, when reopening crosses the byte bound", () => {
+  const h = fixture();
+  const maxBytes = 512 * 1024;
+  const items = Array.from({ length: 76 }, (_, row) =>
+    thread(
+      h,
+      Array.from({ length: 100 }, (_, index) => hex(row * 100 + index + 1)),
+    ),
+  );
+  const archives = items.map((item, index) => ({
+    id: item.id,
+    channelId: item.channelId,
+    through: 100 + index,
+    messageIds: item.messageIds,
+  }));
+  // An archive whose conversation has no current row leaves 15 bytes free,
+  // less than reopening adds.
+  const gone = { id: "gone:gone", channelId: "", through: 1, messageIds: [] };
+  const free = maxBytes - JSON.stringify([gone, ...archives]).length - 15;
+  writeView(h.scope, archiveKey, [
+    { ...gone, channelId: "x".repeat(free) },
+    ...archives,
+  ]);
+  expect(viewRevision(h.scope, archiveKey)).toHaveLength(maxBytes - 15);
+  const last = items.at(-1);
+  if (!last) throw new Error("Missing last row");
+  const reply = {
+    ...last,
+    messageIds: [...last.messageIds, "e".repeat(64)],
+    messages: [
+      ...last.messages,
+      { id: "e".repeat(64), createdAt: 200, mentioned: false },
+    ],
+  };
+  reopenArchives(h.scope, [...items.slice(0, -1), reply]);
+  expect(
+    viewRevision(h.scope, archiveKey)?.length ?? Infinity,
+  ).toBeLessThanOrEqual(maxBytes);
+  expect(stored(h.scope).map(({ id }) => id)).toEqual(
+    items.map(({ id }) => id),
+  );
+  const index = archiveIndex(stored(h.scope));
+  expect(items.slice(0, -1).every((item) => isArchived(index, item))).toBe(
+    true,
+  );
+  expect(isArchived(index, reply)).toBe(false);
+  expect(isArchived(index, reply, true)).toBe(true);
+});
+
+it("stores only a DM's watermark messages and still blocks their replay", () => {
+  const h = fixture();
+  const ids = Array.from({ length: 300 }, (_, index) => hex(index + 1));
+  const dm: InboxItem = {
+    ...h.item,
+    id: "dm:dm",
+    channelId: "dm",
+    target: { kind: "channel", channelId: "dm" },
+    messageIds: ids,
+    messages: ids.map((id, index) => ({
+      id,
+      createdAt: 701 + index,
+      mentioned: true,
+    })),
+  };
+  // The newest message arrived in the archive's own second.
+  updateArchive(h.scope, dm, true, 1000);
+  expect(stored(h.scope)).toEqual([
+    { id: dm.id, channelId: "dm", through: 1000, messageIds: [hex(300)] },
+  ]);
+  const add = (id: string, createdAt: number, mentioned: boolean) => ({
+    ...dm,
+    messageIds: [...dm.messageIds, id],
+    messages: [...dm.messages, { id, createdAt, mentioned }],
+  });
+  const index = archiveIndex(stored(h.scope));
+  expect(isArchived(index, dm)).toBe(true);
+  expect(isArchived(index, dm, true)).toBe(true);
+  expect(isArchived(index, add("c".repeat(64), 999, true), true)).toBe(true);
+  expect(isArchived(index, add("d".repeat(64), 1000, true), true)).toBe(false);
+  expect(isArchived(index, add("d".repeat(64), 1000, false))).toBe(false);
+  updateArchive(h.scope, dm, false);
+  expect(stored(h.scope)).toEqual([]);
+});
+
+it("still hides and restores an archive saved with every DM message ID", () => {
+  const h = fixture();
+  const ids = Array.from({ length: 2000 }, (_, index) => hex(index + 1));
+  const dm: InboxItem = {
+    ...h.item,
+    id: "dm:dm",
+    channelId: "dm",
+    target: { kind: "channel", channelId: "dm" },
+    messageIds: ids,
+    messages: ids.map((id) => ({ id, createdAt: 20, mentioned: false })),
+  };
+  writeView(h.scope, archiveKey, [
+    { id: dm.id, channelId: "dm", through: 30, messageIds: ids },
+  ]);
+  expect(h.archived(dm)).toBe(true);
+  updateArchive(h.scope, h.item, true);
+  expect(h.archived(dm)).toBe(true);
+  updateArchive(h.scope, dm, false);
+  expect(h.archived(dm)).toBe(false);
+  expect(stored(h.scope)).toEqual([expect.objectContaining({ id: h.item.id })]);
 });
 
 it("ignores malformed archive records", () => {

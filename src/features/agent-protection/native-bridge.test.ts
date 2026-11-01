@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { McpHandler } from "../host/service";
 import { nativeProtectionBridge } from "./native-bridge";
-import type { AgentProtection } from "./service";
+import { ProtectionDenied, type AgentProtection } from "./service";
 
 async function fixture(check: AgentProtection["check"]) {
   let handler!: McpHandler, closed!: () => void;
@@ -133,4 +133,43 @@ it("rejects saturation instead of admitting unchecked native actions", async () 
         (row as { result: { allowed: boolean } }).result.allowed === false,
     ),
   ).toBe(true);
+});
+
+it("keeps an explained model-input denial for Buzz, never for the runtime", async () => {
+  const check = vi.fn<AgentProtection["check"]>();
+  const f = await fixture(check);
+  const ask = (kind: string, session = "native-session") =>
+    f.handler({ ...call, params: { ...call.params, kind, session } });
+  const deny = (reason?: string) =>
+    check.mockRejectedValueOnce(new ProtectionDenied(reason));
+  deny("It asks to reveal keys.");
+  expect(await ask("context")).toEqual({
+    jsonrpc: "2.0",
+    id: "native-1",
+    result: { allowed: false },
+  });
+  // A refused tool call or result does not end the turn, so needs no reason.
+  deny("A refused tool call.");
+  await ask("tool");
+  deny("A refused tool result.");
+  await ask("tool-result");
+  // Nor does a concurrent source that passed, or was refused unexplained.
+  check.mockResolvedValueOnce();
+  await ask("context");
+  deny();
+  await ask("context");
+  check.mockRejectedValueOnce(new Error("offline"));
+  await ask("context");
+  expect(f.bridge.explanation("native-session")).toBe(
+    "It asks to reveal keys.",
+  );
+  expect(f.bridge.explanation("native-session")).toBeUndefined();
+  // Explanations nobody takes age out, oldest first.
+  for (let index = 0; index <= 16; index++) {
+    deny(`Session ${index}.`);
+    await ask("context", `session-${index}`);
+  }
+  expect(f.bridge.explanation("session-0")).toBeUndefined();
+  expect(f.bridge.explanation("session-1")).toBe("Session 1.");
+  expect(f.bridge.explanation("session-16")).toBe("Session 16.");
 });

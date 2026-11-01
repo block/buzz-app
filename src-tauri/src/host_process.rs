@@ -1,8 +1,8 @@
 //! Long-lived processes a plugin starts from its manifest's `host.processes`:
 //! stdin stays open for the plugin, and stdout and stderr stream back as they
 //! arrive. A process belongs to the plugin that started it and to the page that
-//! asked; it is killed when the plugin asks, when the page reloads, or when the
-//! app exits. A page that reloaded hears nothing of it after. It runs with the
+//! asked; it is killed when the plugin asks, when that webview loads another
+//! page, or when the app exits. A page that reloaded hears nothing of it after. It runs with the
 //! user's own access, with optional native containment for protected workers.
 mod artifact;
 mod protection;
@@ -10,6 +10,7 @@ use artifact::verify_artifact;
 use protection::ProcessProtection;
 
 use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
+use crate::page::{Page, PageLoads};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::HostProcess;
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,7 @@ pub(crate) enum ProcessEvent {
 
 struct Entry {
     plugin: String,
+    page: Page,
     /// Its process group, which is its own pid.
     #[cfg_attr(not(unix), allow(dead_code))]
     group: Option<u32>,
@@ -79,9 +81,9 @@ pub(crate) struct HostProcesses {
 #[derive(Default)]
 struct Registry {
     next: u64,
-    /// Counts page loads, so a spawn the page asked for before it reloaded is
-    /// refused rather than left running with nobody listening.
-    page: u64,
+    /// So a spawn the page asked for before it reloaded is refused rather
+    /// than left running with nobody listening.
+    pages: PageLoads,
     entries: HashMap<u64, Entry>,
 }
 impl HostProcesses {
@@ -102,15 +104,15 @@ impl HostProcesses {
             _ => Err("No such process".into()),
         }
     }
-    /// The current page load, for `start`.
-    pub(crate) fn page(&self) -> u64 {
-        self.registry().page
+    /// The page `webview` shows now, for `start`.
+    pub(crate) fn page(&self, webview: &str) -> Page {
+        self.registry().pages.current(webview)
     }
     /// Starts `command`, owned by `plugin`, and streams its output to `on_event`,
     /// unless the page that asked during `page` has since gone.
     fn start(
         &self,
-        page: u64,
+        page: Page,
         plugin: String,
         program: &str,
         mut command: Command,
@@ -118,7 +120,7 @@ impl HostProcesses {
     ) -> Result<u64, String> {
         let state = self.clone();
         let mut registry = self.registry();
-        if registry.page != page {
+        if !registry.pages.is_current(&page) {
             return Err("The page reloaded".into());
         }
         if registry.entries.len() >= MAX_PROCESSES {
@@ -143,6 +145,7 @@ impl HostProcesses {
             handle,
             Entry {
                 plugin,
+                page: page.clone(),
                 group: child.id(),
                 stdin: child
                     .stdin
@@ -210,7 +213,7 @@ impl HostProcesses {
             registry.entries.remove(&handle);
             // A page that reloaded is told nothing: it stopped the process by
             // going, and may run until it unloads, taking the exit for a failure.
-            let reloaded = registry.page != page;
+            let reloaded = !registry.pages.is_current(&page);
             drop(registry);
             if !reloaded {
                 let _ = on_event.send(ProcessEvent::Exit {
@@ -256,22 +259,21 @@ impl HostProcesses {
         }
         Ok(())
     }
-    /// Stops every process, without telling the page: it is gone.
-    pub(crate) fn stop_all(&self) {
+    /// Stops every process `webview`'s page started, without telling the
+    /// page: it is gone.
+    pub(crate) fn page_load(&self, webview: &str) {
         let mut registry = self.registry();
-        registry.page += 1;
-        for entry in registry.entries.values_mut() {
-            entry.stdin = None;
-            if let Some(stop) = entry.stop.take() {
-                let _ = stop.send(());
-            }
-        }
+        registry.pages.load(webview);
+        registry.stop(|page| page.webview() == webview);
     }
     /// Kills every process group at once: the app is exiting, and its async
     /// tasks will not run again to stop them. On Windows each process's job
     /// kills it when the app's handle to the job closes.
     pub(crate) fn shutdown(&self) {
-        self.stop_all();
+        let mut registry = self.registry();
+        registry.pages.exit();
+        registry.stop(|_| true);
+        drop(registry);
         #[cfg(unix)]
         for group in self
             .registry()
@@ -280,6 +282,17 @@ impl HostProcesses {
             .filter_map(|entry| entry.group)
         {
             unsafe { libc::kill(-(group as i32), libc::SIGKILL) };
+        }
+    }
+}
+impl Registry {
+    /// Stops the processes of each page `gone` picks.
+    fn stop(&mut self, gone: impl Fn(&Page) -> bool) {
+        for entry in self.entries.values_mut().filter(|entry| gone(&entry.page)) {
+            entry.stdin = None;
+            if let Some(stop) = entry.stop.take() {
+                let _ = stop.send(());
+            }
         }
     }
 }
@@ -297,6 +310,7 @@ enum Stream {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
     manager: tauri::State<'_, PluginManager>,
     processes: tauri::State<'_, HostProcesses>,
     id: String,
@@ -309,7 +323,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     mcp: Option<ProcessMcpConnection>,
     protection: Option<ProcessProtection>,
 ) -> Result<u64, String> {
-    let page = processes.page();
+    let page = processes.page(webview.label());
     let plugin = id.clone();
     let (declared, registry) = with_manager(manager, move |manager| {
         let registry = manager.storage_root().to_path_buf();

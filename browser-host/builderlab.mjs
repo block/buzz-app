@@ -223,11 +223,17 @@ export function createBuilderlab({
   let credential;
   let account;
   let pending = false;
+  let loginError;
   let linking = Promise.resolve();
   let expiry;
   let revision = randomUUID();
   const listeners = new Set();
-  const snapshot = () => ({ revision, pending, auth: account ?? null });
+  const snapshot = () => ({
+    revision,
+    pending,
+    auth: account ?? null,
+    ...(loginError ? { error: loginError } : {}),
+  });
   const notify = () => {
     for (const listener of listeners) listener(snapshot());
   };
@@ -319,6 +325,7 @@ export function createBuilderlab({
     revision = randomUUID();
     clearTimeout(expiry);
     pending = false;
+    loginError = undefined;
     account = undefined;
     session?.abort();
     session = new AbortController();
@@ -354,6 +361,7 @@ export function createBuilderlab({
       const attempt = signal
         ? AbortSignal.any([signal, session.signal])
         : session.signal;
+      let loginCredential;
       try {
         const verifier = randomBytes(32).toString("base64url");
         const code = await awaitCallback(attempt, open, api, verifier);
@@ -381,7 +389,8 @@ export function createBuilderlab({
           throw new Error(
             "Builderlab code exchange returned an empty credential",
           );
-        const account = await me(exchanged.session_credential, attempt);
+        loginCredential = exchanged.session_credential;
+        const account = await me(loginCredential, attempt);
         if (account.expiresAt !== exchanged.expires_at)
           throw new Error(
             "Builderlab session expiry did not match code exchange",
@@ -400,8 +409,16 @@ export function createBuilderlab({
         publishAccount(account);
         return account;
       } catch (error) {
-        if (started === generation) revoke();
-        throw error;
+        const message = (
+          error instanceof Error ? error.message : "Builderlab sign-in failed"
+        ).replaceAll(loginCredential || "\u0000", "[redacted]");
+        if (started === generation) {
+          const canceled = attempt.aborted;
+          revoke(false);
+          loginError = canceled ? undefined : message;
+          notify();
+        }
+        throw new Error(message);
       } finally {
         if (started === generation) {
           pending = false;

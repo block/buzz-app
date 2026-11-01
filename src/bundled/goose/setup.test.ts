@@ -113,7 +113,10 @@ describe("GooseSetup", () => {
             expect(request.params).toEqual({
               provider: "ollama",
               id: "qwen3",
-              prompt: { system: "Review", input: "Evidence" },
+              prompt: {
+                system: `Review\n\nReply with only JSON that matches this JSON Schema, and no other text:\n${JSON.stringify({ type: "object", required: ["decision"] })}`,
+                input: "Evidence",
+              },
             });
             options?.onStdout?.(
               `${JSON.stringify({

@@ -341,7 +341,14 @@ export class GooseSetup {
           {
             provider: model.provider,
             id: model.id,
-            prompt: { system: prompt.system, input: prompt.input },
+            // Goose's native review takes text only and rejects other fields,
+            // so the schema can only be stated in the trusted instructions.
+            prompt: {
+              system: prompt.outputSchema
+                ? `${prompt.system}\n\nReply with only JSON that matches this JSON Schema, and no other text:\n${JSON.stringify(prompt.outputSchema)}`
+                : prompt.system,
+              input: prompt.input,
+            },
           },
           65_000,
         )) as { text: string; model: { provider: string; id: string } };

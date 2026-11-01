@@ -117,7 +117,13 @@ export function AgentCreateDialog({
       ? item.adopt({ instructions: request.instructions }, config)
       : config;
   };
-  const [config, setConfig] = useState(() => seed(type));
+  const [config, setConfig] = useState(() => {
+    const start = seed(type);
+    // A requested creation starts with its instructions, as a change does.
+    return request?.instructions !== undefined && type?.adopt
+      ? type.adopt({ instructions: request.instructions }, start)
+      : start;
+  });
   const preview = migration(type);
   const [dirty, setDirty] = useState(Boolean(update));
   const [pending, setPending] = useState(false);

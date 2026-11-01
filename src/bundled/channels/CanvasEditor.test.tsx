@@ -13,7 +13,12 @@ import { StrictMode, useLayoutEffect } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
-import { clearView, readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  clearView,
+  readView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { CanvasEditor } from "./CanvasEditor";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 
@@ -469,9 +474,9 @@ it.each([head, edited])(
     }
     render(<Mount />);
     await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "Canvas Markdown" })).toHaveValue(
-        current.content,
-      ),
+      expect(
+        screen.getByRole("textbox", { name: "Canvas Markdown" }),
+      ).toHaveValue(current.content),
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Canvas" })).toBeEnabled();

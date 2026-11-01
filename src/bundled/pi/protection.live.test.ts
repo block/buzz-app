@@ -130,6 +130,16 @@ try {
  assert.equal(JSON.parse(reviewed.text).blocked,true);
  assert.equal(reviewer.actions.length,0);
  result.toolFreeReview=true;
+ // A schema reaches the model in the trusted instructions, never the evidence.
+ const outputSchema={type:'object',properties:{blocked:{type:'boolean'}},required:['blocked']};
+ faux.setResponses([(context)=>{
+  assert.ok(context.messages[0].content.startsWith('TRUSTED_REVIEW_INSTRUCTIONS'));
+  assert.ok(context.messages[0].content.includes(JSON.stringify(outputSchema)));
+  assert.equal(context.messages[1].content,'UNTRUSTED_ACTION_EVIDENCE');
+  return fauxAssistantMessage('{"blocked":false}');
+ }]);
+ await reviewer.rpc('review',{id:'schema-review',provider:'faux',model:'faux-1',prompt:{system:'TRUSTED_REVIEW_INSTRUCTIONS',input:'UNTRUSTED_ACTION_EVIDENCE',outputSchema}});
+ result.reviewSchema=true;
 } finally {await reviewer.stop();}
 // Wrappers also handle errors and exact snapshots independently.
 const emitted=[];let seen;
@@ -188,6 +198,7 @@ it.skipIf(!deps)(
             "concurrentSessions",
             "compactionRecovery",
             "toolFreeReview",
+            "reviewSchema",
             "secondaryMembership",
           ].map((name) => [name, true]),
         ),

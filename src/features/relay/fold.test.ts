@@ -1315,3 +1315,45 @@ it("applies an agent owner's edit only with ownership evidence for that author",
   expect(fold(relay.pubkey)).toBe("Whole answer");
   expect(fold(bob.pubkey)).toBe("Spoken prefix");
 });
+
+it("keeps a message's tl;dr through edits that do not replace it", () => {
+  const original = message(alice, channel, "Long report", 10, [
+    ["summary", "Fixed the flaky upload test"],
+  ]);
+  const edit = (created_at: number, tags: string[][] = []) =>
+    signed(alice, {
+      kind: 40003,
+      content: `Long report, take ${created_at}`,
+      created_at,
+      tags: [["h", channel], ["e", original.id], ...tags],
+    });
+  const fold = (...events: ReturnType<typeof signed>[]) =>
+    foldMessages(channel, relay.pubkey, [original, ...events])[0];
+  expect(fold()?.tldr).toBe("Fixed the flaky upload test");
+  // Another client's edit drops tags it does not know.
+  expect(fold(edit(11))?.tldr).toBe("Fixed the flaky upload test");
+  const replaced = edit(11, [["summary", "Fixed it and added a retry"]]);
+  expect(fold(replaced)?.tldr).toBe("Fixed it and added a retry");
+  expect(fold(replaced, edit(12))?.tldr).toBe("Fixed it and added a retry");
+  const before = foldMessages(channel, relay.pubkey, [original]);
+  const after = foldMessages(channel, relay.pubkey, [original, replaced]);
+  expect(shareMessageRows(before, after)[0]).toBe(after[0]);
+  expect(after[0]).not.toBe(before[0]);
+});
+
+it("reads a tl;dr as one bounded line of plain text", () => {
+  const tldr = (value: string) =>
+    foldMessages(channel, relay.pubkey, [
+      message(alice, channel, "Body", 10, [["summary", value]]),
+    ])[0]?.tldr;
+  expect(tldr("  Two\nlines‮  here\t")).toBe("Two lines here");
+  expect(tldr(" \n ")).toBeUndefined();
+  const long = tldr("😀".repeat(200));
+  expect(Array.from(long ?? "")).toHaveLength(160);
+  expect(long?.endsWith("…")).toBe(true);
+  expect(
+    foldMessages(channel, relay.pubkey, [
+      message(alice, channel, "Body", 10),
+    ])[0]?.tldr,
+  ).toBeUndefined();
+});

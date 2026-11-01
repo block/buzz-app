@@ -422,6 +422,128 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published).toHaveLength(1);
 });
 
+it("tags a sent message and a subthread reply with a trimmed summary", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  await callTool(client, context, "send", {
+    text: "long report",
+    audience: "agents",
+    summary: "  Fixed the flaky suite  ",
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["audience", "agents"],
+    ["summary", "Fixed the flaky suite"],
+  ]);
+  await callTool(client, context, "reply_in_subthread", {
+    parent: root,
+    text: "side note",
+    audience: "everyone",
+    summary: "Side note",
+  });
+  expect(published[1]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["summary", "Side note"],
+  ]);
+  await callTool(client, context, "send", {
+    text: "short",
+    audience: "everyone",
+  });
+  expect(published[2]?.tags.some((t) => t[0] === "summary")).toBe(false);
+});
+
+it("tags an edit with a summary only when given one", async () => {
+  const { client, published } = fake([
+    ...community,
+    event({ id: "d".repeat(64), pubkey: me }),
+  ]);
+  const context = { channel: "chan", root };
+  await callTool(client, context, "edit", {
+    id: "d".repeat(64),
+    text: "new",
+    summary: "Reworded",
+  });
+  expect(published[0]).toEqual({
+    kind: 40003,
+    content: "new",
+    tags: [
+      ["h", "chan"],
+      ["e", "d".repeat(64)],
+      ["summary", "Reworded"],
+    ],
+  });
+  await callTool(client, context, "edit", {
+    id: "d".repeat(64),
+    text: "newer",
+  });
+  expect(published[1]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", "d".repeat(64)],
+  ]);
+});
+
+it("accepts a summary of exactly 160 code points, however many bytes", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  for (const unit of ["a", "é", "日", "😀"]) {
+    await callTool(client, context, "send", {
+      text: "x",
+      audience: "everyone",
+      summary: unit.repeat(160),
+    });
+  }
+  expect(published.map((p) => p.tags.at(-1))).toEqual(
+    ["a", "é", "日", "😀"].map((unit) => ["summary", unit.repeat(160)]),
+  );
+});
+
+it.each([
+  ["empty", "", "summary must not be empty."],
+  ["blank", "  \t ", "summary must not be empty."],
+  ["a string of 161 characters", "a".repeat(161), "at most 160 characters"],
+  ["161 emoji", "😀".repeat(161), "at most 160 characters"],
+  ["a line feed", "one\ntwo", "one line"],
+  ["a carriage return", "one\rtwo", "one line"],
+  ["CRLF", "one\r\ntwo", "one line"],
+  ["a vertical tab", "one\vtwo", "one line"],
+  ["a form feed", "one\ftwo", "one line"],
+  ["a next line", "one\u0085two", "one line"],
+  ["a line separator", "one\u2028two", "one line"],
+  ["a paragraph separator", "one\u2029two", "one line"],
+  ["a tab", "one\ttwo", "one line"],
+  ["a null", "one\0two", "one line"],
+  ["a number", 5, "summary must be a string."],
+  ["null", null, "summary must be a string."],
+  ["a list", ["a"], "summary must be a string."],
+])(
+  "rejects a summary that is %s, sending nothing",
+  async (_name, summary, message) => {
+    const { client, published } = fake([
+      ...community,
+      event({ id: "d".repeat(64), pubkey: me }),
+    ]);
+    const context = { channel: "chan", root };
+    const args = { text: "x", audience: "everyone", summary };
+    for (const [tool, extra] of [
+      ["send", {}],
+      ["reply_in_subthread", { parent: root }],
+      ["edit", { id: "d".repeat(64) }],
+    ] as const) {
+      await expect(
+        callTool(client, context, tool, {
+          ...args,
+          ...extra,
+          files: ["shot.png"],
+        }),
+      ).rejects.toThrow(message);
+    }
+    expect(published).toHaveLength(0);
+    expect(client.upload).not.toHaveBeenCalled();
+  },
+);
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

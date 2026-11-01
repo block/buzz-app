@@ -145,6 +145,9 @@ export type ChannelMessage = Readonly<{
   }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
+  /** Author-written one-line `summary` tag, from the newest edit that has one,
+   * else the original. Sanitized plain text; never markdown. */
+  tldr?: string;
   /** Offsets in `content` where attachment removal joined once-separate text; a
    * bound name never spans one. */
   attachmentSeams?: readonly number[];

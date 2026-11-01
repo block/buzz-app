@@ -3606,3 +3606,59 @@ html[data-keyboard-navigation]
   min-width: 0;
   max-width: calc(100% - var(--size-control));
 }
+
+/* A collapsed agent message: one quiet line where its body was. */
+.collapsedLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  inline-size: 100%;
+  min-inline-size: 0;
+  margin-block-start: var(--space-half);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--affordance-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-body-sm);
+  font-weight: var(--text-body-sm--font-weight);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  text-align: start;
+}
+.collapsedLine:hover {
+  background: var(--affordance-subtle-hover);
+}
+html[data-keyboard-navigation] .collapsedLine:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+/* "TL;DR": a small tag of its own, so the summary after it reads as text. */
+.collapsedLabel {
+  flex: none;
+  padding: 0 var(--space-1h);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: var(--text-caption);
+  font-weight: var(--type-weight-medium);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: 0.04em;
+}
+.collapsedText {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collapsedTldr {
+  font-style: italic;
+}
+.collapsedChevron {
+  flex: none;
+  color: var(--text-subtle);
+}

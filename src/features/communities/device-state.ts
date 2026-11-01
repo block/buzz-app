@@ -2,6 +2,7 @@ import { forgetTabVisits } from "../messages/tab-visit-lifetime";
 import { forgetCoreMemory } from "../agents/core-memory-cache";
 import { forgetChannelSetups } from "../channel-templates/setup";
 import { forgetQuickReactions } from "../messages/quick-reactions";
+import { forgetCollapsedMessages } from "../messages/collapsed-messages";
 import { relayPartition } from "../relay/partition";
 import { purgeRelayPartition } from "../relay/partition-purge";
 import { forgetThreadFollows } from "../relay/thread-follows";
@@ -58,6 +59,7 @@ export async function purgeCommunityDeviceState(
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));
+  await attempt("collapsed messages", () => forgetCollapsedMessages(scope));
   await purgeRelayPartition(origin, viewer, attempt);
   return failures;
 }

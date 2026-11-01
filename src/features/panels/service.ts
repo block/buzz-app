@@ -62,7 +62,12 @@ export type Panel = Readonly<{
   /** Claim strength when several panels match a target; see `MatchOrder`. */
   order?: MatchOrder | undefined;
   // Optional host launcher; placement stays with the current page or host fallback.
-  launcher?: Readonly<{ icon: string; target: string }>;
+  launcher?: Readonly<{
+    icon: string;
+    target: string;
+    /** Plugin-owned count or mark, clipped to a compact corner badge. */
+    badge?: ComponentType;
+  }>;
   /** Optional live controls beside shell search; lifetime remains plugin-owned. */
   toolbar?: ComponentType;
   // Optional channel-header launcher. The page supplies context and owns placement.
@@ -176,9 +181,13 @@ export class PanelsService extends Service implements Panels {
       (!panel.launcher ||
         typeof panel.launcher.icon !== "string" ||
         !panel.launcher.icon.trim() ||
-        typeof panel.launcher.target !== "string")
+        typeof panel.launcher.target !== "string" ||
+        (panel.launcher.badge !== undefined &&
+          typeof panel.launcher.badge !== "function"))
     ) {
-      throw new Error("A panel launcher needs an icon and target string");
+      throw new Error(
+        "A panel launcher needs an icon and target string; an optional badge must be a component",
+      );
     }
     if (panel.toolbar !== undefined && typeof panel.toolbar !== "function")
       throw new Error("A panel toolbar needs a component");

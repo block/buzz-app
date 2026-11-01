@@ -339,3 +339,51 @@ it("runs a chat archive's Undo through the lifecycle gate, after any action hold
   expect(view.result.current.lifecycleDialog).toBeUndefined();
   expect(run).toHaveBeenCalledTimes(3);
 });
+
+it("refuses a region chat's Archive, Unarchive and Undo without a live source and publishes nothing", async () => {
+  const run = vi.fn(async () => {});
+  const view = mount(fixture(run).relay, true);
+  const task = {
+    id: "task",
+    name: "Task",
+    channelType: "solo" as const,
+    labels: ["buzz.solo", "buzz.region:nexus:tasks"],
+  };
+  for (const [action, choose] of [
+    ["Archive", () => view.result.current.openLifecycle(task, "archive")],
+    [
+      "Unarchive",
+      () =>
+        view.result.current.openLifecycle(
+          { ...task, archived: true },
+          "unarchive",
+        ),
+    ],
+    [
+      "Unarchive",
+      () => view.result.current.undoArchive({ ...task, archived: true }),
+    ],
+  ] as const) {
+    act(choose);
+    expect(view.result.current.lifecycleDialog).toBeUndefined();
+    expect(
+      await screen.findByText(
+        "The plugin that manages this chat is not available. Try again when it is running.",
+      ),
+    ).toBeDefined();
+    expect(screen.getByText(`${action} chat failed`)).toBeDefined();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(`${action} chat failed`)).toBeNull(),
+    );
+  }
+  expect(run).not.toHaveBeenCalled();
+  // Leave and Delete are not region-owned and keep the host confirmation.
+  act(() => view.result.current.openLifecycle(task, "leave"));
+  expect(view.result.current.lifecycleDialog).toMatchObject({
+    channel: task,
+    action: "leave",
+  });
+});

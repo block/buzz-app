@@ -86,12 +86,27 @@ fn details_labels(labels: &[Vec<String>]) -> bool {
 fn lifecycle(event: &EventTemplate) -> bool {
     if !matches!(event.kind, 9002 | 9008 | 9021 | 9022 | 41012)
         || !common(event)
-        || event.tags.len() != if event.kind == 9002 { 2 } else { 1 }
+        || !tag(event, 0, "h").is_some_and(uuid)
     {
         return false;
     }
-    tag(event, 0, "h").is_some_and(uuid)
-        && (event.kind != 9002 || matches!(tag(event, 1, "archived"), Some("true" | "false")))
+    match (event.kind, event.tags.len()) {
+        (9002, 2) => matches!(tag(event, 1, "archived"), Some("true" | "false")),
+        // Guarded state request: archive is always subtree-scoped.
+        (9002, 4) => {
+            matches!(
+                (tag(event, 1, "archived"), tag(event, 2, "scope")),
+                (Some("true"), Some("subtree")) | (Some("false"), Some("target" | "subtree"))
+            ) && tag(event, 3, "expect").is_some_and(super::hex_key)
+        }
+        // Guarded fence: replaces only the target's token.
+        (9002, 3) => {
+            tag(event, 1, "lifecycle") == Some("fence")
+                && tag(event, 2, "expect-target").is_some_and(|t| t == "-" || uuid(t))
+        }
+        (9002, _) => false,
+        (_, len) => len == 1,
+    }
 }
 fn archive(event: &EventTemplate) -> bool {
     if !matches!(event.kind, 9035 | 9036)
@@ -878,12 +893,10 @@ mod member_administration_tests {
     use super::*;
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
 
-    #[test]
-    fn member_commands_match_js_and_sign_through_production_ipc_and_acl() {
-        let cases: Value = serde_json::from_str(include_str!(
-            "../../../src/features/channel-members/administration-contract.json"
-        ))
-        .unwrap();
+    /// A production command handler for one purpose-bound route.
+    fn ipc(
+        route: &'static str,
+    ) -> impl Fn(&str, Value) -> std::result::Result<tauri::ipc::InvokeResponseBody, Value> {
         let app = mock_builder()
             .manage(IdentityHost::fixture())
             .manage(FederatedIdentity::new().unwrap())
@@ -893,7 +906,8 @@ mod member_administration_tests {
         let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
             .build()
             .unwrap();
-        let invoke = |command: &str, event: Value| {
+        move |command: &str, event: Value| {
+            let _app = &app;
             get_ipc_response(
                 &view,
                 tauri::webview::InvokeRequest {
@@ -902,13 +916,58 @@ mod member_administration_tests {
                     error: tauri::ipc::CallbackFn(1),
                     url: view.url().unwrap(),
                     body: tauri::ipc::InvokeBody::Json(serde_json::json!({
-                        "community": "https://relay.test", "route": "member-administration", "event": event
+                        "community": "https://relay.test", "route": route, "event": event
                     })),
                     headers: Default::default(),
                     invoke_key: INVOKE_KEY.into(),
                 },
             )
-        };
+        }
+    }
+
+    #[test]
+    fn guarded_lifecycle_commands_match_js_and_sign_through_production_ipc() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../src/features/relay/channel-lifecycle-contract.json"
+        ))
+        .unwrap();
+        let invoke = ipc("channel-lifecycle");
+        for case in cases["accepted"].as_array().unwrap() {
+            let template = case["event"].clone();
+            let event: Value = invoke("relay_channel_sign", template.clone())
+                .unwrap()
+                .deserialize()
+                .unwrap();
+            super::super::verify_signature(&event).unwrap();
+            assert_eq!(event["tags"], template["tags"], "{}", case["name"]);
+            let viewer = event["pubkey"].as_str().unwrap();
+            assert!(validate("channel-lifecycle", &event, Some(viewer)).is_ok());
+            for route in [
+                "channel-details",
+                "identity-archive",
+                "member-administration",
+            ] {
+                assert!(validate(route, &event, Some(viewer)).is_err());
+            }
+        }
+        for case in cases["rejected"].as_array().unwrap() {
+            let event = case["event"].clone();
+            assert!(
+                validate("channel-lifecycle", &event, None).is_err(),
+                "{}",
+                case["name"]
+            );
+            assert!(invoke("relay_channel_sign", event).is_err());
+        }
+    }
+
+    #[test]
+    fn member_commands_match_js_and_sign_through_production_ipc_and_acl() {
+        let cases: Value = serde_json::from_str(include_str!(
+            "../../../src/features/channel-members/administration-contract.json"
+        ))
+        .unwrap();
+        let invoke = ipc("member-administration");
         for case in cases["accepted"].as_array().unwrap() {
             let template = case["event"].clone();
             let event: Value = invoke("relay_channel_sign", template.clone())

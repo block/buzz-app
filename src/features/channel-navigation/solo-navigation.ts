@@ -2,12 +2,18 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 import { readView, viewRevision, writeView } from "../../shared/view-state";
 import type { RelayData, RelaySnapshot } from "../relay/service";
+import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { JsonValue } from "../navigation/targets";
 import type { PluginManager } from "../../plugins/manager";
 import { relayPartition } from "../relay/partition";
 import { ownSolo, soloLabels } from "../solo/labels";
-import { regionLabels, soloRegionLabel } from "../solo/region-labels";
+import {
+  effectiveRegionLabel,
+  REGION_PREFIX,
+  regionLabels,
+  soloRegionLabel,
+} from "../solo/region-labels";
 import {
   projectSoloRegions,
   type RegisteredSoloSource,
@@ -368,6 +374,30 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   retry = (key: string) => {
     if (this.sources().some((source) => source.key === key)) this.bind(true);
   };
+  /** Runs the live source's lifecycle hook for one of its chats, archived ones included. */
+  lifecycle(
+    label: string,
+    channelId: string,
+    action: "archive" | "unarchive",
+  ): Promise<void> {
+    const binding = this.binding;
+    const runtime = [...this.runtimes.values()].find(
+      ({ source }) =>
+        `${REGION_PREFIX}${source.pluginId}:${source.id}` === label,
+    );
+    const hook = runtime?.source.lifecycle;
+    if (
+      !binding ||
+      !runtime ||
+      runtime.failed ||
+      runtime.snapshot?.status !== "ready" ||
+      !hook
+    )
+      return Promise.reject(new Error(REGION_LIFECYCLE_UNAVAILABLE));
+    return (async () => {
+      await hook(binding, Object.freeze({ channelId, action }));
+    })();
+  }
   registerSource(source: SoloRegionSource): SoloRegionHandle {
     const owner = this.ctx.pluginOwner;
     if (!owner)
@@ -380,7 +410,8 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       typeof source.read !== "function" ||
       typeof source.subscribe !== "function" ||
       !source.component ||
-      (source.order !== undefined && !Number.isFinite(source.order))
+      (source.order !== undefined && !Number.isFinite(source.order)) ||
+      (source.lifecycle !== undefined && typeof source.lifecycle !== "function")
     )
       throw new Error("Invalid Solo region source");
     const identity = {};
@@ -450,6 +481,30 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       },
     });
   }
+}
+
+const REGION_LIFECYCLE_UNAVAILABLE =
+  "The plugin that manages this chat is not available. Try again when it is running.";
+
+/**
+ * Archive and Unarchive of a region-labelled Solo chat belong to its live
+ * region source; without one they are refused, never published here.
+ * Undefined means the host handles the chat itself.
+ */
+export function routeSoloLifecycle(
+  session: RelaySession,
+  channel: ChannelSummary,
+  action: "archive" | "unarchive",
+): Promise<void> | undefined {
+  const label =
+    channel.channelType === "solo"
+      ? effectiveRegionLabel(channel.labels)
+      : undefined;
+  if (!label) return undefined;
+  return (
+    soloNavigationFor(session)?.lifecycle(label, channel.id, action) ??
+    Promise.reject(new Error(REGION_LIFECYCLE_UNAVAILABLE))
+  );
 }
 
 /** Recheck the shared projection immediately before a personal filing write. */

@@ -22,7 +22,12 @@ fn routes_cannot_retarget_credentials_or_expand_http_access() {
     ] {
         assert!(request_url("https://relay.test", path, "POST").is_err());
     }
-    for path in ["/api/invites", "/gifs/search", "/profiles/search"] {
+    for path in [
+        "/api/invites",
+        "/gifs/search",
+        "/profiles/search",
+        "/buzz/v1/lifecycle/state",
+    ] {
         assert!(request_url("https://relay.test", path, "POST").is_ok());
         assert!(request_url("https://relay.test", path, "GET").is_err());
     }

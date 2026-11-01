@@ -12,6 +12,7 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useCallback, useRef, useState } from "react";
 import { SoloRegions } from "./SoloRegions";
+import { ChannelNavigationProvider } from "./ChannelNavigationState";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
 import { SoloHeading } from "../../bundled/channels/SoloHeading";
@@ -44,6 +45,7 @@ function fixture() {
 function mount(
   h: ReturnType<typeof fixture>,
   target: OpenTarget = { version: 1, kind: "home" },
+  handoff = false,
 ) {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const retryReveal = vi.fn();
@@ -81,11 +83,18 @@ function mount(
       />
     );
   }
-  const mounted = render(
+  const Tree = () => (
     <ToastProvider>
-      <View />
-    </ToastProvider>,
+      {handoff ? (
+        <ChannelNavigationProvider relay={h.relay}>
+          <View />
+        </ChannelNavigationProvider>
+      ) : (
+        <View />
+      )}
+    </ToastProvider>
   );
+  const mounted = render(<Tree />);
   return {
     ...mounted,
     open,
@@ -94,11 +103,7 @@ function mount(
     navigate(next: OpenTarget) {
       target = next;
       void h.navigate(next);
-      mounted.rerender(
-        <ToastProvider>
-          <View />
-        </ToastProvider>,
-      );
+      mounted.rerender(<Tree />);
     },
   };
 }
@@ -1460,4 +1465,50 @@ it("hands a header menu action the durable trigger as its dialog origin", async 
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
   expect(selected).toHaveBeenCalledOnce();
+});
+
+it("sends the chat menu's Archive for a region chat to the source hook instead of the host dialog", async () => {
+  const h = fixture();
+  const run = vi.fn(async () => {});
+  Object.assign(h.session, {
+    channelLifecycle: {
+      ...h.session.channelLifecycle,
+      available: true,
+      run,
+      load: async (channelId: string) => ({
+        channelId,
+        channelType: "stream",
+        canArchive: true,
+        canUnarchive: false,
+        canDelete: false,
+        canLeave: true,
+        canHide: false,
+      }),
+    },
+  });
+  const lifecycle = vi.fn(async () => {
+    throw new Error("Finish preparing this task first.");
+  });
+  const source = await h.register({ component: Body, lifecycle });
+  mount(h, undefined, true);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Actions for Owned" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Archive chat" }),
+  );
+  await waitFor(() =>
+    expect(lifecycle).toHaveBeenCalledExactlyOnceWith(source.binding(), {
+      channelId: "owned",
+      action: "archive",
+    }),
+  );
+  // The source owns confirmation and results; its refusal is the action's failure.
+  expect(
+    await screen.findByText("Finish preparing this task first."),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Archive chat failed")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("dialog", { name: "Archive chat" }),
+  ).not.toBeInTheDocument();
+  expect(run).not.toHaveBeenCalled();
 });

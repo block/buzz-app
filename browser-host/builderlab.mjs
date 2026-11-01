@@ -393,7 +393,7 @@ export function createBuilderlab({
         if (delay <= 0) throw new Error("Builderlab sign-in expired");
         expiry = setTimeout(revoke, Math.min(delay, 2_147_483_647));
         expiry.unref?.();
-        // Binding remains server-side. Its failure is shown by the existing identity UI.
+        // Retain structured binding failures for the existing identity UI.
         linking = broker.bind().catch(() => {});
         if (started !== generation)
           throw new Error("Builderlab session changed");
@@ -423,11 +423,12 @@ export function createBuilderlab({
     },
     async request(input, signal) {
       // Activation must not overtake the sign-in's automatic key binding.
-      if (
-        typeof input.path === "string" &&
-        input.path.startsWith("/v3/beekeeper/")
-      )
-        await linking;
+      const binding =
+        input.path === "/v1/buzz/nostr-identities/current" ||
+        (typeof input.path === "string" &&
+          input.path.startsWith("/v3/beekeeper/"))
+          ? await linking
+          : undefined;
       current(input.revision);
       const started = generation;
       const secret = credential;
@@ -450,6 +451,12 @@ export function createBuilderlab({
             ))
       )
         throw new Error("Unsupported Builderlab request");
+      if (binding?.error && path === "/v1/buzz/nostr-identities/current")
+        return {
+          status: builderlabResponseStatus(binding),
+          headers: {},
+          body: JSON.stringify(binding).replaceAll(secret, "[redacted]"),
+        };
       const method = input.method ?? "GET";
       if (
         !(apps ? ["GET", "POST", "PUT", "DELETE"] : ["GET", "POST"]).includes(

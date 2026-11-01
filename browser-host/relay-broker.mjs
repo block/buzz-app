@@ -1004,6 +1004,7 @@ export function relayBrokerPlugin({
                     community: req.headers["x-buzz-community"],
                   },
                   cancel.signal,
+                  true,
                 );
                 res
                   .writeHead(reply.status, {
@@ -1022,6 +1023,7 @@ export function relayBrokerPlugin({
                     body: JSON.stringify(input),
                   },
                   cancel.signal,
+                  true,
                 );
                 res
                   .writeHead(reply.status, {

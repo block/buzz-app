@@ -609,6 +609,8 @@ it.each([
   "//evil.example/",
   "/v3/beekeeper/../auth/me",
   "/v3/beekeeper/%2e%2e/auth/me",
+  "/v1/auth/hosted-site/native-session",
+  "/v3/builderlab/decisions",
   "/v3/beekeeper/../../../../v1/auth/me",
 ])("refuses proxy path %s before dispatch", async (path) => {
   const h = account();
@@ -665,6 +667,7 @@ it("forwards native-validated Decisions through the same server session and comm
       body: "{}",
     },
     new AbortController().signal,
+    true,
   );
   expect(h.requests.at(-1).init.headers).toMatchObject({
     "X-BB-Session-Credential": "secret",
@@ -680,6 +683,7 @@ it("forwards native-validated Decisions through the same server session and comm
         body: "{}",
       },
       new AbortController().signal,
+      true,
     ),
   ).rejects.toThrow("Invalid decision community");
   h.builderlab.signOut();

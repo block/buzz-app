@@ -217,6 +217,8 @@ function configLabels(options: unknown) {
 export function activityTranscript(
   records: readonly Source[],
   scope: TranscriptScope,
+  /** Names an exact-record prompt's author, if known. */
+  name?: (pubkey: string) => string | undefined,
 ): Transcript {
   const events: { id: string; at: number; order: number; event: Json }[] = [];
   for (const record of records) {
@@ -382,7 +384,7 @@ export function activityTranscript(
           .filter(Boolean)
           .join("\n");
         const sections = promptSections(text);
-        const message = promptMessage(sections);
+        const message = promptMessage(sections, name);
         const thread = promptThread(sections);
         if (thread !== undefined) turn.promptThread = thread;
         turn.items.push({

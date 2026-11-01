@@ -561,3 +561,49 @@ it("reads an event sent as an exact record, in its own or a steer's section", ()
     promptMessage([{ tag: STEER, body: "<buzz-event>\nContent: x\n" }]),
   ).toEqual({ text: "", author: undefined });
 });
+
+it("names an exact-record prompt's author in the turn, as the viewer knows them", () => {
+  serial = 0;
+  const sender = "f".repeat(64);
+  const body = eventBody(
+    {
+      id: message,
+      pubkey: sender,
+      kind: 9,
+      created_at: 1,
+      content: "hi",
+      tags: [],
+    },
+    "hi",
+  );
+  const records = [
+    record([
+      event("t1", "turn_started", {}, 0),
+      event(
+        "t1",
+        "acp_write",
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "session/prompt",
+          params: {
+            sessionId: "S",
+            prompt: [
+              {
+                type: "text",
+                text: `<buzz-event type="mention">\n${body}\n</buzz-event>`,
+              },
+            ],
+          },
+        },
+        1,
+      ),
+    ]),
+  ];
+  const author = (name?: (pubkey: string) => string | undefined) =>
+    activityTranscript(records, { agent }, name).turns[0]?.items[0];
+  expect(
+    author((pubkey) => (pubkey === sender ? "Salman" : undefined)),
+  ).toMatchObject({ type: "prompt", text: "hi", author: "Salman" });
+  expect(author()).not.toHaveProperty("author");
+});

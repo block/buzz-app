@@ -74,6 +74,7 @@ vi.mock("react", async (original) => ({
       hooks.memos[index] = { deps, value: factory() };
     return hooks.memos[index]?.value;
   },
+  useContext: () => undefined,
   useEffect(create: () => (() => void) | undefined, deps: readonly unknown[]) {
     const index = hooks.effect++;
     const old = hooks.effects[index];

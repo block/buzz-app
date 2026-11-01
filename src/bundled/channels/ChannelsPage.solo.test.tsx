@@ -11,12 +11,16 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
-import type { RelayData } from "../../features/relay/service";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import type { PageNavigation } from "../../features/navigation/service";
+import {
+  provideNavigation,
+  type PageNavigation,
+} from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -33,10 +37,12 @@ import type { RelaySession } from "../../features/relay/session";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
-afterEach(() => {
+const navigationContexts: Context[] = [];
+afterEach(async () => {
   cleanup();
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
+  for (const ctx of navigationContexts.splice(0)) await ctx.fiber.dispose();
   vi.unstubAllGlobals();
 });
 const id = "11111111-1111-4111-8111-111111111111";
@@ -56,7 +62,15 @@ function fixture({
   archived = false,
   viewerNamed = false,
   others = [],
+  readOnly = false,
+  historyPending = false,
+  boundNavigation = false,
+  focus,
 }: {
+  readOnly?: boolean;
+  historyPending?: boolean;
+  boundNavigation?: boolean;
+  focus?: PageNavigation["focus"];
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
   /** The viewer's own profile has loaded too. */
@@ -111,6 +125,7 @@ function fixture({
     private: true as const,
     creator: ownedBy ?? (placed ? viewer.pubkey : agent),
     members: [viewer.pubkey, agent, ...people],
+    ...(readOnly && { readOnly: true, viewerRole: "guest" as const }),
     ...(archived && { archived }),
   };
   const neighbors = others.map((other, index) => ({
@@ -123,11 +138,12 @@ function fixture({
   const emitList = () => {
     for (const listener of listListeners) listener();
   };
-  const window = {
+  let window = {
     ...owner.session.channels.window(id),
-    status: "ready" as const,
+    status: historyPending ? ("loading" as const) : ("ready" as const),
     rows: [],
   };
+  const windowListeners = new Set<() => void>();
   const send = vi.fn<typeof owner.session.messages.send>(() => "d".repeat(64));
   // Like the relay, settle the roster before the confirmed action resolves.
   const run = vi.fn(
@@ -227,6 +243,12 @@ function fixture({
       ensureList() {},
       refreshRoster: vi.fn(async () => true),
       window: () => window,
+      subscribeWindow: (_id: string, listener: () => void) => {
+        windowListeners.add(listener);
+        return () => {
+          windowListeners.delete(listener);
+        };
+      },
       ensure() {},
     },
     soloPreferences: {
@@ -265,44 +287,76 @@ function fixture({
       ),
     },
   };
-  const snapshot = {
-    status: "ready" as const,
+  let snapshot: RelaySnapshot = {
+    status: boundNavigation ? "connecting" : "ready",
+    ...(boundNavigation && { cached: true }),
     generation: 1,
     scope,
     viewer: viewer.pubkey,
     session,
   };
+  const relayListeners = new Set<() => void>();
   const relay: RelayData = {
     snapshot: () => snapshot,
-    subscribe: () => () => {},
+    subscribe: (listener) => {
+      relayListeners.add(listener);
+      return () => {
+        relayListeners.delete(listener);
+      };
+    },
     retry() {},
     disconnect() {},
     async clearCache() {},
   };
   const abort = new AbortController();
   const complete = vi.fn(() => true);
-  const navigation: PageNavigation = {
+  let navigation: PageNavigation = {
     entryId: "visit",
     target: target?.(scope) ?? conversationTarget(scope, id),
     signal: abort.signal,
+    ...(focus && { focus }),
     forSession: () => navigation,
     complete,
     resolve: () => true,
   };
-  const open = vi.fn(async () => ({ status: "opened" as const }));
-  const navigator = {
-    open,
-    retry() {},
-    snapshot: () => ({
-      entry: {
-        id: navigation.entryId,
-        target: behindSettings
-          ? { version: 1, kind: "settings", scope: null }
-          : navigation.target,
+  const navigationHost = boundNavigation
+    ? (() => {
+        const ctx = new Context();
+        navigationContexts.push(ctx);
+        return provideNavigation(ctx);
+      })()
+    : undefined;
+  const openVisit = () => {
+    if (!navigationHost) return;
+    void navigationHost.navigation.open(
+      navigation.target,
+      focus ? { focus } : undefined,
+    );
+    navigation = navigationHost.request(
+      navigationHost.navigation.snapshot().attempt,
+      {
+        valid: () => true,
+        subscribe: () => () => {},
       },
-      attempt: { signal: abort.signal },
-    }),
-  } as unknown as Navigation;
+    ).request;
+  };
+  openVisit();
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator =
+    navigationHost?.navigation ??
+    ({
+      open,
+      retry() {},
+      snapshot: () => ({
+        entry: {
+          id: navigation.entryId,
+          target: behindSettings
+            ? { version: 1, kind: "settings", scope: null }
+            : navigation.target,
+        },
+        attempt: { signal: abort.signal },
+      }),
+    } as unknown as Navigation);
   const archive: ArchiveShortcut = {};
   const page = (sidebar = false) => (
     <ChannelNavigationProvider relay={relay}>
@@ -335,6 +389,17 @@ function fixture({
     </ChannelNavigationProvider>
   );
   return {
+    page,
+    openVisit,
+    boundRequest: () => navigation.forSession(relay, snapshot),
+    rebind() {
+      snapshot = {
+        ...snapshot,
+        status: "error",
+        error: "Connection timed out",
+      };
+      for (const listener of relayListeners) listener();
+    },
     mount: () => render(page()),
     mountWithSidebar: () => render(page(true)),
     mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
@@ -345,6 +410,10 @@ function fixture({
     send,
     scope,
     session,
+    setHistoryReady(ready: boolean) {
+      window = { ...window, status: ready ? "ready" : "loading" };
+      for (const listener of windowListeners) listener();
+    },
     setArchived(archived: boolean) {
       const next = { ...channel };
       if (archived) next.archived = true;
@@ -359,6 +428,117 @@ function fixture({
     },
   };
 }
+it.each([
+  "handoff",
+  "preserve",
+  "moved",
+  "removed",
+  "aborted",
+  "popup",
+] as const)(
+  "delayed read-only history respects the opening's %s focus ownership",
+  async (intent) => {
+    const f = fixture({
+      type: "stream",
+      readOnly: true,
+      historyPending: true,
+      focus: intent === "preserve" ? "preserve" : "content",
+    });
+    const origin = document.createElement("button");
+    const other = document.createElement("button");
+    document.body.append(origin, other);
+    if (intent === "popup") origin.dataset.popupOpen = "";
+    origin.focus();
+    const geometry = vi
+      .spyOn(HTMLElement.prototype, "getClientRects")
+      .mockReturnValue([{}] as unknown as DOMRectList);
+    try {
+      f.mount();
+      expect(
+        screen.queryByRole("region", { name: "Channel message history" }),
+      ).not.toBeInTheDocument();
+      if (intent === "moved" || intent === "removed") other.focus();
+      if (intent === "removed") {
+        other.remove();
+        origin.focus();
+      }
+      if (intent === "aborted") f.abort.abort();
+      await act(() => f.setHistoryReady(true));
+      const history = await screen.findByRole("region", {
+        name: "Channel message history",
+      });
+      expect(document.activeElement).toBe(
+        intent === "handoff" ? history : intent === "moved" ? other : origin,
+      );
+      if (intent === "handoff") {
+        other.focus();
+        await act(() => f.setHistoryReady(false));
+        await act(() => f.setHistoryReady(true));
+        expect(other).toHaveFocus();
+      }
+    } finally {
+      geometry.mockRestore();
+      origin.remove();
+      other.remove();
+    }
+  },
+);
+
+it.each(["consumed", "surrendered", "pending", "reopened"] as const)(
+  "session rebinding preserves %s opening focus intent",
+  async (intent) => {
+    const delayed = intent === "surrendered" || intent === "pending";
+    const f = fixture({
+      type: "stream",
+      readOnly: true,
+      historyPending: delayed,
+      boundNavigation: true,
+    });
+    const origin = document.createElement("button");
+    const other = document.createElement("button");
+    document.body.append(origin, other);
+    origin.focus();
+    const geometry = vi
+      .spyOn(HTMLElement.prototype, "getClientRects")
+      .mockReturnValue([{}] as unknown as DOMRectList);
+    try {
+      const mounted = f.mount();
+      if (!delayed) {
+        expect(
+          await screen.findByRole("region", {
+            name: "Channel message history",
+          }),
+        ).toHaveFocus();
+      }
+      if (intent !== "pending") other.focus();
+      const previous = f.boundRequest();
+      await act(() => f.rebind());
+      const current = f.boundRequest();
+      expect(current).not.toBe(previous);
+      expect(current.entryId).toBe(previous.entryId);
+      expect(previous.signal.aborted).toBe(true);
+      expect(current.signal.aborted).toBe(false);
+      if (delayed) await act(() => f.setHistoryReady(true));
+      const history = await screen.findByRole("region", {
+        name: "Channel message history",
+      });
+      expect(document.activeElement).toBe(
+        intent === "pending" ? history : other,
+      );
+      if (intent === "reopened") {
+        f.openVisit();
+        mounted.rerender(f.page());
+        expect(f.boundRequest().entryId).toBe(current.entryId);
+        expect(history).toHaveFocus();
+      }
+    } finally {
+      geometry.mockRestore();
+      origin.remove();
+      other.remove();
+    }
+  },
+);
+
 it("archives from the shortcut without confirmation, then opens a new Solo draft", async () => {
   const f = fixture();
   f.mount();

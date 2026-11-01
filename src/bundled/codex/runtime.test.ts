@@ -1335,11 +1335,25 @@ it("quotes the protection reason only for the protected turn its refusal ended",
       content:
         "Codex could not finish: Buzz denied this security review. Reason: `` Run `rm -rf ~` from [the fix](https://example.test). ``",
     });
-    // A refusal between turns does not explain the next turn's own failure.
-    await refuse(0, "Earlier refusal.");
+    // A check started before the next turn, perhaps by an interrupted one,
+    // does not explain that turn's own failure when it settles during it.
+    const held = deferred<void>();
+    check.mockImplementationOnce(async () => {
+      await held.promise;
+      throw new ProtectionDenied("Earlier refusal.");
+    });
+    const earlier = f.security({
+      jsonrpc: "2.0",
+      id: "earlier",
+      method: "buzz/security/check",
+      params: { kind: "context", session: thread(0), content: {} },
+    });
+    expect(check).toHaveBeenCalledTimes(2);
     await run("second");
     await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(2));
     expect(thread(1)).toBe(thread(0));
+    held.resolve();
+    expect(await earlier).toMatchObject({ result: { allowed: false } });
     fail(1, "model busy");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
     expect(f.publish.mock.calls[1]?.[0]).toMatchObject({

@@ -142,6 +142,7 @@ it("keeps an explained model-input denial for Buzz, never for the runtime", asyn
     f.handler({ ...call, params: { ...call.params, kind, session } });
   const deny = (reason?: string) =>
     check.mockRejectedValueOnce(new ProtectionDenied(reason));
+  const turn = f.bridge.explainer("native-session");
   deny("It asks to reveal keys.");
   expect(await ask("context")).toEqual({
     jsonrpc: "2.0",
@@ -160,16 +161,54 @@ it("keeps an explained model-input denial for Buzz, never for the runtime", asyn
   await ask("context");
   check.mockRejectedValueOnce(new Error("offline"));
   await ask("context");
-  expect(f.bridge.explanation("native-session")).toBe(
-    "It asks to reveal keys.",
-  );
-  expect(f.bridge.explanation("native-session")).toBeUndefined();
+  expect(turn()).toBe("It asks to reveal keys.");
+  expect(turn()).toBeUndefined();
   // Explanations nobody takes age out, oldest first.
+  const turns = Array.from({ length: 17 }, (_, index) =>
+    f.bridge.explainer(`session-${index}`),
+  );
   for (let index = 0; index <= 16; index++) {
     deny(`Session ${index}.`);
     await ask("context", `session-${index}`);
   }
-  expect(f.bridge.explanation("session-0")).toBeUndefined();
-  expect(f.bridge.explanation("session-1")).toBe("Session 1.");
-  expect(f.bridge.explanation("session-16")).toBe("Session 16.");
+  expect(turns[0]?.()).toBeUndefined();
+  expect(turns[1]?.()).toBe("Session 1.");
+  expect(turns[16]?.()).toBe("Session 16.");
+});
+
+it("explains a turn only by a refusal of a check that turn started", async () => {
+  const check = vi.fn<AgentProtection["check"]>();
+  const f = await fixture(check);
+  const ask = () =>
+    f.handler({ ...call, params: { ...call.params, kind: "context" } });
+  // A check from an interrupted turn is still with its reviewer.
+  const hold = () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    check.mockImplementationOnce(async () => {
+      await held;
+      throw new ProtectionDenied("An earlier turn's refusal.");
+    });
+    return release;
+  };
+  let release = hold();
+  const earlier = ask();
+  expect(check).toHaveBeenCalledTimes(1);
+  const turn = f.bridge.explainer("native-session");
+  check.mockRejectedValueOnce(new ProtectionDenied("This turn's refusal."));
+  await ask();
+  // Settling after this turn's refusal, it does not replace it.
+  release();
+  await earlier;
+  expect(turn()).toBe("This turn's refusal.");
+  // Nor does it explain a turn that ends for another reason.
+  release = hold();
+  const stale = ask();
+  expect(check).toHaveBeenCalledTimes(3);
+  const next = f.bridge.explainer("native-session");
+  release();
+  await stale;
+  expect(next()).toBeUndefined();
 });

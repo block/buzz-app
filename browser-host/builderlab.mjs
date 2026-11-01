@@ -525,7 +525,7 @@ export function createBuilderlab({
         throw new Error("Builderlab response was too large");
       if (started !== generation && !input.file)
         throw new Error("Builderlab session changed");
-      if (response.status === 401 && started === generation) revoke();
+      if (response.status === 401 && started === generation && !apps) revoke();
       return {
         status: response.status,
         headers: {},

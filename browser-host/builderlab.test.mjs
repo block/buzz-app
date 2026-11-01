@@ -87,6 +87,7 @@ function account(responses = {}) {
       return key;
     },
     fetch,
+    appsBase: controlPlane(BUILDERLAB_ORIGIN),
     open: async (url) => {
       opened = new URL(url);
       didOpen(opened);

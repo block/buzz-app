@@ -400,6 +400,7 @@ export function MessageManagementItems({
       )}
       {canDelete && (
         <MenuItem
+          tone="danger"
           disabled={
             busy ||
             management.operations.some(

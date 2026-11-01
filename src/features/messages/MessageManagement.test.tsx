@@ -403,6 +403,7 @@ it.each(["member", "guest"] as const)(
       ),
     );
     expect(item).toBeVisible();
+    expect(item).toHaveAttribute("data-tone", "danger");
     fireEvent.click(item);
     const confirmation = await screen.findByRole("alertdialog", {
       name: "Delete message?",

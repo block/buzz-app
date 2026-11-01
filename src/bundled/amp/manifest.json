@@ -1,0 +1,15 @@
+{
+  "id": "buzz.amp",
+  "name": "Amp",
+  "apiVersion": 1,
+  "description": "Run local Amp agents in Buzz.",
+  "discovery": {
+    "category": "agents",
+    "tags": ["code", "coding-agents"]
+  },
+  "host": {
+    "processes": [{ "id": "amp", "program": "amp" }],
+    "mcp": true,
+    "files": true
+  }
+}

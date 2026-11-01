@@ -394,7 +394,7 @@ export function createBuilderlab({
         expiry = setTimeout(revoke, Math.min(delay, 2_147_483_647));
         expiry.unref?.();
         // Retain structured binding failures for the existing identity UI.
-        linking = broker.bind().catch(() => {});
+        void broker.bind();
         if (started !== generation)
           throw new Error("Builderlab session changed");
         publishAccount(account);
@@ -559,33 +559,39 @@ export function createBuilderlab({
         body: text.replaceAll(secret, "[redacted]"),
       };
     },
-    async bind() {
-      const session = credential;
-      const started = generation;
-      const challenge = await request(
-        "/v1/buzz/nostr-identities/challenge",
-        { origin: new URL(api).origin },
-        session,
-      );
-      if (challenge.error) return challenge;
-      // A sign-out or new sign-in while the challenge was pending must not let the
-      // old credential claim this device's key.
-      if (started !== generation) throw new Error("Builderlab session changed");
-      const event = bindingEvent(
-        key(),
-        challenge,
-        Date.now(),
-        new URL(api).origin,
-      );
-      return request(
-        "/v1/buzz/nostr-identities/verify",
-        {
-          challenge_id: challenge.challenge_id,
-          nonce: challenge.nonce,
-          signed_payload: JSON.stringify(event),
-        },
-        session,
-      );
+    bind() {
+      const done = (async () => {
+        const session = credential;
+        const started = generation;
+        const challenge = await request(
+          "/v1/buzz/nostr-identities/challenge",
+          { origin: new URL(api).origin },
+          session,
+        );
+        if (challenge.error) return challenge;
+        // A sign-out or new sign-in while the challenge was pending must not let the
+        // old credential claim this device's key.
+        if (started !== generation)
+          throw new Error("Builderlab session changed");
+        const event = bindingEvent(
+          key(),
+          challenge,
+          Date.now(),
+          new URL(api).origin,
+        );
+        return request(
+          "/v1/buzz/nostr-identities/verify",
+          {
+            challenge_id: challenge.challenge_id,
+            nonce: challenge.nonce,
+            signed_payload: JSON.stringify(event),
+          },
+          session,
+        );
+      })();
+      // Every attempt, including a manual retry, replaces the previous result.
+      linking = done.catch(() => {});
+      return done;
     },
     async call(action, input) {
       const route = Object.hasOwn(ROUTES, action) ? ROUTES[action] : undefined;

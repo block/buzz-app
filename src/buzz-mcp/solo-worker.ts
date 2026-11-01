@@ -504,6 +504,7 @@ async function connections(client: BuzzClient, clock: Clock) {
       "#h": [stream],
       authors: [owner],
       limit: ACK_HORIZON,
+      consistency: "strong",
     });
     // The highest revision is the owner's latest word on the grant; records
     // from the same second come back in no useful order.

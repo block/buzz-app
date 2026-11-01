@@ -618,6 +618,32 @@ describe("solo_worker_connections", () => {
     );
   });
 
+  it("reads the newest acknowledgement from the relay's writer", async () => {
+    const harness = community();
+    const { call, sign, client } = harness;
+    const stale = await client.query([{ kinds: [9], "#h": [K] }]);
+    sign(
+      OWNER,
+      recordTemplate({
+        ...ACK,
+        state: "revoked",
+        grant: { id: "g1", revision: 4 },
+      }),
+      START + 1,
+    );
+    // A replica that has not seen the revocation; only the writer is current.
+    const current = client.query;
+    harness.client.query = async (filters) => {
+      const [filter] = filters as { kinds: number[]; consistency?: string }[];
+      return filter?.kinds.includes(9) && filter.consistency !== "strong"
+        ? stale
+        : current(filters);
+    };
+    expect((await call("solo_worker_connections")).connections[0].state).toBe(
+      "revoked",
+    );
+  });
+
   it("follows the highest revision when acknowledgements share a second", async () => {
     const harness = community();
     harness.sign(

@@ -132,7 +132,9 @@ it("shares agent and Apps transport without an app-held credential and refuses s
   ]);
   const held = deferred<Response>();
   h.fetch.mockImplementationOnce(() => held.promise);
-  const pending = h.session.request(owner, { path: "/v1/auth/me" });
+  const pending = h.session.request(owner, {
+    path: "/v3/beekeeper/list-agents",
+  });
   const rejected = expect(pending).rejects.toThrow("session changed");
   const oldViewer = h.session.viewerSession();
   h.events.emit("two", "B");

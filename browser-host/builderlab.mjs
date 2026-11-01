@@ -218,7 +218,7 @@ export function createBuilderlab({
   fetch = globalThis.fetch,
   open = openBrowser,
   api = API,
-  appsBase = api === API ? "https://compose-ctrl.builderlab.xyz" : undefined,
+  appsBase,
 }) {
   let credential;
   let account;

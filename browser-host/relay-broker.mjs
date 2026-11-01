@@ -994,33 +994,26 @@ export function relayBrokerPlugin({
                   return json(res, 413, { error: "Request too large" });
               }
               const input = raw ? JSON.parse(raw) : {};
-              if (action === "decisions") {
+              const nativeRoute = {
+                // Native Decisions puts the public revision in its existing credential header.
+                decisions: [
+                  "/v3/builderlab/decisions",
+                  "x-bb-session-credential",
+                ],
+                viewer: [
+                  "/v1/auth/hosted-site/native-session",
+                  "x-buzz-builderlab-revision",
+                ],
+              }[action];
+              if (nativeRoute) {
+                const [path, header] = nativeRoute;
                 const reply = await builderlab.request(
                   {
-                    revision: req.headers["x-bb-session-credential"],
-                    path: "/v3/builderlab/decisions",
+                    revision: req.headers[header],
+                    path,
                     method: "POST",
                     body: raw,
                     community: req.headers["x-buzz-community"],
-                  },
-                  cancel.signal,
-                  true,
-                );
-                res
-                  .writeHead(reply.status, {
-                    "Content-Type": "application/json",
-                    "Cache-Control": "no-store",
-                  })
-                  .end(reply.body);
-                return;
-              }
-              if (action === "viewer") {
-                const reply = await builderlab.request(
-                  {
-                    revision: req.headers["x-buzz-builderlab-revision"],
-                    path: "/v1/auth/hosted-site/native-session",
-                    method: "POST",
-                    body: JSON.stringify(input),
                   },
                   cancel.signal,
                   true,

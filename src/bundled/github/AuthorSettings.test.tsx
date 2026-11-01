@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { AuthorSettings } from "./AuthorSettings";
 import { DEFAULT_RULES, loadPolicy, POLICY_KEY } from "./authors";
+import { GitHubError, type GitHubCli } from "./gh";
 
 afterEach(() => {
   cleanup();
@@ -82,4 +83,21 @@ it("shows saved rules that no longer parse, with why, until they are fixed", asy
   expect(loadPolicy().error).toBeUndefined();
   expect(rules).toBeValid();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("warns about the saved rules' names GitHub cannot resolve", async () => {
+  const user = userEvent.setup();
+  const gh = (async () => {
+    throw new GitHubError("Could not resolve", "NOT_FOUND", { o0: null });
+  }) as GitHubCli;
+  render(<AuthorSettings active={() => true} gh={gh} />);
+  const rules = screen.getByRole("textbox", { name: /Rules/ });
+  await user.clear(rules);
+  await user.type(rules, "allow org:blok");
+  await user.click(screen.getByRole("radio", { name: "Don’t wake it" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(loadPolicy().text).toBe("allow org:blok");
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "org:blok: GitHub has no organization blok, so it matches no one",
+  );
 });

@@ -5,6 +5,7 @@
 // agents' own comments, as before rules existed. Saved on this device and
 // edited in Settings; each poll reads them again, so a change applies to
 // running watches.
+import { GitHubError, type GitHubCli } from "./gh";
 import { Pattern } from "./pattern";
 import { BODY_CHARS, type Feedback } from "./pull-states";
 
@@ -276,4 +277,67 @@ export function parseMembership(
       ];
     }),
   );
+}
+
+/** What in `policy` GitHub cannot resolve: organizations and users it has no
+ * record of, and organizations whose private members the viewer cannot see,
+ * so they match none of them. Bots are not looked up. */
+export async function unresolved(
+  policy: AuthorPolicy,
+  gh: GitHubCli | undefined,
+): Promise<string[]> {
+  const orgs = organizations(policy);
+  const logins = [
+    ...new Set(
+      policy.rules.flatMap(({ author }) =>
+        typeof author === "string" && author !== ME && !author.endsWith("]")
+          ? [author.toLowerCase()]
+          : [],
+      ),
+    ),
+  ];
+  if (!orgs.length && !logins.length) return [];
+  const unchecked = (reason: string) => [
+    `GitHub could not be asked about the names in these rules: ${reason}`,
+  ];
+  if (!gh) return unchecked("gh is unavailable here");
+  const query = `query{${[
+    ...orgs.map(
+      (org, index) =>
+        `o${index}:organization(login:${JSON.stringify(org)}){viewerIsAMember}`,
+    ),
+    ...logins.map(
+      (login, index) => `u${index}:user(login:${JSON.stringify(login)}){id}`,
+    ),
+  ].join(" ")}}`;
+  let answer: Record<string, { viewerIsAMember?: boolean } | null>;
+  try {
+    answer = await gh(query, {});
+  } catch (error) {
+    // A name GitHub has no record of fails only its own field.
+    if (!(error instanceof GitHubError && error.type === "NOT_FOUND"))
+      return unchecked(error instanceof Error ? error.message : String(error));
+    answer = (error.data ?? {}) as typeof answer;
+  }
+  return [
+    ...orgs.flatMap((org, index) => {
+      const found = answer[`o${index}`];
+      return !found
+        ? [
+            `org:${org}: GitHub has no organization ${org}, so it matches no one`,
+          ]
+        : found.viewerIsAMember
+          ? []
+          : [
+              `org:${org}: you are not a member of ${org}, so only its public members match`,
+            ];
+    }),
+    ...logins.flatMap((login, index) =>
+      answer[`u${index}`]
+        ? []
+        : [
+            `author:${login}: GitHub has no user ${login}; a bot's login ends in [bot]`,
+          ],
+    ),
+  ];
 }

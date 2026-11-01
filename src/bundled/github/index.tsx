@@ -50,6 +50,7 @@ import {
 import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
+import { addAuthorRulesTool } from "./author-rules-tool";
 import { AuthorSettings } from "./AuthorSettings";
 
 /** How often an open pull request panel reads GitHub again. */
@@ -193,6 +194,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
   addPullStateTool(ctx.agents, states);
+  addAuthorRulesTool(ctx.agents, gh);
   // Agents can watch pull requests where the app runs them.
   ctx.inject(["agents", "host", "navigation"], (scope) =>
     watchPulls(scope, states, gh, presentPull(scope.navigation)),
@@ -204,7 +206,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       title: "GitHub comment authors",
       group: "Plugins",
       icon: GithubLogoIcon,
-      component: ({ active }) => <AuthorSettings active={active} />,
+      component: ({ active }) => <AuthorSettings active={active} gh={gh} />,
     });
   });
 };

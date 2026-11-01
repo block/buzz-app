@@ -66,6 +66,7 @@ function account(responses = {}) {
       });
     if (path === "/v1/auth/me")
       return Response.json({
+        subject: "auth0|owner",
         email: "a@example.com",
         name: "A",
         expires_at: "2030",
@@ -95,9 +96,11 @@ function account(responses = {}) {
 async function signIn(h) {
   const pending = h.builderlab.login(new AbortController().signal);
   while (!h.opened()) await new Promise((resolve) => setTimeout(resolve, 5));
-  const returnTo = h.opened().searchParams.get("returnTo");
+  const returnTo = h.opened().searchParams.get("redirect_uri");
   expect(new URL(returnTo).hostname).toBe("127.0.0.1");
-  await globalThis.fetch(`${returnTo}?code=one-time`);
+  await globalThis.fetch(
+    `${returnTo}?state=${h.opened().searchParams.get("state")}&code=one-time`,
+  );
   return pending;
 }
 
@@ -105,15 +108,25 @@ it("completes browser sign-in through a loopback callback without exposing the c
   const h = account();
   const auth = await signIn(h);
   expect(auth).toEqual({
+    subject: "auth0|owner",
     email: "a@example.com",
     name: "A",
     expiresAt: "2030",
-    capabilities: { can_delete_buzz_communities: false },
+    capabilities: {
+      can_delete_buzz_communities: false,
+      can_use_remote_agents: false,
+      can_use_builderlab_decisions: false,
+    },
   });
   expect(JSON.stringify(auth)).not.toContain("secret");
   expect(h.opened().pathname).toBe("/api/goose/v1/auth/login");
-  expect(h.opened().searchParams.get("product")).toBe("buzz");
-  expect(JSON.parse(h.requests[0].init.body)).toEqual({ code: "one-time" });
+  expect(h.opened().searchParams.get("product")).toBe("builderlab");
+  const exchange = JSON.parse(h.requests[0].init.body);
+  expect(exchange.code).toBe("one-time");
+  const { createHash } = await import("node:crypto");
+  expect(
+    createHash("sha256").update(exchange.code_verifier).digest("base64url"),
+  ).toBe(h.opened().searchParams.get("code_challenge"));
   await h.builderlab.call("list", {});
   expect(h.requests.at(-1).init.headers).toMatchObject({
     "X-BB-Session-Credential": "secret",
@@ -207,6 +220,7 @@ it.each([
   const h = account({
     "/v1/auth/me": () =>
       Response.json({
+        subject: "auth0|owner",
         email: "a@example.com",
         expires_at: "2030",
         capabilities: { can_delete_buzz_communities: value },
@@ -214,6 +228,8 @@ it.each([
   });
   expect((await signIn(h)).capabilities).toEqual({
     can_delete_buzz_communities: expected,
+    can_use_remote_agents: false,
+    can_use_builderlab_decisions: false,
   });
 });
 
@@ -285,7 +301,9 @@ it.each(["cancel", "sign-out"])(
     const abort = new AbortController();
     const pending = h.builderlab.login(abort.signal).catch((error) => error);
     while (!h.opened()) await new Promise((resolve) => setTimeout(resolve, 5));
-    await globalThis.fetch(`${h.opened().searchParams.get("returnTo")}?code=x`);
+    await globalThis.fetch(
+      `${h.opened().searchParams.get("redirect_uri")}?state=${h.opened().searchParams.get("state")}&code=x`,
+    );
     await started.promise;
     if (mode === "cancel") abort.abort();
     else h.builderlab.signOut();
@@ -317,7 +335,11 @@ it.each(["error", "success"])(
           await release.promise;
           if (outcome === "error") return Response.json({}, { status: 401 });
         }
-        return Response.json({ email: session, expires_at: "2030" });
+        return Response.json({
+          subject: session,
+          email: session,
+          expires_at: "2030",
+        });
       },
     });
     const signInAs = async (code) => {
@@ -326,7 +348,7 @@ it.each(["error", "success"])(
       while (h.opened() === before)
         await new Promise((resolve) => setTimeout(resolve, 5));
       await globalThis.fetch(
-        `${h.opened().searchParams.get("returnTo")}?code=${code}`,
+        `${h.opened().searchParams.get("redirect_uri")}?state=${h.opened().searchParams.get("state")}&code=${code}`,
       );
       return pending;
     };
@@ -378,7 +400,7 @@ it("rejects malformed and wrong callbacks without ending the listener", async ()
   const h = account();
   const pending = h.builderlab.login(new AbortController().signal);
   while (!h.opened()) await new Promise((resolve) => setTimeout(resolve, 5));
-  const returnTo = new URL(h.opened().searchParams.get("returnTo"));
+  const returnTo = new URL(h.opened().searchParams.get("redirect_uri"));
   const { request } = await import("node:http");
   const raw = (path) =>
     new Promise((resolve, reject) =>
@@ -391,6 +413,129 @@ it("rejects malformed and wrong callbacks without ending the listener", async ()
     );
   expect(await raw("//[")).toBe(400);
   expect(await raw("/callback/wrong?code=x")).toBe(404);
-  await globalThis.fetch(`${returnTo}?code=one-time`);
+  await globalThis.fetch(
+    `${returnTo}?state=${h.opened().searchParams.get("state")}&code=one-time`,
+  );
   expect(await pending).toMatchObject({ email: "a@example.com" });
+});
+
+it("keeps one public server revision for agents, Apps and reloaded clients, and never forwards caller credentials", async () => {
+  const h = account({
+    "/v3/beekeeper/list-agents": () => Response.json({ status: 1, agents: [] }),
+    "/v1/agent/apps": () => Response.json({ apps: [] }),
+  });
+  const states = [];
+  const stop = h.builderlab.subscribe((state) => states.push(state));
+  await signIn(h);
+  const signedIn = h.builderlab.snapshot();
+  expect(signedIn).toMatchObject({
+    pending: false,
+    auth: { subject: "auth0|owner" },
+  });
+  expect(JSON.stringify(states)).not.toContain("secret");
+  const revision = signedIn.revision;
+  await h.builderlab.request(
+    {
+      revision,
+      path: "/v3/beekeeper/list-agents",
+      method: "POST",
+      body: "{}",
+      headers: { "X-BB-Session-Credential": "untrusted" },
+    },
+    new AbortController().signal,
+  );
+  expect(h.requests.at(-1).init.headers["X-BB-Session-Credential"]).toBe(
+    "secret",
+  );
+  await h.builderlab.request(
+    { revision, target: "apps", path: "/v1/agent/apps?scope=owned" },
+    new AbortController().signal,
+  );
+  expect(h.requests.at(-1).init.headers.Authorization).toBe(
+    "BBIdentity secret",
+  );
+  await expect(h.builderlab.auth()).resolves.toMatchObject({
+    subject: "auth0|owner",
+  });
+  expect(h.builderlab.snapshot().revision).toBe(revision);
+  h.builderlab.signOut();
+  await expect(
+    h.builderlab.request(
+      { revision, path: "/v1/auth/me" },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("session changed");
+  expect(states.at(-1).auth).toBeNull();
+  stop();
+});
+
+it("expires every consumer together on 401, while a transient account check preserves the server login", async () => {
+  let unavailable = false;
+  const h = account({
+    "/v1/auth/me": () =>
+      unavailable
+        ? Promise.reject(new Error("offline"))
+        : Response.json({ subject: "owner", expires_at: "2030" }),
+    "/v3/beekeeper/list-agents": () => Response.json({}, { status: 401 }),
+  });
+  await signIn(h);
+  const revision = h.builderlab.snapshot().revision;
+  unavailable = true;
+  await expect(h.builderlab.auth()).rejects.toThrow("offline");
+  expect(h.builderlab.snapshot().revision).toBe(revision);
+  const reply = await h.builderlab.request(
+    { revision, path: "/v3/beekeeper/list-agents", method: "POST", body: "{}" },
+    new AbortController().signal,
+  );
+  expect(reply.status).toBe(401);
+  expect(h.builderlab.snapshot()).toMatchObject({ auth: null, pending: false });
+});
+
+it.each([
+  "/v1/auth/login/exchange",
+  "//evil.example/",
+  "/v3/beekeeper/../auth/me",
+  "/v3/beekeeper/%2e%2e/auth/me",
+])("refuses proxy path %s before dispatch", async (path) => {
+  const h = account();
+  await signIn(h);
+  const count = h.requests.length;
+  await expect(
+    h.builderlab.request(
+      { revision: h.builderlab.snapshot().revision, path },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("Unsupported");
+  expect(h.requests).toHaveLength(count);
+  h.builderlab.signOut();
+});
+
+it("ends the shared session at its advertised expiry", async () => {
+  const { vi } = await import("vitest");
+  const expires = new Date(Date.now() + 60_000).toISOString();
+  const h = account({
+    "/v1/auth/login/exchange": () =>
+      Response.json({ session_credential: "secret", expires_at: expires }),
+    "/v1/auth/me": () =>
+      Response.json({ subject: "owner", expires_at: expires }),
+  });
+  const login = h.builderlab.login(new AbortController().signal);
+  while (!h.opened()) await new Promise((resolve) => setTimeout(resolve, 5));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    await globalThis.fetch(
+      `${h.opened().searchParams.get("redirect_uri")}?state=${h.opened().searchParams.get("state")}&code=expiry`,
+    );
+    await login;
+    expect(h.builderlab.snapshot().auth).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.builderlab.snapshot()).toMatchObject({
+      auth: null,
+      pending: false,
+    });
+    expect(await h.builderlab.auth()).toBeNull();
+  } finally {
+    vi.useRealTimers();
+    h.builderlab.signOut();
+  }
 });

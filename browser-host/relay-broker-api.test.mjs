@@ -168,6 +168,7 @@ test.each([
           });
         if (path.endsWith("/v1/auth/me"))
           return Response.json({
+            subject: "auth0|owner",
             email: "fixture@example.com",
             expires_at: "2030",
           });
@@ -185,9 +186,15 @@ test.each([
         body: "{}",
       });
       const opened = new URL(await loginOpened);
-      const callback = opened.searchParams.get("returnTo");
+      const callback = opened.searchParams.get("redirect_uri");
       expect(callback).toBeTruthy();
-      expect((await fetch(`${callback}?code=fixture`)).status).toBe(200);
+      expect(
+        (
+          await fetch(
+            `${callback}?state=${opened.searchParams.get("state")}&code=fixture`,
+          )
+        ).status,
+      ).toBe(200);
       expect((await login).status).toBe(200);
       const response = await fetch(`${h.base}/api/builderlab/delete`, {
         method: "POST",

@@ -12,6 +12,7 @@ import {
   referencedEmoji,
   type CustomEmoji,
 } from "./emoji";
+import { createEmojiCatalog } from "./emoji-catalog";
 import { eventDto, newer, type RelayEvent } from "./events";
 import type { Priority, RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
@@ -38,6 +39,7 @@ export function createEmojiDirectory(
   authoring?: EmojiAuthoring,
 ) {
   const sets = new Map<string, { event: RelayEvent; bytes: number }>();
+  const catalog = createEmojiCatalog(reader);
   const listeners = new Set<() => void>();
   let bytes = 0,
     closed = false,
@@ -273,6 +275,9 @@ export function createEmojiDirectory(
     },
     ensure,
     refresh,
+    search: catalog.search,
+    cached: catalog.cached,
+    known: catalog.known,
     ...(authoring
       ? {
           /** Removes only from the viewer's set; absent or invalid names are no-ops. */
@@ -320,6 +325,7 @@ export function createEmojiDirectory(
     sets.clear();
     bytes = 0;
     limited = false;
+    catalog.clear();
     publish({
       status: "idle",
       entries: Object.freeze([]),
@@ -360,9 +366,10 @@ export function createEmojiDirectory(
         );
       }
       const used = new Map<string, string>();
+      const entries = [...snapshot.entries, ...catalog.known()];
       for (const part of messageParts(content)) {
         if (linkPart(part)) continue;
-        for (const { emoji } of emojiMatches(part, snapshot.entries))
+        for (const { emoji } of emojiMatches(part, entries))
           used.set(emoji.shortcode, emoji.url);
       }
       return [...used].map(([code, url]) => ["emoji", code, url]);
@@ -370,6 +377,7 @@ export function createEmojiDirectory(
     dispose() {
       closed = true;
       lifetime.abort();
+      catalog.dispose();
       clear();
       listeners.clear();
     },

@@ -8,7 +8,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
-import { apply } from "./index";
+import { agent, apply } from "./index";
 import type { SoloPull, SoloPulls } from "./solo-pull";
 import {
   SoloPullIcon,
@@ -167,7 +167,14 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     { id: team, channelType: "stream" },
   ]);
   let tool: AddedTool | undefined;
-  const inject = vi.fn();
+  const agents = {
+    addTool: (added: AddedTool) => {
+      if (added.name === "github_link_pr") tool = added;
+    },
+    relay: () => relay,
+    // The agent side also lets agents follow pull requests.
+    addAttentionSource: () => {},
+  };
   apply({
     host: {},
     panels: { register: () => {} },
@@ -177,22 +184,15 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
       registerLink: () => {},
     },
     relay,
-    agents: {
-      addTool: (added: AddedTool) => {
-        if (added.name === "github_link_pr") tool = added;
-      },
-      relay: () => relay,
-    },
-    inject,
+    agents,
+    inject: () => {},
   } as never);
+  void agent.apply({ host: {}, agents, effect: () => {} } as never);
   const client = {
     key: "a".repeat(64),
     pubkey: "a".repeat(64),
   } as BuzzClient;
-  expect(inject).toHaveBeenCalledWith(
-    ["agents", "host", "navigation"],
-    expect.any(Function),
-  );
+  expect(agent.inject).toEqual(["agents", "host"]);
   expect(tool?.name).toBe("github_link_pr");
   await expect(
     tool?.call(client, { channel: chat }, { url: "https://github.com/block" }),

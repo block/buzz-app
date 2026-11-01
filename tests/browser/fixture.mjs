@@ -2028,6 +2028,22 @@ export const test = base.extend({
         })
       : undefined;
     const middleware = async (request, response, next) => {
+      // Development-React journeys restore the shared login at startup too.
+      // This synthetic host has no Builderlab account; keep its stream open
+      // until the page disconnects, just like the real broker's signed-out state.
+      if (
+        request.method === "GET" &&
+        request.url === "/api/builderlab/events"
+      ) {
+        response.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-store",
+        });
+        response.write(
+          `data: ${JSON.stringify({ revision: "fixture", pending: false, auth: null })}\n\n`,
+        );
+        return;
+      }
       if (!request.url?.startsWith("/api/relay/")) return next();
       try {
         const parts = request.url.split("/");

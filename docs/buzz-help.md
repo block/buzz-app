@@ -33,7 +33,8 @@ the interface unless an available tool actually supports that action.
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
   **Not now** opens Buzz anyway, but that organization's communities stay
-  unavailable until you sign in. Sign-in and sign-out also live under
+  unavailable until you sign in. Sign-in, sign-out and when the current
+  sign-in ends also live under
   **Settings → Buzz → Identity → Organization sign-in**.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in

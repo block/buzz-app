@@ -32,7 +32,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.agentProtection.registerModels({
     label: "Claude",
     models: async () =>
-      setup.snapshot().models.map((model) => ({
+      (await setup.catalog()).map((model) => ({
         id: model.value,
         label: model.displayName ?? model.value,
       })),

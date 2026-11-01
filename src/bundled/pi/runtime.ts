@@ -800,7 +800,7 @@ export class PiRuntime {
                 this.spawn,
                 entry.config.workspace,
                 path,
-                undefined,
+                signal,
                 entry.handle.protection.processProtection,
               )
             : this.readFile(path, { cwd: entry.config.workspace }),

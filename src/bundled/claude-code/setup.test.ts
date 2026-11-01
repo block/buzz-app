@@ -4,7 +4,7 @@ import type {
   HostProcessOptions,
 } from "../../features/host/service";
 import type { Spawn } from "./claude";
-import { fakeSpawn, sessionState } from "./claude-testing";
+import { fakeSpawn, MODELS, sessionState } from "./claude-testing";
 import script from "./claude.sh?raw";
 import manifest from "./manifest.json";
 import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
@@ -252,6 +252,47 @@ it("caches failed model discovery until retry and closes a late probe on disposa
   await pending;
   expect(kill).toHaveBeenCalled();
   expect(setup.snapshot().models).toEqual([]);
+});
+
+/** Health checks answer from a script; `claude` sessions answer like Claude. */
+function discoverable() {
+  const checks = scripted({
+    "claude --version": { stdout: "2.1.200" },
+    "claude auth status --json": { stdout: '{"loggedIn":true}' },
+  });
+  const claude = fakeSpawn();
+  const spawn = vi.fn<Spawn>(async (id, options) =>
+    options?.args?.[0] === "--version" || options?.args?.[0] === "auth"
+      ? checks.spawn(id, options)
+      : claude.spawn(id, options),
+  );
+  return { spawn, sessions: claude.processes };
+}
+
+it("offers the model catalog without the picker, discovering it once for concurrent callers", async () => {
+  const { spawn, sessions } = discoverable();
+  const setup = new ClaudeSetup(spawn);
+  // Nothing has checked Claude or opened the picker yet.
+  expect(setup.snapshot().models).toEqual([]);
+  const [first, second] = await Promise.all([setup.catalog(), setup.catalog()]);
+  expect(first.map((model) => model.value)).toEqual(
+    MODELS.map((model) => model.value),
+  );
+  expect(second).toBe(first);
+  expect(sessions).toHaveLength(1);
+  await setup.catalog();
+  expect(sessions).toHaveLength(1);
+});
+
+it("looks for the catalog again after a discovery that listed nothing", async () => {
+  const { spawn, sessions } = discoverable();
+  const setup = new ClaudeSetup(spawn);
+  await setup.check();
+  spawn.mockRejectedValueOnce(new Error("probe failed"));
+  await expect(setup.catalog()).resolves.toEqual([]);
+  expect(setup.snapshot().modelsError).toBe("probe failed");
+  expect(await setup.catalog()).not.toEqual([]);
+  expect(sessions).toHaveLength(1);
 });
 
 it("bounds a stalled discovery and releases it for an explicit retry", async () => {

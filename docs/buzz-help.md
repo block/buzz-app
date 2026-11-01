@@ -82,6 +82,11 @@ the interface unless an available tool actually supports that action.
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Do not assume someone can edit another person's agent.
+- An agent can ask its owner to delete one of the owner's agents. Buzz shows
+  the owner a confirmation that names the agent, and nothing is deleted unless
+  the owner chooses **Delete**. Deleting stops the agent, removes it from its
+  channels and archives it, then erases its key from this device. It can't be
+  undone. An agent that has no confirmation to show has not been deleted.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.

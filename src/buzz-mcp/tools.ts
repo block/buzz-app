@@ -136,6 +136,12 @@ export const TOOLS: readonly Tool[] = [
     ["agent"],
   ),
   tool(
+    "agent_delete",
+    "Ask your owner to delete one of their agents. agent is its pubkey or exact name. Nothing is deleted until they confirm.",
+    { agent: str },
+    ["agent"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -469,6 +475,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(typeof instructions === "string" && { instructions }),
       }),
     );
+  },
+  async agent_delete({ client }, args) {
+    if (!client.deleteAgent)
+      throw new Error("Agent deletion is unavailable on this host");
+    const agent = text(args.agent);
+    if (!agent) throw new Error("agent is required");
+    return JSON.stringify(await client.deleteAgent({ agent }));
   },
   async send(tools, args) {
     const { context } = tools;

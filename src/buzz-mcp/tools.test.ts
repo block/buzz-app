@@ -131,6 +131,52 @@ function fake(
   return { client, published };
 }
 
+it.each([false, true])(
+  "serves product help through MCP without channel access or host I/O (protected: %s)",
+  async (protectedSession) => {
+    const protect = vi.fn<NonNullable<BuzzClient["protect"]>>(async () => {});
+    const client = new Proxy({} as BuzzClient, {
+      get(_target, property) {
+        // The shared session gate checks this optional hook before dispatch.
+        if (property === "protect")
+          return protectedSession ? protect : undefined;
+        throw new Error(`Help must not access the host: ${String(property)}`);
+      },
+    });
+    const list = await respond(client, {}, { id: 1, method: "tools/list" });
+    expect(list).toMatchObject({
+      result: {
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: "buzz_help" }),
+        ]),
+      },
+    });
+    const reply = await respond(
+      client,
+      {},
+      {
+        id: 2,
+        method: "tools/call",
+        params: { name: "buzz_help", arguments: {} },
+      },
+    );
+    expect(reply).toMatchObject({
+      result: {
+        content: [
+          {
+            type: "text",
+            text: expect.stringContaining("# Buzz quick guide"),
+          },
+        ],
+      },
+    });
+    expect(reply).not.toHaveProperty("result.isError");
+    expect(protect.mock.calls.map(([action]) => action.kind)).toEqual(
+      protectedSession ? ["tool", "tool-result"] : [],
+    );
+  },
+);
+
 const members = event({
   kind: 39002,
   tags: [

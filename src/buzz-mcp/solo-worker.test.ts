@@ -913,7 +913,12 @@ describe("registration", () => {
         (tool as unknown as { annotations: object }).annotations,
       ]),
     );
-    expect(annotations.solo_worker_read).toEqual({ readOnlyHint: true });
+    expect(annotations.solo_worker_connections).toEqual({ readOnlyHint: true });
+    // Reading a worker still posts a request in the control channel.
+    expect(annotations.solo_worker_read).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
     expect(annotations.solo_worker_stop).toEqual({
       readOnlyHint: false,
       destructiveHint: true,

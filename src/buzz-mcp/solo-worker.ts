@@ -97,7 +97,7 @@ export const SOLO_WORKER_TOOLS = [
     "Whether the owner's Buzz can take worker requests now.",
     {},
     [],
-    { readOnlyHint: true },
+    { destructiveHint: false },
   ),
   workerTool(
     "solo_worker_create",
@@ -126,7 +126,7 @@ export const SOLO_WORKER_TOOLS = [
       after: { ...str, description: "next from the previous page." },
     },
     ["solo"],
-    { readOnlyHint: true },
+    { destructiveHint: false },
   ),
   workerTool(
     "solo_worker_stop",
@@ -151,7 +151,7 @@ export const SOLO_WORKER_TOOLS = [
       cursor: { ...str, description: "next from the previous page." },
     },
     [],
-    { readOnlyHint: true },
+    { destructiveHint: false },
   ),
 ] as const;
 

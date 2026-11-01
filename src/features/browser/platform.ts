@@ -52,6 +52,7 @@ export interface BrowserPlatform {
     bounds: BrowserBounds,
     storage?: string,
     builderlab?: BuilderlabViewerSession,
+    userAgent?: string,
   ): Promise<string>;
   setBounds(
     sessionId: string,
@@ -77,7 +78,7 @@ export function createBrowserPlatform(): BrowserPlatform {
     /Mac/i.test(navigator.platform);
   return {
     available,
-    attach: async (url, bounds, storage, builderlab) => {
+    attach: async (url, bounds, storage, builderlab, userAgent) => {
       const target = normalizedUrl(url);
       builderlab?.signal.throwIfAborted();
       // Authenticated attach installs the viewer cookie but leaves the guest blank.
@@ -86,6 +87,7 @@ export function createBrowserPlatform(): BrowserPlatform {
         url: target,
         bounds,
         storage: storage ?? null,
+        userAgent: userAgent ?? null,
         builderlab: builderlab
           ? "federated" in builderlab
             ? { federated: builderlab.federated }

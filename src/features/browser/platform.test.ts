@@ -56,6 +56,13 @@ describe("createBrowserPlatform", () => {
       "session-1",
     );
     await platform.attach("https://example.com", bounds, "builderlab-apps");
+    await platform.attach(
+      "https://example.com",
+      bounds,
+      "site",
+      undefined,
+      "Example/1.0",
+    );
     await platform.setBounds("session-1", bounds, true);
     await platform.navigate("session-1", "https://other.example.com");
     await platform.action("session-1", "reload");
@@ -68,6 +75,7 @@ describe("createBrowserPlatform", () => {
           url: "https://example.com/",
           bounds,
           storage: null,
+          userAgent: null,
           builderlab: null,
         },
       ],
@@ -77,6 +85,17 @@ describe("createBrowserPlatform", () => {
           url: "https://example.com/",
           bounds,
           storage: "builderlab-apps",
+          userAgent: null,
+          builderlab: null,
+        },
+      ],
+      [
+        "browser_attach",
+        {
+          url: "https://example.com/",
+          bounds,
+          storage: "site",
+          userAgent: "Example/1.0",
           builderlab: null,
         },
       ],
@@ -149,6 +168,7 @@ describe("createBrowserPlatform", () => {
         url: "https://counter--workspace.apps.example/",
         bounds,
         storage: "account",
+        userAgent: null,
         builderlab: { federated: "revision-1" },
       },
     ]);

@@ -322,6 +322,8 @@ export type MessageComposerProps = {
     attachments?: boolean;
     /** DMs can start with files alone; named Solo chats still require text. */
     allowAttachmentOnly?: boolean;
+    /** Hears each edit, whether or not saving it succeeded. */
+    onDraftChange?: ((draft: MentionDraft) => void) | undefined;
     /** `addressed`: the toolbar's agents, when they are held apart from the text. */
     submit: (
       draft: MentionDraft,
@@ -893,8 +895,10 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     if (save && !editing.target) {
-      if (submission) writeView(scope, draftKey, next);
-      else {
+      if (submission) {
+        writeView(scope, draftKey, next);
+        submission.onDraftChange?.(next);
+      } else {
         dirty.current = true;
         if (!conflict && !accepted) persist(next);
       }

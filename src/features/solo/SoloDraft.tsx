@@ -1,4 +1,4 @@
-import { linkedDraftKey, type LinkedChat } from "./linked-chat";
+import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -15,7 +15,7 @@ import {
   parseChatSetup,
   type ChatSetup,
 } from "./workspace";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
@@ -42,6 +42,8 @@ import {
   type AttachmentDraft,
 } from "../messages/attachment-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
+import { usePassThroughUntilDrafted } from "../messages/draft-visit";
+import type { PageNavigation } from "../navigation/service";
 import styles from "./Solo.module.css";
 
 /** Starting a new chat from a project starts it in that project, even when an
@@ -97,7 +99,10 @@ export function SoloDraft({
   agent,
   linkedId,
   source,
+  visit,
 }: {
+  /** The visit presenting this draft, a Back stop only once drafted. */
+  visit?: PageNavigation | undefined;
   linkedId?: string | undefined;
   source?: LinkedChat | undefined;
   /** Start with this agent chosen, as when search opens a new chat with it. */
@@ -120,6 +125,18 @@ export function SoloDraft({
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
+  // Read the source live: starting the chat consumes it.
+  const linkedSource = useCallback(
+    () => (source ? readLinkedChat(scope, draftKey)?.link : undefined),
+    [source, scope, draftKey],
+  );
+  const draftEdited = usePassThroughUntilDrafted(
+    visit,
+    session,
+    scope,
+    `${draftKey}:new-draft`,
+    { initialDraft: linkedSource },
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
@@ -333,6 +350,7 @@ export function SoloDraft({
       // next start from that source seeds its link again.
       writeView(scope, `${draftKey}:new-draft`, source ? null : "");
       writeView(scope, `${draftKey}:new-project`, null);
+      draftEdited(undefined);
       onStarted(channelId);
       // Only a start that made no chat ends here; the chat and its messages
       // are dropped (see channelWrites.start). Any other miss leaves the chat
@@ -392,6 +410,7 @@ export function SoloDraft({
           locked: busy,
           disabled: busy || !available,
           attachments: true,
+          onDraftChange: draftEdited,
           submit: (draft, files, addressed) => {
             void start(draft, files, addressed);
           },

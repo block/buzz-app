@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { controlPlane } from "../src/bundled/builderlab/apps/environment";
-import { createAgentClient } from "../src/bundled/builderlab/agents/client";
 import {
   BUILDERLAB_ORIGIN,
   bindingEvent,
@@ -479,7 +478,7 @@ it("keeps one public server revision for agents, Apps and reloaded clients, and 
   h.builderlab.signOut();
   await expect(
     h.builderlab.request(
-      { revision, path: "/v1/auth/me" },
+      { revision, path: "/v3/beekeeper/list-agents" },
       new AbortController().signal,
     ),
   ).rejects.toThrow("session changed");
@@ -538,58 +537,6 @@ it("keeps the shared login and agent requests working after an Apps 401", async 
   h.builderlab.signOut();
 });
 
-it("passes the server binding failure through the identity read used by activation", async () => {
-  const error = { code: "identity_already_bound" };
-  const h = account({
-    "/v1/buzz/nostr-identities/challenge": () =>
-      Response.json({ error }, { status: 409 }),
-    "/v1/buzz/nostr-identities/current": () =>
-      Response.json({ error: { setup_needed: true } }, { status: 404 }),
-  });
-  await signIn(h);
-  const reply = await h.builderlab.request(
-    {
-      revision: h.builderlab.snapshot().revision,
-      path: "/v1/buzz/nostr-identities/current",
-      method: "POST",
-      body: "{}",
-    },
-    new AbortController().signal,
-  );
-  expect(reply.status).toBe(409);
-  expect(JSON.parse(reply.body)).toEqual({ error });
-  expect(h.requests.map(({ path }) => path)).not.toContain(
-    "/v1/buzz/nostr-identities/current",
-  );
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", BUILDERLAB_ORIGIN);
-  try {
-    const credential = { account: {} };
-    const client = createAgentClient(
-      {
-        credential: () => credential,
-        snapshot: () => ({ status: "signed-in" }),
-        request: (_credential, input) =>
-          h.builderlab.request(
-            { ...input, revision: h.builderlab.snapshot().revision },
-            new AbortController().signal,
-          ),
-      },
-      {
-        key: async () => getPublicKey(h.key),
-        signBinding: async () => {
-          throw new Error("The server owns binding");
-        },
-      },
-    );
-    await expect(client.link(new AbortController().signal)).rejects.toThrow(
-      "This Builderlab account is linked to a different Buzz identity.",
-    );
-  } finally {
-    vi.unstubAllEnvs();
-  }
-  h.builderlab.signOut();
-});
-
 it("preserves encoded Apps IDs and query values after resolving the allowed URL", async () => {
   const h = account();
   await signIn(h);
@@ -610,6 +557,9 @@ it("preserves encoded Apps IDs and query values after resolving the allowed URL"
 
 it.each([
   "/v1/auth/login/exchange",
+  "/v1/auth/me",
+  "/v1/buzz/communities/list",
+  "/v1/buzz/nostr-identities/current",
   "//evil.example/",
   "/v3/beekeeper/../auth/me",
   "/v3/beekeeper/%2e%2e/auth/me",

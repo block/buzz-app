@@ -731,10 +731,12 @@ describe("a change", () => {
     expect(requests()).toEqual([]);
   });
 
-  it("names a missing worker rather than refusing it", async () => {
+  it("names a missing worker before asking for readiness", async () => {
     const { call, requests } = community();
-    await expect(call("solo_worker_create")).rejects.toThrow(/args\.worker/);
-    expect(requests().map((request) => request.action)).toEqual(["readiness"]);
+    await expect(call("solo_worker_create")).rejects.toThrow(
+      /request\.args\.worker.*required/,
+    );
+    expect(requests()).toEqual([]);
   });
 
   it("returns a pending request to retry, and a retry sends it unchanged", async () => {
@@ -797,14 +799,6 @@ describe("a change", () => {
       retry: { action: "archive", args: { solo: S } },
     });
     expect(answer.note).toMatch(/was sent and may have run/);
-  });
-
-  it("checks a change's arguments before asking for readiness", async () => {
-    const { call, requests } = community();
-    await expect(call("solo_worker_create", {})).rejects.toThrow(
-      /request\.args\.worker.*required/,
-    );
-    expect(requests()).toEqual([]);
   });
 
   it("refuses a retry with other arguments, or for another tool or agent", async () => {

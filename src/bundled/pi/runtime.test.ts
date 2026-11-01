@@ -270,6 +270,48 @@ it("contains delegated file reads with the current Pi handle's policy", async ()
   }
 });
 
+it("stops a protected file read when its tool call is aborted", async () => {
+  const f = setup();
+  const spawn = f.desktop.spawn;
+  const started = deferred();
+  const exit = deferred<number>();
+  const kill = vi.fn(async () => exit.resolve(143));
+  f.desktop.spawn = async (id, options) => {
+    if (id !== "read-protected") return spawn(id, options);
+    started.resolve();
+    return { write: vi.fn(), end: vi.fn(), kill, exited: exit.promise };
+  };
+  try {
+    await f.deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+    Object.assign(f.agent, {
+      protection: {
+        processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+        assertAvailable() {},
+        check: async () => {},
+      },
+    });
+    const stop = new AbortController();
+    const result = f.runtime.tool(
+      {
+        agent: self,
+        conversation: CONVERSATION,
+        context: { channel, root: root.id },
+        name: "send",
+        arguments: { path: "report.md", audience: "everyone" },
+      },
+      stop.signal,
+    );
+    await started.promise;
+    expect(kill).not.toHaveBeenCalled();
+    stop.abort();
+    expect((await result).isError).toBe(true);
+    expect(kill).toHaveBeenCalled();
+  } finally {
+    exit.resolve(0);
+    await f.runtime.dispose();
+  }
+});
+
 it("never opens a protected agent's storage in the shared host before its handle arrives", async () => {
   const { host, runtime } = setup();
   runtime.sync([

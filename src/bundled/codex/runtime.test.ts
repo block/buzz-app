@@ -1368,6 +1368,107 @@ it("retries a protected retirement that failed", async () => {
   await expect(f.runtime.preview(f.agent)).resolves.toBeDefined();
 });
 
+describe("saved threads and protection state", () => {
+  type Protected = ReturnType<typeof protectedPreview>;
+  const ask = async (
+    f: Protected,
+    protect: boolean,
+    text: string,
+    named?: (title: string) => void,
+  ) => {
+    if (!f.handle) throw new Error("Missing handle");
+    const agent = protect ? f.handle : { ...f.handle, protection: undefined };
+    const target = protect ? f.worker : f;
+    const before = target.starts().length;
+    const sent = target.sent.length;
+    const published = f.publish.mock.calls.length;
+    await f.runtime.run({
+      ...f.delivery(text),
+      agent,
+      config: { workspace: "/tmp/codex-test" },
+      ...(named ? { named } : {}),
+    });
+    await vi.waitFor(() => expect(target.starts()).toHaveLength(before + 1));
+    const methods = target.sent.slice(sent).map((wire) => wire.method);
+    await target.complete(before, "ok");
+    await vi.waitFor(() =>
+      expect(f.publish).toHaveBeenCalledTimes(published + 1),
+    );
+    return methods;
+  };
+  const resumed = (methods: (string | undefined)[]) =>
+    methods.includes("thread/resume");
+
+  it("starts a new thread under a replacement protection state", async () => {
+    const f = protectedPreview();
+    try {
+      expect(resumed(await ask(f, true, "one"))).toBe(false);
+      expect(resumed(await ask(f, true, "two"))).toBe(true);
+      await f.runtime.retire(pubkey);
+      f.replace("generation-2");
+      expect(resumed(await ask(f, true, "three"))).toBe(false);
+      expect(resumed(await ask(f, true, "four"))).toBe(true);
+      await f.runtime.retire(pubkey);
+      f.replace("generation-1");
+      expect(resumed(await ask(f, true, "five"))).toBe(false);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("never resumes an unprotected thread under protection or the reverse", async () => {
+    const f = protectedPreview();
+    try {
+      expect(resumed(await ask(f, false, "open"))).toBe(false);
+      expect(resumed(await ask(f, false, "again"))).toBe(true);
+      await f.runtime.retire(pubkey);
+      expect(resumed(await ask(f, true, "guarded"))).toBe(false);
+      await f.runtime.retire(pubkey);
+      f.replace("generation-1");
+      expect(resumed(await ask(f, true, "guarded again"))).toBe(true);
+      await f.runtime.retire(pubkey);
+      expect(resumed(await ask(f, false, "open again"))).toBe(false);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("does not title a Solo chat again when its protection state changes", async () => {
+    const f = protectedPreview();
+    asSoloChat(f);
+    const named = vi.fn();
+    try {
+      await ask(f, true, "guarded", named);
+      await f.runtime.retire(pubkey);
+      expect(resumed(await ask(f, false, "open", named))).toBe(false);
+      expect(
+        f.sent.filter(
+          (wire) =>
+            wire.method === "thread/start" &&
+            (wire.params as { ephemeral?: boolean }).ephemeral,
+        ),
+      ).toEqual([]);
+      expect(named).not.toHaveBeenCalled();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("refuses to compact a thread saved under another protection state", async () => {
+    const f = protectedPreview();
+    try {
+      await ask(f, true, "one");
+      await f.runtime.retire(pubkey);
+      f.replace("generation-2");
+      await expect(
+        f.runtime.session(f.agent, { channelId: "channel", root }, "compact"),
+      ).rejects.toThrow("There is no session here to compact yet.");
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+});
+
 it("stops a protected worker that served only a preview once its agent goes", async () => {
   const f = protectedPreview();
   await f.runtime.preview(f.agent);

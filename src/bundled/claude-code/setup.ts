@@ -234,6 +234,8 @@ export class ClaudeSetup {
   private health: AgentProviderSnapshot = { readiness: "checking" };
   private process: HostProcess | undefined;
   private modelRequest: AbortController | undefined;
+  private modelWork: Promise<void> | undefined;
+  private cataloging: Promise<SetupState["models"]> | undefined;
   private modelsLoaded = false;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
@@ -314,21 +316,26 @@ export class ClaudeSetup {
     });
   }
 
-  /** Loads optional model copy only for surfaces that display the catalog. */
-  async loadModels(retry = false) {
+  /** Loads optional model copy only for surfaces that display the catalog.
+   * Callers during a load wait for it. */
+  loadModels(retry = false) {
+    if (this.modelRequest) return this.modelWork;
     if (
       !this.spawn ||
       this.state.status?.state !== "ready" ||
       this.state.checking ||
-      this.modelRequest ||
       (this.modelsLoaded && !retry)
     )
-      return;
+      return Promise.resolve();
     const request = new AbortController();
     this.modelRequest = request;
     this.set({ modelsChecking: true, modelsError: "" });
+    this.modelWork = this.discoverModels(this.spawn, request);
+    return this.modelWork;
+  }
+  private async discoverModels(spawn: Spawn, request: AbortController) {
     try {
-      const models = await queryModels(this.spawn, request.signal);
+      const models = await queryModels(spawn, request.signal);
       if (!models.length) throw new Error("Claude did not list its models");
       if (this.modelRequest === request) this.set({ models });
     } catch (error) {
@@ -343,6 +350,18 @@ export class ClaudeSetup {
         this.set({ modelsChecking: false });
       }
     }
+  }
+  /** The catalog for a surface that opens without the model picker: found
+   * once, and looked for again only after a discovery that listed nothing. */
+  catalog() {
+    this.cataloging ??= (async () => {
+      if (!this.state.status) await this.check();
+      await this.loadModels(!this.state.models.length);
+      return this.state.models;
+    })().finally(() => {
+      this.cataloging = undefined;
+    });
+    return this.cataloging;
   }
 
   /** Moves Buzz's copy to the latest release. Unless `needed`, a computer

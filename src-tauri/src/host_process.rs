@@ -417,7 +417,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     } else {
         None
     };
-    let claude_hooks = protected && plugin == "buzz.claude-code";
+    let claude_hooks = runs_protected_claude(&plugin, &declared.id, protected);
     let mut command = if let Some(protection) = protection {
         let controls = controls.ok_or("Agent controls are unavailable")?;
         std::fs::create_dir_all(&controls).map_err(|_| "Agent controls are unavailable")?;
@@ -612,6 +612,12 @@ fn take_text(pending: &mut Vec<u8>) -> String {
     let text = String::from_utf8_lossy(pending).into_owned();
     *pending = rest;
     text
+}
+
+/// Only the protected Claude CLI speaks the hook protocol; the plugin's other
+/// protected workers, such as its file reader, print arbitrary output.
+fn runs_protected_claude(plugin: &str, process_id: &str, protected: bool) -> bool {
+    protected && plugin == "buzz.claude-code" && process_id == "claude-protected-sh"
 }
 
 /// An absolute directory, or one under the user's home written `~/…`.

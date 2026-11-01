@@ -115,12 +115,15 @@ type Request = {
 };
 /** `at` is when the binding last took in a message or ended a turn; bindings
  * saved before it existed have none. `tools` is the `addedKey` of the
- * thread's tools, absent when plugins added none. */
+ * thread's tools, absent when plugins added none. `protection` is the
+ * `stateKey` of the protection the thread ran under, absent when unprotected;
+ * only a run under the same state resumes it. */
 type Saved = {
   threadId: string;
   workspace: string;
   at?: number;
   tools?: string;
+  protection?: string;
 };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
@@ -197,6 +200,12 @@ export type SavedConversation = Partial<ChannelLabel> & {
  * one over about 50ms after the turn ends. */
 const STOP_LINGER_MS = 1_000;
 const LINGER_POLL_MS = 100;
+/** The binding a run under `protection` may resume: threads never cross
+ * protection state keys, protected or not. */
+const resumable = (
+  saved: Saved | undefined,
+  protection: Pick<AgentProtection, "stateKey"> | undefined,
+) => (saved?.protection === protection?.stateKey ? saved : undefined);
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 /** Codex's own small model for titles, and its title rules. */
 const TITLE_MODEL = "gpt-5.6-luna";
@@ -342,14 +351,15 @@ export class CodexRuntime {
         }
         return;
       }
-      if (!saved) throw new Error("There is no session here to compact yet.");
       if (agent.protection && !this.handle(agent.key)?.protection)
         throw new Error("The protected agent has no live policy binding");
+      const thread = resumable(saved, this.handle(agent.key)?.protection);
+      if (!thread) throw new Error("There is no session here to compact yet.");
       const server = this.open(this.handle(agent.key));
       const rpc = await server.opening;
       const settings = this.resolveConfig(agent.config);
       const workspace = await this.workspace(settings.workspace);
-      if (workspace !== saved.workspace)
+      if (workspace !== thread.workspace)
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
         );
@@ -362,14 +372,14 @@ export class CodexRuntime {
       );
       try {
         signal.throwIfAborted();
-        bridge?.bind(saved.threadId);
+        bridge?.bind(thread.threadId);
         await rpc.request("thread/resume", {
           ...params,
-          threadId: saved.threadId,
+          threadId: thread.threadId,
           excludeTurns: true,
         });
         signal.throwIfAborted();
-        await this.compact(rpc, signal, saved.threadId, agent.key, key);
+        await this.compact(rpc, signal, thread.threadId, agent.key, key);
         this.status(agent.key, key, "Idle");
       } catch (error) {
         this.status(
@@ -382,7 +392,7 @@ export class CodexRuntime {
       } finally {
         await bridge?.close();
         await rpc
-          .request("thread/unsubscribe", { threadId: saved.threadId })
+          .request("thread/unsubscribe", { threadId: thread.threadId })
           .catch(() => undefined);
       }
     });
@@ -1746,7 +1756,8 @@ export class CodexRuntime {
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       active.workspace = workspace;
-      const existing = entry.saved[key];
+      const saved = entry.saved[key];
+      const existing = resumable(saved, agent.protection);
       const { params, model, effort, summary, bridge } = await this.prepare(
         rpc,
         agent,
@@ -1841,7 +1852,7 @@ export class CodexRuntime {
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
       // A conversation new to this agent: name its Solo chat meanwhile.
-      if (request.named && !existing && !server.protection)
+      if (request.named && !saved && !server.protection)
         void this.offerTitle(
           rpc,
           request.named,
@@ -1858,6 +1869,7 @@ export class CodexRuntime {
         workspace,
         at: Date.now(),
         ...(tools ? { tools } : {}),
+        ...(agent.protection ? { protection: agent.protection.stateKey } : {}),
       });
       ready();
       this.status(agent.key, key, "Working");

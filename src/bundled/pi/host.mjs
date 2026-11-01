@@ -1147,7 +1147,11 @@ export function serve({
         const reply = await models.completeSimple(
           found,
           {
-            systemPrompt: turn.prompt.system,
+            // Pi's models have no response-format option and cannot be made to
+            // call a tool, so the schema can only be stated in the prompt.
+            systemPrompt: turn.prompt.outputSchema
+              ? `${turn.prompt.system}\n\nReply with only JSON that matches this JSON Schema, and no other text:\n${JSON.stringify(turn.prompt.outputSchema)}`
+              : turn.prompt.system,
             messages: [
               {
                 role: "user",

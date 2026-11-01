@@ -77,6 +77,8 @@ function community(
     roster?: string[];
     ack?: GrantAck | null;
     visibility?: "private" | "public" | null;
+    /** The agent's owner as its host records it; null where none is, as standalone. */
+    recorded?: string | null;
   } = {},
 ) {
   let now = START;
@@ -127,6 +129,7 @@ function community(
   const client: BuzzClient = {
     pubkey: C,
     key: C,
+    ...(options.recorded === null ? {} : { owner: options.recorded ?? H }),
     relayAuthor: getPublicKey(RELAY),
     async query(filters: readonly Filter[]) {
       const [filter = {}] = filters as Record<string, unknown>[];
@@ -449,7 +452,7 @@ describe("solo_worker_connections", () => {
     ).rejects.toThrow(/cannot verify channel members/);
   });
 
-  it("lists each owner's grant, and needs owner to choose between them", async () => {
+  it("lists each owner's grant, and uses the agent's own owner's unless another is named", async () => {
     const { call, sign, requests } = community();
     const elsewhere = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
     const stranger = getPublicKey(STRANGER);
@@ -475,15 +478,37 @@ describe("solo_worker_connections", () => {
     expect(
       connections.map((found: { owner: string }) => found.owner).sort(),
     ).toEqual([H, stranger].sort());
-    await expect(call("solo_worker_readiness")).rejects.toThrow(/give owner/);
-    expect(requests()).toEqual([]);
-    expect(await call("solo_worker_readiness", { owner: H })).toMatchObject({
+    expect(await call("solo_worker_readiness")).toMatchObject({
       phase: "ready",
     });
     expect(requests()).toMatchObject([{ owner: H, stream: K }]);
   });
 
-  it("needs owner when not every channel could be checked", async () => {
+  it("never chooses another person's grant unless it is named", async () => {
+    // Anyone may grant the agent their own workers; this grant is not from
+    // the owner its host records, and would receive the agent's task text.
+    const { call, requests } = community(ready, {
+      recorded: getPublicKey(STRANGER),
+    });
+    await expect(
+      call("solo_worker_send", { solo: S, worker_epoch: 1, text: "go" }),
+    ).rejects.toThrow(/Your own owner has not authorized you/);
+    expect(requests()).toEqual([]);
+    expect(await call("solo_worker_readiness", { owner: H })).toMatchObject({
+      phase: "ready",
+    });
+  });
+
+  it("needs owner where the host records no owner", async () => {
+    const { call, requests } = community(ready, { recorded: null });
+    await expect(call("solo_worker_readiness")).rejects.toThrow(/Give owner/);
+    expect(requests()).toEqual([]);
+    expect(await call("solo_worker_readiness", { owner: H })).toMatchObject({
+      phase: "ready",
+    });
+  });
+
+  it("uses its own owner's grant when not every channel could be checked", async () => {
     const { call, sign } = community();
     for (let index = 0; index < 500; index++)
       sign(
@@ -502,8 +527,7 @@ describe("solo_worker_connections", () => {
       connections: [{ owner: H }],
       complete: false,
     });
-    await expect(call("solo_worker_readiness")).rejects.toThrow(/give owner/);
-    expect(await call("solo_worker_readiness", { owner: H })).toMatchObject({
+    expect(await call("solo_worker_readiness")).toMatchObject({
       phase: "ready",
     });
   });

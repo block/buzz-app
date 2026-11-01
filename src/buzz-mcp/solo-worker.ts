@@ -53,7 +53,7 @@ const str = { type: "string" } as const;
 const owner = {
   ...str,
   description:
-    "Owner's public key (hex); needed only with more than one owner.",
+    "Owner's public key (hex). Without it, only your own owner's grant is used; give it to run another person's workers.",
 };
 const solo = { ...str, description: "The worker's Solo chat id." };
 const epoch = {
@@ -189,7 +189,7 @@ export async function callSoloWorkerTool(
       complete: found.complete,
     });
   const action = name.slice(PREFIX.length) as Action;
-  const route = pick(found, args.owner, action);
+  const route = pick(found, args.owner, client.owner, action);
   if (args.retry !== undefined) {
     if (Object.keys(args).some((key) => key !== "retry" && key !== "owner"))
       throw new Error("Give retry on its own.");
@@ -591,30 +591,35 @@ async function requirePrivate(
     );
 }
 
+/** The grant to use: `owner`'s, or else only that of `mine`, the agent's own
+ * owner as its host records it. Anyone can grant an agent their own workers,
+ * so another person's grant, which would receive the agent's task text, is
+ * never chosen unless named. */
 function pick(
   found: Awaited<ReturnType<typeof connections>>,
   owner: unknown,
+  mine: string | undefined,
   action: Action,
 ) {
+  const wanted = owner ?? mine;
   const active = found.connections.filter(
     (connection) =>
       connection.state === "active" &&
-      (owner === undefined || connection.owner === owner),
+      (wanted === undefined || connection.owner === wanted),
   );
   const [route] = active;
   if (!route)
     throw new Error(
-      `No owner has authorized you to run their workers${owner === undefined ? "" : " for that owner"}${found.complete ? "" : ", as far as could be found"}. Only the owner can, in Buzz.`,
+      owner === undefined &&
+        found.connections.some((connection) => connection.state === "active")
+        ? "Your own owner has not authorized you. To run another person's workers, give owner."
+        : `No owner has authorized you to run their workers${owner === undefined ? "" : " for that owner"}${found.complete ? "" : ", as far as could be found"}. Only the owner can, in Buzz.`,
     );
+  if (wanted === undefined)
+    throw new Error("Give owner: the person whose workers you mean to run.");
   if (active.length > 1)
     throw new Error(
-      owner === undefined
-        ? "More than one owner has authorized you: give owner."
-        : "That owner has authorized you in more than one channel; ask them to revoke one.",
-    );
-  if (owner === undefined && !found.complete)
-    throw new Error(
-      "Not every channel could be checked, so another owner may also have authorized you: give owner.",
+      "That owner has authorized you in more than one channel; ask them to revoke one.",
     );
   if (!route.operations.includes(action))
     throw new Error(`The owner has not allowed ${PREFIX}${action}.`);

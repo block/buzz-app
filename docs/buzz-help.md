@@ -97,8 +97,10 @@ the interface unless an available tool actually supports that action.
   start, message, read, stop, and archive the owner's workers in Solo chats. The
   agent asks the owner's Buzz in a private channel with only the two of them;
   the owner's Buzz decides each request and must be running to answer. No
-  answer does not mean nothing happened. Without that authorization, or once the
-  channel is no longer private, the agent's Solo worker tools find no owner. The
+  answer does not mean nothing happened. Unless the agent names another person,
+  it uses only the authorization from its own owner, as Buzz records it; an agent
+  with no recorded owner must always name one. Without that authorization, or once
+  the channel is no longer private, the agent's Solo worker tools find no owner. The
   standalone Buzz MCP server checks that channel's members and privacy against
   the key its relay advertises; where the relay does not advertise one, the
   tools find none.

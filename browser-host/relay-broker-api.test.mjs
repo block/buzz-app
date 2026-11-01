@@ -3917,3 +3917,85 @@ test("inventory rejects foreign pages, ignores invalid heads and follows exact-k
     await h.close();
   }
 });
+
+test("Builderlab HTTP accepts maximum-length agent instructions after JSON envelope escaping", async () => {
+  let openLogin;
+  const opened = new Promise((resolve) => {
+    openLogin = resolve;
+  });
+  const instructions = "\\".repeat(20_000);
+  let received;
+  const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+    open: async (url) => openLogin(new URL(url)),
+    fetch: async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/v1/auth/login/exchange"))
+        return Response.json({
+          session_credential: "fixture-only",
+          expires_at: "2030",
+        });
+      if (path.endsWith("/v1/auth/me"))
+        return Response.json({
+          subject: "fixture-account",
+          expires_at: "2030",
+          capabilities: { can_use_remote_agents: true },
+        });
+      if (path.endsWith("/nostr-identities/challenge"))
+        return Response.json({
+          error: { code: "missing_mapping", setup_needed: true },
+        });
+      if (path.endsWith("/v3/beekeeper/update-agent")) {
+        received = JSON.parse(init.body);
+        return Response.json({ status: 1 });
+      }
+      throw new Error(`Unexpected Builderlab request ${path}`);
+    },
+  });
+  try {
+    const login = fetch(`${h.base}/api/builderlab/login`, {
+      method: "POST",
+      body: "{}",
+    });
+    const authorization = await opened;
+    await fetch(
+      `${authorization.searchParams.get("redirect_uri")}?code=fixture&state=${authorization.searchParams.get("state")}`,
+    );
+    expect((await login).status).toBe(200);
+    const stream = await fetch(`${h.base}/api/builderlab/events`);
+    const reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    let event = "";
+    try {
+      while (!event.includes("\n\n")) {
+        const part = await reader.read();
+        if (part.done) throw new Error("Missing development session metadata");
+        event += decoder.decode(part.value, { stream: true });
+      }
+    } finally {
+      await reader.cancel();
+    }
+    const { revision } = JSON.parse(
+      event.slice("data: ".length).split("\n\n")[0],
+    );
+    const body = JSON.stringify({
+      agent_pubkey: "a".repeat(64),
+      agent_instructions: instructions,
+    });
+    const envelope = JSON.stringify({
+      revision,
+      path: "/v3/beekeeper/update-agent",
+      method: "POST",
+      body,
+    });
+    expect(envelope.length).toBeGreaterThan(64 * 1024);
+    const response = await fetch(`${h.base}/api/builderlab/request`, {
+      method: "POST",
+      body: envelope,
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).status).toBe(200);
+    expect(received.agent_instructions).toBe(instructions);
+  } finally {
+    await h.close();
+  }
+});

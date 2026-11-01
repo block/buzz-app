@@ -987,7 +987,7 @@ export function relayBrokerPlugin({
                   (action === "decisions"
                     ? 128 * 1024
                     : action === "request"
-                      ? 64 * 1024
+                      ? 1024 * 1024
                       : 4096)
                 )
                   return json(res, 413, { error: "Request too large" });

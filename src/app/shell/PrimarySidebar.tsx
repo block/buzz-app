@@ -31,7 +31,11 @@ import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
-import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type {
+  ChatIcon,
+  ChatMenu,
+  ConversationSection,
+} from "../../features/conversation/service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
@@ -52,6 +56,7 @@ type Props = {
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  conversationSections?: ContributionReader<ConversationSection> | undefined;
   sidebarSections?: SidebarSections | undefined;
   target: OpenTarget;
   children: ReactNode;
@@ -215,6 +220,7 @@ function ScopedSidebar({
           relay={props.relay}
           navigator={props.navigator}
           agents={props.agents}
+          conversationSections={props.conversationSections}
           target={props.target}
           queries={connection.session}
           scope={scope}
@@ -228,6 +234,7 @@ function ScopedSidebar({
             dmPreviews,
             frame,
             before,
+            recent,
             content,
             after,
             dialogs,
@@ -250,6 +257,7 @@ function ScopedSidebar({
                 />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
+                  {filter === "all" && recent}
                   <section
                     aria-label={soloTitle}
                     className={styles.sidebarGroup}

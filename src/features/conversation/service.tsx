@@ -40,6 +40,19 @@ export type ChatIcon = Readonly<{
   id: string;
   component: ComponentType<ChatIconProps>;
 }>;
+/** A sidebar section listing Solo and Team conversations a plugin chooses. */
+export type ConversationSection = Readonly<{
+  id: string;
+  title: string;
+  /** This session's channel IDs, first shown first. The sidebar lists only
+   * conversations it already shows in Solo or Team, the first eight until
+   * Show more.
+   * `snapshot` returns the same array until the IDs change. */
+  channels(session: RelaySession): Readonly<{
+    snapshot(): readonly string[];
+    subscribe(listener: () => void): () => void;
+  }>;
+}>;
 
 export type ChatMenuProps = Readonly<{
   session: RelaySession;
@@ -86,6 +99,10 @@ export type Conversation = {
   /** Shows `component` as each Solo chat's sidebar icon while the providing
    * plugin runs. */
   registerChatIcon(component: ComponentType<ChatIconProps>): void;
+  /** Sections at the top of the sidebar's All view, in registration order. */
+  conversationSections: ContributionReader<ConversationSection>;
+  /** Adds `section` above Solo and Team while the providing plugin runs. */
+  registerConversationSection(section: ConversationSection): void;
   /** The host's date labels, so plugin text reads like the message rows. */
   format: {
     /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
@@ -152,6 +169,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly chatMenuEntries;
   readonly chatIcons;
   private readonly chatIconEntries;
+  readonly conversationSections;
+  private readonly teamSectionEntries;
   readonly ui: Conversation["ui"];
   constructor(ctx: Context) {
     super(ctx, "conversation");
@@ -214,6 +233,12 @@ export class ConversationService extends Service implements Conversation {
       snapshot: chatIcons.snapshot,
       subscribe: chatIcons.subscribe,
     };
+    const conversationSections = createContributions<ConversationSection>(ctx);
+    this.teamSectionEntries = conversationSections;
+    this.conversationSections = {
+      snapshot: conversationSections.snapshot,
+      subscribe: conversationSections.subscribe,
+    };
     const Tabs = (props: PageTabsProps) => {
       const Provided = tabs.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
@@ -247,6 +272,17 @@ export class ConversationService extends Service implements Conversation {
     if (typeof component !== "function")
       throw new Error("A chat icon needs a component");
     this.chatIconEntries.register(this.ctx, { id: "chat-icon", component });
+  }
+  registerConversationSection(value: ConversationSection) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      typeof value.channels !== "function"
+    )
+      throw new Error("A conversation section needs an id, title and channels");
+    this.teamSectionEntries.register(this.ctx, value);
   }
   registerMessageAction(value: MessageAction) {
     validate(value);

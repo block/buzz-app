@@ -14,6 +14,18 @@ import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMen
 import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { inTeamInventory } from "./team-inventory";
+import {
+  isContributedSection,
+  SECTION_CAP,
+  SECTION_STEP,
+  useConversationSections,
+  withConversationSections,
+} from "./conversation-sections";
+import type { ContributionReader } from "../conversation/contracts";
+import type { ConversationSection } from "../conversation/service";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { SidebarSection } from "../../bundled/channels/SidebarSection";
+import { ownSolo } from "../solo/labels";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -101,6 +113,8 @@ type Inventory = {
   dmPreviews: ReadonlyMap<string, UnreadDmPreview>;
   frame: Pick<ComponentProps<typeof SidebarFrame>, "busy" | "launchPending">;
   before: ReactNode;
+  /** Contributed sections, above Solo and Team. */
+  recent: ReactNode;
   content: ReactNode;
   after: ReactNode;
   dialogs: ReactNode;
@@ -121,6 +135,7 @@ export function ChannelInventory({
   relay,
   navigator,
   agents,
+  conversationSections,
   target,
   queries,
   cached,
@@ -134,6 +149,7 @@ export function ChannelInventory({
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
+  conversationSections?: ContributionReader<ConversationSection> | undefined;
   target: OpenTarget;
   queries: RelaySession;
   cached: boolean;
@@ -470,6 +486,8 @@ export function ChannelInventory({
         sidebar.toggle(key, true),
       );
   };
+  const contributed = useConversationSections(conversationSections, queries);
+  const [sectionExtra, setSectionExtra] = useState<Record<string, number>>({});
   const sections = startup.ready
     ? sidebarSections(
         sidebarChannels,
@@ -477,6 +495,19 @@ export function ChannelInventory({
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
       )
     : [];
+  const recentSections = withConversationSections(
+    [
+      ...sections.flatMap((section) => section.rows),
+      ...channels.filter(
+        // As the Solo list shows them.
+        (channel) =>
+          channel.channelType === "solo" &&
+          !channel.archived &&
+          (!channel.readOnly || ownSolo(channel, queries.viewer)),
+      ),
+    ],
+    contributed,
+  );
   const filteredSections = useSidebarFilters(
     sections,
     Object.fromEntries(
@@ -644,9 +675,13 @@ export function ChannelInventory({
   // of any one action. Sibling actions keep their own eligibility checks.
   const rowActions = (
     channel: ChannelSummary,
-    sectionKey: string,
+    placement: string,
     surface?: ChannelMenuSurface,
   ) => {
+    // A contributed section repeats a row; placement actions use its home.
+    const sectionKey = isContributedSection(placement)
+      ? channelSectionKey(channel.id)
+      : placement;
     const actions: ReactNode[] = [];
     if (placementWritable && channel.channelType !== "forum") {
       const currentSectionId = sectionKey.startsWith("group:")
@@ -866,7 +901,7 @@ export function ChannelInventory({
     rowMenu,
     open: openMenu,
     close: closeMenu,
-  } = useChannelRowMenu(filteredSections, rowActions);
+  } = useChannelRowMenu([...recentSections, ...filteredSections], rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       readAction.reset();
@@ -897,9 +932,15 @@ export function ChannelInventory({
   const rowFocusTarget = useCallback(
     (channelId: string) => {
       const list = sidebar.list.current;
-      const row = list?.querySelector<HTMLElement>(
-        `[data-channel-id="${CSS.escape(channelId)}"]`,
-      );
+      const rows = [
+        ...(list?.querySelectorAll<HTMLElement>(
+          `[data-channel-id="${CSS.escape(channelId)}"]`,
+        ) ?? []),
+      ];
+      // Contributed sections repeat rows; focus returns to the home row.
+      const row =
+        rows.find((row) => !row.closest('[data-sidebar-section^="plugin:"]')) ??
+        rows[0];
       if (row) return row;
       const sectionKey = hiddenRowSections.current.get(channelId);
       return sectionKey
@@ -1071,6 +1112,86 @@ export function ChannelInventory({
     },
     [lifecycleCallbacks],
   );
+  const row = (channel: ChannelSummary, sectionKey: string) => {
+    const selected = current?.id === channel.id ? current.id : undefined;
+    // Every row offers Copy link; build items only for the open
+    // menu. useChannelRowMenu closes a menu left with none.
+    const menuOpen =
+      rowMenu?.channelId === channel.id && rowMenu.sectionKey === sectionKey;
+    return (
+      <ChannelSidebarItem
+        profile={
+          channel.channelType === "dm" && channel.participants?.length === 1
+            ? dmProfiles.get(channel.participants[0] ?? "")
+            : undefined
+        }
+        key={channel.id}
+        channel={channel}
+        session={queries}
+        working={workingChannels.has(channel.id)}
+        selected={composingMessage ? undefined : selected}
+        onSelect={select}
+        onOpenThread={openActivityThread}
+        onOpenWorkingAgent={openWorkingAgent}
+        onOpenAgentActivity={openAgentActivity}
+        // Solo chats keep their actions in the Solo list.
+        menuEnabled={channel.channelType !== "solo"}
+        sectionKey={sectionKey}
+        selectFrame={
+          channel.channelType !== "dm" && isChannelDropSectionKey(sectionKey)
+            ? DraggableChannel
+            : undefined
+        }
+        onOpenMenu={openRowMenu}
+        menuOpen={menuOpen}
+        menuAnchor={menuOpen ? rowMenu.anchor : undefined}
+        menuContent={
+          menuOpen ? (
+            <>
+              {rowActions(channel, sectionKey)}
+              {readWrite?.pending && <p role="status">Saving…</p>}
+              {readWrite?.error && <p role="alert">{readWrite.error}</p>}
+            </>
+          ) : undefined
+        }
+        onCloseMenu={closeRowMenu}
+        onMenuClosed={rowMenuClosed}
+        menuFinalFocus={rowMenuFinalFocus}
+      />
+    );
+  };
+  const recent = recentSections.map((section) => {
+    const extra = sectionExtra[section.key] ?? 0;
+    const more = section.rows.length > SECTION_CAP + extra;
+    return (
+      <SidebarSection
+        key={section.key}
+        sectionKey={section.key}
+        title={section.title}
+        session={queries}
+        open={!sidebar.collapsed.includes(section.key)}
+        onToggle={(open) => sidebar.toggle(section.key, open)}
+        channelCount={section.rows.length}
+      >
+        {section.rows
+          .slice(0, SECTION_CAP + extra)
+          .map((channel) => row(channel, section.key))}
+        {section.rows.length > SECTION_CAP && (
+          <NavigationItem
+            variant="text"
+            label={more ? "Show more" : "Show less"}
+            aria-label={`${more ? "Show more" : "Show fewer"} conversations in ${section.title}`}
+            onClick={() =>
+              setSectionExtra({
+                ...sectionExtra,
+                [section.key]: more ? extra + SECTION_STEP : 0,
+              })
+            }
+          />
+        )}
+      </SidebarSection>
+    );
+  });
   return render({
     sidebar,
     dmPreviews: unreadDmPreviews,
@@ -1085,6 +1206,7 @@ export function ChannelInventory({
             : undefined,
       busy: preferences.status === "loading" || startup.updating || undefined,
     },
+    recent,
     before: (
       <>
         {/* The sidebar mounts the one automatic relay-recovery notice.
@@ -1360,59 +1482,7 @@ export function ChannelInventory({
                   : undefined
               }
             >
-              {section.rows.map((channel) => {
-                const selected =
-                  current?.id === channel.id ? current.id : undefined;
-                // Every row offers Copy link; build items only for the open
-                // menu. useChannelRowMenu closes a menu left with none.
-                const menuOpen =
-                  rowMenu?.channelId === channel.id &&
-                  rowMenu.sectionKey === section.key;
-                return (
-                  <ChannelSidebarItem
-                    profile={
-                      channel.channelType === "dm" &&
-                      channel.participants?.length === 1
-                        ? dmProfiles.get(channel.participants[0] ?? "")
-                        : undefined
-                    }
-                    key={channel.id}
-                    channel={channel}
-                    session={queries}
-                    working={workingChannels.has(channel.id)}
-                    selected={composingMessage ? undefined : selected}
-                    onSelect={select}
-                    onOpenThread={openActivityThread}
-                    onOpenWorkingAgent={openWorkingAgent}
-                    onOpenAgentActivity={openAgentActivity}
-                    menuEnabled
-                    sectionKey={section.key}
-                    selectFrame={
-                      channel.channelType !== "dm" &&
-                      isChannelDropSectionKey(section.key)
-                        ? DraggableChannel
-                        : undefined
-                    }
-                    onOpenMenu={openRowMenu}
-                    menuOpen={menuOpen}
-                    menuAnchor={menuOpen ? rowMenu.anchor : undefined}
-                    menuContent={
-                      menuOpen ? (
-                        <>
-                          {rowActions(channel, section.key)}
-                          {readWrite?.pending && <p role="status">Saving…</p>}
-                          {readWrite?.error && (
-                            <p role="alert">{readWrite.error}</p>
-                          )}
-                        </>
-                      ) : undefined
-                    }
-                    onCloseMenu={closeRowMenu}
-                    onMenuClosed={rowMenuClosed}
-                    menuFinalFocus={rowMenuFinalFocus}
-                  />
-                );
-              })}
+              {section.rows.map((channel) => row(channel, section.key))}
             </DroppableSidebarSection>
           ))}
           {orderedContributions.map((entry, index) => {

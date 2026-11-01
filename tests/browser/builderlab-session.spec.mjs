@@ -109,3 +109,60 @@ test("a late failed login response cannot overwrite another page's pending login
     await other.close();
   }
 });
+
+// The broker cannot emit an outcome for a POST that never reached it. A fresh
+// subscription must restore idle state and allow another click without Cancel/reload.
+test("a login POST rejected before broker admission recovers and can be retried", async ({
+  page,
+  context,
+  app,
+  builderlab,
+}) => {
+  const loginUrl = `${app.origin}/api/builderlab/login`;
+  app.report.builderlabFailures = [loginUrl, loginUrl]; // Injected rejection, then canceled retry.
+  let rejected = false;
+  await page.route(loginUrl, (route) => {
+    if (rejected) return route.continue();
+    rejected = true;
+    return route.fulfill({
+      status: 502,
+      json: { error: "Fixture admission rejection" },
+    });
+  });
+  const signIn = page.getByRole("button", {
+    name: "Sign in with Builderlab",
+    exact: true,
+  });
+  const cancel = page.getByRole("button", {
+    name: "Cancel sign-in",
+    exact: true,
+  });
+  try {
+    await open(page, app);
+    await openSettings(page);
+    await selectSettingsSection(page, "Builderlab");
+    await signIn.click();
+    await expect(signIn).toBeVisible();
+    await expect(page.getByRole("alert")).toContainText(
+      "Could not start Builderlab sign-in. Try again.",
+    );
+    expect(builderlab.opened).toHaveLength(0);
+    await signIn.click();
+    await expect.poll(() => builderlab.opened.length).toBe(1);
+    await expect(cancel).toBeVisible();
+    const ended = page.waitForResponse(
+      (response) => response.url() === loginUrl && response.status() === 502,
+    );
+    await cancel.click();
+    await (await ended).finished();
+    await expect(signIn).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  } finally {
+    await fetch(`${app.origin}/api/builderlab/sign-out`, {
+      method: "POST",
+      headers: { Origin: app.origin },
+      body: "{}",
+    });
+    await stopRoutes(context);
+  }
+});

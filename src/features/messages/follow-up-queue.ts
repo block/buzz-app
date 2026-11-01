@@ -454,8 +454,8 @@ function createQueue(session: RelaySession) {
           await session.outbox.recover(
             previous.event.id,
             followUpRecovery(entry.id),
+            () => storage.remove(entry.id),
           );
-          storage.remove(entry.id);
           entries = entries.filter((item) => item !== entry);
           return;
         }
@@ -545,8 +545,9 @@ function createQueue(session: RelaySession) {
       if (storage && entry.message) {
         if (!session.outbox)
           throw new Error("Message delivery is unavailable.");
-        await session.outbox.recover(id, followUpRecovery(entry.id));
-        storage.remove(entry.id);
+        await session.outbox.recover(id, followUpRecovery(entry.id), () =>
+          storage.remove(entry.id),
+        );
       }
       entries = entries.filter((item) => item !== entry);
     } catch (error) {

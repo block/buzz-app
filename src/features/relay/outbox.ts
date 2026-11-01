@@ -63,8 +63,13 @@ export interface Outbox {
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
-  /** Attach caller-owned recovery to an existing receipt before resuming it. */
-  recover(id: string, recovery: OutboxRecovery): Promise<void>;
+  /** Establish durable recovery, then synchronously consume its source while
+   * holding the receipt's shared dismissal lock. */
+  recover(
+    id: string,
+    recovery: OutboxRecovery,
+    consume?: () => void,
+  ): Promise<void>;
   acknowledge(id: string): Promise<void>;
   retry(id: string, active?: () => boolean): void;
   dismiss(id: string): Promise<void>;
@@ -77,13 +82,18 @@ type SendObserver = (
 ) => ((pending: readonly EventData[]) => void) | undefined;
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
 export interface OutboxStorage {
+  /** Serialize receipt adoption and dismissal across windows. */
+  lock?<T>(id: string, run: () => Promise<T>): Promise<T>;
   /** Relinquish incremental write ownership after observing external removal. */
   forget?(id: string): void;
   close?(): void;
   load(options?: {
     readOnly?: boolean;
   }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
-  save(operations: readonly OutgoingEvent[]): void | Promise<void>;
+  save(
+    operations: readonly OutgoingEvent[],
+    options?: { force?: string },
+  ): void | Promise<void>;
 }
 export class PublishRejected extends Error {
   /** The relay's own refusal text, when it sent one; `message` stays the
@@ -258,7 +268,10 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
-  const persist = (id: string, action?: "acknowledge" | "dismiss") => {
+  const persist = (
+    id: string,
+    action?: "acknowledge" | "dismiss" | "recover",
+  ) => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
       .catch(() => {})
@@ -292,7 +305,8 @@ export function createOutbox(
         return profiling.measureAsync("outbox.persist", id, async () => {
           if (bytes > 2 * 1024 * 1024)
             throw new Error("Outbox storage is full");
-          await storage.save(records);
+          if (action === "recover") await storage.save(records, { force: id });
+          else await storage.save(records);
           if (action === "dismiss") {
             // Commit removal inside the serialized write, before a later save
             // can capture state. Failed storage never exposes a temporary absence.
@@ -679,40 +693,67 @@ export function createOutbox(
       }
       return shared;
     },
-    async recover(id: string, recovery: OutboxRecovery) {
-      await outbox.ready();
-      const saved = recoveryValue(recovery);
-      if (!saved) throw new Error("Invalid outbox recovery state");
-      const item = visible.find((entry) => entry.event.id === id);
-      if (!item || dismissing.has(id))
-        throw new Error(
-          "The original operation is unavailable. Refresh before retrying.",
+    async recover(id: string, recovery: OutboxRecovery, consume?: () => void) {
+      const adopt = async () => {
+        await outbox.ready();
+        const saved = recoveryValue(recovery);
+        if (!saved) throw new Error("Invalid outbox recovery state");
+        let item = visible.find((entry) => entry.event.id === id);
+        if (!item || dismissing.has(id))
+          throw new Error(
+            "The original operation is unavailable. Refresh before retrying.",
+          );
+        const shared = (await storage.load({ readOnly: true })).find(
+          (entry) => entry.event.id === id,
         );
-      if (item.acknowledged) return;
-      if (
-        (item.recovery &&
-          (item.recovery.key !== saved.key ||
-            item.recovery.value !== saved.value)) ||
-        snapshot.some(
-          (entry) => entry.event.id !== id && entry.recovery?.key === saved.key,
+        if (!shared && restoredReceipts.has(id))
+          throw new Error(
+            "The original operation was removed in another window. Try Send again.",
+          );
+        if (
+          shared?.recovery?.key === saved.key &&
+          shared.recovery.value === saved.value
+        ) {
+          // The receipt already owns this source durably. Do not overwrite
+          // delivery progress made by another window after our read.
+          consume?.();
+          return;
+        }
+        if (shared && restoredReceipts.has(id)) item = shared;
+        if (item.acknowledged) {
+          consume?.();
+          return;
+        }
+        if (
+          (item.recovery &&
+            (item.recovery.key !== saved.key ||
+              item.recovery.value !== saved.value)) ||
+          snapshot.some(
+            (entry) =>
+              entry.event.id !== id && entry.recovery?.key === saved.key,
+          )
         )
-      )
-        throw new Error("Recover the earlier message before sending another");
-      if (!find(id) && snapshot.length >= MAX_PENDING)
-        throw new Error(
-          "Too many outstanding operations; resolve a pending operation",
-        );
-      // Protect immediately against dismissal/echo eviction. On save failure keep
-      // that protection; a later recovery attempt must persist it again before use.
-      if (!item.recovery) restoredReceipts.delete(id);
-      const retained = Object.freeze({ ...item, recovery: saved });
-      completed.delete(id);
-      snapshot = Object.freeze([
-        ...snapshot.filter((entry) => entry.event.id !== id),
-        retained,
-      ]);
-      notify();
-      await persist(id);
+          throw new Error("Recover the earlier message before sending another");
+        if (!find(id) && snapshot.length >= MAX_PENDING)
+          throw new Error(
+            "Too many outstanding operations; resolve a pending operation",
+          );
+        // Protect immediately against dismissal/echo eviction. On save failure keep
+        // that protection; a later recovery attempt must persist it again before use.
+        if (!item.recovery) restoredReceipts.delete(id);
+        const retained = Object.freeze({ ...item, recovery: saved });
+        completed.delete(id);
+        snapshot = Object.freeze([
+          ...snapshot.filter((entry) => entry.event.id !== id),
+          retained,
+        ]);
+        notify();
+        // Adoption must write the receipt even if this window cached the same
+        // record before another window removed it.
+        await persist(id, shared ? undefined : "recover");
+        consume?.();
+      };
+      return storage.lock ? storage.lock(id, adopt) : adopt();
     },
     async acknowledge(id: string) {
       await outbox.ready();
@@ -909,7 +950,8 @@ export function createOutbox(
               : "Confirm this message in New message before removing it",
           ),
         );
-      const work = persist(id, "dismiss")
+      const remove = () => persist(id, "dismiss");
+      const work = (storage.lock ? storage.lock(id, remove) : remove())
         .then(() => {
           admissionGates.delete(id);
         })

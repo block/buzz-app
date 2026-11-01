@@ -56,6 +56,10 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
   const forgotten = new Map<string, number>();
   const open = () => (database ??= openDatabase());
   return {
+    async lock(id, run) {
+      if (!navigator.locks) throw new Error("Window ownership is unavailable.");
+      return navigator.locks.request(`buzz-outbox:${scope}:${id}`, run);
+    },
     forget(id) {
       forgotten.set(id, ++ownershipRevision);
       persisted.delete(id);
@@ -101,7 +105,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           : new Map();
       return records;
     },
-    async save(operations) {
+    async save(operations, options) {
       const revision = ownershipRevision;
       const db = await open();
       const next = new Map(operations.map((item) => [item.event.id, item]));
@@ -113,6 +117,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         for (const [id, operation] of next) {
           const old = persisted.get(id);
           if (
+            id !== options?.force &&
             old &&
             old.delivery === operation.delivery &&
             old.error === operation.error &&

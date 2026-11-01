@@ -82,25 +82,30 @@ function fixture(
   if (records.length || !journals.has(partition))
     journals.set(partition, persisted);
   const publish = vi.fn(async () => {});
-  const save = vi.fn(async (value: readonly OutgoingEvent[]) => {
-    if (incremental) {
-      const next = new Map(
-        (journals.get(partition) ?? []).map((item) => [item.event.id, item]),
-      );
-      for (const item of value) {
-        const old = persisted.find(
-          (previous) => previous.event.id === item.event.id,
+  const save = vi.fn(
+    async (value: readonly OutgoingEvent[], options?: { force?: string }) => {
+      if (incremental) {
+        const next = new Map(
+          (journals.get(partition) ?? []).map((item) => [item.event.id, item]),
         );
-        if (JSON.stringify(old) !== JSON.stringify(item))
-          next.set(item.event.id, structuredClone(item));
-      }
-      for (const old of persisted)
-        if (!value.some((item) => item.event.id === old.event.id))
-          next.delete(old.event.id);
-      journals.set(partition, [...next.values()]);
-    } else journals.set(partition, structuredClone(value));
-    persisted = structuredClone(value);
-  });
+        for (const item of value) {
+          const old = persisted.find(
+            (previous) => previous.event.id === item.event.id,
+          );
+          if (
+            options?.force === item.event.id ||
+            JSON.stringify(old) !== JSON.stringify(item)
+          )
+            next.set(item.event.id, structuredClone(item));
+        }
+        for (const old of persisted)
+          if (!value.some((item) => item.event.id === old.event.id))
+            next.delete(old.event.id);
+        journals.set(partition, [...next.values()]);
+      } else journals.set(partition, structuredClone(value));
+      persisted = structuredClone(value);
+    },
+  );
   const owner = createOutbox(
     viewer,
     {
@@ -111,6 +116,8 @@ function fixture(
       publish,
     },
     {
+      lock: (id, run) =>
+        navigator.locks.request(`outbox:${partition}:${id}`, run),
       forget: (id) => {
         persisted = persisted.filter((item) => item.event.id !== id);
       },
@@ -988,7 +995,11 @@ it.each([false, true])(
     const outbox = { ...restarted.owner.outbox };
     const recover = vi
       .spyOn(outbox, "recover")
-      .mockImplementationOnce(() => pending);
+      .mockImplementationOnce((_id, _recovery, consume) =>
+        pending.then(() => {
+          consume?.();
+        }),
+      );
     Object.assign(restarted.session, { outbox });
     try {
       restarted.queue.sendNow(id);
@@ -1825,7 +1836,7 @@ it.each([false, true])(
   },
 );
 
-it.each(["send", "storage"])(
+it.each(["send", "storage", "after-lookup"])(
   "revalidates a stale hydrated failed receipt after another window dismisses it (%s)",
   async (trigger) => {
     const first = fixture(scope, [], true);
@@ -1863,7 +1874,36 @@ it.each(["send", "storage"])(
     if (!old) throw new Error("Missing failed receipt");
     await followUpStorage(scope).lock(id, async () => {});
     expect(stale.queue.snapshot()[0]?.deliveryId).toBe(old.event.id);
-    await dismissing.owner.outbox.dismiss(old.event.id);
+    if (trigger === "after-lookup") {
+      let reached!: () => void;
+      const adopting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      Object.assign(stale.session, {
+        outbox: {
+          ...stale.owner.outbox,
+          recover: async (
+            ...args: Parameters<typeof stale.owner.outbox.recover>
+          ) => {
+            reached();
+            await gate;
+            return stale.owner.outbox.recover(...args);
+          },
+        },
+      });
+      stale.queue.sendNow(id);
+      await adopting;
+      await dismissing.owner.outbox.dismiss(old.event.id);
+      release();
+      await followUpStorage(scope).lockChat("chat", async () => {});
+      expect(followUpStorage(scope).has(id)).toBe(true);
+      expect(stale.publish).not.toHaveBeenCalled();
+      Object.assign(stale.session, { outbox: stale.owner.outbox });
+    } else await dismissing.owner.outbox.dismiss(old.event.id);
     await followUpStorage(scope).lockChat("chat", async () => {});
     expect(journals.get(scope)).toEqual([]);
     expect(stale.owner.outbox.snapshot()[0]?.event.id).toBe(old.event.id);
@@ -1896,3 +1936,50 @@ it.each(["send", "storage"])(
     ).toBe(true);
   },
 );
+
+it("durably adopts a locally owned failed receipt after another window dismisses it", async () => {
+  const h = fixture(scope, [], true);
+  await h.owner.ready;
+  const id = h.enqueue();
+  let release!: () => void;
+  h.holdSigning(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  h.publish.mockRejectedValue(new PublishRejected("Refused"));
+  h.save
+    .mockImplementationOnce(async () => {})
+    .mockRejectedValueOnce(new Error("Recovery disk failure"));
+  h.queue.sendNow(id);
+  try {
+    await vi.waitFor(() =>
+      expect(h.queue.snapshot()[0]?.error).toBe("Recovery disk failure"),
+    );
+  } finally {
+    release();
+  }
+  await vi.waitFor(() =>
+    expect(journals.get(scope)?.[0]?.delivery).toBe("failed"),
+  );
+  const receipt = h.owner.outbox.snapshot()[0];
+  if (!receipt) throw new Error("Missing receipt");
+  const peer = fixture(scope, [], true);
+  await peer.owner.ready;
+  await peer.owner.outbox.dismiss(receipt.event.id);
+  expect(journals.get(scope)).toEqual([]);
+  h.queue.sendNow(id);
+  await vi.waitFor(() => expect(h.queue.snapshot()).toEqual([]));
+  expect(followUpStorage(scope).has(id)).toBe(false);
+  expect(journals.get(scope)?.[0]).toMatchObject({
+    event: { id: receipt.event.id },
+    recovery: followUpRecovery(id),
+  });
+  const reloaded = fixture(scope, [], true);
+  await reloaded.owner.ready;
+  expect(reloaded.owner.outbox.snapshot()[0]).toMatchObject({
+    event: { id: receipt.event.id },
+    recovery: followUpRecovery(id),
+  });
+  expect(h.send).toHaveBeenCalledOnce();
+});

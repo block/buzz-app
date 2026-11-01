@@ -316,7 +316,13 @@ function mount(
       ready: async () => {},
       recovery: async (key: string) =>
         pending.find((item) => item.recovery?.key === key),
-      recover: async () => {},
+      recover: async (
+        _id: string,
+        _recovery: unknown,
+        consume?: () => void,
+      ) => {
+        consume?.();
+      },
       acknowledge: async () => {},
       observeDismiss: () => () => {},
       supports: () => true,
@@ -5628,7 +5634,13 @@ for (const threadRootId of [undefined, "f".repeat(64)])
         send: add,
         retry,
         ready: async () => {},
-        recover: async () => {},
+        recover: async (
+          _id: string,
+          _recovery: unknown,
+          consume?: () => void,
+        ) => {
+          consume?.();
+        },
         acknowledge: async () => {},
         snapshot: () => operations,
         subscribe: (fn: () => void) => {
@@ -5745,7 +5757,13 @@ it.each([false, true])(
         send: add,
         snapshot: () => operations,
         ready: async () => {},
-        recover: async () => {},
+        recover: async (
+          _id: string,
+          _recovery: unknown,
+          consume?: () => void,
+        ) => {
+          consume?.();
+        },
         acknowledge: async () => {},
       },
     });

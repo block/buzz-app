@@ -1,10 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createRelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
 import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
 import { keypair, roster, signed } from "../relay/testing";
 import type { RelayEvent } from "../relay/events";
-import { addChannelMember, canAddMembers } from "./members";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+  canAddMembers,
+} from "./members";
 
 const cleanups: (() => void)[] = [];
 it.each([
@@ -750,3 +754,276 @@ it.each([false, true])(
     ]);
   },
 );
+
+/** A private channel whose relay applies every `p` a kind:9000 names, or only
+ * the first, as a relay without batch support does. */
+function batchSetup(applyAll = true) {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const id = "33333333-3333-4333-8333-333333333333";
+  let members = [viewer.pubkey];
+  let clock = 1700000000;
+  let records: readonly OutgoingEvent[] = [];
+  const published: RelayEvent[] = [];
+  let onPublish = () => {};
+  let rosterReads = 0;
+  let failRosterRead = 0;
+  let rosterDown = false;
+  const publish = vi.fn(async (event: RelayEvent) => {
+    onPublish();
+    const named = event.tags.flatMap(([tag, value]) =>
+      tag === "p" && value ? [value] : [],
+    );
+    members = [...new Set([...members, ...named.slice(0, applyAll ? 100 : 1)])];
+    clock++;
+    published.push(event);
+  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      readAgentLibrary: async () => ({
+        definitions: [],
+        identities: [{ pubkey: agent.pubkey, name: "Agent" }],
+      }),
+      writer: {
+        kinds: [9, 9000, 9007],
+        sign: async (template) => signed(viewer, template),
+        publish: async (event) => {
+          await publish(event);
+        },
+      },
+      query: async (filters) => {
+        if (filters.some((filter) => filter.kinds?.includes(39002)))
+          if (++rosterReads === failRosterRead || rosterDown)
+            throw new Error("Roster unavailable");
+        return [
+          signed(relay, {
+            kind: 39000,
+            content: "",
+            tags: [
+              ["d", id],
+              ["t", "stream"],
+              ["private"],
+              ["join_role", "guest"],
+              ["name", "Design"],
+            ],
+          }),
+          roster(relay, id, members, clock),
+        ].filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+      },
+    },
+    {
+      outboxStorage: {
+        load: () => records,
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+    },
+  );
+  cleanups.push(() => owner.dispose());
+  return {
+    session: owner.session,
+    id,
+    agent,
+    published,
+    records: () => records,
+    members: () => members,
+    /** Runs as the relay receives each write, e.g. another owner's admission. */
+    onPublish(run: () => void) {
+      onPublish = run;
+    },
+    /** Fails the relay's nth roster read from now. */
+    failRosterRead(nth: number) {
+      failRosterRead = rosterReads + nth;
+    },
+    /** Fails every roster read until restored. */
+    rosterDown(down: boolean) {
+      rosterDown = down;
+    },
+    admit(key: string) {
+      members = [...members, key];
+      clock++;
+    },
+    async ready() {
+      owner.session.channels.ensureList();
+      await vi.waitFor(() =>
+        expect(owner.session.channels.list().status).toBe("ready"),
+      );
+      await owner.session.agentChoices.refresh();
+    },
+    addAll: (keys: readonly string[]) =>
+      Promise.all(
+        keys.map((key) => owner.session.memberAdditions.add(id, key)),
+      ),
+  };
+}
+const people = (count: number) =>
+  Array.from({ length: count }, () => keypair().pubkey);
+
+it("adds people requested together in one write per role and 100 people", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const humans = people(101);
+  await t.addAll([...humans, t.agent.pubkey]);
+  expect(
+    t.published.map((event) => [
+      event.tags.filter(([tag]) => tag === "p").length,
+      event.tags.find(([tag]) => tag === "role")?.[1],
+    ]),
+  ).toEqual([
+    [100, "member"],
+    [1, "member"],
+    [1, "bot"],
+  ]);
+  expect(t.members()).toEqual(
+    expect.arrayContaining([...humans, t.agent.pubkey]),
+  );
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it("adds anyone a relay without batch support missed one at a time", async () => {
+  const t = batchSetup(false);
+  await t.ready();
+  const [first = "", second = "", third = ""] = people(3);
+  await t.addAll([first, second, third]);
+  expect(
+    t.published.map((event) =>
+      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
+    ),
+  ).toEqual([[first, second, third], [second], [third]]);
+  expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("leaves a pending single addition to resume, never batching its person again", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [earlier = "", fresh = "", other = ""] = people(3);
+  const id = t.session.outbox?.send(
+    {
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", t.id],
+        ["p", earlier],
+        ["role", "member"],
+      ],
+    },
+    { key: `member-add:${t.id}:${earlier}`, value: "1" },
+  );
+  await vi.waitFor(() => expect(t.published).toHaveLength(1));
+  await t.addAll([earlier, fresh, other]);
+  // The earlier write landed, so it is confirmed rather than sent again.
+  expect(t.published.map((event) => event.id)).toEqual([
+    id,
+    expect.any(String),
+  ]);
+  expect(t.published[1]?.tags.filter(([tag]) => tag === "p")).toEqual([
+    ["p", fresh],
+    ["p", other],
+  ]);
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it("reads the roster again before a later write, so it never names someone admitted meanwhile", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  // Another owner admits the agent, at any role, while the people's write is held.
+  t.onPublish(() => {
+    t.onPublish(() => {});
+    t.admit(t.agent.pubkey);
+  });
+  await t.addAll([first, second, t.agent.pubkey]);
+  expect(t.published).toHaveLength(1);
+  expect(
+    t.published[0]?.tags.some(([, value]) => value === t.agent.pubkey),
+  ).toBe(false);
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("adds the rest one at a time when the roster can't be read again between writes", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  // The first read precedes the people's write; the second, before the agent's, fails.
+  t.failRosterRead(2);
+  await t.addAll([first, second, t.agent.pubkey]);
+  expect(
+    t.published.map((event) =>
+      event.tags.filter(([tag]) => tag === "p" || tag === "role"),
+    ),
+  ).toEqual([
+    [
+      ["p", first],
+      ["p", second],
+      ["role", "member"],
+    ],
+    [
+      ["p", t.agent.pubkey],
+      ["role", "bot"],
+    ],
+  ]);
+  expect(t.members()).toContain(t.agent.pubkey);
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+});
+
+it("keeps a batch until everyone it names is in the roster or has their own addition", async () => {
+  const t = batchSetup(false);
+  await t.ready();
+  const [first = "", second = "", third = ""] = people(3);
+  // The relay adds only the first person; then no roster read succeeds, so
+  // nobody else gets a receipt of their own.
+  t.onPublish(() => {
+    t.onPublish(() => {});
+    t.rosterDown(true);
+  });
+  const failed = await Promise.allSettled([
+    t.session.memberAdditions.add(t.id, first),
+    t.session.memberAdditions.add(t.id, second),
+    t.session.memberAdditions.add(t.id, third),
+  ]);
+  expect(failed.every((result) => result.status === "rejected")).toBe(true);
+  expect(t.published).toHaveLength(1);
+  // The saved batch, which a restart restores, is everyone's only record.
+  const [batch] = t.records().filter((item) => !item.acknowledged);
+  expect(batch?.recovery?.key).toMatch(/^member-add:batch:/);
+  expect(batch?.event.id).toBe(t.published[0]?.id);
+  t.rosterDown(false);
+  await t.addAll([first, second, third]);
+  expect(t.members()).toEqual(expect.arrayContaining([first, second, third]));
+  expect(t.records().filter((item) => !item.acknowledged)).toEqual([]);
+});
+
+it("reads the roster again after a write that couldn't be sent", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const [first = "", second = ""] = people(2);
+  const outbox = t.session.outbox;
+  if (!outbox) throw new Error("Outbox unavailable");
+  // Another owner admits the agent while the people's write fails to send.
+  const send = vi.fn<typeof outbox.send>(() => {
+    t.admit(t.agent.pubkey);
+    throw new Error("Outbox storage is full");
+  });
+  const session = Object.create(t.session, {
+    outbox: { value: Object.create(outbox, { send: { value: send } }) },
+  }) as RelaySession;
+  const added = await addChannelMembersAtOnce(
+    session,
+    t.id,
+    [first, second, t.agent.pubkey],
+    new Map(),
+    new AbortController().signal,
+  );
+  // The roster read before the agent's write omits it, so nothing else is sent.
+  expect(send).toHaveBeenCalledOnce();
+  expect(added.size).toBe(0);
+});

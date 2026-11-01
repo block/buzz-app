@@ -706,6 +706,23 @@ it("keeps the provider dialog and its draft open while defaults could not be sav
   expect(storage.get("buzz.codex.provider-defaults.v1")).toContain("high");
 });
 
+it("saves the shown default thinking without requiring a change", async () => {
+  const f = fixture();
+  const onClose = vi.fn();
+  render(<f.tabs.ProviderDialogBody onClose={onClose} />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
+  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
+    "Low · Default",
+  );
+  const save = screen.getByRole("button", { name: "Save defaults" });
+  expect(save).toBeEnabled();
+  fireEvent.click(save);
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  expect(f.provider.snapshot().defaults.effort).toBe("");
+});
+
 it("holds the default thinking while it saves, so the dialog closes on what was saved", async () => {
   let release = () => {};
   const storage = fileStore(

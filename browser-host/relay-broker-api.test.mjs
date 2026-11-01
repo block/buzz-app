@@ -3999,3 +3999,79 @@ test("Builderlab HTTP accepts maximum-length agent instructions after JSON envel
     await h.close();
   }
 });
+
+test("Builderlab pending sign-in survives its initiating page disconnecting", async () => {
+  let openLogin;
+  const opened = new Promise((resolve) => {
+    openLogin = resolve;
+  });
+  const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
+    open: async (url) => openLogin(new URL(url)),
+    fetch: async (url) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/v1/auth/login/exchange"))
+        return Response.json({
+          session_credential: "fixture-only",
+          expires_at: "2030",
+        });
+      if (path.endsWith("/v1/auth/me"))
+        return Response.json({
+          subject: "fixture-account",
+          expires_at: "2030",
+        });
+      if (path.endsWith("/nostr-identities/challenge"))
+        return Response.json({
+          error: { code: "missing_mapping", setup_needed: true },
+        });
+      throw new Error(`Unexpected Builderlab request ${path}`);
+    },
+  });
+  const disconnected = new Promise((resolve) => {
+    h.server.on("request", (req, res) => {
+      if (req.url === "/api/builderlab/login") res.once("close", resolve);
+    });
+  });
+  const abort = new AbortController();
+  let reader;
+  try {
+    const login = fetch(`${h.base}/api/builderlab/login`, {
+      method: "POST",
+      body: "{}",
+      signal: abort.signal,
+    }).catch((error) => error);
+    const authorization = await opened;
+    abort.abort();
+    await login;
+    await disconnected;
+    const stream = await fetch(`${h.base}/api/builderlab/events`);
+    reader = stream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const next = async () => {
+      while (!buffered.includes("\n\n")) {
+        const part = await reader.read();
+        if (part.done) throw new Error("Development session stream ended");
+        buffered += decoder.decode(part.value, { stream: true });
+      }
+      const end = buffered.indexOf("\n\n");
+      const event = JSON.parse(buffered.slice("data: ".length, end));
+      buffered = buffered.slice(end + 2);
+      return event;
+    };
+    expect(await next()).toMatchObject({ pending: true, auth: null });
+    await fetch(
+      `${authorization.searchParams.get("redirect_uri")}?code=fixture&state=${authorization.searchParams.get("state")}`,
+    );
+    let signedIn;
+    do {
+      signedIn = await next();
+    } while (signedIn.pending);
+    expect(signedIn.auth).toMatchObject({ subject: "fixture-account" });
+    const auth = await (await fetch(`${h.base}/api/builderlab/auth`)).json();
+    expect(auth.auth).toMatchObject({ subject: "fixture-account" });
+  } finally {
+    abort.abort();
+    await reader?.cancel();
+    await h.close();
+  }
+});

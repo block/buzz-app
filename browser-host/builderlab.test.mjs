@@ -652,3 +652,23 @@ it("settles the sign-in identity binding before dispatching remote-agent operati
   await expect(request).resolves.toMatchObject({ status: 200 });
   h.builderlab.signOut();
 });
+
+it("announces a new sign-in atomically as pending, without canceling observers", async () => {
+  const h = account();
+  const states = [];
+  const stop = h.builderlab.subscribe((state) => states.push(state));
+  const login = h.builderlab.login(new AbortController().signal);
+  const authorization = await h.openedReady;
+  expect(states).toHaveLength(1);
+  expect(states[0]).toMatchObject({ pending: true, auth: null });
+  await globalThis.fetch(
+    `${authorization.searchParams.get("redirect_uri")}?code=fixture&state=${authorization.searchParams.get("state")}`,
+  );
+  await login;
+  expect(states.at(-1)).toMatchObject({
+    pending: false,
+    auth: { subject: "auth0|owner" },
+  });
+  stop();
+  h.builderlab.signOut();
+});

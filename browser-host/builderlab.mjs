@@ -314,7 +314,7 @@ export function createBuilderlab({
   // write, clear or describe the current session.
   let generation = 0;
   let session;
-  const revoke = () => {
+  const revoke = (announce = true) => {
     generation += 1;
     revision = randomUUID();
     clearTimeout(expiry);
@@ -323,7 +323,7 @@ export function createBuilderlab({
     session?.abort();
     session = new AbortController();
     credential = undefined;
-    notify();
+    if (announce) notify();
   };
   revoke();
   const publishAccount = (value) => {
@@ -347,11 +347,13 @@ export function createBuilderlab({
       return account;
     },
     async login(signal) {
-      revoke();
+      revoke(false);
       const started = generation;
       pending = true;
       notify();
-      const attempt = AbortSignal.any([signal, session.signal]);
+      const attempt = signal
+        ? AbortSignal.any([signal, session.signal])
+        : session.signal;
       try {
         const verifier = randomBytes(32).toString("base64url");
         const code = await awaitCallback(attempt, open, api, verifier);

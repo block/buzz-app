@@ -910,6 +910,7 @@ export function relayBrokerPlugin({
         ...builderlabOptions,
       });
       server.httpServer?.once("close", () => {
+        builderlab.signOut();
         for (const { close } of streams.values()) close();
         archive?.close();
         key.fill(0);
@@ -1044,7 +1045,7 @@ export function relayBrokerPlugin({
                 return json(res, 409, { error: "Builderlab session changed" });
               if (action === "login")
                 return json(res, 200, {
-                  auth: await builderlab.login(cancel.signal),
+                  auth: await builderlab.login(),
                 });
               if (action === "sign-out") {
                 builderlab.signOut();

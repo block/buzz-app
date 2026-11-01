@@ -437,13 +437,26 @@ export function createBuilderlab({
         throw new Error(
           "Apps are not configured for this Builderlab environment",
         );
-      const path = input.path;
+      const base = new URL(apps ? appsBase : api);
+      const prefix = base.pathname.replace(/\/$/, "");
+      let url;
+      try {
+        if (
+          typeof input.path !== "string" ||
+          !input.path.startsWith("/") ||
+          input.path.startsWith("//") ||
+          input.path.includes("#") ||
+          input.path.includes("\\")
+        )
+          throw new Error();
+        url = new URL(`${base.href.replace(/\/$/, "")}${input.path}`);
+      } catch {
+        throw new Error("Unsupported Builderlab request");
+      }
+      const path = url.pathname.slice(prefix.length);
       if (
-        typeof path !== "string" ||
-        path.includes("#") ||
-        path.includes("\\") ||
-        path.includes("..") ||
-        path.includes("%") ||
+        url.origin !== base.origin ||
+        !url.pathname.startsWith(`${prefix}/`) ||
         !(apps
           ? /^\/v1\/agent\//.test(path)
           : /^\/(?:v3\/(?:beekeeper\/|builderlab\/decisions$)|v1\/(?:auth\/me$|auth\/hosted-site\/native-session$|buzz\/(?:communities\/list$|known-communities\/(?:list|add|remove)$)|buzz\/nostr-identities\/current$))/.test(
@@ -514,7 +527,7 @@ export function createBuilderlab({
         headers["Content-Type"] = "application/json";
       }
       current(input.revision);
-      const response = await fetch(`${apps ? appsBase : api}${path}`, {
+      const response = await fetch(url, {
         method,
         headers,
         ...(body !== undefined ? { body } : {}),

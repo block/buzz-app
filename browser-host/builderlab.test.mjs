@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
+import { controlPlane } from "../src/bundled/builderlab/apps/environment";
 import { createAgentClient } from "../src/bundled/builderlab/agents/client";
 import {
   BUILDERLAB_ORIGIN,
@@ -61,7 +62,7 @@ function account(responses = {}) {
   });
   const fetch = async (url, init = {}) => {
     const path = new URL(url).pathname.replace("/api/goose", "");
-    requests.push({ path, init });
+    requests.push({ path, url: new URL(url), init });
     const reply = responses[path];
     if (reply) return reply(init);
     if (path === "/v1/auth/login/exchange")
@@ -585,11 +586,30 @@ it("passes the server binding failure through the identity read used by activati
   h.builderlab.signOut();
 });
 
+it("preserves encoded Apps IDs and query values after resolving the allowed URL", async () => {
+  const h = account();
+  await signIn(h);
+  const path =
+    "/v1/agent/apps/app/communities/" +
+    encodeURIComponent("community:id") +
+    "?" +
+    new URLSearchParams({ version_id: "version/id with spaces" });
+  await h.builderlab.request(
+    { revision: h.builderlab.snapshot().revision, target: "apps", path },
+    new AbortController().signal,
+  );
+  expect(h.requests.at(-1).url.href).toBe(
+    `${controlPlane(BUILDERLAB_ORIGIN)}${path}`,
+  );
+  h.builderlab.signOut();
+});
+
 it.each([
   "/v1/auth/login/exchange",
   "//evil.example/",
   "/v3/beekeeper/../auth/me",
   "/v3/beekeeper/%2e%2e/auth/me",
+  "/v3/beekeeper/../../../../v1/auth/me",
 ])("refuses proxy path %s before dispatch", async (path) => {
   const h = account();
   await signIn(h);

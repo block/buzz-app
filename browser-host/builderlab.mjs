@@ -369,7 +369,12 @@ export function createBuilderlab({
         const exchanged = await response.json();
         if (
           typeof exchanged.session_credential !== "string" ||
-          !exchanged.session_credential
+          !exchanged.session_credential ||
+          exchanged.session_credential.length > 4096 ||
+          [...exchanged.session_credential].some(
+            (character) =>
+              character.charCodeAt(0) <= 32 || character.charCodeAt(0) > 126,
+          )
         )
           throw new Error(
             "Builderlab code exchange returned an empty credential",
@@ -432,7 +437,7 @@ export function createBuilderlab({
         path.includes("%") ||
         !(apps
           ? /^\/v1\/agent\//.test(path)
-          : /^\/(?:v3\/beekeeper\/|v1\/(?:auth\/me$|auth\/hosted-site\/native-session$|buzz\/(?:communities\/list$|known-communities\/(?:list|add|remove)$)|buzz\/nostr-identities\/current$))/.test(
+          : /^\/(?:v3\/(?:beekeeper\/|builderlab\/decisions$)|v1\/(?:auth\/me$|auth\/hosted-site\/native-session$|buzz\/(?:communities\/list$|known-communities\/(?:list|add|remove)$)|buzz\/nostr-identities\/current$))/.test(
               path,
             ))
       )
@@ -453,6 +458,15 @@ export function createBuilderlab({
             }
           : { "X-BB-Session-Credential": secret, Origin: new URL(api).origin }),
       };
+      if (path === "/v3/builderlab/decisions") {
+        if (
+          typeof input.community !== "string" ||
+          !/^[a-z0-9.-]+(?::[0-9]+)?$/i.test(input.community) ||
+          input.community.length > 253
+        )
+          throw new Error("Invalid decision community");
+        headers["X-Buzz-Community"] = input.community;
+      }
       let body = input.body;
       if (input.file) {
         if (

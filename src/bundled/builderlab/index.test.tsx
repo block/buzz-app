@@ -1199,7 +1199,10 @@ it("uses one development-server login for the Settings account, hosting and remo
           subject: "server-account",
           email: "dev@example.com",
           expiresAt: "2030",
-          capabilities: { can_use_remote_agents: true },
+          capabilities: {
+            can_use_remote_agents: true,
+            can_use_builderlab_decisions: true,
+          },
         }
       : null,
   });
@@ -1257,15 +1260,22 @@ it("uses one development-server login for the Settings account, hosting and remo
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
-  native.invoke.mockRejectedValue(
-    new Error("This dev mode must not invoke native OAuth or backup"),
-  );
+  native.invoke.mockImplementation(async (command) => {
+    if (command === "decide")
+      return {
+        outcome: "answered",
+        backend: "builderlab",
+        model: "test",
+        answers: { a: { type: "yes_no", probability: 0.7 } },
+      };
+    throw new Error("This dev mode must not invoke native OAuth or backup");
+  });
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   provideApps(root);
   const cards = new SettingsCardsService(root);
-  new DecisionsService(root, localStorage);
+  const decisions = new DecisionsService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   provideKnownCommunities(root, community.viewer);
@@ -1304,6 +1314,22 @@ it("uses one development-server login for the Settings account, hosting and remo
       }),
     );
     expect(native.invoke).not.toHaveBeenCalled();
+    const [provider] = decisions.providers();
+    if (!provider) throw new Error("Missing shared-session Decisions provider");
+    const question = {
+      timeoutMs: 30_000,
+      state: "test",
+      community: "wss://buzz.example.com",
+      questions: { a: { type: "yes_no" as const, instructions: "test" } },
+    };
+    await expect(
+      provider.decide(question, { signal: new AbortController().signal }),
+    ).resolves.toMatchObject({ outcome: "answered" });
+    expect(native.invoke).toHaveBeenCalledWith("decide", {
+      backend: "builderlab",
+      request: question,
+      broker: { origin: window.location.origin, revision: "server-one" },
+    });
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(
       await screen.findByRole("button", { name: "Sign in with Builderlab" }),

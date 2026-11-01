@@ -305,6 +305,10 @@ const ARGS: Readonly<Record<Action, Check>> = {
   list: shape({ limit: count, archived: bool }, { cursor: token }),
 };
 
+/** Throws what is wrong with `args` for `action`, as `checkIntent` would. */
+export const checkArgs = (action: Action, args: unknown) =>
+  ARGS[action](args, "request.args");
+
 /** Returns `value` as a request intent, or throws what is wrong with it. */
 export function checkIntent(value: unknown): Intent {
   shape(

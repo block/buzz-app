@@ -13,6 +13,7 @@ import {
   ADMISSION_WINDOW,
   type Action,
   answers,
+  checkArgs,
   checkIntent,
   type GrantAck,
   type Intent,
@@ -201,6 +202,8 @@ export async function callSoloWorkerTool(
   delete request.owner;
   if (action === "read" || action === "list") request.limit ??= 20;
   if (action === "list") request.archived ??= false;
+  // Before readiness, so a malformed change posts nothing.
+  checkArgs(action, request);
   if (
     action === "create" &&
     typeof request.worker === "string" &&

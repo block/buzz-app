@@ -799,6 +799,14 @@ describe("a change", () => {
     expect(answer.note).toMatch(/was sent and may have run/);
   });
 
+  it("checks a change's arguments before asking for readiness", async () => {
+    const { call, requests } = community();
+    await expect(call("solo_worker_create", {})).rejects.toThrow(
+      /request\.args\.worker.*required/,
+    );
+    expect(requests()).toEqual([]);
+  });
+
   it("refuses a retry with other arguments, or for another tool or agent", async () => {
     const { call } = community();
     const retry = {

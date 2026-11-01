@@ -45,6 +45,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
 import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
+import { SidebarRowsService } from "../features/channel-navigation/sidebar-rows-service";
 import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
 import { bundledPlugins } from "../bundled";
 import { conversationFeatures } from "./conversation-features";
@@ -71,6 +72,7 @@ export function createServices() {
   const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
   const sidebarSections = new SidebarSectionsService(ctx);
+  const sidebarRows = new SidebarRowsService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -226,6 +228,7 @@ export function createServices() {
     adminAccess,
     pages,
     sidebarSections,
+    sidebarRows,
     panels,
     plugins,
     federatedIdentity,

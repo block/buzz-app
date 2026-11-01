@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
+import { sidebarSortNeedsActivity } from "../../features/relay/sidebar-sort";
 
 // Presentation latch only, never roster/access data. Warm sidebar remounts reveal
 // immediately, but new relay/viewer sessions start independently.
@@ -67,9 +68,11 @@ export function useSidebarStartup(
     preferences.status === "error" ||
     preferences.status === "unsupported";
   const namesReady = rosterState !== "pending" && rosterState !== "idle";
-  const recent = Object.values(preferences.data?.sort ?? {}).includes("recent");
+  const needsActivity = Object.values(preferences.data?.sort ?? {}).some(
+    sidebarSortNeedsActivity,
+  );
   const activityReady =
-    !recent ||
+    !needsActivity ||
     list.activityStatus === "ready" ||
     list.activityStatus === "error" ||
     list.activityStatus === "unavailable";

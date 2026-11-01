@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-// Public projection of the development server's login. No credential is held here.
+// Public projection of the development server's login; the parent credential stays in Node.
+// Trusted local callers can still use its dedicated native viewer/Decisions routes.
 import type {
   Host,
   HostRequest,

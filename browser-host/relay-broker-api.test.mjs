@@ -3918,13 +3918,14 @@ test("inventory rejects foreign pages, ignores invalid heads and follows exact-k
   }
 });
 
-test("Builderlab HTTP accepts maximum-length agent instructions after JSON envelope escaping", async () => {
+test("Builderlab HTTP accepts full agent instructions and isolates the fixed native routes", async () => {
   let openLogin;
   const opened = new Promise((resolve) => {
     openLogin = resolve;
   });
   const instructions = "\\".repeat(20_000);
   let received;
+  const nativeCalls = [];
   const h = await harness(() => Response.json([]), {}, fixtureRelayUrl, {
     open: async (url) => openLogin(new URL(url)),
     fetch: async (url, init) => {
@@ -3947,6 +3948,17 @@ test("Builderlab HTTP accepts maximum-length agent instructions after JSON envel
       if (path.endsWith("/v3/beekeeper/update-agent")) {
         received = JSON.parse(init.body);
         return Response.json({ status: 1 });
+      }
+      if (
+        path.endsWith("/v3/builderlab/decisions") ||
+        path.endsWith("/v1/auth/hosted-site/native-session")
+      ) {
+        nativeCalls.push({
+          path,
+          body: JSON.parse(init.body),
+          headers: init.headers,
+        });
+        return Response.json({ fixture: "native reply" });
       }
       throw new Error(`Unexpected Builderlab request ${path}`);
     },
@@ -3995,6 +4007,36 @@ test("Builderlab HTTP accepts maximum-length agent instructions after JSON envel
     expect(response.status).toBe(200);
     expect((await response.json()).status).toBe(200);
     expect(received.agent_instructions).toBe(instructions);
+    for (const [action, path, header] of [
+      ["decisions", "/v3/builderlab/decisions", "X-BB-Session-Credential"],
+      [
+        "viewer",
+        "/v1/auth/hosted-site/native-session",
+        "X-Buzz-Builderlab-Revision",
+      ],
+    ]) {
+      const refused = await fetch(`${h.base}/api/builderlab/request`, {
+        method: "POST",
+        body: JSON.stringify({ revision, path, method: "POST", body: "{}" }),
+      });
+      expect(await refused.json()).toEqual({
+        error: "Unsupported Builderlab request",
+      });
+      const forwarded = await fetch(`${h.base}/api/builderlab/${action}`, {
+        method: "POST",
+        headers: { [header]: revision, "X-Buzz-Community": "buzz.example" },
+        body: JSON.stringify({ fixture: action }),
+      });
+      expect(forwarded.status).toBe(200);
+      expect(await forwarded.json()).toEqual({ fixture: "native reply" });
+      expect(nativeCalls.at(-1)).toMatchObject({
+        path: `/api/goose${path}`,
+        body: { fixture: action },
+        headers: { "X-BB-Session-Credential": "fixture-only" },
+      });
+    }
+    expect(nativeCalls).toHaveLength(2);
+    expect(nativeCalls[0].headers["X-Buzz-Community"]).toBe("buzz.example");
   } finally {
     await h.close();
   }

@@ -421,7 +421,8 @@ export function createBuilderlab({
           signal: AbortSignal.timeout(30000),
         }).catch(() => {});
     },
-    async request(input, signal) {
+    // Only the broker's fixed viewer/Decisions handlers opt into native routes.
+    async request(input, signal, native = false) {
       // Activation must not overtake the sign-in's automatic key binding.
       const binding =
         input.path === "/v1/buzz/nostr-identities/current" ||
@@ -457,11 +458,17 @@ export function createBuilderlab({
       if (
         url.origin !== base.origin ||
         !url.pathname.startsWith(`${prefix}/`) ||
-        !(apps
-          ? /^\/v1\/agent\//.test(path)
-          : /^\/(?:v3\/(?:beekeeper\/|builderlab\/decisions$)|v1\/(?:auth\/me$|auth\/hosted-site\/native-session$|buzz\/(?:communities\/list$|known-communities\/(?:list|add|remove)$)|buzz\/nostr-identities\/current$))/.test(
-              path,
-            ))
+        !(native
+          ? !apps &&
+            [
+              "/v3/builderlab/decisions",
+              "/v1/auth/hosted-site/native-session",
+            ].includes(path)
+          : apps
+            ? /^\/v1\/agent\//.test(path)
+            : /^\/(?:v3\/beekeeper\/|v1\/(?:auth\/me$|buzz\/(?:communities\/list$|known-communities\/(?:list|add|remove)$)|buzz\/nostr-identities\/current$))/.test(
+                path,
+              ))
       )
         throw new Error("Unsupported Builderlab request");
       if (binding?.error && path === "/v1/buzz/nostr-identities/current")

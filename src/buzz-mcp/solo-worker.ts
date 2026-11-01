@@ -63,7 +63,7 @@ const epoch = {
 const retry = {
   type: "object",
   description:
-    "The retry request from an earlier unsent or pending answer. Sends that same request again; give nothing else with it.",
+    "The retry request from an earlier unsent or pending answer. Sends that same request again; give nothing else with it except owner, which is needed again if you gave it for that request.",
 } as const;
 const limit = { type: "integer", minimum: 1, maximum: PAGE_MAX } as const;
 const workerTool = (
@@ -192,7 +192,7 @@ export async function callSoloWorkerTool(
   const route = pick(found, args.owner, client.owner, action);
   if (args.retry !== undefined) {
     if (Object.keys(args).some((key) => key !== "retry" && key !== "owner"))
-      throw new Error("Give retry on its own.");
+      throw new Error("Give retry on its own, or with owner.");
     return JSON.stringify(
       await resend(client, route, action, args.retry, clock),
     );

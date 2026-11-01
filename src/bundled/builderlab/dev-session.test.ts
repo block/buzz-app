@@ -316,3 +316,137 @@ it("keeps another page's replacement login pending after this page's late HTTP f
   });
   h.session.dispose();
 });
+
+it.each(["HTTP", "network"])(
+  "reconciles a rejected %s login POST with no broker event and permits retry",
+  async (mode) => {
+    const h = setup();
+    h.events.emit("idle", null);
+    if (mode === "HTTP")
+      h.fetch.mockResolvedValueOnce(
+        Response.json({ error: "Request refused" }, { status: 502 }),
+      );
+    else h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await h.session.signIn();
+    expect(h.events.close).toHaveBeenCalledOnce();
+    const fresh = Events.all.at(-1);
+    if (!fresh || fresh === h.events)
+      throw new Error("Missing fresh broker snapshot subscription");
+    expect(h.session.snapshot()).toMatchObject({
+      status: "pending",
+      checking: true,
+    });
+    // Retired callbacks cannot describe the replacement subscription.
+    h.events.emit("retired", null, true);
+    h.events.onerror?.();
+    fresh.emit("idle", null);
+    expect(h.session.snapshot()).toEqual({
+      status: "signed-out",
+      error: "Could not start Builderlab sign-in. Try again.",
+    });
+    const retry = h.session.signIn();
+    fresh.emit("retry", null, true);
+    await retry;
+    expect(h.fetch).toHaveBeenCalledTimes(2);
+    expect(h.session.snapshot()).toEqual({ status: "pending" });
+    h.session.dispose();
+  },
+);
+
+it.each(["pending", "signed-in", "failed"])(
+  "uses the broker's fresh %s state after an unaccounted login failure",
+  async (mode) => {
+    const h = setup();
+    h.events.emit("idle", null);
+    h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await h.session.signIn();
+    const fresh = Events.all.at(-1);
+    if (!fresh || fresh === h.events)
+      throw new Error("Missing fresh broker snapshot subscription");
+    fresh.emit(
+      "replacement",
+      mode === "signed-in" ? "B" : null,
+      mode === "pending",
+      mode === "failed" ? "Broker failure" : undefined,
+    );
+    if (mode === "signed-in") await signedIn(h.session);
+    expect(h.session.snapshot()).toMatchObject(
+      mode === "signed-in"
+        ? { status: "signed-in", account: { subject: "B" } }
+        : mode === "pending"
+          ? { status: "pending" }
+          : { status: "signed-out", error: "Broker failure" },
+    );
+    if (mode !== "failed")
+      expect(h.session.snapshot()).not.toHaveProperty("error");
+    if (mode === "pending") {
+      fresh.emit("replacement-ended", null);
+      expect(h.session.snapshot()).toEqual({ status: "signed-out" });
+    }
+    h.session.dispose();
+  },
+);
+
+it("restores an unchanged signed-in owner after a login dispatch fails", async () => {
+  const h = setup();
+  h.events.emit("one", "A");
+  await signedIn(h.session);
+  const owner = h.session.credential();
+  const viewer = h.session.viewerSession();
+  h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  await h.session.signIn();
+  const fresh = Events.all.at(-1);
+  if (!fresh || fresh === h.events)
+    throw new Error("Missing fresh broker snapshot subscription");
+  fresh.emit("one", "A");
+  expect(h.session.snapshot()).toEqual({
+    status: "signed-in",
+    account: owner.account,
+  });
+  expect(h.session.credential()).toBe(owner);
+  expect(h.session.viewerSession()).toBe(viewer);
+  expect(viewer.signal.aborted).toBe(false);
+  h.session.dispose();
+});
+
+it.each(["shared update", "cancel", "dispose"])(
+  "does not reconcile an old failed POST after %s",
+  async (mode) => {
+    const h = setup();
+    h.events.emit("idle", null);
+    const response = deferred<Response>();
+    h.fetch.mockImplementationOnce(() => response.promise);
+    const login = h.session.signIn();
+    if (mode === "shared update") h.events.emit("B", null, true);
+    else if (mode === "cancel") {
+      h.session.cancel();
+      h.events.emit("canceled", null);
+    } else h.session.dispose();
+    response.resolve(Response.json({ error: "Old failure" }, { status: 502 }));
+    await login;
+    expect(Events.all).toHaveLength(1);
+    expect(h.session.snapshot()).toEqual({
+      status: mode === "shared update" ? "pending" : "signed-out",
+    });
+    h.session.dispose();
+  },
+);
+
+it.each(["cancel", "dispose"])(
+  "drops the recovery diagnostic after %s before its fresh snapshot arrives",
+  async (mode) => {
+    const h = setup();
+    h.events.emit("idle", null);
+    h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await h.session.signIn();
+    const fresh = Events.all.at(-1);
+    if (!fresh || fresh === h.events)
+      throw new Error("Missing fresh broker snapshot subscription");
+    if (mode === "cancel") h.session.cancel();
+    else h.session.dispose();
+    fresh.emit("current", null);
+    expect(h.session.snapshot()).toEqual({ status: "signed-out" });
+    h.session.dispose();
+    expect(fresh.close).toHaveBeenCalled();
+  },
+);

@@ -63,7 +63,11 @@ export function createDevSession() {
   async function project(next: State) {
     if (disposed) return;
     revision = next.revision;
-    if (owner?.revision === next.revision && next.auth && !next.pending) return;
+    if (owner?.revision === next.revision && next.auth && !next.pending) {
+      if (state.status !== "signed-in")
+        publish({ status: "signed-in", account: owner.account });
+      return;
+    }
     const at = ++version;
     clear();
     if (!next.auth || next.pending) {
@@ -92,22 +96,41 @@ export function createDevSession() {
     };
     publish({ status: "signed-in", account });
   }
-  const events = new EventSource("/api/builderlab/events");
-  events.onmessage = (event) => {
-    void project(JSON.parse(event.data) as State).catch(() => {
-      clear();
-      publish({
-        status: "signed-out",
-        error: "Could not read the development server's Builderlab sign-in.",
+  let events: EventSource;
+  const connect = (dispatchError?: string) => {
+    const initialVersion = version;
+    const source = new EventSource("/api/builderlab/events");
+    events = source;
+    source.onmessage = (event) => {
+      if (disposed || events !== source) return;
+      const next = JSON.parse(event.data) as State;
+      if (
+        dispatchError &&
+        version === initialVersion &&
+        !next.pending &&
+        !next.auth
+      )
+        next.error ??= dispatchError;
+      dispatchError = undefined;
+      const projection = project(next);
+      const at = version;
+      void projection.catch(() => {
+        if (disposed || events !== source || version !== at) return;
+        clear();
+        publish({
+          status: "signed-out",
+          error: "Could not read the development server's Builderlab sign-in.",
+        });
       });
-    });
+    };
+    source.onerror = () => {
+      if (disposed || events !== source) return;
+      ++version;
+      clear();
+      publish({ status: "pending", checking: true });
+    };
   };
-  events.onerror = () => {
-    if (disposed) return;
-    ++version;
-    clear();
-    publish({ status: "pending", checking: true });
-  };
+  connect();
   async function send(action: string, body: object = {}, signal?: AbortSignal) {
     const response = await fetch(`/api/builderlab/${action}`, {
       method: "POST",
@@ -177,11 +200,17 @@ export function createDevSession() {
     },
     async signIn() {
       if (disposed || state.status === "pending") return;
+      const at = ++version;
       publish({ status: "pending" });
       try {
         await send("login");
       } catch {
         // The broker's revisioned event stream owns login outcomes across all pages.
+        if (disposed || version !== at) return;
+        // No event accounted for this dispatch. A new stream starts with fresh broker state.
+        events.close();
+        connect("Could not start Builderlab sign-in. Try again.");
+        publish({ status: "pending", checking: true });
       }
     },
     cancel() {

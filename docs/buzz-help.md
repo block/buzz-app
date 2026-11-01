@@ -53,6 +53,12 @@ the interface unless an available tool actually supports that action.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. You and the person asking may have
   different channel access. A link alone never grants access.
+- **Manage members** shows **General** access first in the member list. **Public**
+  lets people in the community read and new people participate; **View only**
+  lets them read; **Private** limits access to people added to the channel.
+  Changing this choice does not change existing members' roles. Ordinary
+  participants have no role caption; Owner, Admin, and Viewing only mark
+  exceptions. Use a person's actions menu to change their role when permitted.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. Do not promise support for every file type or size.

@@ -214,17 +214,33 @@ fn storage_identifier(name: &str) -> Result<[u8; 16], String> {
     Ok(identifier)
 }
 
+/// A website-facing User-Agent header value: printable ASCII only, so it can
+/// never carry a header break, and short enough to stay an ordinary header.
+fn validate_user_agent(user_agent: &str) -> Result<(), String> {
+    if user_agent.is_empty()
+        || user_agent.len() > 512
+        || !user_agent.bytes().all(|b| (0x20..=0x7e).contains(&b))
+    {
+        return Err("Browser user agents use 1-512 printable ASCII characters".into());
+    }
+    Ok(())
+}
+
 fn build_contents(
     app: &AppHandle,
     target: &str,
     bounds: BrowserBounds,
     storage: Option<&str>,
+    user_agent: Option<&str>,
     defer_navigation: bool,
 ) -> Result<BrowserSession, String> {
     let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
     let target = policy.validate(target)?;
     bounds.validate()?;
     let storage = storage.map(storage_identifier).transpose()?;
+    if let Some(user_agent) = user_agent {
+        validate_user_agent(user_agent)?;
+    }
     let host = app
         .get_webview_window("main")
         .ok_or("Buzz main webview is unavailable")?
@@ -263,6 +279,10 @@ fn build_contents(
             false
         })
         .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny);
+    let builder = match user_agent {
+        Some(user_agent) => builder.with_user_agent(user_agent),
+        None => builder,
+    };
     let guest = platform::build_guest(builder, &host.window())?;
     let permissions = platform::deny_permissions(&guest)?;
     let browser = BrowserSession {
@@ -286,6 +306,7 @@ pub async fn browser_attach(
     url: String,
     bounds: BrowserBounds,
     storage: Option<String>,
+    user_agent: Option<String>,
     builderlab: Option<builderlab::ViewerAuth>,
     federated_identity: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
 ) -> Result<String, String> {
@@ -298,8 +319,14 @@ pub async fn browser_attach(
     let handle = app.clone();
     let (session_id, pending) = on_main_thread(&app, move || {
         with_current_document(&DOCUMENT_GENERATION, generation, || {
-            let browser =
-                build_contents(&handle, &url, bounds, storage.as_deref(), defer_navigation)?;
+            let browser = build_contents(
+                &handle,
+                &url,
+                bounds,
+                storage.as_deref(),
+                user_agent.as_deref(),
+                defer_navigation,
+            )?;
             let pending = bootstrap
                 .as_ref()
                 .map(|value| platform::install_builderlab_cookie(&browser.guest, value))
@@ -412,7 +439,18 @@ pub async fn browser_status(app: AppHandle, session_id: String) -> Result<Browse
 
 #[cfg(test)]
 mod storage_tests {
-    use super::storage_identifier;
+    use super::{storage_identifier, validate_user_agent};
+
+    #[test]
+    fn user_agent_is_one_printable_header_value() {
+        assert!(validate_user_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+        )
+        .is_ok());
+        for value in ["", "a\r\nX-Injected: 1", "caf\u{e9}", &"a".repeat(513)] {
+            assert!(validate_user_agent(value).is_err(), "{value:?}");
+        }
+    }
 
     #[test]
     fn names_map_to_stable_distinct_stores() {

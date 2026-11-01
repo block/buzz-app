@@ -420,6 +420,12 @@ export function createBuilderlab({
         }).catch(() => {});
     },
     async request(input, signal) {
+      // Activation must not overtake the sign-in's automatic key binding.
+      if (
+        typeof input.path === "string" &&
+        input.path.startsWith("/v3/beekeeper/")
+      )
+        await linking;
       current(input.revision);
       const started = generation;
       const secret = credential;

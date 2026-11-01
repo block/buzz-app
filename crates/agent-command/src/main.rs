@@ -1,9 +1,17 @@
 //! One initialized app-held MCP session, inherited by a command and its children.
-//! No relay credentials, configuration files, or owner-identity fallback.
+//! No relay credentials or owner-identity fallback. A plugin may also advertise
+//! one of its sessions to the user's other local agents with `--advertise`; they
+//! run this helper without an inherited session and it finds the advertisement.
 use reqwest::{header::HeaderMap, Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, path::Path, process::Command, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const CONNECTION: &str = "BUZZ_AGENT_CONNECTION";
@@ -23,7 +31,18 @@ struct Session {
     client: Client,
     url: Url,
     headers: HeaderMap,
+    /// Read from an advertisement, so its server may have closed since.
+    advertised: bool,
 }
+/// The advertised port is not one this user's processes listen on.
+#[derive(Debug)]
+struct Unowned;
+impl std::fmt::Display for Unowned {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("Could not confirm that this user's Buzz holds an advertised port")
+    }
+}
+impl std::error::Error for Unowned {}
 impl Session {
     fn open(connection: Connection) -> Result<Self> {
         let url = Url::parse(&connection.url)?;
@@ -49,12 +68,22 @@ impl Session {
                 .build()?,
             url,
             headers,
+            advertised: false,
         })
     }
     async fn rpc(&mut self, method: &str, params: Value, notify: bool) -> Result<Value> {
         let mut body = json!({"jsonrpc":"2.0", "method":method, "params":params});
         if !notify {
             body["id"] = json!(1);
+        }
+        // A closed server's port may since belong to another user's process. The host
+        // takes one request per connection, so each request checks just before it.
+        if self.advertised {
+            if let Some(owned) = own_listeners()? {
+                if !self.url.port().is_some_and(|port| owned.contains(&port)) {
+                    return Err(Unowned.into());
+                }
+            }
         }
         let response = self
             .client
@@ -128,38 +157,232 @@ impl Session {
             .status()?;
         Ok(status.code().unwrap_or(1))
     }
-    async fn call(&mut self, args: &[String]) -> Result<i32> {
+    async fn call(mut self, args: &[String]) -> Result<i32> {
         if !self.headers.contains_key("mcp-session-id") {
             return Err("Run buzz inside an agent command".into());
         }
         let tools = self.rpc("tools/list", json!({}), false).await?;
-        if args == ["tools"] {
-            println!("{}", tools["tools"]);
-            return Ok(0);
-        }
-        let (name, arguments) = arguments(args, &tools)?;
-        let result = self
-            .rpc(
-                "tools/call",
-                json!({"name":name,"arguments":arguments}),
-                false,
-            )
-            .await?;
-        if let Some(content) = result["content"].as_array() {
-            for block in content {
-                if let Some(text) = block["text"].as_str() {
-                    println!("{text}");
-                }
+        run(vec![(self, tools)], args).await
+    }
+}
+/// Lists or calls the tools of `live` sessions, newest first; a name the newest
+/// offers wins over the same name in another Buzz window.
+async fn run(mut live: Vec<(Session, Value)>, args: &[String]) -> Result<i32> {
+    let mut names = HashSet::new();
+    let catalog: Vec<Value> = live
+        .iter()
+        .flat_map(|(_, tools)| tools["tools"].as_array().cloned().unwrap_or_default())
+        .filter(|tool| names.insert(tool["name"].to_string()))
+        .collect();
+    if args == ["tools"] {
+        println!("{}", Value::Array(catalog));
+        return Ok(0);
+    }
+    let (name, arguments) = arguments(args, &json!({ "tools": catalog }))?;
+    let (session, _) = live
+        .iter_mut()
+        .find(|(_, tools)| {
+            tools["tools"]
+                .as_array()
+                .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name.as_str()))
+        })
+        .ok_or("Unknown agent tool")?;
+    let result = session
+        .rpc(
+            "tools/call",
+            json!({"name":name,"arguments":arguments}),
+            false,
+        )
+        .await?;
+    if let Some(content) = result["content"].as_array() {
+        for block in content {
+            if let Some(text) = block["text"].as_str() {
+                println!("{text}");
             }
         }
-        Ok(i32::from(result["isError"] == true))
     }
+    Ok(i32::from(result["isError"] == true))
+}
+
+/// Same-user-private advertisements: the user's own agents may use them, other
+/// users may not, and nothing here is an account key.
+fn advertisements() -> Result<PathBuf> {
+    let home = std::env::home_dir().ok_or("No home directory")?;
+    let directory = home.join(".buzz-foundation").join("agent-connections");
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        builder.mode(0o700);
+        builder.create(&directory)?;
+        let metadata = std::fs::symlink_metadata(&directory)?;
+        if !metadata.is_dir() || metadata.uid() != std::fs::metadata(&home)?.uid() {
+            return Err("The agent connection directory is not private".into());
+        }
+        if metadata.mode() & 0o077 != 0 {
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    #[cfg(not(unix))]
+    builder.create(&directory)?;
+    Ok(directory)
+}
+/// Publishes this inherited, already-initialized session; it lasts as long as the
+/// plugin's server, and callers drop it once that stops answering.
+fn advertise(connection: &str) -> Result<i32> {
+    let session = Session::open(serde_json::from_str(connection)?)?;
+    if !session.headers.contains_key("mcp-session-id") {
+        return Err("Advertise an app-held session from inside an agent command".into());
+    }
+    let directory = advertisements()?;
+    // Written whole under a dot name, then renamed, so readers never see part of it.
+    let mut file = tempfile::Builder::new()
+        .prefix(".")
+        .rand_bytes(16)
+        .tempfile_in(&directory)?;
+    file.write_all(session.connection()?.as_bytes())?;
+    let name = file
+        .path()
+        .file_name()
+        .ok_or("No file name")?
+        .to_string_lossy()[1..]
+        .to_owned();
+    file.persist(directory.join(format!("{name}.json")))?;
+    Ok(0)
+}
+/// Sessions plugins advertised that still answer, newest first. One whose
+/// server is gone is removed: a later server never accepts its token.
+async fn discovered() -> Result<Vec<(Session, Value)>> {
+    let directory = advertisements()?;
+    #[cfg(unix)]
+    let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&directory)?);
+    // Another caller may prune a file while this one lists them.
+    let mut files: Vec<_> = std::fs::read_dir(directory)?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let metadata = std::fs::symlink_metadata(&path).ok()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                // A directory once open to others may still hold their files.
+                if metadata.uid() != owner || metadata.mode() & 0o077 != 0 {
+                    return None;
+                }
+            }
+            let name = path.file_name()?.to_str()?;
+            (metadata.is_file() && name.ends_with(".json") && !name.starts_with('.'))
+                .then_some((metadata.modified().ok()?, path))
+        })
+        .collect();
+    files.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    let (mut live, mut unreachable) = (Vec::new(), None);
+    for (_, path) in files {
+        let Some(mut session) = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|connection| Session::open(connection).ok())
+            .filter(|session| session.headers.contains_key("mcp-session-id"))
+        else {
+            continue;
+        };
+        session.advertised = true;
+        match session.rpc("tools/list", json!({}), false).await {
+            Ok(tools) => live.push((session, tools)),
+            Err(error) if error.is::<Unowned>() => {
+                // A bare connection sends no credentials; only its refusal proves the server closed.
+                let refused = match session.url.socket_addrs(|| None) {
+                    Ok(addresses) => tokio::net::TcpStream::connect(&*addresses)
+                        .await
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused),
+                    Err(_) => false,
+                };
+                if refused {
+                    let _ = std::fs::remove_file(&path);
+                } else {
+                    unreachable = Some(error.to_string());
+                }
+            }
+            Err(error) if gone(error.as_ref()) => {
+                let _ = std::fs::remove_file(&path);
+            }
+            Err(error) => {
+                let cause = std::iter::successors(Some(error.as_ref()), |error| error.source());
+                unreachable = Some(format!(
+                    "Could not reach Buzz: {}",
+                    cause.last().unwrap_or(&*error)
+                ));
+            }
+        }
+    }
+    if live.is_empty() {
+        return Err(unreachable
+            .unwrap_or_else(|| "No running Buzz offers agent tools to this user's agents".into())
+            .into());
+    }
+    Ok(live)
+}
+/// Loopback ports a process of this user listens on, where the platform can tell.
+#[cfg(target_os = "macos")]
+fn own_listeners() -> Result<Option<HashSet<u16>>> {
+    // Without root, lsof sees only this user's processes.
+    let output = Command::new("/usr/sbin/lsof")
+        .args(["-nP", "-w", "-iTCP@127.0.0.1", "-sTCP:LISTEN", "-Fn"])
+        .output()
+        .map_err(|error| format!("Could not check this user's listeners: {error}"))?
+        .stdout;
+    Ok(Some(
+        String::from_utf8_lossy(&output)
+            .lines()
+            .filter_map(|line| line.strip_prefix("n127.0.0.1:")?.parse().ok())
+            .collect(),
+    ))
+}
+#[cfg(target_os = "linux")]
+fn own_listeners() -> Result<Option<HashSet<u16>>> {
+    use std::os::unix::fs::MetadataExt;
+    let check = |error: std::io::Error| format!("Could not check this user's listeners: {error}");
+    let uid = std::fs::metadata("/proc/self")
+        .map_err(check)?
+        .uid()
+        .to_string();
+    let table = std::fs::read_to_string("/proc/net/tcp").map_err(check)?;
+    Ok(Some(
+        table
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                let (address, port) = fields.get(1)?.split_once(':')?;
+                let listening = address == "0100007F" && fields.get(3) == Some(&"0A");
+                (listening && fields.get(7) == Some(&uid.as_str()))
+                    .then(|| u16::from_str_radix(port, 16).ok())?
+            })
+            .collect(),
+    ))
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn own_listeners() -> Result<Option<HashSet<u16>>> {
+    Ok(None)
+}
+/// Nothing listens on the server's port, or it no longer admits the session. A
+/// connection the caller's own sandbox denied proves neither, so its file stays.
+fn gone(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+        == Some(reqwest::StatusCode::NOT_FOUND)
+        || std::iter::successors(Some(error), |error| error.source()).any(|error| {
+            error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
+        })
 }
 fn arguments(args: &[String], catalog: &Value) -> Result<(String, Value)> {
     let explicit = args.first().is_some_and(|arg| arg == "call");
-    let (name, rest) = args[usize::from(explicit)..].split_first().ok_or(
-        "Usage: buzz tools | buzz <tool> --field value | buzz call <tool> '<JSON object>'",
-    )?;
+    let (name, rest) = args[usize::from(explicit)..]
+        .split_first()
+        .ok_or("Name a tool; --help shows the usage")?;
     let tool = catalog["tools"]
         .as_array()
         .and_then(|tools| tools.iter().find(|tool| tool["name"] == name.as_str()))
@@ -214,19 +437,39 @@ fn main() {
                 .into());
         }
 
-        let connection = serde_json::from_str(
-            &std::env::var(CONNECTION).map_err(|_| "An app-held agent connection is required")?,
-        )?;
-        let mut session = Session::open(connection)?;
+        let inherited = std::env::var(CONNECTION).ok();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        if Path::new(&args[0]).file_stem().and_then(|s| s.to_str()) == Some("buzz") {
-            runtime.block_on(session.call(&args[1..]))
-        } else if args.get(1).is_some_and(|arg| arg == "--launch") {
-            runtime.block_on(session.launch(&args[2..]))
-        } else {
-            Err("Expected --launch command [arguments]".into())
+        let required = || {
+            inherited
+                .as_deref()
+                .ok_or("An app-held agent connection is required")
+        };
+        let buzz = Path::new(&args[0]).file_stem().and_then(|s| s.to_str()) == Some("buzz");
+        match args.get(1).map(String::as_str) {
+            Some("--launch") if !buzz => runtime
+                .block_on(Session::open(serde_json::from_str(required()?)?)?.launch(&args[2..])),
+            Some("--advertise") if !buzz => advertise(required()?),
+            Some("--help" | "-h") | None => {
+                // An agent outside a command has no `buzz` alias; it keeps using this path.
+                let program = if buzz {
+                    "buzz".to_owned()
+                } else if args[0].contains(char::is_whitespace) {
+                    format!("'{}'", args[0])
+                } else {
+                    args[0].clone()
+                };
+                println!(
+                    "Usage: {program} tools | {program} <tool> --field value | {program} call <tool> '<JSON object>'"
+                );
+                Ok(0)
+            }
+            _ => match &inherited {
+                Some(connection) => runtime
+                    .block_on(Session::open(serde_json::from_str(connection)?)?.call(&args[1..])),
+                None => runtime.block_on(async { run(discovered().await?, &args[1..]).await }),
+            },
         }
     })();
     match result {

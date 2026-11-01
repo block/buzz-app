@@ -197,7 +197,7 @@ export function createAppsClient(
           error instanceof Error ? error.message : "Request failed";
         throw new Error(
           `Create stopped during ${step} for app_id=${id}: ${detail}. The reservation may already exist; inspect or resume this exact app before creating a replacement.`.replaceAll(
-            secret,
+            secret || "\u0000",
             "[redacted]",
           ),
         );

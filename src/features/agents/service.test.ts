@@ -10575,6 +10575,129 @@ it("keeps a failed review for retry and rejects concurrent approvals", async () 
   expect(service.creationRequests()).toEqual([]);
 });
 
+it("submits unsaved team drafts and saves only what the owner reviewed", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.proposeTeam || !handle.teams)
+    throw new Error("Missing team handle");
+  expect(handle.teams()).toEqual([]);
+  const created = await handle.proposeTeam({
+    name: " Crew ",
+    instructions: "Be kind.",
+    members: ["Child", bot],
+  });
+  expect(created).toEqual({ requestId: expect.any(String), saved: false });
+  expect(service.snapshot().teams).toEqual([]);
+  expect(service.teamRequests()).toEqual([
+    expect.objectContaining({
+      id: created.requestId,
+      requester: bot,
+      name: "Crew",
+      instructions: "Be kind.",
+      members: [sibling, bot],
+    }),
+  ]);
+  await service.approveTeam(created.requestId, {
+    name: "Crew 2",
+    instructions: "Be kind.",
+    members: [sibling],
+  });
+  expect(service.teamRequests()).toEqual([]);
+  const [team] = service.snapshot().teams;
+  expect(team).toMatchObject({ name: "Crew 2", members: [sibling] });
+  expect(handle.teams()).toEqual([
+    {
+      id: team?.id,
+      name: "Crew 2",
+      instructions: "Be kind.",
+      members: [{ pubkey: sibling, name: "Child" }],
+    },
+  ]);
+  // A change keeps what it does not propose, names the team as it is, and
+  // saves over the same team.
+  const change = await handle.proposeTeam({
+    team: "Crew 2",
+    name: "Crew 3",
+    instructions: "Be brief.",
+  });
+  expect(service.teamRequests()).toEqual([
+    expect.objectContaining({
+      team: team?.id,
+      teamName: "Crew 2",
+      name: "Crew 3",
+      instructions: "Be brief.",
+      members: [sibling],
+    }),
+  ]);
+  await service.approveTeam(change.requestId, {
+    name: "Crew 2",
+    instructions: "Be brief.",
+    members: [sibling, bot],
+  });
+  expect(service.snapshot().teams).toEqual([
+    {
+      id: team?.id,
+      name: "Crew 2",
+      instructions: "Be brief.",
+      members: [sibling, bot],
+    },
+  ]);
+  await expect(
+    service.approveTeam(change.requestId, {
+      name: "Again",
+      instructions: "",
+      members: [],
+    }),
+  ).rejects.toThrow("No such pending team request");
+});
+
+it("refuses team drafts that name no such team or agent, or change nothing", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.saveTeam({ name: "Crew", instructions: "", members: [bot] });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.proposeTeam) throw new Error("Missing team handle");
+  await expect(
+    handle.proposeTeam({ team: "Missing", name: "X" }),
+  ).rejects.toThrow("no team");
+  await expect(
+    handle.proposeTeam({ name: "X", members: ["Ghost"] }),
+  ).rejects.toThrow("no agent");
+  await expect(handle.proposeTeam({ name: " " })).rejects.toThrow("Name");
+  await expect(handle.proposeTeam({ team: "Crew" })).rejects.toThrow(
+    "at least one change",
+  );
+  expect(service.teamRequests()).toEqual([]);
+  const first = await handle.proposeTeam({ name: "Fresh" });
+  service.dismissTeam(first.requestId);
+  expect(service.teamRequests()).toEqual([]);
+});
+
+it("keeps a team's members from the owner's other communities", async () => {
+  const { service, plugin } = await setup({
+    identities: [here(birch, "wss://other.example.test")],
+  });
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.saveTeam({ name: "Crew", instructions: "", members: [birch] });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.proposeTeam || !handle.teams)
+    throw new Error("Missing team handle");
+  // The agent sees only its own community's members, and a change to them
+  // keeps the rest.
+  expect(handle.teams()).toEqual([
+    expect.objectContaining({ name: "Crew", members: [] }),
+  ]);
+  await handle.proposeTeam({ team: "Crew", members: ["Parent"] });
+  expect(service.teamRequests()).toEqual([
+    expect.objectContaining({ members: [bot, birch] }),
+  ]);
+});
+
 it("refuses approval after leaving the requesting community", async () => {
   const { service, native, plugin, leave } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
@@ -12474,6 +12597,64 @@ describe("synced teams", () => {
       /Added Alder\. Stopped at npub…\w+\. Reopen the team to continue\./,
     );
     expect(error).not.toContain(away);
+  });
+
+  it("lets an agent propose changes to its community's synced team and a new synced team", async () => {
+    const team = stored(viewer, [bot]);
+    const f = await ready([], team.storage);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    team.confirm(f.stores.get(home));
+    await vi.waitFor(() =>
+      expect(f.service.snapshot().teams.map((t) => t.name)).toEqual(["Crew"]),
+    );
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const handle = f.plugin.agents.handle(bot);
+    if (!handle?.proposeTeam || !handle.teams)
+      throw new Error("Missing team handle");
+    expect(handle.teams()).toEqual([
+      {
+        id: draft,
+        name: "Crew",
+        instructions: "Ship it",
+        members: [{ pubkey: bot, name: "Echo" }],
+      },
+    ]);
+    // A change saves over the head the review opened.
+    const change = await handle.proposeTeam({
+      team: "Crew",
+      instructions: "Ship it twice",
+    });
+    const opened = f.service.snapshot().teams.find((t) => t.id === draft);
+    expect(opened?.revision).toBeDefined();
+    await f.service.approveTeam(change.requestId, {
+      name: "Crew",
+      instructions: "Ship it twice",
+      members: [bot],
+      ...(opened && { opened }),
+    });
+    expect(f.saveTeam).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: draft,
+        instructions: "Ship it twice",
+        base: { head: opened?.revision, members: [bot] },
+      }),
+    );
+    // A new team syncs to the request's community.
+    const created = await handle.proposeTeam({ name: "Night", members: [bot] });
+    await f.service.approveTeam(created.requestId, {
+      name: "Night",
+      instructions: "",
+      members: [bot],
+      draft: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    });
+    expect(f.saveTeam).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+        name: "Night",
+        members: [bot],
+      }),
+    );
+    expect(f.service.teamRequests()).toEqual([]);
   });
 
   it("puts set-up hosted agents on a team and names them in its roster", async () => {

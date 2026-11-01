@@ -397,6 +397,9 @@ function setup(
     addedTabs: () => [],
     registerTab: () => {},
     controlAttention: () => {},
+    teamRequests: () => [],
+    dismissTeam: vi.fn(),
+    approveTeam: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

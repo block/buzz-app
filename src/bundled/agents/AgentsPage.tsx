@@ -35,6 +35,7 @@ import { AgentShareDialog } from "./AgentShareDialog";
 import type { SharedAgent } from "../../features/agents/shared-agents";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
+import { TeamFields, type TeamDraft } from "./TeamFields";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
 import {
@@ -80,7 +81,6 @@ import {
   GearIcon,
   PlusIcon,
   RobotIcon,
-  WarningCircleIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -90,11 +90,9 @@ import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Input } from "../../shared/design-system/ui/Input";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -109,7 +107,6 @@ import {
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { SplitButton } from "../../shared/design-system/ui/SplitButton";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
@@ -119,10 +116,6 @@ import { writeClipboardText } from "../../shared/clipboard";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const noSubscribe = () => () => {};
-const names = (agents: readonly Agent[]) =>
-  new Intl.ListFormat(undefined, { type: "conjunction" }).format(
-    agents.map((agent) => agent.name),
-  );
 const importReminderKey = "agent-community-import:dismissed";
 
 /** The type's one-line summary of an agent; its title when it has none. */
@@ -2217,11 +2210,12 @@ function TeamEditor({
   team?: Team;
   onDone(): void;
 }) {
-  const [name, setName] = useState(team?.name ?? "");
-  const [instructions, setInstructions] = useState(team?.instructions ?? "");
-  const [members, setMembers] = useState<readonly string[]>(
-    team?.members ?? [],
-  );
+  const [fields, setFields] = useState<TeamDraft>({
+    name: team?.name ?? "",
+    instructions: team?.instructions ?? "",
+    members: team?.members ?? [],
+  });
+  const { members } = fields;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   // What a synced Save revises, and a new team's id for every retry.
@@ -2262,10 +2256,6 @@ function TeamEditor({
       !choices.some((agent) => agent.pubkey === pubkey) &&
       agents.memberships(pubkey).length > 0,
   ).length;
-  // Their provider runs them, so they may not get the team's instructions.
-  const remote = choices.filter(
-    (agent) => agent.place === "hosted" && members.includes(agent.pubkey),
-  );
   const act = async (work: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
@@ -2282,8 +2272,8 @@ function TeamEditor({
     act(() =>
       agents.saveTeam({
         ...(opened ? { id: opened.id, opened } : { draft }),
-        name: name.trim(),
-        instructions,
+        name: fields.name.trim(),
+        instructions: fields.instructions,
         members: kept,
       }),
     );
@@ -2307,70 +2297,18 @@ function TeamEditor({
         }
         onClose={onDone}
       />
-      <Field label="Name">
-        <Input
-          autoFocus
-          value={name}
-          disabled={pending}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </Field>
-      <Field
-        label="Instructions"
-        description={
-          <>
-            {remote.length > 0
-              ? "Agents on your devices follow these after their own instructions."
-              : "Every member follows these after its own instructions."}
-            {remote.length > 0 && (
-              <>
-                {" "}
-                <span className="mt-1 flex items-start gap-1 text-warning">
-                  <WarningCircleIcon className="mt-0.5 shrink-0" aria-hidden />
-                  {`Agents run by their provider (${names(remote)}) will not get these team instructions.`}
-                </span>
-              </>
-            )}
-          </>
-        }
-      >
-        <Textarea
-          rows={5}
-          value={instructions}
-          disabled={pending}
-          onChange={(event) => setInstructions(event.target.value)}
-        />
-      </Field>
-      <Section title="Members">
-        {choices.length ? (
-          <div className="grid gap-2">
-            {choices.map((agent) => (
-              <Checkbox
-                key={agent.pubkey}
-                label={agent.name}
-                checked={members.includes(agent.pubkey)}
-                disabled={pending}
-                onCheckedChange={(checked) => {
-                  if (agent.place === "hosted")
-                    setPicked((last) => new Map(last).set(agent.pubkey, agent));
-                  setMembers((last) =>
-                    checked
-                      ? [...last, agent.pubkey]
-                      : last.filter((pubkey) => pubkey !== agent.pubkey),
-                  );
-                }}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
-        )}
-        {away > 0 && (
-          <p className="m-0 text-body-sm text-secondary">
-            {`+${away} in your other communities, who stay on the team.`}
-          </p>
-        )}
-      </Section>
+      <TeamFields
+        value={fields}
+        agents={choices}
+        disabled={pending}
+        autoFocus
+        away={away}
+        onChange={setFields}
+        onPick={(agent) => {
+          if (agent.place === "hosted")
+            setPicked((last) => new Map(last).set(agent.pubkey, agent));
+        }}
+      />
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}
@@ -2381,7 +2319,7 @@ function TeamEditor({
           type="submit"
           variant="primary"
           loading={pending}
-          disabled={!name.trim()}
+          disabled={!fields.name.trim()}
         >
           {team ? "Save" : "Create team"}
         </Button>

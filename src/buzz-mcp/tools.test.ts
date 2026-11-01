@@ -3401,6 +3401,48 @@ it("hands off to the agent in another of its conversations it can see", async ()
     [{ channel: "chan", root, text: "carry on", from: {} }],
   ]);
 });
+it("validates team drafts and passes only the proposed fields", async () => {
+  const { client } = fake([]);
+  for (const name of ["teams", "team_create", "team_update"])
+    await expect(
+      callTool(client, {}, name, { name: "Crew", team: "Crew" }),
+    ).rejects.toThrow("unavailable");
+  client.teams = vi.fn(async () => []);
+  client.proposeTeam = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  expect(await callTool(client, {}, "teams", {})).toBe("[]");
+  await expect(callTool(client, {}, "team_create", {})).rejects.toThrow(
+    "required",
+  );
+  await expect(
+    callTool(client, {}, "team_update", { name: "Crew" }),
+  ).rejects.toThrow("required");
+  expect(client.proposeTeam).not.toHaveBeenCalled();
+  await callTool(client, {}, "team_create", {
+    name: " Crew ",
+    instructions: "Be kind.",
+    members: ["Child", 1, "b".repeat(64)],
+  });
+  expect(client.proposeTeam).toHaveBeenLastCalledWith({
+    name: "Crew",
+    instructions: "Be kind.",
+    members: ["Child", "b".repeat(64)],
+  });
+  await callTool(client, {}, "team_update", {
+    team: " Crew ",
+    name: " ",
+    instructions: "",
+    members: [],
+  });
+  expect(client.proposeTeam).toHaveBeenLastCalledWith({
+    team: "Crew",
+    instructions: "",
+    members: [],
+  });
+});
+
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(

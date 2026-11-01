@@ -136,6 +136,23 @@ export const TOOLS: readonly Tool[] = [
     ["agent"],
   ),
   tool(
+    "teams",
+    "List your owner's agent teams: id, name, instructions and members.",
+    {},
+  ),
+  tool(
+    "team_create",
+    "Submit an unsaved new-team draft for your owner to review. Nothing is created until they save it. members are pubkeys or exact names of your owner's agents.",
+    { name: str, instructions: str, members: strs },
+    ["name"],
+  ),
+  tool(
+    "team_update",
+    "Submit an unsaved draft of changes to one of your owner's teams for them to review. team is its id or exact name. members, if given, replaces the team's members. Nothing changes until they save it.",
+    { team: str, name: str, instructions: str, members: strs },
+    ["team"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -467,6 +484,33 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+      }),
+    );
+  },
+  async teams({ client }) {
+    if (!client.teams) throw new Error("Teams are unavailable on this host");
+    return JSON.stringify(await client.teams());
+  },
+  async team_create({ client }, args) {
+    if (!client.proposeTeam)
+      throw new Error("Team changes are unavailable on this host");
+    const name = text(args.name);
+    if (!name) throw new Error("name is required");
+    return JSON.stringify(
+      await client.proposeTeam({ name, ...teamFields(args) }),
+    );
+  },
+  async team_update({ client }, args) {
+    if (!client.proposeTeam)
+      throw new Error("Team changes are unavailable on this host");
+    const team = text(args.team);
+    if (!team) throw new Error("team is required");
+    const name = text(args.name);
+    return JSON.stringify(
+      await client.proposeTeam({
+        team,
+        ...(name && { name }),
+        ...teamFields(args),
       }),
     );
   },
@@ -2301,6 +2345,14 @@ function checkDetails(name?: string, about?: string, ttl?: number) {
 }
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** The instructions and members a team draft may carry. Empty instructions
+ * propose clearing them; members, when given, replace the team's. */
+const teamFields = (args: Args) => ({
+  ...(typeof args.instructions === "string" && {
+    instructions: args.instructions,
+  }),
+  ...(Array.isArray(args.members) && { members: list(args.members) }),
+});
 const list = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")

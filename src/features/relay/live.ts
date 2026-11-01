@@ -17,7 +17,6 @@ import {
 } from "../agents/observer.ts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
-import { EMOJI_SET } from "./emoji.ts";
 import type {
   ArtifactSyncFilter,
   ArtifactSyncSink,
@@ -787,9 +786,9 @@ export function subscribeRelayTraffic(
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },
+              // Every custom emoji part (`buzz:custom-emoji[:n]`); the directory filters.
               {
                 kinds: [30030],
-                "#d": [EMOJI_SET],
                 since: route.since,
                 limit: LIVE_REPLAY_LIMIT,
               },

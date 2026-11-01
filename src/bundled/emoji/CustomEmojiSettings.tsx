@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -29,6 +30,8 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { CustomEmoji } from "./CustomEmoji";
 import styles from "./Emoji.module.css";
 
+/** Rows rendered per list; more is a search away. */
+const SHOWN = 200;
 const message = (reason: unknown, fallback: string) =>
   reason instanceof Error && reason.message ? reason.message : fallback;
 
@@ -339,19 +342,22 @@ function Editor({
       )}
     </form>
   ) : null;
-  const ownShortcodes = new Set(catalog.mine.map((emoji) => emoji.shortcode));
-  const community = catalog.entries.filter(
-    (emoji) => !ownShortcodes.has(emoji.shortcode),
-  );
+  const community = useMemo(() => {
+    const own = new Set(catalog.mine.map((emoji) => emoji.shortcode));
+    return catalog.entries.filter((emoji) => !own.has(emoji.shortcode));
+  }, [catalog.entries, catalog.mine]);
   const needle = query
     .trim()
     .toLowerCase()
     .replace(/^:+|:+$/g, "");
   function browsePanel(view: "mine" | "community") {
     const showingCommunity = view === "community";
-    const entries = showingCommunity
-      ? community.filter((emoji) => emoji.shortcode.includes(needle))
-      : catalog.mine;
+    // A large list (an imported workspace holds tens of thousands) is searched.
+    const searchable = showingCommunity || catalog.mine.length > SHOWN;
+    const matches = (showingCommunity ? community : catalog.mine).filter(
+      (emoji) => !searchable || emoji.shortcode.includes(needle),
+    );
+    const entries = matches.length > SHOWN ? matches.slice(0, SHOWN) : matches;
     return (
       <fieldset
         ref={showingCommunity ? undefined : browseRef}
@@ -359,7 +365,7 @@ function Editor({
         aria-label={showingCommunity ? "Community emoji" : "My emojis"}
         className="grid min-w-0 gap-2"
       >
-        {showingCommunity && (
+        {searchable && (
           <div className={styles.emojiBrowseControls}>
             <SearchField value={query} onValueChange={setQuery} />
           </div>
@@ -428,6 +434,12 @@ function Editor({
                 </li>
               ))}
             </ul>
+            {matches.length > SHOWN && (
+              <p className="pb-3 text-body-sm text-muted">
+                Showing {SHOWN} of {matches.length.toLocaleString()}. Search to
+                find more.
+              </p>
+            )}
           </SettingsGroup>
         )}
       </fieldset>

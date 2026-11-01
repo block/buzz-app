@@ -8,7 +8,7 @@ import { useIdentityNames } from "../identity-names/react";
 import { useListedChannel } from "../relay/listed-channel";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
-import type { CustomEmoji } from "../relay/emoji";
+import { findCustomEmoji, type CustomEmoji } from "../relay/emoji";
 import type { ComposerSession } from "./composer-session";
 import { profileKey } from "../profiles/target";
 import { scanMarkdown } from "../relay/message-content";
@@ -233,13 +233,21 @@ export function RichComposerInput({
       directory.agents,
     ))
       add(reference.start, reference.end, undefined, true);
-    const renderableEmoji = emoji.filter((entry) => !!session.media(entry.url));
-    const shortcodes = new Set(
-      renderableEmoji.map((entry) => entry.shortcode.toLowerCase()),
-    );
-    for (const match of context.text.matchAll(/:([a-z0-9_-]{1,64}):/gi))
-      if (shortcodes.has(match[1]?.toLowerCase() ?? ""))
+    // The catalog can hold 100k entries: resolve only the draft's shortcodes,
+    // and hand each decoration just the emoji its own text uses.
+    const renderableEmoji = (text: string) => {
+      const used = new Map<string, CustomEmoji>();
+      for (const match of text.matchAll(/:([a-z0-9_-]{1,64}):/gi)) {
+        const entry = findCustomEmoji(emoji, match[1] ?? "");
+        if (entry && session.media(entry.url)) used.set(entry.shortcode, entry);
+      }
+      return [...used.values()];
+    };
+    for (const match of context.text.matchAll(/:([a-z0-9_-]{1,64}):/gi)) {
+      const entry = findCustomEmoji(emoji, match[1] ?? "");
+      if (entry && session.media(entry.url))
         add(match.index, match.index + match[0].length);
+    }
     for (const [start, { end }] of gifPreviews)
       if (!ranges.some((range) => start < range.end && end > range.start))
         ranges.push({ start, end });
@@ -296,7 +304,7 @@ export function RichComposerInput({
                 channelId,
                 content: draft.text.slice(start, end),
                 mentions: mention ? [mention] : [],
-                emoji: renderableEmoji,
+                emoji: renderableEmoji(draft.text.slice(start, end)),
                 participants: [],
                 attachments: [],
                 reactions: [],

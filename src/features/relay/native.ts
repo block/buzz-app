@@ -66,6 +66,7 @@ import {
   type Signer,
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
+import { nativeThreadNavigation } from "./native-thread-navigation";
 import { readApiFailure } from "./http-admission";
 
 async function nativeReadInvoke<T>(
@@ -672,6 +673,7 @@ export async function connectNativeTransport(
       return { repository, token };
     },
     ...nativeSidebar(transport),
+    threadNavigation: nativeThreadNavigation(transport),
     reminders: {
       async decode(events, signal) {
         signal.throwIfAborted();

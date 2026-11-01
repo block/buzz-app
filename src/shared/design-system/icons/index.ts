@@ -145,6 +145,8 @@ import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessage
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
 import TablerMessageReplyIcon from "@tabler/icons-react/dist/esm/icons/IconMessageReply.mjs";
 export const MessageReplyIcon = defineIcon("tabler", TablerMessageReplyIcon);
+import TablerPinIcon from "@tabler/icons-react/dist/esm/icons/IconPin.mjs";
+export const PinIcon = defineIcon("tabler", TablerPinIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
 import { ChatUnreadArtwork } from "./ChatUnread";

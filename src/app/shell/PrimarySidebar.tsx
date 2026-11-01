@@ -7,6 +7,7 @@ import {
 } from "react";
 import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
+import { RecentThreads } from "../../features/channel-navigation/RecentThreads";
 import { soloDraft } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
@@ -250,6 +251,14 @@ function ScopedSidebar({
                 />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
+                  <RecentThreads
+                    scope={scope}
+                    navigator={props.navigator}
+                    target={props.target}
+                    channels={channelList?.channels ?? []}
+                    filter={filter}
+                    store={connection.session.threadNavigation}
+                  />
                   <section
                     aria-label={soloTitle}
                     className={styles.sidebarGroup}

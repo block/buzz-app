@@ -51,6 +51,12 @@ the interface unless an available tool actually supports that action.
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+- **Recent** in the sidebar lists threads you have opened, with your pinned
+  threads held at the top. Use a thread’s menu to pin or unpin it. **Show more**
+  reveals eight more threads; **Show less** folds the list. This history and
+  your pins sync privately across native Buzz installs for the same identity
+  and community, refreshing when you return to the app. Background replies do
+  not change the order. A failed save offers **Try again**.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. You and the person asking may have
   different channel access. A link alone never grants access.

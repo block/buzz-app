@@ -233,30 +233,59 @@ it("returns accepted deployment IDs without checking readiness under a replaceme
   h.session.dispose();
 });
 
-it.each([false, true])(
-  "reports a login failure only if its attempt is still current (canceled: %s)",
-  async (canceled) => {
+it.each(["current", "canceled", "disposed"] as const)(
+  "handles login failure after pending and signed-out SSE when the attempt is %s",
+  async (mode) => {
     const h = setup();
     h.events.emit("one", null);
     const response = deferred<Response>();
     h.fetch.mockImplementationOnce(() => response.promise);
     const pending = h.session.signIn();
+    // The broker announces pending, then revokes a failed login before its HTTP error.
+    h.events.emit("two", null, true);
     expect(h.session.snapshot().status).toBe("pending");
-    if (canceled) {
-      h.session.cancel();
-      h.events.emit("two", null);
-    }
-    response.resolve(
-      Response.json(
-        { error: "Builderlab authentication canceled" },
-        { status: 502 },
-      ),
-    );
+    if (mode === "canceled") h.session.cancel();
+    if (mode === "disposed") h.session.dispose();
+    h.events.emit("three", null);
+    const error = "Builderlab code exchange failed with HTTP 503";
+    response.resolve(Response.json({ error }, { status: 502 }));
     await pending;
     expect(h.session.snapshot()).toEqual({
       status: "signed-out",
-      ...(canceled ? {} : { error: "Builderlab authentication canceled" }),
+      ...(mode === "current" ? { error } : {}),
     });
     h.session.dispose();
   },
 );
+
+it("ignores an older login error while preserving a replacement attempt's failure", async () => {
+  const h = setup();
+  h.events.emit("one", null);
+  const oldResponse = deferred<Response>();
+  const newResponse = deferred<Response>();
+  h.fetch.mockImplementationOnce(() => oldResponse.promise);
+  const oldLogin = h.session.signIn();
+  h.events.emit("two", null, true);
+  h.events.emit("three", null);
+  h.fetch.mockImplementationOnce(() => newResponse.promise);
+  const newLogin = h.session.signIn();
+  h.events.emit("four", null, true);
+  try {
+    oldResponse.resolve(
+      Response.json({ error: "Old login failed" }, { status: 502 }),
+    );
+    await oldLogin;
+    expect(h.session.snapshot()).toEqual({ status: "pending" });
+    h.events.emit("five", null);
+  } finally {
+    newResponse.resolve(
+      Response.json({ error: "New login failed" }, { status: 502 }),
+    );
+  }
+  await newLogin;
+  expect(h.session.snapshot()).toEqual({
+    status: "signed-out",
+    error: "New login failed",
+  });
+  h.session.dispose();
+});

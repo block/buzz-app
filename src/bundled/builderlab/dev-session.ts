@@ -43,6 +43,7 @@ export function createDevSession() {
   let lifetime = new AbortController();
   let disposed = false;
   let version = 0;
+  let loginAttempt = 0;
   let revision: string | undefined;
   const listeners = new Set<() => void>();
   const publish = (next: LoginSnapshot) => {
@@ -173,12 +174,12 @@ export function createDevSession() {
     },
     async signIn() {
       if (disposed || state.status === "pending") return;
-      const at = ++version;
+      const at = ++loginAttempt;
       publish({ status: "pending" });
       try {
         await send("login");
       } catch (error) {
-        if (!disposed && version === at && !owner)
+        if (!disposed && loginAttempt === at && !owner)
           publish({
             status: "signed-out",
             error:
@@ -195,6 +196,7 @@ export function createDevSession() {
     abandon() {},
     signOut() {
       if (disposed) return;
+      ++loginAttempt;
       const at = ++version;
       clear();
       publish({ status: "pending", checking: true });
@@ -209,6 +211,7 @@ export function createDevSession() {
     },
     dispose() {
       disposed = true;
+      ++loginAttempt;
       ++version;
       events.close();
       clear();

@@ -565,11 +565,18 @@ function Timeline({
     complete: completeTarget,
     hold: holdTarget,
   });
+  // A pending saved row is the reader's place: following the latest message
+  // until it loads is not catching up past it.
+  const restoring = useCallback(
+    () => pendingRestore.current === intent.current,
+    [],
+  );
   useReading({
     session: queries,
     channelId,
     scroller,
     settled,
+    restoring,
     latestMessageId: window.rows
       .filter((row) => !row.membership && !row.huddle)
       .at(-1)?.id,

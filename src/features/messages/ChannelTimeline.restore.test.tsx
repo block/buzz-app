@@ -1096,3 +1096,120 @@ it("a saved row missing from the first rows stays pending: the reader follows, s
     offset: -42,
   });
 });
+
+/** A focused reader reopening at a saved row the first rows do not hold yet. */
+async function pendingReader() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 800, 500),
+  );
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+    new DOMRect(0, 0, 800, 500),
+  ] as unknown as DOMRectList);
+  const owner = createRelaySession(null);
+  owners.push(owner);
+  const catchUp = vi.fn(async () => {}),
+    observe = vi.fn(async () => {});
+  const sync = {
+    ...owner.session.unread.sync(),
+    capability: "frontier-sync" as const,
+  };
+  const session = {
+    ...owner.session,
+    unread: {
+      ...owner.session.unread,
+      sync: () => sync,
+      reading: () => ({ view: () => {}, dispose: () => {}, observe, catchUp }),
+    },
+  };
+  const base = {
+    channelId: "c",
+    authorId: "a".repeat(64),
+    content: "Message",
+    createdAt: 1,
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+  };
+  const tree = (rows: ChannelWindow["rows"]) => (
+    <ChannelTimeline
+      channelId="c"
+      scope="read-restore"
+      queries={session}
+      window={{
+        channelId: "c",
+        status: "ready",
+        freshness: "cached",
+        error: undefined,
+        hasMore: false,
+        loadingOlder: false,
+        rows,
+      }}
+      onOpenLink={() => false}
+    />
+  );
+  writeView("read-restore", "scroll:c", {
+    bottom: false,
+    anchor: { id: "saved", y: 42 },
+  });
+  const latest = { ...base, id: "latest" };
+  const view = render(tree([latest]));
+  await frame();
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, { align: "end" });
+  const history = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  await act(async () => {
+    history.focus();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    vi.advanceTimersByTime(300);
+  });
+  return {
+    history,
+    catchUp,
+    observe,
+    load() {
+      view.rerender(tree([{ ...base, id: "saved", createdAt: 0 }, latest]));
+    },
+  };
+}
+
+it("following the latest message while a saved row loads reads the rows shown, but does not catch up past the saved row", async () => {
+  try {
+    const h = await pendingReader();
+    expect(h.observe).toHaveBeenCalledWith(["latest"]);
+    expect(h.catchUp).not.toHaveBeenCalled();
+    scroll.toIndex.mockClear();
+    h.load();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+      align: "start",
+      offset: -42,
+    });
+    expect(h.catchUp).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("reader input retires a loading saved row, so a dwell at the latest message catches up", async () => {
+  try {
+    const h = await pendingReader();
+    expect(h.catchUp).not.toHaveBeenCalled();
+    fireEvent.keyDown(h.history, { key: "ArrowDown" });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(h.catchUp).toHaveBeenCalledWith("latest", undefined);
+  } finally {
+    vi.useRealTimers();
+  }
+});

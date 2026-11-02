@@ -30,9 +30,13 @@ export type HostUpload = Readonly<{
 /** One in-memory multipart part plus bounded text fields. Desktop only. */
 export type HostByteUpload = Readonly<{
   url: string;
+  /** 1–256 ASCII letters/digits/dots/underscores/hyphens; no leading dot. */
   field: string;
+  /** One filename with the same safe characters; no leading dot or path. */
   name: string;
+  /** Exactly image/png, image/jpeg or image/webp, matching the bytes' signature. */
   contentType: string;
+  /** At most 16 text fields, safe names, each value at most 8192 UTF-8 bytes. */
   fields?: Readonly<Record<string, string>>;
 }>;
 export type HostResponse = Readonly<{
@@ -520,19 +524,18 @@ export class HostService extends Service implements Host {
       throw new Error("Invalid upload bytes");
     // Pin both the bytes and metadata before waiting for authority or eligibility.
     const snapshot = new Uint8Array(bytes);
-    const metadata = JSON.parse(
-      JSON.stringify({
-        id: owner.id,
-        revision: owner.revision,
-        upload: input,
-      }),
-    );
-    if (asciiJson(metadata).length > UPLOAD_METADATA_LIMIT - 512)
+    const metadata = asciiJson({
+      id: owner.id,
+      revision: owner.revision,
+      upload: input,
+    });
+    if (metadata.length > UPLOAD_METADATA_LIMIT - 512)
       throw new Error("Upload metadata is too large");
     return protectedCall(this.ctx, callId, isEligible, (once) =>
       invoke<HostResponse>("plugin_host_upload_bytes_once", snapshot, {
         headers: {
-          "x-buzz-upload": asciiJson({ ...metadata, once }),
+          // Append authority to the already pinned JSON object without reserializing input.
+          "x-buzz-upload": `${metadata.slice(0, -1)},"once":${asciiJson(once)}}`,
         },
       }),
     );

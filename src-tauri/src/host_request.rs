@@ -281,22 +281,10 @@ struct ByteUpload {
     fields: BTreeMap<String, String>,
 }
 impl ByteUpload {
-    fn fingerprint(&self, bytes: &[u8]) -> [u8; 32] {
-        fingerprint(
-            [
-                self.url.as_bytes(),
-                self.field.as_bytes(),
-                self.name.as_bytes(),
-                self.content_type.as_bytes(),
-                bytes,
-            ]
-            .into_iter()
-            .chain(
-                self.fields
-                    .iter()
-                    .flat_map(|(k, v)| [k.as_bytes(), v.as_bytes()]),
-            ),
-        )
+    fn fingerprint(&self, bytes: &[u8]) -> Result<[u8; 32], String> {
+        // Reuse the bounded metadata shape, including deterministic BTreeMap order.
+        let metadata = serde_json::to_vec(self).map_err(|_| "Invalid upload metadata")?;
+        Ok(fingerprint([metadata.as_slice(), bytes]))
     }
 }
 #[derive(Deserialize)]
@@ -311,12 +299,35 @@ fn validate_byte_upload(upload: &ByteUpload, bytes: &[u8]) -> Result<reqwest::Ur
     if bytes.is_empty() || bytes.len() > MAX_RESPONSE_BYTES {
         return Err("Invalid upload bytes".into());
     }
-    validate_form(
-        &upload.fields,
-        &upload.field,
-        &upload.name,
-        &upload.content_type,
-    )?;
+    // One safe filename and safe form names; no paths or multipart header syntax.
+    let safe_name = |name: &str| {
+        !name.is_empty()
+            && name.len() <= 256
+            && !name.starts_with('.')
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    if !safe_name(&upload.name)
+        || !safe_name(&upload.field)
+        || upload.fields.len() > 16
+        || upload
+            .fields
+            .iter()
+            .any(|(name, value)| !safe_name(name) || value.len() > MAX_HEADER_BYTES)
+    {
+        return Err("Invalid upload form".into());
+    }
+    // This is a signature check, not an image decoder or a claim of image safety.
+    let matches_type = match upload.content_type.as_str() {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => false,
+    };
+    if !matches_type {
+        return Err("Upload type must be PNG, JPEG or WebP with matching magic bytes".into());
+    }
     let (url, _, _) = validate_request(&HostRequest {
         url: upload.url.clone(),
         method: "POST".into(),
@@ -335,6 +346,7 @@ pub(crate) async fn plugin_host_upload_bytes_once<R: tauri::Runtime>(
     manager: tauri::State<'_, PluginManager>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<HostResponse, String> {
+    let deadline = tokio::time::Instant::now() + DEADLINE;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Protected upload body must be raw bytes; outcome unknown".into());
     };
@@ -366,11 +378,11 @@ pub(crate) async fn plugin_host_upload_bytes_once<R: tauri::Runtime>(
             &id,
             &revision,
             &once,
-            upload.fingerprint(bytes),
+            upload.fingerprint(bytes)?,
         )?;
         send_byte_upload(url, &upload, bytes).await
     };
-    tokio::time::timeout(DEADLINE, operation)
+    tokio::time::timeout_at(deadline, operation)
         .await
         .map_err(|_| "Host upload timed out; outcome unknown")?
 }

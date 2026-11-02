@@ -1419,6 +1419,31 @@ it("uploads an immutable raw snapshot with shared protected authority and no fal
   }
 });
 
+it("serializes upload metadata once and preserves escaped text when adding authority", async () => {
+  const { host, fiber } = await oncePlugin();
+  const fields = { caption: 'café 😀 "quoted"\r\n\\ trailing }' };
+  const toJSON = vi.fn(() => ({ ...byteUpload, fields }));
+  vi.mocked(invoke).mockResolvedValueOnce(onceContext);
+  vi.mocked(invoke).mockResolvedValueOnce(onceReply);
+  try {
+    const input = { ...byteUpload, toJSON };
+    await host.uploadBytesOnce?.(new Uint8Array([1]), input, { callId });
+    expect(toJSON).toHaveBeenCalledTimes(1);
+    const header = new Headers(
+      vi.mocked(invoke).mock.calls[1]?.[2]?.headers,
+    ).get("x-buzz-upload");
+    expect(header).toMatch(/^[\x20-\x7e]+$/);
+    expect(JSON.parse(header ?? "")).toEqual({
+      id: "example.plugin",
+      revision: "abc",
+      upload: { ...byteUpload, fields },
+      once: { ...onceContext, activation: expect.any(String), callId },
+    });
+  } finally {
+    await fiber.dispose();
+  }
+});
+
 it.each([new Uint8Array(), new Uint8Array(16777217), [1, 2]])(
   "refuses invalid upload bytes before acquiring authority",
   async (bytes) => {

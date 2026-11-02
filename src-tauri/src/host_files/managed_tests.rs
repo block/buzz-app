@@ -24,7 +24,8 @@ impl Fixture {
         std::fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
         std::fs::write(source.join("manifest.json"), serde_json::to_vec(&serde_json::json!({
             "id":"example.bytes", "name":"Byte fixture", "apiVersion":1,
-            "host":{"managedFiles":managed,"files":files,"networkOrigins":["https://example.test"]}
+            "host":{"managedFiles":managed,"files":files,"networkOrigins":["https://example.test"],
+                "processes":[{"id":"read","program":"cat"},{"id":"read-protected","program":"cat"}]}
         })).unwrap()).unwrap();
         let catalog = manager.install(&source).unwrap();
         let revision = catalog
@@ -41,6 +42,7 @@ impl Fixture {
         );
         let app = mock_builder()
             .manage(PluginManager(Ok(manager.clone())))
+            .manage(crate::host_process::HostProcesses::default())
             .invoke_handler(crate::commands())
             .build(context)
             .unwrap();
@@ -802,4 +804,73 @@ fn concurrent_native_saves_queue_instead_of_refusing_the_second_plugin_operation
     drop(held);
     let saved: Vec<_> = jobs.into_iter().map(|job| job.join().unwrap()).collect();
     assert_ne!(saved[0]["path"], saved[1]["path"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn process_attachment_reader_blocks_delete_until_output_and_killed_child_complete() {
+    let _serial = commands();
+    tauri::async_runtime::block_on(async {
+        let f = Fixture::new(true, false);
+        let saved = f
+            .save(b"process-source", &digest(b"process-source"))
+            .unwrap();
+        let path = saved["path"].as_str().unwrap();
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let channel = tauri::ipc::Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                let _ = events.send(serde_json::from_str::<serde_json::Value>(&json).unwrap());
+            }
+            Ok(())
+        });
+        let handle = crate::host_process::plugin_host_process_spawn(
+            f.app.handle().clone(),
+            f.app.state(),
+            f.app.state(),
+            "example.bytes".into(),
+            f.revision.clone(),
+            "read".into(),
+            Vec::new(),
+            None,
+            None,
+            channel,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // cat is held on stdin; its actual monitor owns the admitted reader lease.
+        assert!(
+            delete_managed(&f.root(), path, &f.manager, "example.bytes", &f.revision)
+                .unwrap_err()
+                .contains("in use")
+        );
+        crate::host_process::plugin_host_process_write(
+            f.app.state(),
+            "example.bytes".into(),
+            handle,
+            "ready\n".into(),
+            false,
+        )
+        .await
+        .unwrap();
+        let event = received.recv().await.unwrap();
+        assert_eq!(event["type"], "stdout");
+        crate::host_process::plugin_host_process_kill(
+            f.app.state(),
+            "example.bytes".into(),
+            handle,
+        )
+        .unwrap();
+        // Kill is a request, not proof of actual completion. Until Exit the lease must not be dropped early.
+        while let Some(event) = tokio::time::timeout(SAVE_WINDOW, received.recv())
+            .await
+            .unwrap()
+        {
+            if event["type"] == "exit" {
+                break;
+            }
+        }
+        delete_managed(&f.root(), path, &f.manager, "example.bytes", &f.revision).unwrap();
+    });
 }

@@ -1,7 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
-import { createRelaySession } from "./session";
+import { createRelaySession, UNREAD_BACKSTOP_INTERVAL } from "./session";
 import { readJournal, type ReadJournal } from "./read-state-storage";
 import { keypair, message, metadata, roster, signed } from "./testing";
 
@@ -104,6 +104,11 @@ function setup(count = 1) {
       live.state({ status: "retrying", routes: [] });
       live.state({ status: "connected", routes: [] });
       live.established();
+    },
+    /** The live recovery tick, once a minute on a healthy connection. */
+    recover() {
+      assert(live);
+      live.recover?.();
     },
     holdProfile() {
       holdProfile = true;
@@ -861,6 +866,46 @@ it("transient startup failure recovers on live reconnect without an automatic re
     }),
   );
   expect(h.snapshot().error).toBeUndefined();
+});
+
+it("the recovery tick repairs unread only as a slow backstop after a connection's own repair", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+  try {
+    const h = setup();
+    const answer = h.query.getMockImplementation();
+    assert(answer);
+    // The reconnect's roster read keeps the joined channel.
+    h.query.mockImplementation(async (filters, signal) =>
+      filters[0]?.kinds?.includes(39002)
+        ? [
+            roster(h.relay, "other", [h.viewer.pubkey], 10),
+            metadata(h.relay, "other", "other", 10),
+          ]
+        : answer(filters, signal),
+    );
+    await h.session.unread.ensure();
+    const evidence = () => h.trace.filter(({ kind }) => kind === 9).length;
+    const before = evidence();
+    h.reconnect();
+    await vi.waitFor(() => expect(evidence()).toBe(before + 1));
+    // The fake clock still runs; the repair was asked at or before this.
+    const repaired = Date.now();
+    // A healthy minute: the live stream carried every unread change.
+    for (let minute = 1; minute < 15; minute++) {
+      vi.setSystemTime(repaired + minute * 60_000 - 1000);
+      h.recover();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(evidence()).toBe(before + 1);
+    vi.setSystemTime(repaired + UNREAD_BACKSTOP_INTERVAL);
+    h.recover();
+    await vi.waitFor(() => expect(evidence()).toBe(before + 2));
+    h.recover();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(evidence()).toBe(before + 2);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("capacity failure stops batching and remains visible rather than becoming success", async () => {

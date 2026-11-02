@@ -974,7 +974,12 @@ evidence. The roster hint starts a full channel-list read only when the last
 one is still owed or failed, or when no full read has completed for 15 minutes
 (`ROSTER_BACKSTOP_INTERVAL`). Membership notices carry joins and removals live.
 The read also covers changes with no notice: a channel delete, a moderation
-kick or DM, and a dropped frame. It does not renew singleton previews or add
+kick or DM, and a dropped frame. The unread hint runs at most every 15 minutes
+(`UNREAD_BACKSTOP_INTERVAL`), counted from that owner's last repair, which each
+connection's first establishment also asks for: the live stream carries every
+unread change, and this backstop only repairs what it lost with no signal (a
+channel the relay pruned from a batch, or a dropped frame). It does not renew
+singleton previews or add
 per-channel background history reads. When the socket
 delivered no frame for a whole interval, the timer also sends one empty probe
 REQ; if no frame arrives within the setup timeout, the socket is replaced through

@@ -1615,6 +1615,10 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
     establish(true, true);
     expect(covered(await drain())).toEqual(none);
     ready();
+    // A cut report later on the same connection still reads.
+    establish(false, false);
+    expect(covered(await drain())).toEqual(once);
+    ready();
     stop();
   } finally {
     owner.dispose();

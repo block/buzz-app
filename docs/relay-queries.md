@@ -646,9 +646,10 @@ profiles replay, statuses and the emoji catalog are not read again; after a
 continuous membership replay, the read-state markers and the reminders list are
 not read again. Each owner returns to the state the drop interrupted once the
 replay is in, and reads again when that state was incomplete, failed, or still
-loading. A cut replay, no cursor, a route that fails before it establishes, or a
-host that reports no route keeps the earlier reads, once per connection. The
-unread repair still runs on each connection.
+loading. A cut replay or no cursor keeps the earlier reads, even after an earlier
+report on the same connection; a route that fails before it establishes, or a
+host that reports no route, keeps them once per connection. The unread repair
+still runs on each connection.
 
 `session.messages.send(channelId, text)`, `.reply(channelId, resolvedRootId, text)`,
 `.edit(messageId, text)` and `.retry(id)`

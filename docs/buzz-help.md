@@ -58,6 +58,8 @@ that app. Protected agents cannot use this connection. Keep Buzz open.
 Use **Settings → External apps → Revoke access** to stop it. Changing community
 or identity also ends access. If a connection ends, start setup in the external
 app again. Never put connection credentials in a chat or file.
+An app can discover tools that need more access. Start its access request and
+approve the requested scopes in Buzz. After approval, make the tool call again.
 
 ## Conversations and communities
 

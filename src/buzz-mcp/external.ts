@@ -3,46 +3,60 @@ import { respond } from "./rpc";
 import { TOOLS } from "./tools";
 import type { ExternalScope } from "../features/agents/external-connection";
 
-const fields: Readonly<Record<string, readonly string[]>> = {
-  channel_list: ["q", "all", "types"],
-  channel_get: ["channel"],
-  read: [
-    "channel",
-    "thread",
-    "q",
-    "author",
-    "since",
-    "before",
-    "before_id",
-    "limit",
-  ],
-  send: ["channel", "text", "reply", "mentions", "audience"],
-  reply_in_subthread: ["parent", "text", "mentions", "audience"],
+type Policy = Readonly<{
+  scope: ExternalScope;
+  fields: readonly string[];
+  required?: readonly string[];
+}>;
+const supportedScopes: readonly ExternalScope[] = ["read", "post"];
+const policies: Readonly<Record<string, Policy>> = {
+  channel_list: { scope: "read", fields: ["q", "all", "types"] },
+  channel_get: { scope: "read", fields: ["channel"], required: ["channel"] },
+  read: {
+    scope: "read",
+    fields: [
+      "channel",
+      "thread",
+      "q",
+      "author",
+      "since",
+      "before",
+      "before_id",
+      "limit",
+    ],
+  },
+  send: {
+    scope: "post",
+    fields: ["channel", "text", "reply", "mentions", "audience"],
+    required: ["channel", "text", "audience"],
+  },
+  reply_in_subthread: {
+    scope: "post",
+    fields: ["parent", "text", "mentions", "audience"],
+    required: ["parent", "text", "audience"],
+  },
 };
-const required: Readonly<Record<string, readonly string[]>> = {
-  channel_get: ["channel"],
-  send: ["channel", "text", "audience"],
-  reply_in_subthread: ["parent", "text", "audience"],
-};
-const tools = TOOLS.filter((tool) => Object.hasOwn(fields, tool.name)).map(
-  (tool) => ({
-    ...tool,
-    inputSchema: {
-      ...tool.inputSchema,
-      properties: Object.fromEntries(
-        Object.entries(tool.inputSchema.properties).filter(([name]) =>
-          fields[tool.name]?.includes(name),
+const tools = TOOLS.filter((tool) => Object.hasOwn(policies, tool.name)).map(
+  (tool) => {
+    const policy = policies[tool.name] as Policy;
+    return {
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: Object.fromEntries(
+          Object.entries(tool.inputSchema.properties).filter(([name]) =>
+            policy.fields.includes(name),
+          ),
         ),
-      ),
-      ...(required[tool.name] ? { required: required[tool.name] } : {}),
-      ...(tool.name === "read"
-        ? { anyOf: [{ required: ["channel"] }, { required: ["thread"] }] }
-        : {}),
-    },
-    annotations: {
-      readOnlyHint: tool.name !== "send" && tool.name !== "reply_in_subthread",
-    },
-  }),
+        ...(policy.required ? { required: policy.required } : {}),
+        ...(tool.name === "read"
+          ? { anyOf: [{ required: ["channel"] }, { required: ["thread"] }] }
+          : {}),
+      },
+      annotations: { readOnlyHint: policy.scope === "read" },
+      _meta: { "buzz/requiredScopes": [policy.scope] },
+    };
+  },
 );
 
 function validate(
@@ -102,17 +116,47 @@ export async function respondExternal(
       };
     connected();
   }
-  const allowed = tools.filter((tool) =>
-    scopes.includes(tool.annotations.readOnlyHint ? "read" : "post"),
-  );
-  if (method === "tools/list") return result({ tools: allowed });
+  if (method === "tools/list") {
+    if (params.cursor !== undefined)
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32602, message: "Tool cursors are not supported." },
+      };
+    return result({
+      tools,
+      _meta: {
+        "buzz/grantedScopes": supportedScopes.filter((scope) =>
+          scopes.includes(scope),
+        ),
+        "buzz/supportedScopes": supportedScopes,
+      },
+    });
+  }
   if (method === "tools/call") {
     try {
-      const tool = allowed.find((tool) => tool.name === params.name);
+      const tool = tools.find((tool) => tool.name === params.name);
       if (!tool)
         throw new Error(
           "This tool is not available through the external connection.",
         );
+      const policy = policies[tool.name] as Policy;
+      if (!scopes.includes(policy.scope))
+        return result({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Additional Buzz access is required. Request authorization, then call this tool again.",
+            },
+          ],
+          _meta: {
+            "buzz/error": {
+              code: "authorization_required",
+              required_scopes: [policy.scope],
+            },
+          },
+        });
       const args = params.arguments ?? {};
       if (!args || typeof args !== "object" || Array.isArray(args))
         throw new Error("arguments must be an object.");
@@ -123,7 +167,7 @@ export async function respondExternal(
           throw new Error(`${name} cannot be used with ${tool.name}.`);
         validate(value, schema, name);
       }
-      for (const name of required[tool.name] ?? [])
+      for (const name of policy.required ?? [])
         if (typeof values[name] !== "string" || !values[name].trim())
           throw new Error(`${name} is required.`);
       if (tool.name === "read" && !values.channel && !values.thread)

@@ -202,7 +202,6 @@ export function createExternalApps() {
         void result.closed.then(() => {
           if (controller !== attempt) return;
           attempt.abort();
-          controller = undefined;
           server = undefined;
           update({ ...state, grant: { ...grant, phase: "ended" } });
         });

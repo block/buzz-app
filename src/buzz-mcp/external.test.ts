@@ -78,6 +78,13 @@ it("lists the restricted schemas and negotiates only the external protocol", asy
   expect(
     await respondExternal(
       client,
+      { id: 3, method: "tools/list", params: { cursor: "next" } },
+      connected,
+    ),
+  ).toHaveProperty("error.code", -32602);
+  expect(
+    await respondExternal(
+      client,
       { method: "notifications/initialized" },
       connected,
     ),
@@ -184,5 +191,45 @@ it("enforces read-only scope even when a caller asks for a post tool", async () 
     "result.tools",
     expect.arrayContaining([expect.objectContaining({ name: "read" })]),
   );
-  expect(JSON.stringify(list)).not.toContain('"name":"send"');
+  expect(list).toHaveProperty("result._meta", {
+    "buzz/grantedScopes": ["read"],
+    "buzz/supportedScopes": ["read", "post"],
+  });
+  expect(list).toHaveProperty(
+    "result.tools",
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: "send",
+        _meta: { "buzz/requiredScopes": ["post"] },
+      }),
+    ]),
+  );
+  expect(call).toHaveProperty("result._meta.buzz/error", {
+    code: "authorization_required",
+    required_scopes: ["post"],
+  });
+  expect(publish).not.toHaveBeenCalled();
+  const granted = ["read", "post"] as const;
+  const explicit = await respondExternal(
+    client,
+    {
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: {
+          channel: "chan",
+          text: "After approval",
+          audience: "everyone",
+        },
+      },
+    },
+    () => {},
+    granted,
+  );
+  expect(explicit).toHaveProperty(
+    "result.content.0.text",
+    `sent ${"d".repeat(64)}`,
+  );
+  expect(publish).toHaveBeenCalledOnce();
 });

@@ -92,7 +92,20 @@ identity change, or the end of the owning agent runtime, plugin, or app also
 stops it. Start setup again in the external app after a connection ends.
 
 The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
-allows `send` and `reply_in_subthread`. The shared schemas apply with explicit
+allows `send` and `reply_in_subthread`. Buzz classifies each built-in tool through
+its trusted external-access policy. Unclassified tools cannot run. Runtime plugin
+tools cannot enroll in this policy.
+
+`tools/list` returns all classified tools in one page. It rejects a supplied
+`cursor`. Each tool has `_meta["buzz/requiredScopes"]`. The list result has
+`_meta["buzz/grantedScopes"]` and `_meta["buzz/supportedScopes"]`; the supported
+set is `read` and `post`. Tool discovery does not grant access. Each call checks
+the grant against the trusted policy. A missing scope returns `isError: true`
+and `_meta["buzz/error"]: {code: "authorization_required", required_scopes: [...]}`.
+The external app can start setup again for those scopes. It must not retry the
+call automatically after approval. New classified tools use this same contract.
+
+The shared schemas apply with explicit
 targets: `read` needs `channel` or `thread`, and searches with `q` need `channel`;
 `channel_get` needs `channel`; `send` needs `channel`, `text`, and `audience`;
 `reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept

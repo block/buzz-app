@@ -129,13 +129,19 @@ it("denies and expires requests without creating a grant", async () => {
   expect(deny).toHaveBeenCalledTimes(2);
   expect(connect).not.toHaveBeenCalled();
 });
-it("closes the grant when callback delivery fails", async () => {
-  const server = transport();
-  server.authorize.mockRejectedValueOnce(new Error("callback failed"));
-  const connection = createExternalApps();
-  connection.bind({ connect: async () => server, deny: async () => {} });
-  connection.open(request, "viewer");
-  await connection.approve("test-agent");
-  expect(server.close).toHaveBeenCalled();
-  expect(connection.snapshot().error).toContain("Start setup again");
-});
+it.each([false, true])(
+  "closes the grant when callback delivery fails (closed first: %s)",
+  async (closedFirst) => {
+    const server = transport();
+    server.authorize.mockImplementationOnce(async () => {
+      if (closedFirst) await server.close();
+      throw new Error("callback failed");
+    });
+    const connection = createExternalApps();
+    connection.bind({ connect: async () => server, deny: async () => {} });
+    connection.open(request, "viewer");
+    await connection.approve("test-agent");
+    expect(server.close).toHaveBeenCalled();
+    expect(connection.snapshot().error).toContain("Start setup again");
+  },
+);

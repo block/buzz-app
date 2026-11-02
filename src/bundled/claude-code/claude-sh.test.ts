@@ -155,8 +155,11 @@ const waiting = (pid: number | undefined) =>
 it("waits for a switch in progress, and goes on once its holder is killed", async () => {
   const { dir, step, selected } = await disk(["0.1.0", "0.2.0"], "0.1.0");
   const holder = await hold(dir);
-  const switching = step("use", "0.2.0");
+  // A timeout while `hold` waits lets `afterEach` remove the home first;
+  // `step` then throws, and the holder must still be killed.
+  let switching: ReturnType<typeof step>;
   try {
+    switching = step("use", "0.2.0");
     await waiting(switching.child.pid);
     expect(await selected()).toBe("0.1.0");
   } finally {
@@ -169,8 +172,9 @@ it("waits for a switch in progress, and goes on once its holder is killed", asyn
 it("leaves the release in use when its switch's release is pruned while it waits", async () => {
   const { dir, step, selected } = await disk(["0.1.0", "0.2.0"], "0.2.0");
   const holder = await hold(dir);
-  const switching = step("use", "0.1.0");
+  let switching: ReturnType<typeof step>;
   try {
+    switching = step("use", "0.1.0");
     await waiting(switching.child.pid);
     // The holder's own prune removes the older release this switch named.
     await rm(join(dir, "0.1.0"), { recursive: true });

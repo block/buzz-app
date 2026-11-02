@@ -30,11 +30,37 @@ pub(crate) fn register_defaults() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn registers_continuous_spell_checking_on() {
-        register_defaults();
+    /// Removes the test process's saved value, including when an assertion fails.
+    struct ClearSaved;
 
+    impl ClearSaved {
+        fn new() -> Self {
+            Self.clear();
+            Self
+        }
+
+        fn clear(&self) {
+            NSUserDefaults::standardUserDefaults()
+                .removeObjectForKey(ns_string!(CONTINUOUS_SPELL_CHECKING));
+        }
+    }
+
+    impl Drop for ClearSaved {
+        fn drop(&mut self) {
+            self.clear();
+        }
+    }
+
+    // One test, because both phases share the process-wide defaults.
+    #[test]
+    fn registered_default_is_on_and_a_saved_choice_wins() {
+        let _saved = ClearSaved::new();
+        register_defaults();
         let defaults = NSUserDefaults::standardUserDefaults();
-        assert!(defaults.boolForKey(ns_string!(CONTINUOUS_SPELL_CHECKING)));
+        let key = ns_string!(CONTINUOUS_SPELL_CHECKING);
+        assert!(defaults.boolForKey(key), "unset should read as on");
+
+        defaults.setBool_forKey(false, key);
+        assert!(!defaults.boolForKey(key), "a saved off should win");
     }
 }

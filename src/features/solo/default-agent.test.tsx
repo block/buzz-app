@@ -610,6 +610,12 @@ it("ignores an older read failure after a newer choice and preserves it through 
   render(<Selection />);
   await act(() => chooseDefaultAgent(session, "stale-failure", "a".repeat(64)));
   await act(async () => first.reject(new Error("old read failed")));
+  account.write.mockRejectedValueOnce(new Error("replacement failed"));
+  await act(async () => {
+    await expect(
+      chooseDefaultAgent(session, "stale-failure", "b".repeat(64)),
+    ).rejects.toThrow("couldn't be saved");
+  });
   expect(screen.getByLabelText("agent")).toHaveTextContent("a".repeat(64));
   expect(screen.getByLabelText("error")).toHaveTextContent("none");
   await act(async () => screen.getByRole("button", { name: "Retry" }).click());
@@ -617,6 +623,39 @@ it("ignores an older read failure after a newer choice and preserves it through 
   expect(screen.getByLabelText("agent")).toHaveTextContent("a".repeat(64));
   expect(screen.getByLabelText("error")).toHaveTextContent("none");
 });
+
+it.each(["a".repeat(64), undefined])(
+  "keeps the last confirmed Bestie after a rejected replacement (initial %s)",
+  async (initial) => {
+    const { account, session } = accountSession(initial);
+    function Selection() {
+      const state = useSavedAgentState(session, "account");
+      return (
+        <>
+          <output aria-label="read">{String(state.read)}</output>
+          <output aria-label="agent">{state.agent ?? "none"}</output>
+          <output aria-label="error">{state.error ?? "none"}</output>
+        </>
+      );
+    }
+    const view = render(<Selection />);
+    await act(async () => account.resolve());
+    await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
+    account.write.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => {
+      await expect(
+        chooseDefaultAgent(session, "account", "c".repeat(64)),
+      ).rejects.toThrow("couldn't be saved");
+    });
+    expect(account.saved()).toBe("b".repeat(64));
+    expect(screen.getByLabelText("read")).toHaveTextContent("true");
+    expect(screen.getByLabelText("agent")).toHaveTextContent("b".repeat(64));
+    expect(screen.getByLabelText("error")).toHaveTextContent("none");
+    view.unmount();
+    render(<Selection />);
+    expect(screen.getByLabelText("agent")).toHaveTextContent("b".repeat(64));
+  },
+);
 
 it("settles a first account read after its attempted choice fails", async () => {
   let resolve!: (value: string | undefined) => void;
@@ -704,6 +743,67 @@ it("recovers a failed first account read after its attempted choice fails", asyn
   expect(screen.getByLabelText("agent")).toHaveTextContent("b".repeat(64));
   expect(screen.getByLabelText("error")).toHaveTextContent("none");
 });
+
+it.each([false, true])(
+  "settles the initial account outcome received before its first write rejects (read fails: %s)",
+  async (readFails) => {
+    let resolveRead!: (value: string | undefined) => void;
+    let rejectRead!: (reason: unknown) => void;
+    let rejectWrite!: (reason: unknown) => void;
+    const read = new Promise<string | undefined>((resolve, reject) => {
+      resolveRead = resolve;
+      rejectRead = reject;
+    });
+    const mainAgent = {
+      read: vi.fn(() => read),
+      write: vi.fn(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectWrite = reject;
+          }),
+      ),
+    };
+    const session = { mainAgent } as unknown as RelaySession;
+    function Selection() {
+      const state = useSavedAgentState(session, "early-read");
+      return (
+        <>
+          <output aria-label="read">{String(state.read)}</output>
+          <output aria-label="agent">{state.agent ?? "none"}</output>
+          <output aria-label="error">{state.error ?? "none"}</output>
+        </>
+      );
+    }
+    render(<Selection />);
+    const choosing = chooseDefaultAgent(session, "early-read", "a".repeat(64));
+    const rejected = expect(choosing).rejects.toThrow("couldn't be saved");
+    try {
+      expect(mainAgent.write).toHaveBeenCalledOnce();
+      await act(async () => {
+        if (readFails) rejectRead(new Error("account offline"));
+        else resolveRead("b".repeat(64));
+      });
+      expect(screen.getByLabelText("read")).toHaveTextContent("false");
+      await act(async () => {
+        rejectWrite(new Error("write failed"));
+        await rejected;
+      });
+      expect(screen.getByLabelText("read")).toHaveTextContent("true");
+      expect(screen.getByLabelText("agent")).toHaveTextContent(
+        readFails ? "none" : "b".repeat(64),
+      );
+      expect(screen.getByLabelText("error")).toHaveTextContent(
+        readFails ? "account offline" : "none",
+      );
+    } finally {
+      await act(async () => {
+        resolveRead(undefined);
+        rejectWrite(new Error("cleanup"));
+        await rejected;
+      });
+    }
+  },
+);
 
 it("a choice made while the account is read wins, even when already cached", async () => {
   const { account, session, Selection } = accountSession("b".repeat(64));

@@ -89,7 +89,8 @@ export async function chooseDefaultAgent(
   try {
     await account.write(pubkey);
   } catch {
-    if (revision(account) === attempt) {
+    // Initial-read recovery must not replace an already settled account choice.
+    if (revision(account) === attempt && !saved.has(account)) {
       if (readValues.has(account)) {
         remember(account, readValues.get(account));
       } else if (readFailures.has(account)) {

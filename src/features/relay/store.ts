@@ -4416,7 +4416,7 @@ export function createChannelStore(
       if (head) heads.set(channelId, { ...head, cached: true });
       state.kept = undefined;
       state.keptLive = undefined;
-      setWindow(state, { freshness: "verified" });
+      setWindow(state, { freshness: "verified", error: undefined });
       return true;
     },
     retainedChannels: () => [...windows.keys()],

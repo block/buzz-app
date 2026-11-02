@@ -52,10 +52,10 @@ the interface unless an available tool actually supports that action.
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
 - **Communities** have their own channels, people, and agents. Switching
-  communities changes the available context. Switching back reopens the page
-  you last used in that community, and a channel reopens where you stopped
-  reading, or at the latest message once you had caught up. You and the person
-  asking may have different channel access. A link alone never grants access.
+  communities changes the available context. A channel reopens where you
+  stopped reading, or at the latest message once you had caught up. You and
+  the person asking may have different channel access. A link alone never
+  grants access.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

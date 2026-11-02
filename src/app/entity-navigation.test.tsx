@@ -1113,56 +1113,6 @@ it("opens a community-scoped page from another community, but not after leaving 
   expect(left.communities.snapshot().selected).toBe(other);
 });
 
-it("switching back to a community reopens its last page, or Messages when that page is gone", async () => {
-  const other = "https://other.example";
-  const current = legacyPageFixture([
-    { id: origin, name: "Fixture community" },
-    { id: other, name: "Other community" },
-  ]);
-  const opened = (pluginId: string, communityOrigin: string) =>
-    waitFor(() =>
-      expect(current.navigation.snapshot()).toMatchObject({
-        status: "opened",
-        entry: {
-          target: { kind: "page", pluginId, scope: { communityOrigin } },
-        },
-      }),
-    );
-  const switchTo = async (name: string) => {
-    await userEvent.click(
-      screen.getByRole("button", { name: /^Community switcher:/ }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: `Switch to ${name}` }),
-    );
-  };
-  // The sidebar remounts once its connection is scoped; click the live row.
-  await waitFor(() => expect(current.relay.snapshot().status).toBe("ready"));
-  await userEvent.click(
-    within(await screen.findByRole("navigation", { name: "Pages" })).getByRole(
-      "button",
-      { name: "Inbox" },
-    ),
-  );
-  await opened("buzz.inbox", origin);
-  // A community's first visit opens Messages.
-  await switchTo("Other community");
-  await opened("buzz.channels", other);
-  await switchTo("Fixture community");
-  await opened("buzz.inbox", origin);
-  await switchTo("Other community");
-  await opened("buzz.channels", other);
-  // A remembered page that is no longer registered falls back to Messages.
-  await act(() => current.plugins.change("disable", "buzz.inbox"));
-  await waitFor(() =>
-    expect(current.pages.snapshot().map((page) => page.key)).not.toContain(
-      "buzz.inbox/inbox",
-    ),
-  );
-  await switchTo("Fixture community");
-  await opened("buzz.channels", origin);
-});
-
 it("restores legacy placeholder history but does not normalize unknown versions or bypass access and plugin gates", async () => {
   const old: OpenTarget = {
     version: 1,

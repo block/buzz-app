@@ -55,7 +55,7 @@ import {
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
-  SEARCH_MIN_CHARS,
+  MESSAGE_SEARCH_MIN_CHARS,
   searchDebounce,
   searchable,
 } from "../../shared/search-debounce";
@@ -1043,7 +1043,7 @@ export function SearchResults({
           ? directoryPending
             ? undefined
             : search.tooShort
-              ? `Type at least ${SEARCH_MIN_CHARS} characters to search messages.`
+              ? `Type at least ${MESSAGE_SEARCH_MIN_CHARS} characters to search messages.`
               : "No matching messages in accessible conversations."
           : scopedChannelId
             ? "Type to search messages in this conversation."

@@ -32,8 +32,46 @@ import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { completionResult, matchCompletion } from "./completion";
 import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 
 const RETRY = Symbol("retry-completion");
+
+/** The editor retains focus, so keyboard selection must open its own hint. */
+function EmojiCompletionName({
+  label,
+  selected,
+  keyboardSelected,
+}: {
+  label: string;
+  selected: boolean;
+  keyboardSelected: boolean;
+}) {
+  const name = useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  useLayoutEffect(() => {
+    const element = name.current;
+    if (!element) return;
+    const measure = () =>
+      setTruncated(element.scrollWidth > element.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <Tooltip
+      content={label}
+      open={truncated && selected && (keyboardSelected || hovered)}
+      onOpenChange={setHovered}
+      follow={keyboardSelected ? "trigger" : "pointer"}
+    >
+      <span ref={name} className={styles.name} tabIndex={-1}>
+        {label}
+      </span>
+    </Tooltip>
+  );
+}
 
 /** What the popup shows, owned by the host across the per-query remount of
  * `OwnedCompletion`. A keystroke that continues an open query (same provider,
@@ -245,6 +283,14 @@ function OwnedCompletion({
   const latest = useRef<CompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
+  const [keyboardSelection, setKeyboardSelection] = useState<string>();
+  useEffect(() => {
+    const document = input.current?.ownerDocument;
+    if (!document || keyboardSelection === undefined) return;
+    const pointer = () => setKeyboardSelection(undefined);
+    document.addEventListener("pointermove", pointer, { once: true });
+    return () => document.removeEventListener("pointermove", pointer);
+  }, [input, keyboardSelection]);
   const revealSelection = useRef(false);
   const live = useRef(false);
   const current = useRef({ editor, replace });
@@ -413,6 +459,7 @@ function OwnedCompletion({
         const next =
           (selectedIndex + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
         revealSelection.current = true;
+        if (compact) setKeyboardSelection(items[next]?.id);
         setSelected(next === items.length ? RETRY : items[next]?.id);
         return true;
       }
@@ -490,6 +537,7 @@ function OwnedCompletion({
                     compact || named
                       ? () => {
                           revealSelection.current = false;
+                          setKeyboardSelection(undefined);
                           setSelected(item.id);
                         }
                       : undefined
@@ -503,7 +551,14 @@ function OwnedCompletion({
                     </span>
                   )}
                   <span className={styles.label} data-completion-label>
-                    {named ? (
+                    {compact ? (
+                      <EmojiCompletionName
+                        key={item.label}
+                        label={item.label}
+                        selected={i === selectedIndex}
+                        keyboardSelected={keyboardSelection === item.id}
+                      />
+                    ) : named ? (
                       <span className={styles.name}>{item.label}</span>
                     ) : (
                       item.label

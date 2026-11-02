@@ -97,6 +97,11 @@ const sessions = ["a", "b"].map((community) => {
                       "very-long-community-emoji-name-that-does-not-fit",
                       `${origin}/media/long.png`,
                     ],
+                    [
+                      "emoji",
+                      "very-long-community-emoji-name-that-does-not-fit-either",
+                      `${origin}/media/longer.png`,
+                    ],
                   ]
                 : []),
             ]),

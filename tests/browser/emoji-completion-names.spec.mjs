@@ -1,0 +1,154 @@
+import { test, expect } from "./source-fixture.mjs";
+import { watchPageErrors } from "./page-errors.mjs";
+
+// Real overflow, tooltip placement and retained editor focus need a browser.
+// Reuse the emoji fixture's real composer/provider with only its small catalog.
+test("truncated emoji names reveal their full value without taking composer focus", async ({
+  page,
+}, testInfo) => {
+  const errors = watchPageErrors(page);
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="10" fill="purple"/></svg>',
+    }),
+  );
+  await page.goto("/tests/fixtures/emoji.html");
+  const input = page.getByRole("textbox", { name: "Message #general" });
+  const firstName = ":very-long-community-emoji-name-that-does-not-fit:";
+  const secondName =
+    ":very-long-community-emoji-name-that-does-not-fit-either:";
+  const choices = page.getByRole("option");
+  const tooltip = page.getByRole("tooltip").and(page.locator("[data-open]"));
+
+  for (const [mode, width, scale] of [
+    ["light", 1280, 1],
+    ["dark", 1280, 1],
+    ["light", 390, 1.5],
+    ["dark", 390, 1.5],
+  ]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.evaluate(
+      ({ mode, scale }) => {
+        document.documentElement.dataset.colorMode = mode;
+        document.documentElement.style.setProperty("--buzz-text-scale", scale);
+      },
+      { mode, scale },
+    );
+    await page.mouse.move(0, 0);
+    await input.fill(":very-long");
+    await expect(choices).toHaveCount(2);
+    const label = choices.first().locator("[data-completion-label] > span");
+    await expect(label).toHaveCSS("text-overflow", "ellipsis");
+    await expect(label).toHaveCSS("white-space", "nowrap");
+    await expect
+      .poll(() => label.evaluate((el) => el.scrollWidth > el.clientWidth))
+      .toBe(true);
+    await label.hover();
+    await expect(tooltip).toHaveText(firstName);
+    await expect(tooltip).toHaveCSS("opacity", "1");
+    await expect(input).toBeFocused();
+    await expect
+      .poll(() =>
+        tooltip.evaluate((el) => {
+          const bounds = el.getBoundingClientRect();
+          return (
+            bounds.left >= 0 &&
+            bounds.right <= innerWidth &&
+            bounds.top >= 0 &&
+            bounds.bottom <= innerHeight &&
+            el.scrollWidth <= el.clientWidth
+          );
+        }),
+      )
+      .toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`emoji-name-${mode}-${width}.png`),
+    });
+    await input.press("Escape");
+    await expect(page.getByRole("listbox")).toHaveCount(0);
+    await expect(tooltip).toHaveCount(0);
+    await expect(input).toHaveJSProperty("value", ":very-long");
+    await expect(input).toBeFocused();
+  }
+
+  await page.mouse.move(0, 0);
+  await input.fill(":very-long");
+  await expect(choices).toHaveCount(2);
+  await input.press("ArrowDown");
+  await expect(choices.nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect(tooltip).toHaveText(secondName);
+  await expect(input).toBeFocused();
+  await page.mouse.move(1, 1);
+  await expect(tooltip).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await input.press("ArrowUp");
+  await expect(tooltip).toHaveText(firstName);
+  await input.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(tooltip).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await input.fill(":very-long");
+  await expect(choices).toHaveCount(2);
+  await input.press("ArrowUp");
+  await expect(tooltip).toHaveText(secondName);
+  await input.press("ArrowUp");
+  await expect(tooltip).toHaveText(firstName);
+  await input.press("Tab");
+  await expect(input).toHaveJSProperty("value", firstName);
+  await expect(tooltip).toHaveCount(0);
+  await expect(input).toBeFocused();
+
+  await input.fill(":very-long");
+  await expect(choices).toHaveCount(2);
+  await input.press("ArrowDown");
+  await expect(tooltip).toHaveText(secondName);
+  await input.press("Enter");
+  await expect(input).toHaveJSProperty("value", secondName);
+  await expect(tooltip).toHaveCount(0);
+
+  await input.fill(":very-long");
+  await choices.first().locator("[data-completion-label]").hover();
+  await expect(tooltip).toHaveText(firstName);
+  await choices.nth(1).click();
+  await expect(input).toHaveJSProperty("value", secondName);
+  await expect(tooltip).toHaveCount(0);
+  await expect(input).toBeFocused();
+
+  // Fully visible names keep their label without an unnecessary hint.
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+  );
+  await input.fill(":aonly");
+  const shortChoice = page.getByRole("option", {
+    name: ":aonly:",
+    exact: true,
+  });
+  await expect(shortChoice).toBeVisible();
+  const short = shortChoice.locator("[data-completion-label] > span");
+  await expect
+    .poll(() => short.evaluate((el) => el.scrollWidth <= el.clientWidth))
+    .toBe(true);
+  await short.hover();
+  await input.press("ArrowDown");
+  await input.press("ArrowUp");
+  await expect(shortChoice).toHaveAttribute("aria-selected", "true");
+  await expect(tooltip).toHaveCount(0);
+  // Resize the same mounted query to exercise overflow updates both ways.
+  const selectedId = await shortChoice.getAttribute("id");
+  await page.mouse.move(0, 0);
+  await input.press("ArrowDown");
+  await input.press("ArrowUp");
+  await page.setViewportSize({ width: 200, height: 844 });
+  await expect(tooltip).toHaveText(":aonly:");
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await expect
+    .poll(() => short.evaluate((el) => el.scrollWidth <= el.clientWidth))
+    .toBe(true);
+  await expect(tooltip).toHaveCount(0);
+  await expect(shortChoice).toHaveAttribute("id", selectedId);
+  await input.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  expect(errors.unexplained()).toEqual([]);
+});

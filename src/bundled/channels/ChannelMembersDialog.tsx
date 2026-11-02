@@ -2044,6 +2044,7 @@ export function ChannelMembersDialog({
                             className="text-caption text-subtle"
                             aria-live="polite"
                           >
+                            <span className="sr-only">Page </span>
                             {page + 1} of {pageCount}
                           </span>
                           <Button

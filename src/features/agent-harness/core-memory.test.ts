@@ -1,6 +1,12 @@
 import { expect, it, vi } from "vitest";
 import type { MemoryEntry, MemoryListing } from "../agents/memory";
-import { MemoryReads, coreMemorySection, coreOf } from "./core-memory";
+import {
+  MemoryReads,
+  NOTE_LIMIT,
+  coreMemorySection,
+  coreOf,
+  recentNotesSection,
+} from "./core-memory";
 
 const agent = "a".repeat(64);
 const core: MemoryEntry = {
@@ -116,4 +122,74 @@ it("shows core memory, prompts for one when there is none, and omits unknown", (
   expect(coreMemorySection(null)).toContain("No core memory found.");
   expect(coreMemorySection(undefined)).toBe("");
   expect(coreMemorySection("  ")).toBe("");
+});
+
+it("shows yesterday's and today's notes, oldest first, by this device's dates", async () => {
+  const note = (slug: string, body: string) => ({ ...core, slug, body });
+  const read = vi.fn(async (slug: string) =>
+    listing(
+      slug === "mem/notes/2026-02-28"
+        ? [note(slug, "Ada likes tea.\n")]
+        : slug === "mem/notes/2026-03-01"
+          ? [note(slug, "Ada moved to Leeds.")]
+          : [],
+    ),
+  );
+  // Just after midnight on the 1st: yesterday is the last day of February.
+  const now = new Date(2026, 2, 1, 0, 5);
+  expect(await recentNotesSection(read, now)).toBe(
+    [
+      "<recent-notes>",
+      '<note slug="mem/notes/2026-02-28">',
+      "Ada likes tea.",
+      "</note>",
+      '<note slug="mem/notes/2026-03-01">',
+      "Ada moved to Leeds.",
+      "</note>",
+      "</recent-notes>",
+    ].join("\n"),
+  );
+  expect(read.mock.calls.map(([slug]) => slug)).toEqual([
+    "mem/notes/2026-02-28",
+    "mem/notes/2026-03-01",
+  ]);
+});
+
+it("adds nothing for a missing, blank or unread note", async () => {
+  const now = new Date(2026, 9, 30, 12);
+  expect(await recentNotesSection(async () => listing([]), now)).toBe("");
+  expect(await recentNotesSection(async () => listing([], true), now)).toBe("");
+  expect(
+    await recentNotesSection(
+      async (slug) => listing([{ ...core, slug, body: " \n" }]),
+      now,
+    ),
+  ).toBe("");
+  expect(
+    await recentNotesSection(async () => {
+      throw new Error("Buzz is not connected");
+    }, now),
+  ).toBe("");
+  // One read failing still shows the other note.
+  expect(
+    await recentNotesSection(async (slug) => {
+      if (slug.endsWith("29")) throw new Error("timed out");
+      return listing([{ ...core, slug, body: "Today." }]);
+    }, now),
+  ).toContain('<note slug="mem/notes/2026-10-30">\nToday.\n</note>');
+});
+
+it("keeps the newest part of a long note, cut where a character starts", async () => {
+  // "é" is two bytes, so the limit falls inside one.
+  const body = `${"old\n".repeat(10)}${"é".repeat(NOTE_LIMIT / 2)}x`;
+  const section = await recentNotesSection(
+    async (slug) =>
+      slug.endsWith("30") ? listing([{ ...core, slug, body }]) : listing([]),
+    new Date(2026, 9, 30, 12),
+  );
+  const kept = section.split("\n")[3] ?? "";
+  expect(section.split("\n")[2]).toBe("[older part of this note left out]");
+  expect(kept).toBe(`${"é".repeat(NOTE_LIMIT / 2 - 1)}x`);
+  expect(new TextEncoder().encode(kept).length).toBeLessThanOrEqual(NOTE_LIMIT);
+  expect(section).not.toContain("old\n");
 });

@@ -106,6 +106,17 @@ export function App({ services }: { services: AppServices }) {
 }
 
 function ConnectedApp({ services }: { services: AppServices }) {
+  return (
+    <ToastProvider
+      portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
+    >
+      <AgentCompletionNotifications services={services} />
+      <ConnectedAppContent services={services} />
+    </ToastProvider>
+  );
+}
+
+function ConnectedAppContent({ services }: { services: AppServices }) {
   const { plugins } = services;
   const [workspaceElement, setWorkspaceElement] =
     useState<HTMLDivElement | null>(null);
@@ -521,11 +532,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
     </div>
   );
   return (
-    <ToastProvider
-      portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
-    >
+    <>
       <SignInEnding identity={services.federatedIdentity} />
-      <AgentCompletionNotifications services={services} />
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell
@@ -781,6 +789,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
           </Dialog>
         </AgentsContext.Provider>
       </ChannelNavigationProvider>
-    </ToastProvider>
+    </>
   );
 }

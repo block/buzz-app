@@ -1563,15 +1563,19 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
       visibility: "private",
       ...args,
     });
-  const shape = "A Solo chat is a private stream without about.";
+  const shape = "A Solo chat is a private stream without about or template.";
   await expect(create({ solo: true, visibility: "open" })).rejects.toThrow(
     shape,
   );
   await expect(create({ solo: true, type: "forum" })).rejects.toThrow(shape);
   await expect(create({ solo: true, about: "notes" })).rejects.toThrow(shape);
-  await expect(create({ members: [alice] })).rejects.toThrow(
-    "members is for Solo chats.",
+  await expect(create({ solo: true, template: "Triage" })).rejects.toThrow(
+    shape,
   );
+  for (const members of [[alice], ["alice"], alice])
+    await expect(create({ members })).rejects.toThrow(
+      "members is for Solo chats.",
+    );
   await expect(create({ solo: true, members: ["alice"] })).rejects.toThrow(
     "Not a pubkey: alice",
   );

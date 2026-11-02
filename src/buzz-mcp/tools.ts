@@ -1458,13 +1458,22 @@ class Tools {
     if (args.solo !== undefined && typeof args.solo !== "boolean")
       throw new Error("solo must be true or false.");
     const solo = args.solo === true;
+    if (!solo && args.members !== undefined)
+      throw new Error("members is for Solo chats.");
     const members = keys(args, "members").filter(
       (key) => key !== this.client.pubkey,
     );
-    if (!solo && args.members !== undefined)
-      throw new Error("members is for Solo chats.");
-    if (solo && (args.visibility !== "private" || type !== "stream" || about))
-      throw new Error("A Solo chat is a private stream without about.");
+    // Its members are only the ones named, so no template adds agents.
+    if (
+      solo &&
+      (args.visibility !== "private" ||
+        type !== "stream" ||
+        about ||
+        args.template !== undefined)
+    )
+      throw new Error(
+        "A Solo chat is a private stream without about or template.",
+      );
     if (members.length > 32)
       throw new Error("A Solo chat starts with at most 32 members.");
     // Found first, so a wrong name creates nothing.

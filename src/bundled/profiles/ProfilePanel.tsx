@@ -7,9 +7,10 @@ import {
   usePanelTabTitle,
 } from "../../features/panels/PanelWorkspace";
 import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
-import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import { StatusDisplay } from "../../features/user-status/StatusDisplay";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
+import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { ProfilePublicMetadata } from "./ProfilePublicMetadata";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
@@ -26,6 +27,7 @@ import {
 import {
   CheckCircleIcon,
   CopyIcon,
+  PencilSimpleIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
@@ -419,7 +421,10 @@ function ProfileDetails({
     });
   // This panel's session is its community's, so the status saves there.
   const statusEditor = useStatusEditor(session, viewer);
+  // The status line or Set a status, whichever shows, so focus returns to it
+  // or, after a save or clear swaps them, to its replacement.
   const statusButton = useRef<HTMLButtonElement>(null);
+  const userStatus = useUserStatus(session.statuses, pubkey);
   const canSetStatus =
     !!scope && viewer === pubkey && session.statuses.writable;
 
@@ -474,9 +479,28 @@ function ProfileDetails({
                 }
               </p>
             )}
-            <UserStatusDisplay session={session} userId={pubkey} />
+            {canSetStatus && userStatus ? (
+              <button
+                ref={statusButton}
+                type="button"
+                className={styles.statusAction}
+                aria-label="Update status"
+                aria-description={[userStatus.emoji, userStatus.text]
+                  .filter(Boolean)
+                  .join(" ")}
+                aria-haspopup="dialog"
+                onClick={() => statusEditor.open()}
+              >
+                <StatusDisplay session={session} status={userStatus} />
+                <span className={styles.statusPencil} aria-hidden="true">
+                  <PencilSimpleIcon size={14} />
+                </span>
+              </button>
+            ) : (
+              <StatusDisplay session={session} status={userStatus} />
+            )}
           </div>
-          {(canMessage || canEdit || canSetStatus) && (
+          {(canMessage || canEdit || (canSetStatus && !userStatus)) && (
             <div className={hero.actions}>
               {canMessage && (
                 <Button
@@ -497,7 +521,7 @@ function ProfileDetails({
                   Edit profile
                 </Button>
               )}
-              {canSetStatus && (
+              {canSetStatus && !userStatus && (
                 <Button
                   ref={statusButton}
                   size="sm"

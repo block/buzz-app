@@ -98,6 +98,8 @@ function fixture(
 }
 const setStatus = (options?: { hidden: boolean }) =>
   screen.queryByRole("button", { name: "Set a status", ...options });
+const updateStatus = (options?: { hidden: boolean }) =>
+  screen.queryByRole("button", { name: "Update status", ...options });
 const editor = () => screen.queryByRole("dialog", { name: "Set a status" });
 const heroStatus = () =>
   document.querySelector(`.${styles.status}`)?.textContent;
@@ -178,33 +180,41 @@ it("ignores a late status after switching profiles", async () => {
   }
 });
 
-it("offers Set a status only on the viewer's own profile when statuses are writable", async () => {
-  const f = fixture(async () => []);
+it("offers your status editor only on your own profile when statuses are writable", async () => {
+  const other = keypair();
+  const f = fixture(async (filter) =>
+    filter.authors?.includes(other.pubkey) ? [status(other, "Away", 2)] : [],
+  );
   const view = render(f.panel(viewer));
   try {
     expect(setStatus()).toBeTruthy();
-    view.rerender(f.panel(keypair()));
+    expect(updateStatus()).toBeNull();
+    view.rerender(f.panel(other));
+    await waitFor(() => expect(heroStatus()).toBe("Away"));
     expect(setStatus()).toBeNull();
+    expect(updateStatus()).toBeNull();
     // No separate agent gate: the viewer === pubkey check hides it here too.
     view.rerender(f.panel(keypair(), true));
     expect(setStatus()).toBeNull();
+    expect(updateStatus()).toBeNull();
   } finally {
     view.unmount();
     f.owner.dispose();
   }
-  const readOnly = fixture(async () => [], { writable: false });
+  const readOnly = fixture(async () => [status(viewer, "Read only", 2)], {
+    writable: false,
+  });
   try {
     render(readOnly.panel(viewer));
-    expect(
-      screen.getByRole("region", { name: "Profile details" }),
-    ).toBeTruthy();
+    await waitFor(() => expect(heroStatus()).toBe("Read only"));
     expect(setStatus()).toBeNull();
+    expect(updateStatus()).toBeNull();
   } finally {
     readOnly.owner.dispose();
   }
 });
 
-it("edits, saves and clears the viewer's status from their profile, returning focus to the button", async () => {
+it("edits, saves and clears your status from the status line, returning focus to the control that shows", async () => {
   const user = userEvent.setup();
   const f = fixture(async () => [
     status(viewer, "Working from home", 2, [["emoji", "🏠"]]),
@@ -212,7 +222,12 @@ it("edits, saves and clears the viewer's status from their profile, returning fo
   try {
     render(f.panel(viewer));
     await waitFor(() => expect(heroStatus()).toBe("🏠 Working from home"));
-    await user.click(setStatus() as HTMLElement);
+    expect(setStatus()).toBeNull();
+    expect(updateStatus()?.getAttribute("aria-description")).toBe(
+      "🏠 Working from home",
+    );
+    expect(updateStatus()?.getAttribute("aria-haspopup")).toBe("dialog");
+    await user.click(updateStatus() as HTMLElement);
     expect(editor()).toBeTruthy();
     expect(screen.getByLabelText("Status message")).toHaveProperty(
       "value",
@@ -220,9 +235,9 @@ it("edits, saves and clears the viewer's status from their profile, returning fo
     );
     await user.keyboard("{Escape}");
     await waitFor(() => expect(editor()).toBeNull());
-    expect(document.activeElement).toBe(setStatus());
+    expect(document.activeElement).toBe(updateStatus());
 
-    await user.click(setStatus() as HTMLElement);
+    await user.click(updateStatus() as HTMLElement);
     fireEvent.change(screen.getByLabelText("Status message"), {
       target: { value: "Design review" },
     });
@@ -239,9 +254,13 @@ it("edits, saves and clears the viewer's status from their profile, returning fo
       ],
     });
     expect(heroStatus()).toBe("🏠 Design review");
-    expect(document.activeElement).toBe(setStatus());
+    expect(updateStatus()?.getAttribute("aria-description")).toBe(
+      "🏠 Design review",
+    );
+    expect(document.activeElement).toBe(updateStatus());
 
-    await user.click(setStatus() as HTMLElement);
+    // Clearing removes the status line, so focus moves to Set a status.
+    await user.click(updateStatus() as HTMLElement);
     await user.click(screen.getByRole("button", { name: "Clear status" }));
     await waitFor(() => expect(editor()).toBeNull());
     expect(f.publish).toHaveBeenCalledTimes(2);
@@ -250,7 +269,21 @@ it("edits, saves and clears the viewer's status from their profile, returning fo
       tags: [["d", "general"]],
     });
     expect(heroStatus()).toBeUndefined();
+    expect(updateStatus()).toBeNull();
     expect(document.activeElement).toBe(setStatus());
+
+    // Setting one swaps back, so focus moves to the status line.
+    await user.click(setStatus() as HTMLElement);
+    expect(screen.getByLabelText("Status message")).toHaveProperty("value", "");
+    fireEvent.change(screen.getByLabelText("Status message"), {
+      target: { value: "Back" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save status" }));
+    await waitFor(() => expect(editor()).toBeNull());
+    expect(f.publish).toHaveBeenCalledTimes(3);
+    expect(heroStatus()).toBe("💬 Back");
+    expect(setStatus()).toBeNull();
+    expect(document.activeElement).toBe(updateStatus());
   } finally {
     f.owner.dispose();
   }
@@ -280,7 +313,7 @@ it("closes the editor when the panel's community or identity changes and saves t
       content: "Elsewhere",
     });
 
-    await user.click(setStatus() as HTMLElement);
+    await user.click(updateStatus() as HTMLElement);
     expect(editor()).toBeTruthy();
     const identity = keypair().pubkey;
     home.show({
@@ -291,6 +324,7 @@ it("closes the editor when the panel's community or identity changes and saves t
     });
     expect(editor()).toBeNull();
     expect(setStatus({ hidden: true })).toBeNull();
+    expect(updateStatus({ hidden: true })).toBeNull();
   } finally {
     home.owner.dispose();
     other.owner.dispose();

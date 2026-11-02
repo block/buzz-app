@@ -165,19 +165,45 @@ test("keyboard hints stay on the active emoji while scrolling under a resting po
   );
   await page.goto("/tests/fixtures/emoji.html?completion-scroll");
   const input = page.getByRole("textbox", { name: "Message #general" });
-  await input.fill(":scrolling-emoji");
+  await input.fill(":scrolling-emoj");
   const list = page.getByRole("listbox", { name: "Emoji suggestions" });
   const choices = list.getByRole("option");
   const tooltip = page.getByRole("tooltip").and(page.locator("[data-open]"));
   await expect(choices).toHaveCount(30);
+  await page.evaluate(() => {
+    document.addEventListener(
+      "pointermove",
+      (event) => {
+        window.restingEmojiPointer = {
+          clientX: event.clientX,
+          clientY: event.clientY,
+        };
+      },
+      { once: true },
+    );
+  });
   await choices.first().locator("[data-completion-label]").hover();
   await expect(tooltip).toHaveText(
     ":scrolling-emoji-with-a-long-common-name-00:",
   );
+  // Continuing the query replaces its owner without any physical pointer move.
+  await input.press("i");
+  await expect(input).toHaveJSProperty("value", ":scrolling-emoji");
+  await expect(choices).toHaveCount(30);
   // Leave the physical pointer over row zero. Arrow keys must own selection
   // even after scrolling moves different rows underneath that pointer.
   for (let index = 1; index <= 20; index++) {
     await input.press("ArrowDown");
+    if (index === 1) {
+      // Linux WebKit emits this same-coordinate event during scroll. Exercise
+      // it explicitly so macOS also detects a regression in input ownership.
+      await choices
+        .nth(8)
+        .dispatchEvent(
+          "pointermove",
+          await page.evaluate(() => window.restingEmojiPointer),
+        );
+    }
     await expect(choices.nth(index)).toHaveAttribute("aria-selected", "true");
     await expect(tooltip).toHaveText(
       `:scrolling-emoji-with-a-long-common-name-${String(index).padStart(2, "0")}:`,

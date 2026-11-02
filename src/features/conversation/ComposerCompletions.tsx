@@ -178,6 +178,22 @@ export function ComposerCompletions({
     registry.snapshot,
   );
   const [display] = useState(createDisplay);
+  // Query owners remount on typing. Keep the last physical position with the
+  // host, recording after row handlers have compared the previous position.
+  const pointerPosition =
+    useRef<Pick<PointerEvent, "clientX" | "clientY">>(undefined);
+  useEffect(() => {
+    const document = input.current?.ownerDocument;
+    if (!document) return;
+    const record = (event: PointerEvent) => {
+      pointerPosition.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+    };
+    document.addEventListener("pointermove", record);
+    return () => document.removeEventListener("pointermove", record);
+  }, [input]);
   const observation = editor.observation;
   // Stale chip ranges cannot classify this caret.
   const match =
@@ -229,6 +245,7 @@ export function ComposerCompletions({
         editor={editor}
         input={input}
         replace={replace}
+        pointerPosition={pointerPosition}
       />
     </ContributionBoundary>
   );
@@ -242,6 +259,7 @@ function OwnedCompletion({
   editor,
   input,
   replace,
+  pointerPosition,
   ...context
 }: CompletionContext & {
   provider: Contribution<ComposerCompletion>;
@@ -251,6 +269,9 @@ function OwnedCompletion({
   observation: ComposerObservation;
   editor: CompletionEditor;
   input: RefObject<ComposerInputElement | null>;
+  pointerPosition: RefObject<
+    Pick<PointerEvent, "clientX" | "clientY"> | undefined
+  >;
   replace(
     edit: CompletionEdit,
     query: CompletionQuery,
@@ -285,13 +306,28 @@ function OwnedCompletion({
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
   const [keyboardSelection, setKeyboardSelection] = useState<string>();
+  const pointerMoved = useCallback(
+    (event: Pick<PointerEvent, "clientX" | "clientY">) => {
+      const previous = pointerPosition.current;
+      return (
+        !previous ||
+        previous.clientX !== event.clientX ||
+        previous.clientY !== event.clientY
+      );
+    },
+    [pointerPosition],
+  );
   useEffect(() => {
     const document = input.current?.ownerDocument;
-    if (!document || keyboardSelection === undefined) return;
-    const pointer = () => setKeyboardSelection(undefined);
-    document.addEventListener("pointermove", pointer, { once: true });
-    return () => document.removeEventListener("pointermove", pointer);
-  }, [input, keyboardSelection]);
+    if (!compact || !document) return;
+    const pointer = (event: PointerEvent) => {
+      if (!pointerMoved(event)) return;
+      setKeyboardSelection(undefined);
+    };
+    // Capture before the host's bubbling listener records this event.
+    document.addEventListener("pointermove", pointer, true);
+    return () => document.removeEventListener("pointermove", pointer, true);
+  }, [compact, input, pointerMoved]);
   const revealSelection = useRef(false);
   const live = useRef(false);
   const current = useRef({ editor, replace });
@@ -536,7 +572,10 @@ function OwnedCompletion({
                   }}
                   onPointerMove={
                     compact || named
-                      ? () => {
+                      ? (event) => {
+                          // WebKit can report a pointermove when keyboard
+                          // scrolling moves another row under a resting pointer.
+                          if (compact && !pointerMoved(event)) return;
                           revealSelection.current = false;
                           setKeyboardSelection(undefined);
                           setSelected(item.id);
@@ -596,7 +635,8 @@ function OwnedCompletion({
                   }}
                   onPointerMove={
                     compact || named
-                      ? () => {
+                      ? (event) => {
+                          if (compact && !pointerMoved(event)) return;
                           revealSelection.current = false;
                           setSelected(RETRY);
                         }

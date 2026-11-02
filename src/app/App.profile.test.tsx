@@ -608,6 +608,14 @@ it("opens profile settings from the session cache while refreshing", async () =>
   await setup();
   if (!services) throw new Error("Missing services");
   const current = services;
+  // ProfileButton fills that cache from its own background read, after the
+  // relay is ready. Settings seeds its loaded profile from the cache once, on
+  // mount, so wait for the fixture profile to land before opening.
+  await waitFor(() =>
+    expect(current.relay.snapshot().session?.profiles.event?.(viewer)?.id).toBe(
+      profile.id,
+    ),
+  );
   let release = () => {};
   const read = new Promise<void>((resolve) => {
     release = resolve;

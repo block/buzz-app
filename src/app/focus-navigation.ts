@@ -64,9 +64,10 @@ export function conversationFocusTarget(channelId: string) {
   const main = conversation?.querySelector<HTMLElement>(PRIMARY);
   return (
     composerIn(main) ??
-    Array.from(
-      main?.querySelectorAll<HTMLElement>("[data-message-scroller]") ?? [],
-    ).find(available)
+    [
+      ...(main?.querySelectorAll<HTMLElement>("[data-message-scroller]") ?? []),
+      ...(main?.querySelectorAll<HTMLElement>("[data-channel-history]") ?? []),
+    ].find(available)
   );
 }
 

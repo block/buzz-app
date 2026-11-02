@@ -12,6 +12,7 @@ function setup(overrides: Partial<PageNavigation> = {}) {
   const opener = document.createElement("button");
   const other = document.createElement("button");
   const container = document.createElement("section");
+  container.tabIndex = -1;
   const history = document.createElement("section");
   history.tabIndex = 0;
   history.setAttribute("data-message-scroller", "");
@@ -108,4 +109,11 @@ it.each([
     target: { ...h.navigation.target, ...target },
   });
   expect(document.activeElement).toBe(h.opener);
+});
+
+it("retains the search dialog handoff to loading history until its timeline is ready", () => {
+  const h = setup();
+  h.container.focus();
+  h.ready();
+  expect(document.activeElement).toBe(h.history);
 });

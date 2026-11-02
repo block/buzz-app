@@ -22,12 +22,16 @@ export function useChannelHistoryFocus(
     if (!plain || !signal || signal.aborted) return;
     pending.current = document.activeElement;
     // Loading must not pull focus back after the reader chooses another control.
-    const moved = () => {
-      pending.current = null;
+    const moved = (event: FocusEvent) => {
+      // Search can close before rows arrive and hand focus to the history shell.
+      pending.current =
+        pending.current && event.target === container.current
+          ? container.current
+          : null;
     };
     document.addEventListener("focusin", moved);
     return () => document.removeEventListener("focusin", moved);
-  }, [signal, plain]);
+  }, [container, signal, plain]);
   useEffect(() => {
     if (!plain || !enabled || !ready || signal?.aborted) return;
     const previous = pending.current;

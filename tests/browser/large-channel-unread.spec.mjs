@@ -38,20 +38,45 @@ for (const entry of ["sidebar", "search"]) {
     await open(page, app);
     const channel = page.getByRole("button", { name: /^Lifecycle channel/ });
     await expect(channel.locator("[data-channel-unread]")).toHaveCount(1);
-    if (entry === "sidebar") await channel.click();
-    else {
-      await page
-        .getByRole("button", { name: "Search Buzz", exact: true })
-        .click();
-      const search = page.getByRole("dialog", {
-        name: "Search Buzz",
-        exact: true,
-      });
-      await search
-        .getByRole("combobox", { name: "Search Buzz" })
-        .fill("Lifecycle channel");
-      await search.getByRole("option", { name: /Lifecycle channel/ }).click();
-      await expect(search).toHaveCount(0);
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let requested = false;
+    await page.route("**/query", async (route) => {
+      if (
+        route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.top_level && filter["#h"]?.includes(id))
+      ) {
+        requested = true;
+        await gate;
+      }
+      await route.continue();
+    });
+    try {
+      if (entry === "sidebar") await channel.click();
+      else {
+        await page
+          .getByRole("button", { name: "Search Buzz", exact: true })
+          .click();
+        const search = page.getByRole("dialog", {
+          name: "Search Buzz",
+          exact: true,
+        });
+        await search
+          .getByRole("combobox", { name: "Search Buzz" })
+          .fill("Lifecycle channel");
+        await search.getByRole("option", { name: /Lifecycle channel/ }).click();
+        await expect(search).toHaveCount(0);
+      }
+      await expect.poll(() => requested).toBe(true);
+      await expect(
+        page.getByText("Loading messages…", { exact: true }),
+      ).toBeVisible();
+    } finally {
+      release();
     }
     await expect(
       page.getByRole("region", { name: "Read-only channel" }),

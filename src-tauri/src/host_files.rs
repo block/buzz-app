@@ -471,20 +471,34 @@ pub(crate) async fn plugin_host_delete_managed_file<R: tauri::Runtime>(
     path: String,
 ) -> Result<(), String> {
     use tauri::Manager as _;
+    let deadline = tokio::time::Instant::now() + SAVE_WINDOW;
     let root = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("plugin-artifacts");
     let manager = manager.0.clone()?;
-    tokio::time::timeout(
-        SAVE_WINDOW,
-        bounded(&DIRECTORIES, move || {
-            delete_managed(&root, &path, &manager, &id, &revision)
-        }),
-    )
+    delete_with_admission(deadline, move || {
+        delete_managed(&root, &path, &manager, &id, &revision)
+    })
     .await
-    .map_err(|_| "Managed deletion timed out; outcome unknown")?
+}
+
+async fn delete_with_admission(
+    deadline: tokio::time::Instant,
+    work: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    // Same ordering as saves: byte permit, root lock, then nonblocking reader
+    // exclusion. No filesystem work has started if admission refuses or expires.
+    let place = byte_admission(deadline)
+        .await
+        .map_err(|error| format!("{error}; managed file not deleted"))?;
+    let writer = managed_writer(place, work);
+    // Once handed to the blocking pool, cancellation cannot prove no unlink.
+    tokio::time::timeout_at(deadline, writer)
+        .await
+        .map_err(|_| "Managed deletion timed out; outcome unknown")?
+        .map_err(|e| e.to_string())?
 }
 
 fn managed_capacity(root: &Path, now: u64, incoming: usize) -> Result<(), String> {

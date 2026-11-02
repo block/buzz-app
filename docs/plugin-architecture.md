@@ -1264,6 +1264,13 @@ files saved by its earlier revisions. It never follows links or deletes a differ
 plugin's file. Legacy files without an owner digest cannot be deleted through this
 API and retain their expiry behavior. Deleting a missing file rejects.
 
+Deletion shares byte GET/save's bounded FIFO admission and single work permit,
+with a 30-second deadline including queue time. Saves and deletes in this app
+serialize before taking the storage lock; another process holding that lock can
+still refuse as busy. A queued timeout says the file was not deleted and does
+not dispatch filesystem work. After dispatch to the blocking worker, a timeout
+may have an unknown outcome; that worker retains admission until it completes.
+
 Await attachment sends before deleting their source. Deletion conservatively
 refuses app-wide while **any plugin's** `host.readFile` call or declared process
 named `read`/`read-protected` is admitted or running, regardless of its program,
@@ -1282,9 +1289,9 @@ existing explicit app-data erase removes this root. Clock changes, user deletion
 erase or disk loss can invalidate retention assumptions; do not treat the path as
 a durable archive or an unqualified availability guarantee.
 
-One process-local byte-work permit is shared by GET/save. A FIFO semaphore queues
+One process-local byte-work permit is shared by GET/save/managed deletion. A FIFO semaphore queues
 at most 16 waiting calls, rejects overflow, and charges queue time to each call's
-existing deadline (GET 1–30000 ms, save 30 seconds). Expired/canceled waiters leave
+existing deadline (GET 1–30000 ms, save/delete 30 seconds). Expired/canceled waiters leave
 the queue without dispatch; raw saves do not clone their body until admitted.
 The one-admitted-operation/16 MiB work bound is unchanged, but waiting IPC input
 buffers still exist: this is not a whole-process memory bound. Blocking save work

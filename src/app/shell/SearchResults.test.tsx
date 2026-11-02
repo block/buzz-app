@@ -31,7 +31,9 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { AppServices } from "../services";
 import { SearchResults } from "./SearchResults";
+import { useSearchSettings } from "./SearchSettings";
 import {
   readSearchUsage,
   recordChoice,
@@ -4827,6 +4829,139 @@ it("preserves remembered page ranking when inline settings match", async () => {
     localStorage.clear();
   }
 });
+
+it.each([
+  ["buzz", "Channels", "buzz-dev", ["IdentityBuzz"]],
+  ["buzz", "People", "Buzz Aldrin", ["IdentityBuzz"]],
+  [
+    "community",
+    "Channels",
+    "community-news",
+    ["ProfileCommunity", "MembershipCommunity admin"],
+  ],
+  [
+    "community",
+    "People",
+    "Community Lead",
+    ["ProfileCommunity", "MembershipCommunity admin"],
+  ],
+  ["labs", "Channels", "labs-crew", ["ExperimentsLabs"]],
+])(
+  "leads %s with %s starting with it, ahead of sections found by their Settings group",
+  async (query, group, name, sections) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      person = keypair();
+    const discovery =
+      group === "Channels"
+        ? [
+            metadata(relay, name, name, 1700000000),
+            roster(relay, name, [viewer.pubkey]),
+          ]
+        : [profile(person, { display_name: name })];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query: (filters) =>
+        Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => matchFilter(filter as Filter, event)),
+          ),
+        ),
+    });
+    const t = peopleSession(owner.session);
+    const cards = [
+      {
+        key: "buzz.moderation/membership",
+        title: "Membership",
+        section: "administration",
+      },
+      { key: "labs.tools/experiments", title: "Experiments", group: "Labs" },
+    ].map((card) => ({
+      ...card,
+      id: card.key.split("/")[1] ?? "",
+      pluginId: card.key.split("/")[0] ?? "",
+      revision: "one",
+      component: () => null,
+    }));
+    const settingsCards = {
+      subscribe: () => () => {},
+      snapshot: () => cards,
+      retainVisibility: () => () => {},
+    } as unknown as AppServices["settingsCards"];
+    const client = {
+      selected: "primary",
+      memberships: [{ id: "primary", name: "Primary" }],
+    };
+    const communities = {
+      subscribe: () => () => {},
+      snapshot: () => client,
+    } as unknown as AppServices["communities"];
+    const openSection = vi.fn();
+    const openConversation = vi.fn();
+    function Palette({ query }: { query: string }) {
+      const inlineSettings = useSearchSettings({
+        query,
+        settingsCards,
+        communities,
+        navigation: {} as AppServices["navigation"],
+        close: () => {},
+        openSection,
+      });
+      return (
+        <SearchResults
+          session={t.session}
+          query={query}
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+          inlineSettings={inlineSettings}
+        />
+      );
+    }
+    try {
+      const view = render(<Palette query="" />);
+      // The joined list and a profile seen elsewhere are known before the
+      // text is typed, so the name match is there when the Settings rows are.
+      await waitFor(() =>
+        expect(owner.session.channels.list().status).toBe("ready"),
+      );
+      await act(async () => owner.session.profiles.ensure([person.pubkey]));
+      view.rerender(<Palette query={query} />);
+      const [lead] = within(
+        screen.getByRole("group", { name: group }),
+      ).getAllByRole("option");
+      expect(lead).toHaveTextContent(name);
+      // The group label still finds its sections, after the name match.
+      expect(
+        within(screen.getByRole("group", { name: "Settings" }))
+          .getAllByRole("option")
+          .map((option) => option.textContent),
+      ).toEqual(expect.arrayContaining(sections));
+      const groups = screen
+        .getAllByRole("group")
+        .map((element) => element.getAttribute("aria-label"));
+      expect(groups.indexOf(group)).toBeLessThan(groups.indexOf("Settings"));
+      const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      expect(input).toHaveAttribute("aria-activedescendant", lead?.id);
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() =>
+        expect(openConversation).toHaveBeenCalledExactlyOnceWith(
+          group === "Channels" ? name : "started-dm",
+        ),
+      );
+      if (group === "People")
+        expect(t.open).toHaveBeenCalledExactlyOnceWith(
+          [person.pubkey],
+          expect.any(AbortSignal),
+        );
+      expect(openSection).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it("excludes proven Huddles but keeps ordinary hits after mutable metadata changes", async () => {
   vi.useFakeTimers();

@@ -119,9 +119,12 @@ export function useSearchSettings({
       ).groups.flatMap((group) =>
         group.sections.flatMap((section) => {
           const match = matchName(section.label, needle);
+          // A group label such as "Buzz" or "Community" names many sections,
+          // so it ranks a step behind a section's own label, as a plugin's
+          // category does.
           const rank = Math.min(
             match?.rank ?? Infinity,
-            matchRank(group.label, needle) ?? Infinity,
+            (matchRank(group.label, needle) ?? Infinity) + 1,
           );
           if (!Number.isFinite(rank)) return [];
           return [
@@ -289,10 +292,17 @@ export function useSearchSettings({
           })
           .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
       : [];
+  // Each group ranks by its best row, not by its own label, which is just as
+  // generic: "plugins" leads with Manage plugins, not the Plugins switches.
   return [
-    { label: "Settings", destinations: settings },
+    {
+      label: "Settings",
+      rank: settings[0]?.rank ?? Infinity,
+      destinations: settings,
+    },
     {
       label: "Plugins",
+      rank: pluginRows[0]?.rank ?? Infinity,
       destinations: pluginRows,
       notice: (
         <>

@@ -3606,3 +3606,43 @@ html[data-keyboard-navigation]
   min-width: 0;
   max-width: calc(100% - var(--size-control));
 }
+
+/* A collapsed agent message: one quiet line where its body was. */
+.collapsedLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  inline-size: 100%;
+  min-inline-size: 0;
+  margin-block-start: var(--space-half);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--affordance-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-body-sm);
+  font-weight: var(--text-body-sm--font-weight);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  text-align: start;
+}
+.collapsedLine:hover {
+  background: var(--affordance-subtle-hover);
+}
+html[data-keyboard-navigation] .collapsedLine:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.collapsedText {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collapsedChevron {
+  flex: none;
+  color: var(--text-subtle);
+}

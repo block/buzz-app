@@ -28,6 +28,7 @@ import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
   createRelayReader,
+  type Priority,
   type ReadOptions,
   type RelayReader,
 } from "./reader";
@@ -94,7 +95,7 @@ import {
   type RelayEvent,
   type EventData,
 } from "./events";
-import { eventVisibility } from "./event-access";
+import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
   PublishRejected,
@@ -343,7 +344,9 @@ export function createRelaySession(
       ]),
     );
     return eventVisibility(
-      remote ? canReadRemote : canAccess,
+      // Remote visibility filters one accept() batch and is never retained.
+      // Remote access builds the channel's discovery summary: read it once.
+      remote ? accessOnce(canReadRemote) : canAccess,
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
@@ -774,7 +777,20 @@ export function createRelaySession(
       traffic?.publishPresence?.(status, signal) ?? Promise.resolve(false),
     notify,
   );
-  const profiles = createProfileDirectory(verified, localViews, notify);
+  const profiles = createProfileDirectory(
+    verified,
+    localViews,
+    notify,
+    transport &&
+      (transport.verifiedProfiles || transport.readVerifiedProfileAuthority)
+      ? {
+          authority: transport.verifiedProfiles,
+          refresh: transport.readVerifiedProfileAuthority?.bind(transport),
+          subscribe: (filter, sink) =>
+            traffic?.syncVerifiedProfiles?.(filter, sink),
+        }
+      : undefined,
+  );
   const emoji = createEmojiDirectory(
     verified,
     notify,
@@ -862,8 +878,14 @@ export function createRelaySession(
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
-      ? (ids, signal) =>
-          transport.channelActivity?.(ids, signal) ?? Promise.resolve([])
+      ? // A transient failure retries quietly before Recent shows its notice.
+        (ids, signal) =>
+          retryRead(
+            (retrySignal) =>
+              transport.channelActivity?.(ids, retrySignal) ??
+              Promise.resolve([]),
+            signal,
+          )
       : undefined,
     notify,
   );
@@ -2305,7 +2327,7 @@ export function createRelaySession(
     thread(
       channelId: string,
       messageId: string,
-      options?: { exact?: boolean },
+      options?: { exact?: boolean; priority?: Priority },
     ) {
       if (closed || views.size >= 64)
         throw new Error("Relay view capacity unavailable");
@@ -2356,6 +2378,7 @@ export function createRelaySession(
         targetReader,
         admitTarget: (events) => accept(events, false),
         exact: options?.exact ?? false,
+        priority: options?.priority,
         admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed: recent.peek(messageId)?.event ?? retainedEvent(messageId),
         local: localViews,
@@ -3142,6 +3165,7 @@ export function createRelaySession(
       memoryConnected = snapshot.status === "connected";
       activity.state(snapshot);
       presence.connected(snapshot.status === "connected");
+      profiles.connected(snapshot.status === "connected");
       if (snapshot.status !== "connected") {
         typing.clear();
         memories.clear();

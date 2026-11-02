@@ -113,7 +113,10 @@ space. Once settled, sidebar rows, bylines and the editor's emoji button show th
 default 💬. Rows and bylines keep the full status in their label and tooltip, and
 the editor's button names the shortcode in its hint; tooltips and profiles show
 the shortcode as status text.
-Set or clear your own status from the top-right profile menu. Shared design-system
+Set or clear your own status from the top-right profile menu. Your own profile
+also offers **Set a status** when the community accepts status updates; it opens
+the same editor, saves to that profile's community, and closes if the community
+or identity changes. Shared design-system
 Avatar and Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or

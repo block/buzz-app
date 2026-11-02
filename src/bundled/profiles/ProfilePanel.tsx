@@ -8,6 +8,8 @@ import {
 } from "../../features/panels/PanelWorkspace";
 import { useAgentOwnerEvidence } from "../../features/profiles/useAgentOwnerEvidence";
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import { StatusEditor } from "../../features/user-status/StatusEditor";
+import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { ProfilePublicMetadata } from "./ProfilePublicMetadata";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
@@ -415,6 +417,11 @@ function ProfileDetails({
       section: "profile",
       scope: scoped.scope,
     });
+  // This panel's session is its community's, so the status saves there.
+  const statusEditor = useStatusEditor(session, viewer);
+  const statusButton = useRef<HTMLButtonElement>(null);
+  const canSetStatus =
+    !!scope && viewer === pubkey && session.statuses.writable;
 
   return (
     <section
@@ -469,7 +476,7 @@ function ProfileDetails({
             )}
             <UserStatusDisplay session={session} userId={pubkey} />
           </div>
-          {(canMessage || canEdit) && (
+          {(canMessage || canEdit || canSetStatus) && (
             <div className={hero.actions}>
               {canMessage && (
                 <Button
@@ -488,6 +495,16 @@ function ProfileDetails({
                   onClick={editProfile}
                 >
                   Edit profile
+                </Button>
+              )}
+              {canSetStatus && (
+                <Button
+                  ref={statusButton}
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  onClick={() => statusEditor.open()}
+                >
+                  Set a status
                 </Button>
               )}
             </div>
@@ -638,6 +655,16 @@ function ProfileDetails({
           )}
         />
       </div>
+      {statusEditor.editor && scope && (
+        <StatusEditor
+          session={session}
+          scope={scope}
+          current={statusEditor.editor.current}
+          viewer={statusEditor.editor.viewer}
+          close={statusEditor.close}
+          finalFocus={statusButton}
+        />
+      )}
     </section>
   );
 }

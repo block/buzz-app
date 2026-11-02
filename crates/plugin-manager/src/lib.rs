@@ -407,6 +407,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         }
     });
     vec![
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/mesh-compute/manifest.json"
+        ))
+        .expect("mesh manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
             .expect("huddles manifest"),
         builderlab,
@@ -489,6 +493,7 @@ fn enabled_by_default(id: &str) -> bool {
     matches!(
         id,
         "buzz.channels"
+            | "buzz.mesh-compute"
             | "buzz.feedback"
             | "buzz.diffs"
             | "buzz.mermaid"

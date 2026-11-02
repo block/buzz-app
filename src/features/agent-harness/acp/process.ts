@@ -11,6 +11,7 @@ import type {
   AcpHooks,
   Choice,
   McpServer,
+  PlatformExtension,
   ServeMcp,
   Spawn,
   ToolServer,
@@ -222,6 +223,11 @@ export class AcpProcess {
       named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
+      /** Built-ins beside the Buzz tools, for harnesses that take them. */
+      platform?: readonly PlatformExtension[];
+      /** Replaces the harness's own base prompt with `systemPrompt` instead
+       * of appending it, for small models that a long prompt throws off. */
+      replacePrompt?: boolean;
     }>,
   ): Promise<AcpSession> {
     const { hooks } = this;
@@ -276,6 +282,7 @@ export class AcpProcess {
             _meta: hooks.newSessionMeta(buzz, {
               ...(title ? { title } : {}),
               provider,
+              ...(launch.platform ? { platform: launch.platform } : {}),
             }),
           }),
         },
@@ -302,7 +309,12 @@ export class AcpProcess {
     }
     try {
       if (systemPrompt && hooks.systemPrompt)
-        await hooks.systemPrompt(this, sessionId, systemPrompt);
+        await hooks.systemPrompt(
+          this,
+          sessionId,
+          systemPrompt,
+          launch.replacePrompt,
+        );
     } catch (error) {
       void this.close(session);
       throw error;

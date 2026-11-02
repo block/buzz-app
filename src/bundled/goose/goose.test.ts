@@ -133,6 +133,31 @@ describe("GooseProcess", () => {
     expect(process.prompts.get(session.id)).toBe("Be Buzz");
   });
 
+  it("replaces goose's base prompt with ours, raw, when asked", async () => {
+    const { open, process } = await start();
+    const session = await open({
+      systemPrompt: "Be {{brief}}",
+      replacePrompt: true,
+    });
+    expect(process.prompts.get(session.id)).toBe(
+      "{% raw %}Be {{brief}}{% endraw %}",
+    );
+  });
+
+  it.each(["{% endraw %}", "{%endraw%}", "{%- endraw %}", "{% endraw -%}"])(
+    "keeps an embedded raw-block terminator %s from closing the prompt wrapper",
+    async (endraw) => {
+      const { open, process } = await start();
+      const session = await open({
+        systemPrompt: `Before ${endraw} {{literal}} after`,
+        replacePrompt: true,
+      });
+      expect(process.prompts.get(session.id)).toBe(
+        "{% raw %}Before  {{literal}} after{% endraw %}",
+      );
+    },
+  );
+
   it("gives each session its own server, closed with it", async () => {
     const { goose, open, fake } = await start();
     const first = await open();
@@ -240,7 +265,7 @@ describe("GooseProcess", () => {
         name,
         arguments: { content: "hi", final: true },
       });
-      await expect(settled).resolves.toEqual({ ok: true });
+      await expect(settled).resolves.toEqual({ ok: true, answered: true });
       expect(session.busy).toBe(false);
       expect(session.working).toBe(true);
       session.interrupt();
@@ -798,6 +823,12 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("does not claim a blank model turn answered in Buzz", async () => {
+    const { open } = await start();
+    const session = await open();
+    await expect(session.send("hello")).resolves.toEqual({ ok: true });
+  });
+
   it.each(["send", "reply_in_subthread"])(
     "ends work that acted in Buzz with %s without its closing text",
     async (name) => {
@@ -816,7 +847,7 @@ describe("GooseProcess", () => {
       });
       await flush();
       process.turns[0]?.finish();
-      await expect(settled).resolves.toEqual({ ok: true });
+      await expect(settled).resolves.toEqual({ ok: true, answered: true });
     },
   );
 

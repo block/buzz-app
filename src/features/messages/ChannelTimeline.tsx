@@ -78,7 +78,6 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
 }
 
 type ReadingPosition = {
-  offset: number;
   bottom: boolean;
   anchor?: { id: string; y: number };
 };
@@ -111,7 +110,6 @@ function positionAt(
     }) ??
     mounted.find((row) => row.getBoundingClientRect().bottom > top);
   return {
-    offset: element.scrollTop,
     bottom:
       element.scrollHeight - element.clientHeight - element.scrollTop < 80,
     ...(row?.dataset.messageId
@@ -210,6 +208,11 @@ function Timeline({
       : readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  // Reload and quit never unmount: also save where scrolling settles.
+  const savePosition = useCallback(() => {
+    if (!transient)
+      writeView(scope, `scroll:${channelId}`, savedPosition.current);
+  }, [channelId, scope, transient]);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
@@ -752,6 +755,8 @@ function Timeline({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     if (edge.current) observer.observe(edge.current);
+    const page = element.ownerDocument.defaultView;
+    page?.addEventListener("pagehide", savePosition);
     return () => {
       if (gestureFrame.current !== undefined)
         cancelAnimationFrame(gestureFrame.current);
@@ -759,8 +764,8 @@ function Timeline({
       upwardGesture.current = false;
       olderDemand.current = false;
       settled.current = false;
-      if (!transient)
-        writeView(scope, `scroll:${channelId}`, savedPosition.current);
+      page?.removeEventListener("pagehide", savePosition);
+      savePosition();
       observer.disconnect();
       if (handle.current)
         geometry.set(
@@ -771,7 +776,7 @@ function Timeline({
         );
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
-  }, [channelId, geometry, scope, transient]);
+  }, [channelId, geometry, savePosition]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
   // an edit, an older-history prepend) reschedules it, while any newer intent
@@ -849,7 +854,7 @@ function Timeline({
       pendingReveal.current = { id: revealMessageId, intent: intent.current };
       follow.current = true;
       restoredAnchor.current = undefined;
-      savedPosition.current = { offset: 0, bottom: true };
+      savedPosition.current = { bottom: true };
       measuredPosition.current = null;
       userScrolled.current = false;
       upwardGesture.current = false;
@@ -857,30 +862,33 @@ function Timeline({
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
     const scheduledIntent = intent.current;
-    const restore =
+    const saved =
       !settled.current && savedPosition.current && !savedPosition.current.bottom
         ? savedPosition.current
         : null;
+    const anchor = saved?.anchor;
+    const restoreIndex = anchor
+      ? rows.findIndex(
+          (row) =>
+            row.id === anchor.id ||
+            row.membershipRows?.some((member) => member.id === anchor.id),
+        )
+      : -1;
+    // Only a loaded row is a place to return to. Without it, an opening reader
+    // follows the latest message; a placed reader stays where they are.
+    const restore = restoreIndex >= 0 ? saved : null;
+    if (saved && !restore && follow.current)
+      savedPosition.current = { bottom: true };
     let observer: MutationObserver | undefined;
     const restorePosition = () => {
       if (intent.current !== scheduledIntent || !handle.current) return;
-      if (restore) {
-        const anchor = restore.anchor;
-        const index = anchor
-          ? rows.findIndex(
-              (row) =>
-                row.id === anchor.id ||
-                row.membershipRows?.some((member) => member.id === anchor.id),
-            )
-          : -1;
-        const row = rows[index];
-        if (anchor && row) {
-          restoredAnchor.current = { id: row.id, y: anchor.y };
-          handle.current.scrollToIndex(index, {
-            align: "start",
-            offset: -anchor.y,
-          });
-        } else handle.current.scrollTo(restore.offset);
+      const row = rows[restoreIndex];
+      if (anchor && row) {
+        restoredAnchor.current = { id: row.id, y: anchor.y };
+        handle.current.scrollToIndex(restoreIndex, {
+          align: "start",
+          offset: -anchor.y,
+        });
         follow.current = false;
       } else if (follow.current) {
         layoutCorrection.current = true;
@@ -1092,6 +1100,7 @@ function Timeline({
             layoutCorrection.current && !pointerHeld.current,
           );
         upwardGesture.current = false;
+        savePosition();
       }}
       onFocus={(event) => {
         setFocusedActivityId(

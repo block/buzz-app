@@ -313,7 +313,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
       services.navigation.snapshot().ingress &&
       services.navigation.snapshot().retryable;
     services.communities.select(id);
-    if (!recovering) select("buzz.channels/channels");
+    if (!recovering) route.selectCommunityPage();
   };
   if (firstRun)
     return (

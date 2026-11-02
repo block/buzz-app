@@ -17,8 +17,12 @@ import type {
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
+import { relayPartition } from "../features/relay/partition";
+import { readView, writeView } from "../shared/view-state";
 
 const channelsKey = "buzz.channels/channels";
+/** The page a community last opened, in that community's view scope. */
+const pageView = "page";
 /** Presentation-only lease for an already-confirmed Settings departure. */
 export type PendingSettingsDeparture = {
   attempt: OpenAttempt;
@@ -353,6 +357,14 @@ export function useAppNavigation(
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
+  useEffect(() => {
+    if (state.status === "opened" && scope && pageKey)
+      writeView(
+        relayPartition(scope.communityOrigin, scope.viewer),
+        pageView,
+        pageKey,
+      );
+  }, [state.status, scope, pageKey]);
   // A visit that failed while its connection was down, or whose connection has
   // dropped since, reopens by itself, once, when that connection is live again. A live connection alone does not prove
   // a failed read recovered. Host-decided, denied and invalid visits keep their
@@ -426,6 +438,19 @@ export function useAppNavigation(
       options?.focus ? { focus: options.focus } : undefined,
     );
   };
+  /** Reopens the page the selected community last opened, else Messages. */
+  const selectCommunityPage = () => {
+    const { viewer, selected } = services.communities.snapshot();
+    const remembered =
+      viewer && selected
+        ? readView<unknown>(
+            relayPartition(communityDestination(selected).url, viewer),
+            pageView,
+            null,
+          )
+        : null;
+    select(pages.find((page) => page.key === remembered)?.key ?? channelsKey);
+  };
   return {
     state,
     target,
@@ -433,6 +458,7 @@ export function useAppNavigation(
     page,
     request,
     select,
+    selectCommunityPage,
     waiting,
     failure,
     selected: pageKey ?? target.kind,

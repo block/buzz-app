@@ -149,6 +149,16 @@ function mount(bottom = false, revealOnMount = false) {
   return {
     saved: { offset: 900, bottom, anchor: { id: target.id, y: 42 } },
     unmount: result.unmount,
+    /** A reload never runs unmount cleanup; reopen from what storage holds. */
+    reload() {
+      const write = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {});
+      result.unmount();
+      write.mockRestore();
+      scroll.toIndex.mockClear();
+      render(tree(window));
+    },
     reveal() {
       result.rerender(tree(sentWindow, sent.id));
     },
@@ -582,7 +592,7 @@ it.each([false, true])(
     fireEvent.scroll(feed);
     h.unmount();
     expect(readView("scope", "scroll:c", null)).toEqual(
-      readerInput ? { offset: 900, bottom: false } : h.saved,
+      readerInput ? { bottom: false } : h.saved,
     );
   },
 );
@@ -1000,8 +1010,62 @@ it("scroll completion saves row geometry measured after the last scroll event", 
   fireEvent(region, new Event("scrollend"));
   h.unmount();
   expect(readView("scope", "scroll:c", null)).toEqual({
-    offset: 0,
     bottom: false,
     anchor: { id: h.saved.anchor.id, y: 142 },
   });
 });
+
+it("catching up saves the bottom once scrolling settles, so a reload opens at the latest message", async () => {
+  const h = mount();
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+    align: "start",
+    offset: -42,
+  });
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  fireEvent.wheel(region, { deltaY: 600 });
+  for (const top of [700, 1100, 1400]) {
+    region.scrollTop = top;
+    fireEvent.scroll(region);
+  }
+  // Scroll events update the place in memory only.
+  expect(readView("scope", "scroll:c", null)).toEqual(h.saved);
+  fireEvent(region, new Event("scrollend"));
+  expect(readView("scope", "scroll:c", null)).toMatchObject({ bottom: true });
+  h.reload();
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, { align: "end" });
+  expect(scroll.toIndex).not.toHaveBeenCalledWith(0, {
+    align: "start",
+    offset: -42,
+  });
+});
+
+it.each(["scrollend", "pagehide"])(
+  "a reload reopens the message a reader stopped at, at the same y, saved on %s",
+  async (save) => {
+    const h = mount(true);
+    await frame();
+    const region = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(0, this.closest("ol") ? 120 : 0, 800, 100);
+      },
+    );
+    fireEvent.wheel(region, { deltaY: -400 });
+    region.scrollTop = 400;
+    fireEvent.scroll(region);
+    if (save === "scrollend") fireEvent(region, new Event("scrollend"));
+    else fireEvent(window, new Event("pagehide"));
+    h.reload();
+    await frame();
+    expect(scroll.toIndex).toHaveBeenLastCalledWith(0, {
+      align: "start",
+      offset: -120,
+    });
+  },
+);

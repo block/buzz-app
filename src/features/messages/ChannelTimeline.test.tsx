@@ -208,6 +208,9 @@ function setup({
     clientHeight: 668,
     scrollHeight: 3706,
     scrollTop: 2388,
+    ownerDocument: Object.assign(new EventTarget(), {
+      defaultView: new EventTarget(),
+    }),
     focus: vi.fn(),
     getBoundingClientRect: () => ({ top: 0 }),
     querySelector: () => list,
@@ -503,7 +506,7 @@ it("persists the event target's reading position at real component cleanup, not 
   const h = setup();
   h.scroll();
   h.unmount();
-  expect(h.saved()).toEqual({ offset: 2388, bottom: false });
+  expect(h.saved()).toEqual({ bottom: false });
 });
 it("a bottom-position event persists bottom intent even when the virtualizer still reports zero", () => {
   const h = setup();
@@ -511,7 +514,7 @@ it("a bottom-position event persists bottom intent even when the virtualizer sti
   h.handle.scrollOffset = 0;
   h.scroll(false);
   h.unmount();
-  expect(h.saved()).toEqual({ offset: 3038, bottom: true });
+  expect(h.saved()).toEqual({ bottom: true });
 });
 it("an append follows the actual bottom position, not stale virtualizer position", () => {
   const h = setup();
@@ -608,7 +611,7 @@ it.each([
     h.element.scrollTop = h.element.scrollHeight - h.element.clientHeight - gap;
     h.scroll();
     h.unmount();
-    expect(h.saved()).toEqual({ offset: h.element.scrollTop, bottom });
+    expect(h.saved()).toEqual({ bottom });
   },
 );
 it.each([
@@ -664,13 +667,27 @@ it.each([
   { offset: 1234, bottom: false },
   { offset: 1234, bottom: false, anchor: { id: "missing", y: 42 } },
 ])(
-  "keeps an offset fallback for legacy positions and an anchor outside retained history: %j",
+  "opens at the latest message, not a pixel offset, for a legacy position or an anchor outside the loaded rows: %j",
   (initial) => {
     const h = setup({ initial });
-    expect(h.handle.scrollTo).toHaveBeenCalledWith(1234);
+    expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, {
+      align: "end",
+    });
+    expect(h.handle.scrollTo).not.toHaveBeenCalled();
     h.unmount();
+    expect(h.saved()).toEqual({ bottom: true });
   },
 );
+it("keeps a placed reader in place when a resize finds their saved row gone", () => {
+  const h = setup({ mounted: [{ id: "last", y: 42 }] });
+  h.scroll();
+  h.setRows([timelineMessage("first")]);
+  h.handle.scrollToIndex.mockClear();
+  h.element.clientWidth = 650;
+  h.resize();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  expect(h.handle.scrollTo).not.toHaveBeenCalled();
+});
 it("captures the mounted message at cleanup and restores that anchor after resize", () => {
   const h = setup({ mounted: [{ id: "last", y: 42 }] });
   h.scroll();
@@ -683,7 +700,6 @@ it("captures the mounted message at cleanup and restores that anchor after resiz
   });
   h.unmount();
   expect(h.saved()).toEqual({
-    offset: 2388,
     bottom: false,
     anchor: { id: "last", y: 42 },
   });
@@ -1570,7 +1586,7 @@ it("cancelled resize settles before later reader scroll/save", () => {
   h.element.scrollTop = 1900;
   h.dispatchScroll();
   h.unmount();
-  expect(h.saved()).toEqual({ offset: 1900, bottom: false });
+  expect(h.saved()).toEqual({ bottom: false });
 });
 
 it("list shrinkage clamps the offset without revoking bottom follow", () => {
@@ -1641,7 +1657,7 @@ it("input saves pending DOM movement even if navigation precedes its scroll even
   h.element.scrollTop = 2000;
   h.gesture();
   h.unmount();
-  expect(h.saved()).toEqual({ offset: 2000, bottom: false });
+  expect(h.saved()).toEqual({ bottom: false });
 });
 
 it("growth before a no-scroll click does not revoke the existing bottom intent", () => {

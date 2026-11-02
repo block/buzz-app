@@ -19,6 +19,7 @@ import {
 import { BestieChooser } from "./BestieChooser";
 import { PinnedBestie } from "./PinnedBestie";
 import { bestieRoute } from "./routes";
+import { bestieTab } from "./BestieTab";
 
 export const inject = [
   "pages",
@@ -29,6 +30,7 @@ export const inject = [
   "panels",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
+  ctx.agents.registerTab(bestieTab(ctx.relay));
   ctx.pages.register({
     id: "bestie",
     title: "Bestie",

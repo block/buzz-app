@@ -88,7 +88,7 @@ import {
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import { attemptEnded } from "./withdraw";
 import type { ReadTransport } from "./transport";
-import type { LiveSnapshot, LiveSubscription } from "./live";
+import type { LiveGlobal, LiveSnapshot, LiveSubscription } from "./live";
 import {
   hasTag,
   type ReadFilter,
@@ -140,7 +140,6 @@ export type EventViewSnapshot = Readonly<{
   error?: string | undefined;
 }>;
 
-/** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
 /** A read of named authors' profiles only. Profiles do not depend on channels,
  * so no channel access change, including a denied channel list, can stale it. */
 function isProfileFilter(filter: ReadFilter) {
@@ -159,6 +158,7 @@ function isProfileRead(filters: readonly ReadFilter[]) {
   return filters.length > 0 && filters.every(isProfileFilter);
 }
 
+/** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
 export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
@@ -708,12 +708,8 @@ export function createRelaySession(
         "Reconnect to refresh conversation access.",
       );
     const epoch = accessEpoch;
-    const cleared = cacheClearEpoch;
     const events = await requests.reader.read(filters, settings);
-    if (
-      closed ||
-      (epoch !== accessEpoch && !profileReadSurvives(filters, cleared))
-    )
+    if (closed || epoch !== accessEpoch)
       throw new DOMException("Stale relay read", "AbortError");
     return events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
   }
@@ -2571,7 +2567,6 @@ export function createRelaySession(
      * merging live observations or local outbox intent into paging evidence. */
     async readRemote(filters: readonly ReadFilter[], settings?: ReadOptions) {
       const epoch = accessEpoch;
-      const cleared = cacheClearEpoch;
       const signal = settings?.signal
         ? AbortSignal.any([settings.signal, lifetime.signal])
         : lifetime.signal;
@@ -2583,8 +2578,7 @@ export function createRelaySession(
       );
       signal.throwIfAborted();
       // Applying discovery can revoke access itself. As with read(), let
-      // authority-only and profile reads finish; mixed/content reads must
-      // remain fenced.
+      // authority-only reads finish; mixed/content reads must remain fenced.
       const discoveryOnly =
         filters.length > 0 &&
         filters.every(
@@ -2592,12 +2586,7 @@ export function createRelaySession(
             !!filter.kinds?.length &&
             filter.kinds.every((kind) => [39000, 39002].includes(kind)),
         );
-      if (
-        closed ||
-        (epoch !== accessEpoch &&
-          !discoveryOnly &&
-          !profileReadSurvives(filters, cleared))
-      )
+      if (closed || (epoch !== accessEpoch && !discoveryOnly))
         throw new DOMException("Stale relay read", "AbortError");
       return result;
     },
@@ -3068,6 +3057,86 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
+  /** Held profiles still need a full read: none has completed since the
+   * session started or since the last one was asked for. */
+  let profilesOwed = true;
+  let profilesRead = 0;
+  /** The full read each global route's establishment may skip. A continuous
+   * replay sent every stored change since the last connection heard the
+   * relay, so its read is skipped unless an earlier one is still owed. A cut
+   * replay reads again; so does a route that fails or goes unreported, once
+   * per connection. */
+  const globalReads = {
+    profiles: {
+      generation: -1,
+      owed: () => profilesOwed,
+      read() {
+        profilesOwed = true;
+        const read = ++profilesRead;
+        const timer = setTimeout(() => {
+          timers.delete(timer);
+          if (!closed)
+            void profiles.reconnect().then(
+              () => {
+                if (read === profilesRead) profilesOwed = false;
+              },
+              () => {},
+            );
+        }, 0);
+        timers.add(timer);
+      },
+    },
+    membership: {
+      generation: -1,
+      // Recovery retries a failed or deferred roster read on its own.
+      owed: () => channels.rosterOwed(),
+      read: () => refreshRoster(),
+    },
+  };
+  /** `continuous` is undefined when the route failed or went unreported. */
+  const settleGlobal = (
+    route: keyof typeof globalReads,
+    continuous?: boolean,
+  ) => {
+    const global = globalReads[route];
+    if (continuous !== false && global.generation === liveGeneration) return;
+    global.generation = liveGeneration;
+    if (!continuous || global.owed()) global.read();
+  };
+  /** Per global route, the connection whose covered reads are settled. */
+  const coveredGeneration = { profiles: -1, membership: -1 };
+  /** The reads a global route's replay covers (statuses and emoji for
+   * `profiles`; read state and reminders for `membership`), once per
+   * connection. A continuous replay already delivered every change since the
+   * last connection heard the relay, so each owner resumes the state the
+   * drop interrupted; otherwise it reads again. Like `settleGlobal`, a cut
+   * replay reads again even after an earlier report on this connection, and
+   * `continuous` is undefined when the route failed or went unreported. */
+  const settleCovered = (route: LiveGlobal["route"], continuous?: boolean) => {
+    if (continuous !== false && coveredGeneration[route] === liveGeneration)
+      return;
+    coveredGeneration[route] = liveGeneration;
+    const generation = liveGeneration;
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      if (closed) return;
+      if (route === "profiles") {
+        if (continuous) {
+          emoji.resume();
+          statuses.resume();
+        } else {
+          emoji.reconnect();
+          statuses.reconnect();
+        }
+        return;
+      }
+      unread.reconnect(continuous);
+      // Only while this same connection is still up.
+      if (generation === liveGeneration && memoryConnected)
+        void (continuous ? reminders?.resume() : reminders?.recover());
+    }, 0);
+    timers.add(timer);
+  };
   /** No route has been established since the stream dropped, or ever: a
    * thread view opened now reads while it is down. */
   let streamDropped = true;
@@ -3346,6 +3415,17 @@ export function createRelaySession(
       )
         refreshRoster();
       liveSnapshot = snapshot;
+      // A global route that failed before it established proves nothing, so
+      // the finite reads stand in for its replay on this connection.
+      if (snapshot.status === "connected")
+        for (const route of snapshot.routes)
+          if (
+            (route.id === "profiles" || route.id === "membership") &&
+            route.status === "error"
+          ) {
+            settleGlobal(route.id);
+            settleCovered(route.id);
+          }
       // Suspend every affected preview before any recheck: one revocation can
       // cancel another read, but must never leave its old public grant readable.
       const previews = snapshot.routes
@@ -3362,28 +3442,31 @@ export function createRelaySession(
       revalidatePreviews(previews);
       publishLive();
     },
-    established(channelId) {
+    established(channelId, global) {
       if (closed) return;
       streamDropped = false;
       if (!channelId) {
-        if (refreshedGeneration !== liveGeneration) {
+        const first = refreshedGeneration !== liveGeneration;
+        // A host that reports no route (an older broker) leaves both reads
+        // to this connection's first establishment, in any order.
+        if (global) {
+          settleGlobal(global.route, global.continuous);
+          settleCovered(global.route, global.continuous);
+        } else {
+          settleGlobal("membership");
+          settleGlobal("profiles");
+          settleCovered("membership");
+          settleCovered("profiles");
+        }
+        if (first) {
           refreshedGeneration = liveGeneration;
-          refreshRoster();
-          const generation = liveGeneration;
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
-              void profiles.reconnect().catch(() => {});
               agentLibrary.reconnect();
               activityRosterKey = undefined;
               refreshChannelActivity();
-              emoji.reconnect();
-              statuses.reconnect();
-              unread.reconnect();
               inboxFeed.reconnect();
-              // Only while this same connection is still up.
-              if (generation === liveGeneration && memoryConnected)
-                void reminders?.recover();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);

@@ -27,6 +27,10 @@ export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
+/** A live batch is re-sent after this long even with no grant, in case a
+ * grant notice never arrived (a dropped frame, or a duplicate notice the
+ * relay stored once and did not fan out again). */
+export const LIVE_BATCH_REFRESH_INTERVAL = 15 * 60_000;
 /** Channel REQs awaiting EOSE at once. `scripts/live-setup-probe.mjs` compares others. */
 export const SETUP_CONCURRENCY = 4;
 /** How long one channel REQ may wait for EOSE before its route fails. */
@@ -183,6 +187,26 @@ export function liveProvenance(value: unknown): LiveProvenance {
       : {}),
   });
 }
+/** A global route's establishment. `continuous`: the route resumed from the
+ * cursor an earlier connection left, and its replay ended below the limit, so
+ * it replayed every stored change since that connection last heard the relay.
+ * A frame the relay dropped silently before then is not replayed. */
+export type LiveGlobal = Readonly<{
+  route: "profiles" | "membership";
+  continuous: boolean;
+}>;
+/** Host-relayed global establishment; anything else reports nothing, so the
+ * session reads again as if the replay was cut. */
+export function liveGlobal(value: unknown): LiveGlobal | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { route, continuous } = value as Record<string, unknown>;
+  if (
+    (route !== "profiles" && route !== "membership") ||
+    typeof continuous !== "boolean"
+  )
+    return undefined;
+  return Object.freeze({ route, continuous });
+}
 export type LiveCallbacks = {
   /** Legacy/missing provenance reconciles quietly; it is never implicitly fresh. */
   receive(events: readonly VerifiedEvent[], provenance?: LiveProvenance): void;
@@ -192,7 +216,8 @@ export type LiveCallbacks = {
   observer?(frame: ObserverFrame, generation: number): void;
   presence?(event: VerifiedEvent): void;
   state(snapshot: LiveSnapshot): void;
-  established(channels?: string | readonly string[]): void;
+  /** A global route (no channels) also reports whether it stayed continuous. */
+  established(channels?: string | readonly string[], global?: LiveGlobal): void;
   /** Periodic repair hint, not membership or historical-completeness evidence. */
   recover?(): void;
   denied(channelId: string, reason: string): void;
@@ -280,7 +305,15 @@ type Route = {
   /** Live on the socket a planned renewal replaced, over the same scope. Its
    * replay resumes from the cursor, so its EOSE needs no catch-up. */
   carried?: boolean;
+  /** Every key had a cursor when the route was created, so its replay starts
+   * where an earlier connection's delivery could have stopped. */
+  resumed?: boolean;
   quotaRetries: number;
+  /** Its REQ was sent before a grant for one of its channels arrived, so the
+   * relay may have left that channel out. Re-send at its EOSE. */
+  regranted?: boolean;
+  /** When its REQ was sent (ms), for the slow batch refresh. */
+  sentAt?: number;
   /** Consecutive refusals that need action, and when the recover tick may retry. */
   refusals?: number;
   retryAt?: number;
@@ -480,6 +513,28 @@ export function subscribeRelayTraffic(
     routes.set(next.id, next);
     return next;
   }
+  // The relay leaves a channel it cannot serve out of a multi-channel REQ
+  // without a CLOSED, both when the REQ arrives and when access ends later. A
+  // batch then stays narrower than the client thinks. Access comes back only
+  // through a grant, and every grant sends the viewer a 44100 (add, join,
+  // create, DM open or add, unarchive), so re-send each batch that holds a
+  // granted channel. A batch whose REQ is in flight may have been checked
+  // before the grant, so it is re-sent once at its EOSE. A forged notice
+  // costs one extra REQ, nothing more.
+  function grant(id: string) {
+    let sent = false;
+    for (const route of [...routes.values()]) {
+      if (!route.channelIds?.includes(id)) continue;
+      if (route.status === "live" && !route.previous) {
+        replace(route);
+        sent = true;
+      } else if (route.status === "pending" && route.wire)
+        route.regranted = true;
+    }
+    if (!sent) return;
+    pump();
+    notify();
+  }
   function recover() {
     if (closed || !authenticated) return;
     provenAt = tickedAt;
@@ -503,10 +558,18 @@ export function subscribeRelayTraffic(
     // opening/authenticating alone must not reset backoff on a flapping relay.
     reconnectDelay = BASE_RECONNECT_DELAY;
     const current = generation;
-    // Only multi-channel scopes can be silently pruned by this relay. Singleton
-    // preview/legacy callers retain their existing CLOSED/retry behavior.
+    // `grant` re-sends a batch when access to one of its channels comes back,
+    // the only time a re-send can change its scope. A lost grant would leave
+    // the batch narrow for good, so a batch not sent for a long time is
+    // re-sent here too.
     for (const route of routes.values()) {
-      if (route.channelIds && route.status === "live" && !route.previous)
+      if (
+        route.channelIds &&
+        route.status === "live" &&
+        !route.previous &&
+        route.sentAt !== undefined &&
+        tickedAt - route.sentAt >= LIVE_BATCH_REFRESH_INTERVAL
+      )
         replace(route);
       else if (
         route.status === "error" &&
@@ -601,6 +664,7 @@ export function subscribeRelayTraffic(
         since: Math.floor(Date.now() / 1000) - 300,
       };
       route.since = resumeSince(route);
+      route.resumed = cursorKeys(route).every((key) => cursors.has(key));
       // Presence and observer feeds establish nothing, so carry no obligation.
       if (
         carrying &&
@@ -717,7 +781,19 @@ export function subscribeRelayTraffic(
     settle();
   }
   const establish = (route: Route) => {
-    if (route.id !== "observer" && route.id !== "presence")
+    if (route.id === "profiles" || route.id === "membership")
+      callbacks.established(
+        undefined,
+        Object.freeze({
+          route: route.id,
+          // The count covers every filter of the route, so any filter the
+          // limit cut marks it. A retry keeps the route's original since; a
+          // live-only replacement replays nothing.
+          continuous:
+            !!route.resumed && !route.liveOnly && route.replay !== "limited",
+        }),
+      );
+    else if (route.id !== "observer" && route.id !== "presence")
       callbacks.established(route.channelIds ?? route.channelId);
   };
   /** A renewal stays quiet only while every carried route keeps continuity.
@@ -794,6 +870,8 @@ export function subscribeRelayTraffic(
       // A retry being sent is not recovery. Retain its last failure until EOSE.
       const wire = `live-${++serial}`;
       route.wire = wire;
+      delete route.regranted; // This REQ is sent after every earlier grant.
+      route.sentAt = Date.now();
       wires.set(wire, route);
       route.deadline = setTimeout(() => {
         if (wires.get(wire) === route)
@@ -1219,7 +1297,7 @@ export function subscribeRelayTraffic(
             incoming.created_at >= route.since
           )
             callbacks.telemetry?.(incoming, observer);
-        } else if (incoming.kind !== OBSERVER_KIND)
+        } else if (incoming.kind !== OBSERVER_KIND) {
           callbacks.receive(
             [incoming],
             Object.freeze({
@@ -1232,6 +1310,14 @@ export function subscribeRelayTraffic(
                   : {}),
             }),
           );
+          if (
+            valid() &&
+            route.id === "membership" &&
+            incoming.kind === 44100 &&
+            destination
+          )
+            grant(destination);
+        }
       } else if (data[0] === "EOSE" && route.status === "pending") {
         clearTimeout(route.deadline);
         if (route.previous) closeWire(route.previous);
@@ -1251,6 +1337,15 @@ export function subscribeRelayTraffic(
         if (broken) settle();
         else if (!caughtUp && wires.get(route.wire ?? "") === route)
           establish(route);
+        if (
+          valid() &&
+          route.regranted &&
+          routes.get(route.id) === route &&
+          route.status === "live"
+        ) {
+          replace(route);
+          notify();
+        }
         if (valid()) pump();
       } else if (data[0] === "CLOSED") {
         const reason =

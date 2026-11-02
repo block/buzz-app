@@ -213,6 +213,29 @@ it("batches and deduplicates subjects, retains retractions, and fences retired c
   }
 });
 
+it("notifies once per replay, then once per live change", async () => {
+  const h = harness();
+  try {
+    h.directory.ensure([alice.pubkey, bob.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    h.changed.mockClear();
+    sink.event(projection(10));
+    sink.event(projection(10, bob.pubkey));
+    expect(h.changed).not.toHaveBeenCalled();
+    expect(h.directory.snapshot().size).toBe(2);
+    sink.eose();
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    sink.event(projection(10)); // Unchanged head.
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    sink.event(projection(11));
+    expect(h.changed).toHaveBeenCalledTimes(2);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
 it("a newer malformed projection invalidates an older valid name", async () => {
   const h = harness();
   try {
@@ -308,6 +331,69 @@ it("overlays verified names, qualifies collisions, preserves kind 0 details, and
     expect(
       directory.queries.snapshot().get(alice.pubkey)?.verified,
     ).toBeUndefined();
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("qualifies verified namesakes and shared usernames, but not a unique verified name", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  const carol = keypair();
+  const dave = keypair();
+  const verifiedAs = (subject: string, displayName: string, username: string) =>
+    eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 10,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", "true"],
+          ["display_name", displayName],
+          ["username", username],
+          ["issuer_label", "Example"],
+          ["verified_at", "10"],
+        ],
+      }),
+    );
+  let sink: VerifiedProfileSink | undefined;
+  const directory = createProfileDirectory(
+    { read: async () => [] },
+    undefined,
+    undefined,
+    {
+      authority: { ...authority, multipleIssuers: false },
+      subscribe(_filter, next) {
+        sink = next;
+        return () => {};
+      },
+    },
+  );
+  try {
+    const people = [alice, bob, carol, dave];
+    directory.accept(
+      people.map((key) =>
+        eventDto(signed(key, { kind: 0, tags: [], content: "{}" })),
+      ),
+    );
+    await directory.ensure(people.map((key) => key.pubkey));
+    assert(sink);
+    sink.event(verifiedAs(alice.pubkey, "Sam", "sam1"));
+    sink.event(verifiedAs(bob.pubkey, "Sam", "sam2"));
+    sink.event(verifiedAs(carol.pubkey, "Carol", "shared"));
+    sink.event(verifiedAs(dave.pubkey, "Dave", "shared"));
+    sink.eose();
+    const name = (key: { pubkey: string }) =>
+      directory.queries.snapshot().get(key.pubkey)?.name;
+    expect(name(alice)).toBe(`Sam (${alice.pubkey.slice(0, 10)})`);
+    expect(name(bob)).toBe(`Sam (${bob.pubkey.slice(0, 10)})`);
+    expect(name(carol)).toBe(`Carol (${carol.pubkey.slice(0, 10)})`);
+    expect(name(dave)).toBe(`Dave (${dave.pubkey.slice(0, 10)})`);
+    sink.event(retract(20, bob.pubkey));
+    sink.event(retract(20, dave.pubkey));
+    expect(name(alice)).toBe("Sam");
+    expect(name(carol)).toBe("Carol");
   } finally {
     directory.dispose();
   }

@@ -124,6 +124,13 @@ the interface unless an available tool actually supports that action.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+- Some plugins let the person's other agents on this computer, such as Claude
+  Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
+  helper Buzz installs, for example
+  `/Applications/Buzz.app/Contents/Resources/bin/buzz-agent-command tools` on
+  macOS (inside the app's installed name, such as `Buzz Foundation.app`), with
+  no setup or token. Without such a plugin there are no tools to
+  offer; do not promise them.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching
   and whether Attention is on for this device. A mention can still wake an agent
@@ -144,6 +151,10 @@ the interface unless an available tool actually supports that action.
   When helping someone explore a community, use only your available access and
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
+
+On macOS, debug builds can use a trusted local credential helper for human restore
+and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).
+Release builds ignore this optional helper.
 
 ### Builderlab in development
 

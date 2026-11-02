@@ -320,10 +320,14 @@ active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
-A plugin, bundled or installed, can add a tab to the settings of every agent
-running on this device, whatever its type, with
-`ctx.agents.registerTab({ id, title, component })`. The component receives
-`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. The tab
+A plugin, bundled or installed, can add a tab to the settings of agents
+running on this device, whatever their type, with
+`ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
+`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
+optional `when(agent)` limits the tab to the agents it returns true for, and an
+optional `subscribe(listener)` tells the host when `when` may answer
+differently, so the tab appears or goes without a reload. A `when` that throws
+hides only its own tab. The tab
 follows Activity and precedes History and Settings, in the agent's Build view and
 its profile panel, and is not offered for hosted or elsewhere agents. It is
 removed when the plugin is turned off or its scope ends. The bundled Agent
@@ -1918,7 +1922,7 @@ provider so a delayed name can appear without another editor event.
 Channels filters the session's joined channel roster locally, including private
 channels and joined channels restored from cache (the store marks those
 `readOnly` and `cached` until the relay reconfirms them), but excluding DMs,
-sessions, archived, hidden, unnamed and other read-only entries. After a 180 ms
+sessions, archived, hidden, unnamed and other read-only entries. After a 300 ms
 typing pause, a query also asks `searchPublic`, through the same
 `usePublicChannelSearch` hook as Command-K, for open channels the viewer has not
 joined; they are labeled "Not joined", and private results are never offered.

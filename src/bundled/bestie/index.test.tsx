@@ -5,7 +5,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { deferred } from "../builderlab/test-helpers";
-import { bestieFixture, cleanups } from "./testing";
+import type { Agent } from "../../features/agents/service";
+import {
+  chooseDefaultAgent,
+  clearDefaultAgent,
+} from "../../features/solo/default-agent";
+import { bestieFixture, cleanups, COMMUNITY } from "./testing";
 
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
@@ -74,6 +79,24 @@ it("replaces hosted setup with the manual Bestie chooser", async () => {
   expect(
     screen.queryByRole("button", { name: "Set up Bestie" }),
   ).not.toBeInTheDocument();
+});
+
+it("keeps the registered Bestie tab in sync with the account choice", async () => {
+  const h = await bestieFixture(native.invoke, {
+    mainAgent: { read: async () => undefined, write: async () => {} },
+  });
+  const tab = h.agents.addedTabs().find((item) => item.id === "bestie");
+  expect(tab).toBeDefined();
+  const agent = {
+    pubkey: h.agent,
+    relay: COMMUNITY,
+    owner: h.viewer,
+  } as Agent;
+  expect(tab?.when?.(agent)).toBe(false);
+  await chooseDefaultAgent(h.session(), h.session().scope, h.agent);
+  expect(tab?.when?.(agent)).toBe(true);
+  await clearDefaultAgent(h.session(), h.session().scope);
+  expect(tab?.when?.(agent)).toBe(false);
 });
 
 it("opens the existing new-agent dialog from the chooser", async () => {

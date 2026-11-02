@@ -1247,10 +1247,14 @@ fn invoke(
 #[test]
 fn production_acl_lets_the_dialog_ask_why_wipe_is_unavailable() {
     let (_app, view) = production_app();
-    // Tests are debug builds, where wipe is refused.
+    // Debug builds refuse wipe; release builds allow it.
     assert_eq!(
         invoke(&view, "sign_out_wipe_refusal", serde_json::json!({})).unwrap(),
-        serde_json::json!(DEV_WIPE)
+        if cfg!(debug_assertions) {
+            serde_json::json!(DEV_WIPE)
+        } else {
+            serde_json::Value::Null
+        }
     );
 }
 

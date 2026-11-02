@@ -1364,3 +1364,183 @@ it("deletes only by the calling installed plugin and suppresses disposed complet
   await expect(pending).rejects.toThrow("inactive");
   await disposed;
 });
+
+const byteUpload = {
+  url: "https://example.test/upload",
+  field: "image",
+  name: "image.png",
+  contentType: "image/png",
+  fields: { label: "café" },
+};
+
+it("uploads an immutable raw snapshot with shared protected authority and no fallback", async () => {
+  const { host, fiber } = await oncePlugin();
+  let release!: (value: typeof onceContext) => void;
+  vi.mocked(invoke).mockReturnValueOnce(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  const bytes = new Uint8Array([0, 159, 255]);
+  const eligibility = vi.fn(() => true);
+  try {
+    const pending = host.uploadBytesOnce?.(bytes, byteUpload, {
+      callId,
+      isEligible: eligibility,
+    });
+    bytes.fill(1);
+    expect(eligibility).not.toHaveBeenCalled();
+    release(onceContext);
+    vi.mocked(invoke).mockResolvedValueOnce(onceReply);
+    await expect(pending).resolves.toEqual(onceReply);
+    const [, body, options] = vi.mocked(invoke).mock.calls[1] ?? [];
+    expect(body).toEqual(new Uint8Array([0, 159, 255]));
+    const metadata = JSON.parse(
+      new Headers(options?.headers).get("x-buzz-upload") ?? "",
+    );
+    expect(metadata).toEqual({
+      id: "example.plugin",
+      revision: "abc",
+      upload: byteUpload,
+      once: { ...onceContext, activation: expect.any(String), callId },
+    });
+    expect(eligibility).toHaveBeenCalledTimes(1);
+    vi.mocked(invoke).mockResolvedValueOnce(onceReply);
+    await host.requestOnce?.(onceInput, { callId });
+    const post = vi.mocked(invoke).mock.calls[2]?.[1] as { once: unknown };
+    expect(post.once).toEqual(metadata.once);
+    vi.mocked(invoke).mockRejectedValueOnce("raw IPC unavailable");
+    await expect(
+      host.uploadBytesOnce?.(bytes, byteUpload, { callId }),
+    ).rejects.toThrow("raw IPC");
+    expect(invoke).toHaveBeenCalledTimes(4);
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it.each([new Uint8Array(), new Uint8Array(16777217), [1, 2]])(
+  "refuses invalid upload bytes before acquiring authority",
+  async (bytes) => {
+    const { host, fiber } = await oncePlugin();
+    try {
+      await expect(
+        host.uploadBytesOnce?.(bytes as Uint8Array, byteUpload, { callId }),
+      ).rejects.toThrow("bytes");
+      expect(invoke).not.toHaveBeenCalled();
+    } finally {
+      await fiber.dispose();
+    }
+  },
+);
+
+it.each([false, undefined, Promise.resolve(true), new Error("refused")])(
+  "fails upload eligibility closed",
+  async (eligible) => {
+    const { host, fiber } = await oncePlugin();
+    vi.mocked(invoke).mockResolvedValue(onceContext);
+    try {
+      await expect(
+        host.uploadBytesOnce?.(new Uint8Array([1]), byteUpload, {
+          callId,
+          isEligible: (() => {
+            if (eligible instanceof Error) throw eligible;
+            return eligible;
+          }) as () => boolean,
+        }),
+      ).rejects.toThrow("eligibility");
+      expect(invoke).toHaveBeenCalledTimes(1);
+    } finally {
+      await fiber.dispose();
+    }
+  },
+);
+
+it("refuses uploads after disposal while native authority is pending", async () => {
+  const { host, fiber } = await oncePlugin();
+  let release!: (value: typeof onceContext) => void;
+  vi.mocked(invoke).mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
+  const pending = host.uploadBytesOnce?.(new Uint8Array([1]), byteUpload, {
+    callId,
+  });
+  await fiber.dispose();
+  release(onceContext);
+  await expect(pending).rejects.toThrow("inactive");
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("rejects oversized upload metadata without IPC", async () => {
+  const { host, fiber } = await oncePlugin();
+  try {
+    await expect(
+      host.uploadBytesOnce?.(
+        new Uint8Array([1]),
+        { ...byteUpload, fields: { large: "x".repeat(16384) } },
+        { callId },
+      ),
+    ).rejects.toThrow("metadata");
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it("pins upload metadata before authority and suppresses late results after disposal", async () => {
+  const { host, fiber } = await oncePlugin();
+  let context!: (value: typeof onceContext) => void;
+  let finish!: (value: typeof onceReply) => void;
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  vi.mocked(invoke).mockReturnValueOnce(
+    new Promise((resolve) => {
+      context = resolve;
+    }),
+  );
+  vi.mocked(invoke).mockImplementationOnce(async (_command, _body, options) => {
+    expect(
+      JSON.parse(new Headers(options?.headers).get("x-buzz-upload") ?? "")
+        .upload.name,
+    ).toBe("image.png");
+    markStarted();
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const upload = { ...byteUpload };
+  const pending = host.uploadBytesOnce?.(new Uint8Array([1]), upload, {
+    callId,
+  });
+  upload.name = "changed.png";
+  context(onceContext);
+  await started;
+  await fiber.dispose();
+  finish(onceReply);
+  await expect(pending).rejects.toThrow("inactive");
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it.each(["browser", "unowned", "invalid-call-id"])(
+  "refuses protected upload in %s",
+  async (mode) => {
+    const { host, fiber, root } = await oncePlugin();
+    if (mode === "browser") vi.mocked(isTauri).mockReturnValue(false);
+    try {
+      await expect(
+        (mode === "unowned" ? root.host : host).uploadBytesOnce?.(
+          new Uint8Array([1]),
+          byteUpload,
+          { callId: mode === "invalid-call-id" ? "INVALID" : callId },
+        ),
+      ).rejects.toThrow();
+      expect(invoke).not.toHaveBeenCalled();
+    } finally {
+      await fiber.dispose();
+    }
+  },
+);

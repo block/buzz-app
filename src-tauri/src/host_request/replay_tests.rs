@@ -556,3 +556,242 @@ async fn deadline_and_cancellation_do_not_rearm_a_consumed_transport_call() {
         assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
     }
 }
+
+fn upload_metadata(fixture: &App, once: &Once, url: &str) -> serde_json::Value {
+    serde_json::json!({"id":"example.replay","revision":fixture.revision,
+        "once":once,"upload":{"url":url,"field":"image","name":"image.png",
+        "contentType":"image/png","fields":{"label":"test"}}})
+}
+fn upload_ipc(
+    fixture: &App,
+    metadata: &serde_json::Value,
+    body: tauri::ipc::InvokeBody,
+) -> Result<serde_json::Value, String> {
+    get_ipc_response(
+        &fixture.view,
+        tauri::webview::InvokeRequest {
+            cmd: "plugin_host_upload_bytes_once".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: fixture.view.url().unwrap(),
+            body,
+            headers: HeaderMap::from_iter([(
+                HeaderName::from_static("x-buzz-upload"),
+                HeaderValue::from_str(&metadata.to_string()).unwrap(),
+            )]),
+            invoke_key: INVOKE_KEY.into(),
+        },
+    )
+    .map_err(|e| e.to_string())
+    .map(|r| r.deserialize().unwrap())
+}
+#[test]
+fn upload_raw_ipc_consumes_once_without_files_and_binds_bytes_and_metadata() {
+    let _serial = crate::host_files::managed_tests::commands();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("https://{}/upload", listener.local_addr().unwrap());
+    let origin = reqwest::Url::parse(&url)
+        .unwrap()
+        .origin()
+        .ascii_serialization();
+    let fixture = App::new(&origin);
+    let calls = fixture.app.state::<HostCalls>();
+    let once = envelope(&calls);
+    let metadata = upload_metadata(&fixture, &once, &url);
+    let server = std::thread::spawn(move || {
+        drop(listener.accept().unwrap());
+        listener
+    });
+    let raw = || tauri::ipc::InvokeBody::Raw(vec![0, 159, 255]);
+    assert!(upload_ipc(&fixture, &metadata, raw())
+        .unwrap_err()
+        .contains("Host request failed"));
+    let listener = server.join().unwrap();
+    assert!(upload_ipc(&fixture, &metadata, raw())
+        .unwrap_err()
+        .contains("already consumed"));
+    assert!(
+        upload_ipc(&fixture, &metadata, tauri::ipc::InvokeBody::Raw(vec![1]))
+            .unwrap_err()
+            .contains("payload conflict")
+    );
+    for key in ["url", "field", "name", "contentType", "fields"] {
+        let mut changed = metadata.clone();
+        if key == "fields" {
+            changed["upload"][key]["label"] = "changed".into();
+        } else {
+            changed["upload"][key] =
+                format!("{}x", changed["upload"][key].as_str().unwrap()).into();
+        }
+        assert!(
+            upload_ipc(&fixture, &changed, raw())
+                .unwrap_err()
+                .contains("payload conflict"),
+            "{key}"
+        );
+    }
+    // Tauri's JSON fallback cannot dispatch, even when the original result was lost.
+    assert!(upload_ipc(
+        &fixture,
+        &metadata,
+        tauri::ipc::InvokeBody::Json(serde_json::json!([0, 159, 255]))
+    )
+    .unwrap_err()
+    .contains("raw bytes"));
+    calls.page_load();
+    assert!(upload_ipc(&fixture, &metadata, raw())
+        .unwrap_err()
+        .contains("Stale"));
+    listener.set_nonblocking(true).unwrap();
+    assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+}
+
+#[test]
+fn upload_ipc_rejects_invalid_data_and_authority_before_consuming() {
+    let _serial = crate::host_files::managed_tests::commands();
+    let fixture = App::new("https://example.test");
+    let calls = fixture.app.state::<HostCalls>();
+    let metadata = upload_metadata(&fixture, &envelope(&calls), "https://example.test/upload");
+    for bytes in [vec![], vec![0; MAX_RESPONSE_BYTES + 1]] {
+        assert!(upload_ipc(&fixture, &metadata, tauri::ipc::InvokeBody::Raw(bytes)).is_err());
+    }
+    for (path, value) in [
+        (
+            vec!["upload", "url"],
+            serde_json::json!("http://example.test/"),
+        ),
+        (
+            vec!["upload", "url"],
+            serde_json::json!("https://other.test/"),
+        ),
+        (vec!["upload", "field"], serde_json::json!("bad\r\nfield")),
+        (vec!["upload", "name"], serde_json::json!("bad\"name")),
+        (vec!["upload", "contentType"], serde_json::json!("a\r\nb")),
+        (
+            vec!["upload", "fields"],
+            serde_json::json!({"huge":"x".repeat(16384)}),
+        ),
+        (vec!["upload", "path"], serde_json::json!("/not/a/file")),
+        (
+            vec!["upload", "headers"],
+            serde_json::json!({"Cookie":"secret"}),
+        ),
+        (vec!["revision"], serde_json::json!("stale")),
+        (vec!["once", "activation"], serde_json::json!("invalid")),
+        (
+            vec!["once", "boot"],
+            serde_json::json!(uuid::Uuid::new_v4().to_string()),
+        ),
+        (vec!["once", "page"], serde_json::json!(999)),
+    ] {
+        let mut bad = metadata.clone();
+        let mut at = &mut bad;
+        for part in path {
+            at = &mut at[part];
+        }
+        *at = value;
+        assert!(upload_ipc(&fixture, &bad, tauri::ipc::InvokeBody::Raw(vec![1])).is_err());
+    }
+    fixture
+        .app
+        .state::<PluginManager>()
+        .0
+        .as_ref()
+        .unwrap()
+        .change("disable", "example.replay")
+        .unwrap();
+    assert!(upload_ipc(&fixture, &metadata, tauri::ipc::InvokeBody::Raw(vec![1])).is_err());
+    assert!(calls.claims.lock().unwrap().consumed.is_empty());
+}
+
+#[test]
+fn upload_validation_and_fingerprint_bind_full_binary_and_plain_metadata() {
+    let mut upload: ByteUpload = serde_json::from_value(serde_json::json!({
+        "url":"https://example.test/upload","field":"image","name":"image.png",
+        "contentType":"image/png","fields":{"label":"hello"}
+    }))
+    .unwrap();
+    assert!(validate_byte_upload(&upload, &[0, 159, 255]).is_ok());
+    assert!(validate_byte_upload(&upload, &vec![0; MAX_RESPONSE_BYTES]).is_ok());
+    let original = upload.fingerprint(&[0, 159, 255]);
+    assert_ne!(original, upload.fingerprint(&[0, 159, 254]));
+    upload.fields.insert("label".into(), "different".into());
+    assert_ne!(original, upload.fingerprint(&[0, 159, 255]));
+    for field in ["url", "field", "name", "contentType", "fields"] {
+        let mut value = serde_json::to_value(&upload).unwrap();
+        if field == "fields" {
+            value[field] = serde_json::json!({"ab":"c"});
+        } else {
+            value[field] = format!("{}x", value[field].as_str().unwrap()).into();
+        }
+        let changed: ByteUpload = serde_json::from_value(value).unwrap();
+        assert_ne!(upload.fingerprint(&[1]), changed.fingerprint(&[1]));
+    }
+    upload.fields = BTreeMap::from([("x".into(), "x".repeat(8193))]);
+    assert!(validate_byte_upload(&upload, &[1]).is_err());
+}
+
+#[tokio::test]
+async fn upload_transport_preserves_binary_multipart_and_never_follows_redirects_or_retries() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for reply in [true, false] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = reqwest::Url::parse(&format!("http://{}/upload", listener.local_addr().unwrap()))
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let n = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+                if let Some(split) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..split]);
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .map(str::to_owned)
+                        })
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if request.len() == split + 4 + length {
+                        break;
+                    }
+                }
+            }
+            assert!(request.starts_with(b"POST /upload HTTP/1.1"));
+            let split = request.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            let headers = String::from_utf8_lossy(&request[..split]);
+            let boundary = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-type: multipart/form-data; boundary="))
+                .unwrap();
+            assert!(!headers.to_ascii_lowercase().contains("cookie:"));
+            let expected = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\ncafé\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n");
+            let mut body = expected.into_bytes();
+            body.extend([0, 159, 255]);
+            body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
+            assert_eq!(&request[split + 4..], body);
+            if reply {
+                socket.write_all(b"HTTP/1.1 307 Temporary Redirect\r\nLocation: https://other.test/\r\nSet-Cookie: secret=1\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            }
+            listener
+        });
+        let upload: ByteUpload = serde_json::from_value(serde_json::json!({"url":url.as_str(),"field":"image","name":"image.png","contentType":"image/png","fields":{"label":"café"}})).unwrap();
+        let result = send_byte_upload(url, &upload, &[0, 159, 255]).await;
+        if reply {
+            let response = result.unwrap();
+            assert_eq!(response.status, 307);
+            assert_eq!(response.body, "{}");
+            assert!(!response.headers.contains_key("set-cookie"));
+        } else {
+            assert!(result.unwrap_err().contains("Host request failed"));
+        }
+        let listener = server.await.unwrap().into_std().unwrap();
+        assert!(matches!(listener.accept(),Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
+}

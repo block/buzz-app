@@ -268,6 +268,140 @@ pub(crate) async fn plugin_host_request<R: tauri::Runtime>(
         .map_err(|_| "Host request timed out")?
 }
 
+const MAX_UPLOAD_METADATA: usize = 16 * 1024;
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ByteUpload {
+    url: String,
+    field: String,
+    name: String,
+    content_type: String,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
+}
+impl ByteUpload {
+    fn fingerprint(&self, bytes: &[u8]) -> [u8; 32] {
+        fingerprint(
+            [
+                self.url.as_bytes(),
+                self.field.as_bytes(),
+                self.name.as_bytes(),
+                self.content_type.as_bytes(),
+                bytes,
+            ]
+            .into_iter()
+            .chain(
+                self.fields
+                    .iter()
+                    .flat_map(|(k, v)| [k.as_bytes(), v.as_bytes()]),
+            ),
+        )
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ByteUploadMetadata {
+    id: String,
+    revision: String,
+    upload: ByteUpload,
+    once: Once,
+}
+fn validate_byte_upload(upload: &ByteUpload, bytes: &[u8]) -> Result<reqwest::Url, String> {
+    if bytes.is_empty() || bytes.len() > MAX_RESPONSE_BYTES {
+        return Err("Invalid upload bytes".into());
+    }
+    validate_form(
+        &upload.fields,
+        &upload.field,
+        &upload.name,
+        &upload.content_type,
+    )?;
+    let (url, _, _) = validate_request(&HostRequest {
+        url: upload.url.clone(),
+        method: "POST".into(),
+        headers: BTreeMap::new(),
+        body: None,
+        timeout_ms: None,
+    })?;
+    Ok(url)
+}
+
+/// Raw-only admission: JSON/array fallback never reaches consumption or HTTP.
+#[tauri::command]
+pub(crate) async fn plugin_host_upload_bytes_once<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
+    calls: tauri::State<'_, HostCalls>,
+    manager: tauri::State<'_, PluginManager>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<HostResponse, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Protected upload body must be raw bytes; outcome unknown".into());
+    };
+    let metadata = request
+        .headers()
+        .get("x-buzz-upload")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| v.len() <= MAX_UPLOAD_METADATA)
+        .ok_or("Invalid upload metadata")?;
+    let ByteUploadMetadata {
+        id,
+        revision,
+        upload,
+        once,
+    } = serde_json::from_str(metadata).map_err(|_| "Invalid upload metadata")?;
+    if id.is_empty() || id.len() > 256 || revision.is_empty() || revision.len() > 128 {
+        return Err("Invalid upload metadata".into());
+    }
+    let url = validate_byte_upload(&upload, bytes)?;
+    // Matches the existing byte-operation admission policy; no unbounded body clone.
+    let _place = crate::host_files::BYTE_WORK
+        .try_acquire()
+        .map_err(|_| "A byte operation is already under way")?;
+    let operation = async {
+        byte_origin(manager, &id, &revision, &url).await?;
+        calls.consume(
+            webview.label(),
+            "upload-bytes",
+            &id,
+            &revision,
+            &once,
+            upload.fingerprint(bytes),
+        )?;
+        send_byte_upload(url, &upload, bytes).await
+    };
+    tokio::time::timeout(DEADLINE, operation)
+        .await
+        .map_err(|_| "Host upload timed out; outcome unknown")?
+}
+
+async fn send_byte_upload(
+    url: reqwest::Url,
+    upload: &ByteUpload,
+    bytes: &[u8],
+) -> Result<HostResponse, String> {
+    let (content_type, body) = multipart(
+        &upload.fields,
+        &upload.field,
+        &upload.name,
+        &upload.content_type,
+        bytes,
+    )?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(DEADLINE)
+        .build()
+        .map_err(|_| "Host request client is unavailable")?;
+    read_response(
+        client
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body),
+    )
+    .await
+}
+
 /// A GET with no caller headers or body; byte limits apply to actual chunks.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -380,7 +514,13 @@ pub(crate) async fn plugin_host_upload(
         if bytes.len() as u64 > MAX_UPLOAD_BYTES {
             return Err("The upload file is too large".into());
         }
-        let (content_type, body) = multipart(&upload.fields, &upload.file, &bytes)?;
+        let (content_type, body) = multipart(
+            &upload.fields,
+            &upload.file.field,
+            &upload.file.name,
+            &upload.file.content_type,
+            &bytes,
+        )?;
         let mut headers = headers;
         headers.insert(
             reqwest::header::CONTENT_TYPE,
@@ -432,11 +572,12 @@ fn upload_path(
 }
 
 /// A `multipart/form-data` body: the text fields, then the file.
-fn multipart(
+fn validate_form(
     fields: &BTreeMap<String, String>,
-    file: &UploadFile,
-    bytes: &[u8],
-) -> Result<(String, Vec<u8>), String> {
+    field: &str,
+    name: &str,
+    content_type: &str,
+) -> Result<(), String> {
     // Names and types go into headers inside the body, so they stay plain.
     let plain = |text: &str| {
         !text.is_empty()
@@ -446,15 +587,26 @@ fn multipart(
                 .all(|byte| byte.is_ascii_graphic() && byte != b'"' && byte != b'\\')
     };
     if fields.len() > 16
-        || !plain(&file.field)
-        || !plain(&file.name)
-        || !plain(&file.content_type)
+        || !plain(field)
+        || !plain(name)
+        || !plain(content_type)
         || fields
             .iter()
             .any(|(name, value)| !plain(name) || value.len() > MAX_HEADER_BYTES)
     {
         return Err("Invalid upload form".into());
     }
+    Ok(())
+}
+
+fn multipart(
+    fields: &BTreeMap<String, String>,
+    field: &str,
+    name: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> Result<(String, Vec<u8>), String> {
+    validate_form(fields, field, name, content_type)?;
     let boundary = format!("buzz-{}", uuid::Uuid::new_v4().simple());
     let mut body = Vec::with_capacity(bytes.len() + 1024);
     for (name, value) in fields {
@@ -468,7 +620,7 @@ fn multipart(
     body.extend(
         format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
-            file.field, file.name, file.content_type
+            field, name, content_type
         )
         .as_bytes(),
     );
@@ -841,7 +993,8 @@ mod tests {
             content_type: "application/gzip".into(),
         };
         let fields = BTreeMap::from([("version_id".to_string(), "v1".to_string())]);
-        let (content_type, body) = multipart(&fields, &file, b"GZ").unwrap();
+        let (content_type, body) =
+            multipart(&fields, &file.field, &file.name, &file.content_type, b"GZ").unwrap();
         let boundary = content_type
             .strip_prefix("multipart/form-data; boundary=")
             .unwrap();
@@ -853,7 +1006,10 @@ mod tests {
         );
         for bad in ["a\"b", "a b", "", "a\r\nb"] {
             let fields = BTreeMap::from([(bad.to_string(), "v".to_string())]);
-            assert!(multipart(&fields, &file, b"").is_err(), "{bad:?}");
+            assert!(
+                multipart(&fields, &file.field, &file.name, &file.content_type, b"").is_err(),
+                "{bad:?}"
+            );
         }
     }
 

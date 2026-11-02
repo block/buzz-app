@@ -294,6 +294,21 @@ active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
+Code that agents need while they run, such as an agent type's runtime, tools,
+wakes and Attention sources, belongs in the plugin's optional `agent` export:
+`export const agent = { inject, apply(ctx) }`, with its own `inject`. `apply`
+stays the plugin's UI. Both parts now start in the same page, under the same
+plugin identity; the plugin is active once both are, and fails if either does.
+This separation lets agents later run apart from the UI page.
+
+A harness plugin registers its type from its `agent` entry and presents it
+from `apply`: `ctx.agents.present(typeId, (exposed) => ({ icon, Peek, Create,
+CreateModel, tabs, provider: { DialogBody, DefaultControl } }))`. The type's
+readers see one type with both halves. `exposed` is the type's `expose`: the
+handles its UI reaches of the runtime. Each is JSON, a store (`snapshot` and
+`subscribe`) or a call returning a promise, so it can later cross to another
+page. Claude is the first harness split this way.
+
 A plugin, bundled or installed, can add a tab to the settings of every agent
 running on this device, whatever its type, with
 `ctx.agents.registerTab({ id, title, component })`. The component receives
@@ -353,7 +368,7 @@ plugin is replaced, so ask for it when acting rather than keeping it. Like any t
 
 Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.
 
-A source may also `present` its watches on the Agent Attention page. Given a watch and its display name, it returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a provider has no `present`, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.
+A plugin's UI entry may also present its source's watches on the Agent Attention page with `ctx.agents.presentSource(sourceId, present)`. The source runs in the agent entry, but how its watches look is a screen concern, so it stays with the screens. Given a watch and its display name, `present` returns the watch's kind and, optionally, an icon, a target with a subtitle, an external link, and a details component that replaces the name in the expanded row. When a source has no presentation, or it throws, Buzz shows the watch by its name. The GitHub plugin presents pull request watches this way, linking to its comment author settings.
 
 Each Attention source `run` receives `spawn(processId, options)` for commands using that watch's owning agent. The host binds agent identity, watch destination and run lifetime; plugins cannot select another agent or obtain the raw authenticated connection. Declare the process in `host.processes` and request `host.mcp`, plus `host.files` for tools reading local paths. Options supply arguments, working directory, environment and output callbacks.
 

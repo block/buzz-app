@@ -24,8 +24,6 @@ export type AttentionSource = Readonly<{
   /** Discovery metadata for tools that configure this provider. */
   description?: string;
   configExample?: Readonly<Record<string, unknown>>;
-  /** `title` is the watch's display name. */
-  present?(watch: SourceWatch, title: string): SourcePresentation;
   run(
     input: Readonly<{
       /** Stable Attention object slug, unique within the agent. */

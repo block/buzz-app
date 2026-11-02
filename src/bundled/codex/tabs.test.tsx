@@ -31,7 +31,7 @@ import type { RelayData } from "../../features/relay/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { defaults, type Config } from "./config";
 import { sessionTag } from "./prompt";
-import { CodexProvider, createTabs } from "./tabs";
+import { CodexProvider, createTabs, transcripts } from "./tabs";
 import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 import { CodexSetup } from "./setup";
@@ -204,7 +204,12 @@ function fixture({
     sessions,
     (raw) => provider.resolve(raw),
   );
-  const tabs = createTabs(provider, runtime, spawn, setup);
+  const tabs = createTabs(
+    provider,
+    runtime,
+    transcripts(spawn, runtime),
+    setup,
+  );
   const props = (settings = defaults, save = vi.fn(async () => {})) =>
     ({
       agent: {
@@ -1474,7 +1479,7 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   const { ProviderDialogBody } = createTabs(
     provider,
     f.runtime,
-    f.spawn,
+    transcripts(f.spawn, f.runtime),
     f.setup,
   );
   render(<ProviderDialogBody onClose={vi.fn()} />);

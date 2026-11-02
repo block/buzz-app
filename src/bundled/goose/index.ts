@@ -15,9 +15,64 @@ import { readUsage } from "./usage";
 
 export const TYPE_ID = "goose";
 
-export const inject = ["agents", "host"];
+/** What the type's UI reaches of its runtime. */
+type GooseExposed = Parameters<typeof createTabs>[0];
+
+export const inject = ["agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `goose-acp`; no unusable type elsewhere.
+  if (!isTauri()) return;
+  ctx.agents.present<GooseExposed, Config>(TYPE_ID, (exposed) => {
+    const {
+      Create,
+      CreateModel,
+      SettingsTab,
+      ActivityTab,
+      DefaultControl,
+      ProviderDialogBody,
+    } = createTabs(exposed);
+    return {
+      icon: GooseLogoIcon,
+      Create,
+      CreateModel,
+      importShared: (source) =>
+        source.runtime === "goose" || source.runtime === "goose-ai"
+          ? {
+              ...DEFAULT_CONFIG,
+              model: source.model,
+              provider: source.provider ?? "",
+            }
+          : undefined,
+      exportShared: (saved) => {
+        const { provider, model } = config(saved);
+        return { runtime: "goose", ...(provider && { provider }), model };
+      },
+      provider: { DialogBody: ProviderDialogBody, DefaultControl },
+      tabs: [
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: SettingsTab,
+        },
+        {
+          id: "activity",
+          title: "Activity",
+          role: "activity",
+          component: ActivityTab,
+        },
+      ],
+    };
+  });
+};
+
+// The runtime, which runs where the agents do.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply: (ctx) => applyAgent(ctx),
+};
+function applyAgent(ctx: Parameters<PluginModule["apply"]>[0]) {
   if (!isTauri()) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
@@ -38,18 +93,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       : undefined;
   const setup = new GooseSetup(desktop, () => runtime.defaultsChanged());
   const history = new GooseHistory(desktop);
-  const {
-    Create,
-    CreateModel,
-    SettingsTab,
-    ActivityTab,
-    DefaultControl,
-    ProviderDialogBody,
-  } = createTabs({
-    setup,
-    runtime,
-    history,
-  });
   const sync = () => {
     const snapshot = agents.snapshot();
     if (snapshot.status === "loading") return;
@@ -67,30 +110,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   agents.register<Config>({
     id: TYPE_ID,
     title: "Goose",
-    icon: GooseLogoIcon,
     description:
       "goose on this computer, with any provider goose supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    importShared: (source) =>
-      source.runtime === "goose" || source.runtime === "goose-ai"
-        ? {
-            ...DEFAULT_CONFIG,
-            model: source.model,
-            provider: source.provider ?? "",
-          }
-        : undefined,
-    exportShared: (saved) => {
-      const { provider, model } = config(saved);
-      return { runtime: "goose", ...(provider && { provider }), model };
-    },
-    Create,
-    CreateModel,
+    expose: { setup, runtime, history } satisfies GooseExposed,
     provider: {
       snapshot: setup.snapshot,
       subscribe: setup.subscribe,
       check: setup.check,
-      DialogBody: ProviderDialogBody,
-      DefaultControl,
     },
     adopt: (carry, saved) => ({
       ...saved,
@@ -145,22 +172,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           signal,
         ),
     }),
-    tabs: [
-      {
-        id: "settings",
-        title: "Settings",
-        role: "settings",
-        splitSettings: true,
-        component: SettingsTab,
-      },
-      {
-        id: "activity",
-        title: "Activity",
-        role: "activity",
-        component: ActivityTab,
-      },
-    ],
     models: (agent) => setup.picks(config(agent.config)),
     ...gooseRun(runtime),
   });
-};
+}

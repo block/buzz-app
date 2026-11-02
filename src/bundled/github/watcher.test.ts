@@ -144,10 +144,7 @@ const asks = (app: ReturnType<typeof setup>, login: string) =>
     ([query]) => membershipRead(query) && query.includes(`login:"${login}"`),
   ).length;
 
-function setup(
-  initial: Pull | null = answer(),
-  present?: AttentionSource["present"],
-) {
+function setup(initial: Pull | null = answer()) {
   let gh = initial;
   let texts = true;
   let members: readonly string[] | null = [];
@@ -289,7 +286,7 @@ function setup(
     },
     effect: (fn: () => () => void) => disposers.push(fn()),
   } as unknown as Context;
-  watchPulls(ctx, states, github as unknown as GitHubCli, present);
+  watchPulls(ctx, states, github as unknown as GitHubCli);
   const tool = tools[0] as AddedTool;
   const call = (
     args: Record<string, unknown>,
@@ -358,15 +355,10 @@ describe("github_watch_pr", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("registers PR watching as an Attention source with its presenter", () => {
-    const present = vi.fn();
-    const app = setup(answer(), present);
+  it("registers PR watching as an Attention source", () => {
+    const app = setup(answer());
     expect(app.addAttentionSource).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "github-pr",
-        run: expect.any(Function),
-        present,
-      }),
+      expect.objectContaining({ id: "github-pr", run: expect.any(Function) }),
     );
     app.dispose();
   });

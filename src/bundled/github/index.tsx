@@ -59,8 +59,8 @@ export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
   // A pull request's state is nobody's community's: one store serves every
-  // session's sidebar, every link in messages, the panel and agents, so one
-  // shown in several places costs one read.
+  // session's sidebar, every link in messages and the panel, so one shown in
+  // several places costs one read. Agents keep their own where they run.
   const states = createPullStates(gh);
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
@@ -192,10 +192,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : "Unlinked this chat's pull request.";
     },
   });
-  addPullStateTool(ctx.agents, states);
-  // Agents can watch pull requests where the app runs them.
-  ctx.inject(["agents", "host", "navigation"], (scope) =>
-    watchPulls(scope, states, gh, presentPull(scope.navigation)),
+  // How a pull request watch shows in Agent Attention.
+  ctx.inject(["navigation"], (scope) =>
+    ctx.agents.presentSource("github-pr", presentPull(scope.navigation)),
   );
   // Whose comments and reviews wake them.
   ctx.inject(["settingsCards"], (scope) => {
@@ -207,6 +206,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       component: ({ active }) => <AuthorSettings active={active} />,
     });
   });
+};
+// Agents can read and watch pull requests where the app runs them.
+export const agent: NonNullable<PluginModule["agent"]> = {
+  inject: ["agents", "host"],
+  apply(ctx) {
+    const gh = gitHubCli(ctx.host);
+    const states = createPullStates(gh);
+    addPullStateTool(ctx.agents, states);
+    watchPulls(ctx, states, gh);
+  },
 };
 /** A repository, issue or commit, read when the panel opens. */
 function useGitHubObject(

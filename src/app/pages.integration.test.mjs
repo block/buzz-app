@@ -29,6 +29,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     value: {
       getItem: (key) => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
     },
   });
   let services;

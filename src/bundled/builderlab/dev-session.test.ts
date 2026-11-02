@@ -239,214 +239,185 @@ it("returns accepted deployment IDs without checking readiness under a replaceme
   h.session.dispose();
 });
 
-it.each(["current", "canceled", "disposed"] as const)(
-  "handles login failure after pending and signed-out SSE when the attempt is %s",
-  async (mode) => {
+type LoginCase = {
+  outcome: "HTTP" | "network" | "broker";
+  lifecycle: "current" | "canceled" | "replaced" | "disposed";
+  fresh?: "pending" | "signed-in" | "failed" | "same-owner";
+  after?: "snapshot";
+  local?: true;
+};
+const loginCases: LoginCase[] = [
+  ...(["HTTP", "network", "broker"] as const).flatMap((outcome) =>
+    (["current", "canceled", "replaced", "disposed"] as const).map(
+      (lifecycle) => ({ outcome, lifecycle }),
+    ),
+  ),
+  ...(["pending", "signed-in", "failed", "same-owner"] as const).map(
+    (fresh) => ({
+      outcome: "network" as const,
+      lifecycle: "current" as const,
+      fresh,
+    }),
+  ),
+  { outcome: "broker", lifecycle: "replaced", local: true },
+  { outcome: "network", lifecycle: "canceled", after: "snapshot" },
+  { outcome: "network", lifecycle: "disposed", after: "snapshot" },
+];
+
+// A dispatch can fail before admission or after its broker events. Only an
+// unaccounted current failure renews the stream; shared state always wins.
+it.each(
+  loginCases.map((row) => ({
+    fresh: "idle" as const,
+    after: "response" as const,
+    local: false,
+    ...row,
+  })),
+)(
+  "projects $outcome failure: $lifecycle, fresh=$fresh, invalidation=$after, local=$local",
+  async ({ outcome, lifecycle, fresh, after, local }) => {
     const h = setup();
-    h.events.emit("one", null);
+    h.events.emit("initial", fresh === "same-owner" ? "A" : null);
+    if (fresh === "same-owner") await signedIn(h.session);
+    const owner = fresh === "same-owner" ? h.session.credential() : undefined;
+    const viewer =
+      fresh === "same-owner" ? h.session.viewerSession() : undefined;
     const response = deferred<Response>();
-    h.fetch.mockImplementationOnce(() => response.promise);
-    const pending = h.session.signIn();
-    // The broker announces pending, then revokes a failed login before its HTTP error.
-    h.events.emit("two", null, true);
-    expect(h.session.snapshot().status).toBe("pending");
-    if (mode === "canceled") h.session.cancel();
-    if (mode === "disposed") h.session.dispose();
-    const error = "Builderlab code exchange failed with HTTP 503";
-    h.events.emit("three", null, false, mode === "current" ? error : undefined);
-    response.resolve(Response.json({ error }, { status: 502 }));
-    await pending;
-    expect(h.session.snapshot()).toEqual({
-      status: "signed-out",
-      ...(mode === "current" ? { error } : {}),
-    });
-    h.session.dispose();
-  },
-);
-
-it("ignores an older login error while preserving a replacement attempt's failure", async () => {
-  const h = setup();
-  h.events.emit("one", null);
-  const oldResponse = deferred<Response>();
-  const newResponse = deferred<Response>();
-  h.fetch.mockImplementationOnce(() => oldResponse.promise);
-  const oldLogin = h.session.signIn();
-  h.events.emit("two", null, true);
-  h.events.emit("three", null);
-  h.fetch.mockImplementationOnce(() => newResponse.promise);
-  const newLogin = h.session.signIn();
-  h.events.emit("four", null, true);
-  try {
-    oldResponse.resolve(
-      Response.json({ error: "Old login failed" }, { status: 502 }),
-    );
-    await oldLogin;
-    expect(h.session.snapshot()).toEqual({ status: "pending" });
-    h.events.emit("five", null, false, "New login failed");
-  } finally {
-    newResponse.resolve(
-      Response.json({ error: "New login failed" }, { status: 502 }),
-    );
-  }
-  await newLogin;
-  expect(h.session.snapshot()).toEqual({
-    status: "signed-out",
-    error: "New login failed",
-  });
-  h.session.dispose();
-});
-
-it("keeps another page's replacement login pending after this page's late HTTP failure", async () => {
-  const h = setup();
-  h.events.emit("initial", null);
-  const response = deferred<Response>();
-  h.fetch.mockImplementationOnce(() => response.promise);
-  const login = h.session.signIn();
-  h.events.emit("attempt-A", null, true);
-  h.events.emit("failed-A", null, false, "Login A failed");
-  // A different renderer starts B: no second local signIn() occurs here.
-  h.events.emit("attempt-B", null, true);
-  response.resolve(Response.json({ error: "Login A failed" }, { status: 502 }));
-  await login;
-  expect(h.session.snapshot()).toEqual({ status: "pending" });
-  h.events.emit("failed-B", null, false, "Login B failed");
-  expect(h.session.snapshot()).toEqual({
-    status: "signed-out",
-    error: "Login B failed",
-  });
-  h.session.dispose();
-});
-
-it.each(["HTTP", "network"])(
-  "reconciles a rejected %s login POST with no broker event and permits retry",
-  async (mode) => {
-    const h = setup();
-    h.events.emit("idle", null);
-    if (mode === "HTTP")
-      h.fetch.mockResolvedValueOnce(
-        Response.json({ error: "Request refused" }, { status: 502 }),
-      );
-    else h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await h.session.signIn();
-    expect(h.events.close).toHaveBeenCalledOnce();
-    const fresh = Events.all.at(-1);
-    if (!fresh || fresh === h.events)
-      throw new Error("Missing fresh broker snapshot subscription");
-    expect(h.session.snapshot()).toMatchObject({
-      status: "pending",
-      checking: true,
-    });
-    // Retired callbacks cannot describe the replacement subscription.
-    h.events.emit("retired", null, true);
-    h.events.onerror?.();
-    fresh.emit("idle", null);
-    expect(h.session.snapshot()).toEqual({
-      status: "signed-out",
-      error: "Could not start Builderlab sign-in. Try again.",
-    });
-    const retry = h.session.signIn();
-    fresh.emit("retry", null, true);
-    await retry;
-    expect(h.fetch).toHaveBeenCalledTimes(2);
-    expect(h.session.snapshot()).toEqual({ status: "pending" });
-    h.session.dispose();
-  },
-);
-
-it.each(["pending", "signed-in", "failed"])(
-  "uses the broker's fresh %s state after an unaccounted login failure",
-  async (mode) => {
-    const h = setup();
-    h.events.emit("idle", null);
-    h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await h.session.signIn();
-    const fresh = Events.all.at(-1);
-    if (!fresh || fresh === h.events)
-      throw new Error("Missing fresh broker snapshot subscription");
-    fresh.emit(
-      "replacement",
-      mode === "signed-in" ? "B" : null,
-      mode === "pending",
-      mode === "failed" ? "Broker failure" : undefined,
-    );
-    if (mode === "signed-in") await signedIn(h.session);
-    expect(h.session.snapshot()).toMatchObject(
-      mode === "signed-in"
-        ? { status: "signed-in", account: { subject: "B" } }
-        : mode === "pending"
-          ? { status: "pending" }
-          : { status: "signed-out", error: "Broker failure" },
-    );
-    if (mode !== "failed")
-      expect(h.session.snapshot()).not.toHaveProperty("error");
-    if (mode === "pending") {
-      fresh.emit("replacement-ended", null);
-      expect(h.session.snapshot()).toEqual({ status: "signed-out" });
-    }
-    h.session.dispose();
-  },
-);
-
-it("restores an unchanged signed-in owner after a login dispatch fails", async () => {
-  const h = setup();
-  h.events.emit("one", "A");
-  await signedIn(h.session);
-  const owner = h.session.credential();
-  const viewer = h.session.viewerSession();
-  h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-  await h.session.signIn();
-  const fresh = Events.all.at(-1);
-  if (!fresh || fresh === h.events)
-    throw new Error("Missing fresh broker snapshot subscription");
-  fresh.emit("one", "A");
-  expect(h.session.snapshot()).toEqual({
-    status: "signed-in",
-    account: owner.account,
-  });
-  expect(h.session.credential()).toBe(owner);
-  expect(h.session.viewerSession()).toBe(viewer);
-  expect(viewer.signal.aborted).toBe(false);
-  h.session.dispose();
-});
-
-it.each(["shared update", "cancel", "dispose"])(
-  "does not reconcile an old failed POST after %s",
-  async (mode) => {
-    const h = setup();
-    h.events.emit("idle", null);
-    const response = deferred<Response>();
+    const replacementResponse = deferred<Response>();
     h.fetch.mockImplementationOnce(() => response.promise);
     const login = h.session.signIn();
-    if (mode === "shared update") h.events.emit("B", null, true);
-    else if (mode === "cancel") {
-      h.session.cancel();
-      h.events.emit("canceled", null);
-    } else h.session.dispose();
-    response.resolve(Response.json({ error: "Old failure" }, { status: 502 }));
-    await login;
-    expect(Events.all).toHaveLength(1);
-    expect(h.session.snapshot()).toEqual({
-      status: mode === "shared update" ? "pending" : "signed-out",
-    });
-    h.session.dispose();
-  },
-);
+    let replacement: Promise<void> | undefined;
+    const brokerError = "Builderlab code exchange failed with HTTP 503";
+    const invalidate = () => {
+      if (lifecycle === "canceled") {
+        h.session.cancel();
+        if (after === "response") h.events.emit("canceled", null);
+      } else if (lifecycle === "disposed") h.session.dispose();
+      else if (lifecycle === "replaced") {
+        if (outcome === "broker")
+          h.events.emit("failed-A", null, false, brokerError);
+        if (local) {
+          h.fetch.mockImplementationOnce(() => replacementResponse.promise);
+          replacement = h.session.signIn();
+        }
+        // Shared replacement rows deliberately have no second local signIn().
+        h.events.emit("attempt-B", null, true);
+      }
+    };
+    try {
+      if (outcome === "broker") {
+        h.events.emit("attempt-A", null, true);
+        expect(h.session.snapshot()).toEqual({ status: "pending" });
+      }
+      if (after === "response") invalidate();
+      if (outcome === "broker" && lifecycle !== "replaced")
+        h.events.emit(
+          "ended-A",
+          null,
+          false,
+          lifecycle === "current" ? brokerError : undefined,
+        );
+      if (outcome === "network")
+        response.reject(new TypeError("Failed to fetch"));
+      else
+        response.resolve(
+          Response.json({ error: brokerError }, { status: 502 }),
+        );
+      await login;
 
-it.each(["cancel", "dispose"])(
-  "drops the recovery diagnostic after %s before its fresh snapshot arrives",
-  async (mode) => {
-    const h = setup();
-    h.events.emit("idle", null);
-    h.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await h.session.signIn();
-    const fresh = Events.all.at(-1);
-    if (!fresh || fresh === h.events)
-      throw new Error("Missing fresh broker snapshot subscription");
-    if (mode === "cancel") h.session.cancel();
-    else h.session.dispose();
-    fresh.emit("current", null);
-    expect(h.session.snapshot()).toEqual({ status: "signed-out" });
-    h.session.dispose();
-    expect(fresh.close).toHaveBeenCalled();
+      const renewed =
+        outcome !== "broker" &&
+        (lifecycle === "current" || after === "snapshot");
+      expect(Events.all).toHaveLength(renewed ? 2 : 1);
+      expect(h.events.close).toHaveBeenCalledTimes(
+        renewed || lifecycle === "disposed" ? 1 : 0,
+      );
+      const current = Events.all.at(-1);
+      if (!current) throw new Error("Missing broker event stream");
+      if (renewed) {
+        expect(current).not.toBe(h.events);
+        expect(h.session.snapshot()).toEqual({
+          status: "pending",
+          checking: true,
+        });
+        // Neither retired callback may mutate the fresh subscription or owner.
+        h.events.emit("retired", null, true);
+        h.events.onerror?.();
+        expect(h.session.snapshot()).toEqual({
+          status: "pending",
+          checking: true,
+        });
+        if (after === "snapshot") invalidate();
+        current.emit(
+          fresh === "same-owner" ? "initial" : "fresh",
+          fresh === "same-owner" ? "A" : fresh === "signed-in" ? "B" : null,
+          fresh === "pending",
+          fresh === "failed" ? "Broker failure" : undefined,
+        );
+        if (fresh === "signed-in" || fresh === "same-owner")
+          await signedIn(h.session);
+      }
+      const error =
+        lifecycle !== "current"
+          ? undefined
+          : outcome === "broker"
+            ? brokerError
+            : fresh === "failed"
+              ? "Broker failure"
+              : fresh === "idle"
+                ? "Could not start Builderlab sign-in. Try again."
+                : undefined;
+      if (fresh === "same-owner") {
+        expect(h.session.snapshot()).toEqual({
+          status: "signed-in",
+          account: owner?.account,
+        });
+        expect(h.session.credential()).toBe(owner);
+        expect(h.session.viewerSession()).toBe(viewer);
+        expect(viewer?.signal.aborted).toBe(false);
+      } else if (fresh === "signed-in")
+        expect(h.session.snapshot()).toMatchObject({
+          status: "signed-in",
+          account: { subject: "B" },
+        });
+      else
+        expect(h.session.snapshot()).toEqual({
+          status:
+            lifecycle === "replaced" ||
+            (lifecycle === "current" && fresh === "pending")
+              ? "pending"
+              : "signed-out",
+          ...(error ? { error } : {}),
+        });
+      if (!error) expect(h.session.snapshot()).not.toHaveProperty("error");
+
+      if (lifecycle === "replaced") {
+        h.events.emit("failed-B", null, false, "New login failed");
+        replacementResponse.resolve(
+          Response.json({ error: "New login failed" }, { status: 502 }),
+        );
+        await replacement;
+        expect(h.session.snapshot()).toEqual({
+          status: "signed-out",
+          error: "New login failed",
+        });
+        expect(Events.all).toHaveLength(1);
+      } else if (fresh === "pending") {
+        current.emit("replacement-ended", null);
+        expect(h.session.snapshot()).toEqual({ status: "signed-out" });
+      } else if (renewed && lifecycle === "current" && fresh === "idle") {
+        const retry = h.session.signIn();
+        current.emit("retry", null, true);
+        await retry;
+        expect(h.fetch).toHaveBeenCalledTimes(2);
+        expect(h.session.snapshot()).toEqual({ status: "pending" });
+      }
+    } finally {
+      h.session.dispose();
+      response.resolve(Response.json({}));
+      replacementResponse.resolve(Response.json({}));
+      await Promise.all([login, replacement]);
+    }
+    expect(Events.all.at(-1)?.close).toHaveBeenCalled();
   },
 );

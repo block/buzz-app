@@ -112,7 +112,7 @@ async fn authorize(shared: Option<Arc<Shared>>, request: Authorization) -> Resul
         return Err("The external app did not accept authorization. Start setup again.".into());
     }
     if let Some(shared) = shared {
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             tokio::select! { () = tokio::time::sleep_until(deadline) => {}, () = shared.stop.cancelled() => return }
             if shared.authorization.lock().map_or(true, |exchange| {
                 exchange.as_ref().is_some_and(|exchange| !exchange.consumed)

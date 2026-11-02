@@ -11,6 +11,7 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
 import { useEffectEvent } from "react";
+import type { Node as EditorNode } from "prosemirror-model";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
 import { animate, useReducedMotion } from "motion/react";
@@ -1396,13 +1397,16 @@ function Composer({
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
+    const quote = { available: quoteAvailable, insert: insertQuote };
     editScope.current = start;
+    editScope.quote = quote;
     editScope.input.current = input.current;
     return () => {
       if (editScope.current === start) {
         editScope.current = undefined;
         editScope.input.current = null;
       }
+      if (editScope.quote === quote) editScope.quote = undefined;
     };
   }, [editScope]);
   // DOM props are committed before child layout effects; closures can still
@@ -1414,6 +1418,13 @@ function Composer({
     !!input.current?.isConnected &&
     !input.current.disabled &&
     !input.current.readOnly;
+  const quoteAvailable = useEffectEvent(editable);
+  const insertQuote = useEffectEvent((doc: EditorNode) => {
+    if (!editable()) return false;
+    const inserted = !!input.current?.insertDocument(doc);
+    setError(inserted ? undefined : "Message is too long to add this quote");
+    return inserted;
+  });
   function insert(
     text: string,
     recipient?: MentionRecipient,

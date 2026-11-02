@@ -5,11 +5,18 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import type { Node as EditorNode } from "prosemirror-model";
 import type { ChannelMessage } from "../relay/contracts";
 
 type EditHandler = (row: ChannelMessage) => void;
+/** The composer's quote destination; see QuoteSelection. */
+type QuoteTarget = {
+  available(): boolean;
+  insert(doc: EditorNode): boolean;
+};
 type EditScopeValue = {
   current: EditHandler | undefined;
+  quote?: QuoteTarget | undefined;
   input: RefObject<HTMLElement | null>;
   focusTarget(): HTMLElement | null;
   exactRows?: (() => readonly ChannelMessage[]) | undefined;

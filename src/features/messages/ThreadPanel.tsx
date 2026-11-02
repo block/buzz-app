@@ -3,6 +3,7 @@ import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { MessageEditScope } from "./MessageEditScope";
 import { useMessageSelectionCopy } from "./selection-copy";
+import { QuoteSelection } from "./QuoteSelection";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
@@ -1782,6 +1783,7 @@ function ThreadMessages({
           aria-hidden="true"
         />
       </section>
+      <QuoteSelection scroller={scroller} />
       {preview && (
         <ChannelJoinNotice
           ready={

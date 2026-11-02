@@ -1941,6 +1941,17 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
 .messageActionsSlot {
   display: contents;
 }
+/* QuoteSelection's one action, portaled beside a message text selection. */
+.quoteSelection {
+  position: fixed;
+  z-index: var(--layer-popover);
+  padding: var(--space-half);
+  user-select: none;
+  @apply popover-surface;
+  --floating-radius: var(--radius-control);
+  --floating-inset: var(--space-half);
+}
+
 .messageActions {
   order: 1;
   flex-shrink: 0;

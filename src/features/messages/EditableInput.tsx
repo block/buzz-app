@@ -2231,6 +2231,10 @@ export function EditableInput({
         value: extendPendingMention,
       },
       insertResource: { configurable: true, value: insertResource },
+      insertDocument: {
+        configurable: true,
+        value: (doc: EditorNode) => !!insertDocument(doc),
+      },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,

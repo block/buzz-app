@@ -509,7 +509,7 @@ export function MessageMarkdown({
   );
   if (prepared.kind === "plain")
     return (
-      <div className={styles.plainText}>
+      <div className={styles.plainText} data-message-body="">
         {prepared.content}
         {edited && <EditedMarker />}
       </div>
@@ -796,7 +796,14 @@ function PreparedMessageMarkdown({
       <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
-  return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
+  return largeEmoji ? (
+    markdown
+  ) : (
+    // QuoteSelection quotes text inside this body only.
+    <div className={styles.text} data-message-body="">
+      {markdown}
+    </div>
+  );
 }
 
 /** Switching channels remounts every row. Keep recent results so a revisit

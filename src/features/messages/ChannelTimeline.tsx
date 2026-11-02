@@ -2,6 +2,7 @@
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
+import { QuoteSelection } from "./QuoteSelection";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import {
@@ -1374,6 +1375,7 @@ function Timeline({
             />
           </div>
         )}
+      <QuoteSelection scroller={scroller} />
     </section>
   );
 }

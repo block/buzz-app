@@ -84,6 +84,10 @@ the interface unless an available tool actually supports that action.
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
   "no results".
+- **Quote** appears next to text selected inside one message in a channel or
+  thread. It adds that text to the same conversation's composer as a quote,
+  with the cursor on the line below it. Mentions inside the quote notify no
+  one. Selections that span several messages offer no Quote.
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. Do not promise support for every file type or size.

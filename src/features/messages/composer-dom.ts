@@ -1,3 +1,4 @@
+import type { Node as EditorNode } from "prosemirror-model";
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 
@@ -111,6 +112,9 @@ export type ComposerInputElement = HTMLDivElement & {
     id: string,
     remainder: string,
   ): boolean | Promise<boolean>;
+  /** Insert editor blocks at the caret as one undo step, as a paste of this
+   * app's copy does; false when the composer cannot take them. */
+  insertDocument(doc: EditorNode): boolean;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;

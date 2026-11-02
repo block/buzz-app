@@ -1,4 +1,4 @@
-//! Nonsecret, native-authoritative deployment descriptor. Also compiled by build.rs.
+//! Nonsecret, native-authoritative deployment descriptor shared by build and runtime.
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 

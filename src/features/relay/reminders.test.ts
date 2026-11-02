@@ -496,3 +496,79 @@ describe("reminder history paging", () => {
     });
   });
 });
+
+describe("resume after a continuous membership replay", () => {
+  const decode = async (events: readonly RelayEvent[]) => {
+    if (events.some((e) => e.id === "bad")) throw new Error("undecodable");
+    return events.map((e) => ({
+      eventId: e.id,
+      content: JSON.parse(e.content),
+    }));
+  };
+  const setup = (query: () => Promise<RelayEvent[]>) =>
+    createReminders({
+      viewer,
+      signal: new AbortController().signal,
+      host: {
+        decode,
+        sign: async () => {
+          throw new Error("unused");
+        },
+      },
+      query,
+      publish: async () => {},
+    });
+
+  it("restores a complete list without a read, with the edits the replay carried", async () => {
+    const query = vi.fn(async () => [wire("e1", 10, "pending")]);
+    const model = setup(query);
+    await model.recover();
+    expect(model.capability.snapshot().status).toBe("ready");
+    model.stale();
+    expect(model.capability.snapshot().status).toBe("loading");
+    // Another device completes it during the outage; the replay carries it.
+    model.receive([wire("e2", 11, "done")]);
+    await model.resume();
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(model.capability.snapshot()).toMatchObject({
+      status: "ready",
+      hydrated: true,
+      reminders: [{ id: "r1", status: "done" }],
+    });
+  });
+
+  it("reads again when the list was not complete at the drop, or a replayed edit failed to decode", async () => {
+    const query = vi.fn(async () => [wire("e1", 10, "pending")]);
+    const model = setup(query);
+    // Never loaded before the drop.
+    model.stale();
+    await model.resume();
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(model.capability.snapshot().status).toBe("ready");
+    model.stale();
+    model.receive([wire("bad", 11, "done")]);
+    await model.resume();
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(model.capability.snapshot().status).toBe("ready"),
+    );
+  });
+
+  it("reads again when a read was still out at the drop", async () => {
+    let answer: (events: RelayEvent[]) => void = () => {};
+    const query = vi.fn(
+      () => new Promise<RelayEvent[]>((resolve) => (answer = resolve)),
+    );
+    const model = setup(query);
+    const first = model.recover();
+    answer([wire("e1", 10, "pending")]);
+    await first;
+    void model.capability.refresh();
+    model.stale();
+    const read = model.resume();
+    expect(query).toHaveBeenCalledTimes(3);
+    answer([wire("e1", 10, "pending")]);
+    await read;
+    expect(model.capability.snapshot().status).toBe("ready");
+  });
+});

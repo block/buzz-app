@@ -2384,6 +2384,8 @@ function requestedHarness(
     origin,
   };
   const claimed = vi.fn(() => true);
+  const unconfirm = vi.fn();
+  const confirmed = vi.fn(() => unconfirm);
   const release = vi.fn();
   const holdReview = vi.fn(() => release);
   const element = (
@@ -2394,6 +2396,7 @@ function requestedHarness(
       request={request}
       onRequestSettled={settled}
       onRequestClaimed={claimed}
+      onRequestConfirmed={confirmed}
       holdReview={holdReview}
       {...(authorizeGit ? { authorizeGit } : {})}
     />
@@ -2405,6 +2408,8 @@ function requestedHarness(
     change,
     settled,
     claimed,
+    confirmed,
+    unconfirm,
     release,
     holdReview,
     element,
@@ -2568,11 +2573,9 @@ it("selects the requested folder directly and refuses a repository without it", 
   expect(missing.installImport).not.toHaveBeenCalled();
 });
 
-it("reviews an update for an installed plugin and reports it as updated", async () => {
-  const { installImport, change, settled, element } = requestedHarness(
-    requestedPreview(pinned),
-    { commit: pinned },
-    [
+it("reviews an update for an installed plugin, holds the request through the install, and reports it as updated", async () => {
+  const { installImport, change, settled, confirmed, unconfirm, element } =
+    requestedHarness(requestedPreview(pinned), { commit: pinned }, [
       {
         manifest: requestedManifest,
         source: "external",
@@ -2587,14 +2590,18 @@ it("reviews an update for an installed plugin and reports it as updated", async 
         },
         error: null,
       },
-    ],
-  );
+    ]);
   render(element);
   fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
   await screen.findByRole("dialog", { name: "Update Requested" });
   expect(screen.queryByText(/already installed/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Update" }));
   await waitFor(() => expect(settled).toHaveBeenCalledWith(7, "updated"));
+  expect(confirmed).toHaveBeenCalledExactlyOnceWith(7);
+  expect(confirmed.mock.invocationCallOrder[0]).toBeLessThan(
+    installImport.mock.invocationCallOrder[0] ?? 0,
+  );
+  expect(unconfirm).toHaveBeenCalledOnce();
   expect(installImport).toHaveBeenCalledTimes(1);
   expect(change).not.toHaveBeenCalled();
 });

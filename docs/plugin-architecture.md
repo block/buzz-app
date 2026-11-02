@@ -275,7 +275,9 @@ The review shows "Opened from <plugin name> (<plugin id>)", taken from the calli
 plugin's own manifest. It is a hint for the user, not proof of who asked: the access
 review and the source shown are what the user approves. A request nobody claims in
 Settings expires as `cancelled` after a minute, and any request is cancelled when
-Settings closes or the requesting plugin is disabled or removed.
+Settings closes or the requesting plugin is disabled or removed, unless the user has
+already confirmed the install. A plugin that updates itself is replaced during that
+install and still resolves `updated`.
 
 A request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,

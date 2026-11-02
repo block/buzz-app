@@ -180,6 +180,28 @@ it("cancels an unclaimed request after its time to live and keeps a claimed one"
   }
 });
 
+it("lets a confirmed install outlive its requester and cancels once it is released", async () => {
+  const requests = createPluginInstallRequests();
+  const kept = requests.request(base, origin);
+  const keptId = requests.snapshot()?.id ?? 0;
+  requests.confirm(keptId);
+  requests.end(keptId);
+  expect(requests.snapshot()?.id).toBe(keptId);
+  requests.settle(keptId, "updated");
+  await expect(kept).resolves.toBe("updated");
+
+  const failed = requests.request(base, origin);
+  const failedId = requests.snapshot()?.id ?? 0;
+  const release = requests.confirm(failedId);
+  requests.end(failedId);
+  release();
+  await expect(failed).resolves.toBe("cancelled");
+
+  const plain = requests.request(base, origin);
+  requests.end(requests.snapshot()?.id ?? 0);
+  await expect(plain).resolves.toBe("cancelled");
+});
+
 it("refuses a request while any review dialog is open", async () => {
   const requests = createPluginInstallRequests();
   const release = requests.holdReview();
@@ -419,4 +441,16 @@ it("is unavailable without native imports, before the catalog is ready, or while
   expect(busy.requests.snapshot()?.source.reference).toBe("main");
   settleRequest(busy.requests, "cancelled");
   await expect(first).resolves.toBe("cancelled");
+});
+
+it("reports a confirmed self-update as updated even though it replaces the requester", async () => {
+  const { requests, as, fibers } = setup();
+  const installer = await as("example.market");
+  const outcome = installer.requestInstall(base);
+  const id = requests.snapshot()?.id ?? 0;
+  requests.confirm(id);
+  await fibers[0]?.dispose();
+  expect(requests.snapshot()?.id).toBe(id);
+  requests.settle(id, "updated");
+  await expect(outcome).resolves.toBe("updated");
 });

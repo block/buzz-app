@@ -146,6 +146,8 @@ export function createPluginInstallRequests({
         request: PluginInstallRequest;
         resolve(outcome: PluginInstallOutcome): void;
         timer: ReturnType<typeof setTimeout> | undefined;
+        confirmed: boolean;
+        ended: boolean;
       }
     | undefined;
   let nextId = 0;
@@ -182,6 +184,8 @@ export function createPluginInstallRequests({
           request: { id, source, origin },
           resolve,
           timer: setTimeout(() => settle(id, "cancelled"), ttlMs),
+          confirmed: false,
+          ended: false,
         };
         emit();
       });
@@ -199,6 +203,26 @@ export function createPluginInstallRequests({
       clearTimeout(current.timer);
       current.timer = undefined;
       return true;
+    },
+    /**
+     * The user confirmed the install. Until the returned function runs, the
+     * requester going away (as it does when it updates itself) does not cancel
+     * the request, so the install can still report its outcome.
+     */
+    confirm(id: number) {
+      if (current?.request.id !== id) return () => {};
+      current.confirmed = true;
+      return () => {
+        if (current?.request.id !== id) return;
+        current.confirmed = false;
+        if (current.ended) settle(id, "cancelled");
+      };
+    },
+    /** The requester went away: cancels the request unless an install is confirmed. */
+    end(id: number) {
+      if (current?.request.id !== id) return;
+      if (current.confirmed) current.ended = true;
+      else settle(id, "cancelled");
     },
     /** Marks a plugin review dialog as open until the returned function runs. */
     holdReview() {
@@ -254,7 +278,7 @@ export function createPluginInstallCore({
       let stopWatching: () => void;
       try {
         stopWatching = caller.lifetime(() => {
-          if (admitted !== undefined) requests.settle(admitted, "cancelled");
+          if (admitted !== undefined) requests.end(admitted);
         });
       } catch {
         return "unavailable";

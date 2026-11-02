@@ -1418,6 +1418,7 @@ export function Settings({
                 request={installRequest}
                 onRequestSettled={installRequests?.settle}
                 onRequestClaimed={installRequests?.claim}
+                onRequestConfirmed={installRequests?.confirm}
                 holdReview={installRequests?.holdReview}
                 plugins={plugins}
                 catalog={catalog}

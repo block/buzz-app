@@ -80,6 +80,7 @@ export function PluginImport({
   request,
   onRequestSettled,
   onRequestClaimed,
+  onRequestConfirmed,
   holdReview,
 }: {
   initialGit?: GitPluginSource | undefined;
@@ -103,6 +104,7 @@ export function PluginImport({
     | ((id: number, outcome: PluginInstallOutcome) => void)
     | undefined;
   onRequestClaimed?: ((id: number) => boolean) | undefined;
+  onRequestConfirmed?: ((id: number) => () => void) | undefined;
   /** Marks a review dialog as open so a plugin request cannot open a second one. */
   holdReview?: (() => () => void) | undefined;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
@@ -956,6 +958,9 @@ export function PluginImport({
                       pending.current = true;
                       setLoading(true);
                       setError(null);
+                      const unconfirm = bound
+                        ? onRequestConfirmed?.(bound.id)
+                        : undefined;
                       try {
                         const success = await plugins.installImport(
                           preview.token,
@@ -989,6 +994,7 @@ export function PluginImport({
                         setOpen(false);
                         onClosed?.();
                       } finally {
+                        unconfirm?.();
                         current.installing = false;
                         if (!current.active && current.token) {
                           await imports.discard(current.token).catch(() => {});

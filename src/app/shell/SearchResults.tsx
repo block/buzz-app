@@ -845,25 +845,25 @@ export function SearchResults({
       (!sidebarHidden(existing) || !session.directMessages.available)
     )
       return openConversation(existing.id);
-    if (
-      agent &&
-      !existing &&
-      !session.agentChoices
+    const controlled = () =>
+      session.agentChoices
         .snapshot()
         .identities.some(
           (item) => canMessageAgent(item) && item.pubkey === pubkey,
-        )
-    ) {
-      setPersonOpen({
-        name,
-        error: "This agent is not ready to message in this community.",
-      });
-      return;
-    }
+        );
     const controller = new AbortController();
     personAttempt.current = { key: personKey(pubkey), controller };
     setPersonOpen({ name });
     try {
+      if (agent && !existing && !controlled()) {
+        // Agents still loading are not missing: wait for the list first.
+        if (session.agentChoices.snapshot().managedPending)
+          await session.agentChoices.refresh(false);
+        if (!controlled())
+          throw new Error(
+            "This agent is not ready to message in this community.",
+          );
+      }
       const channelId = await session.directMessages.open(
         [pubkey],
         controller.signal,

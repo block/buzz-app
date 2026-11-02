@@ -7,7 +7,7 @@ import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
 import { createHash } from "node:crypto";
 import { callTool, memoryVersion, TOOLS } from "./tools";
-import { callSessionTool } from "./session-tools";
+import { callSessionTool, sessionTools } from "./session-tools";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { Context } from "@deepseek-ai/cordis";
 import { AgentProtectionService } from "../features/agent-protection/service";
@@ -3650,7 +3650,7 @@ it("needs the message to reply under", async () => {
   expect(published).toEqual([]);
 });
 
-it("deletes your message and its sent-to-channel copy, as the app does", async () => {
+it("deletes only the given message, one target per deletion", async () => {
   const mine = event({ id: root, pubkey: me, created_at: 100 });
   const copy = event({
     id: nested,
@@ -3672,11 +3672,17 @@ it("deletes your message and its sent-to-channel copy, as the app does", async (
       tags: [
         ["h", "chan"],
         ["e", nested],
-        ["e", root],
         ["k", "9"],
       ],
     },
   ]);
+});
+
+it("marks delete as destructive, also as a session lists it", () => {
+  for (const tools of [TOOLS, sessionTools()])
+    expect(tools.find((tool) => tool.name === "delete")).toMatchObject({
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    });
 });
 
 it("refuses to delete another author's message", async () => {

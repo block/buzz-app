@@ -98,11 +98,29 @@ vi.mock("react", async (original) => ({
   },
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
     snapshot(),
+  // No provider is rendered: contexts take their defaults.
+  useContext: (context: { _currentValue: unknown }) => context._currentValue,
 }));
 vi.mock("../relay/react", () => ({
   useRowProfiles: () => new Map(),
 }));
 afterEach(() => vi.unstubAllGlobals());
+
+/** The Virtualizer element, inside the day dividers' jump-menu provider. */
+function virtualizerOf(section: { props: { children: unknown[] } }) {
+  for (const child of section.props.children) {
+    const inner = (child as ReactElement<{ children?: unknown }> | null)?.props
+      ?.children;
+    if (
+      inner &&
+      typeof inner === "object" &&
+      "type" in inner &&
+      inner.type === Virtualizer
+    )
+      return inner;
+  }
+  return undefined;
+}
 
 const timelineMessage = (id: string): ChannelMessage => ({
   id,
@@ -316,13 +334,9 @@ function setup({
       scoped.props,
     );
     section.props.ref.current = element;
-    const virtualizer = section.props.children.find(
-      (child) =>
-        !!child &&
-        typeof child === "object" &&
-        "type" in child &&
-        child.type === Virtualizer,
-    ) as ReactElement<{ ref: { current: unknown } }>;
+    const virtualizer = virtualizerOf(section) as ReactElement<{
+      ref: { current: unknown };
+    }>;
     if (virtualizer) virtualizer.props.ref.current = handle;
     for (const effect of hooks.pending.splice(0)) effect();
     if (runFrames) flush();
@@ -346,13 +360,9 @@ function setup({
       render();
     },
     pinned() {
-      const virtualizer = section.props.children.find(
-        (child) =>
-          !!child &&
-          typeof child === "object" &&
-          "type" in child &&
-          child.type === Virtualizer,
-      ) as ReactElement<{ keepMounted: number[] }>;
+      const virtualizer = virtualizerOf(section) as ReactElement<{
+        keepMounted: number[];
+      }>;
       return virtualizer.props.keepMounted;
     },
     loadOlder,

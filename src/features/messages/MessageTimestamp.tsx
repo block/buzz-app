@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode, type RefObject } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   formatDayGroupLabel,
@@ -6,50 +6,92 @@ import {
   formatItemTimestamp,
 } from "../../shared/datetime";
 import { useLocalDay } from "../../shared/use-local-day";
+import { DateJumpContext, DateJumpMenu } from "./DateJumpMenu";
 import styles from "./Messages.module.css";
 
 /** The divider above a day's first row: "Today", "Monday", "June 20, 2025".
- * `data-day` carries the local calendar day. */
+ * `data-day` carries the local calendar day. In a channel timeline its label
+ * opens the "Jump to…" menu. */
 export function DayDivider({ createdAt }: { createdAt: number }) {
   useLocalDay();
+  const jump = useContext(DateJumpContext);
   const date = new Date(createdAt * 1000);
   const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
     .map((part) => String(part).padStart(2, "0"))
     .join("-");
+  const label = formatDayGroupLabel(createdAt);
+  const content = (
+    <span className={styles.dayLabel}>
+      {/* Decorative calendar artwork; the adjacent label owns the date.
+          The numeral is HTML, not SVG <text>: Linux WebKit's SVG text cost
+          doubled every thread-pane interaction in browser journeys. */}
+      <span className={styles.dayCalendar} aria-hidden="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
+          <path
+            d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
+            fill="#f00"
+          />
+          <rect
+            x="0.5"
+            y="0.5"
+            width="23"
+            height="23"
+            rx="5.5"
+            fill="none"
+            stroke="var(--border-standard)"
+            strokeWidth="0.5"
+          />
+        </svg>
+        {/* Artwork ink, like the SVG fills: the tile is white in both themes. */}
+        <span
+          data-calendar-date
+          style={{ color: "#111", fontSize: "calc(var(--space-5) / 2)" }}
+        >
+          {date.getDate()}
+        </span>
+      </span>
+      <span data-day={day}>{label}</span>
+    </span>
+  );
   return (
     <div className={styles.day}>
-      <span className={styles.dayLabel}>
-        {/* Decorative calendar artwork; the adjacent label owns the date.
-            The numeral is HTML, not SVG <text>: Linux WebKit's SVG text cost
-            doubled every thread-pane interaction in browser journeys. */}
-        <span className={styles.dayCalendar} aria-hidden="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="#fff" />
-            <path
-              d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1H.5V6A5.5 5.5 0 0 1 6 .5Z"
-              fill="#f00"
-            />
-            <rect
-              x="0.5"
-              y="0.5"
-              width="23"
-              height="23"
-              rx="5.5"
-              fill="none"
-              stroke="var(--border-standard)"
-              strokeWidth="0.5"
-            />
-          </svg>
-          {/* Artwork ink, like the SVG fills: the tile is white in both themes. */}
-          <span
-            data-calendar-date
-            style={{ color: "#111", fontSize: "calc(var(--space-5) / 2)" }}
-          >
-            {date.getDate()}
-          </span>
-        </span>
-        <span data-day={day}>{formatDayGroupLabel(createdAt)}</span>
-      </span>
+      {jump ? (
+        <DateJumpMenu label={label} jump={jump}>
+          {content}
+        </DateJumpMenu>
+      ) : (
+        content
+      )}
+    </div>
+  );
+}
+
+/** The top visible message's day, floating over the timeline. Mouse only:
+ * keyboard and screen-reader users reach the same menu through the dividers. */
+export function PinnedDay({
+  createdAt,
+  jump,
+  returnFocus,
+}: {
+  createdAt: number;
+  jump(from: number): void;
+  returnFocus: RefObject<HTMLElement | null>;
+}) {
+  useLocalDay();
+  const label = formatDayGroupLabel(createdAt);
+  return (
+    <div className={styles.pinnedDay} aria-hidden="true" data-pinned-day>
+      <div className={styles.pinnedDaySurface}>
+        <DateJumpMenu
+          label={label}
+          jump={jump}
+          pinned
+          returnFocus={returnFocus}
+        >
+          <span className={styles.dayLabel}>{label}</span>
+        </DateJumpMenu>
+      </div>
     </div>
   );
 }

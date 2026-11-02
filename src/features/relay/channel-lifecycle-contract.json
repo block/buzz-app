@@ -1,0 +1,301 @@
+{
+  "accepted": [
+    {
+      "name": "archive-subtree",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          ["scope", "subtree"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "restore-target",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "04040404-0404-0404-0404-040404040404"],
+          ["archived", "false"],
+          ["scope", "target"],
+          [
+            "expect",
+            "32a700a437403b0695e028542a50e74705b4416095dee22366a8584fd7ce4fdd"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "restore-subtree",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "false"],
+          ["scope", "subtree"],
+          [
+            "expect",
+            "3821bc3142cdbc0a678052580d5e103553669eb11ebd956d1678411d65938fd7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fence-token",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["lifecycle", "fence"],
+          ["expect-target", "a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2"]
+        ]
+      }
+    },
+    {
+      "name": "fence-null-token",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "03030303-0303-0303-0303-030303030303"],
+          ["lifecycle", "fence"],
+          ["expect-target", "-"]
+        ]
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "archive-target-scope",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          ["scope", "target"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unknown-scope",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "false"],
+          ["scope", "all"],
+          [
+            "expect",
+            "3821bc3142cdbc0a678052580d5e103553669eb11ebd956d1678411d65938fd7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "uppercase-expect",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          ["scope", "subtree"],
+          [
+            "expect",
+            "E9FA8E584E36A45A6773703A48536E276FEE69015545BBC3B40169A56CBAEEF7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "short-expect",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          ["scope", "subtree"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "settings-tag",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          ["scope", "subtree"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ],
+          ["name", "renamed"]
+        ]
+      }
+    },
+    {
+      "name": "reordered",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["scope", "subtree"],
+          ["archived", "true"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "repeated-expect",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "state-with-fence",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["archived", "true"],
+          ["lifecycle", "fence"],
+          [
+            "expect",
+            "e9fa8e584e36a45a6773703a48536e276fee69015545bbc3b40169a56cbaeef7"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fence-other",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["lifecycle", "other"],
+          ["expect-target", "-"]
+        ]
+      }
+    },
+    {
+      "name": "fence-uppercase-token",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["lifecycle", "fence"],
+          ["expect-target", "A2A2A2A2-A2A2-A2A2-A2A2-A2A2A2A2A2A2"]
+        ]
+      }
+    },
+    {
+      "name": "fence-empty-token",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["lifecycle", "fence"],
+          ["expect-target", ""]
+        ]
+      }
+    },
+    {
+      "name": "fence-with-archived",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["lifecycle", "fence"],
+          ["archived", "true"]
+        ]
+      }
+    },
+    {
+      "name": "target-without-fence",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "02020202-0202-0202-0202-020202020202"],
+          ["expect-target", "-"],
+          ["lifecycle", "fence"]
+        ]
+      }
+    },
+    {
+      "name": "non-uuid-channel",
+      "event": {
+        "kind": 9002,
+        "created_at": 1700000010,
+        "content": "",
+        "tags": [
+          ["h", "not-a-channel"],
+          ["lifecycle", "fence"],
+          ["expect-target", "-"]
+        ]
+      }
+    }
+  ]
+}

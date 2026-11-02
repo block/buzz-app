@@ -30,7 +30,10 @@ import {
 } from "../channel-templates/model";
 import type { RelayWriter } from "./transport";
 import { communityGitRepository } from "../repos/git";
-import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
+import {
+  LIFECYCLE_STATE_PATH,
+  validateLifecycleTemplate,
+} from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
 import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
@@ -471,10 +474,17 @@ export async function connectNativeTransport(
       return response;
     }),
     archiveAuthority: author,
-    channelLifecycle: commandWriter(
-      "channel-lifecycle",
-      validateLifecycleTemplate,
-    ),
+    channelLifecycle: {
+      ...commandWriter("channel-lifecycle", validateLifecycleTemplate),
+      info: (signal) => nativeRelayInfo(origin, signal),
+      state: (body, signal) =>
+        admitSignedRequest(
+          origin,
+          transport.viewer,
+          () => nativeRelayRequest(origin, LIFECYCLE_STATE_PATH, body, signal),
+          signal,
+        ),
+    },
     channelDetails: commandWriter("channel-details", validateDetailsTemplate),
     memberAdministration: commandWriter("member-administration", (event) =>
       validateMemberAdministrationTemplate(event, transport.viewer ?? ""),

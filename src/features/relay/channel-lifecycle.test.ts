@@ -14,15 +14,18 @@ import {
 } from "vitest";
 import { ReadError } from "./errors";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
+import contract from "./channel-lifecycle-contract.json";
 import {
   createChannelLifecycle,
   ChannelLifecycleUnconfirmed,
 } from "./channel-lifecycle";
 import {
+  guardedLifecycleTemplate,
   lifecycleSettings,
   lifecycleTemplate,
   validateLifecycleTemplate,
+  type GuardedLifecycleRequest,
 } from "./channel-lifecycle-protocol";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadOptions } from "./reader";
@@ -1867,4 +1870,310 @@ it("retires queued entries and waits only after confirmed removal, including pen
     gate.resolve();
     h.owner.dispose();
   }
+});
+
+describe("guarded task lifecycle", () => {
+  const golden = (n: number) => {
+    const hex = n.toString(16).padStart(2, "0").repeat(16);
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
+  function guarded() {
+    const sign = vi.fn(async (event: EventTemplate) =>
+      finalizeEvent(structuredClone(event), key),
+    );
+    const publish = vi.fn(async (_event: RelayEvent): Promise<string> => "");
+    const info = vi.fn(
+      async (_signal: AbortSignal): Promise<unknown> => ({
+        lifecycle_guard: {
+          version: 1,
+          state_path: "/buzz/v1/lifecycle/state",
+          max_state_channels: 1000,
+          max_subtree_channels: 200,
+        },
+      }),
+    );
+    const state = vi.fn(
+      async (
+        body: Readonly<{ channel_ids: readonly string[] }>,
+        _signal: AbortSignal,
+      ) =>
+        Response.json({
+          channels: body.channel_ids.map((channel) => ({
+            id: channel,
+            archived_at: null,
+            deleted: false,
+            lifecycle_token: null,
+          })),
+        }),
+    );
+    let access = true;
+    const owner = createChannelLifecycle({
+      writer: { sign, publish, info, state },
+      viewer,
+      relayAuthor,
+      canAccess: () => access,
+      acceptDiscovery: () => {},
+      removed: () => {},
+    });
+    const api = owner.capability.guarded;
+    assert.exists(api);
+    return {
+      api,
+      owner,
+      sign,
+      publish,
+      info,
+      state,
+      deny() {
+        access = false;
+      },
+    };
+  }
+  const archive = {
+    kind: "state",
+    channelId: golden(2),
+    archived: true,
+    scope: "subtree",
+    expect: contract.accepted[0]?.event.tags[3]?.[1] ?? "",
+  } as const;
+
+  it("matches the shared contract and builds every tag itself", () => {
+    for (const { event } of contract.accepted)
+      expect(() => validateLifecycleTemplate(event)).not.toThrow();
+    for (const { name, event } of contract.rejected)
+      expect(() => validateLifecycleTemplate(event), name).toThrow();
+    const tags = (request: GuardedLifecycleRequest) =>
+      guardedLifecycleTemplate(request).tags;
+    expect(tags(archive)).toEqual(contract.accepted[0]?.event.tags);
+    expect(
+      tags({
+        kind: "fence",
+        channelId: golden(2),
+        expectTarget: golden(0xa2),
+      }),
+    ).toEqual(contract.accepted[3]?.event.tags);
+    expect(
+      tags({ kind: "fence", channelId: golden(3), expectTarget: null }),
+    ).toEqual(contract.accepted[4]?.event.tags);
+    expect(() => tags({ ...archive, scope: "target" })).toThrow();
+    expect(() => tags({ ...archive, archived: "yes" as never })).toThrow();
+  });
+
+  it("reads the advertised capability fresh and treats anything else as unsupported", async () => {
+    const h = guarded();
+    await expect(h.api.capability()).resolves.toEqual({
+      maxSubtreeChannels: 200,
+    });
+    for (const lifecycle_guard of [
+      undefined,
+      { version: 2, state_path: "/buzz/v1/lifecycle/state" },
+      { version: 1, state_path: "/other", max_subtree_channels: 5 },
+      { version: 1, state_path: "/buzz/v1/lifecycle/state" },
+      {
+        version: 1,
+        state_path: "/buzz/v1/lifecycle/state",
+        max_subtree_channels: 0,
+      },
+    ]) {
+      h.info.mockResolvedValueOnce({ lifecycle_guard });
+      await expect(h.api.capability()).resolves.toBeUndefined();
+    }
+    expect(h.info).toHaveBeenCalledTimes(6);
+    // Without the reads, a connection does not offer guarded requests at all.
+    expect(harness().owner.capability.guarded).toBeUndefined();
+  });
+
+  it("batches state reads and keeps an omitted channel unknown", async () => {
+    const h = guarded();
+    const ids = Array.from(
+      { length: 1001 },
+      (_, index) =>
+        `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+    );
+    const rows = await h.api.state([...ids, ids[0] ?? ""]);
+    expect(h.state.mock.calls.map(([body]) => body.channel_ids.length)).toEqual(
+      [1000, 1],
+    );
+    expect(rows).toHaveLength(1001);
+    h.state.mockResolvedValueOnce(
+      Response.json({
+        channels: [
+          {
+            id: golden(2),
+            archived_at: 1_700_000_000,
+            deleted: false,
+            lifecycle_token: golden(0xa2),
+          },
+          {
+            id: golden(4),
+            archived_at: null,
+            deleted: true,
+            lifecycle_token: null,
+          },
+        ],
+      }),
+    );
+    await expect(
+      h.api.state([golden(2), golden(3), golden(4)]),
+    ).resolves.toEqual([
+      {
+        id: golden(2),
+        archivedAt: 1_700_000_000,
+        deleted: false,
+        token: golden(0xa2),
+      },
+      { id: golden(4), archivedAt: null, deleted: true, token: null },
+    ]);
+    for (const channels of [
+      [
+        {
+          id: golden(5),
+          archived_at: null,
+          deleted: false,
+          lifecycle_token: null,
+        },
+      ],
+      [
+        {
+          id: golden(2),
+          archived_at: null,
+          deleted: false,
+          lifecycle_token: null,
+        },
+        {
+          id: golden(2),
+          archived_at: null,
+          deleted: false,
+          lifecycle_token: null,
+        },
+      ],
+      [
+        {
+          id: golden(2),
+          archived_at: null,
+          deleted: "no",
+          lifecycle_token: null,
+        },
+      ],
+      [
+        {
+          id: golden(2),
+          archived_at: -1,
+          deleted: false,
+          lifecycle_token: null,
+        },
+      ],
+      [
+        {
+          id: golden(2),
+          archived_at: null,
+          deleted: false,
+          lifecycle_token: "x",
+        },
+      ],
+    ]) {
+      h.state.mockResolvedValueOnce(Response.json({ channels }));
+      await expect(h.api.state([golden(2)])).rejects.toThrow(
+        "Invalid channel lifecycle state",
+      );
+    }
+    h.state.mockResolvedValueOnce(
+      Response.json(
+        { error: { code: "forbidden", request_id: "r" } },
+        { status: 403 },
+      ),
+    );
+    await expect(h.api.state([golden(2)])).rejects.toThrow();
+    await expect(h.api.state(["NOT-A-UUID"])).rejects.toThrow(
+      "Invalid channel ID",
+    );
+    await expect(h.api.state([])).rejects.toThrow("Invalid channel ID");
+  });
+
+  it("classifies one send without retrying: applied, refused, not sent or unknown", async () => {
+    const h = guarded();
+    const event = await h.api.sign(archive);
+    expect(event.tags).toEqual(contract.accepted[0]?.event.tags);
+    await expect(h.api.send(event)).resolves.toEqual({ kind: "applied" });
+    h.publish.mockResolvedValueOnce("duplicate: already have this event");
+    await expect(h.api.send(event)).resolves.toEqual({ kind: "applied" });
+    h.publish.mockRejectedValueOnce(
+      new PublishRejected(
+        "Relay rejected the message (400)",
+        "invalid: channel is archived",
+      ),
+    );
+    await expect(h.api.send(event)).resolves.toEqual({
+      kind: "refused",
+      reason: "invalid: channel is archived",
+    });
+    // A conflict says nothing more than any other refusal.
+    h.publish.mockRejectedValueOnce(
+      new PublishRejected(
+        "conflict: the relay state changed; reload before writing again",
+      ),
+    );
+    await expect(h.api.send(event)).resolves.toMatchObject({
+      kind: "refused",
+    });
+    h.publish.mockRejectedValueOnce(new PublishNotSent("rate-limited: wait"));
+    await expect(h.api.send(event)).resolves.toEqual({
+      kind: "not-sent",
+      reason: "rate-limited: wait",
+    });
+    h.publish.mockRejectedValueOnce(new Error("connection lost"));
+    await expect(h.api.send(event)).rejects.toBeInstanceOf(
+      ChannelLifecycleUnconfirmed,
+    );
+    // Cancelling after publication started leaves the outcome unknown.
+    const gate = deferred<string>();
+    h.publish.mockImplementationOnce(() => gate.promise);
+    const controller = new AbortController();
+    const pending = h.api.send(event, controller.signal);
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledTimes(7));
+    controller.abort();
+    gate.reject(new DOMException("aborted", "AbortError"));
+    await expect(pending).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+    expect(h.publish).toHaveBeenCalledTimes(7);
+  });
+
+  it("publishes nothing when the caller retires, access ends, or the event is not a guarded request", async () => {
+    const h = guarded();
+    const event = await h.api.sign({
+      kind: "fence",
+      channelId: golden(2),
+      expectTarget: null,
+    });
+    // The caller's publication guard decides at the moment of publication.
+    const retired = vi.fn(() => false);
+    await expect(h.api.send(event, undefined, retired)).resolves.toEqual({
+      kind: "not-sent",
+      reason: "Channel action cancelled",
+    });
+    expect(retired).toHaveBeenCalledOnce();
+    const plain = finalizeEvent(lifecycleTemplate("archive", golden(2)), key);
+    const forged = {
+      ...event,
+      tags: [...event.tags.slice(0, 2), ["expect-target", golden(0xa2)]],
+    };
+    const foreign = finalizeEvent(
+      guardedLifecycleTemplate({
+        kind: "fence",
+        channelId: golden(2),
+        expectTarget: null,
+      }),
+      agentKey,
+    );
+    for (const candidate of [plain, forged, foreign])
+      await expect(h.api.send(candidate)).resolves.toMatchObject({
+        kind: "not-sent",
+      });
+    h.deny();
+    await expect(h.api.send(event)).resolves.toMatchObject({
+      kind: "not-sent",
+    });
+    await expect(h.api.sign(archive)).rejects.toThrow("Channel access");
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.sign).toHaveBeenCalledOnce();
+  });
 });

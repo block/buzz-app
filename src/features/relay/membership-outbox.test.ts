@@ -208,10 +208,12 @@ async function setup(
         expect(owner.session.live.snapshot().roster.state).toBe("verified"),
       );
     },
-    /** Someone adds the viewer back, seen through the live roster. */
-    async rejoin(id: string) {
+    /** Someone adds the viewer back, seen through the live roster unless
+     * the relay's roster push has not reached this device yet. */
+    async rejoin(id: string, seen: "live roster" | "unseen" = "live roster") {
       members.add(id);
       bump(id);
+      if (seen === "unseen") return;
       receive([roster(id)]);
       await vi.waitFor(() =>
         expect(
@@ -428,6 +430,53 @@ it("sweeps again when an access change cancels its writer read", async () => {
   } finally {
     release();
   }
+});
+
+it("keeps a removed channel's failed sends when the viewer rejoins before the writer answers", async () => {
+  const unsent = failed(gone, "Never sent");
+  const elsewhere = failed(kept, "Removed later");
+  const h = await setup([unsent, elsewhere]);
+  const release = h.hold();
+  try {
+    await h.remove(gone, "roster refresh");
+    await vi.waitFor(() => expect(h.confirmations).toEqual([[gone]]));
+    // The held answer was sampled before the rejoin and still omits the viewer.
+    await h.rejoin(gone);
+  } finally {
+    release();
+  }
+  // A later removal's discard is the barrier: outbox writes run in order.
+  await h.remove(kept, "live removal");
+  await vi.waitFor(() =>
+    expect(h.pending()).toEqual([[unsent.event.id], [unsent.event.id]]),
+  );
+});
+
+it("asks the writer again for a send refused while it was answering", async () => {
+  const elsewhere = failed(kept, "Removed later");
+  const h = await setup([elsewhere]);
+  const send = await inFlight(h);
+  const release = h.hold();
+  try {
+    await h.remove(gone, "roster refresh");
+    // The sweep saw the running send; the writer sampled the viewer's absence.
+    await vi.waitFor(() => expect(h.confirmations).toEqual([[gone]]));
+    // The viewer is added back, but no roster push has reached this device.
+    await h.rejoin(gone, "unseen");
+    send.end(new PublishRejected("restricted: not a member"));
+    await vi.waitFor(() =>
+      expect(
+        h.outbox.snapshot().find((item) => item.event.id === send.id)?.delivery,
+      ).toBe("failed"),
+    );
+  } finally {
+    release();
+  }
+  // The stale answer decides nothing for the send; a fresh read lists the viewer.
+  await vi.waitFor(() => expect(h.confirmations).toEqual([[gone], [gone]]));
+  // A later removal's discard is the barrier: outbox writes run in order.
+  await h.remove(kept, "live removal");
+  await vi.waitFor(() => expect(h.pending()).toEqual([[send.id], [send.id]]));
 });
 
 it("discards failed sends an earlier session left in a channel the viewer is not on", async () => {

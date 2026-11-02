@@ -450,10 +450,11 @@ export function createRelaySession(
    * roster read or a confirmed Leave or Delete, the writer confirms which
    * channels the viewer cannot participate in no longer list them: a
    * replica's omission can be lag, and a local denial (a 401 or a ban) is not
-   * removal. Their failed writes go. A running one is swept again once it
-   * ends, since the viewer may have rejoined meanwhile. Unconfirmed intent
-   * stays for a regrant. One writer read runs at a time; a request or a
-   * cancelled read sweeps again after it. */
+   * removal. Writes that had already failed go. One still running when the
+   * writer was asked is swept again once its attempt ends, even if it fails
+   * before the answer arrives, since the viewer may have rejoined meanwhile.
+   * Unconfirmed intent stays for a regrant. One writer read runs at a time;
+   * a request or a cancelled read sweeps again after it. */
   function dropStrandedSends() {
     const outbox = writes?.outbox;
     if (!outbox) return;
@@ -466,15 +467,22 @@ export function createRelaySession(
     void outbox
       .ready()
       .then(async () => {
+        const items = outbox.snapshot();
         const ids = [
           ...new Set(
-            outbox.snapshot().flatMap((item) => {
+            items.flatMap((item) => {
               const id = contribution(item);
               return id && !channels.canParticipate(id) ? [id] : [];
             }),
           ),
         ];
         if (!ids.length) return;
+        // The writer's answer covers only writes that had failed when asked.
+        const settled = new Set(
+          items.flatMap((item) =>
+            item.delivery === "failed" ? [item.event.id] : [],
+          ),
+        );
         const gone = await channels
           .unlisted(ids, lifetime.signal)
           .catch((error: unknown) => {
@@ -496,7 +504,7 @@ export function createRelaySession(
           )
             continue;
           const { id } = item.event;
-          if (item.delivery === "failed")
+          if (item.delivery === "failed" && settled.has(id))
             void outbox.dismiss(id).catch(() => {});
           else void attemptEnded(outbox, id).then(dropStrandedSends);
         }

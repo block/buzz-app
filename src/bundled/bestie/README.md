@@ -42,12 +42,21 @@ and incomplete or failed inventory reads remain on the pinned destination with
 their own recovery. Once a complete read proves that the saved agent is gone,
 the same chooser appears in place instead of sending the owner to another menu.
 
-A successful account read with no saved Bestie shows **Choose your Bestie**,
-where the owner can select an eligible existing agent or open the shared
-**Create agent** dialog. Choosing or creating an agent saves it through
-`main-agent`, then hands off to the canonical DM. A finished agent deletion
-also saves `agent: null` when that agent is still the account's Bestie; another
-account choice is never cleared.
+A successful account read with no saved Bestie shows **Choose your bestie agent**,
+where the owner can search eligible existing agents in a picker with avatars,
+names and short public-key labels, or open the shared **Create agent** dialog.
+Known hosted agents and agents on another device remain eligible, but require
+confirmation before saving: **Some bestie features aren’t available with remote
+agents.** This also applies after creating one through Builderlab.
+Cancel leaves the account choice unchanged and keeps any newly created agent.
+Local choices save directly. Both paths save through `main-agent`, then hand off
+to the canonical DM; this does not configure memory or check-ins for remote agents.
+A finished agent deletion saves `agent: null` only when a fresh account read still
+names that agent. Another choice already visible to that read is left alone.
+This is a read/replace, not an atomic compare-and-swap: a choice made on another
+device between the read and publish can still be overwritten. A cleanup failure
+reports that the agent was deleted but its Bestie choice could not be cleared;
+open Bestie to choose another.
 
 Builderlab no longer owns a separate Bestie setup, agent, Solo chat, or
 selection path.

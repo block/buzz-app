@@ -148,6 +148,7 @@ function BestieDestination({
   ) : (
     <BestieStatus>
       <BestieChooser
+        key={connection.scope}
         session={connection.session}
         scope={connection.scope ?? ""}
         community={connection.origin}

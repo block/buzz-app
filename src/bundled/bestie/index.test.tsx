@@ -61,12 +61,15 @@ it("replaces hosted setup with the manual Bestie chooser", async () => {
   const h = await bestieFixture(native.invoke);
   renderPage(h);
   expect(
-    await screen.findByRole("heading", { name: "Choose your Bestie" }),
+    await screen.findByRole("heading", { name: "Choose your bestie agent" }),
   ).toBeVisible();
   expect(
     screen.getByText(
-      "Choose an eligible agent, or create one to make your Bestie in Buzz.",
+      "This is your primary agent in Buzz. They’ll get special placement and extra capabilities in the app.",
     ),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Choose an eligible agent or create a new one:"),
   ).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "Set up Bestie" }),

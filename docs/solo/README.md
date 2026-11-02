@@ -130,9 +130,10 @@ behavior on the label, so a rename touches copy only.
   Make my bestie** explicitly saves that agent as the bestie; its card then shows
   **Bestie**. That choice is saved to the account as a private `main-agent` record,
   so every install adopts it once per session. Explicit choices write the
-  record. A finished deletion also writes no Bestie when the deleted agent is
-  still its saved choice; it never clears another choice. The choice stays until
-  it is changed or the agent is deleted, and it is still
+  record. A finished deletion writes no Bestie when a fresh account read still
+  names the deleted agent. A different choice visible to that read stays; the
+  read/replace cannot protect a concurrent choice on another device before publish.
+  The choice stays until it is changed or the agent is deleted, and it is still
   tagged when its runtime is signed out or broken. Without a choice, or after the
   chosen agent is deleted, the first managed agent, then the first selectable
   agent, becomes the default agent and is saved on this device only, after the

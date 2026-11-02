@@ -1,17 +1,25 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Agents } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useAgents } from "../../features/agents/react";
+import { useNamesRevision } from "../../features/identity-names/react";
+import { matchPerson } from "../../features/search/person-match";
+import { avatarMedia } from "../../shared/avatar-source";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../../features/relay/session";
 import { chooseDefaultAgent } from "../../features/solo/default-agent";
 import { BestieIcon } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { Select } from "../../shared/design-system/ui/Select";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { AgentCreateDialog } from "../agents/AgentCreateDialog";
 
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
+const chooseInstruction = "Choose an eligible agent or create a new one:";
 
 /** The one Bestie selection owner, shared by first setup and stale-choice recovery. */
 export function BestieChooser({
@@ -19,8 +27,8 @@ export function BestieChooser({
   scope,
   community,
   agents,
-  title = "Choose your Bestie",
-  description = "Choose an eligible agent, or create one to make your Bestie in Buzz.",
+  title = "Choose your bestie agent",
+  description = "This is your primary agent in Buzz. They’ll get special placement and extra capabilities in the app.",
 }: {
   session: RelaySession;
   scope: string;
@@ -30,14 +38,31 @@ export function BestieChooser({
   description?: string;
 }) {
   const choices = useAgentChoices(session, true, true);
+  useNamesRevision(session.names, true);
   const { types } = useAgents(agents);
+  const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState("");
   const [created, setCreated] = useState("");
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const choose = async (pubkey: string, keepsCreated = false) => {
+  const [remote, setRemote] = useState<{
+    pubkey: string;
+    keepsCreated: boolean;
+  }>();
+  const cancel = useRef<HTMLButtonElement>(null);
+  const dismissRemote = () => {
+    setRemote(undefined);
+    setSelected("");
+    setCreated("");
+    setError("");
+  };
+  const choose = async (
+    pubkey: string,
+    keepsCreated = false,
+    confirmedRemote = false,
+  ) => {
     if (saving) return;
     if (!keepsCreated) setCreated("");
     if (
@@ -49,12 +74,19 @@ export function BestieChooser({
       setError("That agent is no longer available. Choose another.");
       return;
     }
+    const place = agents.find(pubkey)?.place;
+    if (!confirmedRemote && (place === "hosted" || place === "elsewhere")) {
+      setError("");
+      setRemote({ pubkey, keepsCreated });
+      return;
+    }
     setSelected(pubkey);
     setSaving(true);
     setError("");
     try {
       await chooseDefaultAgent(session, scope, pubkey);
       setCreated("");
+      setRemote(undefined);
     } catch (reason) {
       setSelected("");
       setError(message(reason));
@@ -76,6 +108,14 @@ export function BestieChooser({
     }
   };
   const available = choices.selectable;
+  const keys = available.map((agent) => agent.pubkey);
+  const names = session.names?.scope(keys);
+  const keyLabels = publicKeyLabels(keys);
+  const items = available.map((agent) => ({
+    ...agent,
+    label: names?.(agent.pubkey)?.name ?? agent.managedName ?? agent.name,
+    keyLabel: keyLabels.get(agent.pubkey),
+  }));
   const pending = choices.pending || choices.archives.status === "loading";
   const shownError = error || choices.error;
   return (
@@ -86,28 +126,74 @@ export function BestieChooser({
         description={description}
         action={
           <div className="flex w-full max-w-sm flex-col items-center gap-3">
+            {!available.length && !pending && (
+              <p className="m-0 text-body-sm text-secondary">
+                {chooseInstruction}
+              </p>
+            )}
             {(available.length > 0 || pending) && (
-              <Select
-                label="Your agents"
-                variant="field"
-                value={selected}
-                placeholder={
-                  pending && !available.length
-                    ? "Loading agents…"
-                    : "Choose your Bestie"
+              <Combobox.Root
+                items={items}
+                value={items.find((agent) => agent.pubkey === selected) ?? null}
+                itemToStringLabel={(agent) => agent.label}
+                itemToStringValue={(agent) => agent.pubkey}
+                isItemEqualToValue={(a, b) => a.pubkey === b.pubkey}
+                filter={(agent, query) =>
+                  !!matchPerson(agent.label, query) ||
+                  !!matchPerson(agent.managedName ?? agent.name, query)
                 }
+                inputValue={search}
+                onInputValueChange={setSearch}
+                onOpenChange={(open) => {
+                  if (open) setSearch("");
+                }}
+                autoHighlight
                 disabled={saving || refreshing || !available.length}
-                groups={[
-                  {
-                    label: "Your agents",
-                    options: available.map((agent) => ({
-                      value: agent.pubkey,
-                      label: agent.managedName ?? agent.name,
-                    })),
-                  },
-                ]}
-                onValueChange={(pubkey) => void choose(pubkey)}
-              />
+                onValueChange={(agent) => {
+                  if (agent) void choose(agent.pubkey);
+                }}
+              >
+                <Combobox.Trigger
+                  label={chooseInstruction}
+                  disabled={saving || refreshing || !available.length}
+                >
+                  {items.find((agent) => agent.pubkey === selected)?.label ??
+                    (pending && !available.length
+                      ? "Loading agents…"
+                      : "Choose your bestie")}
+                </Combobox.Trigger>
+                <Combobox.Popup
+                  search
+                  size="compact"
+                  side="bottom"
+                  collisionAvoidance={{ side: "none", align: "shift" }}
+                  empty="No matching agents."
+                >
+                  <Combobox.List>
+                    {(agent: (typeof items)[number]) => (
+                      <Combobox.Item
+                        key={agent.pubkey}
+                        value={agent}
+                        aria-label={`${agent.label} ${agent.keyLabel ?? ""}`.trim()}
+                      >
+                        <ChoiceRow
+                          label={agent.label}
+                          description={agent.keyLabel}
+                          leading={
+                            <Avatar
+                              alt=""
+                              fallback={agent.label}
+                              src={avatarMedia(agent.avatar, session.media)}
+                              size="large"
+                              shape="squircle"
+                            />
+                          }
+                        />
+                      </Combobox.Item>
+                    )}
+                  </Combobox.List>
+                </Combobox.Popup>
+              </Combobox.Root>
             )}
             {!available.length && !pending && !shownError && (
               <p className="m-0 text-body-sm text-muted" role="status">
@@ -119,7 +205,7 @@ export function BestieChooser({
                 Saving your Bestie…
               </p>
             )}
-            {shownError && (
+            {shownError && !remote && (
               <p className="m-0 text-body-sm text-danger" role="alert">
                 {shownError}
               </p>
@@ -148,6 +234,32 @@ export function BestieChooser({
           </div>
         }
       />
+      {remote && (
+        <AlertDialog
+          title={`Use ${items.find((agent) => agent.pubkey === remote.pubkey)?.label ?? "this agent"} as your bestie?`}
+          description="Some bestie features aren’t available with remote agents."
+          initialFocus={cancel}
+          pending={saving}
+          onClose={dismissRemote}
+          {...(error && { children: <p role="alert">{error}</p> })}
+          actions={
+            <>
+              <Button ref={cancel} disabled={saving} onClick={dismissRemote}>
+                Cancel
+              </Button>
+              <Button
+                variant="prominent"
+                loading={saving}
+                onClick={() =>
+                  void choose(remote.pubkey, remote.keepsCreated, true)
+                }
+              >
+                Use as bestie
+              </Button>
+            </>
+          }
+        />
+      )}
       {creating && (
         <AgentCreateDialog
           agents={agents}

@@ -322,6 +322,9 @@ export type MessageComposerProps = {
     attachments?: boolean;
     /** DMs can start with files alone; named Solo chats still require text. */
     allowAttachmentOnly?: boolean;
+    /** Told after each save whether the editor holds a draft it could not
+     * save, which view state then misses. */
+    unsaved?: ((held: boolean) => void) | undefined;
     /** `addressed`: the toolbar's agents, when they are held apart from the text. */
     submit: (
       draft: MentionDraft,
@@ -893,7 +896,7 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     if (save && !editing.target) {
-      if (submission) writeView(scope, draftKey, next);
+      if (submission) submission.unsaved?.(!writeView(scope, draftKey, next));
       else {
         dirty.current = true;
         if (!conflict && !accepted) persist(next);
@@ -955,10 +958,11 @@ function Composer({
   const compacting = sessionState === "compacting";
   // In a saved chat, the viewer's own pick outlives a remount until the next
   // send, which the chat's history then seeds from. A new chat always starts
-  // from the main agent.
-  const pillKey = submission ? undefined : `${draftKey}:agents`;
+  // from the main agent, unless a refused start gave its pick back (SoloDraft
+  // saves that one).
+  const pillKey = `${draftKey}:agents`;
   const keepPick = (people: readonly MentionRecipient[] | null) => {
-    if (pillKey) writeView(scope, pillKey, people?.length ? people : null);
+    if (!submission) writeView(scope, pillKey, people?.length ? people : null);
   };
   const choose = (people: readonly MentionRecipient[]) => {
     seededRoute.current = undefined;
@@ -1024,7 +1028,7 @@ function Composer({
     if (automaticTag.current === JSON.stringify(valueRef.current)) return;
     setReplacedKey(draftKey);
     setRouted([]);
-    if (pillKey) writeView(scope, pillKey, null);
+    writeView(scope, pillKey, null);
   }, [routing, recipients.length, draftKey, scope, pillKey]);
   const editLocked = useListedChannel(
     listed,
@@ -1971,7 +1975,7 @@ function Composer({
       if (routed.length || recipients.length) return;
       // A saved pick is restored whole, however discovery stands; the send
       // checks each agent and asks the viewer about any it can't reach.
-      const chosen = pillKey ? readView<unknown>(scope, pillKey, null) : null;
+      const chosen = readView<unknown>(scope, pillKey, null);
       const kept = Array.isArray(chosen)
         ? chosen
             .filter(wellFormedRecipient)

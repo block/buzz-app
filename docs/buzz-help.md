@@ -47,6 +47,11 @@ the interface unless an available tool actually supports that action.
 
 ## Conversations and communities
 
+- **Forward message** in a message's hover actions or message menu sends its link
+  to one person in the current community, with an optional note. Buzz opens or
+  creates the direct message for you. The link previews the original message;
+  the recipient still needs access to its conversation. Forwarding is unavailable
+  when the connection cannot start DMs or the message has no link yet.
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Solo conversations continue at the chat's top
   level rather than requiring a new thread for each reply. Solo chats can also

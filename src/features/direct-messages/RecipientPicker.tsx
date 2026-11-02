@@ -45,6 +45,7 @@ export function RecipientPicker({
   disabled,
   excludedPubkeys = noExclusions,
   initiallyOpen = true,
+  maxRecipients = 8,
   onChange,
   onComplete,
   onTyped,
@@ -57,6 +58,7 @@ export function RecipientPicker({
   excludedPubkeys?: readonly string[];
   /** Share dialogs keep the people list closed until the To field is used. */
   initiallyOpen?: boolean;
+  maxRecipients?: number;
   onChange(people: Recipient[]): void;
   onComplete(): void;
   /** Whether the To field holds text that is not a recipient yet. */
@@ -76,7 +78,7 @@ export function RecipientPicker({
   const directory = usePeople(session, query);
   const agents = useAgentChoices(session, false);
   const removal = useChipRemoval();
-  const atLimit = selected.length >= 8;
+  const atLimit = selected.length >= maxRecipients;
   const needle = query.trim().toLowerCase();
   const typed = pickerText("dm", needle);
   const invalid = !open && !!needle && selected.length > 0;
@@ -263,7 +265,7 @@ export function RecipientPicker({
   function choose(person: Recipient) {
     if (
       disabled ||
-      selection.current.length >= 8 ||
+      selection.current.length >= maxRecipients ||
       person.pubkey === session.viewer ||
       excludedPubkeys.includes(person.pubkey) ||
       (person.isAgent && !controlled.has(person.pubkey)) ||
@@ -410,7 +412,7 @@ export function RecipientPicker({
             placeholder={
               selected.length
                 ? atLimit
-                  ? "8 people selected"
+                  ? `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
                   : "Add another person…"
                 : "Find a person…"
             }
@@ -515,7 +517,11 @@ export function RecipientPicker({
               className={styles.picker}
             >
               {atLimit ? (
-                <p role="status">You can message up to 8 people at once.</p>
+                <p role="status">
+                  {maxRecipients === 1
+                    ? "Choose one person."
+                    : `You can message up to ${maxRecipients} people at once.`}
+                </p>
               ) : (
                 <div
                   className={styles.people}

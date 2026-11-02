@@ -12,6 +12,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -879,6 +880,62 @@ it.each([false, true])(
     ).not.toBeInTheDocument();
   },
 );
+
+it("opens search from New and returns focus to New when it closes", async () => {
+  const current = createServices();
+  services = current;
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[]}
+        selected="buzz.channels/channels"
+        navigationAttempt="same-conversation"
+        onSelect={vi.fn()}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+        searchServices={current}
+        creationInSidebar
+        sidebar={(_, action) => <aside aria-label="Sidebar">{action}</aside>}
+        creationAction={(open, onOpenChange, container, findChannel) => (
+          <MenuRoot open={open} onOpenChange={onOpenChange}>
+            {container &&
+              createPortal(
+                <MenuTrigger render={<button type="button">New</button>} />,
+                container,
+              )}
+            <MenuPopup>
+              <MenuItem
+                onClick={() =>
+                  findChannel(screen.getByRole("button", { name: "New" }))
+                }
+              >
+                Join channel
+              </MenuItem>
+            </MenuPopup>
+          </MenuRoot>
+        )}
+      >
+        Current conversation
+      </AppShell>
+    </ToastProvider>,
+  );
+  const trigger = screen.getByRole("button", { name: "New" });
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Join channel" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Search Buzz" }),
+  ).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+  );
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
 
 it.each([true, false])(
   "opens New with Mod+N without navigating (sidebar placement: %s)",

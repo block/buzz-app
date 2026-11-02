@@ -22,7 +22,11 @@ import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityPicker } from "../../features/communities/CommunityPicker";
 import { ProfileButton } from "./ProfileButton";
 import type { Appearance } from "../../shared/theme/service";
-import { PageSearch, type SearchServices } from "./PageSearch";
+import {
+  PageSearch,
+  type SearchOpener,
+  type SearchServices,
+} from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
 import { PageNavigation } from "./PageNavigation";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
@@ -97,6 +101,7 @@ export function AppShell({
     open: boolean,
     onOpenChange: (open: boolean) => void,
     triggerContainer: HTMLElement | null,
+    findChannel: SearchOpener,
   ) => ReactNode;
   creationInSidebar?: boolean;
   children: ReactNode;
@@ -216,6 +221,7 @@ export function AppShell({
   const historyRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const search = useRef<SearchOpener>(null);
   const topbarRef = useRef<HTMLElement>(null);
   const toolbarRef = useRef<HTMLElement>(null);
   const overflowTrigger = useRef<HTMLButtonElement>(null);
@@ -420,6 +426,7 @@ export function AppShell({
           </div>
           <div ref={searchRef} className="shell-search-action shell-capsule">
             <PageSearch
+              ref={search}
               pages={pages}
               onSelect={onSelect}
               services={searchServices}
@@ -549,7 +556,12 @@ export function AppShell({
           </div>
         </div>
       </div>
-      {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
+      {creationAction?.(
+        creationOpen,
+        setCreationOpen,
+        creationContainer,
+        (returnTo) => search.current?.(returnTo),
+      )}
     </div>
   );
 }

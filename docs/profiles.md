@@ -116,11 +116,11 @@ the shortcode as status text.
 Set or clear your own status from the top-right profile menu. Your own profile
 also offers **Set a status** when the community accepts status updates; it opens
 the same editor, saves to that profile's community, and closes if the community
-or identity changes. Shared design-system
-Avatar and Button use the host-loaded styles directly. The profile content marks its
-`data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
-owns layout, not component overrides. No new theme owner, second global reset or
-shell migration. Designers own later refinement.
+or identity changes.
+Shared design-system Avatar and Button use the host-loaded styles directly. The
+profile content marks its `data-buzz-ui` boundary and uses shared heading/body/mono
+roles; its stylesheet owns layout, not component overrides. No new theme owner,
+second global reset or shell migration. Designers own later refinement.
 
 Agent hints change avatar shape, not authority:
 

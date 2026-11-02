@@ -185,6 +185,7 @@ it("offers Set a status only on the viewer's own profile when statuses are writa
     expect(setStatus()).toBeTruthy();
     view.rerender(f.panel(keypair()));
     expect(setStatus()).toBeNull();
+    // No separate agent gate: the viewer === pubkey check hides it here too.
     view.rerender(f.panel(keypair(), true));
     expect(setStatus()).toBeNull();
   } finally {

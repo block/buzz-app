@@ -1,3 +1,4 @@
+import { useProfileGeneration } from "../../features/relay/react";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
@@ -802,6 +803,7 @@ export function ChannelMembersDialog({
     administration.operation.status === "pending"
   )
     busy.add(administration.operation.change.pubkey);
+  const profileGeneration = useProfileGeneration(session.profiles);
   const namesBusy =
     namesSettledFor?.session !== session ||
     namesSettledFor?.memberKey !== memberKey;
@@ -987,7 +989,7 @@ export function ChannelMembersDialog({
           );
         })
         .join(":");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh retries missing names with the other dialog reads; a purge generation rereads.
   useEffect(() => {
     let current = true;
     setNameError("");
@@ -1009,7 +1011,7 @@ export function ChannelMembersDialog({
     return () => {
       current = false;
     };
-  }, [session, memberKey, profileKey, refresh, largeRoster]);
+  }, [session, memberKey, profileKey, refresh, largeRoster, profileGeneration]);
   const relayKeys = new Set(search.people.map((person) => person.pubkey));
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),

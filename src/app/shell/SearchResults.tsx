@@ -54,7 +54,7 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
-import { afterTypingPause, searchable } from "../../shared/search-debounce";
+import { searchDebounce, searchable } from "../../shared/search-debounce";
 import { matchPerson } from "../../features/search/person-match";
 import {
   personKey,
@@ -356,7 +356,7 @@ export function SearchResults({
   useEffect(() => {
     if (!showAuthorPicker) return;
     const controller = new AbortController();
-    const cancel = afterTypingPause(() => {
+    const cancel = searchDebounce(() => {
       void (async () => {
         const members = effectiveChannelId
           ? (session.channels.get?.(effectiveChannelId)?.members ?? [])

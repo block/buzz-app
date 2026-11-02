@@ -4,7 +4,7 @@ import {
   searchMembers,
   type MemberSearchResult,
 } from "../../features/channel-members/search";
-import { afterTypingPause, searchable } from "../../shared/search-debounce";
+import { searchDebounce, searchable } from "../../shared/search-debounce";
 
 /** Dialog-owned search intent. The session owns transport, verification and profiles. */
 export function useMemberSearch(
@@ -29,7 +29,7 @@ export function useMemberSearch(
       more: false,
       loading: true,
     }));
-    const cancel = afterTypingPause(() => {
+    const cancel = searchDebounce(() => {
       void searchMembers(session, text, request.page, abort.signal).then(
         (page) => {
           if (abort.signal.aborted || current !== generation.current) return;

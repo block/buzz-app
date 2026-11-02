@@ -1,3 +1,4 @@
+import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -1105,7 +1106,7 @@ it("filters the completed directory immediately without loading or searching aga
   vi.useFakeTimers();
   fireEvent.change(recipient(), { target: { value: "Still nobody" } });
   try {
-    await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   } finally {
     vi.useRealTimers();
   }
@@ -1129,13 +1130,13 @@ it("searches again for people added after a completed directory when New message
   try {
     t.mount();
     fireEvent.change(recipient(), { target: { value: "New colleague" } });
-    await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
     await act(() => vi.advanceTimersToNextFrame());
     expect(screen.getByRole("option", { name: "New colleague" })).toBeVisible();
     // The reopened list is reused; a completed search is not read again.
     fireEvent.change(recipient(), { target: { value: "" } });
     fireEvent.change(recipient(), { target: { value: "New colleague" } });
-    await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   } finally {
     vi.useRealTimers();
   }
@@ -1170,7 +1171,7 @@ it("repeats a search completed during an earlier visit while the directory is in
   try {
     t.mount();
     fireEvent.change(recipient(), { target: { value: "Ali" } });
-    await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
     await act(() => vi.advanceTimersToNextFrame());
   } finally {
     vi.useRealTimers();
@@ -1304,7 +1305,7 @@ it("keeps searching past pages of excluded agents and never announces a false em
   const t = setup();
   const foreign = {
     pubkey: "a".repeat(64),
-    name: "C agent",
+    name: "Cy agent",
     isAgent: true as const,
   };
   const human = { pubkey: "b".repeat(64), name: "Cynthia" };
@@ -1319,10 +1320,10 @@ it("keeps searching past pages of excluded agents and never announces a false em
   });
   t.mount();
   await waitFor(() => expect(recipient()).toBeEnabled());
-  await t.user.type(recipient(), "C");
+  await t.user.type(recipient(), "Cy");
   await waitFor(() =>
     expect(t.directMessages.people).toHaveBeenCalledWith(
-      "C",
+      "Cy",
       2,
       expect.any(AbortSignal),
     ),

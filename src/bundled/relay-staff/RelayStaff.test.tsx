@@ -2325,7 +2325,7 @@ it("member search fetches every unknown result profile in one batch", async () =
   );
   fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
   fireEvent.change(screen.getByLabelText("Member"), {
-    target: { value: "x" },
+    target: { value: "xy" },
   });
   await screen.findByRole("listbox");
   await waitFor(() =>
@@ -2847,7 +2847,7 @@ it("Load more appends the next directory page, and a late page after a new searc
       return new Promise((resolve) => {
         late = resolve;
       });
-    if (q === "x")
+    if (q === "xe")
       return ok({ items: [community("x.example.com")], nextCursor: null });
     return ok({ items: [community("one.example.com")], nextCursor: "p2" });
   };
@@ -2873,7 +2873,7 @@ it("Load more appends the next directory page, and a late page after a new searc
   fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
   await waitFor(() => expect(late).toBeTypeOf("function"));
   fireEvent.change(screen.getByLabelText("Search communities"), {
-    target: { value: "x" },
+    target: { value: "xe" },
   });
   await screen.findByRole("button", { name: "x.example.com" });
   await act(async () =>

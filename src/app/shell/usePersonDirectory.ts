@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { PEOPLE_SEARCH_MAX_LENGTH } from "../../features/relay/direct-messages";
-import { afterTypingPause, searchable } from "../../shared/search-debounce";
+import { searchDebounce, searchable } from "../../shared/search-debounce";
 
 type Person = Awaited<
   ReturnType<RelaySession["directMessages"]["people"]>
@@ -33,7 +33,7 @@ export function usePersonDirectory(
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
-    const cancel = afterTypingPause(() => {
+    const cancel = searchDebounce(() => {
       session.directMessages.people(query, 1, controller.signal).then(
         ({ people }) => {
           if (!controller.signal.aborted) setState({ query, attempt, people });

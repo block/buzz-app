@@ -4,7 +4,7 @@ import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
 import { matchPerson } from "../search/person-match";
 import {
-  afterTypingPause,
+  searchDebounce,
   SEARCH_DEBOUNCE_MS,
   searchable,
 } from "../../shared/search-debounce";
@@ -159,7 +159,7 @@ export function usePeople(session: RelaySession, query: string) {
     const cancel =
       initial.page || !initial.hasMore
         ? undefined
-        : afterTypingPause(
+        : searchDebounce(
             () => void load(1, owned),
             query ? SEARCH_DEBOUNCE_MS : 0,
           );

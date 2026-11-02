@@ -2,7 +2,7 @@ import { retryRead } from "../relay/read-retry";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ComposerSession } from "../messages/composer-session";
-import { afterTypingPause, searchable } from "../../shared/search-debounce";
+import { searchDebounce, searchable } from "../../shared/search-debounce";
 
 const none: readonly ChannelSummary[] = [];
 
@@ -41,7 +41,7 @@ export function usePublicChannelSearch(
     let shown = "";
     let kept = none;
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
-    const cancel = afterTypingPause(() => {
+    const cancel = searchDebounce(() => {
       retryRead(
         (signal) =>
           search(query, {

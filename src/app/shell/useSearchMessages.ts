@@ -1,6 +1,6 @@
 import { workflowOwner } from "../../features/relay/workflow-attribution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { afterTypingPause, searchable } from "../../shared/search-debounce";
+import { searchDebounce, searchable } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
@@ -198,7 +198,7 @@ export function useSearchMessages(
     if (!canSearch || unresolvedChannel) return;
     const controller = new AbortController();
     // Typeahead waits for a brief typing pause; cancellation also owns the delay.
-    const cancel = afterTypingPause(() => {
+    const cancel = searchDebounce(() => {
       void (async (): Promise<{
         messages: readonly SearchMessage[];
         next?: Result["next"];

@@ -12,7 +12,7 @@ export function searchable(text: string) {
 
 /** Runs `search` once typing pauses. Call the returned cleanup from the
  * effect that owns the search, alongside aborting its request. */
-export function afterTypingPause(search: () => void, ms = SEARCH_DEBOUNCE_MS) {
+export function searchDebounce(search: () => void, ms = SEARCH_DEBOUNCE_MS) {
   const timer = setTimeout(search, ms);
   return () => clearTimeout(timer);
 }
@@ -20,6 +20,6 @@ export function afterTypingPause(search: () => void, ms = SEARCH_DEBOUNCE_MS) {
 /** `value` once it has stopped changing for `ms`. */
 export function useDebounced<T>(value: T, ms = SEARCH_DEBOUNCE_MS) {
   const [settled, setSettled] = useState(value);
-  useEffect(() => afterTypingPause(() => setSettled(value), ms), [value, ms]);
+  useEffect(() => searchDebounce(() => setSettled(value), ms), [value, ms]);
   return settled;
 }

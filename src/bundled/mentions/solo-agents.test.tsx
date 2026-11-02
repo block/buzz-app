@@ -1736,7 +1736,7 @@ it("shows local rows before the directory, appends outside rows, and reuses sett
   // The member is usable before the network search starts or settles.
   expect(labels()).toEqual(["Larkin"]);
   expect(last()?.status).toBe("Searching community…");
-  await act(() => vi.advanceTimersByTimeAsync(200));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(1);
   // A truncated page: a longer query cannot be read out of it, so it searches.
   await act(async () =>
@@ -1753,7 +1753,7 @@ it("shows local rows before the directory, appends outside rows, and reuses sett
   );
   expect(labels()).toEqual(["Larry Outside"]);
   expect(last()?.status).toBe("Searching community…");
-  await act(() => vi.advanceTimersByTimeAsync(200));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(2);
   const newer = { pubkey: "d".repeat(64), name: "Larry Newer" };
   await act(async () =>
@@ -1767,7 +1767,7 @@ it("shows local rows before the directory, appends outside rows, and reuses sett
   );
   expect(labels()).toEqual(["Larkin", "Lara", "Larry Outside"]);
   expect(last()?.status).toBe("Narrow your search to see more members.");
-  await act(() => vi.advanceTimersByTimeAsync(200));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(people).toHaveBeenCalledTimes(2);
 });
 

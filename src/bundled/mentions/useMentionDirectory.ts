@@ -3,7 +3,7 @@ import type { ComposerSession } from "../../features/messages/composer-session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 import { matchPerson } from "../../features/search/person-match";
-import { afterTypingPause, searchable } from "../../shared/search-debounce";
+import { searchDebounce, searchable } from "../../shared/search-debounce";
 
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
@@ -188,7 +188,7 @@ export function useMentionDirectory(
     if (!searching) return;
     const controller = new AbortController();
     const current = { session, query, attempt, lifetime };
-    const cancel = afterTypingPause(() => {
+    const cancel = searchDebounce(() => {
       void fetchMentionDirectoryPage(session, query, controller.signal, {
         fresh: attempt > 0,
       }).then(

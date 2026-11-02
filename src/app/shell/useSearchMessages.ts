@@ -162,7 +162,8 @@ export function useSearchMessages(
   const unfinishedAuthor = /(?:^|\s)from:(@?)([^\s]*)$/i.exec(query);
   const canSearch =
     !(unfinishedAuthor && !isHexPubkey(unfinishedAuthor[2] ?? "")) &&
-    (parsed.text ? searchable(parsed.text) : hasFilters);
+    // A filter already narrows the read, so short text may refine it.
+    (hasFilters || searchable(parsed.text));
   const newest = sort === "newest" && session.searchSort;
   // Without text the relay reads its ordinary newest-first history.
   const newestFirst = newest || !parsed.text;
@@ -362,6 +363,8 @@ export function useSearchMessages(
       ordinaryChannel(message.channelId),
     ),
     loading: canSearch && !unresolvedChannel && !current,
+    /** Typed text is too short to search and no filter narrows it. */
+    tooShort: !!parsed.text && !hasFilters && !searchable(parsed.text),
     error: current?.error,
     ambiguousAuthor: current?.ambiguousAuthor,
     newestFirst,

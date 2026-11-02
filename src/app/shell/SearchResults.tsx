@@ -54,7 +54,11 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
-import { searchDebounce, searchable } from "../../shared/search-debounce";
+import {
+  SEARCH_MIN_CHARS,
+  searchDebounce,
+  searchable,
+} from "../../shared/search-debounce";
 import { matchPerson } from "../../features/search/person-match";
 import {
   personKey,
@@ -1038,7 +1042,9 @@ export function SearchResults({
         : query.trim()
           ? directoryPending
             ? undefined
-            : "No matching messages in accessible conversations."
+            : search.tooShort
+              ? `Type at least ${SEARCH_MIN_CHARS} characters to search messages.`
+              : "No matching messages in accessible conversations."
           : scopedChannelId
             ? "Type to search messages in this conversation."
             : "Type to search messages in this community.";

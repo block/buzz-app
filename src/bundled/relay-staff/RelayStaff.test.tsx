@@ -953,6 +953,32 @@ it("directory search waits for typing to pause before sending", async () => {
   }
 });
 
+it("directory search sends nothing for one character and lists every community", async () => {
+  mount();
+  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
+  await screen.findByRole("button", { name: /team\.example\.com/ });
+  const search = screen.getByLabelText("Search communities");
+  vi.useFakeTimers();
+  try {
+    const before = sent("listCommunities").length;
+    fireEvent.change(search, { target: { value: "t" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("listCommunities")).toHaveLength(before);
+    fireEvent.change(search, { target: { value: "te" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("listCommunities").slice(before)).toEqual([
+      { route: "listCommunities", q: "te" },
+    ]);
+    fireEvent.change(search, { target: { value: "t" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("listCommunities").at(-1)).toEqual({
+      route: "listCommunities",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("config-backed staff can't be removed, and removing yourself re-probes", async () => {
   const fixedKey = "c".repeat(64);
   routes.probe = () => probe({ role: "operator", canStaff: true });
@@ -2787,6 +2813,30 @@ it("member search waits for typing to pause before sending one request", async (
   await screen.findByRole("option", { name: /Bob/ });
   expect(sent("searchMembers")).toEqual([
     { route: "searchMembers", communityHost: "team.example.com", q: "Bob" },
+  ]);
+});
+
+it("member search sends nothing for one character", async () => {
+  mount();
+  await reopenActions();
+  const input = await screen.findByLabelText("Member");
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value: "B" } });
+    await act(async () => {
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    expect(sent("searchMembers")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "Bo" } });
+    await act(async () => {
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+  await screen.findByRole("option", { name: /Bob/ });
+  expect(sent("searchMembers")).toEqual([
+    { route: "searchMembers", communityHost: "team.example.com", q: "Bo" },
   ]);
 });
 

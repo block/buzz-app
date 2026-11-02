@@ -135,8 +135,6 @@ export function useMentionDirectory(
 ) {
   const active =
     enabled &&
-    // An empty query lists the directory; typed text waits for enough to search.
-    (!query.trim() || searchable(query)) &&
     allowsOutsideMentions(channel) &&
     !channel?.archived &&
     !channel?.readOnly;
@@ -183,7 +181,9 @@ export function useMentionDirectory(
   const hit = active
     ? (exact ?? own?.page ?? derived ?? (refuted ? refutedPage : undefined))
     : undefined;
-  const searching = active && !hit;
+  // An empty query lists the directory; shorter text shows only pages already
+  // read, filtered by the chooser, and waits for enough to search.
+  const searching = active && !hit && (!query.trim() || searchable(query));
   useEffect(() => {
     if (!searching) return;
     const controller = new AbortController();
@@ -226,11 +226,11 @@ export function useMentionDirectory(
       /** The current query's page, or the last settled page while it loads. */
       // An empty page shares one array, so it changes no cached candidates.
       people: active && shown?.people.length ? shown.people : empty,
-      loading: active && !hit && !error,
+      loading: searching && !error,
       error,
       more: !!hit?.more,
       retry,
     }),
-    [active, shown, hit, error, retry],
+    [active, shown, hit, searching, error, retry],
   );
 }

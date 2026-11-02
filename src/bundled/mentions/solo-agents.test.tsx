@@ -2193,6 +2193,32 @@ type RelaySessionPeople = (
   query: string,
 ) => Promise<{ people: { pubkey: string; name: string }[]; hasMore: boolean }>;
 
+it("keeps already-read directory people at one character without searching", async () => {
+  vi.useFakeTimers();
+  const people = vi.fn<RelaySessionPeople>(async () => ({
+    people: [
+      { pubkey: "e".repeat(64), name: "Mark Outsider" },
+      { pubkey: "f".repeat(64), name: "Zed Outsider" },
+    ],
+    hasMore: false,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete(""));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+  expect(people).toHaveBeenCalledExactlyOnceWith("", 1, expect.anything());
+  // One character is too short to search: the listing stays, filtered.
+  view.rerender(complete("m"));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+  expect(people).toHaveBeenCalledTimes(1);
+  const labels = last()?.items.map((item) => item.label);
+  expect(labels).toContain("Mark Outsider");
+  expect(labels).not.toContain("Zed Outsider");
+  expect(last()?.status).not.toBe("Searching community…");
+  view.rerender(complete("ma"));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+  expect(people).toHaveBeenLastCalledWith("ma", 1, expect.anything());
+});
+
 it("answers a longer query from the complete page already read for its prefix, with no read and no typing pause", async () => {
   vi.useFakeTimers();
   const people = vi.fn<RelaySessionPeople>(async () => ({

@@ -1182,6 +1182,38 @@ it("repeats a search completed during an earlier visit while the directory is in
   ]);
 });
 
+it("browses an empty query but searches an incomplete directory only from two characters", async () => {
+  const t = setup();
+  t.directMessages.people.mockImplementation(async (query, page) => {
+    if (!query)
+      return page === 1
+        ? { people: people.slice(0, 1), hasMore: true }
+        : new Promise(() => {});
+    return { people: [], hasMore: false };
+  });
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  expect(t.directMessages.people).toHaveBeenCalledWith(
+    "",
+    1,
+    expect.any(AbortSignal),
+  );
+  const requests = t.directMessages.people.mock.calls.length;
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(recipient(), { target: { value: "P" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
+    fireEvent.change(recipient(), { target: { value: "Pe" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(t.directMessages.people.mock.calls.slice(requests)).toEqual([
+    ["Pe", 1, expect.any(AbortSignal)],
+  ]);
+});
+
 it("keeps local matches visible while an incomplete directory searches in the background", async () => {
   const t = setup();
   let release: (value: { people: typeof people; hasMore: boolean }) => void =

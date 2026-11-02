@@ -2142,6 +2142,201 @@ it("does not read messages for punctuation-only operands after normalization", a
   }
 });
 
+it("reads no search for one typed character and says why", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const searches: Filter[][] = [];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query(filters) {
+      if (filters.some((filter) => filter.search !== undefined))
+        searches.push(filters as Filter[]);
+      return Promise.resolve([]);
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="a"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(searches).toHaveLength(0);
+    expect(
+      screen.getByText("Type at least 2 characters to search messages."),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("No matching messages in accessible conversations."),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("still searches one character of text narrowed by an in: operator", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        [
+          metadata(relay, "crew", "crew"),
+          roster(relay, "crew", [viewer.pubkey]),
+        ].filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="in:#crew a"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(wire.next().filters).toEqual([
+      {
+        kinds: [40002, 40008, 9],
+        search: "a",
+        search_mode: "prefix",
+        limit: 20,
+        "#h": ["crew"],
+      },
+    ]);
+    expect(
+      screen.queryByText("Type at least 2 characters to search messages."),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("looks up an author by name only from two characters", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  const searchProfiles = vi.fn(async () => []);
+  const props = {
+    session: { ...owner.session, searchProfiles } as typeof owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const view = render(<SearchResults {...props} query="from:@a" />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(searchProfiles).not.toHaveBeenCalled();
+    view.rerender(<SearchResults {...props} query="from:@al" />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(searchProfiles).toHaveBeenCalledExactlyOnceWith(
+      "al",
+      expect.objectContaining({ limit: 40 }),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("searches the people directory only from two characters", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession(
+    scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+  );
+  const people = vi.fn(async () => ({ people: [], hasMore: false }));
+  const props = {
+    session: {
+      ...owner.session,
+      directMessages: { ...owner.session.directMessages, people },
+    } as typeof owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const view = render(<SearchResults {...props} query="a" />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(people).not.toHaveBeenCalled();
+    view.rerender(<SearchResults {...props} query="al" />);
+    await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(people).toHaveBeenCalledExactlyOnceWith(
+      "al",
+      1,
+      expect.any(AbortSignal),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("still looks up a one-character channel named by in:", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [metadata(relay, "x", "x", 1700000000, [["public", ""]])];
+  const owner = createRelaySession({
+    ...wire.transport,
+    query: async (filters) =>
+      discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      ),
+  });
+  const source = owner.session.channels.searchPublic;
+  assert.exists(source);
+  const searchPublic = vi.fn(source);
+  try {
+    render(
+      <SearchResults
+        session={{
+          ...owner.session,
+          channels: { ...owner.session.channels, searchPublic },
+        }}
+        query="in:#x"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(searchPublic).toHaveBeenCalledWith(
+        "x",
+        expect.objectContaining({ exact: true }),
+      ),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("runs operator-only date and author searches without a text predicate", async () => {
   const relay = keypair(),
     viewer = keypair(),

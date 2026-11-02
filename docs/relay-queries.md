@@ -575,8 +575,10 @@ its management snapshot still exposes those operations, while read overlays hide
 them until access returns. Confirmed evidence is not pending intent and is dropped
 when inaccessible. If revocation races initial outbox hydration, that load's entire
 confirmed cache is discarded conservatively; pending signed records are preserved.
-Shared signed profile projections and already-opened disk-head caches are also
-cleared conservatively because they can include cross-channel evidence. Disk-cache
+Already-opened disk-head caches are also cleared conservatively because they can
+include cross-channel evidence. Signed profiles (kind 0 and NIP-FI kind 30382) are
+kept: they are global relay events, not channel evidence, so a profile read in
+flight finishes too. Only a full cache clear empties the profile directory. Disk-cache
 failure does not reauthorize in-memory views. This does not erase copies already
 made by trusted plugins, cancel/re-sign durable writes, or replace relay-side checks.
 
@@ -630,7 +632,14 @@ The signed host and opt-in broker subscribe to authenticated Nostr traffic. Veri
 incoming events, finite reads and own echoes enter the same session reconciliation
 path. Reconnect performs bounded replay and revalidates retained channel heads and
 filtered views. History bounds still come from finite channel reads; replay does
-not claim complete history. Decryption, uploads and server-derived aggregate calculations remain domain capabilities.
+not claim complete history. Each global route reports at establishment whether it
+stayed continuous: it resumed from an earlier connection's cursor and its replay
+ended below the limit. Held profiles and the roster are read in full again only
+when their route (`profiles`, `membership`) was not continuous, failed or went
+unreported, or when the last full read has not succeeded yet. Continuity is a skip
+rule, not a delivery proof: the relay can drop a live frame for a slow client
+without telling it, and a replay does not reach a frame dropped long before the
+disconnect. Window focus does not read the roster. Decryption, uploads and server-derived aggregate calculations remain domain capabilities.
 
 `session.messages.send(channelId, text)`, `.reply(channelId, resolvedRootId, text)`,
 `.edit(messageId, text)` and `.retry(id)`

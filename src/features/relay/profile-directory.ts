@@ -27,6 +27,12 @@ export interface ProfileQueries {
   unnamed?(): ReadonlySet<string>;
   /** Cryptographically verified owner of the retained signed profile head. */
   owner?(pubkey: string): string | undefined;
+  /** Moves each time a full cache clear or dispose drops every loaded profile.
+   * A channel access change keeps profiles, so it does not move this. A view
+   * that ensured the identities it shows must ensure them again: the clear
+   * notifies after it removes content, so only names still on screen are
+   * reread. */
+  generation?(): number;
 }
 
 /** Authors per profile read, the reader's largest page. A page that fills it
@@ -68,6 +74,7 @@ export function createProfileDirectory(
   let loaded: ReadonlySet<string> = new Set();
   let controller = new AbortController();
   let closed = false;
+  let generation = 0;
   const verified =
     verification &&
     createVerifiedProfileDirectory(
@@ -270,9 +277,10 @@ export function createProfileDirectory(
     pending.clear();
     events.clear();
     verified?.clear();
-    const forgot = unnamed.size > 0;
     unnamed = new Set();
-    publish(forgot);
+    generation++;
+    // Notify even when nothing was loaded: an aborted read still needs a retry.
+    publish(true);
   }
   const queries: ProfileQueries = Object.freeze({
     snapshot: () => snapshot,
@@ -285,6 +293,7 @@ export function createProfileDirectory(
     ensure,
     event: (pubkey: string) => events.peek(pubkey),
     unnamed: () => unnamed,
+    generation: () => generation,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

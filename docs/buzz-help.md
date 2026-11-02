@@ -135,3 +135,7 @@ the interface unless an available tool actually supports that action.
   When helping someone explore a community, use only your available access and
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
+
+On macOS, debug builds can use a trusted local credential helper for human restore
+and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).
+Release builds ignore this optional helper.

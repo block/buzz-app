@@ -1,10 +1,11 @@
 import { observerFrame, observerGeneration } from "../agents/observer";
-import { eventDto } from "./events";
+import { createEventVerifier } from "./events";
 import type {
   ArtifactSyncFilter,
   ArtifactSyncSink,
 } from "./artifact-sync-filter.ts";
 import {
+  LIVE_PROOF_ENTRIES,
   LIVE_RECOVERY_INTERVAL,
   liveSlowRetryDelay,
   liveChannels,
@@ -29,6 +30,8 @@ export function subscribeBrokerTraffic(
     generation = 0,
     attempts = 0,
     refusals = 0;
+  // Outlives each stream, so a reconnect's replay reuses the proofs.
+  const verify = createEventVerifier(LIVE_PROOF_ENTRIES);
   let channels: string[] = [];
   let joined: string[] = [];
   let sentChannels: string[] = [];
@@ -254,7 +257,7 @@ export function subscribeBrokerTraffic(
               if (!lines.length) continue; // Keepalives carry no data.
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
-              if (kind === "message") callbacks.receive([eventDto(data)]);
+              if (kind === "message") callbacks.receive([verify(data)]);
               else if (kind === "traffic") {
                 if (
                   !data ||
@@ -270,9 +273,9 @@ export function subscribeBrokerTraffic(
                   provenance.sourceChannels ??
                   (provenance.channelId ? [provenance.channelId] : []);
                 if (scopes.every((id) => currentChannel(id, revision)))
-                  callbacks.receive([eventDto(data.event)], provenance);
+                  callbacks.receive([verify(data.event)], provenance);
               } else if (kind === "presence") {
-                const event = eventDto(data);
+                const event = verify(data);
                 if (
                   event.kind === 20001 &&
                   presenceAuthors.includes(event.pubkey)
@@ -291,7 +294,7 @@ export function subscribeBrokerTraffic(
                     : undefined;
                 if (sync && sync.sent === current) {
                   if (frame.type === "event")
-                    sync.sink.event(eventDto(frame.event));
+                    sync.sink.event(verify(frame.event));
                   else if (frame.type === "eose") sync.sink.eose();
                   else if (frame.type === "closed") {
                     syncs.delete(sync.id);

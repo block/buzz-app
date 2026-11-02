@@ -100,6 +100,32 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+## Open a Git import from a link
+
+Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>]`
+to open a preview in **Settings > Plugins > Manage plugins > Add**. The repository
+accepts HTTPS, `ssh://`, `git@host:path`, `github.com/owner/repo`, or `owner/repo`.
+Omit `ref` to use the repository default. For example, on macOS:
+
+```sh
+open 'buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2FOWNER%2FPLUGIN.git&ref=main'
+open 'buzz://plugin-install?repository=git%40github.com%3AOWNER%2FPLUGIN.git&ref=main'
+```
+
+The link fetches a preview through the existing importer. Review the plugin and
+computer access, then select **Install plugin**. Opening the link does not install,
+enable, or grant access. You can close the dialog while the preview loads. A late
+result is discarded. Confirmed installation remains protected from dismissal.
+
+SSH uses the desktop process's inherited `SSH_AUTH_SOCK` and known hosts.
+The importer disables SSH config and interactive prompts. If terminal Git uses
+an `IdentityAgent`, launch Buzz with that socket as `SSH_AUTH_SOCK`.
+
+A new installation completes identity setup before the app can show the linked
+preview. For a repository hosted by a Buzz community, select that community and
+wait for its relay connection before opening the link. Other repositories do not
+require a selected community. See [OS deep links](deep-links.md).
+
 ## The `buzzodz` CLI
 
 Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
@@ -121,7 +147,8 @@ The CLI prints readable results and reports errors with a nonzero exit code.
 `disable`, `remove`, and
 `rollback` take a plugin ID. New installs start disabled; updates preserve their
 existing enabled state. `recover` backs up management settings and resets to
-bundled defaults, preserving artifacts for reinstallation.
+bundled defaults, preserving artifacts for reinstallation. `managed` prints the
+[managed plugin policy](managed-plugins.md) and how each recommendation stands.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
@@ -148,6 +175,8 @@ updates retain their enabled state and may run immediately. Repositories must
 include built `manifest.json` + `plugin.js` artifacts—Buzz never runs project builds
 or install scripts. See [import behavior and limits](#loading-from-folders-and-repositories).
 Browser installation is not supported; the browser shows a desktop-only explanation.
+An organization can recommend plugin sources through a policy file next to the profile
+folders; see [managed plugin sources](managed-plugins.md).
 
 ## Emoji and reusable conversation UI
 
@@ -1083,8 +1112,17 @@ plugins while enabled bundled plugins remain usable.
 
 Builderlab's effective manifest derives its exact origin from the validated
 [`BUZZ_BUILDERLAB_URL` build input](configuration.md#builderlab-url-build-input).
-Its source manifest contains no deployment origins; external plugin declarations
-remain fixed in their installed artifacts.
+With the [FI descriptor](configuration.md#federated-identity-build-input), it
+instead gets a `host.federatedIdentity` grant of exact Builderlab routes and no
+network origins or files. Its source manifest contains no deployment origins;
+external plugin declarations remain fixed in their installed artifacts.
+
+The `federatedIdentity` service forwards a granted operation natively to the
+identity origin with the FI session as `Authorization: Bearer`, scoped to the
+caller's enabled current artifact, a live registration and the session revision
+the call started under. Plugin reload, recovery and enable changes retire
+registrations; a caller registers again once. The token never enters the
+renderer, and an ordinary network origin is never authority to use it.
 
 Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
@@ -1270,6 +1308,10 @@ SSH uses the selected agent and known hosts, not user SSH config; password entry
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
+A caller may require a commit: the import then refuses a reference that resolves to
+anything else, and records that commit in the saved source. An unpinned import records
+no commit, so its registry stays readable by older versions.
+[Managed plugin sources](managed-plugins.md) use this.
 
 Git acquisition has a 60-second deadline (including blob discovery), an observed
 256 MiB repository limit and bounded command output; transport processes are killed
@@ -1344,7 +1386,14 @@ while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
 
 Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
-optional versioned JSON routes, and account/community-bound conversations.
+optional versioned JSON routes, plugin links, and account/community-bound conversations.
+A plugin link, `{ kind: "plugin", pluginId, pageId?, params?, scope? }`, is the target
+form of `buzz://plugin?id=…`. It names a plugin and optionally one of its pages, with
+untrusted string `params`. Once the plugin runtime has settled, the host resolves it
+in place to an ordinary page target: the named page, else the plugin's primary page,
+else its first page. `params` become that page's route params only when the page
+declares a route and its `validate` accepts them; otherwise the page opens without
+params. A plugin that is absent, disabled, or lacks the page fails `unavailable`.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.
@@ -1385,8 +1434,10 @@ into versioned route parameters. These are host-matched preview types through
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 Messages recognize the Buzz link forms `buzz://channel/<id>`,
-`buzz://channel/<id>/<event>` and
-`buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links carry
+`buzz://channel/<id>/<event>`,
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>` and
+`buzz://plugin?id=<plugin>&page=<optional-page>&route.<key>=<optional-value>`
+(plugin pages; see [OS deep links](deep-links.md)). Buzz links carry
 no community: they bind to the receiving conversation's community and viewer and
 pass through existing navigation admission and session ownership checks. The app
 has no link form of its own; any other `buzz://` host is rejected everywhere,
@@ -1474,14 +1525,23 @@ credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
 formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
 autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
 to Channel, Message or Thread when that name is unavailable in the current community;
-the full destination remains on the anchor. Buzz activation stays inside the host,
+the full destination remains on the anchor. A raw message or thread link in a listed
+channel reads as “<author> in #<channel>” once its author has a name, and a workflow’s
+as “Workflow in #<channel>”; DMs, Solo chats, authored labels and drafts keep the channel
+name. So does a message the lookup cannot find or read, whether deleted or not yet
+replicated; it is looked up again when a link to it mounts again or the live stream
+connects again. An author once found stays shown for the session, even after its message
+is deleted. Buzz activation stays inside the host,
 including modifier/middle clicks, even when the optional Links plugin is disabled.
 Unsupported Buzz formats remain plain text. The host-matched author preview exports `LinkRenderer`; older hosts do not
 provide `registerLink`.
 
 Message hover/focus previews are host-owned. The entire card is a keyboard-accessible
 link to the same destination, routed through the same host navigation handler. Opening a preview allocates the current
-session's bounded thread reader; closing disposes it. The reader supplies verified
+session's bounded thread reader; closing disposes it. A live message link borrows
+the same reader only until it learns its author, and not when its channel’s timeline
+already holds the message. Its reads take background admission, so opening or previewing
+a conversation reads first. The reader supplies verified
 message content, author and timestamp and preserves edit/deletion/access handling.
 Previewing never acknowledges reading or switches community. The host offers a
 resolved label to the bundled presentation via `LinkLabelContext`, and whether

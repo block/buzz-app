@@ -95,6 +95,7 @@ import {
 import { splitPartition } from "../relay/partition";
 import styles from "../../bundled/channels/Channels.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useBestieConversation } from "../../app/shell/bestie-context";
 
 type Inventory = {
   sidebar: ReturnType<typeof useSidebarView>;
@@ -170,6 +171,13 @@ export function ChannelInventory({
     queries.channelKit.snapshot,
   );
   const hiddenDms = useHiddenDms(scope, queries, list);
+  const promotedDm = useBestieConversation(queries);
+  // Promotion is presentation, not hiding. Clear an earlier local removal so
+  // releasing this destination restores the ordinary DM row.
+  const showDm = hiddenDms.show;
+  useEffect(() => {
+    if (promotedDm) showDm([promotedDm]);
+  }, [promotedDm, showDm]);
   const lifecycle = queries.channelLifecycle;
   const dmVisibility = useSyncExternalStore(
     lifecycle.subscribe,
@@ -247,6 +255,7 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
+      channel.id !== promotedDm &&
       !channel.huddle &&
       !channel.metadataPending &&
       inTeamInventory(channel) &&
@@ -1194,10 +1203,7 @@ export function ChannelInventory({
             if (!channel) return null;
             const Icon = channelIcon(channel);
             return (
-              <div
-                className={styles.channelDragOverlay}
-                data-section-creation-preview=""
-              >
+              <div className={styles.channelDragOverlay}>
                 <Icon size={16} />
                 <span>{channel.name}</span>
               </div>

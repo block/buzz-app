@@ -2,6 +2,7 @@
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
 import { decode, npubEncode } from "nostr-tools/nip19";
+import buzzHelp from "../../docs/buzz-help.md?raw";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -18,6 +19,14 @@ import {
   attachmentMarkdown,
   attachmentName,
 } from "../features/relay/attachments";
+import {
+  communityEmoji,
+  contentEmojiTags,
+  EMOJI_SET,
+  EMOJI_SET_KIND,
+  referencedEmoji,
+} from "../features/relay/emoji";
+import { newer } from "../features/relay/events";
 import { threadReference } from "../features/relay/thread-reference";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import type { RelayEvent } from "../features/relay/events";
@@ -104,6 +113,11 @@ export async function captureToolBody(
 }
 
 export const TOOLS: readonly Tool[] = [
+  tool(
+    "buzz_help",
+    "Read the bundled guide to using Buzz: chats, communities, identity, agents, and settings.",
+    {},
+  ),
   tool(
     "agent_types",
     "List installed local agent types available for agent_create.",
@@ -384,6 +398,9 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async buzz_help() {
+    return buzzHelp.trim();
+  },
   async agent_types({ client }) {
     if (!client.agentTypes)
       throw new Error("Agent creation is unavailable on this host");
@@ -509,14 +526,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const target = await tools.event(id);
     const channel = tag(target, "h");
     if (!channel) throw new Error(`${id} is not a channel message.`);
+    const content = required(args, "text");
     await tools.client.publish({
       kind: 40003,
-      content: required(args, "text"),
+      content,
       // An edit replaces the attachments too, so it keeps the message's.
       tags: [
         ["h", channel],
         ["e", id],
         ...target.tags.filter((t) => t[0] === "imeta"),
+        ...(await tools.emoji(content)),
       ],
     });
     return "edited";
@@ -1300,6 +1319,7 @@ async function post(
       ...thread,
       ...mentions.map((pubkey) => ["p", pubkey]),
       ...files.tags,
+      ...(await tools.emoji(content)),
       ...extra,
     ],
   });
@@ -1714,6 +1734,18 @@ class Tools {
         .filter(Boolean)
         .join(" ");
     });
+  }
+
+  /** NIP-30 tags for the community emoji `content` uses, as the composer
+   * adds them, so `:shortcode:` renders as the emoji. */
+  async emoji(content: string) {
+    if (!referencedEmoji(content).length) return [];
+    const sets = new Map<string, BuzzEvent>();
+    for (const event of await this.client.query([
+      { kinds: [EMOJI_SET_KIND], "#d": [EMOJI_SET], limit: 500 },
+    ]))
+      sets.set(event.pubkey, newer(sets.get(event.pubkey), event));
+    return contentEmojiTags(content, communityEmoji(sets.values()));
   }
 
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`

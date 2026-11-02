@@ -95,6 +95,7 @@ import {
   useMemo,
   useSyncExternalStore,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
 import type { RelaySession } from "../relay/session";
@@ -304,8 +305,8 @@ export type MessageComposerProps = {
   replyContext?: ReactNode;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
-  /** Focus once when this conversation mounts, not when overlays close. */
-  autoFocus?: boolean;
+  /** Focus once on entry; an owner can cancel its target before a delayed mount. */
+  autoFocus?: boolean | RefObject<HTMLElement | null>;
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
@@ -321,6 +322,9 @@ export type MessageComposerProps = {
     attachments?: boolean;
     /** DMs can start with files alone; named Solo chats still require text. */
     allowAttachmentOnly?: boolean;
+    /** Told after each save whether the editor holds a draft it could not
+     * save, which view state then misses. */
+    unsaved?: ((held: boolean) => void) | undefined;
     /** `addressed`: the toolbar's agents, when they are held apart from the text. */
     submit: (
       draft: MentionDraft,
@@ -754,9 +758,14 @@ function Composer({
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const hasFocused = useRef(false);
+  const focusFromControl = useRef(
+    typeof autoFocus === "object" ? autoFocus : undefined,
+  );
   const focusOnMount = useRef(
     autoFocus && typeof document !== "undefined"
-      ? document.activeElement
+      ? typeof autoFocus === "boolean"
+        ? document.activeElement
+        : autoFocus.current
       : undefined,
   );
   useEffect(() => {
@@ -782,11 +791,18 @@ function Composer({
     }
     if (!focusOnMount.current) return;
     const focus = () => {
+      const handoff = focusFromControl.current;
+      if (handoff && !handoff.current) return;
       const previous = focusOnMount.current;
+      // A responsive draft detail hides its opening row while the thread loads.
+      // That browser blur may leave body focused; a later focusin still cancels.
       if (
         !previous ||
         (previous !== document.activeElement &&
-          (previous.isConnected || document.activeElement !== document.body))
+          (document.activeElement !== document.body ||
+            (previous.isConnected &&
+              (!focusFromControl.current ||
+                previous.getClientRects().length > 0))))
       )
         return;
       const editor = input.current;
@@ -800,6 +816,8 @@ function Composer({
       );
       if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
+      // Let the visit's listener recognize its own successful focus handoff.
+      if (handoff) handoff.current = editor;
       editor.focus();
       if (document.activeElement !== editor) return;
       editor.setSelectionRange(end, end);
@@ -878,8 +896,10 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     if (save && !editing.target) {
-      if (submission) writeView(scope, draftKey, next);
-      else {
+      if (submission) {
+        const saved = writeView(scope, draftKey, next);
+        submission.unsaved?.(!saved);
+      } else {
         dirty.current = true;
         if (!conflict && !accepted) persist(next);
       }
@@ -940,10 +960,11 @@ function Composer({
   const compacting = sessionState === "compacting";
   // In a saved chat, the viewer's own pick outlives a remount until the next
   // send, which the chat's history then seeds from. A new chat always starts
-  // from the main agent.
-  const pillKey = submission ? undefined : `${draftKey}:agents`;
+  // from the main agent, unless a refused start gave its pick back (SoloDraft
+  // saves that one) and the viewer has not picked since.
+  const pillKey = `${draftKey}:agents`;
   const keepPick = (people: readonly MentionRecipient[] | null) => {
-    if (pillKey) writeView(scope, pillKey, people?.length ? people : null);
+    writeView(scope, pillKey, !submission && people?.length ? people : null);
   };
   const choose = (people: readonly MentionRecipient[]) => {
     seededRoute.current = undefined;
@@ -1009,7 +1030,7 @@ function Composer({
     if (automaticTag.current === JSON.stringify(valueRef.current)) return;
     setReplacedKey(draftKey);
     setRouted([]);
-    if (pillKey) writeView(scope, pillKey, null);
+    writeView(scope, pillKey, null);
   }, [routing, recipients.length, draftKey, scope, pillKey]);
   const editLocked = useListedChannel(
     listed,
@@ -1956,7 +1977,7 @@ function Composer({
       if (routed.length || recipients.length) return;
       // A saved pick is restored whole, however discovery stands; the send
       // checks each agent and asks the viewer about any it can't reach.
-      const chosen = pillKey ? readView<unknown>(scope, pillKey, null) : null;
+      const chosen = readView<unknown>(scope, pillKey, null);
       const kept = Array.isArray(chosen)
         ? chosen
             .filter(wellFormedRecipient)

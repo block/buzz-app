@@ -946,19 +946,16 @@ export function ChannelMembersDialog({
       group.keys.length > 0,
   );
   const [memberPages, setMemberPages] = useState({
-    memberKey,
     text,
     roleFilter,
     pages: {} as Record<string, number>,
   });
   const pages =
-    memberPages.memberKey === memberKey &&
-    memberPages.text === text &&
-    memberPages.roleFilter === roleFilter
+    memberPages.text === text && memberPages.roleFilter === roleFilter
       ? memberPages.pages
       : {};
   if (pages !== memberPages.pages)
-    setMemberPages({ memberKey, text, roleFilter, pages: {} });
+    setMemberPages({ text, roleFilter, pages: {} });
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;
@@ -971,7 +968,6 @@ export function ChannelMembersDialog({
   const changeMemberPage = (group: string, page: number) => {
     pendingMemberPage.current = group;
     setMemberPages({
-      memberKey,
       text,
       roleFilter,
       pages: { ...pages, [group]: page },

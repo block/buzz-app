@@ -19,6 +19,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
+import type { LiveCallbacks } from "../../features/relay/live";
 import { createRelaySession } from "../../features/relay/session";
 import {
   keypair,
@@ -129,6 +130,7 @@ async function setup(
     ),
     ...(options.memberProfiles ?? []).map((event) => event.pubkey),
   ];
+  let live: LiveCallbacks | undefined;
   let clock = 1700000000;
   let failure = "";
   let applyAddition = true;
@@ -215,6 +217,10 @@ async function setup(
       scope: "https://relay.example.test",
       media: () => undefined,
       query,
+      subscribe: (callbacks) => {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
       ...(options.searchProfiles
         ? { searchProfiles: options.searchProfiles }
         : {}),
@@ -283,6 +289,10 @@ async function setup(
     relay,
     person,
     viewer,
+    replaceRoster: (keys: string[]) => {
+      members.splice(0, members.length, ...keys);
+      live?.receive([roster(relay, id, members, ++clock)]);
+    },
     delayRoster: () => {
       applyAddition = false;
     },
@@ -3371,6 +3381,28 @@ it("pages a large roster without waiting for optional names or exceeding the pro
   } finally {
     await act(async () => release());
   }
+});
+
+it("keeps the current member page through live removals and clamps a shortened roster", async () => {
+  const t = await setup("stream", false, false, undefined, undefined, {
+    extraMembers: 125,
+  });
+  const keys = Array.from({ length: 125 }, (_, i) =>
+    (i + 10000).toString(16).padStart(64, "0"),
+  );
+  const pages = () =>
+    screen.getByRole("navigation", { name: "People member pages" });
+  await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
+  expect(within(pages()).getByText("2 of 3")).toBeVisible();
+  await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
+  expect(within(pages()).getByText("2 of 3")).toBeVisible();
+  await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
+  expect(within(pages()).getByText("3 of 3")).toBeVisible();
+  await act(async () =>
+    t.replaceRoster([t.viewer.pubkey, ...keys.slice(1, 75)]),
+  );
+  expect(within(pages()).getByText("2 of 2")).toBeVisible();
+  expect(within(pages()).getByRole("button", { name: "Next" })).toBeDisabled();
 });
 
 it.each([true, false])(

@@ -193,8 +193,9 @@ it("batches memo misses to the host's signature checker and rejects a whole resp
   const check = vi.fn(async (claims: readonly { sig: string }[]) =>
     claims.map((claim) => claim.sig !== "0".repeat(128)),
   );
-  const batch = createEventVerifier(undefined, check).batch;
-  if (!batch) throw new Error("expected a batch verifier");
+  const { prepare, settle } = createEventVerifier(undefined, check);
+  if (!prepare || !settle) throw new Error("expected a native verifier");
+  const batch = async (values: unknown[]) => settle(values.map(prepare));
   const second = signed(key, { kind: 9, content: "second", tags: [] });
   const events = await batch([wire(), second]);
   expect(check).toHaveBeenCalledTimes(1);
@@ -215,5 +216,5 @@ it("batches memo misses to the host's signature checker and rejects a whole resp
   await expect(
     batch([wire(), { ...forged, sig: "0".repeat(128) }]),
   ).rejects.toThrow("invalidly signed");
-  expect(createEventVerifier().batch).toBeUndefined();
+  expect(createEventVerifier().settle).toBeUndefined();
 });

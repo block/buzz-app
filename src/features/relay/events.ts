@@ -75,7 +75,8 @@ export type SignatureVerifier = (
  * across its reconnects), not an event/result cache. Only a matching content
  * hash AND exact signature can reuse a successful verification. Retains no
  * payload, authorization, freshness or caller-supplied proof symbols.
- * With `signatures`, `batch` sends memo misses to it in one call. */
+ * With `signatures`, `prepare` does the synchronous checks per event and
+ * `settle` sends the memo misses to it in one call. */
 export function createEventVerifier(
   entries = 8192,
   signatures?: SignatureVerifier,
@@ -83,6 +84,7 @@ export function createEventVerifier(
   // Idle sessions periodically re-read the same events. An LRU smaller than that
   // working set misses on every in-order re-read, so keep it well above it.
   const proofs = new ByteLru<string>(entries, entries * 192);
+  const proven = (event: Event) => proofs.get(event.id) === event.sig;
   const remember = (event: Event) => {
     // A resume never replays an ephemeral event, so its proof would rarely hit.
     if (event.kind < 20000 || event.kind >= 30000)
@@ -90,10 +92,7 @@ export function createEventVerifier(
   };
   const verify = (value: unknown): RelayEvent =>
     checkedEvent(value, (event): event is VerifiedEvent => {
-      if (
-        proofs.get(event.id) === event.sig &&
-        getEventHash(event) === event.id
-      ) {
+      if (proven(event) && getEventHash(event) === event.id) {
         event[verifiedSymbol] = true;
         return true;
       }
@@ -102,13 +101,15 @@ export function createEventVerifier(
       return true;
     });
   if (!signatures) return verify;
-  const batch = async (values: readonly unknown[]): Promise<RelayEvent[]> => {
-    const events = values.map(wireEvent);
-    if (events.some((event) => getEventHash(event) !== event.id))
-      throw invalidEvent();
-    const pending = events.filter(
-      (event) => proofs.get(event.id) !== event.sig,
-    );
+  const prepare = (value: unknown): PreparedEvent => {
+    const event = wireEvent(value);
+    if (getEventHash(event) !== event.id) throw invalidEvent();
+    return event;
+  };
+  const settle = async (
+    events: readonly PreparedEvent[],
+  ): Promise<RelayEvent[]> => {
+    const pending = events.filter((event) => !proven(event));
     const valid = pending.length
       ? await signatures(
           pending.map(({ id, pubkey, sig }) => ({ id, pubkey, sig })),
@@ -125,12 +126,16 @@ export function createEventVerifier(
       return admit(event as VerifiedEvent);
     });
   };
-  return Object.assign(verify, { batch });
+  return Object.assign(verify, { prepare, settle });
 }
 
+/** A well-formed wire copy whose id matches its hash; its signature is unchecked. */
+export type PreparedEvent = Event;
+
 export type EventVerifier = ((value: unknown) => RelayEvent) & {
-  /** A whole response; one bad event rejects it, as `verify` does per event. */
-  batch?: (values: readonly unknown[]) => Promise<RelayEvent[]>;
+  prepare?: (value: unknown) => PreparedEvent;
+  /** One bad signature rejects the whole response, as `verify` does per event. */
+  settle?: (events: readonly PreparedEvent[]) => Promise<RelayEvent[]>;
 };
 
 const invalidEvent = () =>

@@ -661,3 +661,58 @@ it("does not re-render for activity updates that leave its agents unchanged", ()
     screen.getByRole("button", { name: "Activity: 2 agents working" }),
   ).toBeVisible();
 });
+
+it("updates the open chooser when only an agent's activity changes", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const now = Date.parse("2026-10-08T12:00:00Z");
+  const turns = [
+    {
+      agent,
+      channelId: "channel",
+      turnId: "turn",
+      state: "working" as const,
+      timestamp: now,
+    },
+  ];
+  f.update([], { turns });
+  render(<TypingIndicator session={f.session} channelId="channel" />);
+  await user.click(
+    screen.getByRole("button", { name: "Activity: Agent working" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
+  expect(within(dialog).queryByText("Reading")).toBeNull();
+  // Same agent and turn; only the tool it is running changes.
+  f.update([], {
+    turns,
+    records: [
+      {
+        id: "f".repeat(64),
+        agent,
+        createdAt: now / 1000,
+        receivedAt: now,
+        kind: "acp_read",
+        channelIds: ["channel"],
+        plaintext: JSON.stringify({
+          kind: "acp_read",
+          channelId: "channel",
+          turnId: "turn",
+          timestamp: new Date(now).toISOString(),
+          payload: {
+            method: "session/update",
+            params: {
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "call",
+                status: "in_progress",
+                title: "read",
+                kind: "read",
+              },
+            },
+          },
+        }),
+      },
+    ],
+  });
+  expect(within(dialog).getByText("Reading", { exact: true })).toBeVisible();
+});

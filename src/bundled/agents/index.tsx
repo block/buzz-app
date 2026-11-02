@@ -7,6 +7,9 @@ import { AgentCardAttachment, isAgentCard } from "./AgentCardAttachment";
 import { availableAgentProviderRoute } from "./routes";
 import { developerMode } from "../../features/developer/mode";
 import { withImportScenario } from "../../features/developer/agent-import-scenario";
+import { isTauri } from "@tauri-apps/api/core";
+import { createExternalConnection } from "../../features/agents/external-connection";
+import { ExternalConnectionSettings } from "./ExternalConnectionSettings";
 
 export const inject = [
   "pages",
@@ -17,6 +20,7 @@ export const inject = [
   "host",
   "conversation",
   "decisions",
+  "settingsCards",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
@@ -24,6 +28,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
   registerDecideTool(ctx.agents, ctx.decisions);
   const { relay, navigation: navigator } = ctx;
   const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
+  if (isTauri()) {
+    const connection = createExternalConnection(ctx.agents);
+    ctx.effect(() => () => {
+      void connection.revoke();
+    });
+    ctx.settingsCards.register({
+      id: "nexus",
+      title: "Connect Nexus",
+      component: () => (
+        <ExternalConnectionSettings
+          agents={ctx.agents}
+          relay={relay}
+          connection={connection}
+        />
+      ),
+    });
+  }
   ctx.conversation.registerAttachment({
     id: "agent-card",
     title: "Agent card",

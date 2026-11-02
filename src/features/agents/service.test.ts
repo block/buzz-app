@@ -12289,6 +12289,99 @@ it("exposes agent execution only inside an Attention source run", async () => {
   await expect(input.spawn("command", {})).rejects.toThrow();
 });
 
+it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
+  "ends an external grant on %s and refuses later tool calls",
+  async (reason) => {
+    const f = await setup();
+    Object.assign(f.session.agentChoices, {
+      snapshot: () => ({ selectable: [{ pubkey: bot }] }),
+      subscribe: () => () => {},
+    });
+    let handler: import("../host/service").McpHandler | undefined;
+    const closed = runnerGate();
+    const close = vi.fn(async () => {
+      closed.resolve();
+    });
+    f.ctx.provide("host", {
+      serveMcp: async (receive: import("../host/service").McpHandler) => {
+        handler = receive;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          closed: closed.promise,
+          close,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const owner = f.ctx.extend({
+      pluginOwner: { id: "buzz.agents", revision: "one" },
+    });
+    const controller = new AbortController();
+    const admitted = vi.fn();
+    const server = await owner.agents.connectExternal(
+      bot,
+      controller.signal,
+      admitted,
+    );
+    const call = handler;
+    if (!call) throw new Error("Missing server handler");
+    expect(
+      await call({
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18" },
+      }),
+    ).toHaveProperty("result.protocolVersion", "2025-06-18");
+    const post = {
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { channel, text: "External test", audience: "everyone" },
+      },
+    };
+    expect(await call(post)).toHaveProperty(
+      "result.content.0.text",
+      expect.stringContaining("sent "),
+    );
+    expect(f.native.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ pubkey: bot }),
+      expect.objectContaining({ content: "External test" }),
+    );
+    const published = f.native.publish.mock.calls.length;
+    const entered = runnerGate(),
+      release = runnerGate();
+    const starting = vi
+      .spyOn(f.session.channelWrites, "starting")
+      .mockImplementation(() => {
+        entered.resolve();
+        return release.promise;
+      });
+    const outcome = call(post).catch((error) => error);
+    try {
+      await entered.promise;
+      if (reason === "community selection")
+        f.select("https://other.example.test");
+      else if (reason === "reconnect") f.connect(true);
+      else if (reason === "identity") f.signIn(other);
+      else if (reason === "runtime") {
+        f.plugin.agents.register({ ...f.type, id: "replacement" });
+        await f.service.retype(bot, "example/replacement");
+      } else controller.abort();
+    } finally {
+      release.resolve();
+      starting.mockRestore();
+    }
+    expect(await outcome).toBeInstanceOf(Error);
+    await vi.waitFor(() => expect(close).toHaveBeenCalled());
+    await expect(call(post)).rejects.toThrow();
+    expect(f.native.publish).toHaveBeenCalledTimes(published);
+    await server.close();
+  },
+);
+
 it.each(["return", "throw"])(
   "revokes source commands on %s without losing queued output",
   async (ending) => {

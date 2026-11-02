@@ -56,6 +56,33 @@ requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
+## External Nexus connection
+
+Buzz desktop offers **Settings > Connect Nexus** in the selected community.
+The owner selects an unprotected agent that this copy of Buzz runs, creates a
+grant, and copies its connection into Nexus. The signing key stays in Buzz.
+The connection can list channels, read messages and threads, and post text.
+It cannot read files, run commands, use Git credentials, or call plugin tools.
+The descriptor grants access. Do not store it in messages, logs, or files.
+
+Each grant admits one upstream MCP session. Nexus shares that session among
+its agents. Buzz stops the grant on a second initialization, owner revocation,
+a change of selected community or identity, loss of the community connection,
+or the end of the owning agent runtime, plugin, or app. The owner creates and
+copies a new grant to pair again. Closing Settings keeps the grant active.
+
+The version 1 descriptor has `version`, `url`, and `token` fields. Its URL is
+`http://127.0.0.1:<port>/mcp`. The token is an opaque bearer. The transport
+accepts JSON POST messages with MCP `2025-06-18`. Initialization returns
+`Mcp-Session-Id`; later requests require that header and the bearer token.
+Notifications return 202. There is no SSE stream or DELETE endpoint.
+The tools are `channel_list`, `channel_get`, `read`, `send`, and
+`reply_in_subthread`. Their shared schemas apply with these limits: `read`
+needs `channel` or `thread`; `channel_get` needs `channel`; `send` needs
+`channel`, `text`, and `audience`; `reply_in_subthread` needs `parent`, `text`,
+and `audience`. Posts accept `mentions` and `send` accepts `reply`.
+Posts reject `path`, `files`, and `final`. Unknown fields are rejected.
+
 ## Product help for agents
 
 The read-only `buzz_help` tool returns [the Buzz quick guide](buzz-help.md), bundled

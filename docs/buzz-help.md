@@ -47,6 +47,18 @@ the interface unless an available tool actually supports that action.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile.
 
+## Connect Nexus
+
+On Buzz desktop, open **Settings → Connect Nexus** in the community you want
+to use. Select an agent that runs in this copy of Buzz, create a connection,
+and paste the copied connection into Nexus. Nexus can read channels and threads
+and post text as that agent. Keys stay in Buzz. Protected agents cannot use this
+connection. Keep Buzz open. Use **Revoke access** to stop it.
+
+The copied connection grants access. Do not paste it into a chat or save it in
+a file. Each connection admits one Nexus session. If it ends, create a new one
+and pair again. Changing community or identity also ends it.
+
 ## Conversations and communities
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag

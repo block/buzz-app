@@ -32,7 +32,7 @@ import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
-import { MessageComposer } from "./MessageComposer";
+import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
@@ -70,6 +70,8 @@ export type ThreadPanelProps = {
   replyRequest?: number | undefined;
   /** Each new value focuses the reply box, keeping its target. */
   focusRequest?: number | undefined;
+  /** A saved draft carries its cancellable target through a delayed root read. */
+  autoFocus?: MessageComposerProps["autoFocus"];
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
@@ -95,6 +97,9 @@ export type ThreadPanelProps = {
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
+
+// Read errors are diagnostics, not copy; the notice says what happened.
+const THREAD_FAILED = "This thread didn’t load.";
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
@@ -282,6 +287,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           navigation?.complete({
             status: "failed",
             reason: result === "unavailable" ? "not-found" : "unavailable",
+            presented: true,
           });
           return;
         }
@@ -312,7 +318,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         // An existing thread stays usable; its notice owns the retry.
         if (prior) settle({ unavailable: false });
         else settle(undefined, String(error));
-        navigation?.complete({ status: "failed", reason: "unavailable" });
+        navigation?.complete({
+          status: "failed",
+          reason: "unavailable",
+          presented: true,
+        });
       }
     }
     void select();
@@ -330,7 +340,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     <>
       {error && !opening && (
         <div role="alert" className={styles.empty}>
-          <p>{error}</p>
+          <p>{THREAD_FAILED}</p>
           <Button loading={pending} onClick={retryNavigation}>
             Try again
           </Button>
@@ -370,6 +380,7 @@ function OwnedThreadPanel({
   disabled,
   replyRequest,
   focusRequest,
+  autoFocus,
   active = true,
   revealSelected,
   requireReadyRoot,
@@ -405,7 +416,11 @@ function OwnedThreadPanel({
       };
     } catch (error) {
       setError(String(error));
-      navigation?.complete({ status: "failed", reason: "unavailable" });
+      navigation?.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
     }
   }, [
     session,
@@ -418,9 +433,9 @@ function OwnedThreadPanel({
   ]);
   return error ? (
     <div className={styles.empty} role="alert">
-      <p>{error}</p>
+      <p>{THREAD_FAILED}</p>
       <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
-        Retry thread
+        Try again
       </Button>
     </div>
   ) : view ? (
@@ -438,6 +453,7 @@ function OwnedThreadPanel({
       messageId={messageId}
       replyRequest={replyRequest}
       focusRequest={focusRequest}
+      autoFocus={autoFocus}
       active={active}
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
@@ -467,6 +483,7 @@ function ThreadMessages({
   disabled,
   replyRequest,
   focusRequest,
+  autoFocus,
   active,
   revealSelected,
   revealRequest,
@@ -491,6 +508,7 @@ function ThreadMessages({
   view: ThreadView;
   replyRequest?: number | undefined;
   focusRequest?: number | undefined;
+  autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
   revealRequest?: number | undefined;
@@ -506,21 +524,21 @@ function ThreadMessages({
     channelId,
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.archived) return "archived";
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
-        return !channel.archived &&
-          (channel.channelType === "stream" || channel.channelType === "forum")
+        return channel.channelType === "stream" ||
+          channel.channelType === "forum"
           ? "joinable"
           : "preview";
       }
-      return listed && !listed.readOnly && !listed.archived
-        ? "member"
-        : "other";
+      return listed && !listed.readOnly ? "member" : "other";
     },
   );
   const preview =
     channelAccess === "joinable" ||
     channelAccess === "preview" ||
+    channelAccess === "archived" ||
     channelAccess === "guest";
   const joinRole = useListedChannel(
     session.channels,
@@ -793,9 +811,9 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
-  // Opening a thread that is already shown selects nothing new, so no tab
-  // hands focus to it. Without focus inside, reading never starts. A first
-  // opening (not yet positioned) is focused by its tab and must be left alone.
+  // Reopening an already-shown thread selects nothing new, so its reader needs
+  // a focus handoff to start reading. First positioning leaves the opening's
+  // tab/composer focus handoff alone.
   // The signal identifies one request; the navigation object is re-bound per
   // relay snapshot, so a re-render of the same request must not refocus.
   const handledRequest = useRef(navigation?.signal);
@@ -854,12 +872,25 @@ function ThreadMessages({
   });
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
+    // Each failure is shown in the thread, next to its own Try again.
     if (rootTarget && snapshot.status === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      navigation.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
     else if (snapshot.targetStatus === "unavailable")
-      navigation.complete({ status: "failed", reason: "not-found" });
+      navigation.complete({
+        status: "failed",
+        reason: "not-found",
+        presented: true,
+      });
     else if (snapshot.targetStatus === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      navigation.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
@@ -1391,6 +1422,18 @@ function ThreadMessages({
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  const targetUnavailable =
+    snapshot.targetStatus === "unavailable" && !selectionNotice;
+  const historyError = !!snapshot.error && !showOlderPageStatus;
+  const focusArchivedHistory = useCallback(() => {
+    const history = scroller.current;
+    if (
+      session.channels?.get?.(channelId)?.archived &&
+      history?.isConnected &&
+      !history.closest("[inert]")
+    )
+      history.focus({ preventScroll: true });
+  }, [session.channels, channelId]);
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
@@ -1541,14 +1584,26 @@ function ThreadMessages({
                 : {})}
             />
           ) : snapshot.status !== "loading" ? (
-            <p className={styles.empty}>Original message unavailable.</p>
+            targetUnavailable ? (
+              // One notice, with its recovery beside it, when nothing loaded.
+              <div className={styles.threadNotice}>
+                <p role="status">This message isn’t available.</p>
+                {!historyError && (
+                  <Button type="button" onClick={() => void view.refresh()}>
+                    Try again
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className={styles.empty}>Original message unavailable.</p>
+            )
           ) : null}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
-                  Retry thread
+                  Try again
                 </Button>
               </li>
             )}
@@ -1566,12 +1621,6 @@ function ThreadMessages({
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <ThreadLoading />
         ) : null}
-        {snapshot.targetStatus === "unavailable" && !selectionNotice && (
-          <p role="status">Selected message unavailable.</p>
-        )}
-        {snapshot.error && !showOlderPageStatus && (
-          <p role="alert">{snapshot.error}</p>
-        )}
         {selectionNotice && (
           <p role="alert">
             {selectionNotice.unavailable
@@ -1582,11 +1631,14 @@ function ThreadMessages({
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {((snapshot.error && !showOlderPageStatus) ||
-          (snapshot.targetStatus === "unavailable" && !selectionNotice)) && (
-          <div className={styles.threadHistoryControls}>
+        {(historyError || (targetUnavailable && snapshot.root)) && (
+          <div className={styles.threadNotice}>
+            {targetUnavailable && snapshot.root && (
+              <p role="status">Selected message unavailable.</p>
+            )}
+            {historyError && <p role="alert">{THREAD_FAILED}</p>}
             <Button type="button" onClick={() => void view.refresh()}>
-              Retry thread
+              Try again
             </Button>
           </div>
         )}
@@ -1616,6 +1668,8 @@ function ThreadMessages({
               !!rows.length)
           }
           channelId={channelId}
+          archived={channelAccess === "archived"}
+          place={soloConversation ? "chat" : "channel"}
           guest={channelAccess === "guest"}
           joinRole={joinRole}
           lifecycle={session.channelLifecycle}
@@ -1627,6 +1681,7 @@ function ThreadMessages({
       {composerRoot && (
         <MessageComposer
           activityClickOpensPanel={activityClickOpensPanel}
+          onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
           session={session}
@@ -1679,6 +1734,7 @@ function ThreadMessages({
           }
           editMessages={rows}
           focusRequest={pendingReplyFocus ?? 0}
+          autoFocus={autoFocus ?? false}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}

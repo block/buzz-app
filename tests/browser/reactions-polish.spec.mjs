@@ -419,8 +419,18 @@ test("short bubbles keep one reaction beside the add-reaction pill", async ({
 
 // Actual popup geometry must follow each emoji bubble.
 test("reaction previews center above each emoji bubble", async ({ page }) => {
+  // Keep failed-image retries from changing the hovered message's layout.
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="purple"/></svg>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&repeated");
   const row = page.locator("[data-message-id]").first();
+  await expect(
+    row.locator('button[data-reaction=":party:"] img'),
+  ).toHaveJSProperty("naturalWidth", 16);
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
   for (const [theme, width, scale] of [
     ["light", 1440, 1],
@@ -477,10 +487,10 @@ test("reaction previews use the delayed first open, immediate warm switch, and r
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
   try {
-    // Previews wait for the pointer to rest 0.6s (DESIGN.md "Hover timing").
+    // Previews wait for the pointer to rest 0.3s (DESIGN.md "Hover timing").
     await custom.hover();
     await expect(tooltip).toHaveCount(0);
-    await page.clock.runFor(599);
+    await page.clock.runFor(299);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(1);
     await expect(tooltip).toBeVisible();
@@ -490,7 +500,7 @@ test("reaction previews use the delayed first open, immediate warm switch, and r
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(151);
     await custom.hover();
-    await page.clock.runFor(599);
+    await page.clock.runFor(299);
     await expect(tooltip).toHaveCount(0);
     await page.clock.runFor(1);
     await expect(tooltip).toBeVisible();

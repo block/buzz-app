@@ -2194,7 +2194,7 @@ export function ChannelMembersDialog({
                 {searchFeedback}
               </section>
             )}
-            {!offering && searchFeedback}
+            {!initialLoading && !offering && searchFeedback}
             {shareChannels.length > 0 && (
               <section className={styles.memberGroup} aria-label="Channels">
                 <h3

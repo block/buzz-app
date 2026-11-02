@@ -255,6 +255,12 @@ async function setup(
   const trigger = screen.getByRole("button", { name: "Access" });
   await user.click(trigger);
   if (
+    options.pendingMemberNames &&
+    !options.extraMembers &&
+    !options.memberProfiles
+  )
+    await screen.findByRole("status", { name: "Loading members" });
+  else if (
     options.pendingMemberNames ||
     options.extraMembers ||
     options.memberProfiles
@@ -3562,6 +3568,45 @@ it("retains visible and unrelated profiles when opening a roster above directory
         t.session.profiles.snapshot().has(event.pubkey),
       ),
     ).toBe(true);
+  } finally {
+    await act(async () => release());
+  }
+});
+
+it("hides search feedback until the initial roster is available", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const results = Array.from({ length: 30 }, (_, i) =>
+    profile(keypair(), { name: `Zed ${i}` }),
+  );
+  const searchProfiles = vi.fn(async () => results);
+  try {
+    const t = await setup("stream", false, false, undefined, undefined, {
+      pendingMemberNames: pending,
+      searchProfiles,
+    });
+    await t.user.type(screen.getByRole("searchbox"), "Zed");
+    await vi.waitFor(() => expect(searchProfiles).toHaveBeenCalled());
+    // Flush the completed search while the independent roster read stays held.
+    await act(async () => {
+      await searchProfiles.mock.results[0]?.value;
+    });
+    expect(
+      screen.getByRole("status", { name: "Loading members" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Searching…")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Find more matches" }),
+    ).not.toBeInTheDocument();
+    await act(async () => release());
+    expect(
+      await screen.findByRole("button", { name: "Find more matches" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("status", { name: "Loading members" }),
+    ).not.toBeInTheDocument();
   } finally {
     await act(async () => release());
   }

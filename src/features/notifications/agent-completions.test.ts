@@ -105,6 +105,33 @@ describe("agent completion notifications", () => {
     stop();
   });
 
+  it("delivers a terminal first-turn result once Solo startup confirms", () => {
+    const activity = createLocalAgentActivity();
+    const desktop = vi.fn();
+    const stop = bindAgentCompletionNotifications(activity.reader, {
+      focused: () => false,
+      active: () => active("other"),
+      target: (work) => completionTarget(work, scope),
+      desktop,
+      foreground: vi.fn(),
+    });
+    const work = activity.begin({
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+    });
+    work.started();
+    work.finish({ ok: false, error: "Provider unavailable" });
+    expect(desktop).not.toHaveBeenCalled();
+    work.confirmSolo("First chat");
+    expect(desktop).toHaveBeenCalledOnce();
+    work.confirmSolo("First chat");
+    expect(desktop).toHaveBeenCalledOnce();
+    stop();
+  });
+
   it("does not add completion feedback to ordinary DMs", () => {
     const h = setup(false, active("other"), "dm");
     h.work.finish({ ok: true });

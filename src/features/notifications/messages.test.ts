@@ -67,13 +67,67 @@ it("lets local Solo completion feedback replace the agent reply's mention alert"
     conversationName: "Planning",
   });
   run.started();
-  h.emit([h.make("Done")], "live");
+  const reply = h.make("Done");
+  const sent = run.sending();
+  h.emit([reply], "live");
   await flush();
   expect(h.show).not.toHaveBeenCalled();
+  run.reply(reply.id);
+  sent();
 
   run.finish({ ok: true });
   h.emit([h.make("A later message")], "live");
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
+it("defers progress and final echoes until each publish is correlated", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+    conversationName: "Planning",
+  });
+  run.started();
+  for (const text of ["Working", "Done"]) {
+    const reply = h.make(text);
+    const sent = run.sending();
+    h.emit([reply], "live");
+    await flush();
+    expect(h.show).not.toHaveBeenCalled();
+    run.reply(reply.id);
+    sent();
+    await flush();
+    expect(h.show).not.toHaveBeenCalled();
+  }
+  run.finish({ ok: true });
+  h.emit([h.make("Unrelated later message")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+});
+
+it("releases a same-agent message that does not match the in-flight publish", async () => {
+  const h = await setup();
+  const run = h.activity.begin({
+    scope: `https://relay.example.com:${h.viewer.pubkey}`,
+    agent: h.peer.pubkey,
+    channelId: "room",
+    messageId: "request",
+    threadRootId: "request",
+    soloChat: true,
+  });
+  run.started();
+  const unrelated = h.make("Unrelated while publishing");
+  const sent = run.sending();
+  h.emit([unrelated], "live");
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+  run.reply(h.make("Actual reply").id);
+  sent();
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0].body).toBe("Unrelated while publishing");
 });
 
 it("suppresses the correlated final reply when it arrives just after local completion", async () => {
@@ -99,7 +153,7 @@ it("suppresses the correlated final reply when it arrives just after local compl
   await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
 });
 
-it("suppresses the exact locally published reply after a delayed relay echo", async () => {
+it("suppresses an earlier locally published reply after a later reply is recorded", async () => {
   const startedAt = 1_780_000_000_000;
   vi.spyOn(Date, "now").mockReturnValue(startedAt);
   const h = await setup();
@@ -113,12 +167,13 @@ it("suppresses the exact locally published reply after a delayed relay echo", as
     conversationName: "Planning",
   });
   run.started();
-  const reply = h.make("Done");
-  run.reply(reply.id);
+  const progress = h.make("Working");
+  run.reply(progress.id);
+  for (let i = 0; i < 40; i++) run.reply(h.make(`Update ${i}`).id);
   run.finish({ ok: true });
 
   vi.mocked(Date.now).mockReturnValue(startedAt + 5_000);
-  h.emit([reply], "live");
+  h.emit([progress], "live");
   await flush();
   expect(h.show).not.toHaveBeenCalled();
 

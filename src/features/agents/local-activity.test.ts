@@ -125,6 +125,21 @@ it("keeps storage bounded and prevents evicted or removed callbacks from recreat
   expect(local.reader.work()).toEqual([]);
 });
 
+it("expires reply correlations after the notification freshness window", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_780_000_000_000);
+  try {
+    const activity = createLocalAgentActivity();
+    const work = activity.begin(request());
+    work.reply(reply);
+    expect(activity.reader.work()[0]?.replyMessages).toHaveLength(1);
+    vi.advanceTimersByTime(120_001);
+    expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("shows the latest live step while working and drops it once settled", () => {
   const activity = createLocalAgentActivity();
   const work = activity.begin({

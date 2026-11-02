@@ -1706,6 +1706,7 @@ it("confirms first-turn Solo metadata before its reply publish is acknowledged",
       state: "working",
       soloChat: true,
       conversationName: "First Solo",
+      publishing: 1,
     }),
   );
   acknowledge(
@@ -1718,11 +1719,131 @@ it("confirms first-turn Solo metadata before its reply publish is acknowledged",
   await vi.waitFor(() =>
     expect(activity.reader.work()[0]).toMatchObject({
       state: "done",
-      replyMessageId: "first-reply".padEnd(64, "0"),
+      replyMessages: [
+        {
+          id: "first-reply".padEnd(64, "0"),
+          acknowledgedAt: expect.any(Number),
+        },
+      ],
     }),
   );
   stop();
   expect(states).toContain("working:true");
+  expect(activity.reader.work()[0]).not.toHaveProperty("publishing");
+});
+
+it("releases own-channel reply correlation when publication fails", async () => {
+  const { service, run, emit, activity, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let fail = (_error: Error) => {};
+  native.publish.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent>((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  run.mockImplementationOnce(async ({ agent }) => {
+    await expect(
+      agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] }),
+    ).rejects.toThrow("offline");
+  });
+  emit({
+    events: [
+      event("failed-reply", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({ publishing: 1 }),
+  );
+  fail(new Error("offline"));
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({ state: "done" }),
+  );
+  expect(activity.reader.work()[0]).not.toHaveProperty("publishing");
+  expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
+});
+
+it("retains reply correlation when publication has an uncertain outcome", async () => {
+  const { service, run, emit, activity, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const id = "d".repeat(64);
+  native.publish.mockRejectedValueOnce(
+    new Error(
+      `Agent event ${id} unconfirmed; it may or may not have been accepted`,
+    ),
+  );
+  run.mockImplementationOnce(async ({ agent }) => {
+    await expect(
+      agent.publish({ kind: 9, content: "hi", tags: [["h", channel]] }),
+    ).rejects.toThrow("may or may not have been accepted");
+  });
+  emit({
+    events: [
+      event("uncertain-request", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({
+      state: "done",
+      replyMessages: [{ id, acknowledgedAt: expect.any(Number) }],
+    }),
+  );
+  expect(activity.reader.work()[0]).not.toHaveProperty("publishing");
+});
+
+it("does not make ordinary work Solo when it publishes into a Solo chat", async () => {
+  const { service, run, emit, session, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const solo = "solo-destination";
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: [
+      ...list.channels,
+      {
+        ...list.channels[0],
+        id: solo,
+        name: "Another Solo chat",
+        channelType: "solo",
+      },
+    ],
+  });
+  run.mockImplementationOnce(async ({ agent }) => {
+    await agent.publish({
+      kind: 9,
+      content: "cross-post",
+      tags: [["h", solo]],
+    });
+  });
+  emit({
+    events: [
+      event("ordinary-request", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() =>
+    expect(activity.reader.work()[0]).toMatchObject({ state: "done" }),
+  );
+  expect(activity.reader.work()[0]).not.toHaveProperty("soloChat");
+  expect(activity.reader.work()[0]).not.toHaveProperty("conversationName");
+  expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
 });
 
 it("does not confirm first-turn Solo metadata when chat start fails", async () => {

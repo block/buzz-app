@@ -95,17 +95,24 @@ export function bindAgentCompletionNotifications(
   },
 ) {
   let previous = new Map(
-    activity.work().map((work) => [keyOf(work), work.state] as const),
+    activity
+      .work()
+      .map(
+        (work) =>
+          [keyOf(work), { state: work.state, solo: !!work.soloChat }] as const,
+      ),
   );
   let disposed = false;
   const stop = activity.subscribeWork(() => {
-    const next = new Map<string, LocalWorkState>();
+    const next = new Map<string, { state: LocalWorkState; solo: boolean }>();
     for (const work of activity.work()) {
       const key = keyOf(work);
       const before = previous.get(key);
-      next.set(key, work.state);
-      if (!running(before) || !completed(work.state) || !work.soloChat)
-        continue;
+      next.set(key, { state: work.state, solo: !!work.soloChat });
+      const completedNow =
+        (running(before?.state) && completed(work.state)) ||
+        (!before?.solo && !!work.soloChat && completed(work.state));
+      if (!completedNow || !work.soloChat) continue;
       const target = options.target(work);
       if (!target) continue;
       const present = (focused: boolean) => {

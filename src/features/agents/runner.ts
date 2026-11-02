@@ -65,7 +65,12 @@ import {
 } from "./classifier";
 import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
-import type { AgentEventTemplate, AgentsNative, Membership } from "./native";
+import {
+  type AgentEventTemplate,
+  type AgentsNative,
+  type Membership,
+  unconfirmedAgentEvent,
+} from "./native";
 import type { AgentKey } from "./membership";
 import { setAttention, type AgentRecord, type TimerProgress } from "./store";
 import type { Start } from "./agent-start";
@@ -2532,19 +2537,36 @@ export class AgentRunners {
         // is deleted, removed from this community or retyped can't.
         publish: async (event: AgentEventTemplate, check?: () => void) => {
           lifetime.throwIfAborted();
-          const published = await this.publish(runner, event, lifetime, check);
-          if (event.kind === 9 && work) {
-            const channel = this.host.channel(agent, published);
-            if (
-              channel?.channelType === "solo" &&
-              !channel.cached &&
-              !channel.pending &&
-              !channel.metadataPending
-            )
-              work.confirmSolo(channel.name ?? undefined);
-            work.reply(published.id);
+          const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
+          const ownReply =
+            event.kind === 9 && !!work && destination === work.channelId;
+          const sent = ownReply ? work.sending() : undefined;
+          try {
+            const published = await this.publish(
+              runner,
+              event,
+              lifetime,
+              check,
+            );
+            if (ownReply) {
+              const channel = this.host.channel(agent, published);
+              if (
+                channel?.channelType === "solo" &&
+                !channel.cached &&
+                !channel.pending &&
+                !channel.metadataPending
+              )
+                work.confirmSolo(channel.name ?? undefined);
+              work.reply(published.id);
+            }
+            return published;
+          } catch (error) {
+            const uncertain = ownReply && unconfirmedAgentEvent(error);
+            if (uncertain) work.reply(uncertain);
+            throw error;
+          } finally {
+            sent?.();
           }
-          return published;
         },
         query: async (filters: readonly object[]) => {
           lifetime.throwIfAborted();

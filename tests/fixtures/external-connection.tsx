@@ -86,9 +86,15 @@ function Fixture() {
         relay={{ subscribe, snapshot: () => snapshot } as unknown as RelayData}
       />
       <div className="flex flex-wrap gap-2">
-        <Button onClick={request}>Fixture: request access</Button>
-        <Button onClick={() => admit()}>Fixture: admit app</Button>
-        <Button onClick={() => end()}>Fixture: end runtime</Button>
+        <Button aria-label="Fixture: request access" onClick={request}>
+          Request
+        </Button>
+        <Button aria-label="Fixture: admit app" onClick={() => admit()}>
+          Admit
+        </Button>
+        <Button aria-label="Fixture: end runtime" onClick={() => end()}>
+          End
+        </Button>
       </div>
     </main>
   );

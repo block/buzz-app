@@ -77,7 +77,7 @@ it.each(["Authorize", "Deny"])(
       />,
     );
     expect(
-      await screen.findByRole("dialog", { name: "Authorize external app" }),
+      await screen.findByRole("dialog", { name: "Authorize app" }),
     ).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
       "Test agent",

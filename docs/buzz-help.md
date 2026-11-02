@@ -49,7 +49,7 @@ the interface unless an available tool actually supports that action.
 
 ## Connect an external app
 
-Start setup in the external app. Buzz desktop shows an **Authorize external app**
+Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, check the requested access, then select
 **Authorize**. The app completes setup automatically. Keys stay in Buzz.
 Only authorize an app when you started its setup. The displayed name comes from

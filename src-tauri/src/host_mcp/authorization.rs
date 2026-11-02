@@ -68,6 +68,7 @@ pub(crate) async fn plugin_host_mcp_authorize(
 
 async fn authorize(shared: Option<Arc<Shared>>, request: Authorization) -> Result<(), String> {
     let url = callback(&request)?;
+    let deadline = tokio::time::Instant::now() + CODE_LIFETIME;
     let body = if let Some(shared) = &shared {
         if shared.shared_session
             || shared.claim.load(Ordering::SeqCst) != UNCLAIMED
@@ -111,7 +112,6 @@ async fn authorize(shared: Option<Arc<Shared>>, request: Authorization) -> Resul
         return Err("The external app did not accept authorization. Start setup again.".into());
     }
     if let Some(shared) = shared {
-        let deadline = tokio::time::Instant::now() + CODE_LIFETIME;
         tauri::async_runtime::spawn(async move {
             tokio::select! { () = tokio::time::sleep_until(deadline) => {}, () = shared.stop.cancelled() => return }
             if shared.authorization.lock().map_or(true, |exchange| {
@@ -295,7 +295,9 @@ mod tests {
         let result = redeem(&shared, input()).unwrap();
         let descriptor: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(descriptor["url"], info.url);
-        assert_eq!(descriptor["token"], info.token);
+        assert!(descriptor["token"]
+            .as_str()
+            .is_some_and(|token| same(token.as_bytes(), info.token.as_bytes())));
         assert!(redeem(&shared, input()).is_none());
         {
             let mut held = shared.authorization.lock().unwrap();
@@ -341,7 +343,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let descriptor: serde_json::Value = response.json().await.unwrap();
         assert_eq!(descriptor["url"], info.url);
-        assert_eq!(descriptor["token"], info.token);
+        assert!(descriptor["token"]
+            .as_str()
+            .is_some_and(|token| same(token.as_bytes(), info.token.as_bytes())));
         assert_eq!(
             client
                 .post(endpoint)

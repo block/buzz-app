@@ -8,10 +8,126 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { createServer } from "./vite-server.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 test.use({
   largeSidebar: true,
   historyCounts: { alpha: 1, beta: 1 },
+});
+
+// Selection motion and cancellation during window resize need real CSS layout
+// and animation timelines, which a DOM emulator cannot exercise.
+test("segmented selections slide but window resizing follows the selected tab immediately", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, open: false },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/design-system.html#/design/components/tabs`,
+    );
+    for (const label of [
+      "Segmented filters",
+      "Small segmented filters",
+      "Icon segmented filters",
+    ]) {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      const list = page.getByRole("tablist", { name: label, exact: true });
+      await list.getByRole("tab").first().click();
+      await list.locator(".buzz-tabs-indicator").evaluate(async (element) => {
+        await Promise.all(
+          element.getAnimations().map((animation) => animation.finished),
+        );
+      });
+      const capture = await list.evaluateHandle((list) => {
+        const indicator = list.querySelector(".buzz-tabs-indicator");
+        if (!indicator) throw new Error("Missing segmented indicator");
+        const start = indicator.getBoundingClientRect().left;
+        const state = {
+          progress: undefined,
+          resizeError: undefined,
+        };
+        let targetWidth;
+        const observer = new MutationObserver(() => {
+          const selected = list
+            .querySelector('[aria-selected="true"]')
+            ?.getBoundingClientRect();
+          if (!selected) throw new Error("Missing selected tab");
+          if (state.progress === undefined) {
+            const animation = indicator
+              .getAnimations()
+              .find(
+                (animation) =>
+                  animation instanceof CSSTransition &&
+                  animation.transitionProperty === "transform",
+              );
+            if (!animation?.effect || selected.left === start) return;
+            // Hold an actual intermediate frame, independent of runner speed.
+            animation.pause();
+            animation.currentTime =
+              Number(animation.effect.getTiming().duration) / 2;
+            state.progress =
+              (indicator.getBoundingClientRect().left - start) /
+              (selected.left - start);
+            targetWidth = selected.width;
+          } else if (Math.abs(selected.width - targetWidth) > 1) {
+            const pill = indicator.getBoundingClientRect();
+            state.resizeError = Math.max(
+              Math.abs(pill.left - selected.left),
+              Math.abs(pill.right - selected.right),
+            );
+          }
+        });
+        observer.observe(indicator, {
+          attributes: true,
+          attributeFilter: ["style"],
+        });
+        return {
+          state,
+          dispose() {
+            observer.disconnect();
+            indicator.getAnimations().forEach((animation) => {
+              animation.finish();
+            });
+          },
+        };
+      });
+      try {
+        await list.getByRole("tab").last().click();
+        await expect
+          .poll(() => capture.evaluate(({ state }) => state.progress))
+          .toBeDefined();
+        const progress = await capture.evaluate(({ state }) => state.progress);
+        expect(
+          progress,
+          `${label} travels from its previous selection`,
+        ).toBeGreaterThan(0);
+        expect(
+          progress,
+          `${label} has not jumped to its destination`,
+        ).toBeLessThan(1);
+        // Window resizing must also cancel a slide already in progress.
+        await page.setViewportSize({ width: 640, height: 900 });
+        await expect
+          .poll(() => capture.evaluate(({ state }) => state.resizeError))
+          .toBeDefined();
+        expect(
+          await capture.evaluate(({ state }) => state.resizeError),
+          label,
+        ).toBeLessThan(1);
+      } finally {
+        await capture.evaluate(({ dispose }) => dispose());
+        await capture.dispose();
+      }
+    }
+  } finally {
+    await server.close();
+  }
 });
 
 test.describe("scope indicator", () => {

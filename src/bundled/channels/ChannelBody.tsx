@@ -141,6 +141,7 @@ export const ChannelBody = memo(function ChannelBody({
       activityLane={activityLane}
       chatPresentation={solo}
       historyControl={solo ? "scroll" : "button"}
+      dateJump={!!queries.channels.seek}
     />
   );
 });

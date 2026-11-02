@@ -26,12 +26,10 @@ export function ordinaryUnread(
 
 /** Observe only confirmed preferences; optimistic menu intents do not quiet unread. */
 export function useConfirmedMute(session: RelaySession, channelId: string) {
-  const get = useCallback(
-    () =>
-      session.sidebarPreferences.snapshot().data?.muted.includes(channelId) ??
-      false,
-    [session, channelId],
-  );
+  const get = useCallback(() => {
+    const snapshot = session.sidebarPreferences.snapshot();
+    return !snapshot.cached && !!snapshot.data?.muted.includes(channelId);
+  }, [session, channelId]);
   return useSyncExternalStore(session.sidebarPreferences.subscribe, get, get);
 }
 

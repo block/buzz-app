@@ -18,6 +18,8 @@ import type { UnreadSnapshot } from "../../features/relay/unread";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
+import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
+import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 
 afterEach(cleanup);
 
@@ -627,4 +629,82 @@ it("quiets confirmed muted backlog, restores it on unmute, and preserves directe
   expect(
     screen.getByRole("img", { name: "Marked unread on this device only" }),
   ).toBeInTheDocument();
+});
+
+it("keeps cached mute from quieting unread but retains confirmed mute through read failures", async () => {
+  const data: SidebarPreferences = {
+    sections: [],
+    assignments: {},
+    starred: [],
+    muted: ["alpha"],
+  };
+  let rejectRead!: (error: Error) => void;
+  const read = vi.fn(
+    () =>
+      new Promise<SidebarPreferences>((_resolve, reject) => {
+        rejectRead = reject;
+      }),
+  );
+  const store = createSidebarPreferencesStore({
+    available: true,
+    read,
+    persistence: {
+      read: async () => [],
+      readStartup: async () => ({ preferences: { savedAt: Date.now(), data } }),
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close() {},
+    },
+  });
+  try {
+    await store.ready;
+    const preferences = store.queries;
+    expect(preferences.snapshot().cached).toBe(true);
+    const state = owner();
+    state.unread(2);
+    const session = { ...state.session, sidebarPreferences: preferences };
+    const view = render(<ChannelSidebarItem {...itemProps(session, false)} />);
+    const row = () =>
+      view.container.querySelector("[data-channel-sidebar-row]");
+    expect(row()).toHaveAttribute("data-ordinary");
+    expect(
+      screen.getByRole("img", { name: /2 observed unread/ }),
+    ).toBeInTheDocument();
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = preferences.refresh();
+    });
+    expect(preferences.snapshot().status).toBe("loading");
+    expect(row()).toHaveAttribute("data-ordinary");
+    await act(async () => {
+      rejectRead(new Error("Preference read failed"));
+      await pending;
+    });
+    expect(preferences.snapshot().status).toBe("error");
+    expect(row()).toHaveAttribute("data-ordinary");
+    read.mockResolvedValueOnce(data);
+    await act(async () => {
+      await preferences.refresh();
+    });
+    expect(preferences.snapshot().cached).toBeUndefined();
+    expect(row()).not.toHaveAttribute("data-ordinary");
+    await act(async () => {
+      pending = preferences.refresh();
+    });
+    expect(row()).not.toHaveAttribute("data-ordinary");
+    await act(async () => {
+      rejectRead(new Error("Refresh failed"));
+      await pending;
+    });
+    expect(row()).not.toHaveAttribute("data-ordinary");
+    read.mockResolvedValueOnce({ ...data, muted: [] });
+    await act(async () => {
+      await preferences.refresh();
+    });
+    expect(row()).toHaveAttribute("data-ordinary");
+  } finally {
+    store.dispose();
+  }
 });

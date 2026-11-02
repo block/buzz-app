@@ -3340,9 +3340,7 @@ it("pages a large roster without waiting for optional names or exceeding the pro
     expect(within(list).getAllByRole("listitem")).toHaveLength(50);
     await act(async () => release());
     await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     const batches = t.query.mock.calls
       .flatMap(([filters]) => filters)
@@ -3412,8 +3410,10 @@ it("loads another member page after a previous page fails", async () => {
   const t = await setup("stream", false, false, undefined, undefined, {
     extraMembers: 749,
   });
-  const refresh = screen.getByRole("button", { name: "Refresh member data" });
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  const data = memberData();
+  await vi.waitFor(() =>
+    expect(data).toHaveAttribute("data-refreshing", "false"),
+  );
   const original = t.query.getMockImplementation();
   if (!original) throw new Error("Missing query fixture");
   t.query.mockImplementation(async (filters) => {
@@ -3426,11 +3426,15 @@ it("loads another member page after a previous page fails", async () => {
   ).getByRole("button", { name: "Next" });
   await t.user.click(next);
   await screen.findByText(/Some names could not load/);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(data).toHaveAttribute("data-refreshing", "false"),
+  );
   const before = t.query.mock.calls.length;
   t.query.mockImplementation(original);
   await t.user.click(next);
-  await vi.waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
+  await vi.waitFor(() =>
+    expect(data).toHaveAttribute("data-refreshing", "false"),
+  );
   expect(t.query.mock.calls.length).toBeGreaterThan(before);
   expect(
     screen.queryByText(/Some names could not load/),
@@ -3466,9 +3470,7 @@ it("keeps the visible member page and focus stable while names arrive", async ()
     focused.focus();
     await act(async () => release());
     await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     expect(
       [...t.session.profiles.snapshot().values()].some((profile) =>
@@ -3480,10 +3482,9 @@ it("keeps the visible member page and focus stable while names arrive", async ()
     expect(loadedRows.every((row, i) => row === rows[i])).toBe(true);
     expect(focused).toHaveFocus();
     expect(within(list).getAllByText(/^Member /).length).toBeGreaterThan(0);
-    await t.user.click(
-      screen.getByRole("button", { name: "Refresh member data" }),
-    );
-    await within(list).findByRole("heading", { name: /^Agents ·/ });
+    await t.user.click(screen.getByRole("button", { name: "Close" }));
+    await t.user.click(screen.getByRole("button", { name: "Access" }));
+    await within(memberData()).findByRole("heading", { name: /^Agents ·/ });
   } finally {
     await act(async () => release());
   }
@@ -3522,9 +3523,7 @@ it("retains visible and unrelated profiles when opening a roster above directory
     });
     await act(async () => release());
     await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     expect(
       timeline.every((event) =>
@@ -3542,9 +3541,7 @@ it("retains visible and unrelated profiles when opening a roster above directory
     });
     await t.user.click(within(pages).getByRole("button", { name: "Next" }));
     await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     expect(
       within(list)
@@ -3553,9 +3550,7 @@ it("retains visible and unrelated profiles when opening a roster above directory
     ).toBe(true);
     await t.user.click(within(pages).getByRole("button", { name: "Previous" }));
     await vi.waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh member data" }),
-      ).toHaveAttribute("aria-busy", "false"),
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
     );
     expect(
       within(list)

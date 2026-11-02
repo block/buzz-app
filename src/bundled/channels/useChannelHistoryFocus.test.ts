@@ -8,7 +8,10 @@ afterEach(() => {
   cleanup();
   document.body.replaceChildren();
 });
-function setup(overrides: Partial<PageNavigation> = {}) {
+function setup(
+  overrides: Partial<PageNavigation> = {},
+  openerParent = document.body,
+) {
   const opener = document.createElement("button");
   const other = document.createElement("button");
   const container = document.createElement("section");
@@ -17,7 +20,8 @@ function setup(overrides: Partial<PageNavigation> = {}) {
   history.tabIndex = 0;
   history.setAttribute("data-message-scroller", "");
   container.append(history);
-  document.body.append(opener, other, container);
+  openerParent.append(opener);
+  document.body.append(other, container);
   opener.focus();
   const abort = new AbortController();
   const navigation: PageNavigation = {
@@ -64,6 +68,7 @@ it("hands a ready read-only visit to its history once", () => {
   h.ready();
   expect(document.activeElement).toBe(h.history);
   h.other.focus();
+  h.ready(false);
   h.ready();
   expect(document.activeElement).toBe(h.other);
 });
@@ -118,4 +123,14 @@ it("retains the search dialog handoff to loading history until its timeline is r
   h.container.focus();
   h.ready();
   expect(document.activeElement).toBe(h.history);
+});
+
+it("keeps the captured opener focused inside an active modal when history becomes ready", () => {
+  const modal = document.createElement("div");
+  modal.setAttribute("aria-modal", "true");
+  document.body.append(modal);
+  const h = setup({}, modal);
+  expect(document.activeElement).toBe(h.opener);
+  h.ready();
+  expect(document.activeElement).toBe(h.opener);
 });

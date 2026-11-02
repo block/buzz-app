@@ -80,14 +80,18 @@ function Audience({ audience }: ComposerToolProps) {
           .map((person) => person.name)
           .join(", ")}. Change agents`}
       />
-      <button
-        type="button"
-        onClick={() =>
-          audience.only([{ pubkey: "b".repeat(64), name: "Outside agent" }])
-        }
-      >
-        Send to Outside agent
-      </button>
+      {[
+        { pubkey: "a".repeat(64), name: "Member agent" },
+        { pubkey: "b".repeat(64), name: "Outside agent" },
+      ].map((agent) => (
+        <button
+          key={agent.pubkey}
+          type="button"
+          onClick={() => audience.only([agent])}
+        >
+          Send to {agent.name}
+        </button>
+      ))}
     </>
   ) : null;
 }
@@ -758,6 +762,49 @@ it("a refused start gives the pill's chosen agent back with its prompt", async (
   ]);
   // The pick was for that prompt: the next New chat starts from the default.
   expect(readView("test", "solo:new-draft:agents", null)).toBeNull();
+});
+it("a pick after a refused start's agent comes back replaces it, unsaved", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    onFailed = vi.fn(),
+    user = userEvent.setup();
+  const refuse = refusedStart(test);
+  const view = () => (
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      extensions={withPill}
+      onStarted={onStarted}
+      onFailed={onFailed}
+    />
+  );
+  const sent = render(view());
+  await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
+  await user.click(
+    screen.getByRole("button", { name: "Send to Outside agent" }),
+  );
+  await user.type(screen.getByRole("textbox"), "Hello");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  sent.unmount();
+  await refuse();
+  await waitFor(() =>
+    expect(onFailed).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringMatching(/\. Your message is back in New chat\.$/),
+    ),
+  );
+  const restored = render(view());
+  await waitFor(() => expect(sendingTo("Outside agent")).toBeInTheDocument());
+  await user.click(
+    screen.getByRole("button", { name: "Send to Member agent" }),
+  );
+  expect(sendingTo("Member agent")).toBeInTheDocument();
+  restored.unmount();
+  // Shown again, New chat starts from the default, not the refused pick.
+  render(view());
+  expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
+  await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
 });
 it("a refused linked start gives its source and workspace back to the New chat opened after it", async () => {
   const test = await projectSetup(),

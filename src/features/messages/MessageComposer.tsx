@@ -896,8 +896,10 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     if (save && !editing.target) {
-      if (submission) submission.unsaved?.(!writeView(scope, draftKey, next));
-      else {
+      if (submission) {
+        const saved = writeView(scope, draftKey, next);
+        submission.unsaved?.(!saved);
+      } else {
         dirty.current = true;
         if (!conflict && !accepted) persist(next);
       }
@@ -959,10 +961,10 @@ function Composer({
   // In a saved chat, the viewer's own pick outlives a remount until the next
   // send, which the chat's history then seeds from. A new chat always starts
   // from the main agent, unless a refused start gave its pick back (SoloDraft
-  // saves that one).
+  // saves that one) and the viewer has not picked since.
   const pillKey = `${draftKey}:agents`;
   const keepPick = (people: readonly MentionRecipient[] | null) => {
-    if (!submission) writeView(scope, pillKey, people?.length ? people : null);
+    writeView(scope, pillKey, !submission && people?.length ? people : null);
   };
   const choose = (people: readonly MentionRecipient[]) => {
     seededRoute.current = undefined;

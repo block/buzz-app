@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { writeClipboardText } from "../../shared/clipboard";
 import { CopyIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { WireframePanel } from "./Wireframe";
@@ -26,15 +27,13 @@ export function PublicKeyPanel({
           aria-label="Copy npub"
           onClick={() => {
             setCopyStatus("");
-            void Promise.resolve()
-              .then(() => navigator.clipboard.writeText(publicKey))
-              .then(
-                () => setCopyStatus("Public key copied."),
-                () =>
-                  setCopyStatus(
-                    "Could not copy. Select the key above to copy it.",
-                  ),
-              );
+            writeClipboardText(publicKey).then(
+              () => setCopyStatus("Public key copied."),
+              () =>
+                setCopyStatus(
+                  "Could not copy. Select the key above to copy it.",
+                ),
+            );
           }}
         >
           <CopyIcon size={16} aria-hidden="true" />

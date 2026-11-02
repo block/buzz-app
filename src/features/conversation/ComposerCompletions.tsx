@@ -49,6 +49,7 @@ function EmojiCompletionName({
   const name = useRef<HTMLSpanElement>(null);
   const [truncated, setTruncated] = useState(false);
   const [hovered, setHovered] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Text can change overflow without resizing the label's box.
   useLayoutEffect(() => {
     const element = name.current;
     if (!element) return;
@@ -58,7 +59,7 @@ function EmojiCompletionName({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [label]);
   return (
     <Tooltip
       content={label}
@@ -66,7 +67,7 @@ function EmojiCompletionName({
       onOpenChange={setHovered}
       follow={keyboardSelected ? "trigger" : "pointer"}
     >
-      <span ref={name} className={styles.name} tabIndex={-1}>
+      <span ref={name} className={styles.name}>
         {label}
       </span>
     </Tooltip>
@@ -553,7 +554,6 @@ function OwnedCompletion({
                   <span className={styles.label} data-completion-label>
                     {compact ? (
                       <EmojiCompletionName
-                        key={item.label}
                         label={item.label}
                         selected={i === selectedIndex}
                         keyboardSelected={keyboardSelection === item.id}

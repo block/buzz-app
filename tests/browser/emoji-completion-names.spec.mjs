@@ -152,3 +152,56 @@ test("truncated emoji names reveal their full value without taking composer focu
   await expect(page.getByRole("listbox")).toHaveCount(0);
   expect(errors.unexplained()).toEqual([]);
 });
+
+test("keyboard hints stay on the active emoji while scrolling under a resting pointer", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"/>',
+    }),
+  );
+  await page.goto("/tests/fixtures/emoji.html?completion-scroll");
+  const input = page.getByRole("textbox", { name: "Message #general" });
+  await input.fill(":scrolling-emoji");
+  const list = page.getByRole("listbox", { name: "Emoji suggestions" });
+  const choices = list.getByRole("option");
+  const tooltip = page.getByRole("tooltip").and(page.locator("[data-open]"));
+  await expect(choices).toHaveCount(30);
+  await choices.first().locator("[data-completion-label]").hover();
+  await expect(tooltip).toHaveText(
+    ":scrolling-emoji-with-a-long-common-name-00:",
+  );
+  // Leave the physical pointer over row zero. Arrow keys must own selection
+  // even after scrolling moves different rows underneath that pointer.
+  for (let index = 1; index <= 20; index++) {
+    await input.press("ArrowDown");
+    await expect(choices.nth(index)).toHaveAttribute("aria-selected", "true");
+    await expect(tooltip).toHaveText(
+      `:scrolling-emoji-with-a-long-common-name-${String(index).padStart(2, "0")}:`,
+    );
+    await expect(input).toBeFocused();
+  }
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      choices.nth(20).evaluate((el) => {
+        const row = el.getBoundingClientRect();
+        const viewport = el.closest('[role="listbox"]').getBoundingClientRect();
+        return row.top >= viewport.top && row.bottom <= viewport.bottom;
+      }),
+    )
+    .toBe(true);
+  await input.press("Enter");
+  await expect(input).toHaveJSProperty(
+    "value",
+    ":scrolling-emoji-with-a-long-common-name-20:",
+  );
+  await expect(tooltip).toHaveCount(0);
+  await expect(input).toBeFocused();
+  expect(errors.unexplained()).toEqual([]);
+});

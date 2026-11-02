@@ -103,6 +103,9 @@ fn human_restore_uses_the_selected_helper_and_fails_closed() {
     ] {
         fs::write(&helper, format!("#!/bin/sh\n{body}\n")).unwrap();
         assert_eq!(agent("read", &[]), expected);
+        if expected.is_err() {
+            assert_eq!(agent("replace", &vec![b'x'; 2 * 1024 * 1024]), expected);
+        }
     }
     fs::write(&helper, "#!/bin/sh\n/bin/cat <&1 > /dev/null\n").unwrap();
     assert_eq!(agent("replace", &vec![b'x'; 2 * 1024 * 1024]), Ok(vec![]));

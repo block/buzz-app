@@ -140,28 +140,29 @@ pub(super) fn agent(
             }
             output.extend_from_slice(&buffer[..count]);
         }
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    return match status.code() {
-                        Some(0) => Ok(output),
-                        Some(10) => Err(Error::Absent),
-                        Some(11) => Err(Error::Denied),
-                        Some(12) => Err(Error::Corrupt),
-                        Some(13) => Err(Error::Occupied),
-                        _ => Err(Error::Unavailable),
-                    }
-                }
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-                _ => return Err(Error::Unavailable),
-            }
-        }
+        Ok(output)
     })();
-    if exchange.is_err() {
+    // A helper can reject a write before it reads the payload.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                break match status.code() {
+                    Some(0) => Ok(()),
+                    Some(10) => Err(Error::Absent),
+                    Some(11) => Err(Error::Denied),
+                    Some(12) => Err(Error::Corrupt),
+                    Some(13) => Err(Error::Occupied),
+                    _ => Err(Error::Unavailable),
+                }
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => break Err(Error::Unavailable),
+        }
+    };
+    let result = status.and(exchange);
+    if result.is_err() {
         let _ = child.kill();
         let _ = child.wait();
     }
-    exchange
+    result
 }

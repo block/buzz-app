@@ -151,13 +151,17 @@ export function createLocalAgentActivity() {
       retry?: () => void,
     ) {
       // Keep the newest accepted handling of one exact message; late completions
-      // retain their own token and cannot overwrite its replacement.
+      // retain their own token and cannot overwrite its replacement. A retry
+      // still owns the prior attempt's fresh reply IDs, because those relay
+      // echoes may arrive after the activity row is replaced.
+      let replaced: LocalWork | undefined;
       for (const [id, row] of entries)
         if (
           row.scope === input.scope &&
           row.agent === input.agent &&
           row.messageId === input.messageId
         ) {
+          replaced = row;
           entries.delete(id);
           stops.delete(id);
           retries.delete(id);
@@ -211,15 +215,32 @@ export function createLocalAgentActivity() {
             ),
           );
       };
+      const startedAt = Math.max(Date.now(), (replaced?.startedAt ?? -1) + 1);
+      const replyMessages = replaced?.replyMessages?.filter(
+        (item) => startedAt - item.acknowledgedAt <= REPLY_CORRELATION_MS,
+      );
       entries.set(
         id,
         Object.freeze({
           ...input,
           state: "waiting",
-          startedAt: Date.now(),
+          startedAt,
+          ...(replyMessages?.length ? { replyMessages } : {}),
           ...(retry ? { retryable: true } : {}),
         }),
       );
+      const oldest = replyMessages?.[0];
+      if (oldest)
+        replyTimers.set(
+          id,
+          setTimeout(
+            expireReplies,
+            Math.max(
+              0,
+              oldest.acknowledgedAt + REPLY_CORRELATION_MS - Date.now() + 1,
+            ),
+          ),
+        );
       publish();
       const update = (
         state: LocalWorkState,

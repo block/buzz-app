@@ -12,6 +12,10 @@ const completed = (state: LocalWorkState) =>
 const keyOf = (work: LocalWork) =>
   JSON.stringify([work.scope, work.agent, work.messageId]);
 
+export const completionSourceKey = (
+  work: Pick<LocalWork, "agent" | "messageId" | "state" | "startedAt">,
+) => `${work.agent}:${work.messageId}:${work.startedAt}:${work.state}`;
+
 export function completionTarget(
   work: LocalWork,
   scope: { viewer: string; communityOrigin: string } | undefined,
@@ -117,9 +121,16 @@ export function bindAgentCompletionNotifications(
       if (!target) continue;
       const present = (focused: boolean) => {
         if (disposed) return;
-        if (!focused) options.desktop(work, target);
+        const current = activity
+          .work()
+          .find(
+            (item) => keyOf(item) === key && item.startedAt === work.startedAt,
+          );
+        if (!current || current.state !== work.state || !current.soloChat)
+          return;
+        if (!focused) options.desktop(current, target);
         else if (!isViewingCompletedWork(options.active(), target))
-          options.foreground(work, target);
+          options.foreground(current, target);
       };
       const focused = options.focused();
       if (typeof focused === "boolean") present(focused);

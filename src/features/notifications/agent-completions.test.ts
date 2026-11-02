@@ -4,6 +4,7 @@ import type { OpenTarget } from "../navigation/targets";
 import {
   bindAgentCompletionNotifications,
   completionBody,
+  completionSourceKey,
   completionTarget,
   completionTitle,
   completionToast,
@@ -105,6 +106,45 @@ describe("agent completion notifications", () => {
     stop();
   });
 
+  it("does not present an old attempt after Retry replaces it during the focus check", async () => {
+    const activity = createLocalAgentActivity();
+    let decide!: (focused: boolean) => void;
+    const focused = new Promise<boolean>((resolve) => {
+      decide = resolve;
+    });
+    const desktop = vi.fn();
+    const stop = bindAgentCompletionNotifications(activity.reader, {
+      focused: () => focused,
+      active: () => active("other"),
+      target: (work) => completionTarget(work, scope),
+      desktop,
+      foreground: vi.fn(),
+    });
+    const first = activity.begin({
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+      soloChat: true,
+    });
+    first.started();
+    first.finish({ ok: false, error: "Provider unavailable" });
+    activity.begin({
+      scope: `https://buzz.example:${scope.viewer}`,
+      agent: "agent",
+      channelId: "chat",
+      messageId: "message",
+      threadRootId: "message",
+      soloChat: true,
+    });
+    decide(false);
+    await focused;
+    await Promise.resolve();
+    expect(desktop).not.toHaveBeenCalled();
+    stop();
+  });
+
   it("delivers a terminal first-turn result once Solo startup confirms", () => {
     const activity = createLocalAgentActivity();
     const desktop = vi.fn();
@@ -181,6 +221,17 @@ describe("agent completion notifications", () => {
     expect(foreground).not.toHaveBeenCalled();
     stop();
   });
+});
+
+it("gives each retry attempt its own completion source identity", () => {
+  const base = {
+    agent: "agent",
+    messageId: "message",
+    state: "error" as const,
+  };
+  expect(completionSourceKey({ ...base, startedAt: 1 })).not.toBe(
+    completionSourceKey({ ...base, startedAt: 2 }),
+  );
 });
 
 it("names the Solo chat in native and in-app completion copy", () => {

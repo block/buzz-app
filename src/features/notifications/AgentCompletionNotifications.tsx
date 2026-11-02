@@ -7,6 +7,7 @@ import { splitPartition } from "../relay/partition";
 import {
   bindAgentCompletionNotifications,
   completionBody,
+  completionSourceKey,
   completionTarget,
   completionTitle,
   completionToast,
@@ -36,7 +37,7 @@ export function AgentCompletionNotifications({
             "agent",
             "Solo chat completions",
             {
-              sourceKey: `${work.agent}:${work.messageId}:${work.state}`,
+              sourceKey: completionSourceKey(work),
               target,
             },
             () => true,

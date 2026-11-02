@@ -27,6 +27,7 @@ import {
   referencedEmoji,
 } from "../features/relay/emoji";
 import { newer } from "../features/relay/events";
+import { CANVAS_BYTES } from "../features/channel-templates/model";
 import { threadReference } from "../features/relay/thread-reference";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import type { RelayEvent } from "../features/relay/events";
@@ -72,6 +73,7 @@ const tool = (
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
+  annotations?: Readonly<{ readOnlyHint: boolean; destructiveHint?: boolean }>,
 ) => ({
   name,
   description,
@@ -81,6 +83,7 @@ const tool = (
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   },
+  ...(annotations ? { annotations } : {}),
 });
 
 export type Tool = ReturnType<typeof tool>;
@@ -311,7 +314,11 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool(
+    "canvas_get",
+    "Read a channel's canvas and its version, the current revision's id.",
+    { channel: str },
+  ),
   tool("canvas_set", "Replace a channel's canvas.", {
     channel: str,
     content: str,
@@ -319,7 +326,7 @@ export const TOOLS: readonly Tool[] = [
   }),
   tool(
     "canvas_history",
-    "A channel's canvas revisions, newest first: each one's id, time, author, size and first line.",
+    "A channel's canvas revisions, newest first: each one's id, time, author, size and first line. The first page starts with the canvas's version.",
     {
       channel: str,
       before: { type: "integer", description: "Unix seconds, at or before." },
@@ -328,12 +335,15 @@ export const TOOLS: readonly Tool[] = [
         description: "For paginating: with before, from a continue line.",
       },
     },
+    [],
+    { readOnlyHint: true },
   ),
   tool(
     "canvas_restore",
-    "Republish an earlier canvas revision as the newest one; history is kept.",
-    { id: str, channel: str },
-    ["id"],
+    "Republish an earlier canvas revision as the newest one; history is kept. Pass the version from your latest canvas_get or canvas_history as expected.",
+    { id: str, channel: str, expected: str },
+    ["id", "expected"],
+    { readOnlyHint: false, destructiveHint: true },
   ),
   tool(
     "media_get",
@@ -1184,7 +1194,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? tools.context.channel;
     if (!channel) throw new Error("channel is required here.");
     const head = await canvas(tools, channel);
-    return head?.content || "No canvas.";
+    return head ? `version: ${head.id}\n\n${head.content}` : "No canvas.";
   },
 
   async canvas_set(tools, args) {
@@ -1205,7 +1215,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async canvas_history(tools, args) {
     const channel = text(args.channel) ?? tools.context.channel;
     if (!channel) throw new Error("channel is required here.");
-    const before = args.before as number | undefined;
+    const before = unixTime(args, "before");
     const beforeId = args.before_id;
     if (beforeId !== undefined && before === undefined)
       throw new Error("before_id needs before, from the same continue line.");
@@ -1214,13 +1224,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       (typeof beforeId !== "string" || !HEX.test(beforeId))
     )
       throw new Error("before_id must be a 64-character event ID.");
-    // A page as the app's history shows it, with the relay's cursor.
+    // A page as the app's history shows it, with the relay's cursor. The
+    // first is read from the writer, so it includes a write just confirmed.
     const rows = await tools.client.query([
       {
         kinds: [40100],
         "#h": [channel],
         limit: CANVAS_PAGE,
-        ...(before !== undefined ? { until: before } : {}),
+        ...(before === undefined
+          ? { consistency: "strong" as const }
+          : { until: before }),
         ...(beforeId ? { before_id: beforeId } : {}),
       },
     ]);
@@ -1237,8 +1250,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const last = rows.at(-1);
     if (last && rows.length >= CANVAS_PAGE)
       lines.push(
-        `Older revisions remain; continue with ${JSON.stringify({ channel, before: last.created_at, before_id: last.id })}`,
+        `Older revisions may remain; continue with ${JSON.stringify({ channel, before: last.created_at, before_id: last.id })}`,
       );
+    if (before === undefined) lines.unshift(`version: ${rows[0]?.id}`, "");
     return lines.join("\n");
   },
 
@@ -1246,6 +1260,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const { client, context } = tools;
     const id = required(args, "id");
     if (!HEX.test(id)) throw new Error("id must be a 64-character event ID.");
+    const expected = required(args, "expected");
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
     // Read from the writer, as the app does, so the guard sees the real head.
@@ -1263,10 +1278,19 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         `No canvas revision ${id} in ${channel}; canvas_history lists them.`,
       );
+    if (new TextEncoder().encode(revision.content).length > CANVAS_BYTES)
+      throw new Error(
+        `Revision ${id} is over the canvas limit of ${CANVAS_BYTES} bytes, so it cannot be restored.`,
+      );
     const current = await head();
-    if (current?.id === id) return "That revision is already the canvas.";
+    // Guard the version the agent saw, never one that replaced it since.
+    if (current?.id !== expected)
+      throw new Error(
+        `The canvas changed since version ${expected}. Read it again with canvas_get or canvas_history before you restore.`,
+      );
+    if (current.id === id) return "That revision is already the canvas.";
     // The newest canvas wins, so a write must be dated after the current one.
-    const after = current ? (current.created_at + 1) * 1000 : 0;
+    const after = (current.created_at + 1) * 1000;
     if (after - Date.now() > 5000)
       throw new Error("The canvas was just changed; try again.");
     await waitUntil(after);
@@ -1276,7 +1300,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       content: revision.content,
       tags: [
         ["h", channel],
-        ["expected-revision", current?.id ?? "none"],
+        ["expected-revision", expected],
       ],
     });
     const selected = await head().catch((error: unknown) => {

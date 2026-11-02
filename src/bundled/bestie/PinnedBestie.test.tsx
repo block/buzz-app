@@ -32,6 +32,9 @@ import { readView, writeView } from "../../shared/view-state";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { PinnedBestie } from "./PinnedBestie";
 import { bestieRoute } from "./routes";
+import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
+import { useBestieConversation } from "../../app/shell/bestie-context";
+import type { RegisteredPage } from "../../features/pages/service";
 
 // jsdom has no virtualized layout. Keep the real rows, thread reader and React
 // lifecycle; model only Virtua's imperative layout boundary, not scroll behavior.
@@ -88,6 +91,7 @@ async function fixture({
   hold = false,
   existing = false,
   badRoster = false,
+  archived = false,
   withReply = false,
 } = {}) {
   // The timeline waits for a measurable host before mounting its virtualizer.
@@ -141,9 +145,19 @@ async function fixture({
     {
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
+      ...(archived ? { archiveAuthority: relayKey.pubkey } : {}),
       scope: "https://test.example",
       media: () => undefined,
       query: async (filters) => {
+        if (archived && filters.some((filter) => filter.kinds?.includes(13535)))
+          return [
+            signed(relayKey, {
+              kind: 13535,
+              created_at: 1_700_000_000,
+              content: "",
+              tags: [["-"], ["p", pollen]],
+            }),
+          ];
         if (
           filters.some((f) =>
             f.kinds?.some((kind) => kind === 39000 || kind === 39002),
@@ -213,6 +227,7 @@ async function fixture({
     scope,
     library: library.queries,
     native,
+    ...(archived ? { archives: owner.session.archives } : {}),
     signal: lifetime.signal,
   });
   await choices.refresh();
@@ -269,6 +284,7 @@ async function fixture({
     viewer: viewer.pubkey,
     scope,
     session,
+    relay,
     send,
     read,
     open,
@@ -368,6 +384,63 @@ it("reuses an existing DM and its ordinary draft after leaving and reopening Bes
   expect(
     await screen.findByRole("textbox", { name: "Message Pollen" }),
   ).toHaveTextContent("Existing DM draft");
+  expect(f.open).not.toHaveBeenCalled();
+});
+
+it("keeps the promoted verified DM usable through discovery failure until absence is confirmed", async () => {
+  const f = await fixture({ existing: true });
+  const agents = f.native.snapshot().agents;
+  f.choose(pollen);
+  writeView(f.scope, `draft:${pollenDM}`, "Keep the existing draft");
+  const page: RegisteredPage = {
+    id: "bestie",
+    key: "buzz.bestie/bestie",
+    pluginId: "buzz.bestie",
+    revision: "bundled",
+    title: "Bestie",
+    component: () => null,
+  };
+  function Promotion() {
+    return (
+      <output aria-label="promoted DM">
+        {useBestieConversation(f.session) ?? "none"}
+      </output>
+    );
+  }
+  render(
+    <BestieNavigationProvider pages={[page]} relay={f.relay}>
+      <Promotion />
+      {f.element()}
+    </BestieNavigationProvider>,
+    { reactStrictMode: true },
+  );
+  const input = await screen.findByRole("textbox", { name: "Message Pollen" });
+  expect(input).toHaveTextContent("Keep the existing draft");
+  expect(screen.getByLabelText("promoted DM")).toHaveTextContent(pollenDM);
+  act(() => {
+    f.native.set({
+      status: "error",
+      agents: [],
+      error: "Local agents unavailable",
+    });
+  });
+  expect(f.session.agentChoices.snapshot()).toMatchObject({ complete: false });
+  expect(
+    f.session.agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
+  ).not.toContain(pollen);
+  expect(await screen.findByRole("textbox", { name: "Message Bestie" })).toBe(
+    input,
+  );
+  expect(input).toHaveTextContent("Keep the existing draft");
+  expect(screen.getByLabelText("promoted DM")).toHaveTextContent(pollenDM);
+  act(() => f.native.set({ status: "ready", agents }));
+  expect(await screen.findByRole("textbox", { name: "Message Pollen" })).toBe(
+    input,
+  );
+  act(() => f.native.set({ status: "ready", agents: [] }));
+  expect(await screen.findByText("Bestie is no longer here")).toBeVisible();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("promoted DM")).toHaveTextContent("none");
   expect(f.open).not.toHaveBeenCalled();
 });
 
@@ -658,6 +731,7 @@ it("recovers a saved agent missing from a partial inventory through refresh", as
     complete: false,
     error: "Local agents unavailable",
   });
+  expect(f.open).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Try again" }));
   await screen.findByRole("textbox", { name: "Message Pollen" });
   expect(f.session.agentChoices.snapshot()).toMatchObject({
@@ -665,6 +739,25 @@ it("recovers a saved agent missing from a partial inventory through refresh", as
     complete: true,
   });
   expect(f.session.agentChoices.snapshot()).not.toHaveProperty("error");
+});
+
+it("does not use a known-archived identity's DM during partial discovery", async () => {
+  const f = await fixture({
+    existing: true,
+    localFailed: true,
+    archived: true,
+  });
+  await f.session.archives.refresh();
+  expect(f.session.agentChoices.snapshot().archives.archived).toContain(pollen);
+  // Keep both source reads settled and failed while archive evidence stays ready.
+  f.native.onRefresh(() => {});
+  f.choose(pollen);
+  f.mount();
+  await waitFor(() =>
+    expect(screen.getByText("Local agents unavailable")).toBeVisible(),
+  );
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(f.open).not.toHaveBeenCalled();
 });
 
 it("rechecks eligibility before retrying a failed DM open", async () => {

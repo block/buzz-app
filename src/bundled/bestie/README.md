@@ -15,7 +15,10 @@ conversation is the newest verified, unarchived, non-cached DM whose roster
 contains the viewer and exactly that one other public key. A Solo chat, group DM,
 namesake, unknown roster or archived/cached channel never qualifies. If no exact
 DM exists, the page asks the shared direct-message service to open one after
-rechecking that the agent remains selectable.
+rechecking that the agent remains selectable. If agent discovery fails, an
+already-verified exact DM stays usable; opening a missing one still requires a
+selectable agent. Known-archived agents and agents confirmed absent from a complete
+inventory do not keep a pinned conversation.
 
 The page uses the ordinary conversation owners for history, drafts, sending,
 threads and unread state. Thread visits bind to their originating DM. Restoring

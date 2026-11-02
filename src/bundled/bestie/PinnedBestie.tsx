@@ -61,6 +61,14 @@ export function PinnedBestie({
     ? choices.selectable.find((choice) => choice.pubkey === saved)
     : undefined;
   const channels = useChannelList(session.channels);
+  // Match promotion: incomplete discovery cannot strand a verified existing DM.
+  // Only a selectable agent below may open a conversation that is missing.
+  const channel =
+    saved &&
+    !choices.archives.archived.includes(saved) &&
+    (agent || choices.status !== "ready" || !choices.complete)
+      ? bestieChat(channels.channels, viewer, saved)
+      : undefined;
   const identity = agent ?? known;
   const name = identity ? (identity.managedName ?? identity.name) : "Bestie";
   const header = (
@@ -106,6 +114,20 @@ export function PinnedBestie({
         }
       />
     );
+  } else if (channel && saved) {
+    content = (
+      <DirectMessage
+        key={saved}
+        session={session}
+        scope={scope}
+        host={host}
+        extensions={extensions}
+        navigator={navigator}
+        navigation={navigation}
+        agent={{ pubkey: saved, name }}
+        channel={channel}
+      />
+    );
   } else if (!agent) {
     const pending =
       choices.pending ||
@@ -140,58 +162,46 @@ export function PinnedBestie({
         />
       );
   } else {
-    const channel = bestieChat(channels.channels, viewer, agent.pubkey);
-    content = channel ? (
-      <DirectMessage
-        key={agent.pubkey}
-        session={session}
-        scope={scope}
-        host={host}
-        extensions={extensions}
-        navigator={navigator}
-        navigation={navigation}
-        agent={{ pubkey: agent.pubkey, name }}
-        channel={channel}
-      />
-    ) : channels.status === "error" || channels.status === "unavailable" ? (
-      <Notice
-        title="Your chats are unavailable"
-        description={
-          channels.error ??
-          "Buzz couldn’t read your chats, so this one can’t be opened."
-        }
-        action={
-          <Button
-            onClick={() =>
-              session.channels.refreshList
-                ? session.channels.refreshList()
-                : session.channels.ensureList()
-            }
-          >
-            Try again
-          </Button>
-        }
-      />
-    ) : channels.status !== "ready" ? (
-      <LoadingRegion pending label="Loading your chats…">
+    content =
+      channels.status === "error" || channels.status === "unavailable" ? (
         <Notice
-          title="Loading your conversation…"
-          description={`Looking for your DM with ${name}.`}
+          title="Your chats are unavailable"
+          description={
+            channels.error ??
+            "Buzz couldn’t read your chats, so this one can’t be opened."
+          }
+          action={
+            <Button
+              onClick={() =>
+                session.channels.refreshList
+                  ? session.channels.refreshList()
+                  : session.channels.ensureList()
+              }
+            >
+              Try again
+            </Button>
+          }
         />
-      </LoadingRegion>
-    ) : (
-      <DirectMessage
-        key={agent.pubkey}
-        session={session}
-        scope={scope}
-        host={host}
-        extensions={extensions}
-        navigator={navigator}
-        navigation={navigation}
-        agent={{ pubkey: agent.pubkey, name }}
-        channel={undefined}
-      />
-    );
+      ) : channels.status !== "ready" ? (
+        <LoadingRegion pending label="Loading your chats…">
+          <Notice
+            title="Loading your conversation…"
+            description={`Looking for your DM with ${name}.`}
+          />
+        </LoadingRegion>
+      ) : (
+        <DirectMessage
+          key={agent.pubkey}
+          session={session}
+          scope={scope}
+          host={host}
+          extensions={extensions}
+          navigator={navigator}
+          navigation={navigation}
+          agent={{ pubkey: agent.pubkey, name }}
+          channel={undefined}
+        />
+      );
   }
   return (
     <div className="h-full min-h-0">

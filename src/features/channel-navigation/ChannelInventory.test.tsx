@@ -521,7 +521,9 @@ it("uses relay section filters across navigation and remount, and offers only hi
     expect.objectContaining({ kind: "conversation", channelId: "beta" }),
   );
   mounted.rerender(h.view("beta"));
-  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "beta" })).toBeVisible(),
+  );
   expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
   mounted.rerender(h.view("not-in-this-section"));
   expect(screen.queryByText("0 matches")).toBeNull();
@@ -541,15 +543,19 @@ it("uses relay section filters across navigation and remount, and offers only hi
   expect(screen.queryByText("0 matches")).toBeNull();
   expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
   restored.rerender(h.view("alpha"));
-  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "alpha" })).toBeVisible(),
+  );
   expect(screen.queryByRole("button", { name: "gamma" })).toBeNull();
   await user.click(
     screen.getByRole("button", { name: "More actions for Channels" }),
   );
   await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "All" }));
-  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+  });
   await user.click(
     screen.getByRole("button", { name: "More actions for Channels" }),
   );
@@ -1406,6 +1412,49 @@ it("clears only the removed section's collapsed intent after confirmation, never
     preferences.dispose();
   }
 });
+it("restores lifecycle focus to the active row while an inert copy is exiting", async () => {
+  const h = fixture();
+  const channel = h.list.channels[1];
+  assert(channel);
+  h.session.channelLifecycle = {
+    ...h.session.channelLifecycle,
+    available: true,
+  };
+  function Start() {
+    const navigation = useChannelNavigation();
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          assert(channel);
+          navigation?.openLifecycle(channel, "archive");
+        }}
+      >
+        Start action
+      </button>
+    );
+  }
+  render(h.view("beta", <Start />));
+  const active = await screen.findByRole("button", { name: "beta" });
+  const leaving = active.cloneNode(true) as HTMLButtonElement;
+  const retired = document.createElement("div");
+  retired.setAttribute("inert", "");
+  retired.append(leaving);
+  active.before(retired);
+  // Both copies have layout during popLayout exit; geometry alone is insufficient.
+  const rects = [active.getBoundingClientRect()] as unknown as DOMRectList;
+  vi.spyOn(active, "getClientRects").mockReturnValue(rects);
+  vi.spyOn(leaving, "getClientRects").mockReturnValue(rects);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Start action" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Archive channel: beta",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(active).toHaveFocus());
+  expect(leaving).not.toHaveFocus();
+});
+
 it.each(["archive", "unarchive", "delete"] as const)(
   "%s completion preserves focus moved during pending work and retains required navigation",
   async (action) => {

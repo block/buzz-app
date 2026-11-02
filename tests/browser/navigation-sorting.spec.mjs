@@ -2,6 +2,470 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true, sortingSidebar: true });
+
+// Real layout/paint and focus retention while live activity reorders keyed DOM
+// cannot be established in jsdom. The same flow exercises reduced motion.
+for (const reducedMotion of ["no-preference", "reduce"]) {
+  test.describe(`live sidebar motion: ${reducedMotion}`, () => {
+    test.use({ reducedMotion, initialSidebarSort: { channels: "recent" } });
+    test("slides a live reorder without replacing the focused row", async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const section = page.locator('[data-sidebar-section="channels"]');
+      const rows = section.locator("[data-channel-id]");
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "willow");
+      const cedar = section.locator('[data-channel-id="cedar"]');
+      await cedar.focus();
+      await cedar.evaluate((element) => {
+        window.sidebarMotion = {
+          element,
+          opacities: [],
+          transforms: [],
+          ys: [],
+          baselineY: element.getBoundingClientRect().y,
+          done: false,
+        };
+        const sample = () => {
+          const state = window.sidebarMotion;
+          state.opacities.push(
+            getComputedStyle(element.closest("[data-channel-sidebar-row]"))
+              .opacity,
+          );
+          const transform = getComputedStyle(
+            element.closest("[data-channel-sidebar-row]").parentElement,
+          ).transform;
+          state.transforms.push(transform);
+          state.ys.push(element.getBoundingClientRect().y);
+          if (!state.done) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+      app.activity({ channel: "cedar", kind: 45003 });
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "cedar");
+      if (reducedMotion === "no-preference") {
+        await expect
+          .poll(() =>
+            page.evaluate(() =>
+              window.sidebarMotion.transforms.some(
+                (value) =>
+                  value !== "none" &&
+                  Math.abs(new DOMMatrixReadOnly(value).m42) > 1,
+              ),
+            ),
+          )
+          .toBe(true);
+      }
+      await expect
+        .poll(() =>
+          cedar.evaluate((element) =>
+            element
+              .closest("[data-channel-sidebar-row]")
+              .parentElement.getAnimations()
+              .every((animation) => animation.playState !== "running"),
+          ),
+        )
+        .toBe(true);
+      await expect(cedar).toBeFocused();
+      const result = await cedar.evaluate((element) => {
+        window.sidebarMotion.done = true;
+        return {
+          same: element === window.sidebarMotion.element,
+          faded: window.sidebarMotion.opacities.some(
+            (value) => Number(value) < 1,
+          ),
+          scales: window.sidebarMotion.transforms.map((value) =>
+            value === "none" ? 1 : new DOMMatrixReadOnly(value).a,
+          ),
+          translations: window.sidebarMotion.transforms.map((value) =>
+            value === "none" ? 0 : new DOMMatrixReadOnly(value).m42,
+          ),
+          opacities: window.sidebarMotion.opacities.map(Number),
+          intermediate: window.sidebarMotion.ys.some(
+            (y) =>
+              y < window.sidebarMotion.baselineY - 1 &&
+              y > element.getBoundingClientRect().y + 1,
+          ),
+        };
+      });
+      expect(result.same).toBe(true);
+      expect(result.faded).toBe(false);
+      expect(result.intermediate).toBe(reducedMotion === "no-preference");
+      expect(result.scales.every((value) => value === 1)).toBe(true);
+      expect(result.translations.some((value) => Math.abs(value) > 1)).toBe(
+        reducedMotion === "no-preference",
+      );
+      expect(Math.min(...result.scales)).toBe(1);
+      expect(Math.min(...result.opacities)).toBe(1);
+    });
+  });
+}
+
+// Cedar and Willow exchange indices between A–Z and Recent; Maple keeps its
+// index. Real browser frames prove the anchor never dims or shifts.
+test("keeps a stationary selected row visible while its neighbors exchange places", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const section = page.locator('[data-sidebar-section="channels"]');
+  const rows = section.locator("[data-channel-id]");
+  const maple = section.locator('[data-channel-id="maple"]');
+  await maple.click();
+  await maple.evaluate((element) => {
+    const moving = element
+      .closest("[data-sidebar-section]")
+      .querySelector('[data-channel-id="cedar"]');
+    const row = element.closest("[data-channel-sidebar-row]").parentElement;
+    const movingRow = moving.closest(
+      "[data-channel-sidebar-row]",
+    ).parentElement;
+    const container = row.parentElement;
+    const baseline = element.getBoundingClientRect().y;
+    window.stationaryMotion = {
+      element,
+      baseline,
+      movingX: movingRow.getBoundingClientRect().x,
+      frames: [],
+      done: false,
+    };
+    const sample = () => {
+      const state = window.stationaryMotion;
+      const opacity = Number(getComputedStyle(container).opacity);
+      state.frames.push({
+        y: element.getBoundingClientRect().y,
+        stationary: Number(getComputedStyle(row).opacity) * opacity,
+        moving:
+          Number(getComputedStyle(movingRow.firstElementChild).opacity) *
+          Number(getComputedStyle(movingRow).opacity) *
+          opacity,
+        backed:
+          movingRow.hasAttribute("data-moving") &&
+          getComputedStyle(movingRow).opacity === "1" &&
+          !["transparent", "rgba(0, 0, 0, 0)"].includes(
+            getComputedStyle(movingRow).backgroundColor,
+          ),
+        movingX: movingRow.getBoundingClientRect().x,
+        stationaryScale:
+          getComputedStyle(row).transform === "none"
+            ? 1
+            : new DOMMatrixReadOnly(getComputedStyle(row).transform).a,
+        movingTransform: getComputedStyle(movingRow).transform,
+        promotedAbove:
+          Number(
+            getComputedStyle(
+              container
+                .querySelector('[data-channel-id="willow"]')
+                .closest("[data-channel-sidebar-row]").parentElement,
+            ).zIndex,
+          ) > Number(getComputedStyle(movingRow).zIndex),
+      });
+      if (!state.done) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await section
+    .getByRole("button", { name: "More actions for Channels" })
+    .click();
+  await page
+    .getByRole("menu", { name: "More actions for Channels", exact: true })
+    .getByRole("menuitem", { name: "Sort", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  await page
+    .getByRole("menu", { name: "Sort Channels", exact: true })
+    .getByRole("menuitemradio", { name: "Recent", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      rows.evaluateAll((elements) =>
+        elements.map((element) => element.dataset.channelId),
+      ),
+    )
+    .toEqual(["willow", "maple", "cedar"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.stationaryMotion.frames.some(
+          (frame) =>
+            frame.movingTransform !== "none" &&
+            Math.abs(new DOMMatrixReadOnly(frame.movingTransform).m42) > 1,
+        ),
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      maple.evaluate(
+        (element) =>
+          getComputedStyle(
+            element.closest("[data-channel-sidebar-row]").parentElement
+              .parentElement,
+          ).opacity,
+      ),
+    )
+    .toBe("1");
+  await expect
+    .poll(() =>
+      section.locator('[data-channel-id="cedar"]').evaluate((element) =>
+        element
+          .closest("[data-channel-sidebar-row]")
+          .parentElement.getAnimations()
+          .every((animation) => animation.playState !== "running"),
+      ),
+    )
+    .toBe(true);
+  const result = await maple.evaluate((element) => {
+    const state = window.stationaryMotion;
+    state.done = true;
+    return {
+      same: state.element === element,
+      fixed: state.frames.every(
+        (frame) =>
+          frame.y === state.baseline &&
+          frame.stationary === 1 &&
+          frame.stationaryScale === 1,
+      ),
+      movingFaded: state.frames.some((frame) => frame.moving < 1),
+      crossingIsOpaque: state.frames
+        .filter(
+          (frame) =>
+            frame.movingTransform !== "none" &&
+            Math.abs(new DOMMatrixReadOnly(frame.movingTransform).m42) > 1,
+        )
+        .every((frame) => frame.backed),
+      promotedAbove: state.frames.some((frame) => frame.promotedAbove),
+      movingTransformed: state.frames.some(
+        (frame) => frame.movingTransform !== "none",
+      ),
+      noLateralDrift: state.frames.every(
+        (frame) => frame.movingX === state.movingX,
+      ),
+    };
+  });
+  expect(result).toMatchObject({
+    same: true,
+    fixed: true,
+    movingFaded: false,
+    crossingIsOpaque: true,
+    promotedAbove: true,
+    movingTransformed: true,
+    noLateralDrift: true,
+  });
+  await expect(section.locator("[data-moving]")).toHaveCount(0);
+  await expect(maple).toHaveAttribute("aria-current", "page");
+});
+// Real animation progress and retargeted screen positions require a browser.
+test("retargets an unfinished slide without jumping or losing focus", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const section = page.locator('[data-sidebar-section="channels"]');
+  const rows = section.locator("[data-channel-id]");
+  await section
+    .getByRole("button", { name: "More actions for Channels" })
+    .click();
+  await page
+    .getByRole("menu", { name: "More actions for Channels", exact: true })
+    .getByRole("menuitem", { name: "Sort", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  await page
+    .getByRole("menu", { name: "Sort Channels", exact: true })
+    .getByRole("menuitemradio", { name: "Recent", exact: true })
+    .click();
+  const cedar = section.locator('[data-channel-id="cedar"]');
+  const willow = section.locator('[data-channel-id="willow"]');
+  const settled = () =>
+    expect
+      .poll(() =>
+        rows.evaluateAll((elements) =>
+          elements.every((element) =>
+            element
+              .closest("[data-channel-sidebar-row]")
+              .parentElement.getAnimations()
+              .every((animation) => animation.playState !== "running"),
+          ),
+        ),
+      )
+      .toBe(true);
+  await settled();
+  await cedar.focus();
+  app.activity({ channel: "cedar", kind: 45003, age: 30 });
+  await expect(rows.first()).toHaveAttribute("data-channel-id", "cedar");
+  await expect
+    .poll(
+      () =>
+        willow.evaluate((element) =>
+          element
+            .closest("[data-channel-sidebar-row]")
+            .parentElement.getAnimations()
+            .some((animation) =>
+              animation.effect
+                .getKeyframes()
+                .some((frame) => "transform" in frame),
+            ),
+        ),
+      { intervals: [10, 20, 50] },
+    )
+    .toBe(true);
+  // Freeze the old slide at its midpoint, then compare with the first frame
+  // of its replacement. Elapsed runner time cannot masquerade as a jump.
+  const before = await willow.evaluate((element) => {
+    const row = element.closest("[data-channel-sidebar-row]").parentElement;
+    for (const animation of row.getAnimations()) {
+      animation.pause();
+      animation.currentTime = 70;
+    }
+    return element.getBoundingClientRect().y;
+  });
+  app.activity({ channel: "willow", kind: 45003, age: 29 });
+  await expect(rows.first()).toHaveAttribute("data-channel-id", "willow");
+  await expect
+    .poll(() =>
+      willow.evaluate((element) =>
+        element
+          .closest("[data-channel-sidebar-row]")
+          .parentElement.getAnimations()
+          .some((animation) =>
+            animation.effect
+              .getKeyframes()
+              .some((frame) => "transform" in frame),
+          ),
+      ),
+    )
+    .toBe(true);
+  const after = await willow.evaluate((element) => {
+    const row = element.closest("[data-channel-sidebar-row]").parentElement;
+    for (const animation of row.getAnimations()) {
+      animation.pause();
+      animation.currentTime = 0;
+    }
+    const y = element.getBoundingClientRect().y;
+    for (const animation of row.getAnimations()) animation.play();
+    return y;
+  });
+  expect(Math.abs(after - before)).toBeLessThan(0.5);
+  await settled();
+  await expect(cedar).toBeFocused();
+  await expect
+    .poll(() =>
+      willow.evaluate(
+        (element) =>
+          getComputedStyle(element.closest("[data-channel-sidebar-row]"))
+            .opacity,
+      ),
+    )
+    .toBe("1");
+  const transform = await willow.evaluate(
+    (element) =>
+      new DOMMatrixReadOnly(
+        getComputedStyle(
+          element.closest("[data-channel-sidebar-row]").parentElement,
+        ).transform,
+      ),
+  );
+  expect(transform.a).toBe(1);
+  expect(transform.m42).toBe(0);
+});
+
+// Distance classification and hidden endpoint swaps require real geometry/paint.
+test.describe("distant channel motion", () => {
+  const channels = [
+    "alpha",
+    "beta",
+    "cedar",
+    "elm",
+    "maple",
+    "oak",
+    "pine",
+    "willow",
+  ];
+  test.use({
+    channelIds: channels,
+    historyCounts: Object.fromEntries(channels.map((id) => [id, 1])),
+    initialSidebarSort: { channels: "recent" },
+  });
+  test("fades a distant jump at its endpoints without a long slide", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const section = page.locator('[data-sidebar-section="channels"]');
+    const rows = section.locator("[data-channel-id]");
+    await expect(rows).toHaveCount(6);
+    const id = await rows.last().getAttribute("data-channel-id");
+    const target = section.locator(`[data-channel-id="${id}"]`);
+    await target.focus();
+    await target.evaluate((element) => {
+      const row = element.closest("[data-channel-sidebar-row]").parentElement;
+      window.distantMotion = {
+        element,
+        oldY: element.getBoundingClientRect().y,
+        frames: [],
+        done: false,
+      };
+      const sample = () => {
+        const state = window.distantMotion;
+        const style = getComputedStyle(row);
+        const m = new DOMMatrixReadOnly(style.transform);
+        state.frames.push({
+          y: element.getBoundingClientRect().y,
+          opacity: Number(style.opacity),
+          scale: m.a,
+          translation: m.m42,
+        });
+        if (!state.done) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    app.activity({ channel: id, kind: 45003 });
+    await expect(rows.first()).toHaveAttribute("data-channel-id", id);
+    await expect
+      .poll(() =>
+        target.evaluate(
+          (element) =>
+            getComputedStyle(
+              element.closest("[data-channel-sidebar-row]").parentElement,
+            ).opacity,
+        ),
+      )
+      .toBe("1");
+    const result = await target.evaluate((element) => {
+      const state = window.distantMotion;
+      state.done = true;
+      const y = element.getBoundingClientRect().y;
+      const partial = state.frames.filter(
+        (frame) => frame.opacity > 0.05 && frame.opacity < 0.95,
+      );
+      return {
+        same: state.element === element,
+        oldFade: partial.some((frame) => Math.abs(frame.y - state.oldY) < 0.5),
+        newFade: partial.some((frame) => Math.abs(frame.y - y) < 0.5),
+        onlyEndpoints: state.frames.every(
+          (frame) =>
+            Math.abs(frame.y - state.oldY) < 0.5 || Math.abs(frame.y - y) < 0.5,
+        ),
+        noScale: state.frames.every((frame) => frame.scale === 1),
+        noSlide: state.frames.every(
+          (frame) => Math.abs(frame.translation) < 0.5,
+        ),
+      };
+    });
+    expect(result).toEqual({
+      same: true,
+      oldFade: true,
+      newFade: true,
+      onlyEndpoints: true,
+      noScale: true,
+      noSlide: true,
+    });
+    await expect(target).toBeFocused();
+  });
+});
+
 // Native details/menu nesting, submenu focus/viewport placement and row reorder
 // through the built app + real broker are browser contracts. Matrices live below.
 test("section sort applies immediately, rolls back on failure, and persists retry independently", async ({

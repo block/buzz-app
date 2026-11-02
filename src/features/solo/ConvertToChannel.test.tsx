@@ -27,11 +27,14 @@ afterEach(() => {
   cleanup();
   for (const close of dispose.splice(0)) close();
 });
-function setup(solo = true) {
+function setup(
+  solo = true,
+  initialVisibility: "private" | "public" = "private",
+) {
   let clock = 100,
     role = "owner",
     name = "Original",
-    visibility = "private";
+    visibility = initialVisibility;
   let labels = solo ? [SOLO_LABEL, "work"] : ["work"];
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent(
@@ -45,6 +48,7 @@ function setup(solo = true) {
       ["t", "stream"],
       ...labels.map((label) => ["t", label]),
       [visibility],
+      ...(initialVisibility === "public" ? [["join_role", "guest"]] : []),
       ["ttl", "86400"],
     ]);
   const read = vi.fn(async () => [
@@ -133,7 +137,7 @@ function setup(solo = true) {
       name = "Changed";
       clock++;
     },
-    converted: (next = "private") => {
+    converted: (next: "private" | "public" = "private") => {
       labels = labels.filter((label) => label !== SOLO_LABEL);
       visibility = next;
       clock++;
@@ -145,6 +149,24 @@ const confirm = () =>
 async function ready() {
   await waitFor(() => expect(confirm()).toBeEnabled());
 }
+it("preserves community reading and Guest admission when converting a public Solo chat", async () => {
+  const h = setup(true, "public");
+  await ready();
+  expect(screen.getByRole("radio", { name: "Public" })).toBeChecked();
+  fireEvent.click(confirm());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(h.sign.mock.calls[0]?.[0].tags).not.toContainEqual([
+    "visibility",
+    "private",
+  ]);
+  expect(await h.details.capability.load(id)).toMatchObject({
+    visibility: "public",
+    joinRole: "guest",
+    labels: ["work"],
+    ttlSeconds: 86400,
+  });
+});
 it.each(["private", "public"])(
   "converts through signed kind 9002 with explicit %s visibility and unchanged TTL",
   async (visibility) => {
@@ -215,7 +237,7 @@ it.each(["authority", "conflict"])(
 it.each([
   { visibility: "private", failedRead: false },
   { visibility: "public", failedRead: true },
-])(
+] as const)(
   "unknown $visibility conversion checks status without resending after remount, failed initial read=$failedRead",
   async ({ visibility, failedRead }) => {
     const h = setup();

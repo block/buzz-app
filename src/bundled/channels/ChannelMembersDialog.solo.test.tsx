@@ -98,7 +98,10 @@ afterEach(() => {
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function fixture(direct = false) {
+function fixture(
+  direct = false,
+  access?: { visibility: "private" | "public"; joinRole: "member" | "guest" },
+) {
   const viewer = keypair(),
     relay = keypair(),
     aria = keypair(),
@@ -118,7 +121,8 @@ function fixture(direct = false) {
       metadata(relay, source, "Work", clock, [
         ["t", "stream"],
         ["t", SOLO_LABEL],
-        ["private"],
+        [access?.visibility ?? "private"],
+        ...(access ? [["join_role", access.joinRole]] : []),
         // The owner's own Solo chat, or one shared with them as a guest.
         ["P", direct ? viewer.pubkey : relay.pubkey],
       ]),
@@ -171,6 +175,9 @@ function fixture(direct = false) {
       const previous = metadataEvents.get(source)?.tags ?? [];
       const ttl = value("ttl") ?? previous.find(([tag]) => tag === "ttl")?.[1];
       const visibility = value("visibility");
+      const joinRole =
+        value("join_role") ??
+        previous.find(([tag]) => tag === "join_role")?.[1];
       const written = event.tags.flatMap(([tag, label]) =>
         tag === "t" ? [label ?? ""] : [],
       );
@@ -201,6 +208,7 @@ function fixture(direct = false) {
               "",
           ],
           ...(ttl && ttl !== "0" ? [["ttl", ttl]] : []),
+          ...(joinRole ? [["join_role", joinRole]] : []),
         ]),
       );
       if (loseDetailsResponse) throw new Error("Lost settings response");
@@ -408,6 +416,128 @@ function fixture(direct = false) {
     },
   };
 }
+
+it("shows Public (existing) without offering Public and changes its admission to Guest", async () => {
+  const t = fixture(true, { visibility: "public", joinRole: "member" });
+  await t.ready();
+  t.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const audience = await screen.findByRole("combobox", {
+    name: "General access",
+  });
+  await waitFor(() => expect(audience).toBeEnabled());
+  expect(audience).toHaveTextContent("Public (existing)");
+  await user.click(audience);
+  expect(
+    (await screen.findAllByRole("option")).map((option) =>
+      option.getAttribute("aria-label"),
+    ),
+  ).toEqual(["Public", "View only", "Private"]);
+  expect(screen.getByRole("option", { name: "Public" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await user.click(screen.getByRole("option", { name: "View only" }));
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    "New people will only be able to view.",
+  );
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    "Canvas, including your folder paths and agent instructions.",
+  );
+  expect(t.published).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Change access" }));
+  await waitFor(() => expect(audience).toBeEnabled());
+  expect(audience).toHaveTextContent("View only");
+  expect(t.published).toHaveLength(1);
+  expect(t.published[0]).toMatchObject({ kind: 9002 });
+  expect(t.published[0]?.tags).toContainEqual(["join_role", "guest"]);
+  expect(t.channel()).toMatchObject({
+    channelType: "solo",
+    visibility: "public",
+    joinRole: "guest",
+    labels: [SOLO_LABEL],
+  });
+  expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
+  expect(t.placement).not.toHaveBeenCalled();
+});
+
+it("opens a Solo chat for view-only visitors and makes it private again without conversion or grants", async () => {
+  const t = fixture(true);
+  await t.ready();
+  t.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Access" }));
+  const audience = await screen.findByRole("combobox", {
+    name: "General access",
+  });
+  await waitFor(() => expect(audience).toBeEnabled());
+  expect(audience).toHaveTextContent("Private");
+  await user.click(audience);
+  expect(
+    (await screen.findAllByRole("option")).map((option) =>
+      option.getAttribute("aria-label"),
+    ),
+  ).toEqual(["Public", "View only", "Private"]);
+  expect(screen.getByRole("option", { name: "Public" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await user.click(await screen.findByRole("option", { name: "View only" }));
+  const confirmation = screen.getByRole("alertdialog", {
+    name: "Change general access?",
+  });
+  expect(confirmation).toHaveTextContent("chat’s full history");
+  expect(confirmation).toHaveTextContent(
+    "Canvas, including your folder paths and agent instructions.",
+  );
+  expect(confirmation).toHaveTextContent(
+    "New people will only be able to view.",
+  );
+  expect(
+    screen.queryByRole("combobox", { name: "New people can" }),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(audience).toHaveFocus());
+  expect(t.published).toEqual([]);
+  await user.click(audience);
+  await user.click(await screen.findByRole("option", { name: "View only" }));
+  await user.click(screen.getByRole("button", { name: "Change access" }));
+  await waitFor(() => expect(audience).toBeEnabled());
+  expect(audience).toHaveTextContent("View only");
+  expect(t.published).toHaveLength(1);
+  expect(t.published[0]).toMatchObject({ kind: 9002 });
+  expect(t.published[0]?.tags).toContainEqual(["visibility", "open"]);
+  expect(t.published[0]?.tags).toContainEqual(["join_role", "guest"]);
+  expect(t.channel()).toMatchObject({
+    channelType: "solo",
+    visibility: "public",
+    joinRole: "guest",
+    labels: [SOLO_LABEL],
+  });
+  expect(
+    screen.queryByRole("combobox", { name: "New people can" }),
+  ).not.toBeInTheDocument();
+  expect(t.session.soloPreferences.snapshot().data?.assignments).toEqual({
+    [source]: "g",
+  });
+  expect(t.placement).not.toHaveBeenCalled();
+  expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
+  await user.click(audience);
+  await user.click(await screen.findByRole("option", { name: "Private" }));
+  await user.click(screen.getByRole("button", { name: "Change access" }));
+  await waitFor(() => expect(audience).toBeEnabled());
+  expect(audience).toHaveTextContent("Private");
+  expect(t.channel()).toMatchObject({
+    channelType: "solo",
+    visibility: "private",
+    joinRole: "guest",
+    labels: [SOLO_LABEL],
+  });
+  expect(t.published.map(({ kind }) => kind)).toEqual([9002, 9002]);
+  expect(t.published[1]?.tags).toContainEqual(["visibility", "private"]);
+  expect(t.placement).not.toHaveBeenCalled();
+});
 
 const search = (dialog: HTMLElement) =>
   within(dialog).getByRole("searchbox", { name: "Search people and channels" });
@@ -618,7 +748,17 @@ it("shows loading and failed current access with refresh, never an empty roster"
     );
     await user.click(refresh);
     await within(access).findByRole("region", { name: "People" });
-    expect(within(access).queryByRole("alert")).toBeNull();
+    // General access has its own failed metadata read and explicit recovery.
+    const recovery = within(access).getByRole("group", {
+      name: "General access recovery",
+    });
+    expect(within(recovery).getByRole("alert")).toHaveTextContent(
+      "Roster unavailable",
+    );
+    await user.click(
+      within(recovery).getByRole("button", { name: "Reload access" }),
+    );
+    await waitFor(() => expect(within(access).queryByRole("alert")).toBeNull());
     t.failRoster(true);
     await chooseDestination(user, dialog);
     const selectedChannel = within(dialog).getByRole("region", {

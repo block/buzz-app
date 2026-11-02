@@ -40,6 +40,7 @@ export function ChannelGeneralAccess({
   channelId: string;
   channel?: ChannelSummary;
 }) {
+  const place = channel?.channelType === "solo" ? "chat" : "channel";
   const Icon =
     channel?.visibility === "public"
       ? channel.joinRole === "guest"
@@ -68,7 +69,7 @@ export function ChannelGeneralAccess({
               {channel.visibility === "public"
                 ? "Anyone in the community can read."
                 : channel.visibility === "private"
-                  ? "Only channel members can read."
+                  ? `Only ${place} members can read.`
                   : "Reading access could not be confirmed."}
             </p>
             <p className="text-caption text-subtle">
@@ -289,17 +290,15 @@ function ChannelGeneralAccessEditor({
                 {
                   label: "",
                   options: [
-                    ...(!solo
-                      ? [
-                          {
-                            value: "public",
-                            label: "Public",
-                            description:
-                              "Anyone in the community can participate.",
-                            leading: <GlobeIcon size={20} />,
-                          },
-                        ]
-                      : []),
+                    {
+                      value: "public",
+                      label: "Public",
+                      disabled: solo,
+                      description: solo
+                        ? "Anyone joining could direct your agents."
+                        : "Anyone in the community can participate.",
+                      leading: <GlobeIcon size={20} />,
+                    },
                     {
                       value: "view-only",
                       label: "View only",
@@ -329,13 +328,13 @@ function ChannelGeneralAccessEditor({
           <AlertDialog
             title="Change general access?"
             description={[
-              choice.visibility !== base.visibility
-                ? solo
-                  ? choice.visibility === "public"
-                    ? "Everyone in this community will be able to view this chat’s full history."
-                    : "Only chat members will have access."
-                  : privacyConsequence(choice.visibility)
-                : "",
+              solo && choice.visibility === "public"
+                ? "Everyone in this community will be able to read this chat’s full history and Canvas, including your folder paths and agent instructions."
+                : choice.visibility !== base.visibility
+                  ? solo
+                    ? "Only chat members will have access."
+                    : privacyConsequence(choice.visibility)
+                  : "",
               choice.visibility === "public"
                 ? `New people will ${choice.joinRole === "guest" ? "only be able to view" : "be able to participate"}. People already in the ${place} keep their access.`
                 : "",

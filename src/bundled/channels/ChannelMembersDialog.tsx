@@ -678,11 +678,15 @@ export function ChannelMembersDialog({
     session.channels.get?.(channelId);
   const solo = channel?.channelType === "solo";
   const place = solo ? "chat" : "channel";
+  const readOnlyAccess =
+    channel?.viewerRole === "guest" ||
+    (channel?.readOnly && channel.joinRole === "guest");
+  const soloSharing = solo && !channel?.readOnly && !readOnlyAccess;
   const share = useSoloShare({
     session,
     navigator,
     channelId,
-    enabled: solo,
+    enabled: soloSharing,
     signal,
     query,
     setQuery,
@@ -696,19 +700,19 @@ export function ChannelMembersDialog({
     session.channelWrites.available;
   const canAddPeople = solo ? share.eligible : canAddMembers(session, channel);
   const canAdd = canAddPeople || canAddSoloAgents;
-  const readOnlyAccess =
-    !solo &&
-    (channel?.viewerRole === "guest" ||
-      (channel?.readOnly && channel.joinRole === "guest"));
   const generalAccess =
     channel &&
-    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    (solo ||
+      channel.channelType === "stream" ||
+      channel.channelType === "forum") &&
     !channel.cached &&
     !channel.archived &&
     (channel.readOnly || session.channelDetails.available);
-  // Solo access is verified by the sharing roster read; channels read 39002.
-  const rosterBusy = solo ? share.rosterState === "loading" : rosterReading;
-  const rosterError = solo
+  // Sharing verifies joined Solo rosters; read-only previews use ordinary 39002 reads.
+  const rosterBusy = soloSharing
+    ? share.rosterState === "loading"
+    : rosterReading;
+  const rosterError = soloSharing
     ? share.rosterState === "error"
       ? share.rosterError
       : ""
@@ -752,7 +756,7 @@ export function ChannelMembersDialog({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries the roster read.
   useEffect(() => {
     void session.archives.ensure();
-    if (solo) return;
+    if (soloSharing) return;
     let current = true;
     setRosterReading(true);
     setRosterReadError("");
@@ -787,7 +791,7 @@ export function ChannelMembersDialog({
     return () => {
       current = false;
     };
-  }, [session, channelId, refresh, solo]);
+  }, [session, channelId, refresh, soloSharing]);
   const memberKey = channel?.members?.join(":") ?? "";
   const administration = useMemberAdministration(
     session,
@@ -1119,7 +1123,7 @@ export function ChannelMembersDialog({
   const refreshMembers = () => {
     if (refreshing || mutationPending) return;
     setChangeError(undefined);
-    if (solo) share.reloadRoster();
+    if (soloSharing) share.reloadRoster();
     else setRosterReading(true);
     setRefresh((value) => value + 1);
     setInvitationPage({
@@ -1501,7 +1505,6 @@ export function ChannelMembersDialog({
     <div className={styles.memberSearch}>
       <SearchField
         inputRef={input}
-        aria-describedby={solo ? `${presenceId}-solo-help` : undefined}
         label={
           solo
             ? canAddSoloAgents
@@ -1609,11 +1612,13 @@ export function ChannelMembersDialog({
               ? "Add member?"
               : `Change access to ${memberAccessLabel(selection.role)}?`
           : (title ??
-            (solo
-              ? "Share access"
-              : readOnlyAccess
-                ? "Channel access"
-                : "Manage members"))
+            (solo && readOnlyAccess
+              ? "Chat access"
+              : solo
+                ? "Share access"
+                : readOnlyAccess
+                  ? "Channel access"
+                  : "Manage members"))
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}
@@ -1717,16 +1722,6 @@ export function ChannelMembersDialog({
       ) : (
         <div className={styles.layout}>
           <div className={styles.searchControls}>{searchField}</div>
-          {solo && (
-            <p
-              id={`${presenceId}-solo-help`}
-              className="shrink-0 text-body-sm text-subtle"
-            >
-              {canAddSoloAgents
-                ? "People and agents with access can read the full history and participate in new messages. Adding an agent won’t start a run."
-                : "People with access can read the full history and participate in new messages."}
-            </p>
-          )}
           {(administrationError ||
             rosterError ||
             nameError ||

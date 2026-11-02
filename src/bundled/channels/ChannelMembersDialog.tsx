@@ -950,12 +950,19 @@ export function ChannelMembersDialog({
     roleFilter,
     pages: {} as Record<string, number>,
   });
-  const pages =
+  let pages =
     memberPages.text === text && memberPages.roleFilter === roleFilter
       ? memberPages.pages
       : {};
-  if (pages !== memberPages.pages)
-    setMemberPages({ text, roleFilter, pages: {} });
+  for (const group of groups) {
+    const lastPage = Math.max(
+      0,
+      Math.ceil(group.keys.length / MEMBER_PAGE_SIZE) - 1,
+    );
+    if ((pages[group.name] ?? 0) > lastPage)
+      pages = { ...pages, [group.name]: lastPage };
+  }
+  if (pages !== memberPages.pages) setMemberPages({ text, roleFilter, pages });
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;

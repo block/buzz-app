@@ -3387,15 +3387,21 @@ it("keeps the current member page through live removals and clamps a shortened r
   const t = await setup("stream", false, false, undefined, undefined, {
     extraMembers: 125,
   });
+  await act(async () => t.session.profiles.ensure([t.viewer.pubkey]));
   const keys = Array.from({ length: 125 }, (_, i) =>
     (i + 10000).toString(16).padStart(64, "0"),
   );
   const pages = () =>
     screen.getByRole("navigation", { name: "People member pages" });
+  const rows = () =>
+    within(screen.getByRole("region", { name: "Member list" }))
+      .getAllByRole("listitem")
+      .map((row) => row.textContent);
   await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
   expect(within(pages()).getByText("2 of 3")).toBeVisible();
   await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
   expect(within(pages()).getByText("2 of 3")).toBeVisible();
+  const secondPageRows = rows();
   await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
   expect(within(pages()).getByText("3 of 3")).toBeVisible();
   await act(async () =>
@@ -3403,6 +3409,20 @@ it("keeps the current member page through live removals and clamps a shortened r
   );
   expect(within(pages()).getByText("2 of 2")).toBeVisible();
   expect(within(pages()).getByRole("button", { name: "Next" })).toBeDisabled();
+  await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
+  expect(within(pages()).getByText("2 of 3")).toBeVisible();
+  expect(rows()).toHaveLength(50);
+  expect(rows()).toEqual(secondPageRows);
+  await t.user.click(within(pages()).getByRole("button", { name: "Previous" }));
+  const firstPageRows = rows();
+  await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
+  await act(async () =>
+    t.replaceRoster([t.viewer.pubkey, ...keys.slice(1, 25)]),
+  );
+  await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
+  expect(within(pages()).getByText("1 of 3")).toBeVisible();
+  expect(rows()).toHaveLength(50);
+  expect(rows()).toEqual(firstPageRows);
 });
 
 it.each([true, false])(

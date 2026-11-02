@@ -1594,6 +1594,22 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
   expect(published).toEqual([]);
 });
 
+it("starts a Solo chat with the relay's maximum of 32 members", async () => {
+  const { client, published } = relay();
+  const members = Array.from({ length: 32 }, (_, n) =>
+    (n + 1).toString(16).padStart(64, "0"),
+  );
+  await callTool(client, {}, "channel_create", {
+    name: "x",
+    visibility: "private",
+    solo: true,
+    members: [...members, me],
+  });
+  expect(
+    published[0]?.tags.filter(([key]) => key === "p").map(([, key]) => key),
+  ).toEqual(members);
+});
+
 it("creates no Solo chat when a member refuses, and says what it cannot confirm", async () => {
   const { client, published, state } = relay({
     [alice]: "blocked: this agent only joins its owner's channels",

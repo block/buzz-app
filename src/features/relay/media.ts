@@ -118,7 +118,7 @@ export function createMediaPreparation() {
         if (outcome !== "timeout" && outcome !== "cancelled") {
           settled.delete(url);
           settled.set(url, Date.now());
-          const oldest = settled.size > 512 && settled.keys().next().value;
+          const oldest = settled.size > 4096 && settled.keys().next().value;
           if (oldest) settled.delete(oldest);
         }
         relayDebug(

@@ -350,6 +350,8 @@ export function subscribeRelayTraffic(
   let renewing = false;
   // While a renewal rebuilds its routes: the cursor keys live on the old socket.
   let carrying: ReadonlySet<string> | undefined;
+  // A carried route lost continuity before its replay completed (see `settle`).
+  let broken = false;
   let connectionError: string | undefined;
   let interests: string[] = [];
   let joined: string[] = [];
@@ -447,6 +449,7 @@ export function subscribeRelayTraffic(
     delete route.previous;
   }
   function remove(route: Route) {
+    if (route.carried) broken = true;
     closeWire(route);
     routes.delete(route.id);
   }
@@ -472,6 +475,7 @@ export function subscribeRelayTraffic(
     delete next.deadline;
     delete next.retryRenewal;
     // A narrowed replacement is live-only, so it has no replay to rely on.
+    if (route.carried) broken = true;
     delete next.carried;
     routes.set(next.id, next);
     return next;
@@ -522,6 +526,7 @@ export function subscribeRelayTraffic(
     }
     pump();
     notify();
+    settle();
     if (closed || generation !== current) return;
     try {
       callbacks.recover?.();
@@ -596,7 +601,13 @@ export function subscribeRelayTraffic(
         since: Math.floor(Date.now() / 1000) - 300,
       };
       route.since = resumeSince(route);
-      if (carrying && cursorKeys(route).every((key) => carrying?.has(key)))
+      // Presence and observer feeds establish nothing, so carry no obligation.
+      if (
+        carrying &&
+        id !== "presence" &&
+        id !== "observer" &&
+        cursorKeys(route).every((key) => carrying?.has(key))
+      )
         route.carried = true;
       routes.set(id, route);
       return route;
@@ -620,6 +631,7 @@ export function subscribeRelayTraffic(
       add(`batch:${++serial}`, batch.slice(i, i + LIVE_BATCH_SIZE), true);
     pump();
     notify();
+    settle();
   }
   /** A stop waits for manual Retry, so an earlier refusal's deadline must not revive it. */
   function stop(route: Route, reason: string) {
@@ -640,6 +652,7 @@ export function subscribeRelayTraffic(
       JSON.stringify(scope(previous)) === JSON.stringify(scope(route));
     if (retain) delete route.previous;
     closeWire(route);
+    if (route.carried) broken = true;
     delete route.carried;
     delete route.retryRenewal;
     delete route.retryAt;
@@ -699,6 +712,38 @@ export function subscribeRelayTraffic(
       }
     } else notify();
     pump();
+    settle();
+  }
+  const establish = (route: Route) => {
+    if (route.id !== "observer" && route.id !== "presence")
+      callbacks.established(route.channelIds ?? route.channelId);
+  };
+  /** A renewal stays quiet only while every carried route keeps continuity.
+   * Once one fails, is replaced or replays a cut window, no consumer may rely
+   * on it: report the drop the renewal hid, as after any outage, and
+   * establish every live route again. Before AUTH, the state still due
+   * reports the drop, and each route establishes at its own EOSE. */
+  function settle() {
+    if (!broken || closed) return;
+    broken = false;
+    for (const route of routes.values()) delete route.carried;
+    if (renewing) {
+      renewing = false;
+      notify();
+      return;
+    }
+    if (!authenticated) return;
+    const current = generation;
+    connection = "connecting";
+    notify();
+    if (closed || generation !== current) return;
+    connection = "connected";
+    notify();
+    for (const route of [...routes.values()]) {
+      if (closed || generation !== current) return;
+      if (route.status === "live" && routes.get(route.id) === route)
+        establish(route);
+    }
   }
   function pump() {
     clearTimeout(dispatchTimer);
@@ -867,6 +912,10 @@ export function subscribeRelayTraffic(
   }
   function connect(renewal = false) {
     if (closed) return;
+    // A renewal before the last one's carried routes completed their replay
+    // cannot prove continuity for them: it is an ordinary reconnect.
+    if ([...routes.values()].some((route) => route.carried)) renewal = false;
+    broken = false;
     // Only a route live on the admitted socket, with no pending replacement,
     // is carried: its cursor is current and its scope is unchanged.
     const carried = renewal
@@ -898,6 +947,7 @@ export function subscribeRelayTraffic(
       log.warn(`${peer} ${reason}`);
       clearSocket();
       renewing = false;
+      broken = false;
       for (const route of routes.values()) delete route.carried;
       connection = "retrying";
       connectionError = reason;
@@ -918,6 +968,7 @@ export function subscribeRelayTraffic(
       log.error(`${peer} ${reason}`);
       clearSocket();
       renewing = false;
+      broken = false;
       for (const route of routes.values()) delete route.carried;
       connection = "error";
       connectionError = reason;
@@ -1189,28 +1240,15 @@ export function subscribeRelayTraffic(
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         // A carried route's replay covered the renewal unless the limit cut it.
         const caughtUp = route.carried && route.replay !== "limited";
-        // A cut one did not, and every consumer must recover what it missed:
-        // report the drop the renewal hid, then establish what it carried.
-        const lost = route.carried && !caughtUp;
+        if (route.carried && !caughtUp) broken = true;
         delete route.carried;
-        if (lost) {
-          for (const other of routes.values()) delete other.carried;
-          connection = "connecting";
-          notify();
-          if (!valid()) return;
-          connection = "connected";
-        }
         notify();
-        if (!valid() || wires.get(route.wire ?? "") !== route) return;
-        const establish = (target: Route) =>
-          target.id !== "observer" &&
-          target.id !== "presence" &&
-          callbacks.established(target.channelIds ?? target.channelId);
-        if (lost)
-          for (const other of [...routes.values()])
-            if (other !== route && other.status === "live" && valid())
-              establish(other);
-        if (!caughtUp && valid()) establish(route);
+        if (!valid()) return;
+        // A cut replay establishes every live route, this one included, even
+        // if a listener retired it meanwhile.
+        if (broken) settle();
+        else if (!caughtUp && wires.get(route.wire ?? "") === route)
+          establish(route);
         if (valid()) pump();
       } else if (data[0] === "CLOSED") {
         const reason =

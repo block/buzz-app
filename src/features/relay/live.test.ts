@@ -3830,9 +3830,9 @@ it("falls back to the outage path when a renewal's new socket fails", async () =
     h.owner.dispose();
   }
 });
-it.each([false, true])(
-  "runs the session's outage recovery after a renewal only when a replay is cut (cut: %s)",
-  async (cut) => {
+it.each(["complete", "cut", "closed", "renewed"] as const)(
+  "runs the session's outage recovery after a renewal only when continuity breaks (%s)",
+  async (mode) => {
     vi.useFakeTimers();
     const h = setup([]);
     const relay = keypair();
@@ -3866,7 +3866,13 @@ it.each([false, true])(
       await answer();
       await establish(h.first);
       await answer();
+      // What Attention and reminders watch: the session's live status.
+      const seen: string[] = [];
+      const stopSeen = owner.session.live.subscribe(() =>
+        seen.push(owner.session.live.snapshot().status),
+      );
       renew(h.first);
+      h.callbacks.state.mockClear();
       const second = h.sockets[1];
       assert.exists(second);
       await second.auth();
@@ -3874,16 +3880,37 @@ it.each([false, true])(
       const a = second.requests().find((r) => scopeOf(r).includes("a"));
       assert.exists(a);
       const event = message(keypair(), "a", "busy", 1700000000);
-      if (cut)
+      if (mode === "cut")
         for (let i = 0; i < 500; i++)
           await second.receive(["EVENT", a[1], event]);
-      for (const request of second.requests())
-        await second.receive(["EOSE", request[1]]);
+      let socket = second;
+      if (mode === "closed") {
+        // The carried route fails after AUTH; a retry then establishes it.
+        await second.receive(["CLOSED", a[1], "error: shutting down"]);
+        h.owner.retry();
+        await vi.advanceTimersByTimeAsync(750);
+      } else if (mode === "renewed") {
+        // A second renewal arrives before the first one's replay completed.
+        renew(second);
+        const third = h.sockets[2];
+        assert.exists(third);
+        await third.auth();
+        await vi.advanceTimersByTimeAsync(750);
+        socket = third;
+      }
+      for (const request of socket.requests())
+        await socket.receive(["EOSE", request[1]]);
       const reads = await answer();
-      // A complete replay needs no read; a cut one re-reads the roster and
+      // A complete replay needs no read. A broken one re-reads the roster and
       // the open channel's head, as after any outage.
-      if (!cut) expect(reads).toEqual([]);
-      else {
+      stopSeen();
+      if (mode === "complete") {
+        expect(reads).toEqual([]);
+        expect(new Set(seen)).toEqual(new Set(["connected"]));
+      } else {
+        // Agents start a new catch-up epoch on this drop and reconnect.
+        expect(seen).toContain("connecting");
+        expect(seen.at(-1)).toBe("connected");
         expect(reads).toContainEqual([
           expect.objectContaining({ kinds: [39002] }),
         ]);
@@ -3896,3 +3923,22 @@ it.each([false, true])(
     }
   },
 );
+it("ends a renewal's quiet state when an interest change replaces a carried batch", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b", "c"], ["a", "b", "c"]);
+    await establish(h.first);
+    h.callbacks.established.mockClear();
+    renew(h.first);
+    const second = h.sockets[1];
+    assert.exists(second);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    h.owner.update(["a", "b"], ["a", "b"]);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connecting");
+    await establish(second);
+    expect(h.callbacks.established).toHaveBeenCalledWith(["a", "b"]);
+  } finally {
+    h.owner.dispose();
+  }
+});

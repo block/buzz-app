@@ -2185,7 +2185,9 @@ it("reads no message search until the last word has three characters", async () 
     await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
     expect(searches).toHaveLength(0);
     expect(
-      screen.getByText("Type at least 3 characters to search messages."),
+      screen.getByText(
+        "Type at least 3 characters in the last word to search messages.",
+      ),
     ).toBeVisible();
 
     view.rerender(<SearchResults {...props} query="project pla" />);

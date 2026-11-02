@@ -1043,7 +1043,9 @@ export function SearchResults({
           ? directoryPending
             ? undefined
             : search.tooShort
-              ? `Type at least ${MESSAGE_SEARCH_MIN_CHARS} characters to search messages.`
+              ? // Only the last word is matched as a prefix, so name it
+                // once earlier words make the whole query long enough.
+                `Type at least ${MESSAGE_SEARCH_MIN_CHARS} characters${/\s/.test(parsed.text.trim()) ? " in the last word" : ""} to search messages.`
               : "No matching messages in accessible conversations."
           : scopedChannelId
             ? "Type to search messages in this conversation."

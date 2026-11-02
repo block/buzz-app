@@ -80,6 +80,7 @@ beforeEach(() => {
           self: relay.pubkey,
           pubkey: viewer.pubkey,
           name: "Native community",
+          supported_nips: [1, 42, 43],
         });
       case "/api/join-policy":
         return response({
@@ -172,10 +173,7 @@ async function start(user: ReturnType<typeof userEvent.setup>) {
   await user.clear(screen.getByLabelText("Community URL"));
   await user.type(screen.getByLabelText("Community URL"), community);
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  await user.type(
-    await screen.findByLabelText("Invite code (if required)"),
-    "v2.fixture",
-  );
+  await user.type(await screen.findByLabelText("Invite code"), "v2.fixture");
   await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
   await user.click(screen.getByRole("checkbox", { name: /at least 18/ }));
 }
@@ -569,9 +567,7 @@ it("keeps a new invite bound to its relay despite another unfinished join", asyn
   await open({ community: other, code: "v2.other" });
   expect(screen.getByLabelText("Community URL")).toHaveValue(other);
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
-    "v2.other",
-  );
+  expect(await screen.findByLabelText("Invite code")).toHaveValue("v2.other");
   await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
   await user.click(screen.getByRole("checkbox", { name: /at least 18/ }));
   await user.click(screen.getByRole("button", { name: "Continue" }));
@@ -606,9 +602,7 @@ it("does not recover another viewer's unfinished join", async () => {
   const user = userEvent.setup();
   await open({ community, code: "v2.new" });
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
-    "v2.new",
-  );
+  expect(await screen.findByLabelText("Invite code")).toHaveValue("v2.new");
   expect(screen.queryByLabelText("Display name")).toBeNull();
 });
 
@@ -621,8 +615,6 @@ it("clears invite material when the prefilled relay is edited", async () => {
   expect(screen.getByLabelText("Community URL")).toHaveValue(other);
   requestedCommunity = other;
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
-    "",
-  );
+  expect(await screen.findByLabelText("Invite code")).toHaveValue("");
   expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(false);
 });

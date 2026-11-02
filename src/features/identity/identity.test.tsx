@@ -742,7 +742,7 @@ it("retires a browser sign-in that starts after setup is unmounted", async () =>
   identity.dispose();
 });
 
-it("first launch offers email sign-in and a live community URL field", async () => {
+it("first launch prioritizes email and preserves community entry behind Other options", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(false);
   const identity = createIdentity();
   render(
@@ -765,10 +765,25 @@ it("first launch offers email sign-in and a live community URL field", async () 
       /^Your people, your agents, your projects —\s*all in one place\.$/,
     ),
   ).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Community URL" })).toBeNull();
+  const options = screen.getByRole("button", { name: "Other options" });
+  fireEvent.click(options);
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toHaveFocus();
   const url = screen.getByRole("textbox", { name: "Community URL" });
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
   expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: /Scan a QR code/ })).toBeNull();
+  fireEvent.change(url, { target: { value: "community.example" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Back$/ }));
+  expect(screen.queryByRole("textbox", { name: "Community URL" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Other options" })).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Other options" }));
+  expect(screen.getByRole("textbox", { name: "Community URL" })).toHaveValue(
+    "community.example",
+  );
   expect(
     screen.queryByRole("button", { name: /existing key|new identity/ }),
   ).toBeNull();
@@ -1072,7 +1087,11 @@ function landingRelay(
   });
   return { relayCalls, info, lookup: [get("/"), get("/api/join-policy")] };
 }
-const urlField = () => screen.getByRole("textbox", { name: "Community URL" });
+const urlField = () => {
+  const options = screen.queryByRole("button", { name: "Other options" });
+  if (options) fireEvent.click(options);
+  return screen.getByRole("textbox", { name: "Community URL" });
+};
 const urlContinue = () => screen.getByRole("button", { name: "Continue" });
 /** The key choice a setup with no backed-up key pauses on; Create links and backs up the key. */
 const createMyKey = async (user: ReturnType<typeof userEvent.setup>) =>
@@ -1128,9 +1147,8 @@ it("a landing URL is looked up before sign-in, Sign in with email from the conne
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
   expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
-  expect(urlField()).toBeDisabled();
-  expect(urlField()).toHaveValue("Design.Relay.Example.com");
-  expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Other options" })).toBeDisabled();
+  expect(screen.queryByRole("textbox", { name: "Community URL" })).toBeNull();
   await act(async () => released.resolve(credential));
   // The account check found no key, so the backed-up-key lookup comes next.
   await waitFor(() =>
@@ -1276,8 +1294,7 @@ it("Sign in with email from the choice signs in at the build portal, runs the Co
   expect(connect).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("heading", { name: /^Connect to / })).toBeNull();
   expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
-  expect(urlField()).toBeDisabled();
-  expect(urlField()).toHaveValue("relay.example.com:8443");
+  expect(screen.getByRole("button", { name: "Other options" })).toBeDisabled();
   expect(relay.relayCalls).toEqual(relay.lookup);
   await act(async () => released.resolve(credential));
   // The reads go to the build portal too, and the lane is Connect's: account
@@ -1587,7 +1604,7 @@ it("a landing URL hosted by this build's Builderlab signs in at once, with no co
   expect(
     screen.queryByRole("heading", { name: "Connect to your community" }),
   ).toBeNull();
-  expect(urlField()).toHaveValue("design.communities.buzz.xyz");
+  expect(screen.getByRole("button", { name: "Other options" })).toBeDisabled();
   expect(relay.relayCalls).toEqual(relay.lookup);
   expect(identity.snapshot().status).toBe("missing");
   identity.dispose();
@@ -1676,7 +1693,8 @@ it("canceling or failing sign-in after a landing URL returns to the landing with
     screen.queryByRole("heading", { name: "Finding community" }),
   ).toBeNull();
   expect(relay.relayCalls).toEqual(relay.lookup);
-  // The landing's own Connect still signs in after the cancelled one.
+  // Return from the community entry page before choosing email.
+  await user.click(screen.getByRole("button", { name: /^Back$/ }));
   await user.click(connectButton());
   await screen.findByRole("button", { name: "Cancel sign-in" });
   expect(connect).toHaveBeenCalledTimes(2);
@@ -1831,10 +1849,12 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   );
   await user.click(await screen.findByRole("button", { name: SIGN_IN }));
   expect(connect).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Finish sign-in in your browser",
-  );
-  expect(screen.getByRole("button", { name: "Cancel sign-in" })).toBeEnabled();
+  expect(
+    screen.queryByText("Finish sign-in in your browser, then return to Buzz."),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
+  expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Other options" })).toBeEnabled();
   await act(async () => released.resolve(credential));
   expect(
     await screen.findByRole("heading", { name: "Setting up Buzz" }),
@@ -1870,7 +1890,7 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   expect(
     screen.getByText(/backed-up key for this account, so let’s make one/),
   ).toBeVisible();
-  expect(screen.getByText("Signed in as a@example.com.")).toBeVisible();
+  expect(screen.queryByText("Signed in as a@example.com.")).toBeNull();
   expect(screen.queryByText(/backed-up key for a@example\.com/)).toBeNull();
   expect(
     screen.getByRole("button", { name: "Use a different account" }),
@@ -1980,7 +2000,7 @@ it("Use a different account on Set up your key signs the session out, returns to
   expect(
     await screen.findByRole("heading", { name: "Set up your key" }),
   ).toBeVisible();
-  expect(screen.getByText("Signed in as a@example.com.")).toBeVisible();
+  expect(screen.queryByText("Signed in as a@example.com.")).toBeNull();
   expect(account).toHaveBeenCalledTimes(1);
   expect(linkedKeys[0]).toHaveBeenCalledTimes(1);
   await user.click(
@@ -2008,7 +2028,7 @@ it("Use a different account on Set up your key signs the session out, returns to
   expect(account).toHaveBeenNthCalledWith(2, second, identity);
   expect(linkedKeys[0]).toHaveBeenCalledTimes(1);
   expect(linkedKeys[1]).toHaveBeenCalledTimes(1);
-  expect(screen.getByText("Signed in as b@example.com.")).toBeVisible();
+  expect(screen.queryByText("Signed in as b@example.com.")).toBeNull();
   expect(screen.queryByText("Signed in as a@example.com.")).toBeNull();
   identity.dispose();
 });
@@ -5646,7 +5666,7 @@ it("a development seed's unlink status fails Start over's unlink as kgoose would
   identity.dispose();
 });
 
-it("the development seed restores its seeded key without a browser sign-in or a native recovery command", async () => {
+it("restores the backed-up key before showing the welcome-back choice", async () => {
   vi.stubEnv(
     "VITE_BUZZ_FIRST_RUN_ACCOUNT",
     JSON.stringify({
@@ -5659,28 +5679,46 @@ it("the development seed restores its seeded key without a browser sign-in or a 
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "identity_legacy_available") return Promise.resolve(false);
     if (command === "identity_import") return Promise.resolve(owned.pubkey);
+    if (command === "sign_out") return Promise.resolve();
     throw new Error(`Unexpected command ${command}`);
   });
   const identity = createIdentity();
   const user = userEvent.setup();
-  await welcomeBackPage(user, identity, undefined);
-  await user.click(screen.getByRole("button", { name: "Restore from backup" }));
-  expect(screen.getByRole("radio", { checked: true })).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: "Restore this identity" }),
+  render(
+    <Welcome
+      identity={identity}
+      communities={communitiesFor(identity)}
+      invites={invites}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
   );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await screen.findByRole("heading", { name: "Welcome back" });
   expect(
-    await screen.findByRole("heading", { name: "Join a community" }),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: "Restore this identity" }),
+  ).toBeNull();
   expect(identity.snapshot()).toEqual({
     status: "ready",
     viewer: owned.pubkey,
   });
-  expect(vi.mocked(invoke).mock.calls).toEqual([
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command.startsWith("identity_")),
+  ).toEqual([
     ["identity_restore", {}],
     ["identity_legacy_available"],
     ["identity_import", { nsec: ownedNsec }],
   ]);
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
+  expect(invoke).toHaveBeenCalledWith("sign_out", {
+    wipe: false,
+    removeAgents: false,
+  });
   identity.dispose();
 });
 
@@ -6060,5 +6098,43 @@ it("shows a native refusal's message and offers a retry", async () => {
   );
   expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  identity.dispose();
+});
+
+it("quiet email sign-in can restart or leave for Other options", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
+    throw new Error("Unexpected command");
+  });
+  const signals: AbortSignal[] = [];
+  const connect = vi.fn((signal: AbortSignal) => {
+    signals.push(signal);
+    return new Promise<Credential>(() => {});
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  const view = render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      account={unlinked}
+      connect={connect}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await user.click(screen.getByRole("button", { name: SIGN_IN }));
+  expect(connect).toHaveBeenCalledTimes(2);
+  expect(signals[0]?.aborted).toBe(true);
+  expect(signals[1]?.aborted).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Other options" }));
+  expect(signals[1]?.aborted).toBe(true);
+  expect(
+    screen.getByRole("heading", { name: "Join a community" }),
+  ).toBeVisible();
+  view.unmount();
   identity.dispose();
 });

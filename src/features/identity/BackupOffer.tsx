@@ -30,9 +30,11 @@ export function BackupOffer({
         </p>
       </div>
       {/* Footer order: secondary first, primary last. */}
-      <div className="flex gap-3">
-        <Button onClick={onSkip}>Not now</Button>
-        <Button variant="prominent" onClick={onBackUp}>
+      <div data-onboarding-actions="">
+        <Button size="lg" onClick={onSkip}>
+          Not now
+        </Button>
+        <Button size="lg" variant="prominent" onClick={onBackUp}>
           Back it up
         </Button>
       </div>

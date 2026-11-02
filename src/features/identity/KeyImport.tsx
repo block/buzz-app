@@ -1,3 +1,4 @@
+import { OnboardingBack } from "./OnboardingBack";
 import { useId, useRef, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { useFileDrop } from "../messages/use-file-drop";
@@ -23,16 +24,17 @@ import { SetupProgress } from "./SetupProgress";
 export function KeyImport({
   expectedPubkey,
   onBack,
+  onLost,
   onImport,
 }: {
   /** The hex key linked to the signed-in account, when the lane has one. */
   expectedPubkey?: string | undefined;
   onBack: () => void;
+  onLost?: (() => void) | undefined;
   /** Rejects with the native refusal, shown under the field. */
   onImport: (nsec: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
-  const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
   const form = useRef<HTMLFormElement>(null);
@@ -47,8 +49,6 @@ export function KeyImport({
   const change = (next: string) => {
     setText(next);
     setFailure(undefined);
-    // Masked by default must re-assert for the next key pasted.
-    if (!next.trim()) setRevealed(false);
   };
   const fromFile = async (file: File | undefined) => {
     if (!file) return;
@@ -136,43 +136,42 @@ export function KeyImport({
                     )
                   }
                 >
-                  <Input
-                    type={revealed ? "text" : "password"}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    placeholder="nsec1…"
-                    value={text}
-                    onValueChange={change}
-                    autoFocus
-                  />
-                </Field>
-                <div className="flex flex-col gap-2">
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={!text}
-                      onClick={() => setRevealed(!revealed)}
-                    >
-                      {revealed ? "Hide private key" : "Reveal private key"}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => picker.current?.click()}
-                    >
-                      Choose a key file
-                    </Button>
+                  <div className="flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <Input
+                        type="password"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        placeholder="nsec1…"
+                        value={text}
+                        onValueChange={change}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="shrink-0">
+                      <Button
+                        type="button"
+                        size="md"
+                        onClick={() => picker.current?.click()}
+                      >
+                        Browse
+                      </Button>
+                    </div>
                   </div>
+                </Field>
+                {dragging && (
                   <p className="m-0 text-body-sm text-subtle">
-                    {dragging
-                      ? "Drop to use this file."
-                      : "A key file is a small text file whose first line is the nsec1 key."}
+                    Drop to use this file.
                   </p>
-                </div>
+                )}
               </div>
+              {onLost && (
+                <Button variant="link" onClick={onLost}>
+                  I lost this key
+                </Button>
+              )}
             </form>
             {/* Outside the form, so the key is its only field and Enter submits. */}
             <input
@@ -203,9 +202,7 @@ export function KeyImport({
           >
             Continue with this key
           </Button>
-          <Button type="button" size="lg" variant="ghost" onClick={onBack}>
-            Back
-          </Button>
+          <OnboardingBack type="button" onClick={onBack} />
         </>
       )}
     </OnboardingScreen>

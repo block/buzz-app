@@ -18,7 +18,14 @@ the interface unless an available tool actually supports that action.
 ## Identity and getting connected
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
-  **Sign in with email** or a **Community URL** (an address or invite link).
+  **Sign in with email**. **Other options** reveals a **Community URL** field
+  for an address or invite link; desktop does not offer QR scanning.
+  With no communities yet, **Join** advances through full-page access and profile
+  steps. **Back** returns to the entered link. An invite-code field appears for
+  a supplied invite or denied access on a community that enforces membership;
+  community policy links open separately.
+  On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
+  skips it, and pressing a key finishes it immediately.
   Setup then creates a new key or takes an existing private key, and may link
   it to the signed-in account and back it up; a returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app

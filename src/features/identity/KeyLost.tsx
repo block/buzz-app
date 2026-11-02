@@ -1,3 +1,4 @@
+import { OnboardingBack } from "./OnboardingBack";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { OwnedCommunity } from "./builderlab-account";
 import { WireframePanel } from "./Wireframe";
@@ -62,9 +63,9 @@ export function KeyLost({
         </p>
       </WireframePanel>
       {/* Footer order: secondary first, primary last. */}
-      <div className="flex gap-3">
-        <Button onClick={onBack}>Back</Button>
-        <Button variant="destructive" onClick={onStartOver}>
+      <div data-onboarding-actions="">
+        <OnboardingBack onClick={onBack} />
+        <Button size="lg" variant="destructive" onClick={onStartOver}>
           Start over with a new key
         </Button>
       </div>

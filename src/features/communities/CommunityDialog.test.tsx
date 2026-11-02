@@ -22,7 +22,7 @@ const api = vi.hoisted(() => ({
   inspectProfile: vi.fn<typeof import("./api").inspectProfile>(),
   publishProfile: vi.fn<typeof import("./api").publishProfile>(),
 }));
-api.inspectProfile.mockRejectedValue(new Error("not admitted"));
+api.inspectProfile.mockRejectedValue(new Error("Relay read failed (403)"));
 api.publishProfile.mockResolvedValue();
 vi.mock("./api", async (actual) => ({
   ...(await actual<typeof import("./api")>()),
@@ -54,7 +54,8 @@ it("publishes a description-only edit to an existing community profile", async (
     vi.fn(async (url: string) => {
       const route = String(url).split("/").at(-1);
       if (route === "register") return Response.json({ id: "x" });
-      if (route === "info") return Response.json({ name: "Fixture" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
@@ -127,7 +128,8 @@ it("opens with an unchanged over-limit profile and blocks publishing it", async 
     vi.fn(async (url: string) => {
       const route = String(url).split("/").at(-1);
       if (route === "register") return Response.json({ id: "x" });
-      if (route === "info") return Response.json({ name: "Fixture" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
@@ -170,7 +172,8 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
     vi.fn(async (url: string) => {
       const route = String(url).split("/").at(-1);
       if (route === "register") return Response.json({ id: "x" });
-      if (route === "info") return Response.json({ name: "Fixture" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
       if (route === "claim")
         return Response.json({ error: refusal }, { status: 403 });
       throw new Error(`Unexpected request: ${url}`);
@@ -191,10 +194,7 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
     "wss://relay.example",
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  await user.type(
-    await screen.findByLabelText("Invite code (if required)"),
-    "v2.abc",
-  );
+  await user.type(await screen.findByLabelText("Invite code"), "v2.abc");
   for (const [code, shown] of [
     [
       "invite_exhausted",
@@ -218,7 +218,7 @@ it.each([
   async (picture) => {
     api.inspectProfile.mockResolvedValueOnce({
       exists: true,
-      existing: { name: "Fixture" },
+      existing: { name: "Fixture", membershipRequired: true },
       profile: {
         name: "Fixture",
         picture,
@@ -230,7 +230,8 @@ it.each([
       vi.fn(async (url: string) => {
         const route = String(url).split("/").at(-1);
         if (route === "register") return Response.json({ id: "x" });
-        if (route === "info") return Response.json({ name: "Fixture" });
+        if (route === "info")
+          return Response.json({ name: "Fixture", membershipRequired: true });
         throw new Error(`Unexpected request: ${url}`);
       }),
     );
@@ -287,7 +288,8 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
     "fetch",
     vi.fn(async (url: string) => {
       if (url.endsWith("/register")) return Response.json({ id: "x" });
-      if (url.endsWith("/info")) return Response.json({ name: "Fixture" });
+      if (url.endsWith("/info"))
+        return Response.json({ name: "Fixture", membershipRequired: true });
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
@@ -430,7 +432,8 @@ it("prefills an invite but requires explicit discovery and claim before membersh
   const requests = vi.fn(async (url: string, init?: RequestInit) => {
     const route = String(url).split("/").at(-1);
     if (route === "register") return Response.json({ id: "x" });
-    if (route === "info") return Response.json({ name: "Fixture" });
+    if (route === "info")
+      return Response.json({ name: "Fixture", membershipRequired: true });
     if (route === "claim") {
       expect(JSON.parse(String(init?.body))).toMatchObject({
         code: "v2.abc",
@@ -464,9 +467,7 @@ it("prefills an invite but requires explicit discovery and claim before membersh
   );
   expect(requests).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(await screen.findByLabelText("Invite code (if required)")).toHaveValue(
-    "v2.abc",
-  );
+  expect(await screen.findByLabelText("Invite code")).toHaveValue("v2.abc");
   expect(
     requests.mock.calls.some(([url]) => String(url).endsWith("/claim")),
   ).toBe(false);
@@ -525,7 +526,7 @@ it("renews policy acceptance after an expired receipt instead of replaying it", 
     />,
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  await screen.findByLabelText("Invite code (if required)");
+  await screen.findByLabelText("Invite code");
   await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -534,7 +535,7 @@ it("renews policy acceptance after an expired receipt instead of replaying it", 
   version = "v2";
   await user.click(screen.getByRole("button", { name: "Back" }));
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  await screen.findByLabelText("Invite code (if required)");
+  await screen.findByLabelText("Invite code");
   await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(receipts).toEqual(["fresh-1", "fresh-2"]));
@@ -629,7 +630,8 @@ it("offers federated sign-in when joining refuses for it, then lets Continue run
           { error: "Federated sign-in is required" },
           { status: 401 },
         );
-      if (route === "info") return Response.json({ name: "Fixture" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
       throw new Error(`Unexpected request: ${url}`);
     }),
   );
@@ -673,9 +675,7 @@ it("offers federated sign-in when joining refuses for it, then lets Continue run
   expect(String(vi.mocked(fetch).mock.calls.at(-1)?.[0])).toContain(
     "other.example",
   );
-  expect(
-    await screen.findByLabelText("Invite code (if required)"),
-  ).toBeInTheDocument();
+  expect(await screen.findByLabelText("Invite code")).toBeInTheDocument();
 });
 
 it.each(["edit", "close"])(
@@ -690,7 +690,8 @@ it.each(["edit", "close"])(
           { error: "Federated sign-in is required" },
           { status: 401 },
         );
-      if (route === "info") return Response.json({ name: "Fixture" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", requests);

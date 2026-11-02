@@ -50,7 +50,7 @@ export function ProfileStep({
   };
   return (
     <form
-      className="flex flex-col gap-6"
+      className="flex flex-1 flex-col gap-6"
       onSubmit={(event) => {
         event.preventDefault();
         if (canContinue)
@@ -71,14 +71,11 @@ export function ProfileStep({
         >
           Set up your profile
         </h1>
-        <p className="mt-2 text-body text-subtle">
-          Add a name and avatar. They’ll show up on your messages, reactions,
-          and agent handoffs in {found.host}. You can change them any time in
-          Settings → Profile.
-        </p>
       </div>
       <WireframePanel>
         <ProfileFields
+          showAbout={false}
+          emptyAvatarStyle="dotted-circle"
           profile={draft}
           onChange={setDraft}
           disabled={busy}
@@ -93,12 +90,13 @@ export function ProfileStep({
         </p>
       )}
       {/* Footer order: secondary first, primary last. */}
-      <div className="flex gap-3">
-        <Button onClick={() => void run(onSkip)} disabled={busy}>
+      <div data-onboarding-actions="">
+        <Button size="lg" onClick={() => void run(onSkip)} disabled={busy}>
           Skip for now
         </Button>
         <Button
           type="submit"
+          size="lg"
           variant="prominent"
           loading={busy}
           disabled={!canContinue}

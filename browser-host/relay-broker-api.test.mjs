@@ -3910,3 +3910,23 @@ test("inventory rejects foreign pages, ignores invalid heads and follows exact-k
     await h.close();
   }
 });
+
+test.each([[], [1, 42], [1, 42, 43]])(
+  "join discovery exposes membership enforcement for %j",
+  async (...nips) => {
+    const h = await harness((call) =>
+      Response.json(
+        call.url === fixtureRelayUrl
+          ? { name: "Community", supported_nips: nips }
+          : { policy: null },
+      ),
+    );
+    try {
+      expect(await (await h.get("info")).json()).toMatchObject({
+        membershipRequired: nips.includes(43),
+      });
+    } finally {
+      await h.close();
+    }
+  },
+);

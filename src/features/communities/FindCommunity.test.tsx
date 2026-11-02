@@ -86,7 +86,7 @@ it("shows the host while finding, then only published facts, gating Join on ever
   expect(screen.queryByRole("button", { name: /join/i })).toBeNull();
   await act(async () => info.resolve(Response.json(buzz)));
   expect(joinCommunity()).toBeVisible();
-  expect(screen.getByText(host)).toHaveClass("font-mono");
+  expect(screen.getByText(host)).toHaveClass("text-body");
   expect(document.querySelector("img")).toHaveAttribute(
     "src",
     "https://cdn.example.com/icon.png",
@@ -125,6 +125,7 @@ it("shows the host while finding, then only published facts, gating Join on ever
     {
       url,
       host,
+      name: "Buzz Relay",
       icon: "https://cdn.example.com/icon.png",
       self,
       policy,
@@ -179,6 +180,7 @@ it("with onFound a found community is handed over while the lookup page stays", 
     expect(onFound).toHaveBeenCalledWith({
       url,
       host,
+      name: "Buzz Relay",
       icon: "https://cdn.example.com/icon.png",
       self,
       policy,

@@ -1,3 +1,4 @@
+import { OnboardingBack } from "./OnboardingBack";
 import { Button } from "../../shared/design-system/ui/Button";
 
 /**
@@ -42,17 +43,15 @@ export function ConnectChoice({
           Buzz relies on a key for your identity.
         </p>
       </div>
-      <div className="flex flex-col gap-3">
+      {/* The secondary choice keeps the same target size with quieter emphasis. */}
+      <Button size="lg" data-return-focus="import" onClick={onImport}>
+        I already have a key
+      </Button>
+      <div data-onboarding-actions="">
         <Button variant="prominent" size="lg" onClick={onConnect}>
           Sign in with email
         </Button>
-        {/* The secondary choice is deliberately smaller than the primary. */}
-        <Button size="sm" data-return-focus="import" onClick={onImport}>
-          I already have a key
-        </Button>
-      </div>
-      <div className="flex gap-3">
-        <Button onClick={onBack}>Back</Button>
+        <OnboardingBack onClick={onBack} />
       </div>
     </>
   );

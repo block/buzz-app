@@ -1,3 +1,5 @@
+import { inspectProfile } from "../communities/api";
+import { OnboardingBack } from "./OnboardingBack";
 import {
   useEffect,
   useMemo,
@@ -6,6 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { onboardingTransition } from "./onboarding-transition";
 import { npubEncode } from "nostr-tools/nip19";
 import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
@@ -125,6 +128,8 @@ export function Welcome({
   // The hex key the account check found bound to the account: the returning-
   // user lane. Cleared by Start over and on the landing.
   const [linked, setLinked] = useState<string>();
+  const [returningProfile, setReturningProfile] = useState<PersonalProfile>();
+  const [switchError, setSwitchError] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
   // The destinations saved to the account, read with the account check and
@@ -137,6 +142,8 @@ export function Welcome({
   const [backups, setBackups] = useState<readonly string[]>();
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
+  const [otherOptions, setOtherOptions] = useState(false);
+  const returningFromOptions = useRef(false);
   // The canonical origin the user asked to join: before sign-in it drives the
   // discovery lookup; after setup, the Join Community page. Cleared on every
   // return to the landing or choices page.
@@ -262,12 +269,32 @@ export function Welcome({
       return;
     const current = account(login.credential(), identity);
     reads.current = current;
+    let checkedKey: string | undefined;
+    let checkedBackups: readonly string[] | undefined;
     void setup.start(
       [
-        checkAccount(current, setLinked, (list) => {
-          known.current = list;
+        checkAccount(
+          current,
+          (key) => {
+            checkedKey = key;
+            setLinked(key);
+          },
+          (list) => {
+            known.current = list;
+          },
+        ),
+        checkBackup(current, (keys) => {
+          checkedBackups = keys;
+          setBackups(keys);
         }),
-        checkBackup(current, setBackups),
+        {
+          label: "Preparing your identity…",
+          run: async () => {
+            if (!checkedKey || !checkedBackups?.includes(checkedKey)) return;
+            void current.recovery.beginRecovery();
+            return { status: "paused", at: "key-restore" };
+          },
+        },
       ],
       { status: "paused", at: "key-choice" },
     );
@@ -344,8 +371,11 @@ export function Welcome({
   };
   /** Every way back to the landing, so a kept `finding` cannot re-enter discovery. */
   const backToLanding = () => {
+    setOtherOptions(false);
     setFinding(undefined);
     setInviteCode("");
+    setReturningProfile(undefined);
+    setSwitchError(undefined);
     setLinked(undefined);
     setOwned(undefined);
     setBackups(undefined);
@@ -503,7 +533,7 @@ export function Welcome({
     switch (at) {
       case "connect-choice":
         // Connect is the landing's own sign-in: resetting first lets the
-        // landing show it pending, with Cancel sign-in.
+        // landing stay visible while the browser completes sign-in.
         return finding ? (
           <ConnectChoice
             host={new URL(finding).host}
@@ -525,6 +555,15 @@ export function Welcome({
         return (
           <KeyImport
             expectedPubkey={linked}
+            onLost={
+              linked && current
+                ? () =>
+                    void setup.start([findCommunities(current, setOwned)], {
+                      status: "paused",
+                      at: "key-lost",
+                    })
+                : undefined
+            }
             onBack={() =>
               back(
                 !current
@@ -557,7 +596,6 @@ export function Welcome({
       case "key-choice":
         return (
           <KeyChoice
-            email={auth.account?.email}
             backups={backups}
             onCreate={() =>
               void setup.start([
@@ -573,26 +611,37 @@ export function Welcome({
         );
       case "welcome-back":
         return linked ? (
-          <WelcomeBack
-            npub={npubEncode(linked)}
-            email={auth.account?.email}
-            onRestore={
-              backedUp
-                ? () => {
-                    void current.recovery.beginRecovery();
-                    pause("key-restore");
-                  }
-                : undefined
-            }
-            onImport={() => pause("key-import")}
-            onLost={() =>
-              void setup.start([findCommunities(current, setOwned)], {
-                status: "paused",
-                at: "key-lost",
-              })
-            }
-            onSwitchAccount={backToLanding}
-          />
+          <>
+            <WelcomeBack
+              npub={npubEncode(linked)}
+              profile={
+                returningProfile ??
+                (communities.snapshot().viewer === linked
+                  ? communities.snapshot().profile
+                  : undefined)
+              }
+              onRestore={
+                viewer === linked
+                  ? () => void setup.start(finish())
+                  : backedUp
+                    ? () => {
+                        void current.recovery.beginRecovery();
+                        pause("key-restore");
+                      }
+                    : undefined
+              }
+              onImport={() => pause("key-import")}
+              onSwitchAccount={() => {
+                if (viewer !== linked) return backToLanding();
+                void identity
+                  .signOut({ wipe: false, removeAgents: false })
+                  .catch(() =>
+                    setSwitchError("Couldn’t switch accounts. Try again."),
+                  );
+              }}
+            />
+            {switchError && <p role="alert">{switchError}</p>}
+          </>
         ) : null;
       case "key-restore":
         // A restored key is already backed up, so no backup step follows.
@@ -602,9 +651,42 @@ export function Welcome({
             expectedPubkey={linked}
             onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
+            onLost={() =>
+              void setup.start([findCommunities(current, setOwned)], {
+                status: "paused",
+                at: "key-lost",
+              })
+            }
             onInstalled={() => {
-              if (identity.snapshot().status === "ready")
-                void setup.start(finish());
+              const restored = identity.snapshot();
+              if (restored.status !== "ready" || restored.viewer !== linked)
+                return;
+              void setup.start(
+                [
+                  {
+                    label: "Loading your profile…",
+                    run: async () => {
+                      for (const destination of (known.current ?? []).slice(
+                        0,
+                        3,
+                      )) {
+                        if (!mounted.current || reads.current !== current)
+                          return;
+                        const found = await inspectProfile(destination).catch(
+                          () => undefined,
+                        );
+                        if (!mounted.current || reads.current !== current)
+                          return;
+                        if (found?.exists) {
+                          setReturningProfile(found.profile);
+                          break;
+                        }
+                      }
+                    },
+                  },
+                ],
+                { status: "paused", at: "welcome-back" },
+              );
             }}
           />
         ) : null;
@@ -676,9 +758,51 @@ export function Welcome({
   // exists. A community hosted by this build's Builderlab signs in at once;
   // any other asks the user whether to connect at the build portal or bring
   // a key.
+  if (
+    progress.status === "idle" &&
+    auth.status !== "pending" &&
+    !auth.error &&
+    !discovering &&
+    otherOptions
+  )
+    return (
+      <OnboardingScreen
+        key="community-entry"
+        labelledBy="welcome-title"
+        intro={
+          <>
+            <h1
+              id="welcome-title"
+              tabIndex={-1}
+              ref={focusCommunityHeading}
+              className="text-heading text-standard"
+            >
+              Join a community
+            </h1>
+            <p className="text-body-sm text-subtle">
+              Enter a community address or an invite link to continue.
+            </p>
+          </>
+        }
+      >
+        <CommunityUrlField
+          url={entered}
+          onUrlChange={setEntered}
+          onSubmit={find}
+          onBack={() =>
+            onboardingTransition(() => {
+              returningFromOptions.current = true;
+              setOtherOptions(false);
+            }, true)
+          }
+        />
+      </OnboardingScreen>
+    );
   if (progress.status === "idle" && !auth.error && !discovering)
     return (
       <OnboardingScreen
+        key="welcome"
+        welcome
         labelledBy="welcome-title"
         intro={
           <>
@@ -693,29 +817,37 @@ export function Welcome({
         }
       >
         <Button
-          variant={auth.status === "pending" ? "outline" : "prominent"}
+          variant="prominent"
           size="lg"
           onClick={() => {
-            if (auth.status === "pending") backToLanding();
-            else void signIn();
+            if (login.snapshot().status === "pending") {
+              cancels.current++;
+              login.cancel();
+            }
+            void signIn();
           }}
         >
-          {auth.status === "pending" ? "Cancel sign-in" : "Sign in with email"}
+          Sign in with email
         </Button>
-        {auth.status === "pending" && (
-          <p role="status" className="text-body-sm text-subtle">
-            Finish sign-in in your browser, then return to Buzz.
-          </p>
-        )}
-        {/* The action column centres its text; the field keeps its label aligned. */}
-        <div className="text-left">
-          <CommunityUrlField
-            url={entered}
-            onUrlChange={setEntered}
-            onSubmit={find}
-            disabled={auth.status === "pending"}
-          />
-        </div>
+        <Button
+          size="lg"
+          variant="ghost"
+          ref={(button) => {
+            if (button && returningFromOptions.current) {
+              returningFromOptions.current = false;
+              button.focus();
+            }
+          }}
+          onClick={() =>
+            onboardingTransition(() => {
+              cancels.current++;
+              login.cancel();
+              setOtherOptions(true);
+            })
+          }
+        >
+          Other options
+        </Button>
         {legacyOffer}
       </OnboardingScreen>
     );
@@ -770,6 +902,7 @@ export function Welcome({
           />
         ) : finding ? (
           <FindCommunity
+            onboarding
             url={finding}
             onCancel={() => setFinding(undefined)}
             onJoin={(found, consent) => join(found, consent, inviteCode)}
@@ -808,6 +941,7 @@ export function Welcome({
         />
       ) : finding ? (
         <FindCommunity
+          onboarding
           url={finding}
           onCancel={backToLanding}
           onFound={(found) => {
@@ -912,17 +1046,20 @@ function Failure({
       )}
       {publicKey && <PublicKeyPanel publicKey={publicKey} />}
       {/* Footer order: secondary first, primary last. */}
-      <div className="flex gap-3">
+      <div data-onboarding-actions="">
         {onBack && (
-          <Button onClick={onBack} disabled={!!busy}>
-            {backLabel}
-          </Button>
+          <OnboardingBack
+            onClick={onBack}
+            disabled={!!busy}
+            aria-label={backLabel}
+          />
         )}
         {onRetry && (
           // Loading keeps focus here, so a repeated denial, which leaves the
           // page unchanged, does not drop it.
           <Button
             variant="prominent"
+            size="lg"
             onClick={onRetry}
             loading={busy === "read"}
             disabled={busy === "code"}
@@ -933,4 +1070,8 @@ function Failure({
       </div>
     </>
   );
+}
+
+function focusCommunityHeading(heading: HTMLHeadingElement | null) {
+  heading?.focus();
 }

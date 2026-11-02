@@ -88,3 +88,22 @@ it("starts no new attempt when the live one could not be canceled", async () => 
   await waitFor(() => expect(stub.cancelRecovery).toHaveBeenCalledTimes(1));
   expect(stub.beginRecovery).not.toHaveBeenCalled();
 });
+
+it("restores the already selected linked identity without a second choice", async () => {
+  const stub = mount({
+    status: "choosing",
+    candidates: [
+      { handle: "other", pubkey: other },
+      { handle: "linked", pubkey: linked },
+    ],
+    currentPubkey: other,
+    failedCount: 0,
+  });
+  await waitFor(() =>
+    expect(stub.installRecovery).toHaveBeenCalledExactlyOnceWith("linked"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Restore this identity" }),
+  ).toBeNull();
+  expect(screen.queryByRole("radiogroup")).toBeNull();
+});

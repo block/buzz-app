@@ -31,6 +31,8 @@ export function ProfileFields({
   community,
   onBusyChange,
   showAvatar = true,
+  showAbout = true,
+  emptyAvatarStyle,
   autoFocus = false,
   nameRef,
   verifiedName,
@@ -41,6 +43,8 @@ export function ProfileFields({
   community?: string | undefined;
   onBusyChange?(busy: boolean): void;
   showAvatar?: boolean;
+  showAbout?: boolean;
+  emptyAvatarStyle?: "dotted-circle";
   /** Focuses the display name on mount, for pages whose only task is this form. */
   autoFocus?: boolean;
   nameRef?: Ref<HTMLInputElement>;
@@ -53,6 +57,7 @@ export function ProfileFields({
     <div className="grid gap-4">
       {showAvatar && (
         <AvatarEditor
+          emptyStyle={emptyAvatarStyle}
           value={profile.picture}
           name={profile.name}
           community={community}
@@ -85,24 +90,26 @@ export function ProfileFields({
           }
         />
       </Field>
-      <Field
-        label="Profile description (optional)"
-        description={`${profile.about?.length ?? 0} of ${PROFILE_ABOUT_MAX_LENGTH} characters`}
-        error={
-          (profile.about?.length ?? 0) > PROFILE_ABOUT_MAX_LENGTH
-            ? `Shorten the description to ${PROFILE_ABOUT_MAX_LENGTH} characters before saving.`
-            : undefined
-        }
-      >
-        <Textarea
-          rows={3}
-          disabled={disabled}
-          value={profile.about ?? ""}
-          onChange={(event) =>
-            onChange({ ...profile, about: event.target.value })
+      {showAbout && (
+        <Field
+          label="Profile description (optional)"
+          description={`${profile.about?.length ?? 0} of ${PROFILE_ABOUT_MAX_LENGTH} characters`}
+          error={
+            (profile.about?.length ?? 0) > PROFILE_ABOUT_MAX_LENGTH
+              ? `Shorten the description to ${PROFILE_ABOUT_MAX_LENGTH} characters before saving.`
+              : undefined
           }
-        />
-      </Field>
+        >
+          <Textarea
+            rows={3}
+            disabled={disabled}
+            value={profile.about ?? ""}
+            onChange={(event) =>
+              onChange({ ...profile, about: event.target.value })
+            }
+          />
+        </Field>
+      )}
     </div>
   );
 }

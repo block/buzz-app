@@ -216,7 +216,7 @@ export function fixture(
             {(creationAction) =>
               sidebarVisible && (
                 <PrimarySidebar
-                  creationAction={creationAction}
+                  actions={creationAction}
                   relay={relay}
                   navigator={navigator}
                   target={target}

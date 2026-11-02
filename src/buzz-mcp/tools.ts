@@ -171,6 +171,7 @@ export const TOOLS: readonly Tool[] = [
     ["channel", "text"],
   ),
   tool("edit", "Edit your message.", { id: str, text: str }, ["id", "text"]),
+  tool("delete", "Delete your message.", { id: str }, ["id"]),
   tool(
     "react",
     "React to a message.",
@@ -539,6 +540,54 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ],
     });
     return "edited";
+  },
+
+  async delete(tools, args) {
+    const { client } = tools;
+    const id = required(args, "id");
+    const target = await tools.event(id);
+    const channel = tag(target, "h");
+    if (!channel) throw new Error(`${id} is not a channel message.`);
+    if (target.pubkey !== client.pubkey)
+      throw new Error("Only your own messages can be deleted.");
+    // As the app does, a thread reply and its sent-to-channel copies are one
+    // message: delete the author's other linked copies too.
+    const sourceId =
+      target.kind === 9 ? tag(target, "buzz:copy-of") : undefined;
+    const source = sourceId ? await tools.event(sourceId) : target;
+    const linked =
+      target.kind === 9
+        ? (
+            await client.query([
+              {
+                kinds: [9],
+                authors: [client.pubkey],
+                "#h": [channel],
+                since: source.created_at,
+                limit: 100,
+              },
+            ])
+          ).filter(
+            (other) =>
+              other.id !== id &&
+              (other.id === source.id ||
+                tag(other, "buzz:copy-of") === source.id),
+          )
+        : [];
+    const targets = [target, ...linked];
+    await client.publish({
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", channel],
+        ...targets.map((event) => ["e", event.id]),
+        ...[...new Set(targets.map((event) => event.kind))].map((kind) => [
+          "k",
+          String(kind),
+        ]),
+      ],
+    });
+    return "deleted";
   },
 
   async react(tools, args) {

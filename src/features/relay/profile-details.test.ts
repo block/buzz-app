@@ -403,6 +403,18 @@ it("background enrichment does not reread a known absence until reconnect", asyn
     // A demanded read still asks again.
     await directory.ensure([other.pubkey], "foreground");
     expect(read).toHaveBeenCalledTimes(2);
+    // A kind 0 that arrives later ends the absence, so eviction rereads it.
+    directory.accept([profile(other, { name: "Nu" })]);
+    const filler = profile(user, { name: "Filler" });
+    directory.accept(
+      Array.from({ length: 1024 }, (_, i) => ({
+        ...filler,
+        pubkey: i.toString(16).padStart(64, "0"),
+      })),
+    );
+    expect(directory.queries.snapshot().has(other.pubkey)).toBe(false);
+    await directory.ensure([other.pubkey], "background");
+    expect(read).toHaveBeenCalledTimes(3);
     // The live route may have missed a kind 0 while offline.
     await directory.reconnect();
     read.mockClear();

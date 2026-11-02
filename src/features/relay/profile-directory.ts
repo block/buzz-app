@@ -104,6 +104,7 @@ export function createProfileDirectory(
       const previous = events.peek(event.pubkey);
       if (newer(previous, event) === previous) continue;
       events.set(event.pubkey, event);
+      absent.delete(event.pubkey);
       if (hasEventProof(event))
         attested.push(
           attestedOwner(event).then((owner) => {

@@ -1103,7 +1103,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on.
+  them. Every external plugin, including a local development build, requires a
+  valid signature. Existing unsigned installations remain blocked until replaced
+  with a signed release. Plugins built into Buzz are exempt. Do not assume a
+  particular optional plugin is on.
   A page whose plugin is turned off says so, and its **Manage plugins** opens
   that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a

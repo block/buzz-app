@@ -16,7 +16,7 @@ Commands:
   build DIRECTORY          Run the project's pnpm build script
   sign DIST_DIRECTORY       Sign with your saved Buzz human identity
   pack DIST_DIRECTORY FILE  Write the single-file artifact a URL source serves; prints its SHA-256
-  install DIRECTORY        Install a built artifact (new plugins start disabled)
+  install DIRECTORY        Install a signed release (new plugins start disabled)
   reload ID                Reload a folder plugin, preserving its enabled state
   list                     List installed pages and their enabled state
   managed                  Show the managed plugin sources policy and its status
@@ -74,7 +74,12 @@ fn run() -> Result<()> {
         }
         ("build", [directory]) => {
             build(Path::new(directory))?;
-            println!("Built {}", Path::new(directory).join("dist").display());
+            let dist = Path::new(directory).join("dist");
+            println!(
+                "Built {}\nNext: buzzodz plugin sign {}",
+                dist.display(),
+                dist.display()
+            );
             return Ok(());
         }
         ("sign", [directory]) => {

@@ -479,6 +479,42 @@ it("asks the writer again for a send refused while it was answering", async () =
   await vi.waitFor(() => expect(h.pending()).toEqual([[send.id], [send.id]]));
 });
 
+it("asks the writer again for a failed send retried while it was answering", async () => {
+  const unsent = failed(gone, "Never sent");
+  const elsewhere = failed(kept, "Removed later");
+  const h = await setup([unsent, elsewhere]);
+  const { id } = unsent.event;
+  const release = h.hold();
+  try {
+    await h.remove(gone, "roster refresh");
+    // The sweep saw the failed send; the writer sampled the viewer's absence.
+    await vi.waitFor(() => expect(h.confirmations).toEqual([[gone]]));
+    // The viewer is added back, but no roster push has reached this device.
+    await h.rejoin(gone, "unseen");
+    // Retrying keeps the send's ID; the relay refuses it again.
+    h.publish.mockRejectedValueOnce(
+      new PublishRejected("restricted: not a member"),
+    );
+    h.outbox.retry(id);
+    expect(
+      h.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+    ).toBe("sending");
+    await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(
+        h.outbox.snapshot().find((item) => item.event.id === id)?.delivery,
+      ).toBe("failed"),
+    );
+  } finally {
+    release();
+  }
+  // The stale answer predates the retry; a fresh read lists the viewer.
+  await vi.waitFor(() => expect(h.confirmations).toEqual([[gone], [gone]]));
+  // A later removal's discard is the barrier: outbox writes run in order.
+  await h.remove(kept, "live removal");
+  await vi.waitFor(() => expect(h.pending()).toEqual([[id], [id]]));
+});
+
 it("discards failed sends an earlier session left in a channel the viewer is not on", async () => {
   const stray = failed(left, "Sent before leaving");
   // Sent to channels the viewer is not on: a create, and removing its agent.

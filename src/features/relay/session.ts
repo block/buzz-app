@@ -450,9 +450,10 @@ export function createRelaySession(
    * roster read or a confirmed Leave or Delete, the writer confirms which
    * channels the viewer cannot participate in no longer list them: a
    * replica's omission can be lag, and a local denial (a 401 or a ban) is not
-   * removal. Writes that had already failed go. One still running when the
-   * writer was asked is swept again once its attempt ends, even if it fails
-   * before the answer arrives, since the viewer may have rejoined meanwhile.
+   * removal. Writes that had already failed go, unless retried since. One
+   * running or retried after the writer was asked is swept again once its
+   * attempt ends, even if it fails before the answer arrives, since the
+   * viewer may have rejoined meanwhile.
    * Unconfirmed intent stays for a regrant. One writer read runs at a time;
    * a request or a cancelled read sweeps again after it. */
   function dropStrandedSends() {
@@ -478,10 +479,9 @@ export function createRelaySession(
         ];
         if (!ids.length) return;
         // The writer's answer covers only writes that had failed when asked.
+        // A retry keeps the ID but replaces the record, so keep the records.
         const settled = new Set(
-          items.flatMap((item) =>
-            item.delivery === "failed" ? [item.event.id] : [],
-          ),
+          items.filter((item) => item.delivery === "failed"),
         );
         const gone = await channels
           .unlisted(ids, lifetime.signal)
@@ -504,8 +504,7 @@ export function createRelaySession(
           )
             continue;
           const { id } = item.event;
-          if (item.delivery === "failed" && settled.has(id))
-            void outbox.dismiss(id).catch(() => {});
+          if (settled.has(item)) void outbox.dismiss(id).catch(() => {});
           else void attemptEnded(outbox, id).then(dropStrandedSends);
         }
       })

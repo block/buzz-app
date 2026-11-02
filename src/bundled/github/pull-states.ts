@@ -786,7 +786,15 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         } catch (error) {
           console.warn("A pull request reader failed", error);
         }
-    if (urls.length) for (const observer of [...observers]) observer();
+    // Observers are other plugins' code: one that throws must not fail this
+    // read or keep the rest from hearing of it.
+    if (urls.length)
+      for (const observer of [...observers])
+        try {
+          observer();
+        } catch (error) {
+          (globalThis.reportError ?? console.error)(error);
+        }
   };
   const watchedAt = (url: string, level: PullLevel) =>
     [...(listeners.get(url) ?? [])].some(

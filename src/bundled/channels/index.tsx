@@ -9,7 +9,12 @@ import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
-import type { ArchiveShortcut } from "./ChannelsPage";
+import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
+import {
+  conversationRows,
+  inTerminal,
+  stepConversation,
+} from "./conversation-rows";
 export const inject = [
   "pages",
   "relay",
@@ -66,6 +71,48 @@ export const apply: PluginModule["apply"] = (ctx) => {
     when: () => !!archive.current?.available(),
     run: () => archive.current?.run(),
   });
+  // Slack's sidebar stepping. Terminals keep Option+Arrow, and stepping is
+  // unavailable (the key is left alone) while the sidebar renders no rows.
+  const stepping = [
+    ["previous-conversation", "Previous conversation", "ArrowUp", false, 30],
+    ["next-conversation", "Next conversation", "ArrowDown", false, 31],
+    [
+      "previous-unread-conversation",
+      "Previous unread conversation",
+      "ArrowUp",
+      true,
+      32,
+    ],
+    [
+      "next-unread-conversation",
+      "Next unread conversation",
+      "ArrowDown",
+      true,
+      33,
+    ],
+  ] as const;
+  for (const [id, title, key, unreadOnly, order] of stepping)
+    ctx.shortcuts.register({
+      id,
+      title,
+      binding: { key, alt: true, shift: unreadOnly },
+      order,
+      allowInEditable: true,
+      when: () => !inTerminal() && conversationRows().length > 0,
+      run: () =>
+        stepConversation(key === "ArrowUp" ? "previous" : "next", unreadOnly),
+    });
+  const read: ReadShortcut = {};
+  ctx.shortcuts.register({
+    id: "mark-read",
+    title: "Mark conversation as read",
+    binding: { key: "Escape" },
+    order: 40,
+    allowInEditable: true,
+    // Escape in a terminal belongs to its shell.
+    when: () => !inTerminal() && !!read.current?.available(),
+    run: () => read.current?.run(),
+  });
   const agents = ctx.agents;
   ctx.settingsCards.register({
     id: "templates",
@@ -94,6 +141,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         relay={relay}
         panels={panels}
         archive={archive}
+        read={read}
         companion={companion}
         agents={agents}
         communities={ctx.communityReader}

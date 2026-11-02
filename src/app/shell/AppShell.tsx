@@ -23,6 +23,9 @@ import type { InviteLink } from "../../features/communities/invite-link";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { CommunityPicker } from "../../features/communities/CommunityPicker";
 import { ProfileButton } from "./ProfileButton";
+import { CommunityShortcuts } from "./CommunityShortcuts";
+import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
+import { ShortcutsPanel } from "./ShortcutsPanel";
 import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
@@ -534,9 +537,12 @@ function AppShellContent({
                 onKeyDown={(event) => {
                   if (
                     event.key === "Escape" &&
+                    !event.shiftKey &&
                     navigationOpen &&
                     !event.defaultPrevented
                   ) {
+                    // Closing the drawer consumes Escape, so it marks nothing read.
+                    event.preventDefault();
                     setNavigationOpen(false);
                     navigationToggle.current?.focus();
                   }
@@ -585,6 +591,24 @@ function AppShellContent({
         </div>
       </div>
       {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
+      {searchServices?.plugins && (
+        <ShortcutsPanel
+          services={{ ...searchServices, plugins: searchServices.plugins }}
+        />
+      )}
+      {searchServices && (
+        <>
+          <MarkAllReadShortcut
+            communities={communities}
+            shortcuts={searchServices.shortcuts}
+          />
+          <CommunityShortcuts
+            communities={communities}
+            shortcuts={searchServices.shortcuts}
+            onSelect={onCommunitySelect}
+          />
+        </>
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -26,6 +27,8 @@ import { createNavigationController } from "../features/navigation/controller";
 import { createMemoryHistory } from "../features/navigation/history";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
 import { PageSearch, type SearchServices } from "./shell/PageSearch";
+import { ShortcutsPanel } from "./shell/ShortcutsPanel";
+import type { ComponentProps } from "react";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
 
@@ -96,7 +99,10 @@ async function harness() {
   shortcuts.registerHost({
     id: "global-search",
     title: "Search Buzz",
-    binding: { key: "k", mod: true },
+    binding: [
+      { key: "k", mod: true },
+      { key: "t", mod: true },
+    ],
     order: 70,
     run: runs.search,
   });
@@ -163,6 +169,15 @@ async function harness() {
   };
 }
 const row = (title: string) => screen.getByRole("article", { name: title });
+/** Rebindable rows: everything outside the read-only Message formatting group. */
+const appRows = () =>
+  screen
+    .getAllByRole("article")
+    .filter(
+      (article) =>
+        article.closest("section")?.querySelector("h3")?.textContent !==
+        "Message formatting",
+    );
 const change = (title: string) =>
   screen.getByRole("button", { name: `Change shortcut for ${title}` });
 const capture = (title: string) =>
@@ -185,14 +200,17 @@ it("lists live host and plugin shortcuts without search or intro text and follow
     const groups = screen
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent);
-    expect(groups).toEqual(["Buzz", "Shortcut counter", "Terminal"]);
+    expect(groups).toEqual([
+      "Buzz",
+      "Shortcut counter",
+      "Terminal",
+      "Message formatting",
+    ]);
     expect(
-      screen
-        .getAllByRole("article")
-        .map(
-          (article) =>
-            within(article).getByRole("heading", { level: 4 }).textContent,
-        ),
+      appRows().map(
+        (article) =>
+          within(article).getByRole("heading", { level: 4 }).textContent,
+      ),
     ).toEqual([
       "Increase interface size",
       "Search Buzz",
@@ -209,6 +227,16 @@ it("lists live host and plugin shortcuts without search or intro text and follow
       "data-binding",
       "⌘=",
     );
+    // Layout aliases of one key (⌘= ⌘+ ⇧⌘= ⇧⌘+) show once.
+    expect(grow.querySelectorAll(".buzz-keyboard-shortcut")).toHaveLength(1);
+    // Distinct chords each show, in order.
+    const search = row("Search Buzz");
+    expect(
+      [...search.querySelectorAll(".buzz-keyboard-shortcut")].map((chord) =>
+        chord.getAttribute("data-binding"),
+      ),
+    ).toEqual(["⌘K", "⌘T"]);
+    expect(within(search).getByText("or")).toBeInTheDocument();
     expect(
       within(row("Increment shortcut counter")).getByText("Shift Command K"),
     ).toBeInTheDocument();
@@ -228,7 +256,7 @@ it("lists live host and plugin shortcuts without search or intro text and follow
     expect(
       screen.queryByRole("heading", { name: "Terminal" }),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByRole("article")).toHaveLength(5);
+    expect(appRows()).toHaveLength(5);
     act(() => h.setActive("buzz.terminal", true));
     expect(row("Toggle channel terminal")).toBeInTheDocument();
   } finally {
@@ -265,6 +293,16 @@ it("presents actual host registrations in navigation, interface sizing, search/s
             } as unknown as SearchServices
           }
         />
+        <ShortcutsPanel
+          services={
+            {
+              shortcuts,
+              shortcutBindings: bindings,
+              plugins: catalog([]),
+              navigation: navigation.navigation,
+            } as unknown as ComponentProps<typeof ShortcutsPanel>["services"]
+          }
+        />
         <ShortcutSettings
           shortcuts={shortcuts}
           bindings={bindings}
@@ -273,12 +311,10 @@ it("presents actual host registrations in navigation, interface sizing, search/s
       </>,
     );
     expect(
-      screen
-        .getAllByRole("article")
-        .map(
-          (article) =>
-            within(article).getByRole("heading", { level: 4 }).textContent,
-        ),
+      appRows().map(
+        (article) =>
+          within(article).getByRole("heading", { level: 4 }).textContent,
+      ),
     ).toEqual([
       "Home",
       "Go back",
@@ -290,8 +326,15 @@ it("presents actual host registrations in navigation, interface sizing, search/s
       "Search this conversation",
       "Open Settings",
       "Show keyboard shortcuts",
+      "Set a status",
       "Focus message box",
       "Focus next pane",
+      "Edit selected message",
+      "React to selected message",
+      "React to latest message",
+      "Reply in thread to selected message",
+      "Mark unread from selected message",
+      "Delete selected message",
       "Reload Buzz",
     ]);
   } finally {
@@ -330,12 +373,10 @@ it("orders plugin rows by metadata then contribution key without merging duplica
       />,
     );
     expect(
-      screen
-        .getAllByRole("article")
-        .map(
-          (article) =>
-            within(article).getByRole("heading", { level: 4 }).textContent,
-        ),
+      appRows().map(
+        (article) =>
+          within(article).getByRole("heading", { level: 4 }).textContent,
+      ),
     ).toEqual([
       "Increase interface size",
       "Search Buzz",
@@ -436,23 +477,23 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     expect(h.bindings.snapshot().overrides).toEqual({});
     expect(capture(title)).toBe(input);
 
-    await user.keyboard("{Control>}{Shift>}u{/Shift}{/Control}");
+    await user.keyboard("{Control>}{Shift>}j{/Shift}{/Control}");
     expect(screen.queryByRole("textbox", { name: /New shortcut/ })).toBeNull();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(within(row(title)).getByText("Modified")).toBeInTheDocument();
-    expect(within(row(title)).getByText("Control Shift U")).toBeInTheDocument();
+    expect(within(row(title)).getByText("Control Shift J")).toBeInTheDocument();
     expect(change(title)).toHaveFocus();
     expect(h.bindings.snapshot().overrides).toEqual({
-      "example.counter/increment": { key: "u", mod: true, shift: true },
+      "example.counter/increment": { key: "j", mod: true, shift: true },
     });
     expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(
       JSON.stringify({
-        "example.counter/increment": { key: "u", mod: true, shift: true },
+        "example.counter/increment": { key: "j", mod: true, shift: true },
       }),
     );
     expect(h.press("k", { shiftKey: true })).toBe(true);
     expect(h.runs.increment).not.toHaveBeenCalled();
-    expect(h.press("u", { shiftKey: true })).toBe(false);
+    expect(h.press("j", { shiftKey: true })).toBe(false);
     expect(h.runs.increment).toHaveBeenCalledTimes(1);
     await user.click(
       screen.getByRole("button", { name: `Reset shortcut for ${title}` }),
@@ -946,7 +987,13 @@ it("keeps the host group distinct from a plugin whose manifest id is buzz", asyn
       screen
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual(["Buzz", "Buzz plugin", "Shortcut counter", "Terminal"]);
+    ).toEqual([
+      "Buzz",
+      "Buzz plugin",
+      "Shortcut counter",
+      "Terminal",
+      "Message formatting",
+    ]);
     expect(row("Ping")).toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
   } finally {
@@ -1043,5 +1090,97 @@ it("shows desktop Close as reserved and read-only while other actions remain edi
     appearance.dispose();
     bindings.dispose();
     await root.fiber.dispose();
+  }
+});
+
+it("lists the message editor's formatting keys read-only and warns when a shortcut takes one", async () => {
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    // Said once under the section heading, not on every row.
+    expect(
+      screen.getByText(
+        "Built into the message editor. These work while you type and can't be changed.",
+      ),
+    ).toBeVisible();
+    const code = row("Code");
+    expect(within(code).queryByText(/Built into/)).toBeNull();
+    expect(
+      within(code).queryByRole("button", { name: /Change shortcut/ }),
+    ).toBeNull();
+    expect(
+      [...code.querySelectorAll(".buzz-keyboard-shortcut")].map((chord) =>
+        chord.getAttribute("data-binding"),
+      ),
+    ).toEqual(["Ctrl+E", "Ctrl+Shift+C"]);
+    expect(row("Add or edit link")).toBeInTheDocument();
+    const user = userEvent.setup();
+    const title = "Increment shortcut counter";
+    await user.click(change(title));
+    await user.keyboard("{Control>}{Shift>}u{/Shift}{/Control}");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The message editor handles Ctrl+Shift+U itself while you are typing",
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("opens a searchable, read-only shortcut list on Control+/ and links to Settings to change keys", async () => {
+  const h = await harness();
+  const open = vi.fn(async () => {});
+  try {
+    render(
+      <ShortcutsPanel
+        services={
+          {
+            shortcuts: h.shortcuts,
+            shortcutBindings: h.bindings,
+            plugins: h.plugins,
+            navigation: { open },
+          } as unknown as ComponentProps<typeof ShortcutsPanel>["services"]
+        }
+      />,
+    );
+    expect(h.press("/")).toBe(false);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+    });
+    const search = within(dialog).getByRole("searchbox", {
+      name: "Search shortcuts",
+    });
+    await waitFor(() => expect(search).toHaveFocus());
+    expect(within(dialog).getByText("Search Buzz")).toBeVisible();
+    expect(within(dialog).getByText("Shortcut counter")).toBeVisible();
+    expect(within(dialog).getByText("Message formatting")).toBeVisible();
+    expect(
+      within(dialog).queryByRole("button", { name: /Change shortcut for/ }),
+    ).toBeNull();
+    const user = userEvent.setup();
+    await user.type(search, "quote");
+    expect(within(dialog).getByText("Quote")).toBeVisible();
+    expect(within(dialog).queryByText("Search Buzz")).toBeNull();
+    await user.clear(search);
+    await user.type(search, "zzz");
+    expect(within(dialog).getByText("No shortcuts match “zzz”.")).toBeVisible();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Change shortcuts in Settings",
+      }),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "shortcuts",
+    });
+  } finally {
+    cleanup();
+    await h.dispose();
   }
 });

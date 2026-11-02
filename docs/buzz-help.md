@@ -101,7 +101,9 @@ the interface unless an available tool actually supports that action.
   of them and also lists the fixed message-formatting keys. In an empty
   composer, Up selects a message. Then E edits it, R reacts, T or → replies in
   thread, U marks it unread, and Delete deletes your own message. ⌘1–9 switch
-  communities, and ⇧Esc marks everything read.
+  communities, and ⇧Esc marks everything read. If a plugin uses the same key as
+  another shortcut, Settings → Shortcuts marks it "Also used by"; change one of
+  them to choose which fires.
 - **Sharing a Solo chat** grants access to its conversation history, not only
   the next message. Copying its link alone does not grant access. Check the
   intended people and destination before changing access.

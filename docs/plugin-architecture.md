@@ -2228,7 +2228,11 @@ so rebinding a shortcut onto one warns. Slack's ⌘⇧C (code), ⌘⇧9 (quote),
 Shortcuts (`useShortcutGroups`), so rebinds and plugin keys show as they fire; its
 footer opens Settings to change them. ⌘⇧Y opens Set a status while the profile menu
 can (the message editor keeps it as Redo). Home is on the placeholder ⌘⇧O while
-⌘⇧A opens Inbox's unread view.
+⌘⇧A opens Inbox's unread view. Inbox's ⌘⇧A, ⌘⇧T, ⌘⇧M and ⌘⇧K are ordinary
+`buzz.inbox` plugin contributions, so they follow the plugin precedence above: a
+plugin whose namespaced ID sorts first and claims the same chord wins it while
+eligible. Settings → Shortcuts marks such rows "Also used by"; rebinding either one
+resolves it.
 
 Known limitations. Capture and matching both use the logical `KeyboardEvent.key`.
 On macOS an Option chord reports the composed character, so Option+K is stored

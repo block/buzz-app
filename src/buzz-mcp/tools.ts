@@ -314,11 +314,7 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool(
-    "canvas_get",
-    "Read a channel's canvas and its version, the current revision's id.",
-    { channel: str },
-  ),
+  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
   tool("canvas_set", "Replace a channel's canvas.", {
     channel: str,
     content: str,
@@ -340,7 +336,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "canvas_restore",
-    "Republish an earlier canvas revision as the newest one; history is kept. Pass the version from your latest canvas_get or canvas_history as expected.",
+    "Republish an earlier canvas revision as the newest one; history is kept. Pass the version from the first page of your latest canvas_history as expected.",
     { id: str, channel: str, expected: str },
     ["id", "expected"],
     { readOnlyHint: false, destructiveHint: true },
@@ -1194,7 +1190,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? tools.context.channel;
     if (!channel) throw new Error("channel is required here.");
     const head = await canvas(tools, channel);
-    return head ? `version: ${head.id}\n\n${head.content}` : "No canvas.";
+    return head?.content || "No canvas.";
   },
 
   async canvas_set(tools, args) {
@@ -1286,7 +1282,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // Guard the version the agent saw, never one that replaced it since.
     if (current?.id !== expected)
       throw new Error(
-        `The canvas changed since version ${expected}. Read it again with canvas_get or canvas_history before you restore.`,
+        `The canvas changed since version ${expected}. Read canvas_history again before you restore.`,
       );
     if (current.id === id) return "That revision is already the canvas.";
     // The newest canvas wins, so a write must be dated after the current one.

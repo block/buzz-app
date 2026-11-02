@@ -1786,7 +1786,7 @@ it("reads an existing canvas without querying channel metadata", async () => {
   const { client } = fake([event({ kind: 40100, content: "# Existing" })]);
   await expect(
     callTool(client, { channel: "chan" }, "canvas_get", {}),
-  ).resolves.toBe(`version: ${"f".repeat(64)}\n\n# Existing`);
+  ).resolves.toBe("# Existing");
   expect(client.query).toHaveBeenCalledExactlyOnceWith([
     { kinds: [40100], "#h": ["chan"], limit: 1 },
   ]);
@@ -1967,7 +1967,7 @@ it("restores a canvas revision guarded by the head it read", async () => {
     ]);
     await expect(
       callTool(client, { channel: "chan" }, "canvas_get", {}),
-    ).resolves.toBe(`version: ${"1".padStart(64, "e")}\n\n# Old`);
+    ).resolves.toBe("# Old");
   } finally {
     vi.useRealTimers();
   }
@@ -2100,10 +2100,10 @@ it("reads and replaces the canvas of a named channel or the current one", async 
   ]);
   await expect(
     callTool(client, { channel: "chan" }, "canvas_get", {}),
-  ).resolves.toBe(`version: ${"f".repeat(64)}\n\n# Existing`);
+  ).resolves.toBe("# Existing");
   await expect(
     callTool(client, {}, "canvas_get", { channel: "chan" }),
-  ).resolves.toBe(`version: ${"f".repeat(64)}\n\n# Existing`);
+  ).resolves.toBe("# Existing");
   await expect(callTool(client, {}, "canvas_get", {})).rejects.toThrow(
     "channel is required here.",
   );

@@ -1159,4 +1159,30 @@ describe("resume after a continuous membership replay", () => {
     expect(f.reader.read).toHaveBeenCalledTimes(2);
     expect(owner.snapshot().status).toBe("reconciled");
   });
+
+  it("reads the snapshot again when a drop cancelled a live marker still being ingested", async () => {
+    const f = fixture();
+    const owner = f.make();
+    await owner.ready;
+    await owner.refresh();
+    const marker = await otherDeviceMarker(f);
+    // The marker arrives live and is still decoding when the stream drops.
+    let release!: () => void;
+    const decode = f.host.decode.getMockImplementation();
+    if (!decode) throw new Error("Missing fixture decoder");
+    f.host.decode.mockImplementationOnce(async (events) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return decode(events);
+    });
+    owner.accept([marker]);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    owner.stale();
+    release();
+    await owner.resume();
+    expect(f.reader.read).toHaveBeenCalledTimes(2);
+    expect(owner.state().frontiers.room).toBe(12);
+    expect(owner.snapshot().status).toBe("reconciled");
+  });
 });

@@ -856,6 +856,9 @@ export function createReadState({
         } catch (error) {
           if (!closed && generation === epoch)
             health({ status: "error", error: errorText(error) });
+          // A drop cancelled it: the replay may not carry it again, so the
+          // snapshot is read again instead of resuming.
+          else resumable = undefined;
         }
       });
     },

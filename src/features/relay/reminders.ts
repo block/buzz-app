@@ -399,7 +399,9 @@ export function createReminders(options: {
       offline = false;
       const current = ++generation;
       return Promise.allSettled([...receiving]).then(() => {
-        if (signal.aborted || current !== generation || loading) return;
+        // A second drop while the edits decode leaves the list stale again.
+        if (signal.aborted || current !== generation || loading || offline)
+          return;
         // An edit the replay carried but that failed to decode is read again.
         if (lost) void recover();
         else publishState({ status: "ready" }, true);

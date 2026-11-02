@@ -7,6 +7,12 @@ import type { LiveCallbacks } from "./live";
 import { headRecovering } from "./live-recovery";
 import { EMOJI_SET } from "./emoji";
 import { readJournal, type ReadJournal } from "./read-state-storage";
+// The real host codec, as read-state.test.ts uses it.
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Node-only host module
+} from "../../../browser-host/read-state.mjs";
 import {
   bounds,
   flush,
@@ -1396,6 +1402,9 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
   let journal: ReadJournal | undefined;
+  const decodeMarkers = vi.fn(async (events: readonly RelayEvent[]) =>
+    decodeReadState(events, viewer.secret),
+  );
   const owner = createRelaySession(
     {
       ...wire.transport,
@@ -1403,7 +1412,7 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
         live = callbacks;
         return { update() {}, retry() {}, dispose() {} };
       },
-      readState: { decode: async () => [] },
+      readState: { decode: decodeMarkers },
       writer: {
         sign: async () => {
           throw new Error("unused");
@@ -1455,6 +1464,16 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
       tags: [["d", "r1"]],
       created_at: at,
     });
+  // Another device's read-state marker for channel "c".
+  const marker: RelayEvent = signReadState(
+    {
+      slot: "ab".repeat(16),
+      createdAt: 1_700_000_100,
+      blob: { v: 1, client_id: "phone", contexts: { c: 1_700_000_050 } },
+    },
+    viewer.secret,
+    1_700_000_100,
+  );
   const channel = [
     roster(relay, "c", [viewer.pubkey]),
     metadata(relay, "c", "C"),
@@ -1539,10 +1558,13 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
       status("In a meeting", 1_700_000_100),
       emojiSet("party", 1_700_000_100),
       reminder("done", 1_700_000_100),
+      marker,
     ]);
     establish(true, true);
     expect(covered(await drain())).toEqual(none);
     ready();
+    // The replayed marker went through the same ingest as a snapshot read.
+    expect(decodeMarkers.mock.calls.at(-1)?.[0]).toEqual([marker]);
     expect(owner.session.statuses.snapshot().get(alice.pubkey)?.text).toBe(
       "In a meeting",
     );

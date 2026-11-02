@@ -519,16 +519,42 @@ describe("resume after a continuous membership replay", () => {
       publish: async () => {},
     });
 
-  it("restores a complete list without a read, with the edits the replay carried", async () => {
+  it("restores a complete list without a read, once the edits the replay carried are decoded", async () => {
     const query = vi.fn(async () => [wire("e1", 10, "pending")]);
-    const model = setup(query);
+    let release: (() => void) | undefined;
+    let held = false;
+    const model = createReminders({
+      viewer,
+      signal: new AbortController().signal,
+      host: {
+        decode: async (events) => {
+          if (held)
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          return decode(events);
+        },
+        sign: async () => {
+          throw new Error("unused");
+        },
+      },
+      query,
+      publish: async () => {},
+    });
     await model.recover();
     expect(model.capability.snapshot().status).toBe("ready");
     model.stale();
     expect(model.capability.snapshot().status).toBe("loading");
     // Another device completes it during the outage; the replay carries it.
+    held = true;
     model.receive([wire("e2", 11, "done")]);
-    await model.resume();
+    const resumed = model.resume();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    // Not ready while that edit is still decoding.
+    await Promise.resolve();
+    expect(model.capability.snapshot().status).toBe("loading");
+    release?.();
+    await resumed;
     expect(query).toHaveBeenCalledTimes(1);
     expect(model.capability.snapshot()).toMatchObject({
       status: "ready",
@@ -552,6 +578,41 @@ describe("resume after a continuous membership replay", () => {
     await vi.waitFor(() =>
       expect(model.capability.snapshot().status).toBe("ready"),
     );
+  });
+
+  it("stays loading when the stream drops again while replayed edits decode", async () => {
+    const query = vi.fn(async () => [wire("e1", 10, "pending")]);
+    let release!: () => void;
+    let held = false;
+    const model = createReminders({
+      viewer,
+      signal: new AbortController().signal,
+      host: {
+        decode: async (events) => {
+          if (held)
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          return decode(events);
+        },
+        sign: async () => {
+          throw new Error("unused");
+        },
+      },
+      query,
+      publish: async () => {},
+    });
+    await model.recover();
+    model.stale();
+    held = true;
+    model.receive([wire("e2", 11, "done")]);
+    const resumed = model.resume();
+    await vi.waitFor(() => expect(release).toBeDefined());
+    model.stale();
+    release();
+    await resumed;
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(model.capability.snapshot().status).toBe("loading");
   });
 
   it("reads again when a read was still out at the drop", async () => {

@@ -1862,6 +1862,124 @@ it("publishes the first canvas only after finding visible channel metadata", asy
   ]);
 });
 
+it("lists canvas revisions newest first, a page at a time", async () => {
+  const rows = Array.from({ length: 26 }, (_, i) =>
+    event({
+      kind: 40100,
+      id: `${i}`.padStart(64, "0"),
+      created_at: 100 + i,
+      content: `# Plan ${i}\nbody`,
+    }),
+  );
+  const { client } = fake(rows);
+  const page = await callTool(
+    client,
+    { channel: "chan" },
+    "canvas_history",
+    {},
+  );
+  const lines = (page as string).split("\n");
+  expect(lines).toHaveLength(26);
+  expect(lines[0]).toBe(
+    `${rows[25]?.id} 1970-01-01T00:02Z ${alice} 14B # Plan 25`,
+  );
+  expect(lines[25]).toBe(
+    `Older revisions remain; continue with ${JSON.stringify({ channel: "chan", before: 101, before_id: rows[1]?.id })}`,
+  );
+  await expect(
+    callTool(client, {}, "canvas_history", {
+      channel: "chan",
+      before: 101,
+      before_id: rows[1]?.id,
+    }),
+  ).resolves.toBe(`${rows[0]?.id} 1970-01-01T00:01Z ${alice} 13B # Plan 0`);
+  await expect(
+    callTool(client, {}, "canvas_history", {
+      channel: "chan",
+      before_id: root,
+    }),
+  ).rejects.toThrow("before_id needs before");
+});
+
+it("restores a canvas revision guarded by the head it read", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(300_000);
+    const old = event({ kind: 40100, id: root, content: "# Old" });
+    const head = event({ kind: 40100, id: nested, created_at: 200 });
+    const { client, published } = fake([old, head], { keep: true });
+    await expect(
+      callTool(client, { channel: "chan" }, "canvas_restore", { id: root }),
+    ).resolves.toBe(`restored ${root} as ${"1".padStart(64, "e")}`);
+    expect(published).toEqual([
+      {
+        kind: 40100,
+        content: "# Old",
+        tags: [
+          ["h", "chan"],
+          ["expected-revision", nested],
+        ],
+      },
+    ]);
+    await expect(
+      callTool(client, { channel: "chan" }, "canvas_get", {}),
+    ).resolves.toBe("# Old");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("refuses to restore what is not a revision of this canvas", async () => {
+  const { client, published } = fake([
+    event({ kind: 9, id: root }),
+    event({ kind: 40100, id: nested, tags: [["h", "other"]] }),
+  ]);
+  for (const id of [root, nested, "f".repeat(64)])
+    await expect(
+      callTool(client, { channel: "chan" }, "canvas_restore", { id }),
+    ).rejects.toThrow(`No canvas revision ${id} in chan`);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_restore", { id: "x" }),
+  ).rejects.toThrow("64-character");
+  expect(published).toEqual([]);
+});
+
+it("reports a restore that another canvas write overtook", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(300_000);
+    const old = event({ kind: 40100, id: root, content: "# Old" });
+    const later = event({ kind: 40100, id: nested, created_at: 999 });
+    const { client } = fake([old]);
+    const publish = client.publish;
+    client.publish = vi.fn(async (template) => {
+      const signed = await publish(template);
+      (client.query as ReturnType<typeof vi.fn>).mockResolvedValue([later]);
+      return signed;
+    });
+    await expect(
+      callTool(client, { channel: "chan" }, "canvas_restore", { id: root }),
+    ).resolves.toBe("That revision is already the canvas.");
+    const { client: other } = fake([
+      old,
+      event({ kind: 40100, id: "d".repeat(64), created_at: 200 }),
+    ]);
+    const otherPublish = other.publish;
+    other.publish = vi.fn(async (template) => {
+      const signed = await otherPublish(template);
+      (other.query as ReturnType<typeof vi.fn>).mockResolvedValue([later]);
+      return signed;
+    });
+    await expect(
+      callTool(other, { channel: "chan" }, "canvas_restore", { id: root }),
+    ).rejects.toThrow(
+      `conflict: the restore was received, but another canvas (${nested})`,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("reads and replaces the canvas of a named channel or the current one", async () => {
   const { client, published } = fake([
     event({ kind: 40100, content: "# Existing" }),

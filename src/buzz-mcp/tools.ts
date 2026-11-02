@@ -318,6 +318,24 @@ export const TOOLS: readonly Tool[] = [
     path: str,
   }),
   tool(
+    "canvas_history",
+    "A channel's canvas revisions, newest first: each one's id, time, author, size and first line.",
+    {
+      channel: str,
+      before: { type: "integer", description: "Unix seconds, at or before." },
+      before_id: {
+        type: "string",
+        description: "For paginating: with before, from a continue line.",
+      },
+    },
+  ),
+  tool(
+    "canvas_restore",
+    "Republish an earlier canvas revision as the newest one; history is kept.",
+    { id: str, channel: str },
+    ["id"],
+  ),
+  tool(
     "media_get",
     "Get a file of any type from a Buzz media URL: saves it locally and gives its path; an image is also shown.",
     { url: str },
@@ -348,6 +366,8 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
+/** Canvas revisions per history page, as the app shows them. */
+const CANVAS_PAGE = 25;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
 /** A repository name the community accepts. */
@@ -1180,6 +1200,93 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     await waitUntil(after);
     await client.publish({ kind: 40100, content, tags: [["h", channel]] });
     return "saved";
+  },
+
+  async canvas_history(tools, args) {
+    const channel = text(args.channel) ?? tools.context.channel;
+    if (!channel) throw new Error("channel is required here.");
+    const before = args.before as number | undefined;
+    const beforeId = args.before_id;
+    if (beforeId !== undefined && before === undefined)
+      throw new Error("before_id needs before, from the same continue line.");
+    if (
+      beforeId !== undefined &&
+      (typeof beforeId !== "string" || !HEX.test(beforeId))
+    )
+      throw new Error("before_id must be a 64-character event ID.");
+    // A page as the app's history shows it, with the relay's cursor.
+    const rows = await tools.client.query([
+      {
+        kinds: [40100],
+        "#h": [channel],
+        limit: CANVAS_PAGE,
+        ...(before !== undefined ? { until: before } : {}),
+        ...(beforeId ? { before_id: beforeId } : {}),
+      },
+    ]);
+    if (!rows.length) {
+      if (before === undefined && !(await tools.metadata(channel)))
+        throw unseen(channel);
+      return before === undefined ? "No canvas." : "No older revisions.";
+    }
+    const lines = rows.map((row) => {
+      const first = row.content.trim().split("\n", 1)[0] ?? "";
+      const bytes = new TextEncoder().encode(row.content).length;
+      return `${row.id} ${time(row.created_at)} ${row.pubkey} ${bytes}B ${first.slice(0, 80)}`;
+    });
+    const last = rows.at(-1);
+    if (last && rows.length >= CANVAS_PAGE)
+      lines.push(
+        `Older revisions remain; continue with ${JSON.stringify({ channel, before: last.created_at, before_id: last.id })}`,
+      );
+    return lines.join("\n");
+  },
+
+  async canvas_restore(tools, args) {
+    const { client, context } = tools;
+    const id = required(args, "id");
+    if (!HEX.test(id)) throw new Error("id must be a 64-character event ID.");
+    const channel = text(args.channel) ?? context.channel;
+    if (!channel) throw new Error("channel is required here.");
+    // Read from the writer, as the app does, so the guard sees the real head.
+    const head = async () =>
+      (
+        await client.query([
+          { kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" },
+        ])
+      )[0];
+    const [revision] = await client.query([{ ids: [id], limit: 1 }]);
+    if (
+      revision?.kind !== 40100 ||
+      !revision.tags.some((t) => t[0] === "h" && t[1] === channel)
+    )
+      throw new Error(
+        `No canvas revision ${id} in ${channel}; canvas_history lists them.`,
+      );
+    const current = await head();
+    if (current?.id === id) return "That revision is already the canvas.";
+    // The newest canvas wins, so a write must be dated after the current one.
+    const after = current ? (current.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The canvas was just changed; try again.");
+    await waitUntil(after);
+    // The relay refuses it if the canvas moved past the revision read above.
+    const saved = await client.publish({
+      kind: 40100,
+      content: revision.content,
+      tags: [
+        ["h", channel],
+        ["expected-revision", current?.id ?? "none"],
+      ],
+    });
+    const selected = await head().catch((error: unknown) => {
+      throw unread(error);
+    });
+    if (selected?.id !== saved.id)
+      throw new Error(
+        `conflict: the restore was received, but another canvas (${selected?.id}) is now current. Read it with canvas_get before trying again.`,
+      );
+    return `restored ${id} as ${saved.id}`;
   },
 
   async repo(tools, args) {

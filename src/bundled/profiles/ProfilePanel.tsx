@@ -478,21 +478,19 @@ function ProfileDetails({
             )}
             <StatusDisplay session={session} status={userStatus} />
           </div>
-          {canSetStatus && (
-            <div className={hero.actions}>
-              <Button
-                ref={statusButton}
-                size="sm"
-                variant={picture ? "glass" : "subtle"}
-                aria-haspopup="dialog"
-                onClick={() => statusEditor.open()}
-              >
-                {userStatus ? "Update status" : "Set a status"}
-              </Button>
-            </div>
-          )}
-          {(canMessage || canEdit) && (
-            <div className={hero.actions}>
+          {(canSetStatus || canMessage || canEdit) && (
+            <div className={`${hero.actions} ${styles.ownActions}`}>
+              {canSetStatus && (
+                <Button
+                  ref={statusButton}
+                  size="sm"
+                  variant={picture ? "glass" : "subtle"}
+                  aria-haspopup="dialog"
+                  onClick={() => statusEditor.open()}
+                >
+                  {userStatus ? "Update status" : "Set a status"}
+                </Button>
+              )}
               {canMessage && (
                 <Button
                   size="sm"

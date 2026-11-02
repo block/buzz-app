@@ -318,18 +318,31 @@ it.each(["history", "details"])(
   },
 );
 
-it.each([false, true])(
-  "staged session cards keep caption-first naming and protect chosen names (chosen=%s)",
-  async (chosen) => {
+it.each([
+  { chosen: false, caption: "Review this", title: "Review this" },
+  { chosen: true, caption: "Review this", title: "Review this" },
+  {
+    chosen: false,
+    caption: "Review [\\#design](buzz://channel/design)",
+    title: "Review #design",
+  },
+  {
+    chosen: true,
+    caption: "Review [\\#design](buzz://channel/design)",
+    title: "Review #design",
+  },
+])(
+  "staged cards and $caption preserve automatic naming and chosen names (chosen=$chosen)",
+  async ({ chosen, caption, title }) => {
     const { startingChatTitle } = await import("../solo/chat-title");
     const { composerMarkdown } = await import("../messages/composer-markdown");
     const draft = {
-      text: "@Agent Review this",
+      text: `@Agent ${caption}`,
       recipients: [{ pubkey: first, name: "Agent", start: 0, end: 6 }],
       chatCards: ["[Session: Fix](buzz://channel/session-id)"],
     };
     const name = startingChatTitle(draft);
-    expect(name).toBe("Review this");
+    expect(name).toBe(title);
     const sent = { ...event, content: composerMarkdown(draft) };
     const save = vi.fn();
     const relay = connection(() => ({
@@ -364,5 +377,5 @@ it("an agent tag without a caption retains the session-card starting title", asy
       recipients: [{ pubkey: first, name: "Agent", start: 0, end: 6 }],
       chatCards: ["[Session: Fix](buzz://channel/session-id)"],
     }),
-  ).toBe("[Session: Fix](buzz://channel/session-id)");
+  ).toBe("Session: Fix");
 });

@@ -200,7 +200,11 @@ it("names the linked message's author and channel once its exact reader settles"
   // Loading keeps the existing channel label and icon.
   const anchor = screen.getByRole("link", { name: "design" });
   expect(anchor.querySelector('[data-link-kind="message"] svg')).not.toBeNull();
-  expect(app.thread).toHaveBeenCalledWith("design", id(1), { exact: true });
+  // A passive lookup yields transport capacity to opened conversations.
+  expect(app.thread).toHaveBeenCalledWith("design", id(1), {
+    exact: true,
+    priority: "background",
+  });
   await app.views[0]?.publish(ready(message(id(1))));
   expect(screen.getByRole("link", { name: "Alice in #design" })).toBe(anchor);
   expect(anchor.textContent).toBe("Alice in #design");
@@ -304,6 +308,7 @@ it("takes the author from the channel's loaded timeline without reading", async 
   await started();
   expect(restored.thread).toHaveBeenCalledWith("design", id(1), {
     exact: true,
+    priority: "background",
   });
 });
 

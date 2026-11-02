@@ -43,7 +43,8 @@ type Want = {
 };
 
 // Link lookups share the session's bounded thread readers with open threads
-// and previews, so only a few run at once.
+// and previews, so only a few run at once, and their reads take background
+// admission, so an opened or previewed conversation's reads start first.
 const concurrent = 4;
 const authors = new WeakMap<RelaySession, ReturnType<typeof lookups>>();
 const noop = () => () => {};
@@ -125,7 +126,10 @@ function lookups(session: RelaySession) {
     };
     running.set(key, settle);
     try {
-      view = session.thread(want.channelId, want.messageId, { exact: true });
+      view = session.thread(want.channelId, want.messageId, {
+        exact: true,
+        priority: "background",
+      });
     } catch {
       settle();
       return;

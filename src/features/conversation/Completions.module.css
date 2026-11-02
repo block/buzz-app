@@ -61,10 +61,7 @@
   align-self: stretch;
   align-items: center;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
   text-align: left;
-  white-space: nowrap;
 }
 .label small {
   display: block;

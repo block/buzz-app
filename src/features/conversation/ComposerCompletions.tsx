@@ -30,6 +30,7 @@ import type {
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { completionResult, matchCompletion } from "./completion";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
 
@@ -468,66 +469,75 @@ function OwnedCompletion({
               ref={list}
               className={styles.list}
             >
-              {items.map((item, i) => (
-                // The textarea owns keyboard focus/selection via aria-activedescendant.
-                // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
-                <div
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={i === selectedIndex}
-                  aria-disabled={!!item.disabled}
-                  aria-label={
-                    compact && item.detail
-                      ? `${item.label} ${item.detail}`
-                      : undefined
-                  }
-                  id={`${id}-${i}`}
-                  key={item.id}
-                  onPointerDown={(event) => {
-                    if (event.button === 0) event.preventDefault();
-                  }}
-                  onPointerMove={
-                    compact || named
-                      ? () => {
-                          revealSelection.current = false;
-                          setSelected(item.id);
-                        }
-                      : undefined
-                  }
-                  onClick={() => accept(i)}
-                  className={styles.option}
-                >
-                  {item.preview && (
-                    <span aria-hidden="true" className={styles.preview}>
-                      {item.preview}
-                    </span>
-                  )}
-                  <span className={styles.label} data-completion-label>
-                    {named ? (
-                      <span className={styles.name}>{item.label}</span>
-                    ) : (
-                      item.label
+              {items.map((item, i) => {
+                const option = (
+                  // The textarea owns keyboard focus/selection via aria-activedescendant.
+                  // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
+                  <div
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={i === selectedIndex}
+                    aria-disabled={!!item.disabled}
+                    aria-label={
+                      compact && item.detail
+                        ? `${item.label} ${item.detail}`
+                        : undefined
+                    }
+                    id={`${id}-${i}`}
+                    key={item.id}
+                    onPointerDown={(event) => {
+                      if (event.button === 0) event.preventDefault();
+                    }}
+                    onPointerMove={
+                      compact || named
+                        ? () => {
+                            revealSelection.current = false;
+                            setSelected(item.id);
+                          }
+                        : undefined
+                    }
+                    onClick={() => accept(i)}
+                    className={styles.option}
+                  >
+                    {item.preview && (
+                      <span aria-hidden="true" className={styles.preview}>
+                        {item.preview}
+                      </span>
                     )}
-                    {item.detail && (
-                      <small
-                        aria-hidden={compact || undefined}
-                        data-recipient-key={
-                          (mention && /^[0-9a-f]{64}$/.test(item.detail)) ||
-                          undefined
-                        }
-                        title={mention ? item.detail : undefined}
-                      >
-                        {item.detail}
-                      </small>
-                    )}
-                  </span>
-                  {channel && i === selectedIndex && (
-                    <span aria-hidden="true" className={styles.acceptKey}>
-                      Enter
+                    <span className={styles.label} data-completion-label>
+                      {compact || named ? (
+                        <span className={styles.name}>{item.label}</span>
+                      ) : (
+                        item.label
+                      )}
+                      {item.detail && (
+                        <small
+                          aria-hidden={compact || undefined}
+                          data-recipient-key={
+                            (mention && /^[0-9a-f]{64}$/.test(item.detail)) ||
+                            undefined
+                          }
+                          title={mention ? item.detail : undefined}
+                        >
+                          {item.detail}
+                        </small>
+                      )}
                     </span>
-                  )}
-                </div>
-              ))}
+                    {channel && i === selectedIndex && (
+                      <span aria-hidden="true" className={styles.acceptKey}>
+                        Enter
+                      </span>
+                    )}
+                  </div>
+                );
+                return compact ? (
+                  <Tooltip key={item.id} content={item.label}>
+                    {option}
+                  </Tooltip>
+                ) : (
+                  option
+                );
+              })}
               {result?.retry && (
                 // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
                 <div

@@ -157,6 +157,7 @@ fn main() {
             "plugin_host_request",
             "plugin_host_request_bytes",
             "plugin_host_save_bytes",
+            "plugin_host_delete_managed_file",
             "plugin_host_upload",
             "plugin_host_process_spawn",
             "plugin_host_process_write",

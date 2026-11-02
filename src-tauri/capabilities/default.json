@@ -106,6 +106,7 @@
     "allow-plugin-host-request",
     "allow-plugin-host-request-bytes",
     "allow-plugin-host-save-bytes",
+    "allow-plugin-host-delete-managed-file",
     "allow-plugin-host-upload",
     "allow-plugin-host-process-spawn",
     "allow-plugin-host-process-write",

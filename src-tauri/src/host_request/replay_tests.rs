@@ -208,7 +208,7 @@ fn actual_ipc_decodes_explicit_envelope_and_preserves_omitted_once_callers() {
     assert!(ipc(&fixture.view, "plugin_host_request", body)
         .unwrap_err()
         .contains("Stale"));
-    assert_eq!(calls.claims.lock().unwrap().consumed.len(), 1);
+    assert_eq!(calls.claims.lock().unwrap().consumed.len(), 0);
     let other = tauri::WebviewWindowBuilder::new(&fixture.app, "other", Default::default())
         .build()
         .unwrap();
@@ -276,7 +276,7 @@ fn denied_ipc_requests_never_consume_dispatch_authority() {
 }
 
 #[test]
-fn full_claims_never_evict_and_page_boot_poison_overflow_fail_closed() {
+fn full_claims_reset_only_on_page_advance_and_stale_boot_poison_overflow_fail_closed() {
     let calls = HostCalls::default();
     let first = envelope(&calls);
     let payload = input().fingerprint();
@@ -297,10 +297,23 @@ fn full_claims_never_evict_and_page_boot_poison_overflow_fail_closed() {
         .unwrap_err()
         .contains("already consumed"));
     calls.page_load();
+    assert!(calls.claims.lock().unwrap().consumed.is_empty());
+    // Freed capacity never admits the original envelope, even with identical tags/payload.
     assert!(calls
-        .consume("main", "post", "p", "r", &envelope(&calls), payload)
+        .consume("main", "post", "p", "r", &first, payload)
         .unwrap_err()
-        .contains("capacity"));
+        .contains("Stale"));
+    let mut current = envelope(&calls);
+    current.activation = first.activation.clone();
+    current.call_id = first.call_id.clone();
+    current.page = calls.context("main").unwrap().page;
+    calls
+        .consume("main", "post", "p", "r", &current, payload)
+        .unwrap();
+    assert!(calls
+        .consume("main", "post", "p", "r", &current, payload)
+        .unwrap_err()
+        .contains("already consumed"));
     assert!(HostCalls::default()
         .consume("main", "post", "p", "r", &first, payload)
         .unwrap_err()

@@ -1171,9 +1171,11 @@ unknown outcome; changed payload under the same authority rejects as a conflict.
 Neither returns cached success or sends again, including after failure or timeout.
 Never mint a fresh identity or refresh authority to retry an unknown submission.
 
-Native retains at most 1024 compact digest claims per process, with no eviction or
-rearming on completion, unload, grant change or page load; capacity/poison/generation
-exhaustion fails closed. Old boot/page envelopes reject after restart/reload. Fiber
+Native retains at most 1024 compact digest claims per page generation, with no
+rearming on completion, unload or grant change. Advancing the native page generation
+clears its claims; old boot/page envelopes are rejected before claim lookup and
+cannot use the freed capacity. Capacity/poison/generation exhaustion fails closed.
+Old boot/page envelopes reject after restart/reload. Fiber
 disposal blocks new cooperative calls and suppresses late success, but cannot undo
 an admitted upstream request. An in-place fiber restart creates a fresh activation;
 old in-flight calls remain inactive. Restart must not be used to retry an unknown
@@ -1181,6 +1183,11 @@ submission. This is **same-envelope host dispatch protection**,
 not durable exactly-once execution, server/proxy deduplication, spend approval,
 upstream cancellation, a malicious-plugin sandbox or deduplication of fresh authorities.
 Plugin persistence and non-resuming approval policy remain the caller's responsibility.
+In particular, this blocks same-envelope IPC-fallback resends only: fresh calls,
+proxy/server retries and work after a client disconnect remain outside its scope.
+When supported by the destination, send the recorded `callId` as its server
+idempotency key as well (for example in an `Idempotency-Key` header). Do not mint
+a new key to recover an unknown outcome.
 Actual WebView fallback/runtime acceptance is distinct from native fixture tests.
 
 ### Bounded binary retrieval and temporary managed files
@@ -1234,7 +1241,8 @@ mismatch. No filename, destination, content type, expiry or reader grant is supp
 by the caller. `expiresAt` is safe-integer Unix milliseconds from the host clock.
 
 Saves use one flat `plugin-artifacts` child of app-data storage, host expiry/UUID
-names and exclusive file creation. Unix uses 0700 root/0600 files with ownership
+names and exclusive file creation. New names also include a digest of the owning
+plugin ID; no caller path/name is accepted. Unix uses 0700 root/0600 files with ownership
 and link checks; other desktop platforms rely on private app storage conventions.
 This is trusted same-user storage, not isolation from malicious plugins or other
 code with the user's access. A fixed cross-process try-lock covers expiry sweeping,
@@ -1250,6 +1258,24 @@ another file is created, without evicting unexpired files. Failures remove outpu
 best-effort; residue remains counted. There is no index, sidecar, recovery adoption,
 content deduplication or temporary-to-final file service.
 
+Optional `host.deleteManagedFile(path)` requires `host.managedFiles` and the current
+enabled plugin revision, not `host.files`. It accepts only a direct, host-generated
+file in this root whose owner digest matches the calling plugin ID, including
+files saved by its earlier revisions. It never follows links or deletes a different
+plugin's file. Legacy files without an owner digest cannot be deleted through this
+API and retain their expiry behavior. Deleting a missing file rejects.
+
+Await attachment sends before deleting their source. Deletion refuses while any
+app-owned `host.readFile` operation is admitted or still running, including blocking
+reads whose async waiter timed out. Its reader lease is acquired before the first
+native await; deletion holds that admission gate through unlink. A read admitted
+first therefore cannot lose its source mid-read. Once the reader has returned its
+byte snapshot, upload/publication no longer needs the source path. If deletion
+wins before a read is admitted, that later read fails as missing; this API does not
+reserve paths for future sends or external processes. The cross-process storage
+lock still refuses if busy; callers may retry a known in-use refusal after the
+send completes, but must not automatically retry an ambiguous deletion timeout.
+
 Expiry is host wall-clock save time plus 24 hours and a 30-second save window.
 Files survive normal plugin unload, disable/update and app restart. Expired files
 are swept only on a new save; there is no startup sweep/background deletion timer.
@@ -1258,8 +1284,13 @@ existing explicit app-data erase removes this root. Clock changes, user deletion
 erase or disk loss can invalidate retention assumptions; do not treat the path as
 a durable archive or an unqualified availability guarantee.
 
-One process-local, nonqueued byte-work permit is shared by GET/save. Blocking save
-work owns its permit and root lock through actual completion, even after the
+One process-local byte-work permit is shared by GET/save. A FIFO semaphore queues
+at most 16 waiting calls, rejects overflow, and charges queue time to each call's
+existing deadline (GET 1–30000 ms, save 30 seconds). Expired/canceled waiters leave
+the queue without dispatch; raw saves do not clone their body until admitted.
+The one-admitted-operation/16 MiB work bound is unchanged, but waiting IPC input
+buffers still exist: this is not a whole-process memory bound. Blocking save work
+owns its permit and root lock through actual completion, even after the
 30-second async deadline. Timeout suppresses handoff and eventual cleanup is
 best-effort, not proof of rollback or completed deletion. Native checks current
 enabled revision/managedFiles at admission and immediately before result eligibility.

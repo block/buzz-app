@@ -913,6 +913,19 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin: 0;
   padding: 0;
 }
+/* A thread notice keeps its recovery aligned beneath its text. */
+.threadNotice {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--text-subtle);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
 .threadHistoryControls {
   flex-shrink: 0;
   display: flex;
@@ -1750,6 +1763,38 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 .imageAlt {
   color: var(--text-subtle);
   font-style: italic;
+}
+
+/* Metadata after the body's last line; on its own line after a closing block
+   or plugin card, or after attachments when no body is drawn. A large-emoji
+   paragraph is itself `.text` and keeps its marker inline. */
+.edited {
+  color: var(--message-metadata, var(--text-metadata));
+  font-size: var(--text-caption);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+/* A plugin card's marker sits in its bubble, above the reactions. */
+.messagePayload > .edited,
+.messageBubble > .edited {
+  display: block;
+  margin-top: var(--space-1);
+}
+.audienceLine > .edited {
+  flex: none;
+  margin-inline-end: auto;
+}
+.text:not(p) > .edited {
+  display: block;
+}
+.text:not(p) > :has(+ .edited:last-child) {
+  margin-bottom: var(--space-1);
+}
+.message[data-viewer-message] .messagePayload > .edited {
+  text-align: end;
+}
+/* The edit marker follows a short preview and stays visible beside a long one. */
+.audiencePreview:has(+ .edited) {
+  flex: 0 1 auto;
 }
 
 .mention {
@@ -2921,19 +2966,24 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   color: var(--text-standard);
   overflow-wrap: anywhere;
 }
-/* Own bubbles retain their toolbar hover treatment; received bubbles stay
-   on the same quiet surface as their reaction strip. */
 @media (hover: hover) and (pointer: fine) {
+  .message[data-actions-revealed]
+    > .messageBody
+    > .messageContent
+    .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+      :has(> .text > table:only-child),
+      :has(> .text > table:first-child + .edited:last-child)
+    ) {
+    background: var(--surface-message-hover);
+  }
   .message[data-own][data-actions-revealed]
     > .messageBody
     > .messageContent
-    .messageBubble:not([data-emoji-only])::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: var(--affordance-message-own-hover);
-    pointer-events: none;
+    .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+      :has(> .text > table:only-child),
+      :has(> .text > table:first-child + .edited:last-child)
+    ) {
+    background: var(--surface-message-own-hover);
   }
 }
 .message[data-layout="continuation"] .messageBubble {
@@ -2960,21 +3010,16 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   width: 100%;
 }
 
+/* Keep sent and received avatars close to their message in every layout. */
 .messageAvatar {
   user-select: none;
   position: absolute;
   bottom: 0;
-  right: calc(100% + var(--space-3));
-  display: flex;
-}
-.message:not([data-layout="timeline"]) .messageAvatar {
   right: calc(100% + var(--space-2));
+  display: flex;
 }
 .message[data-viewer-message] .messageAvatar {
   right: auto;
-  left: calc(100% + var(--space-3));
-}
-.message[data-viewer-message]:not([data-layout="timeline"]) .messageAvatar {
   left: calc(100% + var(--space-2));
 }
 .messageBubble > :is(.text, .plainText) {
@@ -2991,7 +3036,14 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
   padding-inline: var(--space-1h);
-  border-radius: calc(var(--radius-chip) / 2);
+}
+/* Align the leading sigil with prose; its capsule paints into the gutter.
+   The renderer marks actual paragraph starts, not merely first elements. */
+.messageBubble
+  > .text
+  > p[data-leading-mention]
+  > [data-mention-kind]:first-child {
+  margin-inline-start: calc(-1 * var(--space-1h));
 }
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
@@ -3053,6 +3105,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --reaction-ink: var(--text-message-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
   --message-icon-subtle: var(--icon-subtle-own);
+  --message-metadata: var(--text-metadata-own);
   --message-icon-success: var(--icon-success-own);
   --message-icon-categorical-purple: var(--icon-categorical-purple-own);
 }
@@ -3068,6 +3121,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   background: transparent;
   color: var(--text-standard);
   --message-link: var(--text-link);
+  --message-metadata: initial;
 }
 
 .messageBubble[data-own] .text blockquote {
@@ -3135,12 +3189,16 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .message .messageBubble > .reactions {
   margin: var(--space-2) 0 0;
-  margin-inline-start: calc(-1 * var(--space-1));
+  margin-inline-start: calc(-1 * var(--space-2));
   /* Short prose still leaves room for a reaction and its add control. The add
      control ends the strip with no end padding, so only the start padding counts. */
   min-inline-size: calc(3 * var(--size-control-sm) + var(--space-1));
-  max-width: 100%;
+  max-width: calc(100% + 2 * var(--space-2));
   border: 0;
+}
+.messageBubble:has(> .reactions:is([data-populated], .reactionFallback)) {
+  border-end-start-radius: calc(var(--size-control-sm) / 2 + var(--space-2));
+  border-end-end-radius: calc(var(--size-control-sm) / 2 + var(--space-2));
 }
 .message
   .messageBubble
@@ -3501,7 +3559,8 @@ html[data-keyboard-navigation]
 
 /* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */
 .messageBubble[data-diff-only],
-.messageBubble:has(> .text > table:only-child) {
+.messageBubble:has(> .text > table:only-child),
+.messageBubble:has(> .text > table:first-child + .edited:last-child) {
   padding: 0;
   background: transparent;
   color: var(--text-standard);
@@ -3510,10 +3569,17 @@ html[data-keyboard-navigation]
      sit on the panel and drop your bubble's pairing. */
   --reaction-surface: initial;
   --reaction-ink: initial;
+  /* An edited marker there sits on the panel too. */
+  --message-metadata: initial;
 }
-.messageBubble[data-diff-only]::after,
-.messageBubble:has(> .text > table:only-child)::after {
-  display: none;
+/* Unboxed renderers have no inner gutter for the reaction strip to outdent. */
+.message .messageBubble[data-diff-only] > .reactions,
+.message .messageBubble:has(> .text > table:only-child) > .reactions,
+.message
+  .messageBubble:has(> .text > table:first-child + .edited:last-child)
+  > .reactions {
+  margin-inline-start: 0;
+  max-width: 100%;
 }
 .workflowAttribution {
   display: inline-flex;

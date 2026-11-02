@@ -58,6 +58,9 @@ export type Feedback = Readonly<{
   /** `review/…`, `inline/…` or `comment/…`, then GitHub's node id. */
   id: string;
   author: string;
+  /** Whether the author is a GitHub App, whose login GitHub gives without
+   * `[bot]`. */
+  bot?: true | undefined;
   url: string;
   /** Clipped to one more than BODY_CHARS. */
   body: string;
@@ -262,9 +265,9 @@ __typename
 const FEEDBACK = `reviews(last:50,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{id comments(first:100){nodes{id}}}}
 comments(last:50){nodes{id}}`;
 const TEXT = `query($ids:[ID!]!){nodes(ids:$ids){__typename id
-... on PullRequestReview{author{login} state body url}
-... on IssueComment{author{login} body url}
-... on PullRequestReviewComment{author{login} body path url}}}`;
+... on PullRequestReview{author{__typename login} state body url}
+... on IssueComment{author{__typename login} body url}
+... on PullRequestReviewComment{author{__typename login} body path url}}}`;
 
 /** The feedback ids `pull` lists, reviews with their inline comments, then
  * comments. */
@@ -352,6 +355,10 @@ export function parseFeedback(found: unknown): Feedback[] {
       {
         id: `${kind}/${str(item.id)}`,
         author: login(item),
+        ...((item.author as { __typename?: unknown } | null)?.__typename ===
+        "Bot"
+          ? { bot: true as const }
+          : {}),
         url: str(item.url),
         body:
           body.length > BODY_CHARS + 1 ? body.slice(0, BODY_CHARS + 1) : body,

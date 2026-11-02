@@ -629,12 +629,21 @@ function Timeline({
       element
         .querySelector(`[data-message-id="${CSS.escape(anchor.id)}"]`)
         ?.getBoundingClientRect().top;
+    const logicalTop = () => {
+      const index = rows.findIndex((row) => row.id === anchor.id);
+      const virtualizer = handle.current;
+      return index < 0 || !virtualizer
+        ? undefined
+        : virtualizer.getItemOffset(index) - element.scrollTop;
+    };
+    let logical = logicalTop();
     // A drag can carry the reader away from that row, and Virtua unmounts
     // rows the reader leaves. Hold the row they read instead, or correcting
     // for the old one would move the rows in view.
     const read = () => {
       const position = positionAt(element, anchor.id).anchor;
       if (position) Object.assign(anchor, position);
+      logical = logicalTop();
     };
     let height = list.style.height;
     const since = intent.current;
@@ -649,15 +658,29 @@ function Timeline({
         if (ended) frame = requestAnimationFrame(() => release());
       });
     });
-    const hold = new MutationObserver(() => {
-      const row = top();
-      if (list.style.height === height) return;
+    const hold = new MutationObserver((mutations) => {
+      // Ignore list-only pointer-events changes during input. A row's offsets
+      // can change even when the sum of its siblings' heights does not.
+      if (
+        list.style.height === height &&
+        !mutations.some((mutation) => mutation.target.parentNode === list)
+      )
+        return;
       height = list.style.height;
-      if (row !== undefined && settled.current && !follow.current)
-        correctScrollTop(
-          element,
-          row - element.getBoundingClientRect().top - anchor.y,
-        );
+      const row = top();
+      const next = logicalTop();
+      if (settled.current && !follow.current) {
+        let delta =
+          row === undefined
+            ? 0
+            : row - element.getBoundingClientRect().top - anchor.y;
+        // The range can evict the reader before the correction's scroll event.
+        // Follow the same item's delta without mixing its inner DOM offset in.
+        if (row === undefined && next !== undefined && logical !== undefined)
+          delta = next - logical;
+        correctScrollTop(element, delta);
+      }
+      logical = logicalTop();
     });
     const release = (keepAnchor = false) => {
       if (!keepAnchor && heldReader.current === anchor)
@@ -677,7 +700,12 @@ function Timeline({
     const end = () => {
       if (intent.current !== since && !pointerHeld.current) done();
     };
-    hold.observe(list, { attributes: true, attributeFilter: ["style"] });
+    // Row measurements can redistribute offsets without changing total height.
+    hold.observe(list, {
+      attributes: true,
+      attributeFilter: ["style"],
+      subtree: true,
+    });
     element.addEventListener("scroll", read);
     element.addEventListener("scrollend", end);
     // A drag can end outside the scroller.

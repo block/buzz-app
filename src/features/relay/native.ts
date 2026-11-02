@@ -1,3 +1,8 @@
+import {
+  verifiedProfileAuthority,
+  verifiedProfileDiscovery,
+} from "./verified-profile";
+import { nativeSocket } from "./native-socket";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -357,6 +362,7 @@ export async function connectNativeTransport(
     nativeRelaySigner(origin),
     origin,
     author,
+    nativeSocket,
   );
   signal?.throwIfAborted();
   const writer = transport.writer;
@@ -790,6 +796,10 @@ export async function connectNativeTransport(
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
+    verifiedProfiles: verifiedProfileAuthority(info),
+    async readVerifiedProfileAuthority(signal) {
+      return verifiedProfileDiscovery(await nativeRelayInfo(origin, signal));
+    },
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

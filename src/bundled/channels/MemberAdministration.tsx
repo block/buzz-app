@@ -27,6 +27,19 @@ import {
 import { DotsThreeIcon } from "../../shared/design-system/icons";
 import styles from "./ChannelMembersDialog.module.css";
 
+export function memberAccessLabel(role: MemberChange["expectedRole"]) {
+  return {
+    owner: "Owner",
+    admin: "Admin",
+    member: "Participating",
+    bot: "Participating",
+    guest: "Viewing only",
+    unknown: "Unconfirmed access",
+    none: "No access",
+    absent: "No access",
+  }[role];
+}
+
 export function useMemberAdministration(
   session: RelaySession,
   channelId: string,
@@ -109,7 +122,14 @@ export function MemberRow({
   useEffect(() => {
     const viewport = scrollport.current;
     if (!menuOpen || !viewport) return;
-    const dismiss = () => setMenuOpen(undefined);
+    // Revealing the trigger can queue a scroll event before this listener mounts.
+    // Only subsequent movement should dismiss the newly opened menu.
+    const top = viewport.scrollTop;
+    const left = viewport.scrollLeft;
+    const dismiss = () => {
+      if (viewport.scrollTop !== top || viewport.scrollLeft !== left)
+        setMenuOpen(undefined);
+    };
     viewport.addEventListener("scroll", dismiss, { passive: true });
     return () => viewport.removeEventListener("scroll", dismiss);
   }, [menuOpen, scrollport]);
@@ -129,15 +149,9 @@ export function MemberRow({
       verifiedOwner,
     );
   const roleCaption =
-    role === "member" || role === "bot"
-      ? "Participating"
-      : role === "guest"
-        ? "Viewing only"
-        : role === "owner"
-          ? "Owner"
-          : role === "admin"
-            ? "Admin"
-            : undefined;
+    role === "unknown" || role === "member" || role === "bot"
+      ? undefined
+      : memberAccessLabel(role);
   const locked =
     state.operation?.status === "pending" ||
     state.operation?.status === "uncertain";
@@ -190,11 +204,7 @@ export function MemberRow({
             >
               {editableMemberRoles.map((next) => (
                 <MenuRadioItem key={next} value={next}>
-                  {next === "member"
-                    ? "Participating"
-                    : next === "guest"
-                      ? "Viewing only"
-                      : "Admin"}
+                  {memberAccessLabel(next)}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>

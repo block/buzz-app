@@ -234,3 +234,38 @@ it("uses a contributed icon and preserves the chat fallback", () => {
     screen.getByRole("button", { name: "Compute" }).closest("section"),
   ).toHaveTextContent("Community");
 });
+
+it.each([
+  [0, "Manage plugins"],
+  [2, "Manage plugins2 recommended plugins"],
+])(
+  "shows %s managed plugin recommendations on Manage plugins only",
+  (count, name) => {
+    const client = { selected: null, memberships: [] };
+    const connection = {};
+    const cards: ReturnType<SettingsCards["snapshot"]> = [];
+    render(
+      <nav aria-label="Settings sections">
+        <SettingsSidebar
+          communities={
+            {
+              subscribe: () => () => {},
+              snapshot: () => client,
+              relay: { subscribe: () => () => {}, snapshot: () => connection },
+            } as unknown as Communities
+          }
+          cards={
+            {
+              subscribe: () => () => {},
+              snapshot: () => cards,
+            } as unknown as SettingsCards
+          }
+          recommendations={count}
+          onSection={() => {}}
+        />
+      </nav>,
+    );
+    expect(screen.getByRole("button", { name })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Appearance" })).toBeVisible();
+  },
+);

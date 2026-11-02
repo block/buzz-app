@@ -27,7 +27,16 @@ export type OpenFailure =
 export type OpenResult = Readonly<
   | { status: "opened" }
   | { status: "cancelled" | "superseded" }
-  | { status: "failed"; reason: OpenFailure }
+  | {
+      status: "failed";
+      reason: OpenFailure;
+      /** The page shows this failure in place, next to what failed; the host
+       * keeps the page on screen instead of replacing it. */
+      presented?: true;
+      /** Reopen this visit once, while it is still the one shown: called
+       * with that reopen, returns its cancel (see reauthorizedOnce). */
+      reauthorize?: (reopen: () => void) => () => void;
+    }
 >;
 /** Focus is per opening, never part of a saved address or history entry. */
 export type NavigationFocus = "content" | "preserve";
@@ -52,6 +61,8 @@ export type NavigationSnapshot = Readonly<{
   attempt: OpenAttempt;
   status: "opening" | OpenResult["status"];
   reason?: OpenFailure;
+  /** The failed page presents its own failure in place. */
+  presented?: true;
   /** An incoming URL failed before it could create a history destination. */
   ingress?: boolean;
   retryable?: boolean;
@@ -87,6 +98,8 @@ export function createNavigationController(
     resolve: (result: OpenResult) => void;
     pending: boolean;
     timer?: ReturnType<typeof setTimeout> | undefined;
+    /** Cancels a failed visit's reopen after sign-in. */
+    reauthorizing?: () => void;
   };
   let disposed = false;
   let active: Operation;
@@ -151,16 +164,38 @@ export function createNavigationController(
     snapshot = Object.freeze({
       ...snapshot,
       status: result.status,
-      ...(result.status === "failed" ? { reason: result.reason } : {}),
+      ...(result.status === "failed"
+        ? {
+            reason: result.reason,
+            ...(result.presented ? { presented: true as const } : {}),
+          }
+        : {}),
     });
-    if (result.status !== "opened")
+    // A failure presented in place keeps its page's authority until the visit
+    // is left or replaced, as an opened visit does.
+    if (
+      result.status !== "opened" &&
+      !(result.status === "failed" && result.presented)
+    )
       effects.push(() => operation.controller.abort(NAVIGATION_ABORTED));
+    const reauthorize = result.status === "failed" && result.reauthorize;
+    if (reauthorize)
+      effects.push(() => {
+        if (active !== operation || disposed) return;
+        operation.reauthorizing = reauthorize(() =>
+          transaction(() => {
+            if (active === operation && !disposed)
+              start(operation.attempt.focus);
+          }),
+        );
+      });
     emit();
   }
   function start(focus: NavigationFocus = "content"): Promise<OpenResult> {
     if (disposed) return Promise.resolve({ status: "cancelled" });
     ingressRetry = undefined;
     const old = active;
+    old?.reauthorizing?.();
     if (old) {
       settle(old, { status: "superseded" });
       effects.push(() => old.controller.abort(NAVIGATION_ABORTED));
@@ -537,6 +572,7 @@ export function createNavigationController(
         openingDecision = undefined;
         departure = undefined;
         ingressRetry = undefined;
+        active.reauthorizing?.();
         unsubscribe();
         finish(active, { status: "cancelled" });
         const operation = active;

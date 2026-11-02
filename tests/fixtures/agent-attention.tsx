@@ -1,6 +1,7 @@
 // The production tab and shared controls, with only the host data boundary replaced.
 import { createRoot } from "react-dom/client";
 import type { Context } from "../../src/plugins/author";
+import { presentPull } from "../../src/bundled/github/attention";
 import { createTab } from "../../src/bundled/watching/Tab";
 import "../../src/shared/styles/globals.css";
 
@@ -88,6 +89,7 @@ const connection = {
 let saveGate: Promise<void> | undefined;
 const controls = {
   saveStarted: false,
+  opened: undefined as unknown,
   releaseSave: () => {},
   holdSave() {
     controls.saveStarted = false;
@@ -102,8 +104,21 @@ declare global {
   }
 }
 window.attentionFixture = controls;
+const navigation = {
+  open: async (target: unknown) => {
+    controls.opened = target;
+  },
+};
+const presentGitHub = presentPull(navigation);
 const Tab = createTab({
   agents: {
+    presentWatch: (
+      watch: Parameters<typeof presentGitHub>[0],
+      title: string,
+    ) =>
+      watch.provider === "attention/github-pr"
+        ? presentGitHub(watch, title)
+        : undefined,
     snapshot: () => snapshot,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -148,7 +163,7 @@ const Tab = createTab({
     },
   },
   relay: { snapshot: () => connection, subscribe: () => () => {} },
-  navigation: { open: async () => {} },
+  navigation,
 } as unknown as Context);
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");

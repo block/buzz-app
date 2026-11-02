@@ -348,8 +348,10 @@ too: one that can't look fails the attempt, keeping the marker. If renaming or t
 the marker is kept and Buzz shows a native error and exits without opening a
 window, so nothing recreates wiped storage and the next launch retries. Without
 wipe, local data stays: it is already scoped by public key, so signing back in
-with the same key finds it. Builderlab and hosted-community logins live only in
-memory and end with the restart. Kept agents start only while the signed-in key
+with the same key finds it. Native federated sessions are removed by the same
+sign-out owner across indexed profiles and configurations. Without FI, Builderlab and
+hosted-community logins live only in memory and end with the restart; an FI build signs
+them in through the native FI session instead, which restores after it. Kept agents start only while the signed-in key
 matches the owner in their saved attestation, checked before their key is read.
 
 ## Automatic backup consent hooks
@@ -378,6 +380,126 @@ app copies. Saving a choice reports busy while such a lease is held. Disabling
 automatic backup governs future uploads and does not delete existing backups.
 The consent hooks are the base of the draft stack:
 #1137 consent hooks → #1106 gated uploader → #1107 recovery → #1101 restore UI.
+
+## Native federated session module
+
+Federated identity ([NIP-FI](https://github.com/block/buzz/blob/main/docs/nips/NIP-FI.md),
+[NIP-FA](https://github.com/block/buzz/blob/main/docs/nips/NIP-FA.md)) adds a native
+owner separate from the human Nostr key. Its deployment descriptor is documented
+in [configuration](configuration.md#federated-identity-build-input).
+The native commands return status, authority, revision, optional email, and fixed
+failure codes. Session tokens and assertion headers are native-only.
+
+Sign-in uses the existing native loopback callback owner with NIP-FA `return_to`
+and an S256 handoff challenge, exchanges the code natively, and verifies the
+fixed session expiry before persistence. Restore checks the stored credential
+against `/v1/session`; failed reads and unrecognized refusals do not authorize
+replacement. Local expiry, cancellation, and sign-out fence stale work.
+
+FI records use the OS secure-store service
+`xyz.block.buzz.desktop.federated-session` (with `.debug` for Rust debug
+builds), keyed by profile and deployment fingerprint. Account indices and
+revision-specific refusal markers contain no credential and live outside wiped
+Buzz data. Failed removal of a known record leaves refusal durable before any
+secure-store access, so that revision cannot restore until cleanup succeeds.
+Sign out of Buzz removes indexed FI records across profiles/configurations in
+its debug/release namespace before deleting the human key or opening a WebView.
+
+The app's `federatedIdentity` service exposes this public state to the shared
+sign-in UI. Session record revision survives restore and scopes account caches
+without inventing a NIP-FA subject.
+
+NIP-11 discovery from the exact relay carries no FI credential. Valid absent or
+false FI flags retain ordinary Nostr transport. A true flag requires the supported
+client-attached/offline-jwt descriptor and compiled authority mapping. Assertions
+are acquired with native same-key NIP-98 proof and checked for exact audience,
+key, and lifetime. Native HTTP, media, repository Git reads/imports, and socket
+upgrades attach the assertion beside their existing possession proof. Protected
+socket workers stop by assertion expiry; the existing live owner reconnects and
+performs fresh NIP-42. Retirement fences protected reads and results.
+
+### Local agent federated credentials
+
+Each local agent enrolls using the signed-in owner's session and its own NIP-98
+proof. The native agent-token owner stores the resulting grant beside session
+records in the same OS secure-store service, under a separate key scoped to the
+profile, deployment, owner public key and agent public key. Neither grants nor
+assertion headers cross IPC. Enrollment validates the returned owner and issuer;
+assertions are checked for the agent key, issuer, relay audience and lifetime.
+The relay remains responsible for signature and authorization verification.
+
+An enrolled grant survives ordinary owner-session expiry and same-account
+restoration. Organization sign-out, another account or agent deletion retires it.
+Account installation records required retirement before persisting the new session;
+interrupted cleanup resumes before grants are admitted. Enrollment also rechecks
+its session revision, so a caller paused before reservation cannot install a
+credential from a retired session.
+
+A refused grant permits one replacement enrollment while the owner is signed in.
+Replacement attempts preserve that budget across transient errors. Before enrollment
+or replacement issuance, the same secure-store record reserves a token-free stop
+scoped to the persisted session revision. Terminal refusal, restart or interrupted
+issuance cannot silently start another enrollment. A new sign-in revision or
+explicit agent deletion permits a reset; ordinary restore of the same session does
+not. Failure to persist the reservation prevents dispatch. A known transient
+outcome releases it only if that storage write succeeds.
+
+The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes and
+`Nostr-Agent-Proof` header are this configured adapter's wire contract, not
+standard endpoints defined by NIP-FI/NIP-FA. NIP-FI defines the
+`nip-fi-agent+jwt` assertion class and owner checks; that does not establish
+interoperability with another adapter's enrollment endpoints.
+
+In an FI build, Builderlab's remote-agent, hosted-community, known-community,
+Apps viewer and backup calls go through the native FI session. The renderer
+names only the public session revision. For API calls, native checks the
+plugin's authority/operation grant, enabled artifact revision, live
+registration and that revision; the Apps viewer exchange and backup check only
+that the revision is current. Each sends the adapter session as
+`Authorization: Bearer` to the identity origin only. A 401 fails that call
+without ending the session; native then checks the adapter's `GET /v1/session`
+once and ends the session only if the adapter refuses it there. Builderlab's
+Settings card has no sign-out of its own in an FI build: it links to Identity →
+Organization sign-in, which ends the shared session. Builderlab
+Apps' agent tools still need the legacy login and are absent in FI builds.
+
+### Sign in at launch
+
+A build whose descriptor sets `"signIn": "at-launch"` treats organization
+sign-in as part of opening the app. After key setup, the launch mark stays up
+while the saved session is checked. A restored session opens the app directly.
+Otherwise a full-window screen titled "Signing you in to *organization*" opens
+the browser sign-in, and the app opens when it finishes. Cancel or a failed
+sign-in leaves **Sign in with *organization*** and **Not now**; neither reopens
+the browser by itself. Not now opens the app, where protected communities offer
+their usual sign-in recovery.
+
+When the session ends during a run (expiry or the adapter refusing it), the same
+screen covers the app, above any dialog or menu it had open, and starts sign-in
+again. The app stays mounted, covered and inert, so drafts, scroll and
+navigation survive, and focus returns to where it was. An explicit sign-out
+shows the screen without opening the browser. A saved session that cannot be
+checked (network or secure storage) offers Try again, and the screen stays up
+while it checks.
+
+Before the session expires, a persistent warning names when it ends and offers
+**Sign in again**. It appears 72 hours ahead, or halfway through a shorter
+session. Signing in again keeps the current session working until the new one
+is exchanged; Cancel or a failure leaves it in place, and a different account
+retires derived agent grants as any account change does. At expiry, native ends
+the session itself rather than waiting for the next relay assertion or 401, and
+the screen above takes over.
+On-demand builds are unchanged.
+
+The Node development host retains its supported broker flow.
+
+For the community sign-in and recovery UI alone, run the environment-free
+fixture server documented below and open `/tests/fixtures/federated-identity.html`.
+Click **Sign in**, then **Cancel sign-in** or **Complete** in fixture controls;
+verify the prompt switches to **Cancel sign-in** and clears once signed in.
+**Binding mismatch** shows existing identity-link guidance; **Storage failure**
+shows recovery without claiming success. It does not exercise the running app's
+full navigation or native credentials.
 
 ## Packaged connection
 
@@ -471,8 +593,7 @@ hashes and uploads only the converted bytes; JavaScript receives the descriptor,
 not the prepared file. ffmpeg must be installed on the computer.
 Community member changes (NIP-43 kinds 9030–9032) are signed in the host only
 in the exact add/remove/role shape; the relay decides authority. Repository HTTP
-and other broker-only helpers are not claimed by this adapter. NIP-FI assertion
-acquisition is not implemented, so deployments enforcing it are outside acceptance.
+and other broker-only helpers are not claimed by this adapter.
 Windows/Linux custody, credential migration and release-signing acceptance remain
 separate limitations.
 

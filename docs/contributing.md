@@ -119,6 +119,17 @@ need their own validation.
   defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
   and passes everything else to `tauri build`. The bundle uses `buzz`, as does
   release bundling with `pnpm tauri build`.
+- On macOS, set `BUZZ_DEV_SIGNING_IDENTITY` in `.env.local` to an installed code
+  signing certificate name or SHA-1 hash (`security find-identity -v -p codesigning`
+  lists them). `just desktop-bundle` passes it to Tauri's macOS signer; the process
+  environment takes precedence, including an empty value to disable this setting.
+  Keep the same certificate and development app identifier across rebuilds. After
+  the first signed build, enter your login Keychain password and choose **Always
+  Allow** when Buzz requests its saved identity; later builds should retain that
+  approval. Ad-hoc signatures change with the binary and cannot retain that trust.
+  An unavailable certificate fails the build rather than silently signing ad-hoc.
+  This setting leaves `just desktop` and release builds unchanged. Explicit Tauri
+  `--config` arguments still merge after the local defaults.
 - For opt-in automation of a disposable macOS native webview, see
   [Native webview automation](native-mcp.md).
 - `just design [args...]`: install locked dependencies, start the standalone
@@ -775,7 +786,7 @@ across cached, parallel jobs rather than running the entire recipe several times
 [Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
 the complete correctness suite still runs with `pnpm test` / `just scan`:
 
-- **JavaScript:** three runners, each with Biome, one TypeScript check and a frontend
+- **JavaScript:** four runners, each with Biome, one TypeScript check and a frontend
   build. Vitest splits all test files across the runners, with two workers each;
   every shard must succeed. Timing artifacts include the shard number.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
@@ -784,13 +795,14 @@ the complete correctness suite still runs with `pnpm test` / `just scan`:
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
   It also runs all [perf scenarios](performance.md) once in Chromium.
-- **Browser journeys:** twenty-one runners (nine Chromium and twelve WebKit
+- **Browser journeys:** twenty-three runners (nine Chromium and fourteen WebKit
   file-level shards), each with two workers. They start alongside measurements on separate
   runners; `CI required` still requires both lanes. A separate required Ubuntu
   job builds the native plugin-manager fixture once with Hermit's pinned Cargo.
   It uploads a tar with executable permission, checkout revision and SHA-256
   checksum; shards download by exact same-run artifact ID and verify all three
-  before running. A missing artifact fails CI rather than rebuilding. Local
+  before running. A missing artifact fails CI rather than rebuilding; the artifact
+  is kept for seven days, so failed shards can be re-run within that window. Local
   non-CI journeys retain the locked Cargo build. Each browser test uses its own
   mutable fixture home. No measurements are repeated on shards and no retries
   hide failures.

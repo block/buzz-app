@@ -12,12 +12,13 @@ import type { MentionRecipient } from "../../features/messages/mention-draft";
 import type { Agent } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
-import { useIdentityNames } from "../../features/identity-names/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import { directoryChanges, mentionCandidates } from "./mention-candidates";
+import { useListedChannel } from "../../features/relay/listed-channel";
+import { useNamesRevision } from "../../features/identity-names/react";
 import {
   exactMention,
   matchingMentions,
@@ -197,12 +198,23 @@ export function useMentionChoices(
     () => session.profiles.unnamed?.(),
     () => session.profiles.unnamed?.(),
   );
-  const list = useSyncExternalStore(
+  // Previews replace the list on every message; read this channel and the
+  // roster's state, not the whole list.
+  const channel = useListedChannel(session.channels, channelId, (c) => c);
+  const listStatus = useSyncExternalStore(
     session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
+    () => session.channels.list().status,
+    () => session.channels.list().status,
   );
-  const channel = list.channels.find((c) => c.id === channelId);
+  const listError = useSyncExternalStore(
+    session.channels.subscribeList,
+    () => session.channels.list().error,
+    () => session.channels.list().error,
+  );
+  const list = useMemo(
+    () => ({ status: listStatus, error: listError }),
+    [listStatus, listError],
+  );
   const directory = useMentionDirectory(
     session,
     channel,
@@ -211,7 +223,8 @@ export function useMentionChoices(
     lifetime,
   );
   const archives = useMentionArchives(session, open);
-  const resolve = useIdentityNames(session.names);
+  // Labels come from names scopes directly: watch every name change while open.
+  const names = useNamesRevision(session.names, open);
   const [installed, install] = useState<{
     session: ComposerSession;
     key: string;
@@ -263,9 +276,10 @@ export function useMentionChoices(
     // Source revisions invalidate the projection; selection reads them again synchronously.
     void profiles;
     void list;
+    void channel;
     void agents;
     void archives;
-    void resolve;
+    void names;
     void revision;
     // A closed or disabled chooser shows nothing, so it names nothing.
     if (!open)
@@ -280,9 +294,10 @@ export function useMentionChoices(
     localKeys,
     profiles,
     list,
+    channel,
     agents,
     archives,
-    resolve,
+    names,
     revision,
   ]);
   // Install membership first; agent discovery must not hide known members.

@@ -94,7 +94,7 @@ import {
   type RelayEvent,
   type EventData,
 } from "./events";
-import { eventVisibility } from "./event-access";
+import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
   PublishRejected,
@@ -113,6 +113,7 @@ import { createRelayProfiler } from "./profiling";
 import { liveRecoveryStatus } from "./live-recovery";
 import {
   createRecovery,
+  loadState,
   type RecoverySource,
   type RecoveryStatus,
 } from "./recovery";
@@ -342,7 +343,9 @@ export function createRelaySession(
       ]),
     );
     return eventVisibility(
-      remote ? canReadRemote : canAccess,
+      // Remote visibility filters one accept() batch and is never retained.
+      // Remote access builds the channel's discovery summary: read it once.
+      remote ? accessOnce(canReadRemote) : canAccess,
       // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
@@ -773,7 +776,20 @@ export function createRelaySession(
       traffic?.publishPresence?.(status, signal) ?? Promise.resolve(false),
     notify,
   );
-  const profiles = createProfileDirectory(verified, localViews, notify);
+  const profiles = createProfileDirectory(
+    verified,
+    localViews,
+    notify,
+    transport &&
+      (transport.verifiedProfiles || transport.readVerifiedProfileAuthority)
+      ? {
+          authority: transport.verifiedProfiles,
+          refresh: transport.readVerifiedProfileAuthority?.bind(transport),
+          subscribe: (filter, sink) =>
+            traffic?.syncVerifiedProfiles?.(filter, sink),
+        }
+      : undefined,
+  );
   const emoji = createEmojiDirectory(
     verified,
     notify,
@@ -808,6 +824,7 @@ export function createRelaySession(
     transport?.viewer,
     writer,
     notify,
+    emoji.tags,
   );
   let memoryConnected = !transport?.subscribe;
   const memories = createAgentMemories(
@@ -860,8 +877,14 @@ export function createRelaySession(
   );
   const channelActivity = createChannelActivity(
     transport?.channelActivity
-      ? (ids, signal) =>
-          transport.channelActivity?.(ids, signal) ?? Promise.resolve([])
+      ? // A transient failure retries quietly before Recent shows its notice.
+        (ids, signal) =>
+          retryRead(
+            (retrySignal) =>
+              transport.channelActivity?.(ids, retrySignal) ??
+              Promise.resolve([]),
+            signal,
+          )
       : undefined,
     notify,
   );
@@ -1916,19 +1939,14 @@ export function createRelaySession(
     subscribe: (listener: () => void) => () => void,
     status: () => RecoveryStatus,
     retry: () => void,
-  ): RecoverySource => Object.freeze({ subscribe, status, retry });
-  // Only failures a retry can fix enter recovery. A denial or a deterministic
-  // failure stays visible on its own surface; see isTransientFailure.
-  const loadState = (
-    state: Readonly<{ status: string; transient?: true | undefined }>,
-  ): RecoveryStatus =>
-    state.status === "error"
-      ? state.transient
-        ? "failed"
-        : "settled"
-      : state.status === "loading"
-        ? "busy"
-        : "settled";
+    reauthorize?: () => void,
+  ): RecoverySource =>
+    Object.freeze({
+      subscribe,
+      status,
+      retry,
+      ...(reauthorize ? { reauthorize } : {}),
+    });
   // Background reads only. A failed read always retries; see recovery.ts.
   // The live source also owns the channel roster and suspended public
   // previews (live.retry retries both).
@@ -1944,6 +1962,8 @@ export function createRelaySession(
           channelKit.capability.subscribe,
           () => loadState(channelKit.capability.snapshot()),
           () => void channelKit.capability.refresh(),
+          // A ready catalog may be revalidating under the old credentials.
+          () => void channelKit.capability.refresh({ after: true }),
         ),
         recoverable(
           soloPreferences.queries.subscribe,
@@ -3143,6 +3163,7 @@ export function createRelaySession(
       memoryConnected = snapshot.status === "connected";
       activity.state(snapshot);
       presence.connected(snapshot.status === "connected");
+      profiles.connected(snapshot.status === "connected");
       if (snapshot.status !== "connected") {
         typing.clear();
         memories.clear();

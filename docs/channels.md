@@ -208,7 +208,7 @@ manually marked unread messages or unread thread activity. Active in the last op
 content-sized dialog with visible 1-, 7-, 30-, and 90-day text-only radio tiles in two columns.
 Apply saves the selected rolling window and activates the filter;
 Cancel leaves the saved choice unchanged. The dialog retains its draft after a
-failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until a successful activity read; a failed read keeps them available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
+failed save, and the menu shows the selected window. Activity uses verified timestamps, including your own messages once the relay accepts them. Channels with unknown activity remain visible until their activity is read. Activity applies in one update when a read finishes; a read that fails partway still applies what it read, and channels it did not reach stay available alongside the activity Retry warning. These filters are encrypted account preferences on the current relay, using a
 separate kind-30078 `channel-filter` record. They leave saved sorting and section
 membership unchanged; earlier device-only filter choices are ignored, not automatically published.
 Filtered sections with no visible channels show only their header, retaining their expanded/collapsed state and menu access to hidden channels.
@@ -508,7 +508,15 @@ Cancellation returns focus to the originating Settings button (or the sidebar
 fallback if that entry has gone away). Archive retains the current conversation,
 messages, membership and open Settings, replacing Archive with Unarchive after a
 fresh permission read. The conversation stays selected after reload; archived
-write restrictions still apply. When refreshed Settings actions remount, focus
+write restrictions still apply. Archived conversations and their threads replace the
+message composer with the lower archived-channel notice. If that composer owned
+focus, focus moves to the retained message history. Nonempty unsent text, including
+an in-progress message edit, is offered through a host-owned **Copy text** toast;
+empty composers and focus elsewhere do not trigger it. Copy failure retains a retry
+action, and recovery stays available until used or dismissed. Unarchiving restores the
+composer and its saved text draft. A remote unarchive in the same open conversation
+preserves the reader's focus instead of autofocus moving it into the restored composer.
+When refreshed Settings actions remount, focus
 returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
 joined archived channels, including session conversations, remain available by name
 in search, labeled **Archived channel**, but stay out of the sidebar and Recent
@@ -730,52 +738,74 @@ confirmation. The device-local opt-out applies to that Create warning; Continue
 only stages the choice and Create channel performs the write.
 
 Access management lives in the members dialog. It retains the existing member
-list, row menus and confirmed role changes. Roles appear as muted
-text before each row’s ellipsis button; Member and Guest are shown as **Participating**
-and **Viewing only**. The ellipsis menu contains permitted role choices with
+list, row menus and confirmed role changes. Exceptional roles appear as muted
+text before each row’s ellipsis button: **Owner**, **Admin**, and **Viewing only**.
+Ordinary Member and Bot rows have no role caption; verification and access warnings
+remain available. The ellipsis menu contains permitted role choices with
 the verified selection checked, alongside profile/removal actions and the existing role
 confirmation. Immutable roles such as Owner and self remain protected.
-The access row stays below and outside the scrolling member list, without a visible
-section heading. It uses the same avatar slot and type sizes as member rows: a community avatar/lock
-icon, a compact audience Select (**Who can read**) with **Public** / **Private**
-labels, a hint explaining the audience and, for public channels, the selected participation default,
-and a public-only trailing **New people can** Select (Participate / View only), with short
-descriptions of the permitted actions. Audience options show the community avatar and
-lock icon inside the dropdown. When making a private channel public, the confirmation
-includes the same **New people can** dropdown. It starts with the saved public default
-(Participate if absent); the selected role and public visibility publish in a single
-details update after confirmation. Cancel saves neither. Both choices make the full
-history readable by the community; View only limits new people's contributions.
-The audience Select uses the shared text-link
-treatment; the participation Select is outlined and vertically centered against
-the audience row, with its popup aligned to the trigger’s right edge. On narrow screens the role control wraps
-under the audience. The confirmation explains “People already in the channel keep
-their access.”; the note is not a permanent paragraph below the controls.
+General access is the first row in the scrolling member list, with its policy
+icon and explanation on the left and the small, text-only Select button on the right.
+Its popup aligns to the button’s right edge. The row wraps
+when enlarged text needs more room. Access errors, uncertain-save explanations,
+and their recovery actions occupy the full width below this row. Copy link stays
+at the footer’s left and Done at its right. Read failures offer Retry through the existing member-data
+reload path; the persistent Refresh action is removed.
+Hidden status announcements do not receive visible-content spacing or extend the
+footer's scroll area. Refresh marks the data lists busy, while saving and search
+announcements remain outside those busy lists. Reader-only explanations stay
+in the first row of the member list. The people/agents filter is an icon action
+inside the search field’s trailing edge, with the selected group checked in its
+menu and an active button treatment when filtered. Typing a search resets it to All.
+The **General access** Select offers three policies:
+
+| Choice | Reading | New people's admission role |
+| --- | --- | --- |
+| Public | Anyone in the community | Member (Participating) |
+| View only | Anyone in the community | Guest (Viewing only) |
+| Private | Only members | Preserves the saved default; people must be added |
+
+The popup separates Private from the two community-readable policies with a divider.
+Options include concise descriptions and fixed policy icons: Lock for Private,
+Globe for Public, and Eye for View only. The selected policy icon stays beside the
+explanation on the left of the row. The small outlined dropdown button contains
+the selected title and chevron; the entire button opens the choices. Policy
+artwork never falls back to a community initial.
+Public and View only explicitly select both visibility and admission in one confirmed details
+update. Both make the full history readable by the community. Existing members
+keep their individual roles. Private is displayed for every private policy,
+including an older Guest admission default; opening or reselecting it never
+normalizes that stored default. Choosing Public or View only explicitly replaces
+it. The shared editor restricts Solo-labelled chats to Private / View only; a
+legacy public Member policy is shown as **Public (existing)** until changed.
+
 Each selection opens a consequence confirmation. Cancel/Escape returns focus to
 the unchanged Select. **Change access** saves immediately through the existing
 channel-details capability, then reloads signed metadata. Loading, pending and
-unconfirmed saves disable both controls. A pending save shows an inline spinner
-in the leading icon slot instead of a separate saving message. Rejections offer
-**Reload access**.
-failures before publication identify the initial access check, signing, or final
-access check that failed, retaining the underlying error. No request is retried.
+unconfirmed saves disable the control. A pending save shows an inline spinner
+in the leading icon slot instead of a separate visible saving message. A persistent
+live region outside the busy controls announces saving and confirmed completion.
+Rejections offer **Reload access**. Failures before publication identify the initial
+access check, signing, or final access check that failed, retaining the underlying
+error. No request is retried.
 Uncertain results survive closing the dialog and offer **Check save status**,
 which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
 
-In the private-channel experiment, the footer omits **New people can** and says
-"Only people you add can read this channel." Ordinary human additions explicitly
-request Member (Participate), including when an older saved admission default is
+For private channels, ordinary human additions explicitly request Member (Participate), including when an older saved admission default is
 Guest. Existing roles are not changed; **Add as** still permits an individual
 View only or Admin choice. Public additions keep their admission-default behavior,
 agents retain Bot, and Solo/system admission is unchanged. The saved default is
-preserved so it reappears when the channel becomes public and the experiment can
-be reverted without a metadata migration.
+preserved while private; explicitly choosing Public or View only selects the
+corresponding admission default without a metadata migration.
 
 Readers see General access as plain text from verified channel discovery metadata,
-without calling the editing capability. Its audience description is followed by
-“Viewing only. Ask an owner or admin to participate.” The private-channel summary
-describes what new members can do; existing participants keep their roles. The compact timeline
+without calling the editing capability. Guests and readers of Guest-default channels
+see “Viewing only. Ask an owner or admin to participate.” A nonmember previewing a
+Member-default channel instead sees “New people can participate. People already in
+the channel keep their access.” Other previews identify defaults that could not be
+confirmed. The private-channel summary identifies member-only reading; existing
+participants keep their roles. The compact timeline
 label says “This channel is read-only.” for Guest-default channels; a Guest in a
 Member-default channel sees “Read-only access.” Guest-default previews never suggest
 joining to add people or agents.
@@ -877,7 +907,7 @@ It is titled **Channel access** in channels and **Chat access** in a Solo chat (
 agents there but cannot change roles.
 One search field, with an accessible name but no visible label, filters current
 members and lists people, agents and Teams to invite under **Not in this channel**.
-With an empty query, ordinary channels show invitations only when the viewer is
+With an empty query, channels and Solo chats show invitations only when the viewer is
 the sole member; otherwise they show just the roster. Searching offers invitations
 with the existing grouping, ranking and expansion behavior.
 Each result's **Add** button, or Enter on the highlighted result, adds immediately.
@@ -900,11 +930,14 @@ preserve the last verified groups on failure. Visible member names request foreg
 priority; avatars, presence and manager enrichment never gate the initial list.
 Search filters
 each group, omits empty elevated and agent groups, and preserves full group counts.
-Non-member search ranking is unchanged. Relay matches followed by matching known
-agents share a 30-row initial invitation page after member/archive exclusion and
-identity deduplication. **Show more results** reveals 30 more already-loaded matches
-before requesting another relay page. Query changes and explicit refresh reset the
-visible page; no matches are silently discarded. Only displayed invitation agents
+Channels and Solo chats share the **Your agents**, **People**, **Other agents** and
+**Your other agents** invitation groups, with empty groups omitted. The idle list
+offers this client's agents; search also includes saved agents. Each group uses
+shared name, relationship and usage ranking, starts with four rows, and has its
+own **Show more**. **Find more matches** requests another directory page and reveals
+its matches. Query changes and explicit refresh reset expansion. Solo retains its
+direct-agent and person-sharing rules, so ineligible agents never enter its groups.
+Only displayed invitation agents
 join ownership observation, so the first character cannot mount/enrich the entire
 known-agent inventory. Unchanged identity rows retain their rendered
 profile/avatar/menu trees across query and loading updates; changed names, permissions,
@@ -950,11 +983,13 @@ Profile navigation stays available during an invitation; a missing profile panel
 leaves the identity static without disabling the separate Add button.
 The dialog retains its shared surface. A quiet `border-standard` outline frames
 one scrolling viewport, with People, Agents and Not in this channel
-separated inside it without extra boxes or fills. Every group heading sticks to the
-top of this viewport while scrolling within its own section, with an opaque matching
-surface so rows do not show through. There is no outer top padding to scroll away:
-when a group starts the list, its heading is pinned from the first scroll pixel;
-the heading itself owns the text's top inset. A compact ghost refresh button sits in the
+separated inside it without extra boxes or fills. In roomy result viewports, group
+headings stick to the top while scrolling within their sections, with an opaque
+matching surface so rows do not show through. When the results have 8rem or less
+of content height, headings scroll with their sections so wrapped labels cannot
+cover keyboard-highlighted actions. Headings own the text's top inset, without
+outer top padding to scroll away; sticky headings start pinned from the first
+scroll pixel when their group starts the list. A compact ghost refresh button sits in the
 fixed dialog header immediately left of Close, matching its button and 16px icon size;
 its tooltip and accessible name are **Refresh member data**. It refreshes this
 dialog's member-related data, not the whole application. It is the single retry
@@ -971,8 +1006,8 @@ while the initial list spinner is showing so only one spinner is active. It expo
 and refresh during membership writes are blocked. Optional-name loading/failure does
 not disable Add once the roster is verified. Failed invitations keep their explicit
 Retry; data refresh never resubmits an invitation, role change or removal.
-Supporting buttons use outline emphasis; **Show more results** uses the small size
-and is horizontally centered beneath the search results.
+**Show more** uses subtle emphasis within its invitation group; **Find more
+matches** is horizontally centered beneath the search results.
 Role confirmations use prominent, and removal remains destructive.
 The search has a role dropdown on its right when at least two roster groups are
 present. It defaults to All and offers only populated People and Agents groups, with whole-roster counts (including the All total), using the shared
@@ -1052,14 +1087,14 @@ another non-owner member:
 
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
-The menu includes **Make guest** through the existing deliberate confirmation
-flow. Participating and Viewing only captions represent each participant's
-verified Member and Guest role; changing the admission default never changes those roles.
-Agent Bot roles retain the contributing presentation.
+The menu offers **Viewing only** through a deliberate **Set to viewing only**
+confirmation. **Participating** remains the role-menu label for verified Member
+and Bot roles, while **Viewing only** represents Guest. Changing the admission
+default never changes those roles.
 
-The members dialog's General access controls keep reading access and new people's
-contribution access separate. The note explicitly preserves existing participants'
-access; a Guest default leaves designated writers able to contribute.
+The members dialog's General access Select presents reading access and new people's
+contribution access as one policy while preserving their separate relay fields.
+The note explicitly preserves existing participants' access; a Guest default leaves designated writers able to contribute.
 Owners/admins save choices through the existing kind:9002 command. Missing `join_role` means Member, matching legacy relay
 behavior. An unrecognized or malformed explicit default maps to Guest so previews
 fail closed. These defaults never replace a participant's stored role.
@@ -1240,8 +1275,16 @@ guarantee of general profile retry after every cache clear/network failure. See
 
 ## Membership activity
 
-Channel history and the existing live route include relay-signed kind-40099
-`member_joined`, `member_left` and `member_removed` summaries. Only recognized,
+The live route includes relay-signed kind-40099 `member_joined`, `member_left` and
+`member_removed` summaries. History pages do not: a NIP-CW page counts every row kind
+against its limit, so a burst of joins could fill pages and hold messages back. After
+each page or head read, the window reads the relay's notices apart, newest first in
+pages of 500, down to its oldest loaded message, so the messages show first and the
+activity between them follows. A head read re-reads the newest notices; when they do
+not meet the ones held, the descent starts over. A window holds at most 2,000 notices
+read this way, outside its row budget; older pages past that show without activity.
+A failed notice read leaves activity out until the next page or head read and never
+errors the window. Saved heads carry no notices. Only recognized,
 channel-scoped payloads from the connected relay become activity rows; malformed,
 unknown and other authors' summaries are not rendered as JSON. These events do not
 grant/revoke access: the existing signed roster remains authoritative.
@@ -1250,7 +1293,8 @@ The timeline groups adjacent arrivals/departures into compact avatar-and-text ro
 Messages, local-day changes and gaps over an hour break groups; removals by different
 actors stay separate. Same-adder additions use “added by you” for the viewer;
 mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
-IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
+IDs and cursors remain per event, and live activity counts against the row budget.
+Profiles reuse the
 shared background directory/cache, and reading anchors can resolve a member of a
 group. Activity has no message actions, thread, unread evidence or chat preview.
 A Solo chat omits its owner's additions and removals of agents before its first
@@ -1469,6 +1513,9 @@ direction shrinks the selection by one emoji. Visible shortcode text and emoji
 that cannot be rendered retain ordinary text selection.
 Custom emoji autocomplete adds no trailing space. The native caret uses the
 regular composer text size while the emoji preview remains large.
+
+Message and thread reactions use one bubble per emoji, counting unique people from
+the second reactor; custom emoji with different URLs stay separate.
 
 Message and thread reaction rows have a Lucide smile-plus button after existing
 reactions. Messages without reactions do not show it. The Emoji plugin supplies

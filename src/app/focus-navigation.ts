@@ -57,11 +57,17 @@ function composerIn(root: HTMLElement | null | undefined) {
 }
 
 /** Search selects a conversation in main, regardless of its previous focus. */
-export function conversationComposerFocusTarget(channelId: string) {
+export function conversationFocusTarget(channelId: string) {
   const conversation = document
     .getElementById("main-content")
     ?.querySelector(`[data-channel-workspace="${CSS.escape(channelId)}"]`);
-  return composerIn(conversation?.querySelector<HTMLElement>(PRIMARY));
+  const main = conversation?.querySelector<HTMLElement>(PRIMARY);
+  return (
+    composerIn(main) ??
+    Array.from(
+      main?.querySelectorAll<HTMLElement>("[data-message-scroller]") ?? [],
+    ).find(available)
+  );
 }
 
 export function focusKeyboardTarget(target: HTMLElement | undefined) {

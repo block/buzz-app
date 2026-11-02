@@ -4,6 +4,7 @@ import {
   searchMembers,
   type MemberSearchResult,
 } from "../../features/channel-members/search";
+import { afterTypingPause, searchable } from "../../shared/search-debounce";
 
 /** Dialog-owned search intent. The session owns transport, verification and profiles. */
 export function useMemberSearch(
@@ -21,14 +22,14 @@ export function useMemberSearch(
   useEffect(() => {
     const current = ++generation.current;
     const abort = new AbortController();
-    if (!enabled || !request.text || request.text !== text) return;
+    if (!enabled || !searchable(request.text) || request.text !== text) return;
     setResult((old) => ({
       text,
       people: request.page === 1 ? [] : old.people,
       more: false,
       loading: true,
     }));
-    const timer = setTimeout(() => {
+    const cancel = afterTypingPause(() => {
       void searchMembers(session, text, request.page, abort.signal).then(
         (page) => {
           if (abort.signal.aborted || current !== generation.current) return;
@@ -57,16 +58,16 @@ export function useMemberSearch(
             }));
         },
       );
-    }, 200);
+    });
     return () => {
-      clearTimeout(timer);
+      cancel();
       abort.abort();
     };
   }, [session, request, text, enabled]);
   const visible = result.text === text && enabled;
   return {
     people: visible ? result.people : [],
-    loading: !!text && enabled && (!visible || result.loading),
+    loading: searchable(text) && enabled && (!visible || result.loading),
     more: visible && result.more,
     error: visible ? result.error : undefined,
     next: () => setRequest((old) => ({ ...old, page: old.page + 1 })),

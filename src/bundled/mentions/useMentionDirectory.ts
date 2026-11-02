@@ -3,6 +3,7 @@ import type { ComposerSession } from "../../features/messages/composer-session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { allowsOutsideMentions } from "../../features/messages/mention-admission";
 import { matchPerson } from "../../features/search/person-match";
+import { afterTypingPause, searchable } from "../../shared/search-debounce";
 
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
@@ -10,8 +11,6 @@ type Person = Awaited<
 export type MentionDirectoryPage = { people: readonly Person[]; more: boolean };
 type Page = MentionDirectoryPage;
 const empty: readonly Person[] = [];
-/** Typing pause before an uncached query reaches the network. */
-export const MENTION_DIRECTORY_DELAY_MS = 200;
 const CACHE_LIMIT = 100;
 // An exact key is an author lookup, which name-prefix evidence cannot refute.
 const exactKey = (query: string) => /^[0-9a-f]{64}$/.test(query.trim());
@@ -136,6 +135,8 @@ export function useMentionDirectory(
 ) {
   const active =
     enabled &&
+    // An empty query lists the directory; typed text waits for enough to search.
+    (!query.trim() || searchable(query)) &&
     allowsOutsideMentions(channel) &&
     !channel?.archived &&
     !channel?.readOnly;
@@ -187,7 +188,7 @@ export function useMentionDirectory(
     if (!searching) return;
     const controller = new AbortController();
     const current = { session, query, attempt, lifetime };
-    const timer = setTimeout(() => {
+    const cancel = afterTypingPause(() => {
       void fetchMentionDirectoryPage(session, query, controller.signal, {
         fresh: attempt > 0,
       }).then(
@@ -204,9 +205,9 @@ export function useMentionDirectory(
             });
         },
       );
-    }, MENTION_DIRECTORY_DELAY_MS);
+    });
     return () => {
-      clearTimeout(timer);
+      cancel();
       controller.abort();
     };
   }, [session, query, searching, attempt, lifetime]);

@@ -3,6 +3,11 @@ import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
 import { matchPerson } from "../search/person-match";
+import {
+  afterTypingPause,
+  SEARCH_DEBOUNCE_MS,
+  searchable,
+} from "../../shared/search-debounce";
 
 export type Recipient = Profile & { pubkey: string };
 
@@ -55,7 +60,8 @@ export function usePeople(session: RelaySession, query: string) {
     // a reopened picker searches again for people added since.
     const exhausted = (entry?: PeopleState) =>
       entry?.hasMore === false && entry.visit === visit;
-    const complete = exhausted(cache.get(""));
+    // Text too short to search shows only people already read.
+    const complete = exhausted(cache.get("")) || !searchable(query);
     const resumed = cached?.hasMore || exhausted(cached) ? cached : undefined;
     const known = new Map(
       [...cache.values()]
@@ -150,12 +156,15 @@ export function usePeople(session: RelaySession, query: string) {
     request.current = owned;
     setState(initial);
     // Returning to a completed query resumes its pages without reshuffling.
-    const timer =
+    const cancel =
       initial.page || !initial.hasMore
         ? undefined
-        : setTimeout(() => void load(1, owned), query ? 150 : 0);
+        : afterTypingPause(
+            () => void load(1, owned),
+            query ? SEARCH_DEBOUNCE_MS : 0,
+          );
     return () => {
-      clearTimeout(timer);
+      cancel?.();
       owned.controller.abort();
     };
   }, [load, query, initial]);

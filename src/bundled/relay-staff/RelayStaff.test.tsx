@@ -30,7 +30,8 @@ import { foldProfiles } from "../../features/relay/profiles";
 import { StrictMode, useState, useSyncExternalStore } from "react";
 import { createSession, SessionProvider, useRead, useWrite } from "./session";
 import { createStaff, type Staff, type StaffTarget } from "./staff";
-import { SEARCH_DEBOUNCE_MS, useRetry } from "./ui";
+import { useRetry } from "./ui";
+import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 
 const signer = "a".repeat(64);
 const member = "b".repeat(64);

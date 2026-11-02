@@ -54,6 +54,7 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
+import { afterTypingPause, searchable } from "../../shared/search-debounce";
 import { matchPerson } from "../../features/search/person-match";
 import {
   personKey,
@@ -355,7 +356,7 @@ export function SearchResults({
   useEffect(() => {
     if (!showAuthorPicker) return;
     const controller = new AbortController();
-    const timer = setTimeout(() => {
+    const cancel = afterTypingPause(() => {
       void (async () => {
         const members = effectiveChannelId
           ? (session.channels.get?.(effectiveChannelId)?.members ?? [])
@@ -370,7 +371,7 @@ export function SearchResults({
         }
         let remote: readonly EventData[] = [];
         let lookupFailed = false;
-        if (authorNeedle) {
+        if (searchable(authorNeedle)) {
           try {
             remote = await session.searchProfiles(authorNeedle, {
               limit: 40,
@@ -387,9 +388,9 @@ export function SearchResults({
         if (!controller.signal.aborted)
           setAuthorSuggestions({ query, remote: [], lookupFailed: true });
       });
-    }, 180);
+    });
     return () => {
-      clearTimeout(timer);
+      cancel();
       controller.abort();
     };
   }, [session, effectiveChannelId, query, authorNeedle, showAuthorPicker]);

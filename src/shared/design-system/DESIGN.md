@@ -871,7 +871,13 @@ a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
 whose light gray fill holds up over the list where glass would disappear.
 
 Arriving at a message, by link, search, the inbox or closing its thread,
-briefly washes it with `surface-message-highlight`. The cue is paint-only and
+briefly marks it. A filled bubble takes `affordance-message-highlight` (your
+own, `affordance-message-own-highlight`) as a see-through layer: the regular
+overlay step, about twice hover, in the direction the bubble's chips already
+take, so chips stay readable on top. While the cue shows it replaces hover
+rather than stacking on it. A row without a filled bubble (membership lines,
+emoji-only, attachments, tables and diffs) is washed with
+`surface-message-highlight` instead. The cue is paint-only and
 belongs to the message reveal, so every route that lands on a message gets it;
 a reveal behind a covering panel, restored scroll and your own send do not.
 Each row type marks its paint surface with `data-highlight-surface`, which

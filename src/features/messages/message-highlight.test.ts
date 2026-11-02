@@ -55,6 +55,22 @@ it("clears when its own wash ends, not another animation", () => {
   expect(row.classList.contains(painted)).toBe(false);
 });
 
+it("clears when the cue on its bubble ends, not another inner one", () => {
+  const bubble = styles.messageBubble ?? "";
+  const row = item(
+    `<div data-message-id="a" data-highlight-surface><div class="${bubble}"><span></span></div></div>`,
+  );
+  highlightMessage(row);
+  animationEnd(row.querySelector("span") as Element, "::after");
+  animationEnd(row.querySelector(`.${CSS.escape(bubble)}`) as Element, "");
+  expect(row.classList.contains(painted)).toBe(true);
+  animationEnd(
+    row.querySelector(`.${CSS.escape(bubble)}`) as Element,
+    "::after",
+  );
+  expect(row.classList.contains(painted)).toBe(false);
+});
+
 it("restarts on a repeat arrival and retires early on clear", () => {
   const row = item('<div data-message-id="a" data-highlight-surface></div>');
   highlightMessage(row);

@@ -908,7 +908,7 @@ export function subscribeRelayTraffic(
       // reconnects while retaining a minimum delay under sustained failure.
       const delay = liveReconnectDelay(closeCode, reconnectDelay, random);
       reconnectDelay = Math.min(MAX_RECONNECT_DELAY, reconnectDelay * 2);
-      retryTimer = setTimeout(connect, delay);
+      retryTimer = setTimeout(() => connect(), delay);
     };
     unresponsive = reconnect;
     // The error stays in state. Recovery treats it as settled, so only this
@@ -923,7 +923,10 @@ export function subscribeRelayTraffic(
       connectionError = reason;
       notify();
       if (retryable)
-        retryTimer = setTimeout(connect, liveSlowRetryDelay(++authFailures));
+        retryTimer = setTimeout(
+          () => connect(),
+          liveSlowRetryDelay(++authFailures),
+        );
     };
     let ws: LiveSocket;
     try {
@@ -1186,11 +1189,28 @@ export function subscribeRelayTraffic(
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         // A carried route's replay covered the renewal unless the limit cut it.
         const caughtUp = route.carried && route.replay !== "limited";
+        // A cut one did not, and every consumer must recover what it missed:
+        // report the drop the renewal hid, then establish what it carried.
+        const lost = route.carried && !caughtUp;
         delete route.carried;
+        if (lost) {
+          for (const other of routes.values()) delete other.carried;
+          connection = "connecting";
+          notify();
+          if (!valid()) return;
+          connection = "connected";
+        }
         notify();
         if (!valid() || wires.get(route.wire ?? "") !== route) return;
-        if (route.id !== "observer" && route.id !== "presence" && !caughtUp)
-          callbacks.established(route.channelIds ?? route.channelId);
+        const establish = (target: Route) =>
+          target.id !== "observer" &&
+          target.id !== "presence" &&
+          callbacks.established(target.channelIds ?? target.channelId);
+        if (lost)
+          for (const other of [...routes.values()])
+            if (other !== route && other.status === "live" && valid())
+              establish(other);
+        if (!caughtUp && valid()) establish(route);
         if (valid()) pump();
       } else if (data[0] === "CLOSED") {
         const reason =

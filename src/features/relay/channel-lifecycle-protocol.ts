@@ -13,6 +13,7 @@ export const CHANNEL_LIFECYCLE_KINDS = [9002, 9008, 9021, 9022, 41012] as const;
 export const DM_VISIBILITY_KIND = 30622;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PUBKEY = /^[0-9a-f]{64}$/;
+const DIGEST = PUBKEY;
 
 export function lifecycleChannelId(value: string): string {
   if (typeof value !== "string" || !UUID.test(value))
@@ -47,6 +48,53 @@ export function lifecycleTemplate(
   return event;
 }
 
+/**
+ * A guarded task lifecycle request (relay `lifecycle_guard` v1). The host
+ * builds every tag, so callers cannot add metadata. `state` archives a subtree
+ * (`archived: true`) or restores (`archived: false`) when `expect` still
+ * matches the relay's digest. `fence` only replaces the target's token when it
+ * is still `expectTarget` (null: never set).
+ */
+export type GuardedLifecycleRequest =
+  | Readonly<{
+      kind: "state";
+      channelId: string;
+      archived: boolean;
+      scope: "target" | "subtree";
+      expect: string;
+    }>
+  | Readonly<{ kind: "fence"; channelId: string; expectTarget: string | null }>;
+
+export function guardedLifecycleTemplate(
+  request: GuardedLifecycleRequest,
+): EventTemplate {
+  const id = lifecycleChannelId(request.channelId);
+  const event = {
+    kind: 9002,
+    created_at: Math.floor(Date.now() / 1000),
+    content: "",
+    tags:
+      request.kind === "state"
+        ? [
+            ["h", id],
+            ["archived", String(request.archived)],
+            ["scope", request.scope],
+            ["expect", request.expect],
+          ]
+        : [
+            ["h", id],
+            ["lifecycle", "fence"],
+            ["expect-target", request.expectTarget ?? "-"],
+          ],
+  };
+  validateLifecycleTemplate(event);
+  return event;
+}
+
+/** Whether a valid lifecycle template is a guarded request rather than a plain archive. */
+export const guardedLifecycleEvent = (event: EventTemplate) =>
+  event.kind === 9002 && event.tags.length > 2;
+
 /** The host never accepts generic metadata edits or other-member removal. */
 export function validateLifecycleTemplate(event: EventTemplate): void {
   if (
@@ -56,20 +104,107 @@ export function validateLifecycleTemplate(event: EventTemplate): void {
     !Number.isSafeInteger(event.created_at) ||
     event.created_at < 0 ||
     !Array.isArray(event.tags) ||
-    event.tags.length !== (event.kind === 9002 ? 2 : 1) ||
+    !(event.kind === 9002
+      ? [2, 3, 4].includes(event.tags.length)
+      : event.tags.length === 1) ||
     event.tags[0]?.length !== 2 ||
     event.tags[0]?.[0] !== "h"
   )
     throw new Error("Invalid channel lifecycle command");
   lifecycleChannelId(event.tags[0]?.[1] ?? "");
+  if (event.kind !== 9002) return;
+  const value = (index: number, name: string) => {
+    const tag = event.tags[index];
+    return tag?.length === 2 && tag[0] === name ? tag[1] : undefined;
+  };
+  const archived = value(1, "archived");
+  const scope = value(2, "scope");
+  const target = value(2, "expect-target");
   if (
-    event.kind === 9002 &&
-    !["true", "false"].some(
-      (value) =>
-        JSON.stringify(event.tags[1]) === JSON.stringify(["archived", value]),
-    )
+    !(event.tags.length === 2
+      ? archived === "true" || archived === "false"
+      : event.tags.length === 4
+        ? (archived === "true"
+            ? scope === "subtree"
+            : archived === "false" &&
+              (scope === "target" || scope === "subtree")) &&
+          DIGEST.test(value(3, "expect") ?? "")
+        : value(1, "lifecycle") === "fence" &&
+          (target === "-" || UUID.test(target ?? "")))
   )
     throw new Error("Only archive metadata may be changed here");
+}
+
+/** The relay's guarded lifecycle capability. */
+export type LifecycleGuard = Readonly<{ maxSubtreeChannels: number }>;
+export const LIFECYCLE_STATE_PATH = "/buzz/v1/lifecycle/state";
+/** The state route's fixed batch limit; the route works without the capability. */
+const MAX_STATE_CHANNELS = 1000;
+
+/** NIP-11 `lifecycle_guard` v1; anything else means new guarded requests are unsupported. */
+export function lifecycleGuard(info: unknown): LifecycleGuard | undefined {
+  const guard = (info as { lifecycle_guard?: unknown } | null)
+    ?.lifecycle_guard as Record<string, unknown> | null | undefined;
+  const subtree = guard?.max_subtree_channels;
+  return guard?.version === 1 &&
+    guard.state_path === LIFECYCLE_STATE_PATH &&
+    Number.isSafeInteger(subtree) &&
+    (subtree as number) > 0
+    ? Object.freeze({ maxSubtreeChannels: subtree as number })
+    : undefined;
+}
+
+/** One channel's current lifecycle state from the relay's state route. */
+export type ChannelLifecycleState = Readonly<{
+  id: string;
+  /** Unix seconds; null while active. */
+  archivedAt: number | null;
+  deleted: boolean;
+  /** Null until the first guarded change. */
+  token: string | null;
+}>;
+
+/** Request batches for the state route: unique canonical ids, at most 1000 each. */
+export function lifecycleStateBatches(ids: readonly string[]) {
+  const unique = [...new Set(ids.map(lifecycleChannelId))];
+  if (!unique.length) throw new Error("Invalid channel ID");
+  const batches: string[][] = [];
+  for (let start = 0; start < unique.length; start += MAX_STATE_CHANNELS)
+    batches.push(unique.slice(start, start + MAX_STATE_CHANNELS));
+  return batches;
+}
+
+/** Validates one state response. An omitted id is unknown, never gone. */
+export function lifecycleStates(
+  body: unknown,
+  requested: readonly string[],
+): ChannelLifecycleState[] {
+  const channels = (body as { channels?: unknown } | null)?.channels;
+  if (!Array.isArray(channels))
+    throw new Error("Invalid channel lifecycle state");
+  const pending = new Set(requested);
+  return channels.map((entry: unknown) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const { id, archived_at: archivedAt, deleted } = row;
+    const token = row.lifecycle_token;
+    if (
+      typeof id !== "string" ||
+      !pending.delete(id) ||
+      !(
+        archivedAt === null ||
+        (Number.isSafeInteger(archivedAt) && (archivedAt as number) >= 0)
+      ) ||
+      typeof deleted !== "boolean" ||
+      !(token === null || (typeof token === "string" && UUID.test(token)))
+    )
+      throw new Error("Invalid channel lifecycle state");
+    return Object.freeze({
+      id,
+      archivedAt: archivedAt as number | null,
+      deleted,
+      token: token as string | null,
+    });
+  });
 }
 
 export function exactLifecycleTag(event: RelayEvent, name: string) {

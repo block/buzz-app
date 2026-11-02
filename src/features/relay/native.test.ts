@@ -3,6 +3,7 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
 import memberContract from "../channel-members/administration-contract.json";
+import lifecycleContract from "./channel-lifecycle-contract.json";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -1086,6 +1087,50 @@ it("routes lifecycle sign/publish separately from the message writer and preserv
   await expect(
     transport.channelLifecycle.publish(event, signal),
   ).rejects.toThrow("rate-limited: unrecognized reason");
+});
+
+it("reads guarded lifecycle capability and state over the signed native routes", async () => {
+  const transport = await connectNativeTransport(community);
+  const writer = transport.channelLifecycle;
+  assert.exists(writer?.info);
+  assert.exists(writer.state);
+  const signal = new AbortController().signal;
+  const guard = {
+    version: 1,
+    state_path: "/buzz/v1/lifecycle/state",
+    max_state_channels: 1000,
+    max_subtree_channels: 200,
+  };
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ self: relay.pubkey, lifecycle_guard: guard }),
+  });
+  expect(await writer.info(signal)).toMatchObject({ lifecycle_guard: guard });
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_http",
+    { community, path: "/", method: "GET", body: null },
+  ]);
+  const body = { channel_ids: ["11111111-1111-4111-8111-111111111111"] };
+  vi.mocked(invoke).mockResolvedValueOnce({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({ channels: [] }),
+  });
+  const response = await writer.state(body, signal);
+  expect(await response.json()).toEqual({ channels: [] });
+  // The host signs NIP-98 over this exact body; no other path is reachable.
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_http",
+    {
+      community,
+      path: "/buzz/v1/lifecycle/state",
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  ]);
+  for (const { event } of lifecycleContract.rejected)
+    await expect(writer.sign(event, signal)).rejects.toThrow();
 });
 
 it("prepares and decodes only verified community-scoped recipe records", async () => {

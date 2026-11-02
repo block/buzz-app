@@ -3,6 +3,7 @@ import { keypair, signed } from "../relay/testing";
 import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { createSoloRegionFixture } from "./solo-navigation-testing";
+import { routeSoloLifecycle } from "./solo-navigation";
 import { afterEach, expect, it, vi } from "vitest";
 
 function deferred() {
@@ -431,4 +432,64 @@ it("allows explicit recovery reveal with cached connection coordinates while ref
   h.service.reveal("shared");
   expect(reveal).toHaveBeenCalledOnce();
   stop();
+});
+
+it("routes a region chat's Archive and Unarchive only to its live source hook and refuses otherwise", async () => {
+  const h = fixture();
+  const channel = (id: string) => {
+    const found = h.session.channels.list().channels.find((c) => c.id === id);
+    if (!found) throw new Error(`Missing ${id}`);
+    return found;
+  };
+  // Ordinary Solo chats and unlabelled channels stay on the host path.
+  expect(routeSoloLifecycle(h.session, channel("chat"), "archive")).toBe(
+    undefined,
+  );
+  expect(routeSoloLifecycle(h.session, channel("unknown"), "archive")).toBe(
+    undefined,
+  );
+  // A labelled chat without a live hook is refused, never handed back.
+  await expect(
+    routeSoloLifecycle(h.session, channel("owned"), "archive"),
+  ).rejects.toThrow("The plugin that manages this chat is not available");
+  const plain = await h.register();
+  await expect(
+    routeSoloLifecycle(h.session, channel("owned"), "archive"),
+  ).rejects.toThrow("not available");
+  await plain.fiber.dispose();
+
+  const gate = deferred();
+  const lifecycle = vi.fn(async () => gate.promise);
+  const source = await h.register({ lifecycle });
+  // Archived chats are outside the projection but still belong to the region.
+  const routed = routeSoloLifecycle(
+    h.session,
+    channel("archived"),
+    "unarchive",
+  );
+  expect(lifecycle).toHaveBeenCalledExactlyOnceWith(source.binding(), {
+    channelId: "archived",
+    action: "unarchive",
+  });
+  let settled = false;
+  void routed?.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  gate.resolve();
+  await expect(routed).resolves.toBeUndefined();
+
+  lifecycle.mockImplementationOnce(() => {
+    throw new Error("Task is still preparing");
+  });
+  await expect(
+    routeSoloLifecycle(h.session, channel("owned"), "archive"),
+  ).rejects.toThrow("Task is still preparing");
+
+  source.update({ status: "loading", binding: source.binding(), revision: 2 });
+  await expect(
+    routeSoloLifecycle(h.session, channel("owned"), "archive"),
+  ).rejects.toThrow("not available");
+  expect(lifecycle).toHaveBeenCalledTimes(2);
 });

@@ -1,8 +1,9 @@
-import { getEventHash } from "nostr-tools";
+import { getEventHash, type EventTemplate } from "nostr-tools";
 import { attestedOwner } from "../agents/owner-attestation";
 import type { RelayReader } from "./reader";
-import type { RelayWriter } from "./transport";
-import { PublishRejected } from "./outbox";
+import type { ChannelLifecycleWriter } from "./transport";
+import { PublishNotSent, PublishRejected } from "./outbox";
+import { readApiFailure } from "./http-admission";
 import { isTransientFailure, readErrorKind } from "./errors";
 import { retryRead } from "./read-retry";
 import { hasTag, newer, type RelayEvent } from "./events";
@@ -10,12 +11,21 @@ import { openMetadata } from "./discovery";
 import {
   DM_VISIBILITY_KIND,
   exactLifecycleTag,
+  guardedLifecycleEvent,
+  guardedLifecycleTemplate,
   lifecycleChannelId,
+  lifecycleGuard,
   lifecycleRecord,
   lifecycleSettings,
+  lifecycleStateBatches,
+  lifecycleStates,
   lifecycleTemplate,
+  validateLifecycleTemplate,
   type ChannelLifecycleCommand,
   type ChannelLifecycleSettings,
+  type ChannelLifecycleState,
+  type GuardedLifecycleRequest,
+  type LifecycleGuard,
 } from "./channel-lifecycle-protocol";
 
 /** No automatic or same-dialog retry after a request may have reached the relay. */
@@ -26,6 +36,40 @@ export class ChannelLifecycleUnconfirmed extends Error {
     );
     this.name = "ChannelLifecycleUnconfirmed";
   }
+}
+
+/**
+ * How one send of a signed guarded request ended. Only `applied` proves an
+ * effect: a state request committed, or a fence replaced the token. A refusal
+ * proves only that this delivery did not commit; `reason` is display text.
+ * `send` rejects instead when the outcome is unknown.
+ */
+export type GuardedSendOutcome =
+  | Readonly<{ kind: "applied" }>
+  | Readonly<{ kind: "refused"; reason: string }>
+  | Readonly<{ kind: "not-sent"; reason: string }>;
+
+/** Guarded task lifecycle (relay `lifecycle_guard` v1). The host never reads back or retries. */
+export interface GuardedChannelLifecycle {
+  /** The relay's current capability; undefined means new guarded requests are unsupported. */
+  capability(signal?: AbortSignal): Promise<LifecycleGuard | undefined>;
+  /** Current state of each id, in any order. An omitted id is unknown; only
+   * `deleted: true` means gone. It works without the capability. */
+  state(
+    ids: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<readonly ChannelLifecycleState[]>;
+  /** Signs one request. Store the event before `send`; resending it is safe. */
+  sign(
+    request: GuardedLifecycleRequest,
+    signal?: AbortSignal,
+  ): Promise<RelayEvent>;
+  send(
+    event: RelayEvent,
+    signal?: AbortSignal,
+    /** Checked synchronously right before publishing; false publishes nothing. */
+    active?: () => boolean,
+  ): Promise<GuardedSendOutcome>;
 }
 
 export type DmVisibility = Readonly<{
@@ -50,6 +94,8 @@ export interface ChannelLifecycleCapability {
   subscribe(listener: () => void): () => void;
   refreshVisibility(signal?: AbortSignal): Promise<void>;
   observeRemoval(listener: (channelId: string) => void): () => void;
+  /** Present only on connections that implement guarded requests. */
+  readonly guarded?: GuardedChannelLifecycle;
 }
 
 export function createChannelLifecycle({
@@ -62,7 +108,7 @@ export function createChannelLifecycle({
   removed,
 }: {
   reader?: RelayReader | undefined;
-  writer?: RelayWriter | undefined;
+  writer?: ChannelLifecycleWriter | undefined;
   viewer: string;
   relayAuthor: string;
   canAccess(id: string): boolean;
@@ -272,8 +318,109 @@ export function createChannelLifecycle({
       emit({ status: "ready", hidden: snapshot.hidden });
     return snapshot.hidden;
   }
+  async function sign(template: EventTemplate, signal: AbortSignal) {
+    if (!writer)
+      throw new Error("Channel actions are unavailable on this connection");
+    const signed = await writer.sign(structuredClone(template), signal);
+    signal.throwIfAborted();
+    if (
+      signed.pubkey !== viewer ||
+      signed.kind !== template.kind ||
+      signed.created_at !== template.created_at ||
+      signed.content !== template.content ||
+      JSON.stringify(signed.tags) !== JSON.stringify(template.tags) ||
+      getEventHash(signed) !== signed.id
+    )
+      throw new Error("Signer changed the channel lifecycle command");
+    return signed;
+  }
+  const info = writer?.info;
+  const stateRoute = writer?.state;
+  const guarded: GuardedChannelLifecycle | undefined =
+    writer && info && stateRoute
+      ? Object.freeze({
+          capability: (caller?: AbortSignal) =>
+            owned({ caller }, async (signal) => {
+              const document = await info(signal);
+              signal.throwIfAborted();
+              return lifecycleGuard(document);
+            }),
+          async state(ids: readonly string[], caller?: AbortSignal) {
+            const batches = lifecycleStateBatches(ids);
+            return owned({ caller }, async (signal) => {
+              const states: ChannelLifecycleState[] = [];
+              for (const batch of batches) {
+                const response = await stateRoute(
+                  { channel_ids: batch },
+                  signal,
+                );
+                signal.throwIfAborted();
+                if (!response.ok)
+                  throw new Error((await readApiFailure(response)).error);
+                states.push(...lifecycleStates(await response.json(), batch));
+              }
+              return Object.freeze(states);
+            });
+          },
+          async sign(request: GuardedLifecycleRequest, caller?: AbortSignal) {
+            const template = guardedLifecycleTemplate(request);
+            const id = lifecycleChannelId(request.channelId);
+            return owned({ id, caller }, async (signal) => {
+              assertAccess(id);
+              return sign(template, signal);
+            });
+          },
+          async send(
+            event: RelayEvent,
+            caller?: AbortSignal,
+            active?: () => boolean,
+          ): Promise<GuardedSendOutcome> {
+            let publicationStarted = false;
+            try {
+              validateLifecycleTemplate(event);
+              if (
+                !guardedLifecycleEvent(event) ||
+                event.pubkey !== viewer ||
+                getEventHash(event) !== event.id
+              )
+                throw new Error("Invalid channel lifecycle command");
+              const id = lifecycleChannelId(event.tags[0]?.[1] ?? "");
+              return await owned({ id, caller }, async (signal) => {
+                assertAccess(id);
+                if (active?.() === false)
+                  throw new DOMException(
+                    "Channel action cancelled",
+                    "AbortError",
+                  );
+                publicationStarted = true;
+                await writer.publish(event, signal);
+                return Object.freeze({ kind: "applied" as const });
+              });
+            } catch (error) {
+              if (error instanceof PublishNotSent)
+                return Object.freeze({
+                  kind: "not-sent",
+                  reason: error.message,
+                });
+              if (error instanceof PublishRejected)
+                return Object.freeze({
+                  kind: "refused",
+                  reason: error.reason ?? error.message,
+                });
+              if (!publicationStarted)
+                return Object.freeze({
+                  kind: "not-sent",
+                  reason:
+                    error instanceof Error ? error.message : String(error),
+                });
+              throw new ChannelLifecycleUnconfirmed(error);
+            }
+          },
+        })
+      : undefined;
   const capability: ChannelLifecycleCapability = Object.freeze({
     available,
+    ...(guarded ? { guarded } : {}),
     observeRemoval(listener: (channelId: string) => void) {
       removalListeners.add(listener);
       return () => {
@@ -418,18 +565,7 @@ export function createChannelLifecycle({
               );
           };
           if (await authorize()) return;
-          const template = lifecycleTemplate(action, id);
-          const signed = await writer.sign(structuredClone(template), signal);
-          signal.throwIfAborted();
-          if (
-            signed.pubkey !== viewer ||
-            signed.kind !== template.kind ||
-            signed.created_at !== template.created_at ||
-            signed.content !== template.content ||
-            JSON.stringify(signed.tags) !== JSON.stringify(template.tags) ||
-            getEventHash(signed) !== signed.id
-          )
-            throw new Error("Signer changed the channel lifecycle command");
+          const signed = await sign(lifecycleTemplate(action, id), signal);
           if (await authorize()) return;
           signal.throwIfAborted();
           if (active?.() === false)

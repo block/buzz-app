@@ -22,6 +22,7 @@ import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
+import { routeSoloLifecycle } from "./solo-navigation";
 
 /** The session owns writes/recovery; each menu owns its focus and read status. */
 export type ChannelMenuSurface = {
@@ -212,6 +213,24 @@ export function ChannelNavigationProvider({
     else lifecycleOrigin.addEventListener("abort", retire, { once: true });
     return () => lifecycleOrigin.removeEventListener("abort", retire);
   }, [lifecycleOrigin, update]);
+  // A region source owns its chats' Archive, Unarchive and Undo: no dialog here.
+  const routeRegion = useCallback(
+    (channel: ChannelSummary, action: ChannelLifecycleAction) => {
+      if (action !== "archive" && action !== "unarchive") return false;
+      const session = connection.session;
+      const routed = routeSoloLifecycle(session, channel, action);
+      routed?.catch((error: unknown) => {
+        if (relay.snapshot().session === session)
+          setFailure({
+            session,
+            title: `${action === "archive" ? "Archive" : "Unarchive"} chat failed`,
+            message: error instanceof Error ? error.message : String(error),
+          });
+      });
+      return !!routed;
+    },
+    [relay, connection.session],
+  );
   const value = useMemo<Handoff>(
     () => ({
       ...state,
@@ -238,6 +257,7 @@ export function ChannelNavigationProvider({
         }));
       },
       openLifecycle(channel, action, trigger, origin, callbacks) {
+        if (origin?.aborted || routeRegion(channel, action)) return;
         update((previous) =>
           origin?.aborted || previous.lifecycleDialog
             ? previous
@@ -283,6 +303,7 @@ export function ChannelNavigationProvider({
         update((previous) => ({ ...previous, lifecycleDialog: undefined }));
       },
       undoArchive(channel) {
+        if (routeRegion(channel, "unarchive")) return;
         update((previous) =>
           previous.lifecycleDialog
             ? {
@@ -311,6 +332,7 @@ export function ChannelNavigationProvider({
       connection.session,
       connection.viewer,
       update,
+      routeRegion,
       clearPreparingDm,
     ],
   );

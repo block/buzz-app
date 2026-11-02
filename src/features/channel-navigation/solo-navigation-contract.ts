@@ -37,6 +37,13 @@ export type SoloRegionSource = Readonly<{
   read(binding: SoloRegionBinding): SoloRegionSnapshot;
   component: ComponentType<SoloRegionProps>;
   actions?: (binding: SoloRegionBinding) => readonly SoloRegionAction[];
+  /** Owns Archive, Unarchive and Undo for this region's chats, archived ones
+   * included. The host then shows no confirmation, result or Undo and publishes
+   * nothing; a rejection shows as the action's failure. */
+  lifecycle?: (
+    binding: SoloRegionBinding,
+    request: Readonly<{ channelId: string; action: "archive" | "unarchive" }>,
+  ) => void | Promise<void>;
 }>;
 export type SoloChatInput = Readonly<{
   channelId: string;

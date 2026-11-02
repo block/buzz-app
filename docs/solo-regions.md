@@ -43,6 +43,14 @@ tasks and restore focus after a move. Plugins must scope queries to their own
 region. Changes to the marker or its meaning require coordinated updates to the
 host and consuming plugins.
 
+A source may own Archive, Unarchive, and Undo for its chats through the optional
+`lifecycle(binding, { channelId, action })` hook. The host routes these actions
+for every Solo chat with the source's effective region label, archived chats
+included. It then opens no confirmation and publishes nothing; a rejection shows
+as the action's failure. If the source is off, loading, unavailable, or failed,
+or has no hook, the host refuses the action and publishes nothing. Unlabelled
+Solo chats and other actions keep the host confirmation.
+
 The host retains one JSON state value per scope, viewer, and source key across
 unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stale
 write returns false and does not update the memory value. Sources must keep their

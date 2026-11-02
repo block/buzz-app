@@ -85,6 +85,16 @@ export interface RelayWriter {
     signal: AbortSignal,
   ): Promise<string> | Promise<void>;
 }
+/** Guarded task lifecycle needs both reads; a writer without them cannot offer it. */
+export interface ChannelLifecycleWriter extends RelayWriter {
+  /** The relay's current NIP-11 document. */
+  readonly info?: (signal: AbortSignal) => Promise<unknown>;
+  /** One NIP-98 signed POST of the lifecycle state route with this exact body. */
+  readonly state?: (
+    body: Readonly<{ channel_ids: readonly string[] }>,
+    signal: AbortSignal,
+  ) => Promise<Response>;
+}
 export interface ReadTransport {
   readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
@@ -106,7 +116,7 @@ export interface ReadTransport {
   ) => Promise<string>;
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
-  readonly channelLifecycle?: RelayWriter;
+  readonly channelLifecycle?: ChannelLifecycleWriter;
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
   readonly memberAdministration?: RelayWriter;

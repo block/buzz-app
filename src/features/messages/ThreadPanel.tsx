@@ -663,6 +663,7 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  const shown = useRef(active);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
@@ -905,18 +906,17 @@ function ThreadMessages({
   // unmounting, records where the reader was. A return counts only once
   // restored, so an unrestored return keeps the place it came back for. New
   // replies don't record one; a relay rebind does, mid-visit, but restoring
-  // that place leaves the reader where they already are. A reader still shown
-  // after its route is withdrawn records again when it leaves, is hidden or
-  // the next route arrives, before that route can restore the place. Once
-  // hidden it records no more: WebKit can show it again at its top.
+  // that place leaves the reader where they already are. A reader whose route
+  // is withdrawn records again when it leaves, is hidden, is shown again or
+  // the next route arrives, before that route can restore the place. No
+  // reading is captured while it is hidden, and showing it again restores the
+  // reading first, so an offset the browser dropped meanwhile is never saved.
   const leftTree = useRef(tree);
   leftTree.current = tree;
   const withdrawn = useRef<() => void>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hiding or showing the reader again records its place too.
   useLayoutEffect(() => {
-    if (!navigation) {
-      if (!active) withdrawn.current = undefined;
-      return withdrawn.current;
-    }
+    if (!navigation) return withdrawn.current;
     withdrawn.current = undefined;
     return () => {
       const presented = returning
@@ -1134,13 +1134,17 @@ function ThreadMessages({
     // too. With no explicit anchor, keep the saved first visible row in place
     // through this commit's layout shift. A scroll since that save is newer
     // reader intent and wins. A drop in scrollTop while the scroll range shrank
-    // is the browser clamping it during this commit's layout, not the reader.
+    // is the browser clamping it during this commit's layout, not the reader;
+    // nor is any change while the reader was hidden, where WebKit drops the
+    // offset under display: none and would show the reader at its top.
     const reading = resizePosition.current;
     const clamped =
       reading !== undefined &&
       element.scrollTop < reading.scrollTop &&
       element.scrollHeight - element.clientHeight <
         reading.contentHeight - reading.height;
+    const reshown = active && !shown.current;
+    shown.current = active;
     // Back/Forward returns once to where this visit was left: its row, with
     // the branch holding it reopened, or else its nearest ancestor shown.
     // When neither is loaded the visit opens again as it first did.
@@ -1183,7 +1187,7 @@ function ThreadMessages({
       !follow.current &&
       !jumpingToLatest.current &&
       reading?.anchor &&
-      (reading.scrollTop === element.scrollTop || clamped) &&
+      (reading.scrollTop === element.scrollTop || clamped || reshown) &&
       element.contains(reading.anchor.element)
     )
       correctScrollTop(element, readingDrift(element, reading.anchor));

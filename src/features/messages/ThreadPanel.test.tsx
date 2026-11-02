@@ -1987,6 +1987,17 @@ const threadReply = (id: string, replyParentId: string) => ({
   replyParentId,
   createdAt: 2,
 });
+/** Lays rows out 2,000 px apart, 500 px tall, scrolling with the reader. */
+function layOutRows(ids: readonly string[]) {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const index = ids.indexOf(this.dataset.messageId ?? "");
+      return index < 0
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(0, index * 2000 - this.scrollTop, 500, 500);
+    },
+  );
+}
 
 it.each([
   ["the reply it was left at, reopening its branch", true],
@@ -2104,35 +2115,59 @@ it.each([
   ["withdrawn, then hidden", ["navigation", "active"]],
   ["hidden, then withdrawn", ["active", "navigation"]],
 ] as const)(
-  "a reader %s keeps the place it was hidden at",
+  "a reader %s is shown again at its place, which the returning route keeps",
   async (_, order) => {
     const { visit } = visitPlaces();
-    // Rows sit below the scroller top, so a reading away from the end anchors.
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(0, 0, 500, 500),
-    );
+    const reply = threadReply("d", row.id);
+    layOutRows([row.id, reply.id]);
     const h = messagesHarness(visit("thread-visit"));
-    h.snapshot.replies = [threadReply("d", row.id)];
+    h.snapshot.replies = [reply];
     const props = h.props as ThreadPanelProps;
     Object.assign(props, { retainThread: true });
     h.render();
-    expect(h.element.scrollTop).toBe(3400);
+    h.scroll(1000);
     // Back to the channel withdraws the route and closes the pane around it.
     for (const prop of order) {
       Object.assign(props, { [prop]: prop === "active" ? false : undefined });
       h.rerenderProps();
     }
-    // Forward shows it again before the route lands; WebKit can show it at the
-    // top, having dropped its scroll offset while hidden.
+    // WebKit drops the hidden reader's scroll offset.
+    h.element.scrollTop = 0;
+    // Forward shows it again before the route lands.
     Object.assign(props, { active: true });
     h.rerenderProps();
-    h.scroll(0);
+    expect(h.element.scrollTop).toBe(1000);
     Object.assign(props, { navigation: visit("thread-visit", true) });
     await act(async () => h.rerenderProps());
     expect(h.view.retarget).toHaveBeenCalledOnce();
-    expect(h.element.scrollTop).toBe(3400);
+    expect(h.element.scrollTop).toBe(1000);
   },
 );
+
+it("a withdrawn reader shown again records where it then reads", async () => {
+  const { visit } = visitPlaces();
+  const reply = threadReply("d", row.id);
+  layOutRows([row.id, reply.id]);
+  const h = messagesHarness(visit("thread-visit"));
+  h.snapshot.replies = [reply];
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, { retainThread: true });
+  h.render();
+  h.scroll(1000);
+  // A timeline link withdraws the route. The pane is closed and reopened
+  // around the thread, and the reader scrolls on before going Back.
+  Object.assign(props, { navigation: undefined });
+  h.rerenderProps();
+  Object.assign(props, { active: false });
+  h.rerenderProps();
+  Object.assign(props, { active: true });
+  h.rerenderProps();
+  h.scroll(2000);
+  Object.assign(props, { navigation: visit("thread-visit", true) });
+  await act(async () => h.rerenderProps());
+  expect(h.view.retarget).toHaveBeenCalledOnce();
+  expect(h.element.scrollTop).toBe(2000);
+});
 
 it("a reader first shown while its route retargets stays hidden until the route restores its place", async () => {
   const { places, visit } = visitPlaces();

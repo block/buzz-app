@@ -212,10 +212,14 @@ function Timeline({
   // changed place is written; a following reader's own end scrolls are not.
   const written = useRef<string | undefined>(undefined);
   const savePosition = useCallback(() => {
-    const revision = JSON.stringify(savedPosition.current);
+    // A bottom place restores at the latest message; its row is noise.
+    const place = savedPosition.current?.bottom
+      ? { bottom: true }
+      : savedPosition.current;
+    const revision = JSON.stringify(place);
     if (transient || revision === written.current) return;
-    written.current = revision;
-    writeView(scope, `scroll:${channelId}`, savedPosition.current);
+    if (writeView(scope, `scroll:${channelId}`, place))
+      written.current = revision;
   }, [channelId, scope, transient]);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   // The intent under which a saved row absent from the loaded rows still waits
@@ -853,7 +857,10 @@ function Timeline({
       !size.width ||
       !size.height ||
       !rows.length ||
-      (revealIndex < 0 && settled.current && (!follow.current || prepend))
+      (revealIndex < 0 &&
+        settled.current &&
+        (!follow.current ||
+          (prepend && pendingRestore.current !== intent.current)))
     )
       return;
     // A send supersedes saved reading intent before the first scroll event.

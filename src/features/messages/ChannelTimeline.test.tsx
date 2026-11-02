@@ -268,6 +268,7 @@ function setup({
     "data-jump-visible": true | undefined;
     children: unknown[];
     onScroll: (event: unknown) => void;
+    onScrollEnd: (event: unknown) => void;
     onPointerDown: () => void;
     onPointerUp: () => void;
     onWheel: (event: { deltaY: number; ctrlKey: boolean }) => void;
@@ -421,6 +422,9 @@ function setup({
     dispatchScroll() {
       section.props.onScroll({ currentTarget: element });
     },
+    scrollEnd() {
+      section.props.onScrollEnd({ currentTarget: element });
+    },
     scroll(user = true) {
       resized(element);
       render();
@@ -514,6 +518,53 @@ it("a bottom-position event persists bottom intent even when the virtualizer sti
   h.handle.scrollOffset = 0;
   h.scroll(false);
   h.unmount();
+  expect(h.saved()).toEqual({ bottom: true });
+});
+// A following reader's place is written once: the row under their viewport
+// changes with every live message, but a bottom place restores without it.
+it("writes a following reader's place once across live messages, and again when their place changes", () => {
+  const mounted = [{ id: "last", y: 42 }];
+  const h = setup({ mounted });
+  const setItem = vi.spyOn(localStorage, "setItem");
+  h.element.scrollTop = 3038;
+  h.scroll(false);
+  h.scrollEnd();
+  expect(setItem).toHaveBeenCalledTimes(1);
+  expect(h.saved()).toEqual({ bottom: true });
+  for (const y of [60, 75]) {
+    h.append();
+    mounted.splice(0, 1, { id: "appended", y });
+    h.element.scrollHeight += 100;
+    h.element.scrollTop += 100;
+    h.dispatchScroll();
+    h.scrollEnd();
+  }
+  expect(setItem).toHaveBeenCalledTimes(1);
+  // Reading back up is a new place.
+  h.element.scrollTop = 2388;
+  h.scroll();
+  h.scrollEnd();
+  expect(setItem).toHaveBeenCalledTimes(2);
+  expect(h.saved()).toMatchObject({
+    bottom: false,
+    anchor: { id: "appended" },
+  });
+  h.unmount();
+  expect(setItem).toHaveBeenCalledTimes(2);
+});
+it("retries a place whose write failed", () => {
+  const h = setup();
+  const setItem = vi
+    .spyOn(localStorage, "setItem")
+    .mockImplementationOnce(() => {
+      throw new Error("quota");
+    });
+  h.element.scrollTop = 3038;
+  h.scroll(false);
+  h.scrollEnd();
+  expect(h.saved()).toBeUndefined();
+  h.unmount();
+  expect(setItem).toHaveBeenCalledTimes(2);
   expect(h.saved()).toEqual({ bottom: true });
 });
 it("an append follows the actual bottom position, not stale virtualizer position", () => {
@@ -697,6 +748,25 @@ it("follows the latest message while a saved row is still loading, then restores
     anchor: { id: "anchor", y: 42 },
   });
 });
+// Notice rows fill in after each head, above the messages already shown.
+it("restores a saved row on the render that inserts it above the loaded rows", () => {
+  const h = setup({
+    initialRows: [timelineMessage("old")],
+    initial: { bottom: false, anchor: { id: "anchor", y: 42 } },
+  });
+  h.scroll(false);
+  h.handle.scrollToIndex.mockClear();
+  h.setRows([timelineMessage("anchor"), timelineMessage("old")]);
+  expect(h.handle.scrollToIndex).toHaveBeenCalledWith(0, {
+    align: "start",
+    offset: -42,
+  });
+  h.unmount();
+  expect(h.saved()).toMatchObject({
+    bottom: false,
+    anchor: { id: "anchor", y: 42 },
+  });
+});
 it.each(["wheel", "pointer"])(
   "%s reader input while a saved row is loading retires it, so its arrival does not move the reader",
   (input) => {
@@ -782,9 +852,11 @@ it("local-send navigation releases the restored anchor", () => {
   h.resize();
   mounted.unshift({ id: "first", y: 0 });
   h.reveal("first");
+  // At the bottom, a retained anchor would still hold the place above it.
+  h.element.scrollTop = 3038;
   h.scroll(false);
   h.unmount();
-  expect(h.saved().anchor).toEqual({ id: "first", y: 0 });
+  expect(h.saved()).toEqual({ bottom: true });
 });
 it.each([-200, 800])(
   "a restored row outside the viewport (%s) is not preferred",

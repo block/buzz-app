@@ -13,6 +13,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { MessageLink } from "../../features/conversation/MessageLink";
+import { labelText } from "../../features/messages/label-text";
 import { useIdentityNames } from "../../features/identity-names/react";
 import {
   MAX_MARKDOWN_LENGTH,
@@ -1007,16 +1008,17 @@ function NoteBody({
               a: ({ children, href }) => {
                 if (!href) return children;
                 // A raw autolink shows its destination's name, as in messages.
-                const label = children === href ? undefined : children;
+                const label = labelText(children);
+                const raw = label === href;
                 return (
                   <MessageLink
                     url={href}
-                    label={typeof label === "string" ? label : undefined}
+                    label={raw ? undefined : label}
                     registry={undefined}
                     session={session}
                     onOpenLink={openLink}
                   >
-                    {label}
+                    {raw ? undefined : children}
                   </MessageLink>
                 );
               },

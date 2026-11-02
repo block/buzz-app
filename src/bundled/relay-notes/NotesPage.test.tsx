@@ -694,18 +694,11 @@ it("renders note content as Markdown without executable HTML or unsafe links", a
   );
 });
 
-it("opens Buzz message and channel links in the app, naming a raw channel link", async () => {
-  const user = userEvent.setup();
-  const root = "a".repeat(64);
-  const f = fixture([
-    {
-      ...note("Blockers"),
-      content: `Summarised from [the blockers thread](buzz://message?channel=release&id=${root}) in <buzz://channel/release>.`,
-    },
-  ]);
+/** A full session whose channel links name a joined #Release. */
+function withReleaseChannel(session: RelaySession) {
   const channels = { status: "ready", channels: [] };
-  const session = {
-    ...f.session,
+  return {
+    ...session,
     unread: undefined,
     channels: {
       list: () => channels,
@@ -723,6 +716,18 @@ it("opens Buzz message and channel links in the app, naming a raw channel link",
       subscribeList: () => () => {},
     },
   } as unknown as RelaySession;
+}
+
+it("opens Buzz message and channel links in the app, naming a raw channel link", async () => {
+  const user = userEvent.setup();
+  const root = "a".repeat(64);
+  const f = fixture([
+    {
+      ...note("Blockers"),
+      content: `Summarised from [the blockers thread](buzz://message?channel=release&id=${root}) in <buzz://channel/release>.`,
+    },
+  ]);
+  const session = withReleaseChannel(f.session);
   const open = vi.fn(async () => {});
   const connection = {
     status: "ready",
@@ -768,6 +773,47 @@ it("opens Buzz message and channel links in the app, naming a raw channel link",
     channelId: "release",
   });
   expect(open).toHaveBeenCalledTimes(2);
+});
+
+it("keeps a formatted label on a Buzz channel link", async () => {
+  const user = userEvent.setup();
+  const f = fixture([
+    {
+      ...note("Launch"),
+      content: "Meet in [the **release** room](buzz://channel/release).",
+    },
+  ]);
+  render(<NotesCommunity session={withReleaseChannel(f.session)} />);
+  await enterFolder();
+  await user.click(screen.getByRole("button", { name: "Open Launch by Carl" }));
+  const link = within(screen.getByRole("complementary")).getByRole("link", {
+    name: "the release room",
+  });
+  expect(link).toHaveTextContent("the release room");
+  expect(link.querySelector("strong")).toHaveTextContent("release");
+});
+
+it("explains that a Buzz link can't be opened without a scope or navigator", async () => {
+  const user = userEvent.setup();
+  const f = fixture([
+    {
+      ...note("Launch"),
+      content: "Meet in [the release room](buzz://channel/release).",
+    },
+  ]);
+  render(<NotesCommunity session={f.session} />);
+  await enterFolder();
+  await user.click(screen.getByRole("button", { name: "Open Launch by Carl" }));
+  const reader = screen.getByRole("complementary");
+  expect(
+    within(reader).queryByText("This Buzz link couldn’t be opened here."),
+  ).not.toBeInTheDocument();
+  await user.click(
+    within(reader).getByRole("link", { name: "the release room" }),
+  );
+  expect(
+    within(reader).getByText("This Buzz link couldn’t be opened here."),
+  ).toBeInTheDocument();
 });
 
 it("shows the saved identifier separately from the display title in row and reader metadata", async () => {

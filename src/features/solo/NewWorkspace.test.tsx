@@ -71,14 +71,12 @@ it.each(["add a folder", "turn worktree off"])(
       fireEvent.change(screen.getByRole("textbox", { name: /^Folders/ }), {
         target: { value: "~/repo" },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
     } else fireEvent.click(toggle);
     expect(
       screen.queryByText("Add at least one folder to use a new worktree."),
     ).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create", exact: true }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(close).toHaveBeenCalledOnce());
     expect(create).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledTimes(recovery === "add a folder" ? 1 : 0);

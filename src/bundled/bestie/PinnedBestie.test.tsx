@@ -561,6 +561,8 @@ async function threadHistoryFixture() {
       entryId: entry.id,
       target: entry.target,
       signal: attempt.signal,
+      position: () => undefined,
+      savePosition: vi.fn(),
       ...(attempt.focus ? { focus: attempt.focus } : {}),
       forSession: () => request,
       resolve: () => false,

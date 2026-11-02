@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
-import { highlightMessage } from "./message-highlight";
+import { highlightWhenSettled, onScreen } from "./message-highlight";
 import { readingPositioned } from "./use-reading";
 
 /** One reveal per request signal, never per row/profile/image update. */
@@ -116,16 +116,12 @@ export function useMessageReveal({
         holding.current = hold
           ? keep(container, target, signal, hold, position)
           : undefined;
-        const box = row.getBoundingClientRect();
-        const viewport = container.getBoundingClientRect();
-        const visible =
-          box.height > 0 &&
-          box.width > 0 &&
-          box.bottom > Math.max(viewport.top, 0) &&
-          box.top < Math.min(viewport.bottom, window.innerHeight) &&
-          box.right > Math.max(viewport.left, 0) &&
-          box.left < Math.min(viewport.right, window.innerWidth);
-        if (!visible) {
+        if (
+          !onScreen(
+            row.getBoundingClientRect(),
+            container.getBoundingClientRect(),
+          )
+        ) {
           holding.current?.();
           holding.current = undefined;
           return;
@@ -134,7 +130,7 @@ export function useMessageReveal({
         cancel();
         highlight.current();
         // A reveal behind a covering panel is not an arrival the reader sees.
-        if (focus) highlight.current = highlightMessage(row);
+        if (focus) highlight.current = highlightWhenSettled(container, target);
         readingPositioned(container);
         complete();
       });

@@ -881,8 +881,11 @@ emoji-only, attachments, tables and diffs) is washed with
 belongs to the message reveal, so every route that lands on a message gets it;
 a reveal behind a covering panel, restored scroll and your own send do not.
 Each row type marks its paint surface with `data-highlight-surface`, which
-excludes the day divider. A repeat arrival restarts the cue. Reduced motion
-holds the tint briefly and removes it without fading.
+excludes the day divider. The cue waits until the message and the list around
+it have held still for 200ms (at most 1.5s), so it never flashes while a fresh
+channel is still loading, then holds about a second and fades over about a
+second. A repeat arrival restarts the cue. Reduced motion holds the tint the
+same time and removes it without fading.
 
 The message hover toolbar uses the 12px rounded-container radius
 with a 2px inset. Its independent icon actions retain their shared 10px corners.

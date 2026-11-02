@@ -3498,7 +3498,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   border-radius: var(--radius-row);
   background: var(--surface-message-highlight);
   pointer-events: none;
-  animation: message-highlight calc(var(--duration-settle) * 5) ease-out both;
+  animation: message-highlight calc(var(--duration-settle) * 10) ease-out both;
 }
 .messageHighlight > .messageBody > .messageContent .messageBubble {
   isolation: isolate;
@@ -3517,7 +3517,7 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   border-radius: inherit;
   background: var(--affordance-message-highlight);
   pointer-events: none;
-  animation: message-highlight calc(var(--duration-settle) * 5) ease-out both;
+  animation: message-highlight calc(var(--duration-settle) * 10) ease-out both;
 }
 .messageHighlight
   > .messageBody
@@ -3525,9 +3525,10 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   .messageBubble[data-own]::after {
   background: var(--affordance-message-own-highlight);
 }
+/* Held about a second so it reads as intentional, then a slow fade. */
 @keyframes message-highlight {
   0%,
-  35% {
+  45% {
     opacity: 1;
   }
   100% {

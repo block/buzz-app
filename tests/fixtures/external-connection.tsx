@@ -1,38 +1,45 @@
 import { createRoot } from "react-dom/client";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { ExternalConnectionSettings } from "../../src/bundled/agents/ExternalConnectionSettings";
-import { createExternalConnection } from "../../src/features/agents/external-connection";
+import { ExternalAuthorizationDialog } from "../../src/features/agents/ExternalAuthorizationDialog";
+import { createExternalApps } from "../../src/features/agents/external-connection";
 import type { Agents } from "../../src/features/agents/service";
+import type { Communities } from "../../src/features/communities/service";
 import type { RelayData } from "../../src/features/relay/service";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { createAppearance } from "../../src/shared/theme/service";
 import "../../src/shared/styles/globals.css";
-
-const appearance = createAppearance();
-const parameters = new URLSearchParams(location.search);
+const appearance = createAppearance(),
+  parameters = new URLSearchParams(location.search);
 appearance.setMode(parameters.get("theme") === "dark" ? "dark" : "light");
 appearance.setFontScale(Number(parameters.get("scale") ?? 1));
-const pubkey = "a".repeat(64);
-const agent = { key: pubkey, pubkey, name: "Test agent", place: "here" };
+const pubkey = "a".repeat(64),
+  viewer = "b".repeat(64),
+  origin = "https://fixture.example.test";
+const inventory = {
+  agents: [{ key: pubkey, pubkey, name: "Test agent", place: "here" }],
+};
 const subscribe = () => () => {};
 const choices = {
   selectable: [{ pubkey }],
   pending: false,
   archives: { status: "ready" },
 };
-const session = { agentChoices: { subscribe, snapshot: () => choices } };
-const snapshot = { status: "ready", session };
-const inventory = { agents: [agent] };
-let admit = () => {};
-let end = () => {};
-const agents = {
-  subscribe,
-  snapshot: () => inventory,
-  connectExternal: async (
-    _key: string,
-    signal: AbortSignal,
-    connected: () => void,
-  ) => {
+const snapshot = {
+  status: "ready",
+  scope: origin,
+  session: { agentChoices: { subscribe, snapshot: () => choices } },
+};
+const client = {
+  viewer,
+  selected: origin,
+  memberships: [{ id: origin, name: "Test community" }],
+};
+let admit = () => {},
+  end = () => {};
+const connection = createExternalApps();
+connection.bind({
+  connect: async (_key, signal, connected) => {
     admit = connected;
     const closed = new Promise<void>((resolve) => {
       end = resolve;
@@ -40,29 +47,47 @@ const agents = {
     signal.addEventListener("abort", () => end(), { once: true });
     return {
       url: "http://127.0.0.1:1234/mcp",
-      headers: [
-        {
-          name: "Authorization",
-          value: "Bearer fixture-only-not-a-real-grant",
-        },
-      ],
+      headers: [],
       close: async () => end(),
       closed,
+      authorize: async () => {},
     };
   },
-} as unknown as Agents;
-const connection = createExternalConnection(agents);
+  deny: async () => {},
+});
+const request = () =>
+  connection.open(
+    {
+      version: 1,
+      client: "Test external app",
+      callback: "http://127.0.0.1:1234/buzz/authorize",
+      state: "A".repeat(43),
+      scope: ["read", "post"],
+      code_challenge: "A".repeat(43),
+      code_challenge_method: "S256",
+    },
+    viewer,
+  );
 function Fixture() {
   useKeyboardFocusVisibility();
   return (
     <main className="mx-auto grid max-w-3xl gap-section-gap p-4">
-      <ExternalConnectionSettings
-        agents={agents}
-        relay={{ subscribe, snapshot: () => snapshot } as unknown as RelayData}
+      <ExternalConnectionSettings connection={connection} />
+      <ExternalAuthorizationDialog
         connection={connection}
+        agents={{ subscribe, snapshot: () => inventory } as unknown as Agents}
+        communities={
+          {
+            subscribe,
+            snapshot: () => client,
+            select: () => {},
+          } as unknown as Communities
+        }
+        relay={{ subscribe, snapshot: () => snapshot } as unknown as RelayData}
       />
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => admit()}>Fixture: admit Nexus</Button>
+        <Button onClick={request}>Fixture: request access</Button>
+        <Button onClick={() => admit()}>Fixture: admit app</Button>
         <Button onClick={() => end()}>Fixture: end runtime</Button>
       </div>
     </main>

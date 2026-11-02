@@ -2,6 +2,7 @@ import type {} from "../navigation/service";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
+import type { ExternalScope } from "./external-connection";
 import { connectMcp } from "../../buzz-mcp/connection";
 import type {
   HostMcpServer,
@@ -1078,6 +1079,7 @@ export type Agents = {
     agent: AgentKey,
     signal: AbortSignal,
     connected: () => void,
+    scopes?: readonly ExternalScope[],
   ): Promise<HostMcpServer>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
@@ -2453,9 +2455,10 @@ export class AgentsService extends Service implements Agents {
     key: AgentKey,
     signal: AbortSignal,
     connected: () => void,
+    scopes: readonly ExternalScope[] = ["read", "post"],
   ) {
     if (this.ctx.pluginOwner?.id !== "buzz.agents")
-      throw new Error("Create external connections in Buzz Agent settings.");
+      throw new Error("Authorize external apps in Buzz.");
     const host = this.ctx.host;
     if (!host?.serveMcp)
       throw new Error("External connections require Buzz desktop.");
@@ -2495,7 +2498,7 @@ export class AgentsService extends Service implements Agents {
           .selectable.some((agent) => agent.pubkey === handle.pubkey)
       )
         throw new Error(
-          "The external connection has ended. Pair Nexus again in Buzz.",
+          "The external connection has ended. Authorize the external app again in Buzz.",
         );
     };
     const changed = () => {
@@ -2533,7 +2536,7 @@ export class AgentsService extends Service implements Agents {
           });
           return (message) => {
             check();
-            return respondExternal(client, message, connected);
+            return respondExternal(client, message, connected, scopes);
           };
         },
         lifetime,

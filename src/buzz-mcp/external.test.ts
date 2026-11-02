@@ -156,3 +156,33 @@ it("posts text through the shared handler with the selected identity", async () 
   );
   expect(read).not.toHaveBeenCalled();
 });
+
+it("enforces read-only scope even when a caller asks for a post tool", async () => {
+  const { client, publish } = fixture();
+  const call = await respondExternal(
+    client,
+    {
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { channel: "chan", text: "blocked", audience: "everyone" },
+      },
+    },
+    () => {},
+    ["read"],
+  );
+  expect(call).toHaveProperty("result.isError", true);
+  expect(publish).not.toHaveBeenCalled();
+  const list = await respondExternal(
+    client,
+    { id: 2, method: "tools/list" },
+    () => {},
+    ["read"],
+  );
+  expect(list).toHaveProperty(
+    "result.tools",
+    expect.arrayContaining([expect.objectContaining({ name: "read" })]),
+  );
+  expect(JSON.stringify(list)).not.toContain('"name":"send"');
+});

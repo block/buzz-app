@@ -56,32 +56,49 @@ requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
-## External Nexus connection
+## External app authorization
 
-Buzz desktop offers **Settings > Connect Nexus** in the selected community.
-The owner selects an unprotected agent that this copy of Buzz runs, creates a
-grant, and copies its connection into Nexus. The signing key stays in Buzz.
-The connection can list channels, read messages and threads, and post text.
-It cannot read files, run commands, use Git credentials, or call plugin tools.
-The descriptor grants access. Do not store it in messages, logs, or files.
+Buzz desktop accepts `buzz://mcp-authorize` requests from local apps. Opening a
+link only shows consent. The owner selects a community and an app-held,
+unprotected agent, then selects **Authorize** or **Deny**. No plugin specific
+to the external app is required. The bundled Agents plugin owns the native MCP
+permission. **Settings > External apps** shows the connection and **Revoke access**.
+Keys stay in Buzz. Closing Settings keeps access active.
 
-Each grant admits one upstream MCP session. Nexus shares that session among
-its agents. Buzz stops the grant on a second initialization, owner revocation,
-a change of selected community or identity, loss of the community connection,
-or the end of the owning agent runtime, plugin, or app. The owner creates and
-copies a new grant to pair again. Closing Settings keeps the grant active.
+Version 1 links contain `version=1`, the requesting `client` display name,
+`callback`, random `state`, `scope` (`read`, `post`, or both), `code_challenge`,
+and `code_challenge_method=S256`. The callback must be exactly
+`http://127.0.0.1:<port>/buzz/authorize`, with a port from 1024 through 65535.
+State and challenge each encode 32 bytes as unpadded base64url. The client name
+is supplied by the requesting app; Buzz does not attest its identity.
+Requests expire after five minutes. Duplicate or unknown parameters are rejected.
 
-The version 1 descriptor has `version`, `url`, and `token` fields. Its URL is
-`http://127.0.0.1:<port>/mcp`. The token is an opaque bearer. The transport
-accepts JSON POST messages with MCP `2025-06-18`. Initialization returns
-`Mcp-Session-Id`; later requests require that header and the bearer token.
-Notifications return 202. There is no SSE stream or DELETE endpoint.
-The tools are `channel_list`, `channel_get`, `read`, `send`, and
-`reply_in_subthread`. Their shared schemas apply with these limits: `read`
-needs `channel` or `thread`; `channel_get` needs `channel`; `send` needs
-`channel`, `text`, and `audience`; `reply_in_subthread` needs `parent`, `text`,
-and `audience`. Posts accept `mentions` and `send` accepts `reply`.
-Posts reject `path`, `files`, and `final`. Unknown fields are rejected.
+After consent, Buzz sends a JSON POST to the callback with `version: 1`, `state`,
+and `outcome: "authorized"`, plus `code` and `exchange_url`. Denial sends
+`outcome: "denied"` with no code. A code lasts 60 seconds. The client sends a
+JSON POST with `version: 1`, `state`, `code`, and `code_verifier` to the exact
+`http://127.0.0.1:<port>/authorize/exchange` URL. S256 verification consumes the
+code once and returns `{version: 1, url, token}`. The URL is that listener's
+`/mcp` endpoint. Neither a link nor a callback carries the MCP bearer or a key.
+Native callback requests do not follow redirects. Failed callbacks close the grant.
+A redeemed grant also expires if it does not initialize within the code deadline.
+
+The MCP endpoint accepts JSON POST messages with MCP `2025-06-18`. Initialization
+returns `Mcp-Session-Id`; later requests need that header and `Authorization:
+Bearer <token>`. Notifications return 202. There is no SSE or DELETE endpoint.
+Each grant admits one upstream session; the external app shares it among its
+agents. A second initialization stops the grant. Revocation, a community or
+identity change, or the end of the owning agent runtime, plugin, or app also
+stops it. Start setup again in the external app after a connection ends.
+
+The read scope allows `channel_list`, `channel_get`, and `read`. The post scope
+allows `send` and `reply_in_subthread`. The shared schemas apply with explicit
+targets: `read` needs `channel` or `thread`, and searches with `q` need `channel`;
+`channel_get` needs `channel`; `send` needs `channel`, `text`, and `audience`;
+`reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
+`mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.
+Unknown fields are rejected. File access, commands, Git credentials, and plugin
+tools are unavailable. Connection credentials must stay out of logs and messages.
 
 ## Product help for agents
 
@@ -1263,7 +1280,7 @@ Subscription runtime history stays on this device, outside configuration: the la
 
 ## Commands using an agent's identity
 
-An Attention source run receives `spawn(processId, { args, cwd, env, onStdout, onStderr })`. Buzz binds it to the watch's owning agent, destination and lifetime. There is no public agent connection or caller-selected agent identity. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
+An Attention source run receives `spawn(processId, { args, cwd, env, onStdout, onStderr })`. Buzz binds it to the watch's owning agent, destination and lifetime. Attention sources do not accept a caller-selected agent identity. The process must be declared in the calling plugin's `host.processes`, and the plugin must declare `host.mcp` (and `host.files` when its tools read local paths). The host retains process permission checks and signing keys. The bundled command helper initializes one MCP session, adds an agent-scoped `buzz` to PATH and passes that session to the command and its children. `buzz tools` lists tools; `buzz <tool> --field value` and `buzz call <tool> '<JSON object>'` invoke them. There is no owner-identity fallback.
 
 Source return or failure, cancellation, Attention off, agent stop, plugin unload, command exit or closing the MCP transport revokes command access. Successful queued output remains valid after the source returns. Killing a command uses the existing host process group/job cleanup for descendants. OS access is the same as the app user's. Buzz owns batching, queue retries and final output draining for its built-in command sources. Other source plugins retain their own producer policies. See the [executable scheduled-source example](../tests/fixtures/agent-command/README.md), including the scope of its fixture-based custody evidence.
 

@@ -1,7 +1,22 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { HostMcpServer } from "../host/service";
-import { createExternalConnection } from "./external-connection";
+import {
+  createExternalApps,
+  parseExternalAuthorization,
+  type ExternalAuthorization,
+} from "./external-connection";
 
+const request: ExternalAuthorization = {
+  version: 1,
+  client: "Test client",
+  callback: "http://127.0.0.1:1234/buzz/authorize",
+  state: "A".repeat(43),
+  scope: ["read", "post"],
+  code_challenge: `${"B".repeat(42)}A`,
+  code_challenge_method: "S256",
+};
+const uri = () =>
+  `buzz://mcp-authorize?${new URLSearchParams({ version: "1", client: request.client, callback: request.callback, state: request.state, scope: "read post", code_challenge: request.code_challenge, code_challenge_method: "S256" })}`;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((accept) => {
@@ -9,78 +24,118 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
-function server() {
+function transport() {
   const ended = deferred<void>();
   return {
     url: "http://127.0.0.1:1234/mcp",
     headers: [{ name: "Authorization", value: "Bearer test-only-token" }],
     closed: ended.promise,
-    close: vi.fn(async () => {
-      ended.resolve();
-    }),
+    authorize: vi.fn(async () => {}),
+    close: vi.fn(async () => ended.resolve()),
   };
 }
-
-it("keeps the descriptor out of state and removes copy access after admission or revoke", async () => {
-  const transport = server();
-  let admit = () => {};
-  let lifetime: AbortSignal | undefined;
-  const connection = createExternalConnection({
-    connectExternal: async (_, signal, connected) => {
-      lifetime = signal;
-      admit = connected;
-      return transport;
-    },
-  });
-  await connection.create("test-agent");
-  expect(JSON.parse(connection.descriptor())).toEqual({
-    version: 1,
-    url: "http://127.0.0.1:1234/mcp",
-    token: "test-only-token",
+afterEach(() => vi.useRealTimers());
+it("parses the generic authorization request without a bearer", () => {
+  expect(parseExternalAuthorization(uri())).toEqual(request);
+});
+it.each([
+  ["callback", "http://localhost:1234/buzz/authorize"],
+  ["callback", "https://127.0.0.1:1234/buzz/authorize"],
+  ["callback", "http://127.0.0.1:1234/buzz/authorize?x=1"],
+  ["callback", "http://127.0.0.1:80/buzz/authorize"],
+  ["callback", "http://user@127.0.0.1:1234/buzz/authorize"],
+  ["code_challenge_method", "plain"],
+  ["scope", "read files"],
+  ["scope", "read read"],
+  ["state", "short"],
+  ["client", ""],
+  ["version", "2"],
+])("rejects invalid %s in the authorization link", (key, value) => {
+  const url = new URL(uri());
+  url.searchParams.set(key, value);
+  expect(parseExternalAuthorization(url.href)).toBeNull();
+});
+it("rejects ambiguous and extra link fields", () => {
+  expect(parseExternalAuthorization(`${uri()}&scope=read`)).toBeNull();
+  expect(parseExternalAuthorization(`${uri()}&token=secret`)).toBeNull();
+  expect(
+    parseExternalAuthorization(
+      uri().replace("mcp-authorize?", "mcp-authorize/extra/../?"),
+    ),
+  ).toBeNull();
+});
+it("requires owner approval and keeps transport credentials out of observable state", async () => {
+  const server = transport(),
+    connect = vi.fn(async () => server),
+    deny = vi.fn(async () => {});
+  const connection = createExternalApps();
+  connection.bind({ connect, deny });
+  connection.open(request, "viewer");
+  expect(connect).not.toHaveBeenCalled();
+  await connection.approve("test-agent");
+  expect(connect).toHaveBeenCalledWith(
+    "test-agent",
+    expect.any(AbortSignal),
+    expect.any(Function),
+    ["read", "post"],
+  );
+  expect(server.authorize).toHaveBeenCalledWith({
+    callback: request.callback,
+    state: request.state,
+    code_challenge: request.code_challenge,
   });
   expect(JSON.stringify(connection.snapshot())).not.toContain(
     "test-only-token",
   );
-  admit();
-  expect(connection.snapshot().phase).toBe("connected");
-  expect(() => connection.descriptor()).toThrow("new connection");
   await connection.revoke();
-  expect(lifetime?.aborted).toBe(true);
-  expect(transport.close).toHaveBeenCalledOnce();
-  expect(connection.snapshot().phase).toBe("off");
+  expect(server.close).toHaveBeenCalled();
 });
-
-it("closes a server that starts after owner revocation", async () => {
-  const pending = deferred<HostMcpServer>();
-  const started = deferred<void>();
-  const transport = server();
-  const connection = createExternalConnection({
-    connectExternal: async () => {
+it("closes a server that starts after revocation", async () => {
+  const pending = deferred<HostMcpServer>(),
+    started = deferred<void>();
+  const server = transport();
+  const connection = createExternalApps();
+  connection.bind({
+    connect: async () => {
       started.resolve();
       return pending.promise;
     },
+    deny: async () => {},
   });
-  const creating = connection.create("test-agent");
+  connection.open(request, "viewer");
+  const approving = connection.approve("test-agent");
   try {
     await started.promise;
     await connection.revoke();
   } finally {
-    pending.resolve(transport);
+    pending.resolve(server);
   }
-  await creating;
-  expect(transport.close).toHaveBeenCalledOnce();
-  expect(connection.snapshot().phase).toBe("off");
-  expect(() => connection.descriptor()).toThrow();
+  await approving;
+  expect(server.close).toHaveBeenCalledOnce();
+  expect(server.authorize).not.toHaveBeenCalled();
 });
-
-it("requires a new grant after the owning transport ends", async () => {
-  const transport = server();
-  const connection = createExternalConnection({
-    connectExternal: async () => transport,
-  });
-  await connection.create("test-agent");
-  await transport.close();
-  expect(connection.snapshot().phase).toBe("ended");
-  expect(() => connection.descriptor()).toThrow("new connection");
+it("denies and expires requests without creating a grant", async () => {
+  vi.useFakeTimers();
+  const connect = vi.fn(),
+    deny = vi.fn(async () => {});
+  const connection = createExternalApps();
+  connection.bind({ connect, deny });
+  connection.open(request, "viewer");
+  await connection.deny();
+  expect(deny).toHaveBeenCalledOnce();
+  connection.open(request, "viewer");
+  await vi.advanceTimersByTimeAsync(300_000);
+  expect(connection.snapshot().pending).toBeUndefined();
+  expect(deny).toHaveBeenCalledTimes(2);
+  expect(connect).not.toHaveBeenCalled();
+});
+it("closes the grant when callback delivery fails", async () => {
+  const server = transport();
+  server.authorize.mockRejectedValueOnce(new Error("callback failed"));
+  const connection = createExternalApps();
+  connection.bind({ connect: async () => server, deny: async () => {} });
+  connection.open(request, "viewer");
+  await connection.approve("test-agent");
+  expect(server.close).toHaveBeenCalled();
+  expect(connection.snapshot().error).toContain("Start setup again");
 });

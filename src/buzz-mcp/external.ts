@@ -1,6 +1,7 @@
 import type { BuzzClient } from "./client";
 import { respond } from "./rpc";
 import { TOOLS } from "./tools";
+import type { ExternalScope } from "../features/agents/external-connection";
 
 const fields: Readonly<Record<string, readonly string[]>> = {
   channel_list: ["q", "all", "types"],
@@ -78,6 +79,7 @@ export async function respondExternal(
   client: BuzzClient,
   input: unknown,
   connected: () => void,
+  scopes: readonly ExternalScope[] = ["read", "post"],
 ) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("Expected one JSON-RPC message.");
@@ -100,10 +102,13 @@ export async function respondExternal(
       };
     connected();
   }
-  if (method === "tools/list") return result({ tools });
+  const allowed = tools.filter((tool) =>
+    scopes.includes(tool.annotations.readOnlyHint ? "read" : "post"),
+  );
+  if (method === "tools/list") return result({ tools: allowed });
   if (method === "tools/call") {
     try {
-      const tool = tools.find((tool) => tool.name === params.name);
+      const tool = allowed.find((tool) => tool.name === params.name);
       if (!tool)
         throw new Error(
           "This tool is not available through the external connection.",
@@ -134,6 +139,6 @@ export async function respondExternal(
   }
   return respond(client, {}, input, [], {
     instructions:
-      "Read and post text as the agent selected by the owner in Buzz. Supply explicit channel or message IDs. Use channel_list to find channels. Keys stay in Buzz. If this connection ends, ask the owner to create a new connection in Buzz Settings > Connect Nexus.",
+      "Act as the agent selected by the owner in Buzz. Supply explicit channel or message IDs. Keys stay in Buzz. If this connection ends, start setup again in the external app and authorize it in Buzz.",
   });
 }

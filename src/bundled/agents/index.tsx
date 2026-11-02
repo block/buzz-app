@@ -8,7 +8,7 @@ import { availableAgentProviderRoute } from "./routes";
 import { developerMode } from "../../features/developer/mode";
 import { withImportScenario } from "../../features/developer/agent-import-scenario";
 import { isTauri } from "@tauri-apps/api/core";
-import { createExternalConnection } from "../../features/agents/external-connection";
+import type {} from "../../features/agents/external-connection";
 import { ExternalConnectionSettings } from "./ExternalConnectionSettings";
 
 export const inject = [
@@ -21,6 +21,7 @@ export const inject = [
   "conversation",
   "decisions",
   "settingsCards",
+  "externalApps",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   registerAttention(ctx);
@@ -29,20 +30,21 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const { relay, navigation: navigator } = ctx;
   const agents = developerMode ? withImportScenario(ctx.agents) : ctx.agents;
   if (isTauri()) {
-    const connection = createExternalConnection(ctx.agents);
-    ctx.effect(() => () => {
-      void connection.revoke();
-    });
+    const connection = ctx.externalApps;
+    ctx.effect(() =>
+      connection.bind({
+        connect: ctx.agents.connectExternal.bind(ctx.agents),
+        deny: (request) => {
+          if (!ctx.host.denyMcpAuthorization)
+            throw new Error("External authorization is unavailable");
+          return ctx.host.denyMcpAuthorization(request);
+        },
+      }),
+    );
     ctx.settingsCards.register({
-      id: "nexus",
-      title: "Connect Nexus",
-      component: () => (
-        <ExternalConnectionSettings
-          agents={ctx.agents}
-          relay={relay}
-          connection={connection}
-        />
-      ),
+      id: "external-apps",
+      title: "External apps",
+      component: () => <ExternalConnectionSettings connection={connection} />,
     });
   }
   ctx.conversation.registerAttachment({

@@ -32,6 +32,8 @@ function setup(overrides: Partial<PageNavigation> = {}) {
       },
     },
     signal: abort.signal,
+    position: () => undefined,
+    savePosition: vi.fn(),
     complete: vi.fn(),
     resolve: vi.fn(),
     forSession: vi.fn(),

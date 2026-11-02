@@ -8,7 +8,6 @@ test.use({
   channelLifecycle: true,
   lifecycleRole: "guest",
   readState: true,
-  pluginFixtures: true,
   channelIds: [channelId, "beta"],
   channelNames: { [channelId]: "Alpha" },
   historyCounts: { [channelId]: 1, beta: 1 },

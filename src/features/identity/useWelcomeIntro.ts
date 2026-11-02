@@ -15,6 +15,7 @@ export function useWelcomeIntro(welcome: boolean) {
   const [phase, setPhase] = useState<"waiting" | "running" | "done">(() => {
     try {
       return welcome &&
+        document.documentElement.dataset.welcomeIntro === "pending" &&
         isTauri() &&
         /Mac/i.test(navigator.platform) &&
         !localStorage.getItem(KEY) &&
@@ -29,11 +30,10 @@ export function useWelcomeIntro(welcome: boolean) {
   useEffect(() => {
     if (!welcome) return;
     if (!active) {
-      delete document.documentElement.dataset.welcomeIntro;
-      if (isTauri() && /Mac/i.test(navigator.platform))
-        void getCurrentWindow()
-          .show()
-          .catch(() => {});
+      if (document.documentElement.dataset.welcomeIntro === "pending") {
+        delete document.documentElement.dataset.welcomeIntro;
+        void invoke("plugin:window|show", { label: "main" }).catch(() => {});
+      }
       return;
     }
     if (launching) return;

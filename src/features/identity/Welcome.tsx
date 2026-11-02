@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { inspectProfile } from "../communities/api";
 import { OnboardingBack } from "./OnboardingBack";
 import {
@@ -221,6 +222,17 @@ export function Welcome({
             : progress.status === "paused"
               ? `paused:${progress.at}`
               : progress.status;
+  // Existing identities and restore errors bypass first-run presentation.
+  // Release the parser's hidden-window hold as soon as that outcome is known.
+  useEffect(() => {
+    if (
+      (state.status === "ready" || state.status === "error") &&
+      document.documentElement.dataset.welcomeIntro === "pending"
+    ) {
+      delete document.documentElement.dataset.welcomeIntro;
+      void invoke("plugin:window|show", { label: "main" }).catch(() => {});
+    }
+  }, [state.status]);
   // A page replacing another takes focus with it: Back returns it to the
   // choice that opened the page it leaves (`data-return-focus`); otherwise
   // the new heading has it — unless the page focused a field itself, which
@@ -614,12 +626,7 @@ export function Welcome({
           <>
             <WelcomeBack
               npub={npubEncode(linked)}
-              profile={
-                returningProfile ??
-                (communities.snapshot().viewer === linked
-                  ? communities.snapshot().profile
-                  : undefined)
-              }
+              profile={returningProfile}
               onRestore={
                 viewer === linked
                   ? () => void setup.start(finish())
@@ -707,7 +714,7 @@ export function Welcome({
         return linked ? (
           <KeyLost
             owned={owned}
-            onBack={() => back("welcome-back", "lost")}
+            onBack={() => back("welcome-back", backedUp ? "restore" : "import")}
             onStartOver={() => {
               setLinked(undefined);
               setOwned(undefined);
@@ -842,6 +849,7 @@ export function Welcome({
             onboardingTransition(() => {
               cancels.current++;
               login.cancel();
+              setFinding(undefined);
               setOtherOptions(true);
             })
           }

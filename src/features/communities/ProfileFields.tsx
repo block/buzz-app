@@ -1,4 +1,4 @@
-import type { Ref } from "react";
+import { useState, type Ref } from "react";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AvatarEditor } from "../profiles/AvatarEditor";
@@ -53,6 +53,10 @@ export function ProfileFields({
     | { name: string; issuerLabel: string; status: VerifiedProfile["status"] }
     | undefined;
 }) {
+  // A simplified form must still let people repair an invalid saved description.
+  const [repairAbout] = useState(
+    () => (profile.about?.length ?? 0) > PROFILE_ABOUT_MAX_LENGTH,
+  );
   return (
     <div className="grid gap-4">
       {showAvatar && (
@@ -90,7 +94,7 @@ export function ProfileFields({
           }
         />
       </Field>
-      {showAbout && (
+      {(showAbout || repairAbout) && (
         <Field
           label="Profile description (optional)"
           description={`${profile.about?.length ?? 0} of ${PROFILE_ABOUT_MAX_LENGTH} characters`}

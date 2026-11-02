@@ -2,6 +2,8 @@ import { OnboardingBack } from "./OnboardingBack";
 import { useId, useRef, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { useFileDrop } from "../messages/use-file-drop";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { EyeIcon, EyeSlashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -35,6 +37,7 @@ export function KeyImport({
   onImport: (nsec: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
   const form = useRef<HTMLFormElement>(null);
@@ -139,7 +142,7 @@ export function KeyImport({
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <Input
-                        type="password"
+                        type={revealed ? "text" : "password"}
                         autoComplete="off"
                         autoCorrect="off"
                         autoCapitalize="off"
@@ -150,6 +153,14 @@ export function KeyImport({
                         autoFocus
                       />
                     </div>
+                    <IconButton
+                      aria-label={
+                        revealed ? "Hide private key" : "Reveal private key"
+                      }
+                      icon={revealed ? <EyeSlashIcon /> : <EyeIcon />}
+                      disabled={!text}
+                      onClick={() => setRevealed(!revealed)}
+                    />
                     <div className="shrink-0">
                       <Button
                         type="button"

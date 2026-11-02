@@ -635,13 +635,14 @@ fn upload_raw_ipc_consumes_once_without_files_and_binds_bytes_and_metadata() {
         );
     }
     // Tauri's JSON fallback cannot dispatch, even when the original result was lost.
-    assert!(upload_ipc(
+    let fallback_error = upload_ipc(
         &fixture,
         &metadata,
-        tauri::ipc::InvokeBody::Json(serde_json::json!([0, 159, 255]))
+        tauri::ipc::InvokeBody::Json(serde_json::json!([0, 159, 255])),
     )
-    .unwrap_err()
-    .contains("raw bytes"));
+    .unwrap_err();
+    assert!(fallback_error.contains("raw bytes"));
+    assert!(!fallback_error.contains("outcome unknown"));
     calls.page_load();
     assert!(upload_ipc(&fixture, &metadata, raw())
         .unwrap_err()

@@ -1569,3 +1569,27 @@ it.each(["browser", "unowned", "invalid-call-id"])(
     }
   },
 );
+
+it("preserves requestOnce owner-first errors and matches upload owner wording", async () => {
+  const { root, plugin } = pluginContext();
+  const invalid = { url: onceInput.url, method: "GET" as const };
+  const ownerError = "Protected requests require an installed desktop plugin";
+  await expect(
+    root.host.requestOnce?.(invalid, { callId: "bad" }),
+  ).rejects.toThrow(ownerError);
+  await expect(
+    root.host.uploadBytesOnce?.(new Uint8Array(), byteUpload, {
+      callId: "bad",
+    }),
+  ).rejects.toThrow(ownerError);
+  vi.mocked(isTauri).mockReturnValue(false);
+  await expect(
+    plugin.host.requestOnce?.(invalid, { callId: "bad" }),
+  ).rejects.toThrow(ownerError);
+  await expect(
+    plugin.host.uploadBytesOnce?.(new Uint8Array(), byteUpload, {
+      callId: "bad",
+    }),
+  ).rejects.toThrow(ownerError);
+  expect(invoke).not.toHaveBeenCalled();
+});

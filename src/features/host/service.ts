@@ -493,11 +493,13 @@ export class HostService extends Service implements Host {
     input: HostRequest,
     { callId, isEligible }: HostRequestOnceOptions,
   ): Promise<HostResponse> {
-    if (input.method !== "POST")
-      throw new Error("Protected requests require POST");
     const owner = this.ctx.pluginOwner;
-    if (!owner)
+    if (!owner || !isTauri())
       throw new Error("Protected requests require an installed desktop plugin");
+    if (input.method !== "POST" || !UUID.test(callId))
+      throw new Error(
+        "Protected requests require POST and a canonical UUID callId",
+      );
     return protectedCall(this.ctx, callId, isEligible, (once) =>
       invoke<HostResponse>("plugin_host_request", {
         id: owner.id,
@@ -515,7 +517,7 @@ export class HostService extends Service implements Host {
   ): Promise<HostResponse> {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri())
-      throw new Error("Protected uploads require an installed desktop plugin");
+      throw new Error("Protected requests require an installed desktop plugin");
     if (
       !(bytes instanceof Uint8Array) ||
       bytes.byteLength < 1 ||

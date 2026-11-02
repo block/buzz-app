@@ -4963,6 +4963,94 @@ it.each([
   },
 );
 
+it("holds an early Enter for a person still being found over a section holding the letters only in order", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    person = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: () => Promise.resolve([]),
+  });
+  // Only the directory knows Champa Rao, so the People row lands when it
+  // answers.
+  const t = peopleSession(owner.session);
+  let answer!: () => void;
+  t.people.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        answer = () =>
+          resolve({
+            people: [{ pubkey: person.pubkey, name: "Champa Rao" }],
+            hasMore: false,
+          });
+      }),
+  );
+  const cards = [
+    {
+      key: "buzz.channels/templates",
+      id: "templates",
+      pluginId: "buzz.channels",
+      title: "Channel templates",
+      group: "App",
+      revision: "one",
+      component: () => null,
+    },
+  ];
+  const settingsCards = {
+    subscribe: () => () => {},
+    snapshot: () => cards,
+    retainVisibility: () => () => {},
+  } as unknown as AppServices["settingsCards"];
+  const openSection = vi.fn();
+  const openConversation = vi.fn();
+  // "wes" finds Software updates the same way, but in the shipped palette
+  // plugin rows still take its early Enter: plugin descriptions hold most
+  // names' letters in order. Of the bundled plugins, controls and a member's
+  // sections, "champ" matched only Channel templates, so this Enter turns on
+  // section matching alone.
+  function Palette() {
+    const inlineSettings = useSearchSettings({
+      query: "champ",
+      settingsCards,
+      navigation: {} as AppServices["navigation"],
+      close: () => {},
+      openSection,
+    });
+    return (
+      <SearchResults
+        session={t.session}
+        query="champ"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+        inlineSettings={inlineSettings}
+      />
+    );
+  }
+  try {
+    render(<Palette />);
+    await waitFor(() => expect(t.people).toHaveBeenCalled());
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(openSection).not.toHaveBeenCalled();
+    expect(openConversation).not.toHaveBeenCalled();
+    await act(async () => answer());
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("started-dm"),
+    );
+    expect(t.open).toHaveBeenCalledExactlyOnceWith(
+      [person.pubkey],
+      expect.any(AbortSignal),
+    );
+    expect(openSection).not.toHaveBeenCalled();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("excludes proven Huddles but keeps ordinary hits after mutable metadata changes", async () => {
   vi.useFakeTimers();
   const relay = keypair(),

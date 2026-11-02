@@ -3,7 +3,7 @@ import { GearIcon, SquaresFourIcon } from "../../shared/design-system/icons";
 import { useEffect, useSyncExternalStore } from "react";
 import type { AppServices } from "../services";
 import type { SearchDestination, SearchGroup } from "./SearchChoices";
-import { matchName, matchRank } from "../../features/search/match";
+import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import { settingsSections } from "../settings-sections";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -33,6 +33,14 @@ const entries = [
 
 const noSubscribe = () => () => {};
 const noSnapshot = () => null;
+
+/** A section opens Settings on Enter, so letters merely in order do not match
+ * it: "wes" would find Software updates before a person Wes is found. Word
+ * runs still do, as in channel completion. */
+function matchSection(label: string, needle: string) {
+  const found = matchName(label, needle);
+  return found && found.rank <= MatchRank.wordRuns ? found : undefined;
+}
 
 function controlDestination(
   key: string,
@@ -118,13 +126,13 @@ export function useSearchSettings({
         client?.memberships.find(({ id }) => id === client.selected),
       ).groups.flatMap((group) =>
         group.sections.flatMap((section) => {
-          const match = matchName(section.label, needle);
+          const match = matchSection(section.label, needle);
           // A group label such as "Buzz" or "Community" names many sections,
           // so it ranks a step behind a section's own label, as a plugin's
           // category does.
           const rank = Math.min(
             match?.rank ?? Infinity,
-            (matchRank(group.label, needle) ?? Infinity) + 1,
+            (matchSection(group.label, needle)?.rank ?? Infinity) + 1,
           );
           if (!Number.isFinite(rank)) return [];
           return [

@@ -62,6 +62,9 @@
    step 10 and pressed: each accent's hover and press, retuned to move clearly
    off step 9 while staying clean rather than muddy. */
 :root {
+  /* Branded onboarding palette; dark mode adds the approved 30% black tint. */
+  --brand-chartreuse: #d7d72e;
+  --brand-chartreuse-dimmed: color-mix(in srgb, #d7d72e 70%, black);
   --magenta-1-light: #fffbfc;
   --magenta-2-light: #fff7fa;
   --magenta-3-light: #ffeef3;
@@ -1212,7 +1215,7 @@
   --border-floating-control: var(--border-prominent);
   --affordance-selected: var(--neutral-3);
   --affordance-disabled: var(--neutral-4);
-  --surface-onboarding: #d7d72e;
+  --surface-onboarding: var(--brand-chartreuse);
   --affordance-danger: var(--red-3);
   --affordance-danger-hover: var(--red-4);
   --affordance-danger-pressed: var(--red-5);
@@ -1357,7 +1360,7 @@
   --border-floating-control: var(--neutral-9);
   --affordance-selected: var(--neutral-5);
   --affordance-disabled: var(--neutral-5);
-  --surface-onboarding: color-mix(in srgb, #d7d72e 70%, black);
+  --surface-onboarding: var(--brand-chartreuse-dimmed);
   --affordance-danger: var(--red-3);
   --affordance-danger-hover: var(--red-4);
   --affordance-danger-pressed: var(--red-5);

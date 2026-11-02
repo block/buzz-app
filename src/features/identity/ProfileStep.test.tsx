@@ -56,15 +56,14 @@ it("suggests and focuses the default name, needs a name to continue, and hands t
   await user.clear(name);
   expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   await user.type(name, " Ada ");
-  await user.type(
-    screen.getByRole("textbox", { name: "Profile description (optional)" }),
-    "Hi ",
-  );
+  expect(
+    screen.queryByRole("textbox", { name: "Profile description (optional)" }),
+  ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(onContinue).toHaveBeenCalledExactlyOnceWith({
     name: "Ada",
     picture: "",
-    about: "Hi",
+    about: "",
   });
   expect(onSkip).not.toHaveBeenCalled();
 });

@@ -901,6 +901,87 @@ it("starts a session without recent notes the relay is slow to give", async () =
   ).not.toContain("<recent-notes>");
 });
 
+it("stops a stalled startup notes read when its budget runs out, so another agent's slow memory read still succeeds", async () => {
+  vi.useFakeTimers();
+  // AbortSignal.timeout runs on real time; put it on the fake clock.
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const controller = new AbortController();
+    setTimeout(
+      () => controller.abort(new DOMException("", "TimeoutError")),
+      ms,
+    );
+    return controller.signal;
+  });
+  try {
+    const other = "d".repeat(64);
+    const stopped: (string | undefined)[] = [];
+    // The agent's notes never answer, and stop only when told to. Another
+    // agent's core memory takes 2.5 seconds, behind the session's real
+    // serialized memory reads.
+    const queue = createAgentMemories(
+      (agent, signal, slug) =>
+        agent === other
+          ? new Promise((done) =>
+              setTimeout(
+                () =>
+                  done({
+                    entries: [
+                      {
+                        slug: "core",
+                        body: "I am another.",
+                        eventId: "e".repeat(64),
+                        createdAt: 1,
+                      },
+                    ],
+                    partial: false,
+                  }),
+                2_500,
+              ),
+            )
+          : new Promise((_, fail) =>
+              signal.addEventListener("abort", () => {
+                stopped.push(slug);
+                fail(signal.reason);
+              }),
+            ),
+      alice,
+      () => true,
+    ).capability;
+    const f = setup();
+    f.memoryRead.mockImplementation(queue.read);
+    void f.deliver({
+      type: "mention",
+      event: message("1", "@Claude 1", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const read = (
+      f.runtime as unknown as {
+        memories(
+          pubkey: string,
+          slug?: string,
+        ): ReturnType<BuzzClient["memories"]>;
+      }
+    ).memories(other, "core");
+    // The start gives up on its notes at two seconds, and both reads stop.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(stopped).toHaveLength(2);
+    for (const slug of stopped) expect(slug).toMatch(/^mem\/notes\//);
+    expect(f.claudes().find((process) => process.prompts.length)).toBeDefined();
+    await vi.advanceTimersByTimeAsync(2_500);
+    await expect(read).resolves.toMatchObject({
+      entries: [{ slug: "core", body: "I am another." }],
+    });
+  } finally {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});
+
 it("starts each session with the agent's recent notes after its core memory", async () => {
   const { deliver, claudes, core, memoryRead } = setup();
   core.mockResolvedValueOnce("I am Claude.");

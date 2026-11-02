@@ -45,7 +45,6 @@ import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
-  abortable,
   recentNotesSection,
 } from "../../features/agent-harness/core-memory";
 import { readProject } from "../../features/agent-harness/project";
@@ -947,10 +946,7 @@ export class ClaudeRuntime {
         const [memory, notes] = await Promise.all([
           this.core(agent),
           recentNotesSection((slug) =>
-            abortable(
-              this.memories(agent, slug),
-              AbortSignal.timeout(NOTES_WAIT_MS),
-            ),
+            this.memories(agent, slug, AbortSignal.timeout(NOTES_WAIT_MS)),
           ),
         ]);
         const directories = key ? entry.directories.get(key) : undefined;
@@ -980,14 +976,15 @@ export class ClaudeRuntime {
   }
 
   /** The agent's memory, or only entry `slug`, as its community's reads give
-   * it. */
-  private memories(agent: AgentKey, slug?: string) {
+   * it. `stop` ends the read sooner than its own limit. */
+  private memories(agent: AgentKey, slug?: string, stop?: AbortSignal) {
     const reads = this.reads(agent);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
+    const limit = AbortSignal.timeout(READ_TIMEOUT_MS);
     return this.memoryReads.read(
       reads,
       pubkeyOf(agent),
-      AbortSignal.timeout(READ_TIMEOUT_MS),
+      stop ? AbortSignal.any([limit, stop]) : limit,
       slug,
     );
   }

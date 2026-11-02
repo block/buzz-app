@@ -108,6 +108,34 @@ it("stops waiting when the caller aborts, even if the read does not", async () =
   expect(s.read).toHaveBeenCalledTimes(1);
 });
 
+it("stops a read once every caller sharing it has stopped waiting", async () => {
+  const signals: AbortSignal[] = [];
+  const read = vi.fn((signal: AbortSignal) => {
+    signals.push(signal);
+    return new Promise<MemoryListing>(() => {});
+  });
+  const source = { connection: {}, memoryListing: read };
+  const reads = new MemoryReads();
+  const first = new AbortController();
+  const second = new AbortController();
+  const waiting = [
+    reads.read(source, agent, first.signal),
+    reads.read(source, agent, second.signal),
+  ];
+  for (const wait of waiting) wait.catch(() => {});
+  // One caller leaving does not cancel the read the other still wants.
+  first.abort(new Error("first left"));
+  await expect(waiting[0]).rejects.toThrow("first left");
+  expect(signals[0]?.aborted).toBe(false);
+  second.abort(new Error("second left"));
+  await expect(waiting[1]).rejects.toThrow("second left");
+  expect(signals[0]?.aborted).toBe(true);
+  // A later caller starts a read of its own rather than joining the stopped one.
+  void reads.read(source, agent, new AbortController().signal).catch(() => {});
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(signals[1]?.aborted).toBe(false);
+});
+
 it("finds core memory, none, or nothing certain in a partial listing", () => {
   expect(coreOf(listing([core]))).toBe("I am Claude.");
   expect(coreOf(listing([core], true))).toBe("I am Claude.");

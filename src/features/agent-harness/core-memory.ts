@@ -9,9 +9,10 @@ export const READ_TIMEOUT_MS = 10_000;
 
 /** One read per connection, agent and slug (or full listing) at a time, which
  * concurrent turns and tool calls share. A new connection, even to the same community, may read as
- * someone else, so it shares nothing with an old one. */
+ * someone else, so it shares nothing with an old one. A read stops once every
+ * caller sharing it has stopped waiting. */
 export class MemoryReads {
-  private reads = new WeakMap<object, Map<string, Promise<MemoryListing>>>();
+  private reads = new WeakMap<object, Map<string, Shared>>();
 
   async read(
     source: Pick<AgentReads, "connection" | "memoryListing">,
@@ -28,19 +29,38 @@ export class MemoryReads {
     const key = `${agent}\0${slug ?? ""}`;
     let read = reads.get(key);
     if (!read) {
-      const started = source.memoryListing(
-        AbortSignal.timeout(READ_TIMEOUT_MS),
-        slug,
-      );
+      const stop = new AbortController();
+      const started: Shared = {
+        listing: source.memoryListing(
+          AbortSignal.any([stop.signal, AbortSignal.timeout(READ_TIMEOUT_MS)]),
+          slug,
+        ),
+        stop,
+        callers: 0,
+      };
       const shared = reads;
       const done = () => {
         if (shared.get(key) === started) shared.delete(key);
       };
-      void started.then(done, done);
+      void started.listing.then(done, done);
       reads.set(key, started);
       read = started;
     }
-    return abortable(read, signal);
+    // The last caller to stop waiting stops the read, which a later caller
+    // then starts afresh.
+    const joined = read;
+    const table = reads;
+    const leave = () => {
+      joined.callers -= 1;
+      if (joined.callers > 0) return;
+      joined.stop.abort(signal.reason);
+      if (table.get(key) === joined) table.delete(key);
+    };
+    joined.callers += 1;
+    signal.addEventListener("abort", leave, { once: true });
+    return abortable(joined.listing, signal).finally(() =>
+      signal.removeEventListener("abort", leave),
+    );
   }
 
   /** After a memory write, a read that may have started before it is not
@@ -51,6 +71,13 @@ export class MemoryReads {
       if (key.startsWith(`${agent}\0`)) reads?.delete(key);
   }
 }
+
+type Shared = {
+  listing: Promise<MemoryListing>;
+  stop: AbortController;
+  /** The callers still waiting for it. */
+  callers: number;
+};
 
 /** The `core` memory in a listing (best read alone, by slug): its text, `null` when the agent has none,
  * or undefined when a partial listing may have missed it. */

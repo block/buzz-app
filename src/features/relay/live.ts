@@ -305,6 +305,9 @@ type Route = {
    * where an earlier connection's delivery could have stopped. */
   resumed?: boolean;
   quotaRetries: number;
+  /** Its REQ was sent before a grant for one of its channels arrived, so the
+   * relay may have left that channel out. Re-send at its EOSE. */
+  regranted?: boolean;
   /** Consecutive refusals that need action, and when the recover tick may retry. */
   refusals?: number;
   retryAt?: number;
@@ -498,11 +501,40 @@ export function subscribeRelayTraffic(
     delete next.wire;
     delete next.deadline;
     delete next.retryRenewal;
+    delete next.regranted; // Sent after the grant, so it covers it.
     // A narrowed replacement is live-only, so it has no replay to rely on.
     if (route.carried) broken = true;
     delete next.carried;
     routes.set(next.id, next);
     return next;
+  }
+  // The relay leaves a channel it cannot serve out of a multi-channel REQ
+  // without a CLOSED, both when the REQ arrives and when access ends later. A
+  // batch then stays narrower than the client thinks. Access comes back only
+  // through a grant, and every grant sends the viewer a 44100 (add, join,
+  // create, DM open or add, unarchive), so re-send each batch that holds a
+  // granted channel. A forged notice costs one extra REQ, nothing more.
+  const grants = new Set<string>();
+  function grant(id: string) {
+    if (!grants.size) queueMicrotask(regrant);
+    grants.add(id);
+  }
+  function regrant() {
+    const ids = [...grants];
+    grants.clear();
+    if (closed) return;
+    let sent = false;
+    for (const route of [...routes.values()]) {
+      if (!route.channelIds?.some((id) => ids.includes(id))) continue;
+      if (route.status === "live" && !route.previous) {
+        replace(route);
+        sent = true;
+      } else if (route.status === "pending" && route.wire)
+        route.regranted = true;
+    }
+    if (!sent) return;
+    pump();
+    notify();
   }
   function recover() {
     if (closed || !authenticated) return;
@@ -527,12 +559,10 @@ export function subscribeRelayTraffic(
     // opening/authenticating alone must not reset backoff on a flapping relay.
     reconnectDelay = BASE_RECONNECT_DELAY;
     const current = generation;
-    // Only multi-channel scopes can be silently pruned by this relay. Singleton
-    // preview/legacy callers retain their existing CLOSED/retry behavior.
+    // Batches are not re-sent here: `grant` re-sends one when access to one of
+    // its channels comes back, the only time a re-send can change its scope.
     for (const route of routes.values()) {
-      if (route.channelIds && route.status === "live" && !route.previous)
-        replace(route);
-      else if (
+      if (
         route.status === "error" &&
         route.retryRenewal &&
         route.previous?.wire
@@ -1256,7 +1286,13 @@ export function subscribeRelayTraffic(
             incoming.created_at >= route.since
           )
             callbacks.telemetry?.(incoming, observer);
-        } else if (incoming.kind !== OBSERVER_KIND)
+        } else if (incoming.kind !== OBSERVER_KIND) {
+          if (
+            route.id === "membership" &&
+            incoming.kind === 44100 &&
+            destination
+          )
+            grant(destination);
           callbacks.receive(
             [incoming],
             Object.freeze({
@@ -1269,6 +1305,7 @@ export function subscribeRelayTraffic(
                   : {}),
             }),
           );
+        }
       } else if (data[0] === "EOSE" && route.status === "pending") {
         clearTimeout(route.deadline);
         if (route.previous) closeWire(route.previous);
@@ -1288,6 +1325,15 @@ export function subscribeRelayTraffic(
         if (broken) settle();
         else if (!caughtUp && wires.get(route.wire ?? "") === route)
           establish(route);
+        if (
+          valid() &&
+          route.regranted &&
+          routes.get(route.id) === route &&
+          route.status === "live"
+        ) {
+          replace(route);
+          notify();
+        }
         if (valid()) pump();
       } else if (data[0] === "CLOSED") {
         const reason =

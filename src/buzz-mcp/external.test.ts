@@ -1,9 +1,9 @@
 import { expect, it, vi } from "vitest";
-import type { BuzzClient } from "./client";
+import type { BuzzClient, BuzzEvent } from "./client";
 import { respondExternal } from "./external";
 
-function fixture() {
-  const query = vi.fn(async () => []);
+function fixture(events: BuzzEvent[] = []) {
+  const query = vi.fn(async () => events);
   const publish = vi.fn(async (event) => ({ ...event, id: "d".repeat(64) }));
   const read = vi.fn(async () => {
     throw new Error("file access");
@@ -122,6 +122,15 @@ it.each([
     { channel: "chan", text: "text", audience: "everyone", mentions: [false] },
   ],
   ["read", { q: "text" }],
+  ["read", { message_url: "https://example.test/message" }],
+  ["read", { message_url: `buzz://channel/chan` }],
+  [
+    "read",
+    {
+      message_url: `buzz://message?channel=chan&id=${"a".repeat(64)}`,
+      channel: "other",
+    },
+  ],
   ["read", { channel: "chan", limit: 1.5 }],
   ["channel_get", {}],
   ["channel_list", { all: "true" }],
@@ -162,6 +171,32 @@ it("posts text through the shared handler with the selected identity", async () 
     }),
   );
   expect(read).not.toHaveBeenCalled();
+});
+
+it("reads a message link through the shared handler without an implicit target", async () => {
+  const id = "a".repeat(64);
+  const { call } = fixture([
+    {
+      id,
+      pubkey: "b".repeat(64),
+      created_at: 1,
+      kind: 9,
+      content: "Linked message",
+      tags: [["h", "chan"]],
+      sig: "",
+    },
+  ]);
+  const reply = await call("read", {
+    message_url: `buzz://message?channel=chan&id=${id}`,
+  });
+  expect(reply).toHaveProperty(
+    "result.content.0.text",
+    expect.stringContaining(`thread ${id} in chan`),
+  );
+  expect(reply).toHaveProperty(
+    "result.content.0.text",
+    expect.stringContaining("Linked message"),
+  );
 });
 
 it("enforces read-only scope even when a caller asks for a post tool", async () => {

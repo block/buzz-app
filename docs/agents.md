@@ -106,7 +106,9 @@ The external app can start setup again for those scopes. It must not retry the
 call automatically after approval. New classified tools use this same contract.
 
 The shared schemas apply with explicit
-targets: `read` needs `channel` or `thread`, and searches with `q` need `channel`;
+targets: `read` needs `channel`, `thread`, or `message_url`. A `message_url` uses
+the linked message's channel and thread; it cannot combine with `channel` or
+`thread`. Searches with `q` need `channel` or `message_url`;
 `channel_get` needs `channel`; `send` needs `channel`, `text`, and `audience`;
 `reply_in_subthread` needs `parent`, `text`, and `audience`. Posts accept
 `mentions`, and `send` accepts `reply`. Posts reject `path`, `files`, and `final`.

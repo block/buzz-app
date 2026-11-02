@@ -87,6 +87,12 @@ it("requires owner approval and keeps transport credentials out of observable st
   expect(JSON.stringify(connection.snapshot())).not.toContain(
     "test-only-token",
   );
+  connection.open({ ...request, state: "B".repeat(43) }, "viewer");
+  expect(server.close).not.toHaveBeenCalled();
+  await connection.deny();
+  expect(deny).toHaveBeenCalledOnce();
+  expect(server.close).not.toHaveBeenCalled();
+  expect(connection.snapshot().grant?.phase).toBe("waiting");
   await connection.revoke();
   expect(server.close).toHaveBeenCalled();
 });

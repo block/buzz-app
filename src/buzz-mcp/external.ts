@@ -17,6 +17,7 @@ const policies: Readonly<Record<string, Policy>> = {
     fields: [
       "channel",
       "thread",
+      "message_url",
       "q",
       "author",
       "since",
@@ -50,7 +51,13 @@ const tools = TOOLS.filter((tool) => Object.hasOwn(policies, tool.name)).map(
         ),
         ...(policy.required ? { required: policy.required } : {}),
         ...(tool.name === "read"
-          ? { anyOf: [{ required: ["channel"] }, { required: ["thread"] }] }
+          ? {
+              anyOf: [
+                { required: ["channel"] },
+                { required: ["thread"] },
+                { required: ["message_url"] },
+              ],
+            }
           : {}),
       },
       annotations: { readOnlyHint: policy.scope === "read" },
@@ -170,9 +177,19 @@ export async function respondExternal(
       for (const name of policy.required ?? [])
         if (typeof values[name] !== "string" || !values[name].trim())
           throw new Error(`${name} is required.`);
-      if (tool.name === "read" && !values.channel && !values.thread)
-        throw new Error("channel or thread is required.");
-      if (tool.name === "read" && values.q && !values.channel)
+      if (
+        tool.name === "read" &&
+        !values.channel &&
+        !values.thread &&
+        !values.message_url
+      )
+        throw new Error("channel, thread, or message_url is required.");
+      if (
+        tool.name === "read" &&
+        values.q &&
+        !values.channel &&
+        !values.message_url
+      )
         throw new Error("channel is required with q.");
     } catch (error) {
       return result({

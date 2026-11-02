@@ -233,15 +233,19 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
           if (events.length > 24) events.shift();
         });
     });
-    const mediaState = (element, instrumented) => ({
-      paused: element.paused,
-      currentTime: element.currentTime,
-      readyState: element.readyState,
-      seeking: element.seeking,
-      ended: element.ended,
-      networkState: element.networkState,
-      error: element.error?.code ?? null,
-      currentSrc: element.currentSrc,
+    // Reads the live video without waiting, so a removal without a successor
+    // still reports the held element (`live: []`).
+    const mediaState = (elements, instrumented) => ({
+      live: elements.map((element) => ({
+        paused: element.paused,
+        currentTime: element.currentTime,
+        readyState: element.readyState,
+        seeking: element.seeking,
+        ended: element.ended,
+        networkState: element.networkState,
+        error: element.error?.code ?? null,
+        currentSrc: element.currentSrc,
+      })),
       isConnected: instrumented.isConnected,
       events: instrumented.mediaEvents,
     });
@@ -294,10 +298,14 @@ test("inline video controls follow playback, hover and keyboard focus", async ({
     await preview.hover({ position: { x: 8, y: 8 } });
     await preview.getByRole("button", { name: "Pause video" }).click();
     await expect
-      .poll(() => video.evaluate(mediaState, instrumented), {
+      .poll(() => video.evaluateAll(mediaState, instrumented), {
         message: "the video pauses after Pause video",
       })
-      .toEqual(expect.objectContaining({ paused: true }));
+      .toEqual(
+        expect.objectContaining({
+          live: [expect.objectContaining({ paused: true })],
+        }),
+      );
     await page.mouse.move(1, 1);
     await expect(play).toHaveCSS("opacity", "1");
     await expect(controlRow.locator(":scope > span").first()).toHaveCSS(

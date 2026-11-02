@@ -839,12 +839,21 @@ export function ChannelMembersDialog({
       new Map(agentChoices.identities.map((agent) => [agent.pubkey, agent])),
     [agentChoices.identities],
   );
+  const search = useMemberSearch(
+    session,
+    query,
+    canAddPeople || (largeRoster && !solo && channel?.channelType !== "dm"),
+  );
+  const searchProfiles = new Map(
+    search.people.map((person) => [person.pubkey, person]),
+  );
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
   const label = (key: string, fallback?: string) =>
     resolveName(
       key,
       profiles.get(key)?.name ??
+        searchProfiles.get(key)?.name ??
         fallback ??
         known.get(key)?.name ??
         formatPublicKey(key) ??
@@ -853,6 +862,7 @@ export function ChannelMembersDialog({
   // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
     !text ||
+    searchProfiles.has(key) ||
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());
@@ -1000,7 +1010,6 @@ export function ChannelMembersDialog({
       current = false;
     };
   }, [session, memberKey, profileKey, refresh, largeRoster]);
-  const search = useMemberSearch(session, query, canAddPeople);
   const relayKeys = new Set(search.people.map((person) => person.pubkey));
   const candidates = new Map(
     search.people.map((person) => [person.pubkey, person]),
@@ -1569,6 +1578,38 @@ export function ChannelMembersDialog({
   const memberCount = (count: number) =>
     `${count} member${count === 1 ? "" : "s"}`;
   const chosen = share.chosen;
+  const searchFeedback = (
+    <>
+      {search.loading && (
+        <p role="status" className="px-control-inset text-body-sm text-subtle">
+          Searching…
+        </p>
+      )}
+      {search.error && (
+        <p role="alert" className="px-control-inset text-body-sm text-danger">
+          {search.error}
+        </p>
+      )}
+      {search.more && (
+        <div className="flex justify-center border-t border-standard pt-4">
+          <Button
+            variant="subtle"
+            size="sm"
+            onClick={() => {
+              setInvitationPage((old) => ({
+                ...old,
+                revealRelay: true,
+              }));
+              search.next();
+            }}
+            disabled={search.loading}
+          >
+            Find more matches
+          </Button>
+        </div>
+      )}
+    </>
+  );
   const dialog = (
     <Dialog
       open
@@ -1996,13 +2037,18 @@ export function ChannelMembersDialog({
                     </section>
                   );
                 })}
-                {!filteredGroups.length && !rosterBusy && !offering && (
-                  <p className="px-control-inset text-body-sm text-subtle">
-                    {query
-                      ? "No members match your search."
-                      : "No members to show."}
-                  </p>
-                )}
+                {!filteredGroups.length &&
+                  !rosterBusy &&
+                  !offering &&
+                  !search.loading &&
+                  !search.error &&
+                  !search.more && (
+                    <p className="px-control-inset text-body-sm text-subtle">
+                      {query
+                        ? "No members match your search."
+                        : "No members to show."}
+                    </p>
+                  )}
               </>
             )}
             {offering && (
@@ -2126,14 +2172,6 @@ export function ChannelMembersDialog({
                     </section>
                   ) : null,
                 )}
-                {search.loading && (
-                  <p
-                    role="status"
-                    className="px-control-inset text-body-sm text-subtle"
-                  >
-                    Searching…
-                  </p>
-                )}
                 {!search.loading && !search.error && !available.length && (
                   <p className="px-control-inset text-body-sm text-subtle">
                     {!solo
@@ -2150,34 +2188,10 @@ export function ChannelMembersDialog({
                     To add an agent, mention it in the chat.
                   </p>
                 )}
-                {search.error && (
-                  <p
-                    role="alert"
-                    className="px-control-inset text-body-sm text-danger"
-                  >
-                    {search.error}
-                  </p>
-                )}
-                {search.more && (
-                  <div className="flex justify-center border-t border-standard pt-4">
-                    <Button
-                      variant="subtle"
-                      size="sm"
-                      onClick={() => {
-                        setInvitationPage((old) => ({
-                          ...old,
-                          revealRelay: true,
-                        }));
-                        search.next();
-                      }}
-                      disabled={search.loading}
-                    >
-                      Find more matches
-                    </Button>
-                  </div>
-                )}
+                {searchFeedback}
               </section>
             )}
+            {!offering && searchFeedback}
             {shareChannels.length > 0 && (
               <section className={styles.memberGroup} aria-label="Channels">
                 <h3

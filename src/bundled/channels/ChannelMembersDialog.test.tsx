@@ -100,6 +100,12 @@ async function setup(
     memberProfiles?: RelayEvent[];
     pendingMemberNames?: Promise<void>;
     channelCreation?: boolean;
+    memberWrites?: boolean;
+    searchProfiles?: (
+      query: string,
+      limit: number,
+      page: number,
+    ) => Promise<RelayEvent[]>;
     communities?: CommunityReader;
   } = {},
 ) {
@@ -208,9 +214,16 @@ async function setup(
       scope: "https://relay.example.test",
       media: () => undefined,
       query,
+      ...(options.searchProfiles
+        ? { searchProfiles: options.searchProfiles }
+        : {}),
       readAgentLibrary,
       writer: {
-        kinds: [9, 9000, ...(options.channelCreation === false ? [] : [9007])],
+        kinds: [
+          9,
+          ...(options.memberWrites === false ? [] : [9000]),
+          ...(options.channelCreation === false ? [] : [9007]),
+        ],
         sign: async (template) => signed(viewer, template),
         publish,
       },
@@ -3043,6 +3056,45 @@ it("pages a large roster without waiting for optional names or exceeding the pro
     await act(async () => release());
   }
 });
+
+it.each([true, false])(
+  "finds an unvisited member by name (member writes: %s)",
+  async (memberWrites) => {
+    const matches: RelayEvent[] = [];
+    const otherMatches = Array.from({ length: 30 }, (_, i) =>
+      profile(keypair(), { name: `Aardvark outsider ${i}` }),
+    );
+    const memberProfiles = Array.from({ length: 75 }, (_, i) =>
+      profile(keypair(), { name: `Aardvark member ${i}` }),
+    );
+    const t = await setup("stream", false, false, undefined, undefined, {
+      memberProfiles,
+      memberWrites,
+      searchProfiles: async (_query, _limit, page) =>
+        !memberWrites && page === 1 ? otherMatches : matches,
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh member data" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    const target =
+      memberProfiles.find(
+        (event) => !t.session.profiles.snapshot().has(event.pubkey),
+      ) ?? memberProfiles[0];
+    if (!target) throw new Error("Missing member fixture");
+    const name = JSON.parse(target.content).name as string;
+    matches.push(target);
+    await t.user.type(screen.getByRole("searchbox"), name);
+    if (!memberWrites)
+      await t.user.click(
+        await screen.findByRole("button", { name: "Find more matches" }),
+      );
+    await within(
+      screen.getByRole("region", { name: "Member list" }),
+    ).findByText(nameText(name));
+  },
+);
 
 it("loads another member page after a previous page fails", async () => {
   const t = await setup("stream", false, false, undefined, undefined, {

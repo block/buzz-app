@@ -14,6 +14,110 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
+test.describe("scope indicator", () => {
+  test.use({ largeSidebar: false });
+
+  // Only browser layout can compare the indicator's measured target with its
+  // rendered box during resize; jsdom cannot exercise flex sizing or transitions.
+  test("scope selection follows sidebar resize at normal and enlarged text", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const scope = page.getByRole("tablist", { name: "Navigation scope" });
+    const handle = page.getByRole("separator", { name: "Resize sidebar" });
+    const aligned = () =>
+      scope.evaluate((list) => {
+        const tab = list
+          .querySelector('[aria-selected="true"]')
+          .getBoundingClientRect();
+        const pill = list
+          .querySelector(".buzz-tabs-indicator")
+          .getBoundingClientRect();
+        return Math.max(
+          Math.abs(tab.left - pill.left),
+          Math.abs(tab.right - pill.right),
+        );
+      });
+
+    for (const scale of [1, 2]) {
+      await page.evaluate((scale) => {
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(scale),
+        );
+      }, scale);
+      for (const label of ["All", "Solo", "Team"]) {
+        await handle.press("Home");
+        await scope.getByRole("tab", { name: label, exact: true }).click();
+        await expect.poll(aligned).toBeLessThan(1);
+        const capture = await scope.evaluateHandle((list) => {
+          const indicator = list.querySelector(".buzz-tabs-indicator");
+          const initialWidth = indicator.getBoundingClientRect().width;
+          const state = { sample: undefined };
+          const observer = new MutationObserver(() => {
+            const tab = list
+              .querySelector('[aria-selected="true"]')
+              .getBoundingClientRect();
+            const target = Number.parseFloat(
+              indicator.style.getPropertyValue("--active-tab-width"),
+            );
+            if (
+              Math.abs(target - initialWidth) < 1 ||
+              Math.abs(target - tab.width) > 1
+            )
+              return;
+            // Read at the measurement update, before a CSS transition can settle.
+            // A later retrying geometry assertion would miss resize lag entirely.
+            const pill = indicator.getBoundingClientRect();
+            state.sample = {
+              left: Math.abs(tab.left - pill.left),
+              right: Math.abs(tab.right - pill.right),
+            };
+            observer.disconnect();
+          });
+          observer.observe(indicator, {
+            attributes: true,
+            attributeFilter: ["style"],
+          });
+          return { state, dispose: () => observer.disconnect() };
+        });
+        try {
+          const grip = await handle.boundingBox();
+          await page.mouse.move(
+            grip.x + grip.width / 2,
+            grip.y + grip.height / 2,
+          );
+          await page.mouse.down();
+          await page.mouse.move(
+            grip.x + grip.width / 2 + 180,
+            grip.y + grip.height / 2,
+          );
+          await expect
+            .poll(() => capture.evaluate(({ state }) => state.sample))
+            .toBeDefined();
+          const sample = await capture.evaluate(({ state }) => state.sample);
+          expect(
+            sample.left,
+            `${label} left edge at ${scale * 100}%`,
+          ).toBeLessThan(1);
+          expect(
+            sample.right,
+            `${label} right edge at ${scale * 100}%`,
+          ).toBeLessThan(1);
+        } finally {
+          await page.mouse.up();
+          await capture.evaluate(({ dispose }) => dispose());
+          await capture.dispose();
+        }
+        await expect(
+          scope.getByRole("tab", { name: label, exact: true }),
+        ).toHaveAttribute("aria-selected", "true");
+      }
+    }
+  });
+});
+
 test("channel sidebar resizes from the full gutter and persists", async ({
   page,
   app,

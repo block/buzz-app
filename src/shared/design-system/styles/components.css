@@ -1130,6 +1130,9 @@
   .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])
     .buzz-tabs-indicator {
     inset-block: 0;
+    /* Flex-sized filters resize with their track. Easing their measured width
+       and position makes the selection trail behind the selected label. */
+    transition: none;
     border-radius: var(--radius-pill);
     background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);

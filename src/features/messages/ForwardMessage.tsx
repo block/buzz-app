@@ -268,6 +268,8 @@ function ForwardMessageDialog({
         open={open}
         title="Forward message"
         description="Send this message to a person, with an optional note."
+        headerGap="compact"
+        footerGap="compact"
         preventClose={pending}
         dismissOnOutsideClick={false}
         onOpenChange={(next) => {
@@ -304,6 +306,7 @@ function ForwardMessageDialog({
             selected={people}
             disabled={locked}
             maxRecipients={1}
+            appearance="field"
             initiallyOpen={false}
             onChange={setPeople}
             onTyped={setTyped}

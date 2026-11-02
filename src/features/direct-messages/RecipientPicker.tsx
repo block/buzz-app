@@ -46,6 +46,7 @@ export function RecipientPicker({
   excludedPubkeys = noExclusions,
   initiallyOpen = true,
   maxRecipients = 8,
+  appearance = "header",
   onChange,
   onComplete,
   onTyped,
@@ -59,6 +60,8 @@ export function RecipientPicker({
   /** Share dialogs keep the people list closed until the To field is used. */
   initiallyOpen?: boolean;
   maxRecipients?: number;
+  /** A panel's header row, or a filled control inside a dialog form. */
+  appearance?: "header" | "field";
   onChange(people: Recipient[]): void;
   onComplete(): void;
   /** Whether the To field holds text that is not a recipient yet. */
@@ -339,6 +342,7 @@ export function RecipientPicker({
       <fieldset
         aria-label="Recipients"
         className={styles.recipientHeader}
+        data-appearance={appearance}
         ref={field}
         onBlur={(event) => {
           if (

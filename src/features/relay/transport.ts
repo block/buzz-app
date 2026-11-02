@@ -72,7 +72,6 @@ import {
   createEventVerifier,
   eventDto,
   type EventVerifier,
-  type PreparedEvent,
   type ReadFilter,
   type RelayEvent,
   type SignatureVerifier,
@@ -277,21 +276,29 @@ async function parseEvents(
       "invalid-response",
       "Relay response is not an event array",
     );
-  const { prepare, settle } = verify;
-  const checked: unknown[] = [];
+  const { native } = verify;
   // Signature checks are CPU work too. Yield between small batches so speculative
   // head/profile responses cannot monopolize input and foreground rendering.
   // A native host checks signatures; JS still validates and hashes each event.
-  for (let index = 0; index < raw.length; index += 12) {
-    if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    const started = performance.now();
-    const batch = raw.slice(index, index + 12).map(prepare ?? verify);
-    clientMetrics.cpu("verify.read", performance.now() - started, batch.length);
-    checked.push(...batch);
-    if (index + 12 < raw.length) await yieldToHost();
-  }
-  if (!prepare || !settle) return checked as RelayEvent[];
-  const events = await settle(checked as PreparedEvent[]);
+  const checkChunks = async <T>(check: (value: unknown) => T) => {
+    const checked: T[] = [];
+    for (let index = 0; index < raw.length; index += 12) {
+      if (signal?.aborted)
+        throw new DOMException("Read cancelled", "AbortError");
+      const started = performance.now();
+      const batch = raw.slice(index, index + 12).map(check);
+      clientMetrics.cpu(
+        "verify.read",
+        performance.now() - started,
+        batch.length,
+      );
+      checked.push(...batch);
+      if (index + 12 < raw.length) await yieldToHost();
+    }
+    return checked;
+  };
+  if (!native) return checkChunks(verify);
+  const events = await native.settle(await checkChunks(native.prepare));
   if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
   return events;
 }

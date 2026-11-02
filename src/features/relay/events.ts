@@ -75,8 +75,8 @@ export type SignatureVerifier = (
  * across its reconnects), not an event/result cache. Only a matching content
  * hash AND exact signature can reuse a successful verification. Retains no
  * payload, authorization, freshness or caller-supplied proof symbols.
- * With `signatures`, `prepare` does the synchronous checks per event and
- * `settle` sends the memo misses to it in one call. */
+ * With `signatures`, `native.prepare` does the synchronous checks per event
+ * and `native.settle` sends the memo misses to it in one call. */
 export function createEventVerifier(
   entries = 8192,
   signatures?: SignatureVerifier,
@@ -104,7 +104,7 @@ export function createEventVerifier(
   const prepare = (value: unknown): PreparedEvent => {
     const event = wireEvent(value);
     if (getEventHash(event) !== event.id) throw invalidEvent();
-    return event;
+    return event as PreparedEvent;
   };
   const settle = async (
     events: readonly PreparedEvent[],
@@ -126,16 +126,20 @@ export function createEventVerifier(
       return admit(event as VerifiedEvent);
     });
   };
-  return Object.assign(verify, { prepare, settle });
+  return Object.assign(verify, { native: { prepare, settle } });
 }
 
-/** A well-formed wire copy whose id matches its hash; its signature is unchecked. */
-export type PreparedEvent = Event;
+declare const prepared: unique symbol;
+/** A well-formed wire copy whose id matches its hash; its signature is unchecked.
+ * Only `native.prepare` produces one. */
+export type PreparedEvent = Event & { readonly [prepared]: true };
 
 export type EventVerifier = ((value: unknown) => RelayEvent) & {
-  prepare?: (value: unknown) => PreparedEvent;
-  /** One bad signature rejects the whole response, as `verify` does per event. */
-  settle?: (events: readonly PreparedEvent[]) => Promise<RelayEvent[]>;
+  native?: {
+    prepare(value: unknown): PreparedEvent;
+    /** One bad signature rejects the whole response, as `verify` does per event. */
+    settle(events: readonly PreparedEvent[]): Promise<RelayEvent[]>;
+  };
 };
 
 const invalidEvent = () =>

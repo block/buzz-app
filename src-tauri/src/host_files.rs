@@ -159,7 +159,7 @@ pub(crate) async fn plugin_host_resolve_directory(
 // One admitted byte operation; waiting never clones a raw save body. Tokio's
 // semaphore preserves FIFO order. At most 16 callers can wait, within their own deadline.
 pub(crate) static BYTE_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-static BYTE_WAITERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+pub(crate) static BYTE_WAITERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 pub(crate) async fn byte_admission(
     deadline: tokio::time::Instant,
 ) -> Result<tokio::sync::SemaphorePermit<'static>, String> {

@@ -1010,3 +1010,84 @@ async fn upload_transport_preserves_binary_multipart_and_never_follows_redirects
         assert!(matches!(listener.accept(),Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
     }
 }
+
+#[test]
+fn upload_waits_for_shared_byte_admission_before_consuming_or_connecting() {
+    let _serial = crate::host_files::managed_tests::commands();
+    let held = crate::host_files::BYTE_WORK.try_acquire().unwrap();
+    let (setup_tx, setup) = std::sync::mpsc::sync_channel(1);
+    let (seen_tx, seen) = std::sync::mpsc::sync_channel(1);
+    let sender = std::thread::spawn(move || {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("https://{}/upload", listener.local_addr().unwrap());
+        let origin = reqwest::Url::parse(&url)
+            .unwrap()
+            .origin()
+            .ascii_serialization();
+        let fixture = App::new(&origin);
+        let once = envelope(&fixture.app.state::<HostCalls>());
+        let metadata = upload_metadata(&fixture, &once, &url);
+        let app = fixture.app.handle().clone();
+        setup_tx.send((app, listener)).unwrap();
+        let result = upload_ipc(
+            &fixture,
+            &metadata,
+            tauri::ipc::InvokeBody::Raw(PNG_UPLOAD.to_vec()),
+        );
+        seen_tx.send(result).unwrap();
+    });
+    let (app, listener) = setup.recv_timeout(Duration::from_secs(5)).unwrap();
+    let watchdog = std::time::Instant::now() + Duration::from_secs(5);
+    while crate::host_files::BYTE_WAITERS.available_permits() != 15 {
+        if let Ok(result) = seen.try_recv() {
+            panic!("upload did not queue: {result:?}");
+        }
+        assert!(
+            std::time::Instant::now() < watchdog,
+            "upload admission watchdog"
+        );
+        std::thread::yield_now();
+    }
+    assert!(app
+        .state::<HostCalls>()
+        .claims
+        .lock()
+        .unwrap()
+        .consumed
+        .is_empty());
+    assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    drop(held);
+    // Complete the attempted TLS once, without adding a production trust bypass.
+    loop {
+        match listener.accept() {
+            Ok((socket, _)) => {
+                drop(socket);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    std::time::Instant::now() < watchdog,
+                    "upload connection watchdog"
+                );
+                std::thread::yield_now();
+            }
+            other => panic!("upload listener: {other:?}"),
+        }
+    }
+    assert!(seen
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap_err()
+        .contains("Host request failed"));
+    sender.join().unwrap();
+    assert_eq!(
+        app.state::<HostCalls>()
+            .claims
+            .lock()
+            .unwrap()
+            .consumed
+            .len(),
+        1
+    );
+}

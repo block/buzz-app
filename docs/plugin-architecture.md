@@ -1217,7 +1217,10 @@ that envelope. Unicode text values are preserved.
 The deadline is fixed at 30 seconds. Responses use the existing bounded
 `HostResponse`: status, at most 64 headers totaling 16 KiB excluding `Set-Cookie`,
 and at most 16 MiB of UTF-8 body. This operation shares the existing app-wide byte
-work permit; a concurrent byte operation can reject before dispatch.
+work permit and bounded FIFO admission queue with byte GET/save. At most 16 callers
+wait; queue overflow refuses before consumption/dispatch. Waiting is charged to
+the same entry deadline, and multipart/body cloning starts only after admission.
+This is a work-admission bound, not a whole-process IPC or RSS memory bound.
 
 Upload authority uses the same boot/page, fiber activation, canonical UUID
 `callId`, final synchronous eligibility check, consumed-envelope storage and
@@ -1339,9 +1342,10 @@ existing explicit app-data erase removes this root. Clock changes, user deletion
 erase or disk loss can invalidate retention assumptions; do not treat the path as
 a durable archive or an unqualified availability guarantee.
 
-One process-local byte-work permit is shared by GET/save/managed deletion. A FIFO semaphore queues
-at most 16 waiting calls, rejects overflow, and charges queue time to each call's
-existing deadline (GET 1–30000 ms, save/delete 30 seconds). Expired/canceled waiters leave
+One process-local byte-work permit is shared by GET/save/managed deletion/uploadBytesOnce.
+A FIFO semaphore queues at most 16 waiting calls, rejects overflow, and charges
+queue time to each call's existing deadline (GET 1–30000 ms, save/delete/upload
+30 seconds). Expired/canceled waiters leave
 the queue without dispatch; raw saves do not clone their body until admitted.
 The one-admitted-operation/16 MiB work bound is unchanged, but waiting IPC input
 buffers still exist: this is not a whole-process memory bound. Blocking save work

@@ -23,7 +23,7 @@ import { PanelCard } from "../../features/panels/PanelCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import {
   BrowserIcon,
-  MessageReplyIcon,
+  ThreadIcon,
   InfoIcon,
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
@@ -805,7 +805,7 @@ export function useConversationTabs({
           : (target?.name ?? "Unavailable conversation"),
       icon:
         tab.kind === "thread" ? (
-          <MessageReplyIcon size="1rem" />
+          <ThreadIcon size="1rem" />
         ) : target ? (
           conversationIcon(target)
         ) : (

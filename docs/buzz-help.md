@@ -52,7 +52,8 @@ the interface unless an available tool actually supports that action.
   level rather than requiring a new thread for each reply. Solo chats can also
   be shared with other people; do not describe every Solo chat as visible only
   to its creator.
-- **Team** contains community channels and their threads. Use the **@** picker
+- **Team** contains community channels and their threads. Choose **Reply** on a
+  message to open or continue its thread. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.

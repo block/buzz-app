@@ -1304,7 +1304,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     });
     if (selected?.id !== saved.id)
       throw new Error(
-        `conflict: the restore was received, but another canvas (${selected?.id}) is now current. Read it with canvas_get before trying again.`,
+        `conflict: the restore was received, but another canvas (${selected?.id}) is now current. Read canvas_history again before you retry.`,
       );
     return `restored ${id} as ${saved.id}`;
   },

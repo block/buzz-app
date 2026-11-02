@@ -18,6 +18,7 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -71,6 +72,9 @@ it("prefills and preserves an existing deadline, and validates a custom date bef
   // Mid-month so the prefilled next-day deadline opens the calendar on today's month.
   vi.useFakeTimers({ toFake: ["Date"], now: new Date(2026, 5, 15, 12) });
   const user = userEvent.setup();
+  // Keep today and the existing next-day deadline in the same calendar month.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 9, 15, 12));
   const now = Date.now();
   const expiresAt = Math.floor(now / 1000) + 86400;
   const { save } = setup({

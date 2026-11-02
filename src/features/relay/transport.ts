@@ -1,5 +1,6 @@
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
+import type { ThreadNavigationHost } from "../channel-navigation/recent-threads";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -124,6 +125,7 @@ export interface ReadTransport {
   readonly writeSidebarSort?: SidebarSortMutator;
   readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
+  readonly threadNavigation?: ThreadNavigationHost;
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;

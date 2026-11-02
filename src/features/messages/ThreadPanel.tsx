@@ -558,6 +558,34 @@ function ThreadMessages({
     view.snapshot,
   );
   const resolvedRoot = snapshot.root?.id;
+  const recentVisit = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (active === false) {
+      recentVisit.current = undefined;
+      return;
+    }
+    const root = snapshot.root;
+    if (
+      !root ||
+      snapshot.status !== "ready" ||
+      cached ||
+      navigation?.signal.aborted
+    )
+      return;
+    const key = `${scope}:${channelId}:${root.id}`;
+    if (recentVisit.current === key) return;
+    recentVisit.current = key;
+    session.threadNavigation?.visit(root);
+  }, [
+    active,
+    scope,
+    channelId,
+    snapshot.root,
+    snapshot.status,
+    cached,
+    navigation?.signal,
+    session.threadNavigation,
+  ]);
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
   useEffect(() => {

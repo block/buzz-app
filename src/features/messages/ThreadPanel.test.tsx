@@ -28,6 +28,7 @@ import type {
   ChannelSummary,
 } from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
+import { createThreadNavigation } from "../channel-navigation/recent-threads";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
@@ -131,6 +132,41 @@ const row: ChannelMessage = {
   replyCount: 2,
 };
 const viewer = "c".repeat(64);
+it("records only a loaded active thread, without moving it for background replies", () => {
+  const harness = messagesHarness();
+  let time = 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => ++time);
+  const store = createThreadNavigation(
+    { read: async () => [], write: async (record) => record },
+    new AbortController().signal,
+  );
+  Object.assign(harness.session, { threadNavigation: store });
+  const recent = () => store.snapshot().entries;
+  harness.snapshot.status = "loading";
+  harness.snapshot.root = undefined;
+  harness.render();
+  expect(recent()).toEqual([]);
+  harness.props.active = false;
+  harness.snapshot.status = "ready";
+  harness.snapshot.root = row;
+  harness.rerenderProps();
+  harness.render();
+  expect(recent()).toEqual([]);
+  harness.props.active = true;
+  harness.rerenderProps();
+  expect(recent().map((entry) => entry.rootId)).toEqual([row.id]);
+  const other = { ...row, id: "e".repeat(64), content: "Other thread" };
+  store.visit(other);
+  harness.snapshot.root = { ...row, replyCount: 3 };
+  harness.render();
+  expect(recent().map((entry) => entry.rootId)).toEqual([other.id, row.id]);
+  harness.props.active = false;
+  harness.rerenderProps();
+  harness.props.active = true;
+  harness.rerenderProps();
+  expect(recent().map((entry) => entry.rootId)).toEqual([row.id, other.id]);
+  store.dispose();
+});
 function ordinaryNavigation() {
   return {
     entryId: "thread-visit",

@@ -761,3 +761,45 @@ async fn main_agent_signer_admits_only_one_agent() {
             .is_err());
     }
 }
+
+#[tokio::test]
+async fn thread_navigation_round_trips_only_purpose_bound_self_encrypted_records() {
+    use serde_json::json;
+    let host = super::IdentityHost::fixture();
+    let root = "a".repeat(64);
+    let hash = format!("{:x}", Sha256::digest(format!("general:{root}").as_bytes()));
+    for (kind, pinned) in [("visit", None), ("pin", Some(true)), ("pin", Some(false))] {
+        let coordinate = format!("buzz-thread-{kind}-v1:{hash}");
+        let mut payload = json!({"version":1,"type":kind,"channelId":"general","rootId":root,"title":"Planning","at":1000});
+        if let Some(pinned) = pinned {
+            payload["pinned"] = json!(pinned);
+        }
+        let event = host
+            .sign_sidebar(coordinate.clone(), payload.clone(), 100)
+            .await
+            .unwrap();
+        let parsed: Event = serde_json::from_value(event.clone()).unwrap();
+        parsed.verify().unwrap();
+        assert!(!event["content"].as_str().unwrap().contains("Planning"));
+        assert_eq!(
+            event["tags"],
+            json!([["d", coordinate], ["t", format!("buzz-thread-{kind}-v1")]])
+        );
+        host.admit_sidebar(event.clone()).await.unwrap();
+        assert_eq!(
+            host.decode_sidebar(vec![event.clone()]).await.unwrap()[&coordinate],
+            payload
+        );
+        let mut wrong_tags = event.clone();
+        wrong_tags["tags"][1][1] = json!("arbitrary");
+        assert!(host.decode_sidebar(vec![wrong_tags]).await.is_err());
+        assert!(
+            IdentityHost::fixture_in(State::Ready(Key(Zeroizing::new([2; 32]))))
+                .decode_sidebar(vec![event])
+                .await
+                .is_err()
+        );
+        payload["channelId"] = json!("other");
+        assert!(host.sign_sidebar(coordinate, payload, 100).await.is_err());
+    }
+}

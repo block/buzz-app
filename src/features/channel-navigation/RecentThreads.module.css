@@ -1,0 +1,18 @@
+.section {
+  margin-block-end: var(--space-section-gap);
+}
+.label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}

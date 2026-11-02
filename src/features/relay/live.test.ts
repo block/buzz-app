@@ -3707,3 +3707,104 @@ it("backs off a relay's sign-in refusal and stops on a local terminal one", asyn
   expect(forbidden.sockets).toHaveLength(1);
   forbidden.owner.dispose();
 });
+
+/** Authenticate, send every route, and establish each one. */
+async function establish(socket: Socket) {
+  await socket.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  for (const request of socket.requests())
+    await socket.receive(["EOSE", request[1]]);
+}
+/** The native socket's planned federated renewal of an admitted connection. */
+function renew(socket: Socket) {
+  socket.readyState = 3;
+  (socket.onclose as (event: { renew: true }) => void)({ renew: true });
+}
+it("keeps a planned renewal connected and skips catch-up for carried routes", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b", "c"], ["a", "b"]);
+    await establish(h.first);
+    // A batch for a and b, a singleton for c, and both globals.
+    expect(h.callbacks.established).toHaveBeenCalledTimes(4);
+    h.callbacks.established.mockClear();
+    h.callbacks.state.mockClear();
+    renew(h.first);
+    const second = h.sockets[1];
+    assert.exists(second);
+    await second.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const batch = second.requests().find((r) => scopeOf(r).includes("a"));
+    assert.exists(batch);
+    // The new batch resumes from the cursor, not from the first connect.
+    expect(filtersOf(batch)[0]?.limit).toBe(500);
+    const event = message(keypair(), "a", "during renewal", 1700000000);
+    await second.receive(["EVENT", batch[1], event]);
+    expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+      phase: "replay",
+      channelId: "a",
+    });
+    for (const request of second.requests())
+      await second.receive(["EOSE", request[1]]);
+    expect(h.callbacks.established).not.toHaveBeenCalled();
+    const states = h.callbacks.state.mock.calls.map(([state]) => state);
+    expect(states.length).toBeGreaterThan(0);
+    for (const state of states) {
+      expect(state.status).toBe("connected");
+      for (const route of state.routes)
+        expect(route, JSON.stringify(state)).toMatchObject({ status: "live" });
+    }
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("catches up after a renewal whose replay hit the limit", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a", "b"]);
+  try {
+    await establish(h.first);
+    h.callbacks.established.mockClear();
+    renew(h.first);
+    const second = h.sockets[1];
+    assert.exists(second);
+    await second.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    const a = second.requests().find((r) => scopeOf(r).includes("a"));
+    assert.exists(a);
+    const event = message(keypair(), "a", "busy", 1700000000);
+    for (let i = 0; i < 500; i++) await second.receive(["EVENT", a[1], event]);
+    for (const request of second.requests())
+      await second.receive(["EOSE", request[1]]);
+    expect(h.callbacks.established.mock.calls).toEqual([["a"]]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+it("falls back to the outage path when a renewal's new socket fails", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  try {
+    await establish(h.first);
+    h.callbacks.established.mockClear();
+    h.callbacks.state.mockClear();
+    renew(h.first);
+    const second = h.sockets[1];
+    assert.exists(second);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    second.close(1006);
+    const failed = h.callbacks.state.mock.lastCall?.[0];
+    expect(failed?.status).toBe("retrying");
+    expect(failed?.routes.map((route) => route.status)).not.toContain("live");
+    await vi.advanceTimersByTimeAsync(1000);
+    const third = h.sockets[2];
+    assert.exists(third);
+    await establish(third);
+    // A real outage: every route catches up again.
+    expect(h.callbacks.established).toHaveBeenCalledWith("a");
+    expect(h.callbacks.established).toHaveBeenCalledTimes(3);
+  } finally {
+    h.owner.dispose();
+  }
+});

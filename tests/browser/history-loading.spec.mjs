@@ -6,7 +6,6 @@ import {
   open,
   settle,
   upper,
-  virtuaIdle,
   wheel,
 } from "./timeline.mjs";
 
@@ -343,8 +342,7 @@ test.describe("pages inside one second", () => {
     page,
     app,
   }) => {
-    // Leave enough loaded history above the reader for the full upward drag.
-    // Page tie ordering varies with the fixture's fresh signed identity.
+    // Leave enough loaded history above the reader for an unclamped drag.
     const pending = await reading(page, app, 250);
     const box = await history(page).boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -359,67 +357,61 @@ test.describe("pages inside one second", () => {
         .toBeGreaterThan(height);
       await settle(page);
       await expectAnchor(page, held);
-      // Geometry can settle while a correction still holds Virtua's range.
-      // Wait for that scroll cycle to finish before starting the next one.
-      await virtuaIdle(page);
-      expect(
-        await history(page).evaluate((e) => e.scrollTop - e.clientHeight),
-      ).toBeGreaterThan(150);
-      // Deliver the programmatic drag's scroll boundary in the same task so
-      // Virtua's real directional render unmounts the held row before its idle
-      // timer buffers below again. Native event timing is covered by the other
-      // drag journey; this case controls the brief unmount it needs to exercise.
+      // Leave the old reader beyond even the idle buffer, so its absence does
+      // not depend on observing Virtua's brief directional scrolling range.
       const row = history(page).locator(`[data-message-id="${held.id}"]`);
-      const seen = await history(page).evaluateHandle((e, id) => {
-        const seen = { unmounted: false };
-        const heldRow = e.querySelector(`[data-message-id="${id}"]`);
-        const observer = new MutationObserver((records) => {
-          // Read the removals themselves: the row may already be remounted
-          // when the observer delivers a batch of mutations.
-          if (
-            records.some((record) =>
-              Array.from(record.removedNodes).some((node) =>
-                node.contains(heldRow),
-              ),
-            )
-          ) {
-            seen.unmounted = true;
-            observer.disconnect();
-          }
-        });
-        observer.observe(e, { childList: true, subtree: true });
-        e.scrollTop -= e.clientHeight + 150;
-        e.dispatchEvent(new Event("scroll"));
-        return seen;
-      }, held.id);
-      await expect.poll(() => seen.evaluate((s) => s.unmounted)).toBe(true);
-      // Once idle, Virtua remounts it.
-      await expect(row).toHaveCount(1);
+      await history(page).evaluate((e) => {
+        e.scrollTop = 0;
+      });
+      await expect(row).toHaveCount(0);
       await settle(page);
-      // It remounts below the viewport, where the reader no longer reads.
-      expect(
-        await history(page).evaluate(
-          (e, id) =>
-            e.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect()
-              .top > e.getBoundingClientRect().bottom,
-          held.id,
-        ),
-      ).toBe(true);
+      // Wait for idle overscan below the viewport and applied row measurements
+      // before taking an independent growth baseline.
+      await expect
+        .poll(() =>
+          history(page).evaluate((e) => {
+            const items = Array.from(e.querySelector("ol").children);
+            return (
+              items.some(
+                (item) =>
+                  item.getBoundingClientRect().top >
+                  e.getBoundingClientRect().bottom,
+              ) &&
+              items.every((item, index) => {
+                const next = items[index + 1];
+                return (
+                  !next ||
+                  Math.abs(
+                    next.getBoundingClientRect().top -
+                      item.getBoundingClientRect().bottom,
+                  ) < 1
+                );
+              })
+            );
+          }),
+        )
+        .toBe(true);
       const before = await anchor(page);
-      // The row above it finishes measuring taller (an image loading). Rows
-      // below the reader grow away from them; nothing in view moves.
-      // Re-resolve the virtualized row at mutation time: an idle render may
-      // have unmounted it again since the position assertion above.
-      await row.evaluate((element) => {
+      const measuredHeight = await history(page).evaluate(
+        (e) => e.scrollHeight,
+      );
+      // A buffered row below the viewport grows while the original held row is
+      // still absent. Growth below the current reader must not move them.
+      await history(page).evaluate((e) => {
         const extra = document.createElement("div");
         extra.style.height = "300px";
-        element
-          .closest("li")
-          .previousElementSibling.querySelector("[data-message-id] p")
-          .after(extra);
+        const row = [...e.querySelectorAll("[data-message-id]")].find(
+          (row) =>
+            row.getBoundingClientRect().top > e.getBoundingClientRect().bottom,
+        );
+        row.querySelector("p").after(extra);
       });
       await settle(page);
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(measuredHeight);
       await expectAnchor(page, before);
+      await expect(row).toHaveCount(0);
     } finally {
       await page.mouse.up();
     }

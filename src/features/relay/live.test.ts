@@ -7,6 +7,8 @@ import {
 import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
+  LIVE_BATCH_REFRESH_INTERVAL,
+  LIVE_RECOVERY_INTERVAL,
   liveChannels,
   liveReconnectDelay,
   liveResumeSince,
@@ -801,6 +803,40 @@ it("re-sends only the batches a grant names, and once more after an in-flight RE
     await h.first.receive(["EVENT", membership[1], notice(44101, "c03")]);
     await grant(h, "elsewhere");
     expect(h.first.requests()).toHaveLength(settled);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("re-sends a batch with no grant after the slow refresh interval", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    h.owner.update(["a", "b"], ["a", "b"]);
+    await h.first.auth();
+    await vi.advanceTimersByTimeAsync(750);
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    const batches = () =>
+      h.first.requests().filter((r) => scopeOf(r).length > 1);
+    expect(batches()).toHaveLength(1);
+    // A lost grant must not leave the batch narrow for good.
+    await vi.advanceTimersByTimeAsync(LIVE_BATCH_REFRESH_INTERVAL - 60_000);
+    expect(batches()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(batches()).toHaveLength(2);
+    expect(batches().at(-1)?.[2]).toMatchObject({ "#h": ["a", "b"], limit: 0 });
+    await h.first.receive(["EOSE", batches().at(-1)?.[1]]);
+    // A grant re-send restarts the interval.
+    await vi.advanceTimersByTimeAsync(LIVE_BATCH_REFRESH_INTERVAL / 2);
+    await grant(h, "a");
+    expect(batches()).toHaveLength(3);
+    await h.first.receive(["EOSE", batches().at(-1)?.[1]]);
+    await vi.advanceTimersByTimeAsync(LIVE_BATCH_REFRESH_INTERVAL - 60_000);
+    expect(batches()).toHaveLength(3);
+    // The next tick after the interval re-sends it.
+    await vi.advanceTimersByTimeAsync(LIVE_RECOVERY_INTERVAL * 2);
+    expect(batches()).toHaveLength(4);
   } finally {
     h.owner.dispose();
   }

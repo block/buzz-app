@@ -27,6 +27,10 @@ export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 10; // Relay's per-REQ filter cap; replay stays per channel.
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
+/** A live batch is re-sent after this long even with no grant, in case a
+ * grant notice never arrived (a dropped frame, or a duplicate notice the
+ * relay stored once and did not fan out again). */
+export const LIVE_BATCH_REFRESH_INTERVAL = 15 * 60_000;
 /** Channel REQs awaiting EOSE at once. `scripts/live-setup-probe.mjs` compares others. */
 export const SETUP_CONCURRENCY = 4;
 /** How long one channel REQ may wait for EOSE before its route fails. */
@@ -308,6 +312,8 @@ type Route = {
   /** Its REQ was sent before a grant for one of its channels arrived, so the
    * relay may have left that channel out. Re-send at its EOSE. */
   regranted?: boolean;
+  /** When its REQ was sent (ms), for the slow batch refresh. */
+  sentAt?: number;
   /** Consecutive refusals that need action, and when the recover tick may retry. */
   refusals?: number;
   retryAt?: number;
@@ -552,10 +558,20 @@ export function subscribeRelayTraffic(
     // opening/authenticating alone must not reset backoff on a flapping relay.
     reconnectDelay = BASE_RECONNECT_DELAY;
     const current = generation;
-    // Batches are not re-sent here: `grant` re-sends one when access to one of
-    // its channels comes back, the only time a re-send can change its scope.
+    // `grant` re-sends a batch when access to one of its channels comes back,
+    // the only time a re-send can change its scope. A lost grant would leave
+    // the batch narrow for good, so a batch not sent for a long time is
+    // re-sent here too.
     for (const route of routes.values()) {
       if (
+        route.channelIds &&
+        route.status === "live" &&
+        !route.previous &&
+        route.sentAt !== undefined &&
+        tickedAt - route.sentAt >= LIVE_BATCH_REFRESH_INTERVAL
+      )
+        replace(route);
+      else if (
         route.status === "error" &&
         route.retryRenewal &&
         route.previous?.wire
@@ -855,6 +871,7 @@ export function subscribeRelayTraffic(
       const wire = `live-${++serial}`;
       route.wire = wire;
       delete route.regranted; // This REQ is sent after every earlier grant.
+      route.sentAt = Date.now();
       wires.set(wire, route);
       route.deadline = setTimeout(() => {
         if (wires.get(wire) === route)

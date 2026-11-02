@@ -554,3 +554,20 @@ it("collapses long instructions and expands them on request", async () => {
     "true",
   );
 });
+
+it("reloads a catalog refused while signed out once the organization signs in", async () => {
+  const { createRecovery } = await import("../../features/relay/recovery");
+  const recovery = createRecovery([]);
+  const read = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Federated sign-in is required"))
+    .mockResolvedValue([shared]);
+  const relay = community(read);
+  Object.assign(relay.snapshot().session, { recovery });
+  render(<AgentBrowse relay={relay} {...importing()} />);
+  expect(await screen.findByText("Couldn’t load shared agents.")).toBeVisible();
+  act(() => recovery.retryAll());
+  expect(await screen.findByText("Shared helper")).toBeVisible();
+  expect(read).toHaveBeenCalledTimes(2);
+  recovery.dispose();
+});

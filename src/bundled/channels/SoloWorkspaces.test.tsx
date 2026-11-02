@@ -456,6 +456,37 @@ it("toggles a deferred collapse intent and protects a failed rename from workspa
   ).not.toHaveAttribute("aria-disabled", "true");
 });
 
+it("opens the inline rename editor from the row actions menu", async () => {
+  const h = fixture();
+  Object.assign(h.details, {
+    available: true,
+    load: vi.fn(async () => ({
+      channelId: "chat",
+      name: "Planning",
+      description: "",
+      visibility: "private",
+      labels: ["buzz.solo"],
+      canEdit: true,
+      version: "one",
+    })),
+  });
+  const owner = h.store();
+  render(h.view(owner.queries));
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Actions for Planning" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  const field = screen.getByRole("textbox", { name: "Chat name" });
+  await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+  expect(field).toHaveFocus();
+  expect(field).toHaveValue("Planning");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Planning" })).toHaveFocus();
+  owner.dispose();
+});
+
 it("prevents rename in a deleting workspace while other workspaces remain editable", async () => {
   const h = fixture();
   Object.assign(h.details, {

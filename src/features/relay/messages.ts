@@ -42,7 +42,10 @@ export function createMessages(
   find: (id: string) => EventData | undefined,
   emojiTags: (content: string) => string[][],
   validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
-  canParticipate: (channelId: string) => boolean = () => true,
+  canWrite: (
+    channelId: string,
+    owner?: AgentOwnerAuthorization,
+  ) => boolean = () => true,
   relayOrigin?: string,
   /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
   publishReport?: (template: EventTemplate) => Promise<void>,
@@ -55,9 +58,13 @@ export function createMessages(
   /** Events whose `buzz:copy-of` tag names this message id (sent-to-channel copies). */
   copiesOf: (id: string) => readonly EventData[] = () => [],
 ) {
-  const writer = (kind: number, channelId: string) => {
-    if (!canParticipate(channelId))
-      throw new Error("Join the conversation before posting");
+  const writer = (
+    kind: number,
+    channelId: string,
+    owner?: AgentOwnerAuthorization,
+  ) => {
+    if (!canWrite(channelId, owner))
+      throw new Error("You don’t have write access to this conversation.");
     if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");
     return outbox;
@@ -171,7 +178,7 @@ export function createMessages(
     )
       throw new Error("Reload the message before editing its attachments.");
     const sendEdit = (targetId: string) =>
-      writer(40003, channelId).send({
+      writer(40003, channelId, ownerEdit ? authorization : undefined).send({
         kind: 40003,
         content: text(content),
         tags: [
@@ -236,7 +243,7 @@ export function createMessages(
     const all = [...ids, ...new Set(linked.map((event) => event.id))];
     const removed = all.length <= 100 ? all : ids;
     const targets = [...originals, ...(all.length <= 100 ? linked : [])];
-    return writer(5, channelId).send({
+    return writer(5, channelId, authorization).send({
       kind: 5,
       content: "",
       tags: [

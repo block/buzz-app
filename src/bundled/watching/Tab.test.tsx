@@ -112,6 +112,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   const ctx = {
     react: React,
     agents: {
+      presentWatch: () => undefined,
       snapshot: () => snapshot,
       subscribe: (listener: () => void) => {
         changed = listener;
@@ -124,7 +125,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   render(
     React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
   );
-  const ada = screen.getByRole("region", { name: "Watching" });
+  const ada = screen.getByRole("region", { name: "Attention" });
   expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
   expect(within(ada).getByText("1 interest · 1 watch")).toBeTruthy();
   fireEvent.click(
@@ -271,6 +272,7 @@ it.each(["source", "event", "timer"] as const)(
     const ctx = {
       react: React,
       agents: {
+        presentWatch: () => undefined,
         snapshot: () => snapshot,
         subscribe: (listener: () => void) => {
           changed = listener;
@@ -399,7 +401,12 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   const save = vi.fn(() => held);
   const ctx = {
     react: React,
-    agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save,
+    },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
   const report = vi.fn();
@@ -441,7 +448,7 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   expect(save).toHaveBeenCalledTimes(1);
 });
 
-it("explains Watching to a new agent and switches it on this device", async () => {
+it("explains Attention to a new agent and switches it on this device", async () => {
   const snapshot = {
     status: "ready",
     running: [
@@ -471,7 +478,9 @@ it("explains Watching to a new agent and switches it on this device", async () =
     React.createElement(createTab(ctx), { agent: { key: "membership-b" } }),
   );
   expect(
-    screen.getByText(/Agents can watch for events and automatically wake/),
+    screen.getByText(
+      /Attention lets agents watch for events and automatically wake/,
+    ),
   ).toBeTruthy();
   expect(
     screen.getByText("Watches only run while Buzz is open on this device."),
@@ -737,6 +746,19 @@ it.each([false, true])(
     const ctx = {
       react: React,
       agents: {
+        presentWatch: (watch: { provider: string }) =>
+          watch.provider === "attention/github-pr"
+            ? {
+                type: "GitHub PR",
+                target: "buzz-app#1578",
+                subtitle: "Release checks",
+                link: {
+                  href: "https://github.com/block/buzz-app/pull/1578",
+                  title: "Open on GitHub",
+                },
+                details: () => React.createElement("p", null, "Who wakes it"),
+              }
+            : undefined,
         snapshot: () => snapshot,
         subscribe: (listener: () => void) => {
           changed = listener;
@@ -778,6 +800,7 @@ it.each([false, true])(
     );
     expect(screen.getByRole("heading", { name: "Recent events" })).toBeTruthy();
     expect(screen.getByText("CI completed: all checks passed")).toBeTruthy();
+    expect(screen.getByText("Who wakes it")).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", { name: "Details for Discussion" }),
     );
@@ -861,7 +884,12 @@ it("keeps overview and destination navigation in the selected community", async 
   const open = vi.fn(),
     save = vi.fn();
   const ctx = {
-    agents: { snapshot: () => snapshot, subscribe: () => () => {}, save },
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save,
+    },
     relay: {
       snapshot: () => connection,
       subscribe: (listener: () => void) => {
@@ -874,7 +902,7 @@ it("keeps overview and destination navigation in the selected community", async 
   render(
     React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
   );
-  expect(screen.getByRole("region", { name: "Watching" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Attention" })).toBeTruthy();
   fireEvent.click(
     screen.getByRole("button", { name: "Open destination Release planning" }),
   );
@@ -975,4 +1003,179 @@ it("keeps technical data out of message summaries and avoids repeating the desti
   );
   expect(screen.queryByText("No additional filters")).toBeNull();
   expect(screen.queryByText("Event kinds: 9")).toBeNull();
+});
+
+it("lists each recent event apart, shown as a chat message from its author", () => {
+  const author = "b".repeat(64);
+  const casey = "c".repeat(64);
+  const now = Math.floor(Date.now() / 1000);
+  const output = (text: string, at: number) => ({ at, text });
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attentionHistory: {
+      "watch/messages": {
+        events: [
+          {
+            id: "1".repeat(64),
+            at: now - 120,
+            author,
+            channel,
+            text: "**Release** is ready: [notes](https://example.com/notes).",
+          },
+          {
+            id: "2".repeat(64),
+            at: now - 60,
+            author,
+            channel,
+            text: "Tagged `v2`.",
+          },
+          {
+            id: "3".repeat(64),
+            at: now - 30,
+            author,
+            channel,
+            text: "Ask @Casey in #Beta.",
+            mentions: [casey],
+          },
+        ],
+      },
+      "watch/build": {
+        events: [output("first", now - 60), output("**second**", now)],
+      },
+    },
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: { type: "interest", instructions: "Follow releases." },
+      },
+      "watch/messages": {
+        slug: "watch/messages",
+        value: {
+          type: "event",
+          name: "Release messages",
+          enabled: true,
+          interest_id: "release",
+          channels: [channel],
+          kinds: [9],
+          since: 0,
+        },
+      },
+      "watch/build": {
+        slug: "watch/build",
+        value: {
+          type: "source",
+          name: "Build",
+          enabled: true,
+          interest_id: "release",
+          provider: "attention/command",
+          config: { command: "make" },
+        },
+      },
+    },
+  };
+  const list = {
+    channels: [
+      { id: channel, name: "Releases" },
+      { id: "beta", name: "Beta" },
+    ],
+  };
+  const queries = {
+    ensureList() {},
+    subscribeList: () => () => {},
+    list: () => list,
+  };
+  const profiles = new Map([
+    [author, { name: "alex" }],
+    [casey, { name: "Casey" }],
+  ]);
+  // Profile reads fail while the session closes; rows must not leave that
+  // unhandled. A plain function, as a mock would observe the rejection itself.
+  const reads: unknown[][] = [];
+  const ensure = (...args: unknown[]) => {
+    reads.push(args);
+    return Promise.reject(new Error("closed"));
+  };
+  const names = {
+    resolve: (pubkey: string, fallback?: string) =>
+      pubkey === author ? "Alex" : fallback,
+    subscribe: () => () => {},
+    snapshot: () => 0,
+  };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: queries,
+      names,
+      profiles: {
+        snapshot: () => profiles,
+        subscribe: () => () => {},
+        ensure,
+      },
+      media: () => undefined,
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const ctx = {
+    agents: {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+    },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Details for Release messages" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Details for Build" }));
+  const recent = (heading: string) =>
+    screen
+      .getByRole("heading", { name: heading })
+      .parentElement?.querySelector("ol");
+  const [messages, build] = [recent("Recent events"), recent("Recent output")];
+  if (!messages || !build) throw new Error("Missing recent events");
+  const events = within(messages).getAllByRole("listitem");
+  // Newest first, each its own chat message with its author's byline.
+  expect(
+    events.map((item) =>
+      item.querySelector("[data-message-id]")?.getAttribute("data-message-id"),
+    ),
+  ).toEqual(["3".repeat(64), "2".repeat(64), "1".repeat(64)]);
+  // Each row reads the profiles it names, so its mentions resolve.
+  expect(reads).toContainEqual([[author, casey], "background"]);
+  for (const item of events)
+    expect(within(item).getByText("Alex").tagName).toBe("STRONG");
+  // Its tags and the community's channels give a message its references.
+  const tagged = events[0] as HTMLElement;
+  expect(
+    within(tagged)
+      .getByText("Casey", { selector: "[data-mention-kind]" })
+      .getAttribute("data-mention-kind"),
+  ).toBe("person");
+  expect(
+    within(tagged).getByRole("link", { name: "#Beta" }).getAttribute("href"),
+  ).toBe("buzz://channel/beta");
+  expect(within(events[2] as HTMLElement).getByText("Release").tagName).toBe(
+    "STRONG",
+  );
+  expect(
+    within(events[2] as HTMLElement)
+      .getByRole("link", { name: "notes" })
+      .getAttribute("href"),
+  ).toBe("https://example.com/notes");
+  expect(within(events[1] as HTMLElement).getByText("v2").tagName).toBe("CODE");
+  // Command output stays as it was printed.
+  expect(
+    within(build)
+      .getAllByRole("listitem")
+      .map((item) => item.querySelector("pre")?.textContent),
+  ).toEqual(["**second**", "first"]);
 });

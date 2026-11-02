@@ -114,6 +114,9 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   await expect(toggle).toBeEnabled();
   await toggle.press("Space");
   await expect(toggle).toHaveAccessibleName("Disable GitHub");
+  // Re-enabling GitHub adds its settings card to the stacked navigation above,
+  // which pushes the toggle down.
+  await toggle.scrollIntoViewIfNeeded();
   await expect(toggle).toBeInViewport({ ratio: 1 });
   // Narrow Settings stacks its own navigation above the detail, reachable by
   // scrolling the modal; wide Settings keeps it beside the detail.
@@ -220,9 +223,7 @@ for (const action of ["Remove from this device", "Leave community"]) {
       page.getByRole("heading", { name: "Profile", exact: true }),
     ).toBeVisible();
     await expect(page.locator("#settings-content")).toBeFocused();
-    await expect(
-      page.getByText("This destination couldn’t open", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.locator('.page-status[role="alert"]')).toHaveCount(0);
     expect(leaveRequests).toHaveLength(action === "Leave community" ? 1 : 0);
   });
 }
@@ -286,12 +287,10 @@ test.describe("community administration permissions", () => {
     try {
       await page.reload();
       await started;
-      await expect(
-        page.getByText("Opening destination…", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByText("This destination couldn’t open", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.locator(".page-status").getByRole("status")).toHaveText(
+        "Loading…",
+      );
+      await expect(page.locator('.page-status[role="alert"]')).toHaveCount(0);
       await expect(
         sections.getByRole("button", { name: "Membership", exact: true }),
       ).toHaveCount(0);
@@ -593,6 +592,7 @@ confirmedPresence(
         "Software updates",
         "Manage plugins",
         "Builderlab",
+        "GitHub comment authors",
       ]) {
         await tab();
         await expect(
@@ -675,9 +675,13 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
     return route.fulfill({ status: 404, json: { error: "unexpected" } });
   });
 
-  await page.goto(app.origin);
-  await page.evaluate(
-    ({ owner, request }) =>
+  // Boot with the saved deletion rather than reloading over a booting app,
+  // which WebKit can fail with an internal error. Seed only the first
+  // document, so the reload below sees just what the app kept.
+  await page.addInitScript(
+    ({ owner, request }) => {
+      if (sessionStorage.getItem("test.seeded-deletion")) return;
+      sessionStorage.setItem("test.seeded-deletion", "1");
       localStorage.setItem(
         "buzz.hosted-community-deletion.v1",
         JSON.stringify({
@@ -686,10 +690,11 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
           backend_origin: window.location.origin,
           request,
         }),
-      ),
+      );
+    },
     { owner, request },
   );
-  await page.reload();
+  await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Builderlab").click();

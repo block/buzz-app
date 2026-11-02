@@ -32,14 +32,19 @@ function joined(channel: ChannelSummary, viewer: string | undefined) {
   return (
     !!viewer &&
     referable(channel) &&
-    (!channel.readOnly || !!channel.cached) &&
+    (!channel.readOnly || channel.viewerRole === "guest" || !!channel.cached) &&
     !!channel.members?.includes(viewer)
   );
 }
 
 /** An open channel the viewer can preview but hasn't joined. */
 function open(channel: ChannelSummary) {
-  return !!channel.readOnly && !channel.private && referable(channel);
+  return (
+    !!channel.readOnly &&
+    channel.viewerRole !== "guest" &&
+    !channel.private &&
+    referable(channel)
+  );
 }
 
 /** The channel name rule the other channel pickers use (`matchName`), without

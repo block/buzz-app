@@ -1,3 +1,4 @@
+import type { VerifiedProfile } from "./verified-profile";
 import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
@@ -22,13 +23,17 @@ export type ChannelSummary = Readonly<{
   metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
+  /** Default for future participants; never an existing participant's role. */
+  joinRole?: "member" | "guest" | undefined;
+  /** Viewer role from the relay-signed roster, independent of admission defaults. */
+  viewerRole?: "owner" | "admin" | "member" | "guest" | "bot" | undefined;
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix
    * seconds. An own send counts once the relay accepts it. */
   lastActivityAt?: number | undefined;
   /** Activity has been observed or read successfully, including an empty result. */
   activityKnown?: true;
-  /** Readable public nonmember channel; not part of the joined roster. */
+  /** Writing unavailable: public preview, cached membership, or a guest. */
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */
   cached?: true;
@@ -63,6 +68,8 @@ export type ChannelSummary = Readonly<{
   participants?: readonly string[];
 }>;
 export type Profile = Readonly<{
+  /** Relay-signed name assertion; display only, never account access. */
+  verified?: VerifiedProfile;
   name: string;
   /** The name is an identity fragment, not a name supplied by kind-0 content. */
   nameIsFallback?: true;

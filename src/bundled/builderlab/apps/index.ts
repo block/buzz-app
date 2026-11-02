@@ -5,7 +5,8 @@ import { createElement, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { OAuthSession } from "../oauth/session";
-import { createAppsClient, type RuntimeProfile } from "./client";
+import type { BuilderlabSession } from "../session";
+import { createAppsClient, type Audience, type RuntimeProfile } from "./client";
 import {
   appName,
   controlPlane,
@@ -44,9 +45,12 @@ It returns the version/deployment IDs once accepted, even if readiness checking 
 
 export function applyApps(
   ctx: Ctx,
-  session: OAuthSession,
+  session: BuilderlabSession,
   /** Whether Settings can sign in; otherwise the app's own browser login is used. */
   loginAvailable: boolean,
+  /** The legacy sign-in the control-plane tools authenticate with; an FI
+   * build has none yet, so it offers no tools. */
+  legacy?: OAuthSession,
 ) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
@@ -90,8 +94,8 @@ export function applyApps(
     component: AppView,
   });
   const base = controlPlane();
-  if (!base) return;
-  const apps = () => createAppsClient(ctx.host, session, base);
+  if (!base || !legacy) return;
+  const apps = () => createAppsClient(ctx.host, legacy, base);
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",
@@ -284,29 +288,87 @@ export function applyApps(
     },
     call: async () => reply(await apps().list()),
   });
+  const communities = (access: Record<string, unknown>) =>
+    Array.isArray(access.shared_community_ids)
+      ? access.shared_community_ids.filter((id) => typeof id === "string")
+      : [];
   ctx.agents.addTool({
-    name: "apps_share",
+    name: "apps_visibility",
     description:
-      "Let the members of a Builderlab workspace view an app. Only when asked to share it.",
+      "Choose who can open an app: everyone in your owner's workspace (the default for new apps) or only your owner. Communities it is shared with keep access either way. Only when asked.",
     inputSchema: {
       type: "object",
       properties: {
         app_id: { type: "string" },
-        workspace_id: {
-          type: "string",
-          description: "The Builderlab workspace's identifier.",
-        },
+        audience: { type: "string", enum: ["workspace", "only_you"] },
       },
-      required: ["app_id", "workspace_id"],
+      required: ["app_id", "audience"],
       additionalProperties: false,
     },
-    call: async (_client, _context, args) =>
-      reply(
-        await apps().share(
-          string(args, "app_id"),
-          string(args, "workspace_id"),
-        ),
-      ),
+    async call(_client, _context, args) {
+      const audience = string(args, "audience") as Audience;
+      if (audience !== "workspace" && audience !== "only_you")
+        throw new Error("audience must be workspace or only_you");
+      const id = string(args, "app_id");
+      const access = await apps().visibility(id, audience);
+      const shared = communities(access);
+      const others = Array.isArray(access.effective_viewers)
+        ? access.effective_viewers.filter((viewer) => viewer !== access.owner)
+            .length
+        : 0;
+      return reply({
+        app_id: id,
+        audience,
+        shared_community_ids: shared,
+        who_can_open: [
+          audience === "workspace"
+            ? "Everyone in your owner's workspace."
+            : "Only your owner.",
+          ...(audience === "only_you" && others
+            ? [
+                `${others} ${others === 1 ? "other person" : "other people"} can also open it.`,
+              ]
+            : []),
+          ...(shared.length
+            ? [
+                `So can members of the ${shared.length === 1 ? "Buzz community" : `${shared.length} Buzz communities`} it is shared with.`,
+              ]
+            : []),
+        ].join(" "),
+      });
+    },
+  });
+  ctx.agents.addTool({
+    name: "apps_community",
+    description:
+      "Share an app with a Buzz community your owner belongs to, or stop sharing it. Its members can then open the app whatever its visibility. Only when asked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string" },
+        community_id: {
+          type: "string",
+          description: "The Buzz community's Builderlab ID.",
+        },
+        action: { type: "string", enum: ["grant", "revoke"] },
+      },
+      required: ["app_id", "community_id", "action"],
+      additionalProperties: false,
+    },
+    async call(_client, _context, args) {
+      const action = string(args, "action");
+      if (action !== "grant" && action !== "revoke")
+        throw new Error("action must be grant or revoke");
+      const id = string(args, "app_id");
+      const community = string(args, "community_id");
+      const shared = communities(await apps().community(id, community, action));
+      return reply({
+        app_id: id,
+        community_id: community,
+        shared: shared.includes(community),
+        shared_community_ids: shared,
+      });
+    },
   });
   ctx.agents.addTool({
     name: "apps_open",

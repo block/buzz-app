@@ -8,7 +8,6 @@ import {
   LockIcon,
   HashIcon,
   ClockIcon,
-  GitPullRequestIcon,
   TerminalWindowIcon,
   CodeIcon,
   ArrowSquareOutIcon,
@@ -23,6 +22,16 @@ import { Switch as SharedSwitch } from "../../shared/design-system/ui/Switch";
 import type { Context } from "../../plugins/author";
 import type { Agent, Watch } from "./model";
 import { InstructionsMarkdown } from "./InstructionsMarkdown";
+import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
+import { useReferenceDirectory } from "../../features/messages/ReferenceText";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
+import { MessageRow } from "../../features/messages/MessageRow";
+import { useRowProfiles } from "../../features/relay/react";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { rowProfileIds } from "../../features/relay/membership";
+import type { ProfileQueries } from "../../features/relay/profile-directory";
+import type { RelaySession } from "../../features/relay/session";
+import type { AttentionEntry } from "../../features/agents/store";
 
 import "./AttentionPage.css";
 
@@ -97,6 +106,11 @@ const suggestions = [
   "Check this channel every morning at 9",
 ];
 const button = { variant: "ghost" as const, size: "sm" as const };
+const noProfiles: ProfileQueries = {
+  snapshot: () => new Map(),
+  subscribe: () => () => {},
+  ensure: async () => {},
+};
 
 /** Uses the host’s controls and surface roles. */
 export function createTab({
@@ -208,6 +222,130 @@ export function createTab({
       </Button>
     );
   }
+  /** A recent event that was a message, shown as the conversation shows it. */
+  function Message({
+    entry,
+    author,
+    channel,
+    session,
+    scope,
+  }: {
+    entry: AttentionEntry;
+    author: string;
+    channel: string;
+    session?: RelaySession | undefined;
+    scope?: string | undefined;
+  }) {
+    const row = React.useMemo(
+      () => ({
+        id: entry.id ?? `${author}:${entry.at}`,
+        channelId: channel,
+        authorId: author,
+        createdAt: entry.at,
+        content: entry.text,
+        mentions: entry.mentions ?? [],
+        mentionReferences: entry.mentionReferences ?? [],
+        participants: [],
+        attachments: [],
+        reactions: [],
+        replyCount: 0,
+      }),
+      [entry, author, channel],
+    );
+    const queries = session?.profiles ?? noProfiles;
+    React.useEffect(
+      () =>
+        void queries.ensure(rowProfileIds(row), "background").catch(() => {}),
+      [queries, row],
+    );
+    const profiles = useRowProfiles(queries, [row]);
+    const resolve = useChannelIdentityNames(session, channel);
+    const profile = profiles.get(author);
+    const name = resolve(author, profile?.name ?? "");
+    const at = scope?.lastIndexOf(":") ?? -1;
+    return h(
+      "li",
+      null,
+      h(MessageRow, {
+        row,
+        profile: name ? { ...profile, name } : profile,
+        participantProfiles: profiles,
+        // Names and references only: the full session offers the row's controls.
+        references: session,
+        // Only a stored event id makes a link to the message.
+        scope: entry.id ? scope : undefined,
+        media: session?.media ?? (() => undefined),
+        onOpenLink: (url) => {
+          const target =
+            scope &&
+            at > 0 &&
+            buzzLinkTarget(url, {
+              communityOrigin: scope.slice(0, at),
+              viewer: scope.slice(at + 1),
+            });
+          if (!target) return false;
+          void navigation.open(target);
+          return true;
+        },
+        day: false,
+        retry: undefined,
+        layout: "thread",
+      }),
+    );
+  }
+  /** One recent output, or an event that was not a message, with its time. */
+  function Entry({
+    entry,
+    session,
+    scope,
+    command,
+  }: {
+    entry: AttentionEntry;
+    session?: RelaySession | undefined;
+    scope?: string | undefined;
+    command: boolean;
+  }) {
+    const directory = useReferenceDirectory(session);
+    const { author, channel } = entry;
+    if (author && channel && !command)
+      return h(Message, { entry, author, channel, session, scope });
+    return h(
+      "li",
+      null,
+      h(
+        "p",
+        { className: "text-caption text-subtle" },
+        relativeTimestamp(entry.at),
+      ),
+      command
+        ? h("pre", { className: "text-caption text-standard" }, entry.text)
+        : session
+          ? h(
+              "div",
+              { className: "text-body-sm" },
+              h(MessageMarkdown, {
+                row: {
+                  id: `${entry.at}`,
+                  authorId: entry.author ?? "",
+                  createdAt: entry.at,
+                  channelId: entry.channel ?? "",
+                  content: entry.text,
+                  mentions: [],
+                  participants: [],
+                  attachments: [],
+                  reactions: [],
+                  replyCount: 0,
+                },
+                directory,
+                session,
+                media: session.media,
+                onOpenLink: () => false,
+                interactive: false,
+              }),
+            )
+          : h("p", { className: "text-body-sm" }, entry.text),
+    );
+  }
   function Subscription({
     agent,
     slug,
@@ -215,6 +353,7 @@ export function createTab({
     name,
     find,
     scope,
+    session,
     returnFocus,
   }: {
     agent: Agent;
@@ -223,6 +362,7 @@ export function createTab({
     name(id: string): string;
     find(id: string): Channel | undefined;
     scope?: string | undefined;
+    session?: RelaySession | undefined;
     returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const row = React.useRef<HTMLLIElement>(null);
@@ -237,6 +377,8 @@ export function createTab({
     const action = useAction();
     const detailsId = React.useId();
     const history = agent.attentionHistory?.[slug];
+    const command =
+      watch.type === "source" && watch.provider === "attention/command";
     const woke = history?.lastWokeAt
       ? `Last woke ${relativeTimestamp(history.lastWokeAt)}`
       : undefined;
@@ -273,36 +415,28 @@ export function createTab({
         h("h4", { className: "text-label-sm text-subtle" }, label),
         content,
       );
+    const shown =
+      watch.type === "source"
+        ? agents.presentWatch(watch, label.text)
+        : undefined;
     const type =
       watch.type === "event"
         ? "Messages"
         : watch.type === "timer"
           ? "Schedule"
-          : watch.provider === "attention/github-pr"
-            ? "GitHub PR"
-            : watch.provider === "attention/command"
-              ? "Command"
-              : "Function";
+          : watch.provider === "attention/command"
+            ? "Command"
+            : (shown?.type ?? "Function");
     const TypeIcon =
-      type === "Messages"
+      watch.type === "event"
         ? ChatCircleIcon
-        : type === "Schedule"
+        : watch.type === "timer"
           ? ClockIcon
-          : type === "GitHub PR"
-            ? GitPullRequestIcon
-            : type === "Command"
-              ? TerminalWindowIcon
-              : CodeIcon;
-    const pr =
-      watch.type === "source" &&
-      watch.provider === "attention/github-pr" &&
-      typeof watch.config.pr === "string"
-        ? /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(
-            watch.config.pr,
-          )
-        : null;
-    const target = pr
-      ? `${pr[1]?.split("/")[1]}#${pr[2]}`
+          : watch.provider === "attention/command"
+            ? TerminalWindowIcon
+            : (shown?.icon ?? CodeIcon);
+    const target = shown?.target
+      ? shown.target
       : watch.type === "event"
         ? watch.channels === "all"
           ? "All joined channels"
@@ -402,11 +536,11 @@ export function createTab({
                   )
                 : target,
             ),
-          pr &&
+          shown?.subtitle &&
             h(
               "span",
               { className: "attention-subtitle text-body-sm text-subtle" },
-              label.text.replace(/^(?:PR\s+\d+:?\s*|[^ ]*#\d+\s*)/i, ""),
+              shown.subtitle,
             ),
         ),
         h(
@@ -427,7 +561,7 @@ export function createTab({
         h(
           "div",
           { className: "attention-actions" },
-          pr &&
+          shown?.link &&
             h(IconButton, {
               size: "sm",
               variant: "ghost",
@@ -436,18 +570,14 @@ export function createTab({
               render: (props) => (
                 <a
                   {...props}
-                  href={
-                    watch.type === "source"
-                      ? String(watch.config.pr)
-                      : undefined
-                  }
+                  href={shown.link?.href}
                   target="_blank"
                   rel="noreferrer"
                 />
               ),
               icon: h(ArrowSquareOutIcon, { size: 16, "aria-hidden": true }),
               "aria-label": `Open ${target}`,
-              title: "Open on GitHub",
+              title: shown.link.title,
             }),
           h(Switch, {
             label: `Watch ${label.text}`,
@@ -512,8 +642,9 @@ export function createTab({
                   ),
                 ),
               )
-            : !pr &&
-                h(
+            : shown?.details
+              ? h(shown.details)
+              : h(
                   "p",
                   { className: "text-body-sm text-secondary" },
                   watch.type === "source"
@@ -522,7 +653,7 @@ export function createTab({
                       ? `New messages in ${watch.channels === "all" ? "all joined channels" : watch.channels.map(name).join(", ")}${watch.classifier ? ", filtered for relevance" : ""}.`
                       : `${description.title}. ${watch.prompt}`,
                 ),
-          !pr &&
+          !shown?.details &&
             label.url &&
             h(
               "a",
@@ -536,24 +667,38 @@ export function createTab({
             ),
           (watch.type === "event" || watch.type === "source") &&
             section(
-              watch.type === "source" && watch.provider === "attention/command"
-                ? "Recent output"
-                : "Recent events",
-              h(
-                watch.type === "event" ? "p" : "pre",
-                {
-                  className:
-                    watch.type === "event"
-                      ? "text-body-sm whitespace-pre-wrap"
-                      : "text-caption text-standard",
-                },
-                (watch.type === "event" && history?.output
-                  ? recentMessages(history.output)
-                  : history?.output) ||
-                  (watch.type === "event"
-                    ? "No matched messages recorded yet."
-                    : "No output recorded yet."),
-              ),
+              command ? "Recent output" : "Recent events",
+              history?.events?.length
+                ? h(
+                    "ol",
+                    { className: "attention-list attention-recent" },
+                    ...history.events
+                      .map((entry, index) =>
+                        h(Entry, {
+                          key: index,
+                          entry,
+                          session,
+                          scope,
+                          command,
+                        }),
+                      )
+                      .reverse(),
+                  )
+                : h(
+                    watch.type === "event" ? "p" : "pre",
+                    {
+                      className:
+                        watch.type === "event"
+                          ? "text-body-sm whitespace-pre-wrap"
+                          : "text-caption text-standard",
+                    },
+                    (watch.type === "event" && history?.output
+                      ? recentMessages(history.output)
+                      : history?.output) ||
+                      (watch.type === "event"
+                        ? "No matched messages recorded yet."
+                        : "No output recorded yet."),
+                  ),
             ),
           watch.type === "event" &&
             (technicalFilters ||
@@ -658,11 +803,13 @@ export function createTab({
     agent,
     channels,
     scope,
+    session,
     returnFocus,
   }: {
     agent: Agent;
     channels: readonly Channel[];
     scope?: string | undefined;
+    session?: RelaySession | undefined;
     returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const action = useAction();
@@ -810,6 +957,7 @@ export function createTab({
                 name,
                 find,
                 scope,
+                session,
                 returnFocus,
               }),
             ),
@@ -911,7 +1059,7 @@ export function createTab({
       {
         "data-buzz-ui": "",
         className: "attention-page",
-        "aria-label": "Watching",
+        "aria-label": "Attention",
         ref: page,
         tabIndex: -1,
       },
@@ -921,7 +1069,7 @@ export function createTab({
         h(
           "p",
           { className: "text-body-sm text-subtle" },
-          "Agents can watch for events and automatically wake to handle them. For example, you can ask your agent to watch a channel or thread for replies, watch a GitHub PR for CI changes and reviews, or do something at a set time or on a schedule. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
+          "Attention lets agents watch for events and automatically wake to handle them. For example, you can ask your agent to watch a channel or thread for replies, watch a GitHub PR for CI changes and reviews, or do something at a set time or on a schedule. Each Interest is something an agent is keeping track of, with instructions for what to do. Its watches are what wake it.",
         ),
         h(
           "p",
@@ -945,6 +1093,7 @@ export function createTab({
               returnFocus: page,
               channels,
               scope: connection.scope,
+              session: connection.session,
             })
           : h(
               "p",

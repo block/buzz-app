@@ -73,12 +73,19 @@ scripts/bootstrap-worktree.sh /absolute/path/to/source/checkout
 
 Do not start development before bootstrap completes. The script copies the
 git-ignored `.env.local` without overwriting an existing target, then uses that
-worktree's Hermit proxy to run `bin/pnpm install --frozen-lockfile`. Do not copy
+worktree's Hermit proxies to run `bin/rustup toolchain install` and
+`bin/pnpm install --frozen-lockfile`. Do not copy
 other ignored paths: Keychain credentials and pnpm's package cache are
 machine-shared, while dependencies and build output are regenerated. Git hooks
 need no per-worktree setup; see [Git hooks](docs/contributing.md#git-hooks).
 
 ## Engineering standard
+
+When changing user-facing Buzz behavior, update [the agent help guide](docs/buzz-help.md)
+if the change affects how someone uses or understands the app. Keep it concise,
+describe implemented behavior, and distinguish optional or platform-dependent
+features. The `buzz_help` tool bundles this file with the app; it is not fetched
+from the repository at runtime.
 
 Before editing, state the intended outcome and non-goals. Read the owning code,
 callers, and relevant design docs; preserve documented product decisions and

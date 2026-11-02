@@ -1,16 +1,19 @@
 import type { BuilderlabViewerSession } from "../../../features/browser/api";
-import type { Credential } from "./browser";
-
-export type LoginSnapshot = Readonly<{
-  status: "signed-out" | "pending" | "signed-in";
-  account?: Credential["account"];
-  error?: string;
-}>;
+import type { Host } from "../../../features/host/service";
+import {
+  accountStorage,
+  type BuilderlabRequest,
+  type Credential as Owner,
+  type LoginSnapshot,
+} from "../session";
+import { oauthTarget, type Credential } from "./browser";
 
 /** One plugin lifetime owns the reusable credential; UI snapshots never contain it. */
 export function createOAuthSession(
   acquire: (signal: AbortSignal) => Promise<Credential>,
   release?: (credential: Credential) => void,
+  /** Carries `request`; without it, requests are refused. */
+  host?: Pick<Host, "request">,
 ) {
   let credential: Credential | undefined;
   let attempt: AbortController | undefined;
@@ -46,6 +49,22 @@ export function createOAuthSession(
       if (!credential) throw new Error("Sign in to Builderlab first.");
       return credential;
     },
+    async request(owner: Owner, input: BuilderlabRequest) {
+      if (!host) throw new Error("Builderlab requests are unavailable.");
+      return host.request({
+        url: `${oauthTarget()}${input.path}`,
+        ...(input.method ? { method: input.method } : {}),
+        headers: {
+          ...input.headers,
+          "X-BB-Session-Credential": (owner as Credential).value,
+        },
+        ...(input.body !== undefined ? { body: input.body } : {}),
+      });
+    },
+    /** The credential is over; a stale one leaves a newer sign-in alone. */
+    expired(owner: Owner) {
+      if (owner === credential) reset(true);
+    },
     viewerSession() {
       if (!viewer) throw new Error("Sign in to Builderlab first.");
       return viewer;
@@ -76,6 +95,7 @@ export function createOAuthSession(
       });
     },
     cancel: () => reset(),
+    abandon: () => reset(),
     signOut: () => reset(true),
     async signIn() {
       if (disposed || attempt) return;
@@ -85,13 +105,14 @@ export function createOAuthSession(
       publish({ status: "pending" });
       try {
         const result = await acquire(current.signal);
+        const storage = await accountStorage(result.account.subject);
         current.signal.throwIfAborted();
         if (attempt !== current || disposed) return;
         credential = result;
         viewerLifetime = new AbortController();
         viewer = {
           credential: result.value,
-          storage: `builderlab-${crypto.randomUUID()}`,
+          storage,
           signal: viewerLifetime.signal,
         };
         publish({ status: "signed-in", account: result.account });

@@ -784,7 +784,7 @@ function InboxList({
         !!channel &&
         !!current &&
         !current.cached &&
-        !current.readOnly &&
+        (!current.readOnly || current.viewerRole === "guest") &&
         !current.archived &&
         current.channelType === channel.channelType &&
         !!current.members?.includes(scope.viewer) &&

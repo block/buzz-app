@@ -1,6 +1,6 @@
 {
   "id": "buzz.watching",
-  "name": "Agent Attention UI",
+  "name": "Attention",
   "apiVersion": 1,
   "description": "Show and control what each agent is watching. While it is off, agents' watches don't run on this device.",
   "discovery": {

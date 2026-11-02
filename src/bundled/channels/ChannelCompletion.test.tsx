@@ -108,6 +108,11 @@ it("offers joined streams/forums, including private and still-confirming channel
     channel("stream"),
     channel("forum", { channelType: "forum" }),
     channel("private", { private: true }),
+    channel("private-guest", {
+      private: true,
+      readOnly: true,
+      viewerRole: "guest",
+    }),
     channel("huddle", { huddle: true }),
     channel("archived", { archived: true }),
     // The real store's shape for a joined channel restored from cache.
@@ -126,6 +131,7 @@ it("offers joined streams/forums, including private and still-confirming channel
     "cached",
     "forum",
     "private",
+    "private-guest",
     "stream",
     "unknown",
   ]);
@@ -407,6 +413,39 @@ it("lists open channels after joined ones, each ranked by match", async () => {
       "Not joined",
       "Not joined · open-tie",
     ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("completes open channels by word runs, without scattered letters", async () => {
+  vi.useFakeTimers();
+  try {
+    const runs = channel("runs", {
+      name: "buzz-community",
+      members: [],
+      readOnly: true,
+    });
+    const scattered = channel("scattered", {
+      name: "lobster-cat",
+      members: [],
+      readOnly: true,
+    });
+    const t = fixture([]);
+    const previews = new Map(
+      [runs, scattered].map((entry) => [entry.id, entry]),
+    );
+    Object.assign(t.session.channels, {
+      // The store's answer may hold scattered-letter matches; completion
+      // drops them, as it does for joined channels.
+      searchPublic: vi.fn(async () => ({
+        channels: [runs, scattered],
+        partial: false,
+      })),
+      get: (id: string) => previews.get(id),
+    });
+    render(t.element("bc"));
+    await act(async () => vi.advanceTimersByTime(180));
+    expect(t.result().items.map((item) => item.id)).toEqual(["runs"]);
   } finally {
     vi.useRealTimers();
   }

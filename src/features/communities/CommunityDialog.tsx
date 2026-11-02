@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -13,6 +13,8 @@ import { nativeIdentityEnabled } from "../identity/service";
 import { readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
 import { admitCommunity, completeJoin, type Current } from "./join";
+import { CommunitySignIn } from "../federated-identity/CommunitySignIn";
+import type { FederatedIdentity } from "../federated-identity/service";
 import styles from "./Communities.module.css";
 
 export function CommunityDialog({
@@ -22,8 +24,11 @@ export function CommunityDialog({
   onJoined,
   invite,
   connectionFrom,
+  federatedIdentity,
 }: {
   communities: Communities;
+  /** Offers protected-community sign-in when admission refuses for it. */
+  federatedIdentity?: FederatedIdentity | undefined;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
@@ -37,6 +42,11 @@ export function CommunityDialog({
     | undefined;
 }) {
   const formId = useId();
+  const destinationInput = useRef<HTMLInputElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const touchOpening = useRef(false);
+  const focusFrom = useRef<Element | null>(null);
+  const focusProfile = useRef(false);
   const client = communities.snapshot();
   const unavailable =
     client.status !== "ready" || (mode === "join" && !client.relayAvailable);
@@ -83,6 +93,7 @@ export function CommunityDialog({
     };
   }, []);
   async function work(action: () => Promise<void>) {
+    focusFrom.current = document.activeElement;
     setBusy(true);
     setError("");
     try {
@@ -94,6 +105,17 @@ export function CommunityDialog({
       if (mounted.current) setBusy(false);
     }
   }
+  useLayoutEffect(() => {
+    if (busy || step !== "profile" || !focusProfile.current) return;
+    focusProfile.current = false;
+    // The submitted step owns this handoff only while focus has not moved elsewhere.
+    if (
+      !touchOpening.current &&
+      (document.activeElement === focusFrom.current ||
+        document.activeElement === document.body)
+    )
+      nameInput.current?.focus();
+  }, [busy, step]);
   const policy = info?.policy;
   const allowed =
     (!policy?.age_attestation_required || adult) &&
@@ -108,6 +130,7 @@ export function CommunityDialog({
     setProfile(
       pending?.profile ?? (found.exists ? found.profile : client.profile),
     );
+    focusProfile.current = true;
     setStep("profile");
   }
   async function submit() {
@@ -189,6 +212,21 @@ export function CommunityDialog({
         if (!next) close();
       }}
       preventClose={busy}
+      initialFocus={(type) => {
+        // Controlled entry has no Base UI trigger to report touch modality.
+        touchOpening.current =
+          type === "touch" ||
+          !!window.matchMedia?.("(pointer: coarse)").matches;
+        const field =
+          step === "destination"
+            ? destinationInput.current
+            : step === "profile"
+              ? nameInput.current
+              : null;
+        return touchOpening.current
+          ? (field?.closest<HTMLElement>('[role="dialog"]') ?? null)
+          : field;
+      }}
       description={
         unavailable
           ? undefined
@@ -294,6 +332,7 @@ export function CommunityDialog({
                 }
               >
                 <Input
+                  ref={destinationInput}
                   type="url"
                   required
                   autoComplete="url"
@@ -376,6 +415,7 @@ export function CommunityDialog({
             )}
             {step === "profile" && (
               <ProfileFields
+                nameRef={nameInput}
                 community={mode === "profile" ? undefined : id}
                 onBusyChange={setUploading}
                 profile={profile}
@@ -387,6 +427,15 @@ export function CommunityDialog({
               <p role="alert" className={styles.error}>
                 {error}
               </p>
+            )}
+            {error && (
+              <CommunitySignIn
+                identity={federatedIdentity}
+                error={error}
+                // Sign-in only clears the refusal: Continue then runs the current
+                // step with current input, never one captured before the login.
+                retry={() => setError("")}
+              />
             )}
           </>
         )}

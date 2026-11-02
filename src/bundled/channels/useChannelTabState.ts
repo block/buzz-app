@@ -184,8 +184,12 @@ function withThread(
         : intent === "select" || intent === "reveal" || intent === "focus"
           ? prior?.replyRequest
           : undefined,
+    // Ordinary user openings resume typing too. Passive restoration and tabs
+    // opened by an agent do not claim focus.
     focusRequest:
-      intent === "focus" ? (prior?.focusRequest ?? 0) + 1 : prior?.focusRequest,
+      intent === "focus" || (attention && intent === undefined)
+        ? (prior?.focusRequest ?? 0) + 1
+        : prior?.focusRequest,
     revealRequest:
       intent === "reveal"
         ? (prior?.revealRequest ?? 0) + 1
@@ -352,7 +356,12 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
       const channel = session.channels
         .list()
         .channels.find((item) => item.id === channelId);
-      if (!channel || channel.readOnly || channel.archived || channel.cached)
+      if (
+        !channel ||
+        (channel.readOnly && channel.viewerRole !== "guest") ||
+        channel.archived ||
+        channel.cached
+      )
         throw new Error("Your owner cannot open threads in this channel.");
       if (threads(channelId).some((thread) => thread.root === rootId))
         return false;

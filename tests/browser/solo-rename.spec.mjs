@@ -355,7 +355,13 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
   await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
   await page.getByRole("menuitem", { name: "New workspace" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
+  // Wait until the exiting menus are gone and the dialog's initial focus has
+  // settled on the field. The modal hides the menus from role queries.
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  const field = dialog.getByRole("textbox", { name: "Workspace name" });
+  await expect(field).toBeFocused();
+  await field.fill("Work");
+  await expect(field).toHaveValue("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(dialog).not.toBeVisible();
   const work = sidebar(page).getByRole("button", { name: "Work", exact: true });
@@ -492,8 +498,10 @@ test("composable rows retain narrow rename and immediate keyboard/touch activati
     await expect(regionRow(page, alpha)).toBeFocused();
   }
   // The ordinary row and source row share the same pending mouse selection.
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  // Anchor both calls to one clock, as in the ordinary-row journey above.
+  const clockStart = Date.now();
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(clockStart + 60_000);
   await regionRow(page, alpha).click();
   await row(page, beta).click();
   await page.clock.runFor(500);

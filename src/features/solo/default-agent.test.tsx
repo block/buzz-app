@@ -5,9 +5,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createAgentChoices } from "../agents/choices";
 import { createAgentLibrary } from "../agents/library";
 import type { RelaySession } from "../relay/session";
+import { readView } from "../../shared/view-state";
 import {
   chooseDefaultAgent,
   forgetDefaultAgent,
+  restoreDefaultAgent,
   setDefaultAgent,
   useDefaultAgent,
 } from "./default-agent";
@@ -450,6 +452,17 @@ it("keeps automatic picks on the device and saves explicit choices to the accoun
   await act(() => chooseDefaultAgent(session, "account", "b".repeat(64)));
   expect(screen.getByRole("status").textContent).toBe("Second");
   expect(account.saved()).toBe("b".repeat(64));
+});
+
+it("restores an abandoned replacement without overwriting a newer choice", () => {
+  const first = "a".repeat(64);
+  const failed = "b".repeat(64);
+  const newer = "c".repeat(64);
+  setDefaultAgent("restore", failed);
+  expect(restoreDefaultAgent("restore", failed, first)).toBe(true);
+  setDefaultAgent("restore", newer);
+  expect(restoreDefaultAgent("restore", failed, first)).toBe(false);
+  expect(readView("restore", "solo:default-agent", null)).toBe(newer);
 });
 
 it("stands in for a deleted agent left on the account without writing to it", async () => {

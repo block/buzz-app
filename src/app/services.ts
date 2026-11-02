@@ -1,3 +1,4 @@
+import { ArtifactStorageService } from "../features/artifact-storage/service";
 import { createAdminAccess } from "../bundled/admin-access";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
@@ -9,10 +10,17 @@ import {
 import { SettingsCardsService } from "../features/settings/service";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
+import {
+  FederatedIdentityService,
+  onSignedIn,
+} from "../features/federated-identity/service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
-import { bindDeepLinks } from "../features/navigation/deep-links";
+import {
+  bindDeepLinks,
+  createRejectedLinks,
+} from "../features/navigation/deep-links";
 import { bindSearchUsage } from "../features/search/usage";
 import { communityDestination } from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
@@ -49,6 +57,7 @@ export function createServices() {
   const updates = createUpdates();
   const ctx = new Context();
   new HostService(ctx);
+  const federatedIdentity = new FederatedIdentityService(ctx);
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
@@ -89,8 +98,13 @@ export function createServices() {
     apply: communities.applySync,
   });
   const relay = communities.relay;
+  const artifactStorage = new ArtifactStorageService(ctx);
   // Expose v2 only with the complete label/projection/frame/Destination/guard slice.
   new SoloNavigationService(ctx, relay, plugins);
+  // The one recovery point for federated sign-in; see onSignedIn.
+  ctx.effect(() =>
+    onSignedIn(federatedIdentity, () => communities.reauthorize()),
+  );
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
@@ -142,9 +156,45 @@ export function createServices() {
   };
   // OS deep links; a no-op in the browser build. Invite admission remains in
   // the join dialog, never in navigation or the native queue.
-  ctx.effect(() =>
-    bindDeepLinks({ ...navigationHost, invite: invites.open }, communities),
-  );
+  const rejectedLinks = createRejectedLinks();
+  const deepLinks = {
+    ...navigationHost,
+    invite: invites.open,
+    rejected: rejectedLinks.reject,
+    accepted: () => rejectedLinks.clear(),
+    // As the router decides: Inbox waits on startup and its own activation.
+    inbox: {
+      status: () =>
+        plugins.startup() === "loading" ||
+        plugins.snapshot().activation["buzz.inbox"]?.status === "starting"
+          ? ("loading" as const)
+          : pages.snapshot().some((page) => page.key === "buzz.inbox/inbox")
+            ? ("on" as const)
+            : ("off" as const),
+      // Both producers emit mid-update: reconciliation before every plugin is
+      // starting, activation before pages publish it. Read once both finish.
+      subscribe(listener: () => void) {
+        let queued = false;
+        let stopped = false;
+        const notify = () => {
+          if (queued) return;
+          queued = true;
+          queueMicrotask(() => {
+            queued = false;
+            if (!stopped) listener();
+          });
+        };
+        const stopPlugins = plugins.subscribe(notify);
+        const stopPages = pages.subscribe(notify);
+        return () => {
+          stopped = true;
+          stopPlugins();
+          stopPages();
+        };
+      },
+    },
+  };
+  ctx.effect(() => bindDeepLinks(deepLinks, communities));
   // Search ranks places by how often and how recently they were opened.
   ctx.effect(() =>
     bindSearchUsage(navigation, () => {
@@ -171,15 +221,19 @@ export function createServices() {
     accountActions,
     shortcutBindings,
     conversation,
+    artifactStorage,
     settingsCards,
     adminAccess,
     pages,
     sidebarSections,
     panels,
     plugins,
+    federatedIdentity,
     relay,
     communities,
     invites,
+    rejectedLinks,
+    deepLinks,
     appearance,
     updates,
     dispose() {

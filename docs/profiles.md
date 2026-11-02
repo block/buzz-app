@@ -121,6 +121,8 @@ status set, choose **Set a status** beside **Edit profile**. Either saves to tha
 profile's community and closes if the community or identity changes. Closing
 returns focus to whichever control is showing, so clearing lands on
 **Set a status** and setting one lands on the status line.
+A status wider than the profile column ends in an ellipsis, and your own keeps
+its pencil after it.
 Shared design-system Avatar and Button use the host-loaded styles directly. The
 profile content marks its `data-buzz-ui` boundary and uses shared heading/body/mono
 roles; its stylesheet owns layout, not component overrides. No new theme owner,

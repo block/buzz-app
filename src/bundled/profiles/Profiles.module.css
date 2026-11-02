@@ -14,6 +14,8 @@
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
+  /* A centred column fits its content; the unwrapped status would overflow. */
+  max-width: 100%;
   text-align: center;
   overflow-wrap: anywhere;
 }
@@ -30,12 +32,12 @@
 }
 /* Your own status opens its editor; copied from the Channel Settings title
    (`.settingsTitleAction` in Channels.module.css). Reserve both sides equally;
-   only the trailing space contains the pencil. */
+   only the trailing space contains the pencil: its offset and 0.875rem icon. */
 .statusAction {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
-  padding: 0 calc(var(--space-4) + var(--space-2));
+  padding: 0 calc(var(--space-2) + var(--space-3) + var(--space-half));
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;

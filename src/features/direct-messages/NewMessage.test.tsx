@@ -634,6 +634,44 @@ it("Space waits for a longer name after any word break", async () => {
   ).not.toBeInTheDocument();
 });
 
+it("Space does not pick a one-character name the unread directory could continue", async () => {
+  const t = setup();
+  const q = { pubkey: "a".repeat(64), name: "Q" };
+  t.directMessages.people.mockImplementation(async (query, page) =>
+    !query && page === 1
+      ? { people: [q], hasMore: true }
+      : new Promise(() => {}),
+  );
+  t.mount();
+  await screen.findByRole("option", { name: "Q" });
+  await t.user.type(recipient(), "q");
+  await screen.findByRole("option", { name: "Q" });
+  await t.user.keyboard(" ");
+  expect(recipient()).toHaveValue("q ");
+  expect(
+    screen.queryByRole("button", { name: "Remove Q" }),
+  ).not.toBeInTheDocument();
+  expect(
+    t.directMessages.people.mock.calls.filter(([query]) => query === "q"),
+  ).toEqual([]);
+});
+
+it("explains the minimum instead of reporting no people for one character", async () => {
+  const t = setup();
+  t.directMessages.people.mockImplementation(async (query, page) =>
+    !query && page === 1
+      ? { people: people.slice(0, 1), hasMore: true }
+      : new Promise(() => {}),
+  );
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  await t.user.type(recipient(), "z");
+  expect(
+    await screen.findByText("Type at least 2 characters to search people."),
+  ).toBeVisible();
+  expect(screen.queryByText("No matching people.")).toBeNull();
+});
+
 it("Space does not pick while the rest of the list failed to load", async () => {
   const t = setup();
   const kim = { pubkey: "a".repeat(64), name: "Kim" };

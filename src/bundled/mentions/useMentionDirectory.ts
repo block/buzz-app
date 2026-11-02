@@ -183,7 +183,8 @@ export function useMentionDirectory(
     : undefined;
   // An empty query lists the directory; shorter text shows only pages already
   // read, filtered by the chooser, and waits for enough to search.
-  const searching = active && !hit && (!query.trim() || searchable(query));
+  const tooShort = active && !hit && !!query.trim() && !searchable(query);
+  const searching = active && !hit && !tooShort;
   useEffect(() => {
     if (!searching) return;
     const controller = new AbortController();
@@ -229,8 +230,10 @@ export function useMentionDirectory(
       loading: searching && !error,
       error,
       more: !!hit?.more,
+      /** Text too short to search: people not yet read may still match. */
+      tooShort,
       retry,
     }),
-    [active, shown, hit, searching, error, retry],
+    [active, shown, hit, searching, tooShort, error, retry],
   );
 }

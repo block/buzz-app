@@ -69,6 +69,8 @@ export function useMemberSearch(
     people: visible ? result.people : [],
     loading: searchable(text) && enabled && (!visible || result.loading),
     more: visible && result.more,
+    /** Typed text is too short to search, so only local choices are offered. */
+    tooShort: enabled && !!text && !searchable(text),
     error: visible ? result.error : undefined,
     next: () => setRequest((old) => ({ ...old, page: old.page + 1 })),
     refresh: () =>

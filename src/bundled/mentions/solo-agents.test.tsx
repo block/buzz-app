@@ -2219,6 +2219,23 @@ it("keeps already-read directory people at one character without searching", asy
   expect(people).toHaveBeenLastCalledWith("ma", 1, expect.anything());
 });
 
+it("Space does not select a one-character name a truncated listing could continue", async () => {
+  vi.useFakeTimers();
+  const people = vi.fn<RelaySessionPeople>(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Q" }],
+    hasMore: true,
+  }));
+  const { last, complete } = directoryCompletion(people);
+  const view = render(complete(""));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+  view.rerender(complete("q"));
+  await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+  expect(last()?.items.map((item) => item.label)).toContain("Q");
+  // An unread page may hold "Q Smith", and no search for `q` ran.
+  expect(last()?.spaceId).toBeUndefined();
+  expect(people).toHaveBeenCalledTimes(1);
+});
+
 it("answers a longer query from the complete page already read for its prefix, with no read and no typing pause", async () => {
   vi.useFakeTimers();
   const people = vi.fn<RelaySessionPeople>(async () => ({

@@ -188,11 +188,17 @@ export function usePeople(session: RelaySession, query: string) {
   }, [state, session, query, load]);
   const visible =
     state.session === session && state.query === query ? state : initial;
+  const browsed = cache.get("");
   return {
     people: visible.people,
     loading: visible.loading || (visible.hasMore && !visible.error),
     error: visible.error,
     hasMore: visible.hasMore,
+    /** Text too short to search, so people not yet read may still match. */
+    tooShort:
+      !!query.trim() &&
+      !searchable(query) &&
+      !(browsed?.hasMore === false && browsed.visit === visit),
     loadMore() {
       if (
         state.session === session &&

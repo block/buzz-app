@@ -1211,6 +1211,11 @@ it("sends a relay member search only from two typed characters", async () => {
   fireEvent.change(input, { target: { value: "M" } });
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(searches()).toHaveLength(0);
+  // No search ran, so the dialog asks for more text rather than reporting none.
+  expect(
+    screen.getByText("Type at least 2 characters to search people."),
+  ).toBeVisible();
+  expect(screen.queryByText(/^No other matching/)).toBeNull();
   fireEvent.change(input, { target: { value: "Mo" } });
   await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
   expect(searches()).toHaveLength(1);

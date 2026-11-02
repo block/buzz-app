@@ -30,7 +30,7 @@ export const inject = [
   "panels",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  ctx.agents.registerTab(bestieTab(ctx.relay));
+  ctx.agents.registerTab(bestieTab(ctx.relay, ctx.agents));
   ctx.pages.register({
     id: "bestie",
     title: "Bestie",

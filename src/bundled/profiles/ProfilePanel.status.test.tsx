@@ -100,7 +100,7 @@ function fixture(
 const setStatus = (options?: { hidden: boolean }) =>
   screen.queryByRole("button", { name: "Set a status", ...options });
 const updateStatus = (options?: { hidden: boolean }) =>
-  screen.queryByRole("button", { name: /^Update status/, ...options });
+  screen.queryByRole("button", { name: "Update status", ...options });
 const editor = () => screen.queryByRole("dialog", { name: "Set a status" });
 const heroStatus = () =>
   document.querySelector(`.${styles.status}`)?.textContent;
@@ -215,7 +215,7 @@ it("offers your status editor only on your own profile when statuses are writabl
   }
 });
 
-it("edits, saves and clears your status from the status line, returning focus to the control that shows", async () => {
+it("edits, saves and clears your status from one button whose label follows the status, returning focus to it", async () => {
   const user = userEvent.setup();
   const f = fixture(async () => [
     status(viewer, "Working from home", 2, [["emoji", "🏠"]]),
@@ -224,11 +224,9 @@ it("edits, saves and clears your status from the status line, returning focus to
     render(f.panel(viewer));
     await waitFor(() => expect(heroStatus()).toBe("🏠 Working from home"));
     expect(setStatus()).toBeNull();
-    expect(updateStatus()?.getAttribute("aria-label")).toBe(
-      "Update status: 🏠 Working from home",
-    );
-    expect(updateStatus()?.getAttribute("aria-haspopup")).toBe("dialog");
-    await user.click(updateStatus() as HTMLElement);
+    const button = updateStatus() as HTMLElement;
+    expect(button.getAttribute("aria-haspopup")).toBe("dialog");
+    await user.click(button);
     expect(editor()).toBeTruthy();
     expect(screen.getByLabelText("Status message")).toHaveProperty(
       "value",
@@ -236,9 +234,9 @@ it("edits, saves and clears your status from the status line, returning focus to
     );
     await user.keyboard("{Escape}");
     await waitFor(() => expect(editor()).toBeNull());
-    await waitFor(() => expect(updateStatus()).toHaveFocus());
+    await waitFor(() => expect(button).toHaveFocus());
 
-    await user.click(updateStatus() as HTMLElement);
+    await user.click(button);
     fireEvent.change(screen.getByLabelText("Status message"), {
       target: { value: "Design review" },
     });
@@ -255,13 +253,11 @@ it("edits, saves and clears your status from the status line, returning focus to
       ],
     });
     expect(heroStatus()).toBe("🏠 Design review");
-    expect(updateStatus()?.getAttribute("aria-label")).toBe(
-      "Update status: 🏠 Design review",
-    );
-    await waitFor(() => expect(updateStatus()).toHaveFocus());
+    expect(updateStatus()).toBe(button);
+    await waitFor(() => expect(button).toHaveFocus());
 
-    // Clearing removes the status line, so focus moves to Set a status.
-    await user.click(updateStatus() as HTMLElement);
+    // Clearing relabels the same button, which keeps focus.
+    await user.click(button);
     await user.click(screen.getByRole("button", { name: "Clear status" }));
     await waitFor(() => expect(editor()).toBeNull());
     expect(f.publish).toHaveBeenCalledTimes(2);
@@ -271,10 +267,11 @@ it("edits, saves and clears your status from the status line, returning focus to
     });
     expect(heroStatus()).toBeUndefined();
     expect(updateStatus()).toBeNull();
-    await waitFor(() => expect(setStatus()).toHaveFocus());
+    expect(setStatus()).toBe(button);
+    await waitFor(() => expect(button).toHaveFocus());
 
-    // Setting one swaps back, so focus moves to the status line.
-    await user.click(setStatus() as HTMLElement);
+    // Setting one relabels it back.
+    await user.click(button);
     expect(screen.getByLabelText("Status message")).toHaveProperty("value", "");
     fireEvent.change(screen.getByLabelText("Status message"), {
       target: { value: "Back" },
@@ -284,7 +281,8 @@ it("edits, saves and clears your status from the status line, returning focus to
     expect(f.publish).toHaveBeenCalledTimes(3);
     expect(heroStatus()).toBe("💬 Back");
     expect(setStatus()).toBeNull();
-    await waitFor(() => expect(updateStatus()).toHaveFocus());
+    expect(updateStatus()).toBe(button);
+    await waitFor(() => expect(button).toHaveFocus());
   } finally {
     f.owner.dispose();
   }

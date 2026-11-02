@@ -27,7 +27,6 @@ import {
 import {
   CheckCircleIcon,
   CopyIcon,
-  PencilSimpleIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
@@ -421,13 +420,10 @@ function ProfileDetails({
     });
   // This panel's session is its community's, so the status saves there.
   const statusEditor = useStatusEditor(session, viewer);
-  // The status line or Set a status, whichever shows, so focus returns to it
-  // or, after a save or clear swaps them, to its replacement.
   const statusButton = useRef<HTMLButtonElement>(null);
   const userStatus = useUserStatus(session.statuses, pubkey);
   const canSetStatus =
     !!scope && viewer === pubkey && session.statuses.writable;
-  const offerSetStatus = canSetStatus && !userStatus;
 
   return (
     <section
@@ -480,25 +476,22 @@ function ProfileDetails({
                 }
               </p>
             )}
-            {canSetStatus && userStatus ? (
-              <button
+            <StatusDisplay session={session} status={userStatus} />
+          </div>
+          {canSetStatus && (
+            <div className={hero.actions}>
+              <Button
                 ref={statusButton}
-                type="button"
-                className={styles.statusAction}
-                aria-label={`Update status: ${[userStatus.emoji, userStatus.text].filter(Boolean).join(" ")}`}
+                size="sm"
+                variant={picture ? "glass" : "subtle"}
                 aria-haspopup="dialog"
                 onClick={() => statusEditor.open()}
               >
-                <StatusDisplay session={session} status={userStatus} />
-                <span className={styles.statusPencil} aria-hidden="true">
-                  <PencilSimpleIcon size={14} />
-                </span>
-              </button>
-            ) : (
-              <StatusDisplay session={session} status={userStatus} />
-            )}
-          </div>
-          {(canMessage || canEdit || offerSetStatus) && (
+                {userStatus ? "Update status" : "Set a status"}
+              </Button>
+            </div>
+          )}
+          {(canMessage || canEdit) && (
             <div className={hero.actions}>
               {canMessage && (
                 <Button
@@ -517,17 +510,6 @@ function ProfileDetails({
                   onClick={editProfile}
                 >
                   Edit profile
-                </Button>
-              )}
-              {offerSetStatus && (
-                <Button
-                  ref={statusButton}
-                  size="sm"
-                  variant={picture ? "glass" : "subtle"}
-                  aria-haspopup="dialog"
-                  onClick={() => statusEditor.open()}
-                >
-                  Set a status
                 </Button>
               )}
             </div>

@@ -114,15 +114,11 @@ default 💬. Rows and bylines keep the full status in their label and tooltip, 
 the editor's button names the shortcode in its hint; tooltips and profiles show
 the shortcode as status text.
 Set or clear your own status from the top-right profile menu. When the community
-accepts status updates, your own profile also opens the same editor: select your
-status line, which reveals a small pencil like the Channel Settings title (on hover
-or keyboard focus, always on touch, no animation for reduced motion), or, with no
-status set, choose **Set a status** beside **Edit profile**. Either saves to that
-profile's community and closes if the community or identity changes. Closing
-returns focus to whichever control is showing, so clearing lands on
-**Set a status** and setting one lands on the status line.
-A status wider than the profile column ends in an ellipsis, and your own keeps
-its pencil after it.
+accepts status updates, your own profile also opens the same editor from a button
+above **Edit profile**: **Update status** when you have one, **Set a status** when
+you don't. It saves to that profile's community, closes if the community or
+identity changes, and returns focus to the button, whose label follows the result.
+A status wider than the profile column ends in an ellipsis.
 Shared design-system Avatar and Button use the host-loaded styles directly. The
 profile content marks its `data-buzz-ui` boundary and uses shared heading/body/mono
 roles; its stylesheet owns layout, not component overrides. No new theme owner,

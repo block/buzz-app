@@ -2137,7 +2137,6 @@ test("real broker keeps 100,000 joined channels and delivers outside the first b
 }, 60_000);
 
 test("broker renewals retain establishment signals while channel status stays live", async () => {
-  const scheduled = vi.spyOn(globalThis, "setTimeout");
   const h = await harness();
   let traffic;
   try {
@@ -2157,15 +2156,24 @@ test("broker renewals retain establishment signals while channel status stays li
         established.mock.calls.filter(([value]) => Array.isArray(value))
           .length === 1,
     );
-    const index = scheduled.mock.calls.findIndex(
-      ([, delay]) => delay === 60_000,
+    const membership = h.requests.find((request) =>
+      request.filters.some((filter) => filter.kinds.includes(44100)),
     );
-    expect(index).toBeGreaterThanOrEqual(0);
-    const timer = scheduled.mock.results[index].value;
-    const renew = scheduled.mock.calls[index][0];
-    clearTimeout(timer);
+    expect(membership).toBeDefined();
     const before = states.length;
-    renew();
+    const notice = finalizeEvent(
+      {
+        kind: 44100,
+        content: "",
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ["p", getPublicKey(h.key)],
+          ["h", ids[0]],
+        ],
+      },
+      h.key,
+    );
+    await membership.socket.receive(["EVENT", membership.id, notice]);
     await until(
       () =>
         established.mock.calls.filter(([value]) => Array.isArray(value))
@@ -2184,7 +2192,6 @@ test("broker renewals retain establishment signals while channel status stays li
     expect(h.sockets).toHaveLength(1);
   } finally {
     traffic?.dispose();
-    scheduled.mockRestore();
     vi.unstubAllGlobals();
     await h.close();
   }

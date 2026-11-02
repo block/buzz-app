@@ -539,7 +539,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               />
             )}
             workspaceRef={setWorkspaceElement}
-            sidebar={(pageNavigation, creationAction) =>
+            sidebar={(pageNavigation, sidebarActions) =>
               workspace.page?.sidebar && pageSidebarReady ? (
                 <OwnedContribution
                   entry={workspace.page}
@@ -575,7 +575,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 </div>
               ) : (
                 <PrimarySidebar
-                  creationAction={creationAction}
+                  actions={sidebarActions}
                   federatedIdentity={services.federatedIdentity}
                   relay={services.relay}
                   navigator={services.navigation}

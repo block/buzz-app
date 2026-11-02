@@ -76,7 +76,7 @@ export function AppShell({
   workspace?: boolean;
   /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
-  sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
+  sidebar?: (pages: ReactNode, actions: ReactNode) => ReactNode;
   communities: Communities;
   invite?: (InviteLink & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
@@ -105,6 +105,9 @@ export function AppShell({
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
   const [creationOpen, setCreationOpen] = useState(false);
+  const [searchContainer, setSearchContainer] = useState<HTMLDivElement | null>(
+    null,
+  );
   const channelsNavigation = selected === "buzz.channels/channels";
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 650px)").matches,
@@ -178,9 +181,12 @@ export function AppShell({
     return sidebar ? (
       sidebar(
         pageNavigation,
-        creationAction && creationInSidebar && (
-          <div ref={setCreationContainer} />
-        ),
+        <>
+          {creationAction && creationInSidebar && (
+            <div ref={setCreationContainer} />
+          )}
+          <div ref={setSearchContainer} />
+        </>,
       )
     ) : (
       <div className="shell-sidebar-default">
@@ -423,6 +429,7 @@ export function AppShell({
               pages={pages}
               onSelect={onSelect}
               services={searchServices}
+              sidebarTrigger={searchContainer}
             />
           </div>
         </div>

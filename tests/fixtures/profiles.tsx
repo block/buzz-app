@@ -36,6 +36,8 @@ import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 import { createAppearance } from "../../src/shared/theme/service";
 import { SOLO_LABEL } from "../../src/features/solo/labels";
+import { emptySync } from "../../src/features/communities/known-communities";
+import type { ClientSnapshot } from "../../src/features/communities/service";
 
 createAppearance();
 const soloProbe = new URLSearchParams(location.search).has("solo");
@@ -86,6 +88,9 @@ const report = {
   publications: 0,
 };
 let failMissing = true;
+let replyGate: Promise<void> | undefined;
+let releaseReply = () => {};
+let replyPending = false;
 let data = [
   profile(viewer, { name: "Viewer", about: "Human profile", picture }),
   profile(mic, { name: "Mic", about: "Mic biography" }),
@@ -155,6 +160,13 @@ function session() {
             : url;
       },
       async query(filters) {
+        if (
+          replyGate &&
+          filters.some((filter) => filter.ids?.includes(reply.id))
+        ) {
+          replyPending = true;
+          await replyGate;
+        }
         return filters.flatMap((filter) => {
           if (dmOpened && filter["#d"]?.includes("member-dm"))
             return dmEvents().filter((event) =>
@@ -304,6 +316,19 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
+const communitySnapshot: ClientSnapshot = {
+  status: "ready",
+  relayAvailable: true,
+  viewer: viewer.pubkey,
+  profile: { name: "Viewer", picture },
+  memberships: [{ id: fixtureOrigin, name: "Fixture community" }],
+  selected: fixtureOrigin,
+  sync: emptySync(),
+};
+context.provide("communityReader", {
+  snapshot: () => communitySnapshot,
+  subscribe: () => () => {},
+});
 const navigationHost = provideNavigation(context, undefined);
 const contexts: PanelContext[] = [];
 function ContextProbe({ context }: PanelProps) {
@@ -344,6 +369,18 @@ const pages = new PagesService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    messages: { root: root.id, reply: reply.id },
+    holdReply() {
+      replyPending = false;
+      replyGate = new Promise<void>((resolve) => {
+        releaseReply = resolve;
+      });
+    },
+    replyPending: () => replyPending,
+    releaseReply() {
+      replyGate = undefined;
+      releaseReply();
+    },
     navigation: context.navigation,
     contexts,
     dmOpens,

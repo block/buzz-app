@@ -404,6 +404,11 @@ it("archives and restores the open conversation from the Archive shortcut", asyn
   // Archiving the open conversation advances to the next one's tab.
   expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
   expect(sideTabs()).toHaveLength(1);
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.mention.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   fireEvent.click(list().getByRole("button", { name: /^Open / }));
   await archiveOpened(h);
@@ -556,7 +561,11 @@ it.each([
     const [first] = list().getAllByRole("button", { name: /^Open / });
     if (!first) throw new Error("Missing fixture row");
     fireEvent.click(first);
-    await findReader();
+    await waitFor(() =>
+      expect(
+        reader().querySelector(`[data-message-id="${h.reply.id}"]`),
+      ).toHaveFocus(),
+    );
     // Showing Archived ends the selection but keeps its tab.
     if (cleared) await chooseFilter("Archived", "Show");
     (await screen.findByRole("textbox")).focus();
@@ -623,6 +632,11 @@ it("offers no Archive shortcut while Drafts is shown", async () => {
   if (!first) throw new Error("Missing fixture row");
   fireEvent.click(first);
   await waitFor(() => expect(h.archive.current).toBeDefined());
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.reply.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Drafts");
   await waitFor(() => expect(h.archive.current).toBeUndefined());
 });
@@ -852,7 +866,11 @@ it("the Archive shortcut advances from an ordinary-reply visit after switching t
   );
   if (!thread) throw new Error("Missing ordinary progress row");
   fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
-  await findReader();
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${progress.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Mentions");
   expect(rows().map((row) => row.textContent)).toEqual([
     expect.stringContaining("Decision in our discussion"),
@@ -1499,6 +1517,7 @@ function fixture(
     soloChannel?: boolean;
     memberAgents?: 1 | 2;
     readCapability?: "read-only" | "unsupported";
+    guest?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -1648,6 +1667,18 @@ function fixture(
         ]
       : []),
   ];
+  if (options.guest) {
+    const roster = events[0];
+    if (!roster) throw new Error("Missing channel roster");
+    events[0] = signed(relayKey, {
+      ...roster,
+      tags: roster.tags.map((tag) =>
+        tag[0] === "p" && tag[1] === viewer.pubkey
+          ? ["p", viewer.pubkey, "", "guest"]
+          : tag,
+      ),
+    });
+  }
   if (options.readCapability) {
     journal = {
       ...newReadJournal(),
@@ -2244,6 +2275,37 @@ it("Mentions orders and classifies matching senders and reads only through match
   ).toMatchObject({ messageId: progress.id, unreadCount: 1 });
 });
 
+it("lets a joined Guest read an Inbox item and change its personal unread state", async () => {
+  const h = fixture({ guest: true });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Mentions");
+  expect(h.session.channels.get?.("room")).toMatchObject({
+    viewerRole: "guest",
+    readOnly: true,
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open Alice in #Design" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("img", { name: "Unread" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.queryByText(
+      "Inbox action expired. Close and reopen the conversation.",
+    ),
+  ).not.toBeInTheDocument();
+  fireEvent.click(await openRowMenu());
+  await waitFor(() =>
+    expect(h.journal()?.localUnread[`msg:${h.mention.id}`]).toBeTypeOf(
+      "number",
+    ),
+  );
+  expect(h.session.channels.get?.("room")?.viewerRole).toBe("guest");
+});
+
 async function openRowMenu(
   method: "context" | "keyboard" | "contextKey" = "context",
 ) {
@@ -2496,9 +2558,9 @@ it("filters real session evidence, opens an exact message and marks it read, and
   await waitFor(() =>
     expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument(),
   );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Open Alice in #Design" }));
   expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
   // Re-clicking reveals the message again, which takes focus.
   await waitFor(() =>
@@ -3449,7 +3511,9 @@ it.each([true, false])(
     await screen.findByText("Please review this");
     await chooseFilter("Mentions");
     fireEvent.click(
-      screen.getByRole("button", { name: "Open Alice in #Design" }),
+      screen.getByRole("button", {
+        name: soloChannel ? "Open Alice in Design" : "Open Alice in #Design",
+      }),
     );
     const editor = await screen.findByRole("textbox", {
       name: soloChannel ? "Message this conversation" : "Reply to thread",
@@ -3498,9 +3562,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
   render(h.view);
   await screen.findByText("Please review this");
   await chooseFilter("Mentions");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
     name: "Message this conversation",
   });
@@ -3535,9 +3597,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   render(h.view);
   await screen.findByText("Please review this");
   await chooseFilter("Mentions");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Open Alice in #Design" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
     name: "Message this conversation",
   });
@@ -4332,6 +4392,11 @@ it("archives the conversation opened last from the Archive shortcut", async () =
   await archiveOpened(h);
   await waitFor(() => expect(rows()).toHaveLength(1));
   expect(rows()[0]).toHaveTextContent("A thread update");
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.reply.id}"]`),
+    ).toHaveFocus(),
+  );
   await chooseFilter("Archived", "Show");
   expect(rows()).toHaveLength(1);
   expect(rows()[0]).toHaveTextContent("Please review this");

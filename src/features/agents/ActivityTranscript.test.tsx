@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import { ActivityTranscript } from "./ActivityTranscript";
@@ -44,7 +44,7 @@ it.each([
   });
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -104,7 +104,7 @@ it("shows the recorded tool name, highlights tool calls, and keeps script text i
   const user = userEvent.setup();
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -160,7 +160,7 @@ it("shows a failed nested call on the collapsed script while preserving the scri
   ];
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -212,7 +212,7 @@ it("discloses tool arguments and results without raw details, including a posted
   const user = userEvent.setup();
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -232,7 +232,6 @@ it("shows each entry's time under it, with the full date on hover, except the pr
   const { container } = render(
     <ActivityTranscript
       transcript={{
-        unknownThread: 0,
         turns: [
           {
             turnId: "t",
@@ -269,7 +268,6 @@ it("shows no time for an entry with a zero, non-finite or invalid time", () => {
   const { container } = render(
     <ActivityTranscript
       transcript={{
-        unknownThread: 0,
         turns: [
           {
             turnId: "t",
@@ -317,7 +315,7 @@ it("dates the turn heading in the shared format, and omits an unknown start", ()
     }) as never;
   render(
     <ActivityTranscript
-      transcript={{ unknownThread: 0, turns: [turn(at), turn(0), turn(NaN)] }}
+      transcript={{ turns: [turn(at), turn(0), turn(NaN)] }}
       agentName="Sol"
       state={() => "ended"}
     />,
@@ -352,11 +350,61 @@ it("keeps different threads distinguishable when showing all conversations", () 
   );
   render(
     <ActivityTranscript
-      transcript={{ turns, unknownThread: 0 }}
+      transcript={{ turns }}
       agentName="Agent"
       state={() => "ended"}
     />,
   );
   expect(screen.getByText("· Thread aaaaaaaa")).toBeVisible();
   expect(screen.getByText("· Thread bbbbbbbb")).toBeVisible();
+});
+
+it("opens at the latest turn and follows new ones until the reader scrolls up", () => {
+  const turn = (id: string, at: number): TranscriptTurn => ({
+    turnId: id,
+    channelId: "channel",
+    threadRootId: null,
+    triggeringEventIds: [],
+    newSession: false,
+    config: [],
+    startedAt: at,
+    endedAt: at + 1000,
+    partial: false,
+    items: [],
+  });
+  let height = 1000;
+  const scrolling = () => {
+    const view = document.createElement("div");
+    view.style.overflowY = "auto";
+    Object.defineProperty(view, "scrollHeight", { get: () => height });
+    Object.defineProperty(view, "clientHeight", { get: () => 200 });
+    return document.body.appendChild(view);
+  };
+  const view = scrolling();
+  const show = (turns: TranscriptTurn[], follow?: boolean) => (
+    <ActivityTranscript
+      transcript={{ turns }}
+      agentName="Sol"
+      state={() => "ended"}
+      {...(follow === undefined ? {} : { follow })}
+    />
+  );
+  const { rerender, unmount } = render(show([turn("a", 1)]), {
+    container: view,
+  });
+  expect(view.scrollTop).toBe(1000);
+  height = 1400;
+  rerender(show([turn("a", 1), turn("b", 2)]));
+  expect(view.scrollTop).toBe(1400);
+  view.scrollTop = 100;
+  fireEvent.scroll(view);
+  height = 1800;
+  rerender(show([turn("a", 1), turn("b", 2), turn("c", 3)]));
+  expect(view.scrollTop).toBe(100);
+  unmount();
+  const shared = scrolling();
+  render(show([turn("a", 1)], false), { container: shared });
+  expect(shared.scrollTop).toBe(0);
+  view.remove();
+  shared.remove();
 });

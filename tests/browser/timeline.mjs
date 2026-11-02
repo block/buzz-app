@@ -200,12 +200,30 @@ export async function virtuaIdle(page, scroller = history(page)) {
   await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
   await settle(page, scroller);
 }
-// Activate a timeline control by keyboard when the test is about the action,
-// not pointer hit testing. Opening a thread narrows the timeline, and its
-// re-pin can scroll after any idle check. A click released inside Virtua's
-// pointer hold reaches the scroller instead of the control.
-export async function activate(control) {
-  await control.focus();
-  await expect(control).toBeFocused();
-  await control.press("Enter");
+// Wait `count` rendering updates. An imperative scroll moves the DOM before
+// its scroll event, which reaches Virtua in the next rendering update (the one
+// after, if issued from a frame callback); until then its pointer events and
+// range are still at rest.
+export async function frames(page, count = 2) {
+  await page.evaluate(
+    (count) =>
+      new Promise((resolve) => {
+        const next = (left) =>
+          left ? requestAnimationFrame(() => next(left - 1)) : resolve();
+        next(count);
+      }),
+    count,
+  );
 }
+// Hover a row's element with one raw pointer move. Locator.hover retries by
+// scrolling the timeline, and each scroll restarts Virtua's pointer-event
+// hold; a hover rest (Base UI's PreviewCard) starts only on a move over the
+// element, so arrive once the list hit-tests again. A late re-measure can
+// still scroll between the measurement and the move.
+export async function hoverRow(page, locator, scroller = history(page)) {
+  await expect(scroller.locator("ol")).toHaveCSS("pointer-events", "auto");
+  await expect(locator).toBeInViewport();
+  const box = await locator.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+}
+export { activate } from "./navigation.mjs";

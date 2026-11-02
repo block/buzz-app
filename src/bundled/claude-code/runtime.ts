@@ -14,6 +14,10 @@ import {
   sessionHint,
   turnNote,
 } from "../../buzz-mcp/session-tools";
+import {
+  unsupportedSynced,
+  unverifiedSynced,
+} from "../../features/agents/agent-config";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
@@ -30,6 +34,7 @@ import type {
 import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
+import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
 import {
   wakeAnchor,
@@ -99,14 +104,14 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-/** A saved session, for the owner's transcript list. */
-export type SavedConversation = Conversation & {
-  key: string;
-  sessionId: string;
-  /** The channel's name, when this community lists it. */
-  name?: string;
-  at: number;
-};
+/** A saved session, for the owner's transcript list, with the channel's name
+ * and kind when this community lists it. */
+export type SavedConversation = Conversation &
+  Partial<ChannelLabel> & {
+    key: string;
+    sessionId: string;
+    at: number;
+  };
 
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
@@ -189,10 +194,18 @@ export class ClaudeRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    private readonly hook: (
+      agent: string,
+      session: string,
+      event: string,
+      input: unknown,
+    ) => Promise<Record<string, unknown>> = async () => ({}),
   ) {}
 
+  /** The host's own spawn, not a copy: history read with it is kept for it,
+   * and shared with the agents' usage. */
   private get spawn(): Spawn {
-    const spawn = this.host.spawn?.bind(this.host);
+    const { spawn } = this.host;
     if (!spawn) throw new Error("Claude agents run only in the desktop app");
     return spawn;
   }
@@ -226,7 +239,9 @@ export class ClaudeRuntime {
       }
     }
     this.spare.warm(
-      ...agents.map((agent) => where(this.resolveConfig(agent.config))),
+      ...agents.map((agent) => ({
+        ...where(this.resolveConfig(agent.config)),
+      })),
     );
     this.notify();
   }
@@ -235,6 +250,12 @@ export class ClaudeRuntime {
    * Without a pick it uses its own: the configured one, or else the one its
    * sessions report. `default` duplicates a listed model, so it is not offered. */
   async models(agent: AgentKey): Promise<Models> {
+    const { current, models } = await this.catalog(agent);
+    return { current, models };
+  }
+
+  /** `models`, saying whether Claude itself lists the current model. */
+  private async catalog(agent: AgentKey) {
     const entry = this.agents.get(agent);
     const configured = entry?.config.model.trim();
     const {
@@ -261,7 +282,7 @@ export class ClaudeRuntime {
         (model) => own === model.value || own === model.resolvedModel,
       )?.value ?? own;
     if (models.some((model) => model.id === current))
-      return { current, models };
+      return { current, models, listed: true };
     // An own model Claude does not list is still the one it runs, at any
     // effort a listed model has.
     const ownEfforts = effortChoices(offered.flatMap(effortLevels));
@@ -276,6 +297,7 @@ export class ClaudeRuntime {
         },
         ...models,
       ],
+      listed: false,
     };
   }
 
@@ -295,14 +317,13 @@ export class ClaudeRuntime {
       .list()
       .map(([key, saved]) => {
         const [channelId = key, root] = key.split("/");
-        const name = reads?.channelName(channelId);
         return {
           key,
           agent,
           sessionId: saved.id,
           channelId,
           ...(root ? { root } : {}),
-          ...(name ? { name } : {}),
+          ...reads?.channelLabel(channelId),
           at: saved.at,
         };
       });
@@ -333,15 +354,18 @@ export class ClaudeRuntime {
     );
     const last = transcript?.turns.at(-1);
     if (!last?.sessionId) return undefined;
-    const name = this.reads(agent)?.channelName(place.channelId);
     return {
       key: place.root ? `${place.channelId}/${place.root}` : place.channelId,
       agent,
       sessionId: last.sessionId,
       ...place,
-      ...(name ? { name } : {}),
       at: last.endedAt ?? last.startedAt,
     };
+  }
+  /** The community's current name and kind for a channel, if it lists it;
+   * `useOpenedSession` gives them to a session `find` returned. */
+  channelLabel(agent: AgentKey, channelId: string) {
+    return this.reads(agent)?.channelLabel(channelId);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -409,6 +433,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    synced,
     team,
     workingUntil,
     current,
@@ -449,6 +474,12 @@ export class ClaudeRuntime {
     const entry = this.entry(agent.key, settings);
     entry.handle = agent;
     entry.team = team ?? "";
+    // A pick is the owner's for this turn; otherwise a synced effort holds.
+    const kept = !model && !effort ? synced?.effort : undefined;
+    const admit = async () => {
+      const refused = kept && (await this.refusal(agent.key, kept));
+      if (refused) throw new Error(refused);
+    };
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
@@ -564,6 +595,7 @@ export class ClaudeRuntime {
               ...(model ? { model } : {}),
               ...(effort ? { effort } : {}),
             },
+            admit,
           });
           void delivered.then(
             (result) => {
@@ -668,9 +700,25 @@ export class ClaudeRuntime {
     const entry = this.entry(agent.key, this.resolveConfig(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
+    const refused = await this.refusal(agent.key, delivery.synced?.effort);
+    if (refused) return { ok: false, error: refused };
     const done = entry.sessions.runOnce(key, prompt, signal);
     this.notify();
     return done.finally(() => this.notify());
+  }
+
+  /** Why a new process can't run a synced effort, which is the agent's on
+   * every device and never swapped for a default (NIP-AP). */
+  private async refusal(agent: AgentKey, kept: string | undefined) {
+    if (!kept) return undefined;
+    const { current, models, listed } = await this.catalog(agent);
+    const own = models.find((model) => model.id === current);
+    // A model Claude doesn't list has no levels to check the effort against.
+    if (!listed || !own)
+      return unverifiedSynced("effort", kept, own?.label ?? "Claude");
+    if (!own.efforts.some(({ id }) => id === kept))
+      return unsupportedSynced("effort", kept, own.label);
+    return undefined;
   }
 
   /** `text` with the notes plugins left for the turn and the Buzz tools'
@@ -894,6 +942,8 @@ export class ClaudeRuntime {
         return {
           ...where(entry.config),
           ...(directories ? { directories } : {}),
+          hook: (session, event, input) =>
+            this.hook(agent, session, event, input),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,

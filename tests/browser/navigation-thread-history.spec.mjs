@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "./fixture.mjs";
-import { activate, open, virtuaIdle } from "./timeline.mjs";
+import {
+  activate,
+  expectAnchor,
+  open,
+  settle,
+  upper,
+  virtuaIdle,
+} from "./timeline.mjs";
 
 import { wheel } from "./timeline.mjs";
 
@@ -244,9 +251,7 @@ for (const reading of [false, true]) {
           region.locator(`[data-message-id="${last.id}"]`),
         ).toBeInViewport();
         await expect(
-          page.locator(
-            '[role="tab"][data-tab-value^="thread:"][aria-selected="true"]',
-          ),
+          page.getByRole("textbox", { name: "Reply to thread", exact: true }),
         ).toBeFocused();
       }
       const live = app.reply(root.id);
@@ -664,13 +669,14 @@ test("closing an active thread highlights its visible channel origin without scr
   const scroll = await timeline.evaluate((element) => element.scrollTop);
   // Observe paint admission before triggering close; the cue is transient.
   await origin.evaluate((element) => {
+    // The cue paints on the row's filled bubble, or on the row without one.
+    window.arrivalCue = (row) =>
+      [row, ...row.querySelectorAll('[class*="messageBubble"]')]
+        .map((painted) => getComputedStyle(painted, "::after").animationName)
+        .find((name) => name !== "none") ?? "none";
     window.returnHighlightPainted = false;
     const observer = new MutationObserver(() => {
-      if (
-        getComputedStyle(element, "::after").animationName.includes(
-          "return-message-highlight",
-        )
-      ) {
+      if (window.arrivalCue(element).includes("message-highlight")) {
         window.returnHighlightPainted = true;
         observer.disconnect();
       }
@@ -689,11 +695,7 @@ test("closing an active thread highlights its visible channel origin without scr
     .poll(() => timeline.evaluate((element) => element.scrollTop))
     .toBe(scroll);
   await expect
-    .poll(() =>
-      origin.evaluate(
-        (element) => getComputedStyle(element, "::after").animationName,
-      ),
-    )
+    .poll(() => origin.evaluate((element) => window.arrivalCue(element)))
     .toBe("none");
 });
 
@@ -745,7 +747,7 @@ test("consecutive native Close requests close each side thread, then return focu
         )
         .getByRole("button", { name: /^View thread:/ }),
     );
-  for (const trigger of triggers) await trigger.click();
+  for (const trigger of triggers) await activate(trigger);
   const side = page.locator("[data-panel-workspace]");
   const threads = side.locator('[role="tab"][data-tab-value^="thread:"]');
   await expect(threads).toHaveCount(2);
@@ -782,11 +784,12 @@ test("consecutive native Close requests close each main-pane thread, then return
         )
         .getByRole("button", { name: /^View thread:/ }),
     );
-  for (const trigger of triggers) await trigger.click();
+  for (const trigger of triggers) await activate(trigger);
   const side = page.locator("[data-panel-workspace]");
   const main = page.locator("[data-main-workspace]");
   const threads = (host) =>
     host.locator('[role="tab"][data-tab-value^="thread:"]');
+  await expect(threads(side)).toHaveCount(2);
   for (const count of [1, 2]) {
     await threads(side).first().focus();
     await page.keyboard.press("Alt+Shift+ArrowLeft");
@@ -959,4 +962,87 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   expect(await destinationEditor.evaluate((el) => el.isConnected)).toBe(true);
   await main.locator('[role="tab"][data-tab-value^="thread:"]').click();
   await expect(reply(main)).toHaveText("Keep original draft");
+});
+
+test.describe(() => {
+  test.use({ historyCounts: { alpha: 80, beta: 20 } });
+
+  // A covered tab skips layout, so it misses resizes and arrivals while hidden.
+  // Revealing it must still restore the reading position, not a stale one.
+  test("a covered conversation keeps its reading position through a resize and a new message", async ({
+    page,
+    app,
+  }) => {
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-thread-placement.v1", "main"),
+    );
+    await open(page, app);
+    const main = page.locator("[data-main-workspace]");
+    const conversation = main.getByRole("tab", { name: "Alpha", exact: true });
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 1");
+    await activate(
+      page
+        .locator(
+          `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
+        )
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+    const reply = main.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await expect(reply).toBeVisible();
+    const thread = main.locator(
+      `[role="tab"][data-tab-value="thread:alpha:${root.id}"]`,
+    );
+    await expect(thread).toHaveAttribute("aria-selected", "true");
+    // The main pane pushes threads across the conversation; let it land.
+    const motion = main.locator("[data-entering], [data-leaving]");
+    await expect(motion).toHaveCount(0);
+    await conversation.click();
+    await expect(motion).toHaveCount(0);
+    await settle(page);
+    const saved = await upper(page);
+    await thread.click();
+    await expect(reply).toBeVisible();
+    await expect(motion).toHaveCount(0);
+    const covered = page.locator(
+      `[id="${await conversation.getAttribute("aria-controls")}"]`,
+    );
+    await expect(covered).toHaveAttribute("data-covered", "true");
+    await expect
+      .poll(() =>
+        covered.evaluate(
+          (element) => getComputedStyle(element).contentVisibility,
+        ),
+      )
+      .toBe("hidden");
+    await page.setViewportSize({ width: 1100, height: 760 });
+    const arrival = app.append("primary", "alpha", "Arrived while covered");
+    // The covered timeline receives it without being shown.
+    // Covered content has no accessible name; its text still updates.
+    await expect(covered.locator("button[data-jump-to-latest]")).toHaveText(
+      "1 new message",
+    );
+    await conversation.click();
+    await expect(conversation).toHaveAttribute("aria-selected", "true");
+    // A pointer reveal hands focus to the tab's composer, as before.
+    await expect(
+      main.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeFocused();
+    await expect(motion).toHaveCount(0);
+    await settle(page);
+    await expectAnchor(page, saved);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await expect(
+      history.locator("button[data-jump-to-latest]"),
+    ).toHaveAccessibleName("1 new message");
+    await expect(
+      history.locator(`[data-message-id="${arrival.id}"]`),
+    ).not.toBeInViewport();
+  });
 });

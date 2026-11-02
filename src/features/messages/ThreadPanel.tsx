@@ -32,7 +32,7 @@ import { useRowProfiles } from "../relay/react";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
-import { MessageComposer } from "./MessageComposer";
+import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
@@ -70,6 +70,8 @@ export type ThreadPanelProps = {
   replyRequest?: number | undefined;
   /** Each new value focuses the reply box, keeping its target. */
   focusRequest?: number | undefined;
+  /** A saved draft carries its cancellable target through a delayed root read. */
+  autoFocus?: MessageComposerProps["autoFocus"];
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
@@ -82,6 +84,9 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
+  /** The conversation this thread lives in, named as Inbox rows name it, when
+   * the host can show the thread there. */
+  parent?: { label: string; open(): void } | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -92,6 +97,9 @@ export type ThreadPanelProps = {
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
+
+// Read errors are diagnostics, not copy; the notice says what happened.
+const THREAD_FAILED = "This thread didn’t load.";
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
@@ -132,6 +140,14 @@ export function ThreadPanel(props: ThreadPanelProps) {
           close={close}
           actions={props.headerActions}
         />
+      )}
+      {props.parent && (
+        <p className={styles.threadParent}>
+          In{" "}
+          <Button variant="link" size="inline" onClick={props.parent.open}>
+            {props.parent.label}
+          </Button>
+        </p>
       )}
       {props.retainThread ? (
         <RetainedThreadPanel key={viewKey} {...props} />
@@ -271,6 +287,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           navigation?.complete({
             status: "failed",
             reason: result === "unavailable" ? "not-found" : "unavailable",
+            presented: true,
           });
           return;
         }
@@ -301,7 +318,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         // An existing thread stays usable; its notice owns the retry.
         if (prior) settle({ unavailable: false });
         else settle(undefined, String(error));
-        navigation?.complete({ status: "failed", reason: "unavailable" });
+        navigation?.complete({
+          status: "failed",
+          reason: "unavailable",
+          presented: true,
+        });
       }
     }
     void select();
@@ -319,7 +340,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     <>
       {error && !opening && (
         <div role="alert" className={styles.empty}>
-          <p>{error}</p>
+          <p>{THREAD_FAILED}</p>
           <Button loading={pending} onClick={retryNavigation}>
             Try again
           </Button>
@@ -359,6 +380,7 @@ function OwnedThreadPanel({
   disabled,
   replyRequest,
   focusRequest,
+  autoFocus,
   active = true,
   revealSelected,
   requireReadyRoot,
@@ -394,7 +416,11 @@ function OwnedThreadPanel({
       };
     } catch (error) {
       setError(String(error));
-      navigation?.complete({ status: "failed", reason: "unavailable" });
+      navigation?.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
     }
   }, [
     session,
@@ -407,9 +433,9 @@ function OwnedThreadPanel({
   ]);
   return error ? (
     <div className={styles.empty} role="alert">
-      <p>{error}</p>
+      <p>{THREAD_FAILED}</p>
       <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
-        Retry thread
+        Try again
       </Button>
     </div>
   ) : view ? (
@@ -427,6 +453,7 @@ function OwnedThreadPanel({
       messageId={messageId}
       replyRequest={replyRequest}
       focusRequest={focusRequest}
+      autoFocus={autoFocus}
       active={active}
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
@@ -456,6 +483,7 @@ function ThreadMessages({
   disabled,
   replyRequest,
   focusRequest,
+  autoFocus,
   active,
   revealSelected,
   revealRequest,
@@ -480,6 +508,7 @@ function ThreadMessages({
   view: ThreadView;
   replyRequest?: number | undefined;
   focusRequest?: number | undefined;
+  autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
   revealRequest?: number | undefined;
@@ -495,18 +524,27 @@ function ThreadMessages({
     channelId,
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
+      if (channel?.archived) return "archived";
+      if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
-        return !channel.archived &&
-          (channel.channelType === "stream" || channel.channelType === "forum")
+        return channel.channelType === "stream" ||
+          channel.channelType === "forum"
           ? "joinable"
           : "preview";
       }
-      return listed && !listed.readOnly && !listed.archived
-        ? "member"
-        : "other";
+      return listed && !listed.readOnly ? "member" : "other";
     },
   );
-  const preview = channelAccess === "joinable" || channelAccess === "preview";
+  const preview =
+    channelAccess === "joinable" ||
+    channelAccess === "preview" ||
+    channelAccess === "archived" ||
+    channelAccess === "guest";
+  const joinRole = useListedChannel(
+    session.channels,
+    channelId,
+    (listed) => (listed ?? session.channels?.get?.(channelId))?.joinRole,
+  );
   const cached = useListedChannel(
     session.channels,
     channelId,
@@ -583,6 +621,15 @@ function ThreadMessages({
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
+  );
+  // Remembered agents follow the viewer's latest message here, not the root.
+  // Undefined until the first page lands: the seeded root is not yet the thread.
+  const threadSeed = useMemo(
+    () =>
+      snapshot.status === "ready"
+        ? rows.filter((row) => row.authorId === session.viewer).at(-1)
+        : undefined,
+    [snapshot.status, rows, session.viewer],
   );
   const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   useEffect(() => {
@@ -720,7 +767,12 @@ function ThreadMessages({
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
-  const revealedAncestors = useRef(new Set<string>());
+  // Each request reveals its ancestors once; a branch the reader then
+  // collapses stays closed until the next request.
+  const revealedAncestors = useRef({
+    request: [] as unknown[],
+    ids: new Set<string>(),
+  });
   // A continuation may supply the parent of the visible reply. Commit its new
   // ancestors before restoring geometry; expanded branches stay open.
   useLayoutEffect(() => {
@@ -739,22 +791,29 @@ function ThreadMessages({
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
     if (navigation?.signal.aborted) return;
+    const request = [messageId, navigation?.signal, revealRequest];
+    if (
+      request.some(
+        (part, index) => part !== revealedAncestors.current.request[index],
+      )
+    )
+      revealedAncestors.current = { request, ids: new Set() };
     const ancestors = tree
       .ancestors(messageId)
-      .filter((id) => !revealedAncestors.current.has(id));
-    for (const id of ancestors) revealedAncestors.current.add(id);
+      .filter((id) => !revealedAncestors.current.ids.has(id));
+    for (const id of ancestors) revealedAncestors.current.ids.add(id);
     if (ancestors.length)
       setExpanded((current) => {
         if (ancestors.every((id) => current.has(id))) return current;
         return new Set([...current, ...ancestors]);
       });
-  }, [tree, messageId, navigation]);
+  }, [tree, messageId, navigation, revealRequest]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
-  // Opening a thread that is already shown selects nothing new, so no tab
-  // hands focus to it. Without focus inside, reading never starts. A first
-  // opening (not yet positioned) is focused by its tab and must be left alone.
+  // Reopening an already-shown thread selects nothing new, so its reader needs
+  // a focus handoff to start reading. First positioning leaves the opening's
+  // tab/composer focus handoff alone.
   // The signal identifies one request; the navigation object is re-bound per
   // relay snapshot, so a re-render of the same request must not refocus.
   const handledRequest = useRef(navigation?.signal);
@@ -813,19 +872,37 @@ function ThreadMessages({
   });
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
+    // Each failure is shown in the thread, next to its own Try again.
     if (rootTarget && snapshot.status === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      navigation.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
     else if (snapshot.targetStatus === "unavailable")
-      navigation.complete({ status: "failed", reason: "not-found" });
+      navigation.complete({
+        status: "failed",
+        reason: "not-found",
+        presented: true,
+      });
     else if (snapshot.targetStatus === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      navigation.complete({
+        status: "failed",
+        reason: "unavailable",
+        presented: true,
+      });
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
   useEffect(() => {
-    if (!joining || channelAccess !== "member") return;
+    if (!joining || (channelAccess !== "member" && channelAccess !== "guest"))
+      return;
     setJoining(false);
-    if (active) setReplyFocus((value) => value + 1);
+    if (active) {
+      if (channelAccess === "guest")
+        scroller.current?.focus({ preventScroll: true });
+      else setReplyFocus((value) => value + 1);
+    }
   }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
     setReplyParent(undefined);
@@ -1064,17 +1141,21 @@ function ThreadMessages({
     expanded,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
-  // shrinks this viewport and late media grows rows; keep a bottom reader there.
+  // shrinks this viewport, late media grows rows and a join error grows the end
+  // spacer's preview lane; keep a bottom reader there.
   useLayoutEffect(() => {
     const element = scroller.current;
     const content = element?.querySelector("[data-thread-rows]");
-    if (!element || !content || typeof ResizeObserver === "undefined") return;
+    const end = element?.querySelector("[data-thread-end]");
+    if (!element || !content || !end || typeof ResizeObserver === "undefined")
+      return;
     const observer = new ResizeObserver(() => {
       if (positioned.current && follow.current && !jumpingToLatest.current)
         element.scrollTop = element.scrollHeight;
     });
     observer.observe(element);
     observer.observe(content);
+    observer.observe(end);
     return () => observer.disconnect();
   }, []);
   // Main's retained presentation can be usable before the initial history walk
@@ -1116,7 +1197,8 @@ function ThreadMessages({
   useLayoutEffect(() => {
     const element = scroller.current;
     const content = element?.querySelector("[data-thread-rows]");
-    if (!active || !initialPositioned || !element || !content) return;
+    const end = element?.querySelector("[data-thread-end]");
+    if (!active || !initialPositioned || !element || !content || !end) return;
     const observer = new ResizeObserver(() => {
       const previous = resizePosition.current;
       if (!previous || !element.clientHeight || jumpingToLatest.current) return;
@@ -1145,6 +1227,7 @@ function ThreadMessages({
     });
     observer.observe(element);
     observer.observe(content);
+    observer.observe(end);
     return () => observer.disconnect();
   }, [active, initialPositioned, captureResizePosition, selectedOffset]);
   const jumpToLatest = () => {
@@ -1281,6 +1364,15 @@ function ThreadMessages({
               targetAnchor.current = undefined;
               setExpanded((current) => new Set([...current, row.id]));
             }}
+            collapseLabel={`Collapse ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
+            onCollapse={() => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded(
+                (current) =>
+                  new Set([...current].filter((id) => id !== row.id)),
+              );
+            }}
           >
             {expanded.has(row.id) && (
               <ol>{renderReplies(row.id, depth + 1)}</ol>
@@ -1330,6 +1422,18 @@ function ThreadMessages({
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  const targetUnavailable =
+    snapshot.targetStatus === "unavailable" && !selectionNotice;
+  const historyError = !!snapshot.error && !showOlderPageStatus;
+  const focusArchivedHistory = useCallback(() => {
+    const history = scroller.current;
+    if (
+      session.channels?.get?.(channelId)?.archived &&
+      history?.isConnected &&
+      !history.closest("[inert]")
+    )
+      history.focus({ preventScroll: true });
+  }, [session.channels, channelId]);
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
@@ -1480,14 +1584,26 @@ function ThreadMessages({
                 : {})}
             />
           ) : snapshot.status !== "loading" ? (
-            <p className={styles.empty}>Original message unavailable.</p>
+            targetUnavailable ? (
+              // One notice, with its recovery beside it, when nothing loaded.
+              <div className={styles.threadNotice}>
+                <p role="status">This message isn’t available.</p>
+                {!historyError && (
+                  <Button type="button" onClick={() => void view.refresh()}>
+                    Try again
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className={styles.empty}>Original message unavailable.</p>
+            )
           ) : null}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
-                  Retry thread
+                  Try again
                 </Button>
               </li>
             )}
@@ -1505,12 +1621,6 @@ function ThreadMessages({
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
           <ThreadLoading />
         ) : null}
-        {snapshot.targetStatus === "unavailable" && !selectionNotice && (
-          <p role="status">Selected message unavailable.</p>
-        )}
-        {snapshot.error && !showOlderPageStatus && (
-          <p role="alert">{snapshot.error}</p>
-        )}
         {selectionNotice && (
           <p role="alert">
             {selectionNotice.unavailable
@@ -1521,11 +1631,14 @@ function ThreadMessages({
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {((snapshot.error && !showOlderPageStatus) ||
-          (snapshot.targetStatus === "unavailable" && !selectionNotice)) && (
-          <div className={styles.threadHistoryControls}>
+        {(historyError || (targetUnavailable && snapshot.root)) && (
+          <div className={styles.threadNotice}>
+            {targetUnavailable && snapshot.root && (
+              <p role="status">Selected message unavailable.</p>
+            )}
+            {historyError && <p role="alert">{THREAD_FAILED}</p>}
             <Button type="button" onClick={() => void view.refresh()}>
-              Retry thread
+              Try again
             </Button>
           </div>
         )}
@@ -1540,6 +1653,11 @@ function ThreadMessages({
             </Button>
           </div>
         )}
+        <div
+          className={styles.timelineEnd}
+          data-thread-end=""
+          aria-hidden="true"
+        />
       </section>
       {preview && (
         <ChannelJoinNotice
@@ -1550,6 +1668,10 @@ function ThreadMessages({
               !!rows.length)
           }
           channelId={channelId}
+          archived={channelAccess === "archived"}
+          place={soloConversation ? "chat" : "channel"}
+          guest={channelAccess === "guest"}
+          joinRole={joinRole}
           lifecycle={session.channelLifecycle}
           joinable={channelAccess === "joinable"}
           onJoin={() => setJoining(true)}
@@ -1559,6 +1681,7 @@ function ThreadMessages({
       {composerRoot && (
         <MessageComposer
           activityClickOpensPanel={activityClickOpensPanel}
+          onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
           session={session}
@@ -1567,6 +1690,7 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          threadSeed={threadSeed}
           replyParentId={replyParent}
           disabled={
             disabled ||
@@ -1610,6 +1734,7 @@ function ThreadMessages({
           }
           editMessages={rows}
           focusRequest={pendingReplyFocus ?? 0}
+          autoFocus={autoFocus ?? false}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}

@@ -24,6 +24,8 @@ import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import watchingManifest from "./watching/manifest.json";
+import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
@@ -51,12 +53,12 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import hostedManifest from "./hosted-communities/manifest.json";
-import * as hosted from "./hosted-communities";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
+import typesafeManifest from "./typesafe/manifest.json";
+import * as typesafe from "./typesafe";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -173,6 +175,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...watchingManifest, apiVersion: 1 },
+    module: watching,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...claudeCodeManifest, apiVersion: 1 },
     module: claudeCode,
     enabledByDefault: true,
@@ -198,11 +205,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...hostedManifest, apiVersion: 1 },
-    module: hosted,
-    enabledByDefault: true,
-  },
-  {
     manifest: { ...moderationManifest, apiVersion: 1 },
     module: moderation,
     enabledByDefault: true,
@@ -210,6 +212,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...relayStaffManifest, apiVersion: 1 },
     module: relayStaff,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...typesafeManifest, apiVersion: 1 },
+    module: typesafe,
     enabledByDefault: true,
   },
 ];

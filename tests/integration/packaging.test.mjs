@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -189,4 +197,61 @@ test("Huddle release provisioning passes microphone entitlements to the actual s
     (step) => step.name === "Install build and packaging dependencies",
   ).run;
   assert.match(dependencies, /\blibopus-dev\b/);
+});
+
+// A download from this pin fails, so a test fails if the script ignores
+// BUZZ_GOOSE_ACP_BINARY.
+function stageWithPrebuilt(t, writePrebuilt) {
+  const directory = temporary(t);
+  mkdirSync(join(directory, "scripts"));
+  mkdirSync(join(directory, "runtime"));
+  copyFileSync(
+    new URL("scripts/build-goose-acp.mjs", root),
+    join(directory, "scripts/build-goose-acp.mjs"),
+  );
+  const triple = "x86_64-unknown-linux-gnu";
+  writeFileSync(
+    join(directory, "runtime/goose-acp.json"),
+    JSON.stringify({
+      version: "0.0.0",
+      assets: {
+        [triple]: {
+          url: "https://goose.invalid/goose-acp.tar.gz",
+          sha256: "0".repeat(64),
+        },
+      },
+    }),
+  );
+  const prebuilt = join(directory, "prebuilt-goose-acp");
+  if (writePrebuilt) writeFileSync(prebuilt, "packager's goose-acp");
+  const result = spawnSync(
+    process.execPath,
+    [join(directory, "scripts/build-goose-acp.mjs")],
+    {
+      encoding: "utf8",
+      env: {
+        PATH: "",
+        TAURI_ENV_TARGET_TRIPLE: triple,
+        BUZZ_GOOSE_ACP_BINARY: prebuilt,
+      },
+    },
+  );
+  return {
+    result,
+    staged: join(directory, "src-tauri/resources/bin/goose-acp"),
+  };
+}
+
+test("goose-acp staging uses a packager's prebuilt binary without downloading", (t) => {
+  const { result, staged } = stageWithPrebuilt(t, true);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(staged, "utf8"), "packager's goose-acp");
+});
+
+test("goose-acp staging fails on a missing prebuilt binary instead of downloading", (t) => {
+  const { result, staged } = stageWithPrebuilt(t, false);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /ENOENT/);
+  assert.doesNotMatch(result.stderr, /goose\.invalid/);
+  assert.equal(existsSync(staged), false);
 });

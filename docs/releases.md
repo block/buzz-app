@@ -225,6 +225,8 @@ the same release bytes (`--dev` remains accepted). The script selects
 `TAURI_ENV_TARGET_TRIPLE` or the host reported by `rustc -vV` (matching Cargo,
 including under Rosetta) and rejects unsupported targets.
 The pin covers macOS and Linux ARM64/x64 and Windows x64 MSVC.
+Distribution builds without network access can set `BUZZ_GOOSE_ACP_BINARY`
+to a goose-acp they built themselves; the script then stages that file instead.
 The upstream macOS executable requires macOS 12.0; Buzz's packaged minimum is
 12.0 too, raised from the previous source build's 11.0 deployment target.
 

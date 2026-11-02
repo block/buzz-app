@@ -1,0 +1,7 @@
+{
+  "id": "buzz.reviews",
+  "name": "Reviews",
+  "apiVersion": 1,
+  "description": "A hello-world starting point for Reviews.",
+  "discovery": { "category": "productivity" }
+}

@@ -20,6 +20,7 @@ import { messagePreviewText } from "./message-preview-text";
 import { linkedMessage } from "./linked-message";
 import { avatarMedia } from "../../shared/avatar-source";
 import { sortParticipantNames } from "../identity-names/participant-order";
+import { useChannelReference } from "./channel-reference";
 
 /** Mounted only while a preview is open. The session owns access, edits and deletion. */
 export function BuzzLinkPreview({
@@ -78,6 +79,22 @@ function PreviewContent({
     session.channels.list,
     session.channels.list,
   );
+  const channel = channels.channels.find(
+    (item) => item.id === message?.channelId,
+  );
+  // An open channel the reader hasn't joined is absent from the list; its
+  // public name still labels the card, as channel-only links do.
+  const reference = useChannelReference(
+    channel ? undefined : session.channels,
+    message?.channelId,
+  );
+  const named =
+    reference.state === "found" &&
+    !reference.hidden &&
+    reference.channelType !== "dm" &&
+    reference.channelType !== "solo"
+      ? reference
+      : undefined;
   const authorId = message?.workflowOwnerId ?? message?.authorId;
   const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {
@@ -101,9 +118,6 @@ function PreviewContent({
   const date = new Date(message.createdAt * 1000);
   if (!Number.isFinite(date.getTime()))
     return <span role="status">Message preview unavailable.</span>;
-  const channel = channels.channels.find(
-    (item) => item.id === message.channelId,
-  );
   const channelName =
     channel?.channelType === "dm" && channel.participants
       ? sortParticipantNames(
@@ -115,11 +129,18 @@ function PreviewContent({
             ),
           ),
         ).join(", ") || "Notes to self"
-      : (channel?.name ?? "Channel unavailable");
+      : (channel?.name ??
+        named?.name ??
+        (reference.state === "withheld"
+          ? "Private channel"
+          : "Channel unavailable"));
   const ChannelIcon =
-    channel?.hidden || channel?.channelType === "dm"
+    channel?.hidden || channel?.channelType === "dm" || (!channel && !named)
       ? LockIcon
-      : channelIcon(channel);
+      : channelIcon(
+          channel ?? (named?.private ? { private: true } : undefined),
+        );
+  const iconShown = channel || named || reference.state === "withheld";
   return (
     <>
       <span className={styles.byline}>
@@ -150,7 +171,7 @@ function PreviewContent({
             </time>
           </span>
           <span className={styles.channel}>
-            {channel && <ChannelIcon aria-hidden="true" size={13} />}
+            {iconShown && <ChannelIcon aria-hidden="true" size={13} />}
             <span>{channelName}</span>
           </span>
         </span>

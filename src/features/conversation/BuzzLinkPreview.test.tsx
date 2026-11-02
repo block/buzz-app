@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { BuzzLinkPreview } from "./BuzzLinkPreview";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, ChannelReference } from "../relay/contracts";
 import { mediaUrl } from "../relay/transport";
 
 afterEach(cleanup);
@@ -26,6 +26,7 @@ function setup(
   snapshot: ThreadSnapshot,
   messageId = root.id,
   profiles = new Map<string, { name?: string; picture?: string }>(),
+  reference?: ChannelReference,
 ) {
   const view = {
     snapshot: () => snapshot,
@@ -36,7 +37,12 @@ function setup(
     dispose: vi.fn(),
   } satisfies ThreadView;
   const thread = vi.fn(() => view);
-  const list = { channels: [{ id: "channel", name: "General" }] };
+  // With a reference, the reader hasn't joined: the channel is unlisted.
+  const list = {
+    status: "ready",
+    channels: reference ? [] : [{ id: "channel", name: "General" }],
+  };
+  const refer = vi.fn(() => () => {});
   const session = {
     thread,
     profiles: {
@@ -47,6 +53,8 @@ function setup(
     channels: {
       subscribeList: () => () => {},
       list: () => list,
+      describe: () => reference ?? { state: "unknown" },
+      refer,
     },
     // The real sizing rewrite behind a pass-through proxy, as the session applies it.
     media: (url: string, size?: "small") =>
@@ -59,7 +67,7 @@ function setup(
       messageId={messageId}
     />,
   );
-  return { tree: mounted.container, thread };
+  return { tree: mounted.container, thread, refer };
 }
 const base: ThreadSnapshot = {
   status: "idle",
@@ -192,4 +200,29 @@ it("asks for the relay thumbnail of the author's picture, as message rows do", (
   expect(tree.querySelector("img")?.getAttribute("src")).toBe(
     `https://relay.test/media/${sha}.thumb.jpg`,
   );
+});
+
+it("names an open channel the reader hasn't joined from its public reference", () => {
+  const ready = { ...base, status: "ready" as const, root };
+  const channel = (reference?: ChannelReference) =>
+    setup(ready, root.id, new Map(), reference);
+  const found = channel({
+    state: "found",
+    name: "buzz-feedback",
+    private: false,
+    hidden: false,
+    archived: false,
+    joined: false,
+  });
+  expect(found.tree.textContent).toContain("buzz-feedback");
+  expect(found.tree.textContent).not.toContain("Channel unavailable");
+  const withheld = channel({ state: "withheld" });
+  expect(withheld.tree.textContent).toContain("Private channel");
+  const unknown = channel({ state: "unknown" });
+  expect(unknown.tree.textContent).toContain("Channel unavailable");
+  expect(unknown.refer).toHaveBeenCalledWith("channel");
+  // A listed channel needs no lookup.
+  const joined = channel();
+  expect(joined.tree.textContent).toContain("General");
+  expect(joined.refer).not.toHaveBeenCalled();
 });

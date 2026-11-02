@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
@@ -99,7 +100,7 @@ function fixture(
 const setStatus = (options?: { hidden: boolean }) =>
   screen.queryByRole("button", { name: "Set a status", ...options });
 const updateStatus = (options?: { hidden: boolean }) =>
-  screen.queryByRole("button", { name: "Update status", ...options });
+  screen.queryByRole("button", { name: /^Update status/, ...options });
 const editor = () => screen.queryByRole("dialog", { name: "Set a status" });
 const heroStatus = () =>
   document.querySelector(`.${styles.status}`)?.textContent;
@@ -187,7 +188,7 @@ it("offers your status editor only on your own profile when statuses are writabl
   );
   const view = render(f.panel(viewer));
   try {
-    expect(setStatus()).toBeTruthy();
+    expect(setStatus()?.getAttribute("aria-haspopup")).toBe("dialog");
     expect(updateStatus()).toBeNull();
     view.rerender(f.panel(other));
     await waitFor(() => expect(heroStatus()).toBe("Away"));
@@ -223,8 +224,8 @@ it("edits, saves and clears your status from the status line, returning focus to
     render(f.panel(viewer));
     await waitFor(() => expect(heroStatus()).toBe("🏠 Working from home"));
     expect(setStatus()).toBeNull();
-    expect(updateStatus()?.getAttribute("aria-description")).toBe(
-      "🏠 Working from home",
+    expect(updateStatus()?.getAttribute("aria-label")).toBe(
+      "Update status: 🏠 Working from home",
     );
     expect(updateStatus()?.getAttribute("aria-haspopup")).toBe("dialog");
     await user.click(updateStatus() as HTMLElement);
@@ -235,7 +236,7 @@ it("edits, saves and clears your status from the status line, returning focus to
     );
     await user.keyboard("{Escape}");
     await waitFor(() => expect(editor()).toBeNull());
-    expect(document.activeElement).toBe(updateStatus());
+    await waitFor(() => expect(updateStatus()).toHaveFocus());
 
     await user.click(updateStatus() as HTMLElement);
     fireEvent.change(screen.getByLabelText("Status message"), {
@@ -254,10 +255,10 @@ it("edits, saves and clears your status from the status line, returning focus to
       ],
     });
     expect(heroStatus()).toBe("🏠 Design review");
-    expect(updateStatus()?.getAttribute("aria-description")).toBe(
-      "🏠 Design review",
+    expect(updateStatus()?.getAttribute("aria-label")).toBe(
+      "Update status: 🏠 Design review",
     );
-    expect(document.activeElement).toBe(updateStatus());
+    await waitFor(() => expect(updateStatus()).toHaveFocus());
 
     // Clearing removes the status line, so focus moves to Set a status.
     await user.click(updateStatus() as HTMLElement);
@@ -270,7 +271,7 @@ it("edits, saves and clears your status from the status line, returning focus to
     });
     expect(heroStatus()).toBeUndefined();
     expect(updateStatus()).toBeNull();
-    expect(document.activeElement).toBe(setStatus());
+    await waitFor(() => expect(setStatus()).toHaveFocus());
 
     // Setting one swaps back, so focus moves to the status line.
     await user.click(setStatus() as HTMLElement);
@@ -283,7 +284,7 @@ it("edits, saves and clears your status from the status line, returning focus to
     expect(f.publish).toHaveBeenCalledTimes(3);
     expect(heroStatus()).toBe("💬 Back");
     expect(setStatus()).toBeNull();
-    expect(document.activeElement).toBe(updateStatus());
+    await waitFor(() => expect(updateStatus()).toHaveFocus());
   } finally {
     f.owner.dispose();
   }

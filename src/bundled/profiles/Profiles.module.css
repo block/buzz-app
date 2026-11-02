@@ -37,6 +37,7 @@
   max-width: 100%;
   padding: 0 calc(var(--space-4) + var(--space-2));
   border: 0;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: inherit;
   font: inherit;

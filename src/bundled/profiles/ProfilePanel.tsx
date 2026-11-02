@@ -427,6 +427,7 @@ function ProfileDetails({
   const userStatus = useUserStatus(session.statuses, pubkey);
   const canSetStatus =
     !!scope && viewer === pubkey && session.statuses.writable;
+  const offerSetStatus = canSetStatus && !userStatus;
 
   return (
     <section
@@ -484,10 +485,7 @@ function ProfileDetails({
                 ref={statusButton}
                 type="button"
                 className={styles.statusAction}
-                aria-label="Update status"
-                aria-description={[userStatus.emoji, userStatus.text]
-                  .filter(Boolean)
-                  .join(" ")}
+                aria-label={`Update status: ${[userStatus.emoji, userStatus.text].filter(Boolean).join(" ")}`}
                 aria-haspopup="dialog"
                 onClick={() => statusEditor.open()}
               >
@@ -500,7 +498,7 @@ function ProfileDetails({
               <StatusDisplay session={session} status={userStatus} />
             )}
           </div>
-          {(canMessage || canEdit || (canSetStatus && !userStatus)) && (
+          {(canMessage || canEdit || offerSetStatus) && (
             <div className={hero.actions}>
               {canMessage && (
                 <Button
@@ -521,11 +519,12 @@ function ProfileDetails({
                   Edit profile
                 </Button>
               )}
-              {canSetStatus && !userStatus && (
+              {offerSetStatus && (
                 <Button
                   ref={statusButton}
                   size="sm"
                   variant={picture ? "glass" : "subtle"}
+                  aria-haspopup="dialog"
                   onClick={() => statusEditor.open()}
                 >
                   Set a status

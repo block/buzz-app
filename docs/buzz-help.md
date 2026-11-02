@@ -119,10 +119,7 @@ the interface unless an available tool actually supports that action.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
-- Desktop plugins may offer protected in-memory image uploads to an HTTPS
-  origin they declare. This optional API accepts PNG, JPEG or WebP only, with
-  matching file signatures, safe filenames, and a 16 MiB cap; it does not grant
-  access to local files. An unknown upload outcome is not safe to retry blindly.
+- Some desktop plugins can upload images you provide to services they declare.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching
   and whether Attention is on for this device. A mention can still wake an agent

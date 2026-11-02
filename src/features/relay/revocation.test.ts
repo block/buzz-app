@@ -588,6 +588,29 @@ it("a denied channel list keeps names and finishes a profile read in flight", as
   expect(view.snapshot().events.map((e) => e.id)).toContain(name.id);
 });
 
+it("keeps a profile with a stray h tag when that channel's access ends", async () => {
+  const h = setup();
+  h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
+  // The relay stores kind 0 globally and ignores the tag, so any member reads it.
+  const tagged = signed(bob, {
+    kind: 0,
+    content: JSON.stringify({ name: "Bob" }),
+    created_at: 1_700_000_000,
+    tags: [["h", "a"]],
+  });
+  h.emit([tagged]);
+  const view = h.session.observe([{ kinds: [0], limit: 20 }]);
+  expect(view.snapshot().events.map((e) => e.id)).toEqual([tagged.id]);
+  h.emit([roster(relay, "a", [], 11)]);
+  expect(view.snapshot().events.map((e) => e.id)).toEqual([tagged.id]);
+  const read = h.session.read([
+    { kinds: [0], authors: [bob.pubkey], limit: 1 },
+  ]);
+  h.next().respond([tagged]);
+  expect((await read).map((e) => e.id)).toEqual([tagged.id]);
+  expect(h.session.profiles.snapshot().get(bob.pubkey)?.name).toBe("Bob");
+});
+
 it("a full cache clear still fences a profile read whose response already arrived", async () => {
   const h = setup();
   const read = h.session

@@ -1250,8 +1250,8 @@ depend on channels. Only a full cache clear (logout, community or scope change)
 empties the directory. After roster membership
 changes, visible DMs must reacquire missing names through the shared profile
 directory at background priority, without blocking conversation opening. Recovery
-must cover both a cleared directory and an initial profile read being cancelled
-before any name arrives.
+covers a cleared directory (a full cache clear) and an initial profile read that
+comes back empty or fails.
 
 `ChannelsPage` passes the **full** roster to `useChannelLabels`; the hook filters
 visible conversations for display/profile demand, but derives its recovery trigger
@@ -1260,18 +1260,15 @@ ordinary message/preview updates: missing/failed responses must not start a
 render-driven request loop. Key fragments remain the fallback for unavailable names.
 
 `useChannelLabels.test.tsx` binds the mounted hook to real session roster omission,
-including hidden/archived deletion, stale in-flight replies and unsuccessful name
-reads. `tests/browser/dm-labels.spec.mjs` guards the production page wiring and DOM
+including hidden/archived deletion, a name read that finishes after the deletion,
+and empty or failed name reads that retry once on a roster change. `tests/browser/dm-labels.spec.mjs` guards the production page wiring and DOM
 labels through the real Refresh channels control and broker.
 
-Open channel timelines and mounted thread/media-comment views also recover: after
-an access-loss purge, each retained window and each mounted thread of a channel the
-viewer can still read requests its rows' names once, at background priority. Names
-whose only evidence was in the lost channel are not requested. A channel opened
-afterwards from a head read shortly before the purge is not covered: its next head
-read or an older page restores its names, while new traffic and the viewer's own
-sends restore only its latest rows. `revocation.test.ts` covers roster omission,
-denied reads and a mention that appears only in a thread reply.
+Open channel timelines and mounted thread/media-comment views need no recovery
+after access loss: their names stay in the directory. `revocation.test.ts` covers
+roster omission, denied channel reads and a denied channel list keeping names, a
+profile read in flight finishing, and a full cache clear still fencing a profile
+read.
 
 These are foundational recovery constraints, not a new shared-session API or a
 guarantee of general profile retry after every cache clear/network failure. See

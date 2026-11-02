@@ -1334,3 +1334,33 @@ it("final eligibility omission preserves deferred protected dispatch without ser
     await fiber.dispose();
   }
 });
+
+it("deletes only by the calling installed plugin and suppresses disposed completion", async () => {
+  const { host, fiber } = await oncePlugin();
+  vi.mocked(invoke).mockResolvedValueOnce(undefined);
+  await host.deleteManagedFile?.(byteSaved.path);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "plugin_host_delete_managed_file",
+    {
+      id: "example.plugin",
+      revision: "abc",
+      path: byteSaved.path,
+    },
+  );
+  vi.mocked(invoke).mockClear();
+  for (const path of ["", "bad\0path"]) {
+    await expect(host.deleteManagedFile?.(path)).rejects.toThrow();
+  }
+  expect(invoke).not.toHaveBeenCalled();
+  let finish!: () => void;
+  vi.mocked(invoke).mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const pending = host.deleteManagedFile?.(byteSaved.path);
+  const disposed = fiber.dispose();
+  finish();
+  await expect(pending).rejects.toThrow("inactive");
+  await disposed;
+});

@@ -56,7 +56,9 @@ impl HostCalls {
             state.page = state
                 .page
                 .and_then(|p| p.checked_add(1))
-                .filter(|p| *p <= 9_007_199_254_740_991)
+                .filter(|p| *p <= 9_007_199_254_740_991);
+            // Old envelopes fail the page check before lookup, so they cannot use freed capacity.
+            state.consumed.clear();
         }
     }
     fn context(&self, label: &str) -> Result<CallContext, String> {
@@ -282,9 +284,7 @@ pub(crate) async fn plugin_host_request_bytes(
     revision: String,
     request: ByteRequest,
 ) -> Result<tauri::ipc::Response, String> {
-    let _place = crate::host_files::BYTE_WORK
-        .try_acquire()
-        .map_err(|_| "A byte operation is already under way")?;
+    let entered = tokio::time::Instant::now();
     let timeout = request.timeout_ms.unwrap_or(30_000);
     if request.max_bytes == 0
         || request.max_bytes > MAX_RESPONSE_BYTES
@@ -299,7 +299,9 @@ pub(crate) async fn plugin_host_request_bytes(
         body: None,
         timeout_ms: Some(timeout),
     })?;
+    let end = entered + Duration::from_millis(timeout);
     let operation = async {
+        let _place = crate::host_files::byte_admission(end).await?;
         byte_origin(manager.clone(), &id, &revision, &url).await?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -311,7 +313,7 @@ pub(crate) async fn plugin_host_request_bytes(
         byte_origin(manager, &id, &revision, &url).await?;
         byte_frame(status, headers, bytes).map(tauri::ipc::Response::new)
     };
-    tokio::time::timeout(Duration::from_millis(timeout), operation)
+    tokio::time::timeout_at(end, operation)
         .await
         .map_err(|_| "Host byte request timed out")?
 }

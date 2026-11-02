@@ -637,3 +637,169 @@ fn actual_save_operation_failures_refuse_and_clean_up_under_writer_ownership() {
 fn actual_save_observes_disable_after_real_write_before_final_eligibility() {
     save_failure_at(SaveBoundary::Revoke);
 }
+
+#[test]
+fn own_managed_delete_refuses_other_plugins_legacy_paths_and_active_reads() {
+    let _serial = commands();
+    let f = Fixture::new(true, false);
+    let saved = f.save(b"owned", &digest(b"owned")).unwrap();
+    let path = saved["path"].as_str().unwrap();
+    let remove = |path: &str, id: &str| {
+        f.ipc(
+            "plugin_host_delete_managed_file",
+            tauri::ipc::InvokeBody::Json(serde_json::json!({
+                "id":id,"revision":f.revision,"path":path
+            })),
+            Default::default(),
+        )
+    };
+    assert!(remove(path, "other.plugin").is_err());
+    // A different enabled plugin with the same capability still has no ownership.
+    let source = f.temp.path().join("other-source");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+    std::fs::write(
+        source.join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "id":"other.plugin","name":"Other","apiVersion":1,"host":{"managedFiles":true}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let catalog = f.manager.install(&source).unwrap();
+    let other = catalog
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "other.plugin")
+        .unwrap();
+    f.manager.change("enable", "other.plugin").unwrap();
+    let error = f
+        .ipc(
+            "plugin_host_delete_managed_file",
+            tauri::ipc::InvokeBody::Json(serde_json::json!({
+                "id":"other.plugin","revision":other.revision,"path":path
+            })),
+            Default::default(),
+        )
+        .unwrap_err();
+    assert!(error.contains("not owned"));
+    assert!(delete_managed(&f.root(), path, &f.manager, "example.bytes", "stale").is_err());
+
+    assert!(remove(
+        f.temp.path().join("outside").to_str().unwrap(),
+        "example.bytes"
+    )
+    .is_err());
+    let legacy = f
+        .root()
+        .join(format!("9999999999999-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&legacy, b"legacy").unwrap();
+    assert!(remove(legacy.to_str().unwrap(), "example.bytes").is_err());
+    // This is the exact shared lease held by the native reader until its byte snapshot completes.
+    let lease = FileReadLease::new().unwrap();
+    assert!(remove(path, "example.bytes")
+        .unwrap_err()
+        .contains("in use"));
+    assert_eq!(std::fs::read(path).unwrap(), b"owned");
+    drop(lease);
+    remove(path, "example.bytes").unwrap();
+    assert!(!Path::new(path).exists());
+    assert!(legacy.exists());
+    assert!(remove(path, "example.bytes").is_err());
+}
+
+#[test]
+fn byte_admission_is_fifo_bounded_and_expired_waiters_release_capacity() {
+    let _serial = commands();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            use std::future::Future;
+            use std::task::{Context, Poll, Waker};
+            let held = BYTE_WORK.acquire().await.unwrap();
+            let end = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+            let mut first = Box::pin(byte_admission(end));
+            let mut second = Box::pin(byte_admission(end));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(first.as_mut().poll(&mut cx).is_pending());
+            assert!(second.as_mut().poll(&mut cx).is_pending());
+            let mut rest = Vec::new();
+            for _ in 2..16 {
+                let mut waiter = Box::pin(byte_admission(end));
+                assert!(waiter.as_mut().poll(&mut cx).is_pending());
+                rest.push(waiter);
+            }
+            assert!(byte_admission(end).await.unwrap_err().contains("queue"));
+            drop(held);
+            // Polling the second first must not allow it to jump the FIFO queue.
+            assert!(second.as_mut().poll(&mut cx).is_pending());
+            let Poll::Ready(Ok(permit)) = first.as_mut().poll(&mut cx) else {
+                panic!("first waiter not admitted")
+            };
+            assert!(second.as_mut().poll(&mut cx).is_pending());
+            drop(permit);
+            let permit = second.await.unwrap();
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+            for waiter in rest {
+                assert!(waiter.await.unwrap_err().contains("timed out"));
+            }
+            drop(permit);
+            assert!(byte_admission(end).await.is_err());
+            drop(
+                byte_admission(tokio::time::Instant::now() + SAVE_WINDOW)
+                    .await
+                    .unwrap(),
+            );
+        });
+}
+
+#[test]
+fn root_gate_unlocks_even_when_another_process_inherits_the_open_description() {
+    let f = Fixture::new(true, false);
+    let lock = managed_lock(&f.root()).unwrap();
+    // try_clone models an inherited descriptor sharing the same flock description.
+    let inherited = lock.try_clone().unwrap();
+    drop(lock);
+    let next =
+        managed_lock(&f.root()).expect("guard drop must unlock before the inherited fd closes");
+    drop(inherited);
+    drop(next);
+}
+
+#[test]
+fn concurrent_native_saves_queue_instead_of_refusing_the_second_plugin_operation() {
+    let _serial = commands();
+    let held = BYTE_WORK.try_acquire().unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let jobs: Vec<_> = [b"one", b"two"]
+        .into_iter()
+        .map(|bytes| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let f = Fixture::new(true, false);
+                barrier.wait();
+                let saved = f.save(bytes, &digest(bytes)).unwrap();
+                assert_eq!(
+                    std::fs::read(saved["path"].as_str().unwrap()).unwrap(),
+                    bytes
+                );
+                saved
+            })
+        })
+        .collect();
+    barrier.wait();
+    let watchdog = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while BYTE_WAITERS.available_permits() != 14 {
+        assert!(
+            std::time::Instant::now() < watchdog,
+            "both commands must reach admission"
+        );
+        std::thread::yield_now();
+    }
+    drop(held);
+    let saved: Vec<_> = jobs.into_iter().map(|job| job.join().unwrap()).collect();
+    assert_ne!(saved[0]["path"], saved[1]["path"]);
+}

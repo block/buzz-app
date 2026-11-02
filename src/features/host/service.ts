@@ -144,7 +144,9 @@ export interface Host {
   resolveDirectory?: (path: string) => Promise<string>;
   request(input: HostRequest): Promise<HostResponse>;
   /** POST-only, desktop and compatible native host required. A repeated call
-   * authority rejects with unknown outcome, never resubmits or caches success. */
+   * authority rejects with unknown outcome, never resubmits or caches success.
+   * Blocks IPC-fallback resends only, not fresh calls or upstream retries.
+   * Also send callId as a server idempotency key when the server supports it. */
   requestOnce?: (
     input: HostRequest,
     options: HostRequestOnceOptions,
@@ -157,6 +159,9 @@ export interface Host {
     bytes: Uint8Array,
     input: Readonly<{ sha256: string }>,
   ) => Promise<HostSavedBytes>;
+  /** Removes this plugin's own managed file. Await attachment sends first;
+   * refuses while an app-owned native host file read is active. */
+  deleteManagedFile?: (path: string) => Promise<void>;
   /** Uploads a file as `request` sends a body. Desktop only. */
   upload?: (input: HostUpload) => Promise<HostResponse>;
   prepareRemoteAgentAuthorization?: (
@@ -605,6 +610,26 @@ export class HostService extends Service implements Host {
       )
         throw new Error("Invalid managed save result; outcome unknown");
       return saved;
+    } finally {
+      lifetime.release();
+    }
+  }
+
+  async deleteManagedFile(path: string): Promise<void> {
+    const ctx = this.ctx;
+    const owner = ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Managed deletion requires an installed desktop plugin");
+    if (typeof path !== "string" || !path || path.includes("\0"))
+      throw new Error("Invalid managed file path");
+    const lifetime = byteLifetime(ctx);
+    try {
+      await invoke<void>("plugin_host_delete_managed_file", {
+        id: owner.id,
+        revision: owner.revision,
+        path,
+      }).catch(rethrow);
+      lifetime.active();
     } finally {
       lifetime.release();
     }

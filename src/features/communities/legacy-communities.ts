@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { communityDestination, relayAddress } from "./destination";
+import {
+  communityDestination,
+  RelayPolicyError,
+  relayAddress,
+  relayOrigin,
+} from "./destination";
 import { enqueue } from "./known-communities";
 import type { Communities } from "./service";
 
@@ -8,6 +13,23 @@ export type LegacyCommunity = { relayUrl: string; pubkey?: string };
 
 const importedKey = (viewer: string) => `buzz-legacy-communities.v1:${viewer}`;
 const imported = "1";
+// `1:<addresses>` completes an import except for the listed relays this
+// build's policy skipped; a build that allows them offers only those.
+const skippedPrefix = `${imported}:`;
+/** `relayAddress` without the policy check, so a blocked relay still matches its removal. */
+const legacyAddress = (url: string) =>
+  `wss://${new URL(relayOrigin(url)).host}`;
+function skippedRelays(marker: string | null): string[] | undefined {
+  if (!marker?.startsWith(skippedPrefix)) return undefined;
+  try {
+    const value: unknown = JSON.parse(marker.slice(skippedPrefix.length));
+    return Array.isArray(value)
+      ? value.filter((url): url is string => typeof url === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 /** The removal addresses a pending import recorded for this viewer. */
 function pendingRemovals(viewer: string): string[] {
@@ -75,7 +97,15 @@ export function importLegacyCommunities(
     if (known.removed.size > before) known.saved = false;
     if (!known.saved) {
       try {
-        if (localStorage.getItem(importedKey(viewer)) !== imported)
+        const marker = localStorage.getItem(importedKey(viewer));
+        const skipped = skippedRelays(marker);
+        if (skipped)
+          localStorage.setItem(
+            importedKey(viewer),
+            skippedPrefix +
+              JSON.stringify(skipped.filter((url) => !known.removed.has(url))),
+          );
+        else if (marker !== imported)
           localStorage.setItem(
             importedKey(viewer),
             JSON.stringify([...known.removed]),
@@ -94,24 +124,34 @@ export function importLegacyCommunities(
       return;
     attempted.add(viewer);
     try {
-      if (localStorage.getItem(importedKey(viewer)) === imported) return;
+      const marker = localStorage.getItem(importedKey(viewer));
+      if (marker === imported) return;
+      const skipped = skippedRelays(marker);
       const saved = await read();
       const ready = communities.snapshot();
       if (disposed || ready.status !== "ready" || ready.viewer !== viewer)
         return;
       const { held, removed } = observe();
       const candidates = new Set<string>();
+      const blocked: string[] = [];
       for (const { relayUrl, pubkey } of saved) {
         if (pubkey !== viewer) continue;
-        let id: string;
+        let address: string;
         try {
-          id = communityDestination(relayUrl).id;
+          address = legacyAddress(relayUrl);
         } catch {
           continue;
         }
-        const address = relayAddress(id);
-        if (held.has(id) || removed.has(address)) continue;
-        candidates.add(id);
+        if (removed.has(address) || (skipped && !skipped.includes(address)))
+          continue;
+        let id: string;
+        try {
+          id = communityDestination(relayUrl).id;
+        } catch (error) {
+          if (error instanceof RelayPolicyError) blocked.push(address);
+          continue;
+        }
+        if (!held.has(id)) candidates.add(id);
       }
       const approved = candidates.size ? await confirm([...candidates]) : true;
       const current = communities.snapshot();
@@ -127,7 +167,11 @@ export function importLegacyCommunities(
       let sync = current.sync;
       for (const id of add) sync = enqueue(sync, relayAddress(id), false);
       if (add.length) await communities.applySync(sync, add);
-      localStorage.setItem(importedKey(viewer), imported);
+      const retained = blocked.filter((url) => !latest.removed.has(url));
+      localStorage.setItem(
+        importedKey(viewer),
+        retained.length ? skippedPrefix + JSON.stringify(retained) : imported,
+      );
     } catch (error) {
       console.warn("Couldn't add old Buzz's communities", error);
     }

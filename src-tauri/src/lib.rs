@@ -78,6 +78,8 @@ mod relaunch;
 mod relay;
 mod relay_admin;
 mod sign_out;
+#[cfg(target_os = "macos")]
+mod spelling;
 mod system_clock;
 use identity::{
     identity_create, identity_export, identity_import, identity_import_legacy,
@@ -829,6 +831,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKit reads spelling defaults once, so register them before any webview.
+    #[cfg(target_os = "macos")]
+    spelling::register_defaults();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(

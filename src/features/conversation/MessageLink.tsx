@@ -43,7 +43,7 @@ import {
   LinkThreadTabContext,
 } from "./LinkLabelContext";
 import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
-import { useChannelReference } from "./channel-reference";
+import { namedChannel, useChannelReference } from "./channel-reference";
 import { useLinkedMessageByline } from "./linked-message";
 import { messageViewKey } from "../messages/view-key";
 import { soloChatLinkName } from "../solo/labels";
@@ -142,13 +142,7 @@ export function MessageLink({
     chatName || sentChatName || destination?.channelId.slice(0, 8);
   const chatLabel = chatChip ? `Chat: ${chipName}` : undefined;
   // DMs and sessions keep their existing presentation.
-  const named =
-    reference.state === "found" &&
-    !reference.hidden &&
-    reference.channelType !== "dm" &&
-    reference.channelType !== "solo"
-      ? reference
-      : undefined;
+  const named = namedChannel(reference);
   const withheld = reference.state === "withheld";
   // The authored label is message text, so it stays; the lock marks it. A raw
   // destination has no name to show.

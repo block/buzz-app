@@ -39,3 +39,14 @@ export function useChannelReference(
   }, [active, channelId, ready, reference.state]);
   return reference;
 }
+
+/** A found reference that names an ordinary channel. DMs, sessions and
+ * hidden channels keep their own presentation. */
+export function namedChannel(reference: ChannelReference) {
+  return reference.state === "found" &&
+    !reference.hidden &&
+    reference.channelType !== "dm" &&
+    reference.channelType !== "solo"
+    ? reference
+    : undefined;
+}

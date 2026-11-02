@@ -20,7 +20,7 @@ import { messagePreviewText } from "./message-preview-text";
 import { linkedMessage } from "./linked-message";
 import { avatarMedia } from "../../shared/avatar-source";
 import { sortParticipantNames } from "../identity-names/participant-order";
-import { useChannelReference } from "./channel-reference";
+import { namedChannel, useChannelReference } from "./channel-reference";
 
 /** Mounted only while a preview is open. The session owns access, edits and deletion. */
 export function BuzzLinkPreview({
@@ -88,13 +88,7 @@ function PreviewContent({
     channel ? undefined : session.channels,
     message?.channelId,
   );
-  const named =
-    reference.state === "found" &&
-    !reference.hidden &&
-    reference.channelType !== "dm" &&
-    reference.channelType !== "solo"
-      ? reference
-      : undefined;
+  const named = namedChannel(reference);
   const authorId = message?.workflowOwnerId ?? message?.authorId;
   const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {
@@ -134,13 +128,15 @@ function PreviewContent({
         (reference.state === "withheld"
           ? "Private channel"
           : "Channel unavailable"));
-  const ChannelIcon =
-    channel?.hidden || channel?.channelType === "dm" || (!channel && !named)
+  const ChannelIcon = channel
+    ? channel.hidden || channel.channelType === "dm"
       ? LockIcon
-      : channelIcon(
-          channel ?? (named?.private ? { private: true } : undefined),
-        );
-  const iconShown = channel || named || reference.state === "withheld";
+      : channelIcon(channel)
+    : named
+      ? channelIcon(named.private ? { private: true } : undefined)
+      : reference.state === "withheld"
+        ? LockIcon
+        : undefined;
   return (
     <>
       <span className={styles.byline}>
@@ -171,7 +167,7 @@ function PreviewContent({
             </time>
           </span>
           <span className={styles.channel}>
-            {iconShown && <ChannelIcon aria-hidden="true" size={13} />}
+            {ChannelIcon && <ChannelIcon aria-hidden="true" size={13} />}
             <span>{channelName}</span>
           </span>
         </span>

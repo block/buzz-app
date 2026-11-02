@@ -216,6 +216,17 @@ it("names an open channel the reader hasn't joined from its public reference", (
   });
   expect(found.tree.textContent).toContain("buzz-feedback");
   expect(found.tree.textContent).not.toContain("Channel unavailable");
+  // A hidden channel keeps its name to itself, as channel-only links do.
+  const hidden = channel({
+    state: "found",
+    name: "secret-hideout",
+    private: false,
+    hidden: true,
+    archived: false,
+    joined: false,
+  });
+  expect(hidden.tree.textContent).not.toContain("secret-hideout");
+  expect(hidden.tree.textContent).toContain("Channel unavailable");
   const withheld = channel({ state: "withheld" });
   expect(withheld.tree.textContent).toContain("Private channel");
   const unknown = channel({ state: "unknown" });

@@ -2094,6 +2094,36 @@ it("reports a restore that another canvas write overtook", async () => {
   }
 });
 
+it("reports an accepted restore whose read-back fails", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(300_000);
+    const old = event({ kind: 40100, id: root, content: "# Old" });
+    const head = event({ kind: 40100, id: nested, created_at: 200 });
+    const { client } = fake([old, head]);
+    const publish = client.publish;
+    let saved = "";
+    client.publish = vi.fn(async (template) => {
+      const signed = await publish(template);
+      saved = signed.id;
+      (client.query as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("socket closed"),
+      );
+      return signed;
+    });
+    const restore = callTool(client, { channel: "chan" }, "canvas_restore", {
+      id: root,
+      expected: nested,
+    });
+    await expect(restore).rejects.toThrow(/^restored /);
+    await expect(restore).rejects.toThrow(
+      `restored ${root} as ${saved}, but the canvas could not be read back to confirm it is current: socket closed`,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("reads and replaces the canvas of a named channel or the current one", async () => {
   const { client, published } = fake([
     event({ kind: 40100, content: "# Existing" }),

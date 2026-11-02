@@ -1300,7 +1300,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ],
     });
     const selected = await head().catch((error: unknown) => {
-      throw unread(error);
+      throw new Error(
+        `restored ${id} as ${saved.id}, but the canvas could not be read back to confirm it is current: ${reason(error)}. Read canvas_history before you retry.`,
+      );
     });
     if (selected?.id !== saved.id)
       throw new Error(

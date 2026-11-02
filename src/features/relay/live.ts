@@ -51,8 +51,10 @@ export const LIVE_RESUME_LAG = RELAY_TIMESTAMP_DRIFT_SECS + 60;
  * fresh signature check costs about 1 ms of main thread per event, a proof hit
  * only the hash. A resume whose window holds more distinct events than this
  * (about 17 a second for 16 minutes, or 33 channels at `LIVE_REPLAY_LIMIT`)
- * evicts each proof before its replay reaches it and gains nothing. About 3 MiB
- * of IDs and signatures, about 5 MiB of heap. */
+ * evicts each proof before its replay reaches it and gains nothing. Artifact
+ * sync events share the memo, so that rate is an upper bound, not a proven fit
+ * for a typical community. About 3 MiB of IDs and signatures, about 5 MiB of
+ * heap. */
 export const LIVE_PROOF_ENTRIES = 16_384;
 /** Close codes for a relay that is going away on purpose (a rolling deploy
  * sends 1012 to every client at once): 1001 Going Away, 1012 Service Restart. */

@@ -84,7 +84,7 @@ export function createEventVerifier(entries = 8192) {
         return true;
       }
       if (!verifyEvent(event)) return false;
-      // A relay stores no ephemeral event, so none can arrive again.
+      // A resume never replays an ephemeral event, so its proof would rarely hit.
       if (event.kind < 20000 || event.kind >= 30000)
         proofs.set(event.id, event.sig, 192); // fixed ASCII id (64) + signature (128)
       return true;

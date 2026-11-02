@@ -10,7 +10,10 @@ import {
   within,
 } from "@testing-library/react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { createNavigationController } from "../../features/navigation/controller";
+import {
+  createNavigationController,
+  type Navigation,
+} from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
 import { Context } from "@deepseek-ai/cordis";
@@ -689,6 +692,82 @@ it("renders note content as Markdown without executable HTML or unsafe links", a
     "rel",
     "noopener noreferrer",
   );
+});
+
+it("opens Buzz message and channel links in the app, naming a raw channel link", async () => {
+  const user = userEvent.setup();
+  const root = "a".repeat(64);
+  const f = fixture([
+    {
+      ...note("Blockers"),
+      content: `Summarised from [the blockers thread](buzz://message?channel=release&id=${root}) in <buzz://channel/release>.`,
+    },
+  ]);
+  const channels = { status: "ready", channels: [] };
+  const session = {
+    ...f.session,
+    unread: undefined,
+    channels: {
+      list: () => channels,
+      get: () => undefined,
+      describe: () => ({
+        state: "found",
+        name: "Release",
+        channelType: "stream",
+        private: false,
+        hidden: false,
+        archived: false,
+        joined: true,
+      }),
+      refer: () => () => {},
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const open = vi.fn(async () => {});
+  const connection = {
+    status: "ready",
+    generation: 1,
+    scope: `https://relay.example:${other}`,
+    viewer: other,
+    session,
+  } as RelaySnapshot;
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+    disconnect: vi.fn(),
+    clearCache: vi.fn(async () => {}),
+  } as RelayData;
+  render(
+    <NotesPage relay={relay} navigator={{ open } as unknown as Navigation} />,
+  );
+  await enterFolder();
+  await user.click(
+    screen.getByRole("button", { name: "Open Blockers by Carl" }),
+  );
+  const reader = screen.getByRole("complementary");
+  const message = within(reader).getByRole("link", {
+    name: "the blockers thread",
+  });
+  await user.hover(message);
+  expect(await screen.findByLabelText("Message preview")).toBeInTheDocument();
+  const scope = { viewer: other, communityOrigin: "https://relay.example" };
+  await user.click(message);
+  expect(open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "release",
+    messageId: root,
+  });
+  await user.click(within(reader).getByRole("link", { name: "#Release" }));
+  expect(open).toHaveBeenLastCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "release",
+  });
+  expect(open).toHaveBeenCalledTimes(2);
 });
 
 it("shows the saved identifier separately from the display title in row and reader metadata", async () => {

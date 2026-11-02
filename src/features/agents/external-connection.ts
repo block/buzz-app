@@ -212,7 +212,12 @@ export function createExternalApps() {
           update({ ...state, grant: { ...grant, phase: "waiting" } });
       } catch {
         if (controller !== attempt) return;
-        await revoke();
+        attempt.abort();
+        const closing = server;
+        server = undefined;
+        await closing?.close();
+        if (controller !== attempt) return;
+        controller = undefined;
         update({
           ...state,
           grant: { ...grant, phase: "ended" },

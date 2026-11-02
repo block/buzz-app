@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { HostMcpServer } from "../host/service";
+import type { Agents } from "./service";
 import {
   createExternalApps,
   parseExternalAuthorization,
@@ -151,3 +152,50 @@ it.each([false, true])(
     expect(connection.snapshot().error).toContain("Start setup again");
   },
 );
+
+it("keeps a replacement grant visible while an older failure closes", async () => {
+  const first = transport(),
+    second = transport();
+  const started = deferred<void>(),
+    finish = deferred<void>();
+  const close = first.close;
+  first.authorize.mockRejectedValueOnce(new Error("callback failed"));
+  first.close = vi.fn(async () => {
+    started.resolve();
+    await finish.promise;
+    await close();
+  });
+  const connect = vi
+    .fn<Agents["connectExternal"]>()
+    .mockResolvedValueOnce(first)
+    .mockImplementationOnce(async (_agent, _signal, connected) => {
+      connected();
+      return second;
+    });
+  const connection = createExternalApps();
+  connection.bind({ connect, deny: async () => {} });
+  connection.open(request, "viewer");
+  const failed = connection.approve("first-agent");
+  try {
+    await started.promise;
+    connection.open(
+      { ...request, client: "Second client", state: "B".repeat(43) },
+      "viewer",
+    );
+    await connection.approve("second-agent");
+    expect(connection.snapshot().grant).toMatchObject({
+      agent: "second-agent",
+      phase: "connected",
+    });
+  } finally {
+    finish.resolve();
+    await failed;
+  }
+  expect(connection.snapshot().grant).toMatchObject({
+    agent: "second-agent",
+    phase: "connected",
+  });
+  expect(connection.snapshot().error).toBeUndefined();
+  await connection.revoke();
+  expect(second.close).toHaveBeenCalledOnce();
+});

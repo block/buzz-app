@@ -1270,13 +1270,15 @@ plugin's file. Legacy files without an owner digest cannot be deleted through th
 API and retain their expiry behavior. Deleting a missing file rejects.
 
 Await attachment sends before deleting their source. Deletion refuses while any
-app-owned `host.readFile` operation is admitted or still running, including blocking
-reads whose async waiter timed out. Its reader lease is acquired before the first
+app-owned `host.readFile` operation or attachment `read`/`read-protected` process is
+admitted or still running. This includes blocking reads whose async waiter timed
+out and process reads until the child and output streams actually complete, even
+after a timeout/kill request. Its reader lease is acquired before the first
 native await; deletion holds that admission gate through unlink. A read admitted
 first therefore cannot lose its source mid-read. Once the reader has returned its
 byte snapshot, upload/publication no longer needs the source path. If deletion
 wins before a read is admitted, that later read fails as missing; this API does not
-reserve paths for future sends or external processes. The cross-process storage
+reserve paths for future sends or unrelated external processes. The cross-process storage
 lock still refuses if busy; callers may retry a known in-use refusal after the
 send completes, but must not automatically retry an ambiguous deletion timeout.
 

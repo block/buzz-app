@@ -182,9 +182,9 @@ pub(crate) async fn byte_admission(
 // Conservatively protect every app-owned host file read (including attachment reads).
 // A Send lease travels with the blocking work even when its async waiter times out.
 static FILE_READS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
-struct FileReadLease;
+pub(crate) struct FileReadLease;
 impl FileReadLease {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         let mut reads = FILE_READS
             .lock()
             .map_err(|_| "File read admission unavailable")?;

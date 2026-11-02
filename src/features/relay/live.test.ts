@@ -718,7 +718,7 @@ it("renews with one bounded overlap and releases both wires on timeout and dispo
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("re-sends only the batches a grant names, once per burst, and after an in-flight REQ", async () => {
+it("re-sends only the batches a grant names, and once more after an in-flight REQ", async () => {
   vi.useFakeTimers();
   const h = setup([]);
   try {
@@ -749,7 +749,30 @@ it("re-sends only the batches a grant names, once per burst, and after an in-fli
       limit: 0,
     });
     await h.first.receive(["EOSE", h.first.requests().at(-1)?.[1]]);
-    // Two grants in one batch share one re-send; other batches stay put.
+    // A grant that fails and is retried after the grant needs no re-send.
+    const retried = h.first.requests().length;
+    await grant(h, "c10");
+    expect(h.first.requests()).toHaveLength(retried + 1);
+    const failing = h.first.requests().at(-1);
+    assert.exists(failing);
+    await grant(h, "c11");
+    await h.first.receive([
+      "CLOSED",
+      failing[1],
+      "rate-limited: quota exceeded; retry in 2s",
+    ]);
+    await vi.advanceTimersByTimeAsync(3000);
+    const retry = h.first.requests().at(-1);
+    assert.exists(retry);
+    expect(retry[1]).not.toBe(failing[1]);
+    await h.first.receive(["EOSE", retry[1]]);
+    expect(h.first.requests().slice(retried).map(scopeOf)).toEqual([
+      ["c10", "c11"],
+      ["c10", "c11"],
+    ]);
+    // Each notice is its own socket message. The first re-sends the batch at
+    // once; the second, while that REQ is in flight, re-sends it at its EOSE.
+    // Other batches stay put.
     const before = h.first.requests().length;
     const membership = h.first
       .requests()
@@ -766,12 +789,14 @@ it("re-sends only the batches a grant names, once per burst, and after an in-fli
       });
     await h.first.receive(["EVENT", membership[1], notice(44100, "c01")]);
     await h.first.receive(["EVENT", membership[1], notice(44100, "c02")]);
-    await vi.advanceTimersByTimeAsync(0);
+    expect(h.first.requests()).toHaveLength(before + 1);
+    await h.first.receive(["EOSE", h.first.requests().at(-1)?.[1]]);
+    await h.first.receive(["EOSE", h.first.requests().at(-1)?.[1]]);
     expect(h.first.requests().slice(before).map(scopeOf)).toEqual([
+      ids.slice(0, 10),
       ids.slice(0, 10),
     ]);
     // A removal, or a grant for a channel in no batch, sends nothing.
-    await h.first.receive(["EOSE", h.first.requests().at(-1)?.[1]]);
     const settled = h.first.requests().length;
     await h.first.receive(["EVENT", membership[1], notice(44101, "c03")]);
     await grant(h, "elsewhere");

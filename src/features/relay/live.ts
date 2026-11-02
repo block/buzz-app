@@ -501,7 +501,6 @@ export function subscribeRelayTraffic(
     delete next.wire;
     delete next.deadline;
     delete next.retryRenewal;
-    delete next.regranted; // Sent after the grant, so it covers it.
     // A narrowed replacement is live-only, so it has no replay to rely on.
     if (route.carried) broken = true;
     delete next.carried;
@@ -513,19 +512,13 @@ export function subscribeRelayTraffic(
   // batch then stays narrower than the client thinks. Access comes back only
   // through a grant, and every grant sends the viewer a 44100 (add, join,
   // create, DM open or add, unarchive), so re-send each batch that holds a
-  // granted channel. A forged notice costs one extra REQ, nothing more.
-  const grants = new Set<string>();
+  // granted channel. A batch whose REQ is in flight may have been checked
+  // before the grant, so it is re-sent once at its EOSE. A forged notice
+  // costs one extra REQ, nothing more.
   function grant(id: string) {
-    if (!grants.size) queueMicrotask(regrant);
-    grants.add(id);
-  }
-  function regrant() {
-    const ids = [...grants];
-    grants.clear();
-    if (closed) return;
     let sent = false;
     for (const route of [...routes.values()]) {
-      if (!route.channelIds?.some((id) => ids.includes(id))) continue;
+      if (!route.channelIds?.includes(id)) continue;
       if (route.status === "live" && !route.previous) {
         replace(route);
         sent = true;
@@ -861,6 +854,7 @@ export function subscribeRelayTraffic(
       // A retry being sent is not recovery. Retain its last failure until EOSE.
       const wire = `live-${++serial}`;
       route.wire = wire;
+      delete route.regranted; // This REQ is sent after every earlier grant.
       wires.set(wire, route);
       route.deadline = setTimeout(() => {
         if (wires.get(wire) === route)
@@ -1287,12 +1281,6 @@ export function subscribeRelayTraffic(
           )
             callbacks.telemetry?.(incoming, observer);
         } else if (incoming.kind !== OBSERVER_KIND) {
-          if (
-            route.id === "membership" &&
-            incoming.kind === 44100 &&
-            destination
-          )
-            grant(destination);
           callbacks.receive(
             [incoming],
             Object.freeze({
@@ -1305,6 +1293,13 @@ export function subscribeRelayTraffic(
                   : {}),
             }),
           );
+          if (
+            valid() &&
+            route.id === "membership" &&
+            incoming.kind === 44100 &&
+            destination
+          )
+            grant(destination);
         }
       } else if (data[0] === "EOSE" && route.status === "pending") {
         clearTimeout(route.deadline);

@@ -47,6 +47,8 @@ import type { BrowserPlatform } from "../../features/browser/platform";
 composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
+const visitSnapshot = { entry: { id: "visit" }, attempt: {} };
+const threadVisitSnapshot = { entry: { id: "thread-visit" }, attempt: {} };
 beforeEach(() => {
   // jsdom has no layout/ResizeObserver. Only geometry is substituted; the page,
   // composer, session, tab store and menu interaction are production owners.
@@ -260,7 +262,7 @@ it.each(["side", "main"] as const)(
       "stream",
       {
         open,
-        snapshot: () => ({ entry: { id: "thread-visit" }, attempt: {} }),
+        snapshot: () => threadVisitSnapshot,
       } as unknown as Navigation,
       true,
     );
@@ -622,7 +624,7 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {
     open,
-    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    snapshot: () => visitSnapshot,
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>
@@ -697,7 +699,7 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
     "stream",
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
-      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+      snapshot: () => visitSnapshot,
     } as unknown as Navigation,
     false,
     undefined,
@@ -792,7 +794,7 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
     "stream",
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
-      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+      snapshot: () => visitSnapshot,
     } as unknown as Navigation,
     false,
     undefined,
@@ -847,7 +849,7 @@ it("opens another conversation's tab in its channel, but not the current channel
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {
     open,
-    snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    snapshot: () => visitSnapshot,
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "d".repeat(64);

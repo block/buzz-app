@@ -518,6 +518,40 @@ it("parks a kept-storage guest on unmount and adopts it when remounted", async (
   expect(platform.detach).not.toHaveBeenCalled();
 });
 
+it("does not adopt a parked guest for a different User-Agent", async () => {
+  const platform = fakePlatform();
+  const sessions = new BrowserSessions(platform);
+  const mount = (userAgent?: string) =>
+    render(
+      <BrowserHostView
+        url="https://app.example/"
+        storage="builderlab-apps"
+        {...(userAgent === undefined ? {} : { userAgent })}
+        platform={platform}
+        sessions={sessions}
+      />,
+    );
+  const first = mount("Agent/A");
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  first.unmount();
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenLastCalledWith(
+      "session-1",
+      expect.any(Object),
+      false,
+    ),
+  );
+  mount();
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  expect(platform.attach).toHaveBeenLastCalledWith(
+    "https://app.example/",
+    expect.any(Object),
+    "builderlab-apps",
+    undefined,
+    undefined,
+  );
+});
+
 it("stays shown for a popup that does not reach over it", async () => {
   const platform = fakePlatform();
   render(

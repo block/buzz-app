@@ -147,7 +147,7 @@ export function BrowserHostView({
     const park =
       storage === undefined
         ? undefined
-        : `${storage}\n${url}\n${userAgent ?? ""}`;
+        : JSON.stringify([storage, url, userAgent ?? null]);
 
     const visible = (bounds: BrowserBounds) =>
       document.visibilityState === "visible" &&

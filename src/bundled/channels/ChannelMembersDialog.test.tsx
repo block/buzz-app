@@ -3611,3 +3611,37 @@ it("hides search feedback until the initial roster is available", async () => {
     await act(async () => release());
   }
 });
+
+it.each([0, 75])(
+  "filters broad relay hits by member name fields (extra members: %s)",
+  async (extraMembers) => {
+    const unrelated = profile(keypair(), {
+      name: "Unrelated member",
+      about: "ZeldaUnique in biography",
+    });
+    const named = profile(keypair(), { name: "ZeldaUnique Person" });
+    const alias = profile(keypair(), {
+      name: "ZeldaUniqueHandle",
+      display_name: "Different display",
+    });
+    const memberProfiles = [unrelated, named, alias];
+    const t = await setup("stream", false, false, undefined, undefined, {
+      extraMembers,
+      memberProfiles,
+      searchProfiles: async (query) =>
+        query === "ZeldaUnique" ? memberProfiles : [],
+    });
+    await vi.waitFor(() =>
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+    );
+    await t.user.type(screen.getByRole("searchbox"), "ZeldaUnique");
+    const list = screen.getByRole("region", { name: "Member list" });
+    await within(list).findByText(nameText("Different display"));
+    expect(
+      within(list).getByText(nameText("ZeldaUnique Person")),
+    ).toBeVisible();
+    expect(
+      within(list).queryByText(nameText("Unrelated member")),
+    ).not.toBeInTheDocument();
+  },
+);

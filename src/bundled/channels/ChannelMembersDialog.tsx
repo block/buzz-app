@@ -864,7 +864,9 @@ export function ChannelMembersDialog({
   // Filters every roster identity using its currently available label.
   const matches = (key: string, name: string) =>
     !text ||
-    searchProfiles.has(key) ||
+    [searchProfiles.get(key)?.name, searchProfiles.get(key)?.username].some(
+      (name) => name && matchPerson(name, query),
+    ) ||
     `${name} ${key} ${npubEncode(key)}`
       .toLowerCase()
       .includes(query.trim().toLowerCase());

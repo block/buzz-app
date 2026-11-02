@@ -1179,8 +1179,7 @@ Native retains at most 1024 compact digest claims per page generation, with no
 rearming on completion, unload or grant change. Advancing the native page generation
 clears its claims; old boot/page envelopes are rejected before claim lookup and
 cannot use the freed capacity. Capacity/poison/generation exhaustion fails closed.
-Old boot/page envelopes reject after restart/reload. Fiber
-disposal blocks new cooperative calls and suppresses late success, but cannot undo
+Fiber disposal blocks new cooperative calls and suppresses late success, but cannot undo
 an admitted upstream request. An in-place fiber restart creates a fresh activation;
 old in-flight calls remain inactive. Restart must not be used to retry an unknown
 submission. This is **same-envelope host dispatch protection**,
@@ -1269,18 +1268,15 @@ files saved by its earlier revisions. It never follows links or deletes a differ
 plugin's file. Legacy files without an owner digest cannot be deleted through this
 API and retain their expiry behavior. Deleting a missing file rejects.
 
-Await attachment sends before deleting their source. Deletion refuses while any
-app-owned `host.readFile` operation or attachment `read`/`read-protected` process is
-admitted or still running. This includes blocking reads whose async waiter timed
-out and process reads until the child and output streams actually complete, even
-after a timeout/kill request. Its reader lease is acquired before the first
-native await; deletion holds that admission gate through unlink. A read admitted
-first therefore cannot lose its source mid-read. Once the reader has returned its
-byte snapshot, upload/publication no longer needs the source path. If deletion
-wins before a read is admitted, that later read fails as missing; this API does not
-reserve paths for future sends or unrelated external processes. The cross-process storage
-lock still refuses if busy; callers may retry a known in-use refusal after the
-send completes, but must not automatically retry an ambiguous deletion timeout.
+Await attachment sends before deleting their source. Deletion conservatively
+refuses app-wide while **any plugin's** `host.readFile` call or declared process
+named `read`/`read-protected` is admitted or running, regardless of its program,
+path or owner. One unrelated or stalled reader can therefore block every plugin's
+managed deletion until its actual work completes, even after an async timeout or
+kill request. A delete that wins before read admission makes that later read fail
+as missing; it does not reserve paths for future sends or other processes. Retry
+a known in-use refusal after the work completes, but never automatically retry an
+ambiguous deletion timeout.
 
 Expiry is host wall-clock save time plus 24 hours and a 30-second save window.
 Files survive normal plugin unload, disable/update and app restart. Expired files

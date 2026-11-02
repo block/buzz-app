@@ -325,8 +325,9 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     mcp: Option<ProcessMcpConnection>,
     protection: Option<ProcessProtection>,
 ) -> Result<u64, String> {
-    // App-owned attachment adapters use these two declared process IDs. Reserve
-    // before grant lookup or spawn awaits, then transfer to the actual monitor.
+    // Any plugin process with either ID conservatively blocks managed deletion
+    // app-wide, regardless of program/path. Attachment adapters use these IDs.
+    // Reserve before awaits; the actual child/output monitor owns the lease.
     let read_lease = matches!(process_id.as_str(), "read" | "read-protected")
         .then(crate::host_files::FileReadLease::new)
         .transpose()?;

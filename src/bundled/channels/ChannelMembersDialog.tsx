@@ -897,7 +897,8 @@ export function ChannelMembersDialog({
     };
   });
   // Optional profile updates change labels, not the identities being browsed.
-  // Reopening, refreshing or changing the roster takes a new paging order.
+  // Reopening or refreshing takes a new paging order. Live roster changes
+  // retain surviving identities and append new members in their current order.
   const [memberOrder, setMemberOrder] = useState({
     session,
     channelId,
@@ -906,24 +907,39 @@ export function ChannelMembersDialog({
     initialLoading,
     groups: currentGroups,
   });
-  const orderChanged =
+  const resetOrder =
     memberOrder.session !== session ||
     memberOrder.channelId !== channelId ||
-    memberOrder.memberKey !== memberKey ||
     memberOrder.refresh !== refresh ||
     memberOrder.initialLoading !== initialLoading;
-  if (largeRoster && orderChanged)
+  const previousMembers = new Set(
+    memberOrder.groups.flatMap((group) => group.keys),
+  );
+  const orderedGroups =
+    resetOrder || !largeRoster
+      ? currentGroups
+      : memberOrder.memberKey !== memberKey
+        ? memberOrder.groups.map((group) => {
+            const keys = [
+              ...group.keys.filter((key) => members.has(key)),
+              ...(
+                currentGroups.find((current) => current.name === group.name)
+                  ?.keys ?? []
+              ).filter((key) => !previousMembers.has(key)),
+            ];
+            return { ...group, keys, count: keys.length };
+          })
+        : memberOrder.groups;
+  if (resetOrder || memberOrder.memberKey !== memberKey)
     setMemberOrder({
       session,
       channelId,
       memberKey,
       refresh,
       initialLoading,
-      groups: currentGroups,
+      groups: orderedGroups,
     });
-  const groups = (
-    largeRoster && !orderChanged ? memberOrder.groups : currentGroups
-  ).map((group) => ({
+  const groups = (largeRoster ? orderedGroups : currentGroups).map((group) => ({
     ...group,
     keys: group.keys.filter((key) => matches(key, label(key))),
   }));

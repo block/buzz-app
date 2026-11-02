@@ -3401,7 +3401,6 @@ it("keeps the current member page through live removals and clamps a shortened r
   expect(within(pages()).getByText("2 of 3")).toBeVisible();
   await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
   expect(within(pages()).getByText("2 of 3")).toBeVisible();
-  const secondPageRows = rows();
   await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
   expect(within(pages()).getByText("3 of 3")).toBeVisible();
   await act(async () =>
@@ -3409,20 +3408,21 @@ it("keeps the current member page through live removals and clamps a shortened r
   );
   expect(within(pages()).getByText("2 of 2")).toBeVisible();
   expect(within(pages()).getByRole("button", { name: "Next" })).toBeDisabled();
+  const clampedRows = rows();
   await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
   expect(within(pages()).getByText("2 of 3")).toBeVisible();
   expect(rows()).toHaveLength(50);
-  expect(rows()).toEqual(secondPageRows);
+  expect(rows().slice(0, clampedRows.length)).toEqual(clampedRows);
   await t.user.click(within(pages()).getByRole("button", { name: "Previous" }));
-  const firstPageRows = rows();
   await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
   await act(async () =>
     t.replaceRoster([t.viewer.pubkey, ...keys.slice(1, 25)]),
   );
+  const shortenedRows = rows();
   await act(async () => t.replaceRoster([t.viewer.pubkey, ...keys.slice(1)]));
   expect(within(pages()).getByText("1 of 3")).toBeVisible();
   expect(rows()).toHaveLength(50);
-  expect(rows()).toEqual(firstPageRows);
+  expect(rows().slice(0, shortenedRows.length)).toEqual(shortenedRows);
 });
 
 it.each([true, false])(
@@ -3551,6 +3551,59 @@ it("keeps the visible member page and focus stable while names arrive", async ()
 const retainedMemberProfiles = Array.from({ length: 1100 }, (_, i) =>
   profile(keypair(), { name: `Member ${String(i).padStart(4, "0")}` }),
 );
+it("keeps named members in order through live roster changes", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const t = await setup("stream", false, false, undefined, undefined, {
+      memberProfiles: retainedMemberProfiles,
+      pendingMemberNames: pending,
+    });
+    const pages = screen.getByRole("navigation", {
+      name: "People member pages",
+    });
+    await t.user.click(within(pages).getByRole("button", { name: "Next" }));
+    await act(async () => release());
+    await vi.waitFor(() =>
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+    );
+    const rows = () => within(memberData()).getAllByRole("listitem");
+    const before = rows();
+    const first = before[0];
+    if (!first) throw new Error("Missing member row");
+    const focused = within(first).getAllByRole("button")[0];
+    if (!focused) throw new Error("Missing member action");
+    focused.focus();
+    const removed = retainedMemberProfiles.find(
+      (event) => !t.session.profiles.snapshot().has(event.pubkey),
+    );
+    if (!removed) throw new Error("Missing off-page member");
+    const keys = [
+      t.viewer.pubkey,
+      ...retainedMemberProfiles.map((event) => event.pubkey),
+    ];
+    await act(async () =>
+      t.replaceRoster(keys.filter((key) => key !== removed.pubkey)),
+    );
+    await vi.waitFor(() =>
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+    );
+    expect(within(pages).getByText("2 of 22")).toBeVisible();
+    expect(rows().every((row, i) => row === before[i])).toBe(true);
+    expect(focused).toHaveFocus();
+    await act(async () => t.replaceRoster(keys));
+    await vi.waitFor(() =>
+      expect(memberData()).toHaveAttribute("data-refreshing", "false"),
+    );
+    expect(rows().every((row, i) => row === before[i])).toBe(true);
+    expect(focused).toHaveFocus();
+  } finally {
+    await act(async () => release());
+  }
+});
+
 const retainedTimelineProfiles = Array.from({ length: 20 }, (_, i) =>
   profile(keypair(), { name: `Timeline ${i}` }),
 );

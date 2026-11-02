@@ -635,6 +635,8 @@ export function subscribeRelayTraffic(
   }
   /** A stop waits for manual Retry, so an earlier refusal's deadline must not revive it. */
   function stop(route: Route, reason: string) {
+    if (route.carried) broken = true;
+    delete route.carried;
     route.status = "error";
     route.error = reason;
     delete route.retryAt;
@@ -719,9 +721,9 @@ export function subscribeRelayTraffic(
       callbacks.established(route.channelIds ?? route.channelId);
   };
   /** A renewal stays quiet only while every carried route keeps continuity.
-   * Once one fails, is replaced or replays a cut window, no consumer may rely
-   * on it: report the drop the renewal hid, as after any outage, and
-   * establish every live route again. Before AUTH, the state still due
+   * Once one fails or stops, is replaced or replays a cut window, no
+   * consumer may rely on it: report the drop the renewal hid, as after any
+   * outage, and establish every live route again. Before AUTH, the state still due
    * reports the drop, and each route establishes at its own EOSE. */
   function settle() {
     if (!broken || closed) return;

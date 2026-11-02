@@ -3923,6 +3923,39 @@ it.each(["complete", "cut", "closed", "renewed"] as const)(
     }
   },
 );
+it("ends a renewal's quiet state when a cooldown stops unsent carried routes", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    // Singleton routes, so setup concurrency leaves b and c unsent.
+    h.owner.update(["a", "b", "c"]);
+    h.owner.watchPresence?.([keypair().pubkey]);
+    await establish(h.first);
+    // Setup concurrency sent b and c only after earlier routes went live.
+    for (const request of h.first.requests().slice(-2))
+      await h.first.receive(["EOSE", request[1]]);
+    renew(h.first);
+    const second = h.sockets[1];
+    assert.exists(second);
+    await second.auth();
+    const presence = second
+      .requests()
+      .find((r) => (r[2] as { kinds?: number[] }).kinds?.[0] === 20001);
+    assert.exists(presence);
+    h.callbacks.state.mockClear();
+    await second.receive([
+      "CLOSED",
+      presence[1],
+      "rate-limited: quota exceeded; retry in 120s",
+    ]);
+    // Presence carries nothing, but the carried routes it stopped lost continuity.
+    expect(
+      h.callbacks.state.mock.calls.map(([state]) => state.status),
+    ).toContain("connecting");
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("ends a renewal's quiet state when an interest change replaces a carried batch", async () => {
   vi.useFakeTimers();
   const h = setup([]);

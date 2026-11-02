@@ -992,7 +992,6 @@ it.each(["pending", "unavailable"] as const)(
     );
     expect(name).toHaveValue("Keep this draft");
   },
-  15_000,
 );
 
 it("drops the retained draft after an accepted departure to another account's unavailable Settings", async () => {

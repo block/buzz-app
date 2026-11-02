@@ -70,6 +70,9 @@ export function createProfileDirectory(
   let snapshot: ReadonlyMap<string, Profile> = new Map();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
   let unnamed: ReadonlySet<string> = new Set();
+  // Absences this connection has read. Background enrichment does not
+  // reread them: the live profiles route delivers a later kind 0.
+  const absent = new Set<string>();
   // Keys with kind-0 metadata. A verified-only overlay must not satisfy ensure.
   let loaded: ReadonlySet<string> = new Set();
   let controller = new AbortController();
@@ -203,6 +206,11 @@ export function createProfileDirectory(
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
   function missed(ids: readonly string[]) {
+    for (const id of ids) if (!loaded.has(id)) absent.add(id);
+    for (const id of absent) {
+      if (absent.size <= 1024) break;
+      absent.delete(id);
+    }
     const fresh = ids.filter((id) => !snapshot.has(id) && !unnamed.has(id));
     if (!fresh.length) return;
     unnamed = new Set([...unnamed, ...fresh].slice(-1024));
@@ -240,7 +248,11 @@ export function createProfileDirectory(
         }
         waiting.add(batch.work);
       }
-      return !batch && (refresh || !loaded.has(id));
+      return (
+        !batch &&
+        (refresh ||
+          !(loaded.has(id) || (priority === "background" && absent.has(id))))
+      );
     });
     for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {
       const authors = missing.slice(offset, offset + PROFILE_PAGE);
@@ -288,6 +300,7 @@ export function createProfileDirectory(
     controller.abort();
     controller = new AbortController();
     pending.clear();
+    absent.clear();
     events.clear();
     verified?.clear();
     unnamed = new Set();
@@ -339,6 +352,8 @@ export function createProfileDirectory(
       controller.abort();
       controller = new AbortController();
       pending.clear();
+      // A kind 0 published while offline was not delivered live.
+      absent.clear();
       return ensure(ids, "background", true);
     },
     event: (id: string) => events.peek(id),

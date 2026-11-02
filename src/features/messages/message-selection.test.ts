@@ -80,6 +80,16 @@ it("selects the newest message's box and reports it as selected", () => {
   expect(selectNewestMessage(document.createElement("section"))).toBe(false);
 });
 
+it("selects the newest message by id when tree order puts an older sibling last", () => {
+  // An expanded branch renders its newer reply above a later, older sibling.
+  const { list, box } = fixture(
+    ["root", "newer-reply", "older-sibling"],
+    "newer-reply",
+  );
+  expect(selectNewestMessage(list)).toBe(true);
+  expect(document.activeElement).toBe(box("newer-reply"));
+});
+
 it("treats only the message itself as selected, not a control inside it", () => {
   const { list } = fixture();
   selectNewestMessage(list);

@@ -78,10 +78,16 @@ function showsNewest(list: HTMLElement) {
   );
 }
 
-/** Selects the newest message; false when it isn't rendered or there is none. */
+/**
+ * Selects the newest message by identity, since a nested thread's tree order
+ * can put an older sibling last; false when it isn't rendered or there is none.
+ */
 export function selectNewestMessage(list: HTMLElement | null | undefined) {
   if (!list?.isConnected || !showsNewest(list)) return false;
-  const row = rowsIn(list).at(-1);
+  const rows = rowsIn(list);
+  const newest = lists.get(list)?.newest();
+  const row =
+    rows.find((row) => row.dataset.messageId === newest) ?? rows.at(-1);
   if (!row) return false;
   selectMessage(row);
   return true;

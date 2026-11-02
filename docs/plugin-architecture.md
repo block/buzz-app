@@ -2191,7 +2191,7 @@ No plugin shortcut API or preference access is added. Ordinary editors continue
 to handle keys before the window's bubbling dispatcher.
 
 Slack-style message keys are host bindings. In an empty composer, Up selects the
-newest message of the timeline or thread sharing its edit scope (on macOS ⌘↑ keeps editing
+newest message (by id, not tree order) of the timeline or thread sharing its edit scope (on macOS ⌘↑ keeps editing
 the latest own message directly; elsewhere use Up, then E); a selection is
 DOM focus on that message's box (`features/messages/message-selection.ts`), so
 the timeline's Virtua keeps the row mounted and assistive technology follows it.
@@ -2204,7 +2204,7 @@ composer keeps its old edit-last behavior, Down at the last rendered row scrolls
 natively, and ⌘⇧\ does nothing rather than act on an older message. E edits a selected eligible own message through the scope's
 editor, R opens the row's reaction picker through the host-owned
 `[data-reaction-tool]` trigger, and ⌘⇧\ selects the newest message in the focused
-pane and does the same. T or → clicks the row's Reply action (open or answer its
+pane, even from another selected message, and does the same. T or → clicks the row's Reply action (open or answer its
 thread), U marks unread from it (`useMessageKeyActions` in `MessageManagement.tsx`,
 the menu's own call), and Delete or Backspace opens the menu's delete confirmation
 for your own message; agent-owner deletion stays in the menu because it needs

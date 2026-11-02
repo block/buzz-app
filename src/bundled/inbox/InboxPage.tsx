@@ -346,7 +346,14 @@ function InboxList({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new presentation applies its route; later filter edits are the user's.
   useEffect(() => {
     const route = routeOf(navigation?.target);
-    if (!navigation || !route || appliedRoutes.has(navigation)) return;
+    // Back/Forward returns to the view as the user left it, not the opening filters.
+    if (
+      !navigation ||
+      !route ||
+      navigation.traversal ||
+      appliedRoutes.has(navigation)
+    )
+      return;
     appliedRoutes.add(navigation);
     setFilter({ show: "inbox", ...route });
     setDrafts(false);

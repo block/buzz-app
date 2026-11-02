@@ -305,10 +305,10 @@ function registerMessageShortcuts(shortcuts: ShortcutsService) {
       ],
       order: HOST_SHORTCUT_ORDER.reactToLatest,
       allowInEditable: true,
-      when: () => !!selectedMessage() || !!activeMessageList(),
+      when: () => !!activeMessageList(),
       run: async () => {
-        if (!selectedMessage() && !selectNewestMessage(activeMessageList()))
-          return;
+        // Always the latest, even from another selected message; R reacts to that.
+        if (!selectNewestMessage(activeMessageList())) return;
         await openReactionPicker();
       },
     }),

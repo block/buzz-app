@@ -2298,6 +2298,19 @@ it("re-applies a repeated shortcut open after the filters were changed by hand",
   expect(savedFilters(h)).toMatchObject({ activity: "threads" });
 });
 
+it("Back/Forward to a shortcut visit keeps the filters chosen since", async () => {
+  const h = fixture({ withDm: true });
+  const view = render(viewAt(h, visit({ activity: "threads" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Threads"));
+  await chooseFilter("Mentions");
+  // Traversal presents the visit as a new object carrying the same address.
+  view.rerender(
+    viewAt(h, { ...visit({ activity: "threads" }), traversal: true }),
+  );
+  expect(filterSummary()).toHaveTextContent("Mentions");
+  expect(savedFilters(h)).toMatchObject({ activity: "mentions" });
+});
+
 it("a shortcut open leaves the Drafts view", async () => {
   const h = fixture();
   const view = render(viewAt(h, visit()));

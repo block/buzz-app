@@ -86,3 +86,34 @@ it("leaves Delete alone on someone else's message and without a selection", () =
   expect(press("u")).toBe(false);
   expect(controller.markUnread).not.toHaveBeenCalled();
 });
+
+it("reacts to the latest message even while an older one is selected", () => {
+  const { reply } = setup(true);
+  const list = document.querySelector("section");
+  const older = document.createElement("div");
+  older.dataset.messageId = "older";
+  older.innerHTML =
+    '<div data-layout="timeline">Older<div role="group"><span data-reaction-tool>' +
+    '<button aria-haspopup="dialog">React</button></span></div></div>';
+  list?.prepend(older);
+  const latest = document.createElement("span");
+  latest.dataset.reactionTool = "";
+  latest.innerHTML = '<button aria-haspopup="dialog">React</button>';
+  list?.querySelector('[data-message-id="one"] [role="group"]')?.append(latest);
+  const reactions = { older: vi.fn(), latest: vi.fn() };
+  older.querySelector("button")?.addEventListener("click", reactions.older);
+  latest.querySelector("button")?.addEventListener("click", reactions.latest);
+  selectMessage(older);
+  const event = new KeyboardEvent("keydown", {
+    key: "|",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  document.activeElement?.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(reactions.latest).toHaveBeenCalledTimes(1);
+  expect(reactions.older).not.toHaveBeenCalled();
+  expect(reply).not.toHaveBeenCalled();
+});

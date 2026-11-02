@@ -558,35 +558,57 @@ it("finishes a profile read that was in flight when another channel's access end
   );
 });
 
-it("a denied channel list purges every profile copy, since the community may refuse the viewer", async () => {
+it("a denied channel list keeps names and finishes a profile read in flight", async () => {
   const h = setup();
   h.emit(["a", "b"].map((id) => roster(relay, id, [viewer.pubkey], 10)));
   const name = profile(alice, { name: "Alice" });
   h.emit([name]);
   const view = h.session.observe([{ kinds: [0], limit: 20 }]);
   expect(view.snapshot().events.map((e) => e.id)).toEqual([name.id]);
-  // A public profile read in flight across the denial must not refill names.
-  const read = h.session
-    .read([{ kinds: [0], authors: [alice.pubkey], limit: 1 }])
-    .catch((error: unknown) => error);
-  const held = h.pending.find(
-    (r) => r.filters[0]?.authors?.[0] === alice.pubkey,
-  );
+  const read = h.session.read([
+    { kinds: [0], authors: [bob.pubkey], limit: 1 },
+  ]);
+  const held = h.pending.find((r) => r.filters[0]?.authors?.[0] === bob.pubkey);
   assert(held);
   h.session.channels.refreshList?.();
   const list = h.pending.find((r) => r !== held && !r.filters[0]?.authors);
   assert(list);
   list.fail(new Error("Relay read failed (403)"));
-  await vi.waitFor(() => expect(h.session.profiles.snapshot().size).toBe(0));
-  expect(held.signal?.aborted).toBe(true);
-  held.respond([name]);
+  await vi.waitFor(() =>
+    expect(h.session.channels.list().status).toBe("error"),
+  );
+  // Profiles do not depend on channels, so even a denied list leaves them.
+  expect(held.signal?.aborted).toBe(false);
+  const bobName = profile(bob, { name: "Bob" });
+  held.respond([bobName]);
+  expect((await read).map((e) => e.id)).toEqual([bobName.id]);
+  const names = h.session.profiles.snapshot();
+  expect(names.get(alice.pubkey)?.name).toBe("Alice");
+  expect(names.get(bob.pubkey)?.name).toBe("Bob");
+  expect(view.snapshot().events.map((e) => e.id)).toContain(name.id);
+});
+
+it("a full cache clear still fences a profile read whose response already arrived", async () => {
+  const h = setup();
+  const read = h.session
+    .readPage([{ kinds: [0], authors: [alice.pubkey], limit: 1 }])
+    .catch((error: unknown) => error);
+  const held = h.pending.find(
+    (r) => r.filters[0]?.authors?.[0] === alice.pubkey,
+  );
+  assert(held);
+  // Clear after the transport answered but before the public read settles.
+  let clearing: Promise<void> | undefined;
+  const stop = h.session.profiles.subscribe(() => {
+    if (!clearing && h.session.profiles.snapshot().has(alice.pubkey))
+      clearing = h.clearCache();
+  });
+  held.respond([profile(alice, { name: "Alice" })]);
   expect(await read).toHaveProperty("name", "AbortError");
-  await flush();
+  stop();
+  assert(clearing);
+  await clearing;
   expect(h.session.profiles.snapshot().size).toBe(0);
-  expect(view.snapshot().events).toEqual([]);
-  expect(
-    h.session.observe([{ kinds: [0], limit: 20 }]).snapshot().events,
-  ).toEqual([]);
 });
 
 it("a denied channel read keeps names", async () => {

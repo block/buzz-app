@@ -172,13 +172,7 @@ export function createChannelStore(
         archiveAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
         /** `ids` names the channels that lost access when known; omitted means any. */
-        /** `community` means the viewer may have lost the community itself, so
-         * global profiles are no longer readable and are purged too. */
-        revokeAccess(
-          commit: () => void,
-          ids?: readonly string[],
-          options?: { community?: boolean },
-        ): void;
+        revokeAccess(commit: () => void, ids?: readonly string[]): void;
         /** A complete roster read applied. A replica can lag, so a channel it
          * left out may still list the viewer; `unlisted` asks the writer. */
         rosterComplete?(): void;
@@ -1678,29 +1672,23 @@ export function createChannelStore(
         listRetryAt = performance.now() + error.retryAfterMs;
       if (denyAllOnFailure && readErrorKind(error) === "denied") {
         discovery.denyAll();
-        transport.revokeAccess(
-          () => {
-            for (const id of allowed ?? [])
-              accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
-            allowed = new Set();
-            for (const state of [...windows.values()]) evict(state);
-            heads.clear();
-            tails.clear();
-            clearTimeout(discoverySave);
-            discoverySave = undefined;
-            void persistence?.clear().catch(() => {});
-            setList({
-              status: "error",
-              channels: Object.freeze([]),
-              coverage: "partial",
-              error: describe(error),
-            });
-            // A denied channel list can mean the community refused the viewer,
-            // and then its profiles are no longer readable either.
-          },
-          undefined,
-          { community: true },
-        );
+        transport.revokeAccess(() => {
+          for (const id of allowed ?? [])
+            accessVersions.set(id, (accessVersions.get(id) ?? 0) + 1);
+          allowed = new Set();
+          for (const state of [...windows.values()]) evict(state);
+          heads.clear();
+          tails.clear();
+          clearTimeout(discoverySave);
+          discoverySave = undefined;
+          void persistence?.clear().catch(() => {});
+          setList({
+            status: "error",
+            channels: Object.freeze([]),
+            coverage: "partial",
+            error: describe(error),
+          });
+        });
       } else {
         // Failed names do not discard successful membership authority.
         if (!readingRoster) applyDiscovery([]);

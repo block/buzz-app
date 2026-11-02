@@ -1244,10 +1244,10 @@ in-place recovery, denial-by-omission and both document themes in Chromium/WebKi
 
 Access-loss purges remove channel content, not profiles. A kind 0 profile is a
 global relay event that any community member can read, so a lost channel does not
-make a name private; the profile directory keeps it. A denied channel list can
-mean the community refused the viewer, so that path purges every profile copy and
-cancels profile reads. A full cache clear (logout, community or scope change)
-still empties the directory. After roster membership
+make a name private; the profile directory keeps it, and a profile read in
+flight finishes. This holds for a denied channel list too: profiles do not
+depend on channels. Only a full cache clear (logout, community or scope change)
+empties the directory. After roster membership
 changes, visible DMs must reacquire missing names through the shared profile
 directory at background priority, without blocking conversation opening. Recovery
 must cover both a cleared directory and an initial profile read being cancelled

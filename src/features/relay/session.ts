@@ -141,9 +141,8 @@ export type EventViewSnapshot = Readonly<{
 }>;
 
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
-/** A read of named authors' profiles only. Kind 0 is a global relay event that
- * any community member can read, so a channel access change cannot stale it.
- * Losing the whole community can: see revokeAccess's `community` option. */
+/** A read of named authors' profiles only. Profiles do not depend on channels,
+ * so no channel access change, including a denied channel list, can stale it. */
 function isProfileFilter(filter: ReadFilter) {
   return (
     filter.kinds?.length === 1 &&
@@ -153,6 +152,11 @@ function isProfileFilter(filter: ReadFilter) {
       ["kinds", "authors", "limit"].includes(key),
     )
   );
+}
+
+/** Every filter reads profiles only: see isProfileFilter. */
+function isProfileRead(filters: readonly ReadFilter[]) {
+  return filters.length > 0 && filters.every(isProfileFilter);
 }
 
 export function createRelaySession(
@@ -225,8 +229,6 @@ export function createRelaySession(
   }
   let revision = 0;
   let accessEpoch = 0;
-  /** Bumped when the viewer may have lost the community; it stales profile reads. */
-  let profileEpoch = 0;
   let cacheClearEpoch = 0;
   let cacheClearing = 0;
   // Access changes update every owned snapshot before invoking subscribers.
@@ -257,10 +259,7 @@ export function createRelaySession(
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
-  const views = new Map<
-    () => void,
-    (clear?: boolean, community?: boolean) => void
-  >();
+  const views = new Map<() => void, (clear?: boolean) => void>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
   const writer = transport?.writer;
   const clock = new MessageClock();
@@ -386,15 +385,17 @@ export function createRelaySession(
   const localViews = writes
     ? { snapshot: local, subscribe: writes.local.subscribe }
     : undefined;
-  function revokeAccess(
-    commit: () => void,
-    ids?: readonly string[],
-    { community = false }: { community?: boolean } = {},
+  /** A profile read survives a channel access change, never a full cache clear. */
+  function profileReadSurvives(
+    filters: readonly ReadFilter[],
+    cleared: number,
   ) {
+    return isProfileRead(filters) && cleared === cacheClearEpoch;
+  }
+  function revokeAccess(commit: () => void, ids?: readonly string[]) {
     revoking++;
     try {
       accessEpoch++;
-      if (community) profileEpoch++;
       cancelUploads();
       // Lifecycle work is keyed by channel and rechecks access after every
       // read; with known ids, other channels' permission reads need not die.
@@ -404,24 +405,19 @@ export function createRelaySession(
       typing.clear();
       // Saved owner inventory and profiles do not depend on channel access.
       // Preserve only those narrow reads; broad, mixed, ID and channel reads
-      // must still retire. Losing the community retires profile reads too.
+      // must still retire.
       const retired = (filters: readonly ReadFilter[]) =>
         !filters.length ||
         filters.some(
           (filter) =>
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
-            (community || !isProfileFilter(filter)),
+            !isProfileFilter(filter),
         );
       requests.invalidate(retired);
       retireBackoffs(retired);
-      const channelVisible = visibility();
+      const visible = visibility();
       // Profiles (kind 0) are global: any community member can read any of
-      // them, so losing a channel does not make a name private. They stay,
-      // unless the viewer may have lost the community itself.
-      const visible = community
-        ? (event: Parameters<typeof channelVisible>[0]) =>
-            event.kind !== 0 && channelVisible(event)
-        : channelVisible;
+      // them, so losing a channel does not make a name private. They stay.
       const revoked = recent
         .entries()
         .flatMap(([id, { event }]) => (!visible(event) ? [id] : []));
@@ -429,7 +425,6 @@ export function createRelaySession(
       for (const id of revoked) recent.delete(id);
       channels.purgeAccess((events) => events.filter(visibility(events)));
       writes?.purgeConfirmed(visible);
-      if (community) profiles.clear();
       emoji.clear();
       statuses.clear();
       activity.accessChanged();
@@ -439,7 +434,7 @@ export function createRelaySession(
       activityRosterKey = undefined;
       archives.clear();
       workflows.clear();
-      for (const purge of views.values()) purge(false, community);
+      for (const purge of views.values()) purge();
       // The relay reapplies access to a new sync; nothing held survives.
       for (const view of artifactSyncs) view.restart();
       commit();
@@ -615,7 +610,7 @@ export function createRelaySession(
       aborted?.throwIfAborted();
     }
     const epoch = accessEpoch;
-    const profileAt = profileEpoch;
+    const cleared = cacheClearEpoch;
     let events: readonly RelayEvent[];
     try {
       events = await requests.reader.read(filters, settings);
@@ -636,11 +631,10 @@ export function createRelaySession(
         channels.denyChannel(id, error);
       throw error;
     }
-    // A profile read stays valid across a channel access change; see isProfileFilter.
+    // A profile read stays valid across an access change; see isProfileFilter.
     if (
       closed ||
-      profileAt !== profileEpoch ||
-      (epoch !== accessEpoch && !filters.every(isProfileFilter))
+      (epoch !== accessEpoch && !profileReadSurvives(filters, cleared))
     )
       throw new DOMException("Stale relay read", "AbortError");
     const relayCount = events.length;
@@ -714,8 +708,12 @@ export function createRelaySession(
         "Reconnect to refresh conversation access.",
       );
     const epoch = accessEpoch;
+    const cleared = cacheClearEpoch;
     const events = await requests.reader.read(filters, settings);
-    if (closed || epoch !== accessEpoch)
+    if (
+      closed ||
+      (epoch !== accessEpoch && !profileReadSurvives(filters, cleared))
+    )
       throw new DOMException("Stale relay read", "AbortError");
     return events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
   }
@@ -2562,6 +2560,7 @@ export function createRelaySession(
      * merging live observations or local outbox intent into paging evidence. */
     async readRemote(filters: readonly ReadFilter[], settings?: ReadOptions) {
       const epoch = accessEpoch;
+      const cleared = cacheClearEpoch;
       const signal = settings?.signal
         ? AbortSignal.any([settings.signal, lifetime.signal])
         : lifetime.signal;
@@ -2573,7 +2572,8 @@ export function createRelaySession(
       );
       signal.throwIfAborted();
       // Applying discovery can revoke access itself. As with read(), let
-      // authority-only reads finish; mixed/content reads must remain fenced.
+      // authority-only and profile reads finish; mixed/content reads must
+      // remain fenced.
       const discoveryOnly =
         filters.length > 0 &&
         filters.every(
@@ -2581,7 +2581,12 @@ export function createRelaySession(
             !!filter.kinds?.length &&
             filter.kinds.every((kind) => [39000, 39002].includes(kind)),
         );
-      if (closed || (epoch !== accessEpoch && !discoveryOnly))
+      if (
+        closed ||
+        (epoch !== accessEpoch &&
+          !discoveryOnly &&
+          !profileReadSurvives(filters, cleared))
+      )
         throw new DOMException("Stale relay read", "AbortError");
       return result;
     },
@@ -2595,6 +2600,7 @@ export function createRelaySession(
     ): Promise<{ events: readonly VisibleEvent[]; relayCount: number }> {
       const began = revision;
       const epoch = accessEpoch;
+      const cleared = cacheClearEpoch;
       const { events: result, relayCount } = await finiteRead(
         filters,
         settings,
@@ -2604,8 +2610,9 @@ export function createRelaySession(
           }),
       );
       // Applying discovery can itself revoke access. Let that authority-only
-      // read finish under current visibility; content/search completions must
-      // still be fenced, including mixed discovery + content requests.
+      // read, or a profile read, finish under current visibility;
+      // content/search completions must still be fenced, including mixed
+      // discovery + content requests.
       const discoveryOnly =
         filters.length > 0 &&
         filters.every(
@@ -2613,7 +2620,12 @@ export function createRelaySession(
             !!filter.kinds?.length &&
             filter.kinds.every((kind) => [39000, 39002].includes(kind)),
         );
-      if (closed || (epoch !== accessEpoch && !discoveryOnly))
+      if (
+        closed ||
+        (epoch !== accessEpoch &&
+          !discoveryOnly &&
+          !profileReadSurvives(filters, cleared))
+      )
         throw new DOMException("Stale relay read", "AbortError");
       const merged = new Map(result.map((event) => [event.id, event]));
       for (const [id, observation] of recent.entries()) {
@@ -2795,15 +2807,11 @@ export function createRelaySession(
         views.delete(dispose);
         refreshers.delete(view.refresh);
       };
-      views.set(dispose, (clear = false, community = false) => {
+      views.set(dispose, (clear = false) => {
         controller?.abort();
         controller = undefined;
         const visible = visibility(remote);
-        remote = clear
-          ? []
-          : remote.filter(
-              (event) => (!community || event.kind !== 0) && visible(event),
-            );
+        remote = clear ? [] : remote.filter(visible);
         update({ status: "idle", error: undefined });
       });
       const view = {

@@ -329,7 +329,7 @@ fn managed_agent_deletion_is_owner_only_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -410,7 +410,7 @@ async fn catalog_signing_admits_maximum_escaped_content_through_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -524,7 +524,7 @@ fn isolated_agent_ipc_probe() {
     let spools = tempfile::tempdir().unwrap();
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .manage(Uploads::default())
         .manage(Spools::new(Ok(spools.path().to_owned())))
         .manage(crate::archive::ArchiveHost::default())
@@ -887,7 +887,7 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1134,7 +1134,7 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1194,7 +1194,7 @@ fn channel_commands_sign_archive_and_unarchive_and_reject_malformed_tags_through
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1252,7 +1252,7 @@ fn creation_rejects_truncated_tags_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -3611,7 +3611,7 @@ fn member_commands_sign_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
-        .manage(FederatedIdentity::new().unwrap())
+        .manage(FederatedIdentity::unconfigured())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();

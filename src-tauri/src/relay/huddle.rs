@@ -620,7 +620,7 @@ mod tests {
         let updates = Channel::new(|_| panic!("Cancelled admission must not connect"));
         let (stop, cancelled) = watch::channel(false);
         let (_pcm, receiver) = mpsc::channel(1);
-        let fi = FederatedIdentity::new().unwrap();
+        let fi = FederatedIdentity::unconfigured();
         let pending = run(
             &host,
             &fi,
@@ -707,7 +707,7 @@ mod tests {
         let viewer = "ab".repeat(32);
         let result = publish(
             &host,
-            &FederatedIdentity::new().unwrap(),
+            &FederatedIdentity::unconfigured(),
             "https://relay.test",
             confirm_member("room", &viewer),
             &viewer,

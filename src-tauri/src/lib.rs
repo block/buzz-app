@@ -1299,7 +1299,7 @@ mod tests {
         let app = tauri::test::mock_builder()
             .manage(super::Imports::default())
             .manage(super::IdentityHost::default())
-            .manage(super::federated_identity::FederatedIdentity::new().unwrap())
+            .manage(super::federated_identity::FederatedIdentity::unconfigured())
             .manage(super::PluginManager(Err("No plugin storage".into())))
             .build(super::app_context())
             .unwrap();

@@ -1213,3 +1213,19 @@ it("reader input retires a loading saved row, so a dwell at the latest message c
     vi.useRealTimers();
   }
 });
+
+it("a wheel at the bottom that cannot scroll still retires a loading saved row, so the next dwell catches up", async () => {
+  try {
+    const h = await pendingReader();
+    expect(h.catchUp).not.toHaveBeenCalled();
+    // The reader is already at the end: the wheel moves nothing and emits no
+    // scroll event, so only the retired restore can wake the dwell.
+    fireEvent.wheel(h.history, { deltaY: 100 });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(h.catchUp).toHaveBeenCalledWith("latest", undefined);
+  } finally {
+    vi.useRealTimers();
+  }
+});

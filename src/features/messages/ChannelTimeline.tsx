@@ -1048,11 +1048,15 @@ function Timeline({
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
   const gesture = (upward = false) => {
+    const restoring = pendingRestore.current === intent.current;
     restoredAnchor.current = undefined;
     layoutCorrection.current = false;
     intent.current++;
     userScrolled.current = true;
     if (scroller.current) recordPosition(scroller.current);
+    // Retiring a pending restore lets the bottom be caught up. Wake dwell: a
+    // wheel or touch at the end cannot scroll, so nothing else would.
+    if (restoring) readingPositioned(scroller.current);
     upwardGesture.current = upward ? "candidate" : false;
     if (gestureFrame.current !== undefined)
       cancelAnimationFrame(gestureFrame.current);

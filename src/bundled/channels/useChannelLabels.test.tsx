@@ -48,15 +48,13 @@ function container() {
 afterEach(() => vi.unstubAllGlobals());
 
 it.each([
-  { outcome: "found", loaded: true },
-  { outcome: "missing", loaded: true },
-  { outcome: "failed", loaded: true },
-  { outcome: "found", loaded: false },
-  { outcome: "found", loaded: false, hidden: true },
-  { outcome: "found", loaded: false, archived: true },
+  { loaded: true },
+  { loaded: false },
+  { loaded: false, hidden: true },
+  { loaded: false, archived: true },
 ])(
-  "reloads surviving DM names after authoritative channel deletion clears profiles (%s)",
-  async ({ outcome, loaded, hidden, archived }) => {
+  "keeps surviving DM names after authoritative channel deletion (%s)",
+  async ({ loaded, hidden, archived }) => {
     const relay = keypair(),
       viewer = keypair(),
       alice = keypair();
@@ -118,20 +116,16 @@ it.each([
         { kinds: [0], authors: [alice.pubkey], limit: 500 },
       ]);
       const initial = wire.next();
+      const alicePicture = profile(alice, {
+        display_name: "Alice",
+        picture: "https://example.com/alice.png",
+      });
       if (loaded) {
         await act(async () => {
-          initial.respond([
-            profile(alice, {
-              display_name: "Alice",
-              picture: "https://example.com/alice.png",
-            }),
-          ]);
+          initial.respond([alicePicture]);
           await flush();
         });
         expect(labels.find((row) => row.id === "dm")?.name).toBe("Alice");
-        expect(selectedProfiles.get(alice.pubkey)?.picture).toBe(
-          "https://example.com/alice.png",
-        );
       }
       expect(wire.pending).toHaveLength(0);
       // Exercise the actual complete-roster omission -> session purge. Do not
@@ -142,35 +136,21 @@ it.each([
         await flush();
       });
       if (!loaded) {
-        expect(initial.signal?.aborted).toBe(true);
+        // Kind 0 is global: losing a channel does not cancel a name read.
+        expect(initial.signal?.aborted).toBe(false);
         await act(async () => {
-          initial.respond([profile(alice, { display_name: "Stale" })]);
+          initial.respond([alicePicture]);
           await flush();
         });
       }
       expect(labels.map((row) => row.id)).toEqual(["dm"]);
-      expect(owner.session.profiles.snapshot().has(alice.pubkey)).toBe(false);
-      expect(selectedProfiles.has(alice.pubkey)).toBe(false);
-      expect(labels[0]?.name).toBe(alice.pubkey.slice(0, 10));
-      expect(wire.pending).toHaveLength(1);
-      expect(wire.pending[0]?.filters).toEqual([
-        { kinds: [0], authors: [alice.pubkey], limit: 500 },
-      ]);
-      await act(async () => {
-        const read = wire.next();
-        if (outcome === "failed") read.fail(new Error("offline"));
-        else
-          read.respond(
-            outcome === "found"
-              ? [profile(alice, { display_name: "Alice fresh" }, 1_700_000_001)]
-              : [],
-          );
-        await flush();
-      });
-      expect(labels[0]?.name).toBe(
-        outcome === "found" ? "Alice fresh" : alice.pubkey.slice(0, 10),
+      expect(owner.session.profiles.snapshot().has(alice.pubkey)).toBe(true);
+      expect(labels[0]?.name).toBe("Alice");
+      expect(selectedProfiles.get(alice.pubkey)?.picture).toBe(
+        "https://example.com/alice.png",
       );
-      // Unrelated renders and empty/failed results must not cause a request loop.
+      expect(wire.pending).toHaveLength(0);
+      // Unrelated renders must not cause a request loop.
       await act(async () => {
         incoming([message(viewer, "dm", "ordinary traffic", 1_700_000_002)]);
         await flush();

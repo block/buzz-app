@@ -1242,16 +1242,20 @@ in-place recovery, denial-by-omission and both document themes in Chromium/WebKi
 
 ## DM label recovery invariant
 
-Access-loss purges remain authoritative: never keep old profiles just to preserve
-sidebar names. After roster membership changes, visible DMs must reacquire their
-missing names through the shared profile directory at background priority, without
-blocking conversation opening. Recovery must cover both loaded profiles being
-purged and an initial profile read being cancelled before any name arrives.
+Access-loss purges remove channel content, not profiles. A kind 0 profile is a
+global relay event that any community member can read, so a lost channel does not
+make a name private; the profile directory keeps it. A denied channel list can
+mean the community refused the viewer, so that path purges every profile copy and
+cancels profile reads. A full cache clear (logout, community or scope change)
+still empties the directory. After roster membership
+changes, visible DMs must reacquire missing names through the shared profile
+directory at background priority, without blocking conversation opening. Recovery
+must cover both a cleared directory and an initial profile read being cancelled
+before any name arrives.
 
 `ChannelsPage` passes the **full** roster to `useChannelLabels`; the hook filters
 visible conversations for display/profile demand, but derives its recovery trigger
-from all channel IDs. Deleting an already-hidden or archived channel can still
-invalidate shared profiles. Missing-profile and membership keys remain stable on
+from all channel IDs. Missing-profile and membership keys remain stable on
 ordinary message/preview updates: missing/failed responses must not start a
 render-driven request loop. Key fragments remain the fallback for unavailable names.
 

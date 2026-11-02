@@ -1203,9 +1203,14 @@ builds the multipart boundary and body in native code. It requires only the exac
 HTTPS origin in `host.networkOrigins`: neither `host.files` nor
 `host.managedFiles` is needed, and no path is accepted. URL credentials, caller
 headers, cookies, redirects, and HTTP client retries are not permitted. Text
-fields are optional (at most 16, each value at most 8 KiB); field names, filename,
-and content type must be nonempty printable ASCII without spaces, quotes or
-backslashes, at most 256 bytes each. The full ASCII-escaped IPC metadata, including
+fields are optional (at most 16 string values, each at most 8 KiB in UTF-8).
+The filename and all form names must be 1–256 ASCII bytes containing only letters,
+digits, dots, underscores or hyphens, with no leading dot. A filename is a single
+name, never a path; separators, control characters and dotfiles are refused.
+`contentType` must be exactly `image/png`, `image/jpeg` or `image/webp`, and native
+magic-byte sniffing must match that declaration. This signature check is not a
+full image decode or a guarantee that downstream image processing is safe.
+The full ASCII-escaped IPC metadata, including
 the authority envelope, is bounded to 16 KiB. The frontend reserves 512 bytes for
 that envelope. Unicode text values are preserved.
 

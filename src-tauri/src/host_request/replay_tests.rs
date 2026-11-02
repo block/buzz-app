@@ -557,6 +557,8 @@ async fn deadline_and_cancellation_do_not_rearm_a_consumed_transport_call() {
     }
 }
 
+const PNG_UPLOAD: &[u8] = b"\x89PNG\r\n\x1a\n\0\x9f\xff";
+
 fn upload_metadata(fixture: &App, once: &Once, url: &str) -> serde_json::Value {
     serde_json::json!({"id":"example.replay","revision":fixture.revision,
         "once":once,"upload":{"url":url,"field":"image","name":"image.png",
@@ -602,7 +604,7 @@ fn upload_raw_ipc_consumes_once_without_files_and_binds_bytes_and_metadata() {
         drop(listener.accept().unwrap());
         listener
     });
-    let raw = || tauri::ipc::InvokeBody::Raw(vec![0, 159, 255]);
+    let raw = || tauri::ipc::InvokeBody::Raw(PNG_UPLOAD.to_vec());
     assert!(upload_ipc(&fixture, &metadata, raw())
         .unwrap_err()
         .contains("Host request failed"));
@@ -610,12 +612,14 @@ fn upload_raw_ipc_consumes_once_without_files_and_binds_bytes_and_metadata() {
     assert!(upload_ipc(&fixture, &metadata, raw())
         .unwrap_err()
         .contains("already consumed"));
-    assert!(
-        upload_ipc(&fixture, &metadata, tauri::ipc::InvokeBody::Raw(vec![1]))
-            .unwrap_err()
-            .contains("payload conflict")
-    );
-    for key in ["url", "field", "name", "contentType", "fields"] {
+    assert!(upload_ipc(
+        &fixture,
+        &metadata,
+        tauri::ipc::InvokeBody::Raw([PNG_UPLOAD, b"changed"].concat())
+    )
+    .unwrap_err()
+    .contains("payload conflict"));
+    for key in ["url", "field", "name", "fields"] {
         let mut changed = metadata.clone();
         if key == "fields" {
             changed["upload"][key]["label"] = "changed".into();
@@ -652,7 +656,13 @@ fn upload_ipc_rejects_invalid_data_and_authority_before_consuming() {
     let fixture = App::new("https://example.test");
     let calls = fixture.app.state::<HostCalls>();
     let metadata = upload_metadata(&fixture, &envelope(&calls), "https://example.test/upload");
-    for bytes in [vec![], vec![0; MAX_RESPONSE_BYTES + 1]] {
+    for bytes in [
+        vec![],
+        vec![0; MAX_RESPONSE_BYTES + 1],
+        b"not an image".to_vec(),
+        b"\xff\xd8\xff\xe0".to_vec(),
+        b"RIFF\x04\0\0\0WEBP".to_vec(),
+    ] {
         assert!(upload_ipc(&fixture, &metadata, tauri::ipc::InvokeBody::Raw(bytes)).is_err());
     }
     for (path, value) in [
@@ -667,6 +677,41 @@ fn upload_ipc_rejects_invalid_data_and_authority_before_consuming() {
         (vec!["upload", "field"], serde_json::json!("bad\r\nfield")),
         (vec!["upload", "name"], serde_json::json!("bad\"name")),
         (vec!["upload", "contentType"], serde_json::json!("a\r\nb")),
+        (
+            vec!["upload", "contentType"],
+            serde_json::json!("image/gif"),
+        ),
+        (
+            vec!["upload", "contentType"],
+            serde_json::json!("image/jpeg"),
+        ),
+        (
+            vec!["upload", "contentType"],
+            serde_json::json!("image/webp"),
+        ),
+        (
+            vec!["upload", "contentType"],
+            serde_json::json!("image/png;charset=utf-8"),
+        ),
+        (vec!["upload", "name"], serde_json::json!("../image.png")),
+        (vec!["upload", "name"], serde_json::json!("dir\\image.png")),
+        (vec!["upload", "name"], serde_json::json!(".hidden.png")),
+        (vec!["upload", "name"], serde_json::json!("x".repeat(257))),
+        (
+            vec!["upload", "fields"],
+            serde_json::json!({"bad/name":"text"}),
+        ),
+        (
+            vec!["upload", "fields"],
+            serde_json::json!({"file":{"name":"image.png"}}),
+        ),
+        (vec!["upload", "fields"], serde_json::json!({"count":1})),
+        (
+            vec!["upload", "fields"],
+            serde_json::json!((0..17)
+                .map(|i| (format!("field_{i}"), "text"))
+                .collect::<BTreeMap<_, _>>()),
+        ),
         (
             vec!["upload", "fields"],
             serde_json::json!({"huge":"x".repeat(16384)}),
@@ -690,7 +735,12 @@ fn upload_ipc_rejects_invalid_data_and_authority_before_consuming() {
             at = &mut at[part];
         }
         *at = value;
-        assert!(upload_ipc(&fixture, &bad, tauri::ipc::InvokeBody::Raw(vec![1])).is_err());
+        assert!(upload_ipc(
+            &fixture,
+            &bad,
+            tauri::ipc::InvokeBody::Raw(PNG_UPLOAD.to_vec())
+        )
+        .is_err());
     }
     fixture
         .app
@@ -700,7 +750,12 @@ fn upload_ipc_rejects_invalid_data_and_authority_before_consuming() {
         .unwrap()
         .change("disable", "example.replay")
         .unwrap();
-    assert!(upload_ipc(&fixture, &metadata, tauri::ipc::InvokeBody::Raw(vec![1])).is_err());
+    assert!(upload_ipc(
+        &fixture,
+        &metadata,
+        tauri::ipc::InvokeBody::Raw(PNG_UPLOAD.to_vec())
+    )
+    .is_err());
     assert!(calls.claims.lock().unwrap().consumed.is_empty());
 }
 
@@ -711,12 +766,14 @@ fn upload_validation_and_fingerprint_bind_full_binary_and_plain_metadata() {
         "contentType":"image/png","fields":{"label":"hello"}
     }))
     .unwrap();
-    assert!(validate_byte_upload(&upload, &[0, 159, 255]).is_ok());
-    assert!(validate_byte_upload(&upload, &vec![0; MAX_RESPONSE_BYTES]).is_ok());
-    let original = upload.fingerprint(&[0, 159, 255]);
-    assert_ne!(original, upload.fingerprint(&[0, 159, 254]));
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+    let mut maximum = vec![0; MAX_RESPONSE_BYTES];
+    maximum[..PNG_UPLOAD.len()].copy_from_slice(PNG_UPLOAD);
+    assert!(validate_byte_upload(&upload, &maximum).is_ok());
+    let original = upload.fingerprint(&[0, 159, 255]).unwrap();
+    assert_ne!(original, upload.fingerprint(&[0, 159, 254]).unwrap());
     upload.fields.insert("label".into(), "different".into());
-    assert_ne!(original, upload.fingerprint(&[0, 159, 255]));
+    assert_ne!(original, upload.fingerprint(&[0, 159, 255]).unwrap());
     for field in ["url", "field", "name", "contentType", "fields"] {
         let mut value = serde_json::to_value(&upload).unwrap();
         if field == "fields" {
@@ -725,10 +782,168 @@ fn upload_validation_and_fingerprint_bind_full_binary_and_plain_metadata() {
             value[field] = format!("{}x", value[field].as_str().unwrap()).into();
         }
         let changed: ByteUpload = serde_json::from_value(value).unwrap();
-        assert_ne!(upload.fingerprint(&[1]), changed.fingerprint(&[1]));
+        assert_ne!(
+            upload.fingerprint(&[1]).unwrap(),
+            changed.fingerprint(&[1]).unwrap()
+        );
     }
+    upload.fields = BTreeMap::from([("ab".into(), "c".into())]);
+    let framed = upload.fingerprint(PNG_UPLOAD).unwrap();
+    upload.fields = BTreeMap::from([("a".into(), "bc".into())]);
+    assert_ne!(framed, upload.fingerprint(PNG_UPLOAD).unwrap());
     upload.fields = BTreeMap::from([("x".into(), "x".repeat(8193))]);
-    assert!(validate_byte_upload(&upload, &[1]).is_err());
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_err());
+}
+
+#[test]
+fn upload_requires_an_allowed_type_and_matching_magic_bytes() {
+    let mut upload: ByteUpload = serde_json::from_value(serde_json::json!({
+        "url":"https://example.test/upload","field":"image","name":"image.png",
+        "contentType":"image/png"
+    }))
+    .unwrap();
+    let images: [(&str, &[u8]); 3] = [
+        ("image/png", PNG_UPLOAD),
+        ("image/jpeg", b"\xff\xd8\xff\xe0binary"),
+        ("image/webp", b"RIFF\x04\0\0\0WEBP"),
+    ];
+    for (declared, bytes) in images {
+        upload.content_type = declared.into();
+        assert!(validate_byte_upload(&upload, bytes).is_ok(), "{declared}");
+        for (_, other) in images {
+            if bytes != other {
+                assert!(validate_byte_upload(&upload, other).is_err(), "{declared}");
+            }
+        }
+        let signature_length = match declared {
+            "image/png" => 8,
+            "image/jpeg" => 3,
+            _ => 12,
+        };
+        for length in 0..signature_length {
+            assert!(
+                validate_byte_upload(&upload, &bytes[..length]).is_err(),
+                "{declared}: {length}"
+            );
+        }
+        assert!(validate_byte_upload(&upload, b"not an image").is_err());
+    }
+    for declared in [
+        "image/gif",
+        "application/octet-stream",
+        "image/svg+xml",
+        "image/PNG",
+        "image/png;charset=utf-8",
+        "",
+    ] {
+        upload.content_type = declared.into();
+        assert!(
+            validate_byte_upload(&upload, PNG_UPLOAD).is_err(),
+            "{declared}"
+        );
+    }
+}
+
+#[test]
+fn upload_requires_one_safe_filename() {
+    let mut upload: ByteUpload = serde_json::from_value(serde_json::json!({
+        "url":"https://example.test/upload","field":"image","name":"image.png",
+        "contentType":"image/png","fields":{"label":"café\ncaption"}
+    }))
+    .unwrap();
+    for name in [
+        "",
+        ".",
+        "..",
+        ".image.png",
+        "../image.png",
+        "dir/image.png",
+        "dir\\image.png",
+        "image\0.png",
+        "image\n.png",
+        "image\u{7f}.png",
+        "bad\"name.png",
+        "image name.png",
+        "café.png",
+        "image:stream.png",
+    ] {
+        upload.name = name.into();
+        assert!(
+            validate_byte_upload(&upload, PNG_UPLOAD).is_err(),
+            "{name:?}"
+        );
+    }
+    upload.name = "x".repeat(256);
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+    upload.name.push('x');
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_err());
+    upload.name = "image-1_test.png".into();
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+}
+
+#[test]
+fn upload_requires_small_text_fields_with_safe_names() {
+    let mut upload: ByteUpload = serde_json::from_value(serde_json::json!({
+        "url":"https://example.test/upload","field":"image","name":"image.png",
+        "contentType":"image/png","fields":{"label":"café\ncaption"}
+    }))
+    .unwrap();
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+    for name in [
+        "a/b",
+        "",
+        ".hidden",
+        "a/b",
+        "a\\b",
+        "a\r\nb",
+        "a:b",
+        "a;filename=x",
+        "é",
+        "a b",
+        "bad\"name",
+    ] {
+        upload.fields.clear();
+        upload.field = name.into();
+        assert!(
+            validate_byte_upload(&upload, PNG_UPLOAD).is_err(),
+            "{name:?}"
+        );
+        upload.field = "image".into();
+        upload.fields = BTreeMap::from([(name.into(), "text".into())]);
+        assert!(
+            validate_byte_upload(&upload, PNG_UPLOAD).is_err(),
+            "{name:?}"
+        );
+    }
+    upload.fields = BTreeMap::from([("x".repeat(256), "text".into())]);
+    upload.field = "x".repeat(256);
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+    upload.field = "image".into();
+    upload.fields = (0..16)
+        .map(|i| (format!("field_{i}"), "text".into()))
+        .collect();
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+    upload.fields.insert("seventeenth".into(), "text".into());
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_err());
+    upload.fields = BTreeMap::from([("label".into(), "é".repeat(4096))]);
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_ok());
+    upload.fields.get_mut("label").unwrap().push('x');
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_err());
+    upload.fields = BTreeMap::from([("x".repeat(257), "text".into())]);
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_err());
+    upload.fields.clear();
+    upload.field = "x".repeat(257);
+    assert!(validate_byte_upload(&upload, PNG_UPLOAD).is_err());
+    for value in [
+        serde_json::json!(1),
+        serde_json::json!({"file":"image.png"}),
+        serde_json::json!(["text"]),
+        serde_json::Value::Null,
+    ] {
+        let mut metadata = serde_json::to_value(&upload).unwrap();
+        metadata["fields"] = serde_json::json!({"label":value});
+        assert!(serde_json::from_value::<ByteUpload>(metadata).is_err());
+    }
 }
 
 #[tokio::test]
@@ -773,7 +988,7 @@ async fn upload_transport_preserves_binary_multipart_and_never_follows_redirects
             assert!(!headers.to_ascii_lowercase().contains("cookie:"));
             let expected = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\ncafé\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n");
             let mut body = expected.into_bytes();
-            body.extend([0, 159, 255]);
+            body.extend(PNG_UPLOAD);
             body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
             assert_eq!(&request[split + 4..], body);
             if reply {
@@ -782,7 +997,7 @@ async fn upload_transport_preserves_binary_multipart_and_never_follows_redirects
             listener
         });
         let upload: ByteUpload = serde_json::from_value(serde_json::json!({"url":url.as_str(),"field":"image","name":"image.png","contentType":"image/png","fields":{"label":"café"}})).unwrap();
-        let result = send_byte_upload(url, &upload, &[0, 159, 255]).await;
+        let result = send_byte_upload(url, &upload, PNG_UPLOAD).await;
         if reply {
             let response = result.unwrap();
             assert_eq!(response.status, 307);

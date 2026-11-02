@@ -27,6 +27,7 @@ function setup(
   messageId = root.id,
   profiles = new Map<string, { name?: string; picture?: string }>(),
   reference?: ChannelReference,
+  resolve?: (ids: readonly string[]) => Promise<void>,
 ) {
   const view = {
     snapshot: () => snapshot,
@@ -55,6 +56,7 @@ function setup(
       list: () => list,
       describe: () => reference ?? { state: "unknown" },
       refer,
+      resolve,
     },
     // The real sizing rewrite behind a pass-through proxy, as the session applies it.
     media: (url: string, size?: "small") =>
@@ -67,7 +69,7 @@ function setup(
       messageId={messageId}
     />,
   );
-  return { tree: mounted.container, thread, refer };
+  return { tree: mounted.container, thread, refer, unmount: mounted.unmount };
 }
 const base: ThreadSnapshot = {
   status: "idle",
@@ -236,4 +238,33 @@ it("names an open channel the reader hasn't joined from its public reference", (
   const joined = channel();
   expect(joined.tree.textContent).toContain("General");
   expect(joined.refer).not.toHaveBeenCalled();
+});
+
+it("admits an unjoined open channel before reading its message", async () => {
+  const ready = { ...base, status: "ready" as const, root };
+  const reference: ChannelReference = { state: "unknown" };
+  let admit = () => {};
+  const resolve = vi.fn(
+    () =>
+      new Promise<void>((done) => {
+        admit = done;
+      }),
+  );
+  const pending = setup(ready, root.id, new Map(), reference, resolve);
+  expect(resolve).toHaveBeenCalledWith(["channel"], expect.anything());
+  expect(pending.thread).not.toHaveBeenCalled();
+  expect(text(pending.tree)).toBe("Loading message…");
+  admit();
+  await vi.waitFor(() =>
+    expect(pending.thread).toHaveBeenCalledWith("channel", root.id, {
+      exact: true,
+    }),
+  );
+  // A preview closed during the lookup never opens a read.
+  const closed = setup(ready, root.id, new Map(), reference, resolve);
+  closed.unmount();
+  admit();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(closed.thread).not.toHaveBeenCalled();
 });

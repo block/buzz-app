@@ -35,14 +35,36 @@ export function BuzzLinkPreview({
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState(false);
   useEffect(() => {
-    try {
-      const owned = session.thread(channelId, messageId, { exact: true });
-      setView(owned);
-      void owned.refresh();
-      return () => owned.dispose();
-    } catch {
-      setError(true);
-    }
+    let owned: ThreadView | undefined;
+    const open = () => {
+      try {
+        owned = session.thread(channelId, messageId, { exact: true });
+        setView(owned);
+        void owned.refresh();
+      } catch {
+        setError(true);
+      }
+    };
+    const channels = session.channels;
+    const listed = channels
+      .list()
+      .channels.some((item) => item.id === channelId);
+    // An open channel the reader hasn't joined is readable once discovery
+    // admits or revalidates it, as scoped search does; a failed lookup
+    // leaves the read to report access.
+    const controller = new AbortController();
+    if (listed || !channels.resolve) open();
+    else
+      void channels
+        .resolve([channelId], { signal: controller.signal })
+        .catch(() => {})
+        .then(() => {
+          if (!controller.signal.aborted) open();
+        });
+    return () => {
+      controller.abort();
+      owned?.dispose();
+    };
   }, [session, channelId, messageId]);
   if (error) return <span role="status">Message preview unavailable.</span>;
   return view ? (

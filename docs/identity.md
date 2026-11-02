@@ -4,13 +4,12 @@ Native macOS, Windows and Linux without the live development broker open on a
 welcome screen when no human key exists on this device: **Buzz** — "Your people,
 your agents, your projects — all in one place." — with **Sign in with email**
 (the label the Buzz mobile client uses; first-run copy never names the sign-in
-provider), a live **Community URL** field with **Continue** beside it (the
-same field and normalisation as Join a community below), and **Scan a QR code**,
-shown disabled as *Coming soon*. Sign in runs the bundled Builderlab plugin's
-browser sign-in under that plugin's own native network grant; that credential
-is not yet shared with Settings → Integrations → Builderlab. A failed or
-canceled sign-in shows *Couldn’t sign in* with the error and **Back** to the
-welcome screen. The welcome screen carries the
+provider) and a live **Community URL** field with **Continue** beside it (the
+same field and normalisation as Join a community below). Sign in runs the
+bundled Builderlab plugin's browser sign-in under that plugin's own native
+network grant; that credential is not yet shared with Settings → Integrations →
+Builderlab. A failed or canceled sign-in shows *Couldn’t sign in* with the
+error and **Back** to the welcome screen. The welcome screen carries the
 onboarding artwork and wordmark, and every later first-run page sits on the
 same artwork; pages without a finished design are plain black-and-white
 wireframes. When a page replaces another, focus moves to the new page's
@@ -286,10 +285,9 @@ laid out as the in-app Join a community landing: a centred heading, then, when
 the account owns communities, rows under *Communities you own* — icon
 placeholder, hostname and **Join** (named *Join {host}* for assistive
 technology), which takes exactly the typed-URL path for that host — then a
-**Community URL** field with **Continue** beside it.
-**Scan a QR code** and **Create a community**, both *Coming soon*, are stacked
-at the bottom. An empty or failed list shows the page without rows. No invite
-list is shown; nothing serves pending invites yet. In development,
+**Community URL** field with **Continue** beside it. An empty or failed list
+shows the page without rows. No invite list is shown; nothing serves pending
+invites yet. In development,
 [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](configuration.md#first-run-account-seed-development)
 answers the two account reads, and fakes the link, the unlink and the backup,
 in place of kgoose and the native uploader.

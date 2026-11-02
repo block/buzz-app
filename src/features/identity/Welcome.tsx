@@ -716,10 +716,6 @@ export function Welcome({
             disabled={auth.status === "pending"}
           />
         </div>
-        {/* A scanner's text takes the field's path: an address or invite link → find. */}
-        <Button size="lg" variant="ghost" disabled>
-          Scan a QR code — Coming soon
-        </Button>
         {legacyOffer}
       </OnboardingScreen>
     );

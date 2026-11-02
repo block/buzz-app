@@ -742,7 +742,7 @@ it("retires a browser sign-in that starts after setup is unmounted", async () =>
   identity.dispose();
 });
 
-it("first launch offers email sign-in and a live community URL field, with QR scanning disabled", async () => {
+it("first launch offers email sign-in and a live community URL field", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(false);
   const identity = createIdentity();
   render(
@@ -769,9 +769,6 @@ it("first launch offers email sign-in and a live community URL field, with QR sc
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
   expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-  expect(
-    screen.getByRole("button", { name: "Scan a QR code — Coming soon" }),
-  ).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: /existing key|new identity/ }),
   ).toBeNull();
@@ -1920,12 +1917,6 @@ it("Sign in with email runs sign-in, creates the key mid-setup, and lands on Joi
   expect(url).toBeEnabled();
   expect(url).toHaveValue("");
   expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-  for (const name of [
-    "Scan a QR code — Coming soon",
-    "Create a community — Coming soon",
-  ]) {
-    expect(screen.getByRole("button", { name })).toBeDisabled();
-  }
   expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",

@@ -102,10 +102,13 @@ function setup() {
   stops.push(controller.dispose);
   const channels = { channels: [] },
     profiles = new Map();
-  const choices = { identities: [], pending: false };
+  const choices = {
+    identities: [] as { pubkey: string; managed: boolean }[],
+    pending: false,
+  };
   const directMessages = {
     available: true,
-    people: vi.fn(async () => ({
+    people: vi.fn<RelaySession["directMessages"]["people"]>(async () => ({
       people: [
         { pubkey: recipient, name: "Avery Chen" },
         { pubkey: "d".repeat(64), name: "Morgan Lee" },
@@ -145,7 +148,7 @@ function setup() {
       </ForwardMessageProvider>
     </ToastProvider>,
   );
-  return { navigation, directMessages, messages };
+  return { navigation, directMessages, messages, choices, profiles };
 }
 async function choose(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Forward source" }));
@@ -348,3 +351,45 @@ it("keeps the permalink renderable when a literal note contains an unclosed Mark
     "``` Please check this",
   );
 });
+
+it.each([true, false])(
+  "rechecks current DM eligibility after preparation with selected agent metadata=%s",
+  async (selectedAgent) => {
+    const user = userEvent.setup();
+    const { directMessages, messages, choices, profiles } = setup();
+    choices.identities = [{ pubkey: recipient, managed: true }];
+    directMessages.people.mockResolvedValue({
+      people: [
+        {
+          pubkey: recipient,
+          name: "Avery Chen",
+          ...(selectedAgent ? { isAgent: true } : {}),
+        },
+      ],
+      hasMore: false,
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    directMessages.open.mockImplementationOnce(async () => {
+      await gate;
+      return destination;
+    });
+    try {
+      await choose(user);
+      await user.click(screen.getByRole("button", { name: "Forward" }));
+      await waitFor(() => expect(directMessages.open).toHaveBeenCalledOnce());
+      choices.identities = [];
+      if (!selectedAgent)
+        profiles.set(recipient, { name: "Avery Chen", isAgent: true });
+    } finally {
+      await act(async () => release());
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "no longer available for direct messages",
+    );
+    expect(messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  },
+);

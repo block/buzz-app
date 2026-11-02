@@ -15,6 +15,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { BuzzLinkPreview } from "../conversation/BuzzLinkPreview";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { canMessageAgent } from "../agents/choices";
 import { RecipientPicker } from "../direct-messages/RecipientPicker";
 import type { Recipient } from "../direct-messages/usePeople";
 import type { Navigation } from "../navigation/controller";
@@ -198,6 +199,22 @@ function ForwardMessageDialog({
     setNotice(undefined);
     try {
       if (!sent.current) {
+        const validateRecipient = () => {
+          if (
+            (person.isAgent ||
+              session.profiles.snapshot().get(person.pubkey)?.isAgent) &&
+            !session.agentChoices
+              .snapshot()
+              .identities.some(
+                (choice) =>
+                  choice.pubkey === person.pubkey && canMessageAgent(choice),
+              )
+          )
+            throw new Error(
+              "This agent is no longer available for direct messages. Choose another person.",
+            );
+        };
+        validateRecipient();
         const channelId = await session.directMessages.open(
           [person.pubkey],
           controller.signal,
@@ -205,6 +222,7 @@ function ForwardMessageDialog({
         controller.signal.throwIfAborted();
         await session.outbox?.ready();
         controller.signal.throwIfAborted();
+        validateRecipient();
         const link = `buzz://message?${new URLSearchParams({ channel: source.channelId, id: source.forward })}`;
         const literalNote = note
           .trim()

@@ -1,5 +1,8 @@
 import { workflowLabel } from "../../features/relay/workflow-attribution";
-import { useIdentityNames } from "../../features/identity-names/react";
+import {
+  useIdentityNames,
+  useNamesRevision,
+} from "../../features/identity-names/react";
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useEffect,
@@ -88,6 +91,7 @@ function conversationName(
 
 /** The most rows the People and Agents groups each show. */
 const PERSON_ROWS = 6;
+const noMembers: readonly string[] = [];
 
 /** "Search in this conversation" narrows the search and "Show more messages"
  * extends it; neither is a result. */
@@ -331,6 +335,8 @@ export function SearchResults({
     peopleActive,
   );
   useMentionArchives(session, showAuthorPicker || peopleActive);
+  // People labels come from one names scope built each render.
+  useNamesRevision(session.names, peopleActive);
   // The viewer's own agents open a new chat, not a direct message: the
   // same agents the new-chat composer accepts. Their earlier chats
   // still show as conversations.
@@ -599,13 +605,14 @@ export function SearchResults({
         name: person.name,
         ...(person.isAgent ? { isAgent: true } : {}),
       }));
+    const named = session.names?.scope(candidates, displayFacts);
     for (const { pubkey, source, agent } of eligible) {
       const dm = relationships.dm(pubkey);
       const agentName =
         messageableAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
       people.push({
         pubkey,
-        label: resolveName(pubkey, source.name, candidates, displayFacts),
+        label: named?.(pubkey)?.name ?? source.name,
         username: source.username,
         agentName: agentName !== source.name ? agentName : undefined,
         agent,
@@ -977,7 +984,7 @@ export function SearchResults({
       displayId,
       profiles.get(displayId)?.name ?? displayId.slice(0, 10),
       list.channels.find((channel) => channel.id === message.channelId)
-        ?.members ?? [],
+        ?.members ?? noMembers,
     );
     return {
       key: message.id,

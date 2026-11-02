@@ -99,9 +99,19 @@ function blankNewChat(session: RelaySession, scope: string, key: string) {
     readView(scope, `${key}:new-project`, null) === null
   );
 }
-/** Open New chats, told when a refused start gives their draft back: their
+/** Open New chats. Asked whether they hold work of the person's that view
+ * state does not show: a draft that couldn't be saved, or Settings being
+ * edited. Told when a refused start gives their draft back, since their
  * composer reads it only as it mounts. */
-const restoreListeners = new Set<(scope: string, key: string) => void>();
+const openNewChats = new Set<{
+  scope: string;
+  key: string;
+  editing(): boolean;
+  restored(): void;
+}>();
+/** The prompt last given back to each New chat, as saved, so a later refusal
+ * that finds it still there can say so. */
+const restoredPrompts = new Map<string, string>();
 
 export function SoloDraft({
   session,
@@ -126,7 +136,8 @@ export function SoloDraft({
   onStarted: (id: string) => void;
   /** The started chat `id` was never made; `message` says why, and whether
    * what was sent in it went back to New chat. It does unless a draft was
-   * begun there since or it can't be saved on this device. */
+   * begun there since (an earlier refused prompt included) or it can't be
+   * saved on this device; its settings may be saved only in part. */
   onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
@@ -191,17 +202,23 @@ export function SoloDraft({
   }, [focusRequest]);
   // The remount replaces the editor; one that had the caret keeps it.
   const [restored, setRestored] = useState({ count: 0, focus: false });
+  // Whether the composer holds text it couldn't save.
+  const unsaved = useRef(false);
   useEffect(() => {
-    const listener = (restoredScope: string, key: string) => {
-      if (restoredScope !== scope || key !== draftKey) return;
-      const focus = !!prompt.current?.contains(document.activeElement);
-      setRestored(({ count }) => ({ count: count + 1, focus }));
+    const chat = {
+      scope,
+      key: draftKey,
+      editing: () => settingsOpen || unsaved.current,
+      restored() {
+        const focus = !!prompt.current?.contains(document.activeElement);
+        setRestored(({ count }) => ({ count: count + 1, focus }));
+      },
     };
-    restoreListeners.add(listener);
+    openNewChats.add(chat);
     return () => {
-      restoreListeners.delete(listener);
+      openNewChats.delete(chat);
     };
-  }, [scope, draftKey]);
+  }, [scope, draftKey, settingsOpen]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
@@ -364,6 +381,7 @@ export function SoloDraft({
       // A linked draft is reused for its source: clear it to absent so the
       // next start from that source seeds its link again.
       writeView(scope, `${draftKey}:new-draft`, source ? null : "");
+      writeView(scope, `${draftKey}:new-draft:agents`, null);
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
       // Only a start that made no chat ends here; the chat and its messages
@@ -374,36 +392,62 @@ export function SoloDraft({
         if (!(reason instanceof ChatNotStarted)) return;
         writeView(scope, `draft:${channelId}`, null);
         clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
-        const blank = blankNewChat(session, scope, draftKey);
+        const open = [...openNewChats].filter(
+          (chat) => chat.scope === scope && chat.key === draftKey,
+        );
+        const blank =
+          blankNewChat(session, scope, draftKey) &&
+          !open.some((chat) => chat.editing());
         // The text first: when it can't be saved, an open New chat may hold
         // unsaved text of its own, so nothing else is given back.
         const returned =
           blank && writeView(scope, `${draftKey}:new-draft`, draft);
+        // What else could not be saved: the toast says so, since a retry
+        // would otherwise silently use the defaults instead.
+        const missing: string[] = [];
+        const returnedTo = `${scope}\n${draftKey}`;
         if (returned) {
-          if (source) writeView(scope, draftKey, source);
-          writeView(scope, `${draftKey}:settings`, draftSettings);
-          writeView(scope, `${draftKey}:new-project`, project);
+          restoredPrompts.set(returnedTo, JSON.stringify(draft));
+          if (source && !writeView(scope, draftKey, source))
+            missing.push("link");
+          if (!writeView(scope, `${draftKey}:settings`, draftSettings))
+            missing.push("settings");
+          if (!writeView(scope, `${draftKey}:new-project`, project))
+            missing.push("workspace");
+          // The pill's agents, when it routed the send; the composer reads
+          // them as it mounts. Tags in the text carry their own.
+          if (
+            addressed &&
+            !draft.recipients.length &&
+            !writeView(scope, `${draftKey}:new-draft:agents`, addressed)
+          )
+            missing.push("agents");
           attachmentDraft(
             session,
             `${scope}:${draftKey}:new-draft`,
             channelId,
             true,
           ).adopt(attached);
-          for (const listener of restoreListeners) listener(scope, draftKey);
+          for (const chat of open) chat.restored();
         }
         const why = /[.!?]$/.test(reason.message)
           ? reason.message
           : `${reason.message}.`;
-        onFailed?.(
-          channelId,
-          `Couldn't start "${name}": ${why} ${
-            returned
-              ? "Your message is back in New chat."
-              : blank
-                ? "Your message could not be saved on this device."
-                : "New chat has a newer draft, so your message was not restored."
-          }`,
-        );
+        const earlier = restoredPrompts.get(returnedTo);
+        const outcome = returned
+          ? missing.length
+            ? `Your message is back in New chat, but its ${new Intl.ListFormat(
+                undefined,
+                { type: "conjunction" },
+              ).format(missing)} could not be saved on this device.`
+            : "Your message is back in New chat."
+          : blank
+            ? "Your message could not be saved on this device."
+            : earlier !== undefined &&
+                viewRevision(scope, `${draftKey}:new-draft`) === earlier
+              ? "New chat holds an earlier message that couldn't be sent, so this one was not restored."
+              : "New chat has a newer draft, so your message was not restored.";
+        onFailed?.(channelId, `Couldn't start "${name}": ${why} ${outcome}`);
       });
     } catch (reason) {
       if (mounted.current)
@@ -457,6 +501,9 @@ export function SoloDraft({
           locked: busy,
           disabled: busy || !available,
           attachments: true,
+          unsaved: (held) => {
+            unsaved.current = held;
+          },
           submit: (draft, files, addressed) => {
             void start(draft, files, addressed);
           },

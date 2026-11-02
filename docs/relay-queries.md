@@ -674,8 +674,8 @@ method is undefined unless the writer supports kind 1984.
 
 In an empty composer, unmodified Up arrow selects the newest message in the
 channel timeline or thread beside it, as in Slack; E then opens a selected
-eligible own message in the same editor, and ⌘↑ still opens the latest eligible
-own message directly. Surfaces without a selectable message
+eligible own message in the same editor, and on macOS ⌘↑ still opens the latest eligible
+own message directly (elsewhere, Up then E). Surfaces without a selectable message
 list (media review, Huddles), or a timeline scrolled away from its newest
 message, keep Up opening the latest eligible own message directly. Enter/the send arrow saves;
 Escape or × cancels. Edits retain raw attachment Markdown and leave original

@@ -2191,8 +2191,8 @@ No plugin shortcut API or preference access is added. Ordinary editors continue
 to handle keys before the window's bubbling dispatcher.
 
 Slack-style message keys are host bindings. In an empty composer, Up selects the
-newest message of the timeline or thread sharing its edit scope (⌘↑ keeps editing
-the latest own message directly); a selection is
+newest message of the timeline or thread sharing its edit scope (on macOS ⌘↑ keeps editing
+the latest own message directly; elsewhere use Up, then E); a selection is
 DOM focus on that message's box (`features/messages/message-selection.ts`), so
 the timeline's Virtua keeps the row mounted and assistive technology follows it.
 Membership notices and folded or collapsed rows are skipped. While a message

@@ -62,7 +62,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.shortcuts.register({
     id: "archive-chat",
     title: "Archive chat",
-    // Apple Mail's Archive. Elsewhere Ctrl is Mod, and Ctrl+Shift+A is Home.
+    // Apple Mail's Archive. Elsewhere Ctrl is Mod, and Ctrl+Shift+A opens Inbox unread.
     binding: isApplePlatform(globalThis.navigator?.platform ?? "")
       ? { key: "a", mod: true, ctrl: true }
       : { key: "e", mod: true, shift: true },

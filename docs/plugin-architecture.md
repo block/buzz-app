@@ -565,6 +565,20 @@ the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
 URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
 execution, remain future shared capabilities.
 
+### Conversation sidebar sections
+
+`ctx.conversation.registerConversationSection({ id, title, channels })` adds a
+section at the top of the conversation sidebar, above Solo and Team in the All
+view, while the plugin runs. `channels(session)` returns `{ snapshot, subscribe }`
+over that session's channel IDs in display order; `snapshot` keeps returning the
+same array until the IDs change. The plugin chooses and orders conversations; the
+host renders its ordinary rows, unread state and selection. It lists only
+conversations the sidebar already shows (Team rows and Solo chats), so a section
+never adds a channel, and shows the first eight until Show more. An empty section
+is hidden, and a section whose `channels` throws is left out. Rows stay in their
+home sections too; Team rows keep their menus, and Solo chats keep theirs in Solo.
+Recent Conversations (`bundled/recent-conversations`) is the first caller.
+
 ### Optional channel menu panels
 
 A panel can register `channelMenu: { label, eligible(channel, session) }` for

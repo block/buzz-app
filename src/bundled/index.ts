@@ -44,6 +44,8 @@ import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
+import recentConversationsManifest from "./recent-conversations/manifest.json";
+import * as recentConversations from "./recent-conversations";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
@@ -157,6 +159,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...inboxManifest, apiVersion: 1 },
     module: inbox,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...recentConversationsManifest, apiVersion: 1 },
+    module: recentConversations,
     enabledByDefault: true,
   },
   {

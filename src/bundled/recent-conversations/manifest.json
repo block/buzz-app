@@ -1,0 +1,10 @@
+{
+  "id": "buzz.recent-conversations",
+  "name": "Recent Conversations",
+  "apiVersion": 1,
+  "description": "Keep your latest Solo chats, direct messages and the Team channels that last mentioned you or replied in your threads in one list at the top of the sidebar.",
+  "discovery": {
+    "category": "communication",
+    "tags": ["Essentials"]
+  }
+}

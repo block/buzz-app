@@ -1210,25 +1210,29 @@ it("opens Manage plugins from the Decisions API hint", async () => {
     setBackend: vi.fn(),
   } as unknown as DecisionsService;
   const onSection = vi.fn();
-  render(
+  const view = (section: string) => (
     <Settings
       {...host}
       cards={cards}
       decisions={decisions}
       navigation={
         {
-          target: { version: 1, kind: "settings", section: "decisions" },
+          target: { version: 1, kind: "settings", section },
           complete: () => true,
         } as never
       }
       onSection={onSection}
-    />,
+    />
   );
+  const { rerender } = render(view("decisions"));
   const section = await screen.findByRole("region", { name: "Decisions API" });
   await user.click(
     within(section).getByRole("button", { name: "Manage plugins" }),
   );
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
+  // The link is hidden with its section, so focus moves into the one it opened.
+  rerender(view("plugins"));
+  expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
 });
 
 it("gives contributed cards their own community sections and retires removed cards", async () => {

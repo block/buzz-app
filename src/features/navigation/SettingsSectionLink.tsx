@@ -1,5 +1,6 @@
+import { Button as BaseButton } from "@base-ui/react/button";
 import type { ReactNode } from "react";
-import { Button } from "../../shared/design-system/ui/Button";
+import inlineStyles from "../../shared/InlineReference.module.css";
 
 /** Names a Settings section within a sentence. With `open`, it is a link to
  * that section; without one, the sentence still reads as plain text. */
@@ -13,9 +14,13 @@ export function SettingsSectionLink({
   children: ReactNode;
 }) {
   return open ? (
-    <Button variant="link" size="inline" onClick={() => open(section)}>
+    <BaseButton
+      data-buzz-ui=""
+      className={inlineStyles.link}
+      onClick={() => open(section)}
+    >
       {children}
-    </Button>
+    </BaseButton>
   ) : (
     children
   );

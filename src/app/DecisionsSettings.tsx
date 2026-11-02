@@ -163,7 +163,7 @@ export function DecisionsSettings({
               <InlineHeader title={shown.label} />
               {shown.Settings && (
                 // A provider's settings are plugin code: if they fail, only
-                // this part does, and Settings > Plugins can turn it off.
+                // this part does, and Manage plugins can turn it off.
                 <OwnedContribution
                   entry={shown}
                   registry={{ snapshot: decisions.providers }}

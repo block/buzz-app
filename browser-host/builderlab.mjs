@@ -333,6 +333,17 @@ export function createBuilderlab({
     if (announce) notify();
   };
   revoke();
+  const signOut = (announce = true) => {
+    const previous = credential;
+    revoke(announce);
+    if (previous)
+      void fetch(`${api}/v1/auth/logout`, {
+        method: "POST",
+        headers: { "X-BB-Session-Credential": previous },
+        redirect: "error",
+        signal: AbortSignal.timeout(30000),
+      }).catch(() => {});
+  };
   const publishAccount = (value) => {
     account = value;
     notify();
@@ -354,7 +365,7 @@ export function createBuilderlab({
       return account;
     },
     async login(signal) {
-      revoke(false);
+      signOut(false);
       const started = generation;
       pending = true;
       notify();
@@ -427,17 +438,7 @@ export function createBuilderlab({
       }
     },
 
-    signOut() {
-      const previous = credential;
-      revoke();
-      if (previous)
-        void fetch(`${api}/v1/auth/logout`, {
-          method: "POST",
-          headers: { "X-BB-Session-Credential": previous },
-          redirect: "error",
-          signal: AbortSignal.timeout(30000),
-        }).catch(() => {});
-    },
+    signOut,
     // Only the broker's fixed viewer/Decisions handlers opt into native routes.
     async request(input, signal, native = false) {
       // Activation must not overtake the sign-in's automatic key binding.

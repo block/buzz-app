@@ -300,6 +300,61 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+it.each(["held", "rejected"])(
+  "logs out a replaced credential without blocking login on a %s upstream logout",
+  async (outcome) => {
+    const release = deferred();
+    const finished = deferred();
+    const h = account({
+      "/v1/auth/logout": async () => {
+        try {
+          await release.promise;
+          if (outcome === "rejected") throw new Error("Logout unavailable");
+          return Response.json({});
+        } finally {
+          finished.resolve();
+        }
+      },
+    });
+    await signIn(h);
+    const before = h.opened();
+    const states = [];
+    const stop = h.builderlab.subscribe((state) => states.push(state));
+    const abort = new AbortController();
+    const login = h.builderlab.login(abort.signal).catch((error) => error);
+    try {
+      expect(
+        h.requests.filter(({ path }) => path === "/v1/auth/logout"),
+      ).toMatchObject([
+        {
+          init: {
+            method: "POST",
+            headers: { "X-BB-Session-Credential": "secret" },
+            redirect: "error",
+          },
+        },
+      ]);
+      expect(states).toHaveLength(1);
+      expect(states[0]).toMatchObject({ pending: true, auth: null });
+      // Opening the replacement browser does not wait for upstream revocation.
+      await vi.waitFor(() => expect(h.opened()).not.toBe(before));
+      release.resolve();
+      await finished.promise;
+      expect(h.builderlab.snapshot()).toMatchObject({
+        pending: true,
+        auth: null,
+      });
+      expect(h.builderlab.snapshot()).not.toHaveProperty("error");
+    } finally {
+      release.resolve();
+      abort.abort();
+      await login;
+      stop();
+      h.builderlab.signOut();
+    }
+  },
+);
+
 it.each(["cancel", "sign-out"])(
   "a %s during a held code exchange never restores the session",
   async (mode) => {

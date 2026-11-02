@@ -366,11 +366,10 @@ pub(crate) async fn plugin_host_upload_bytes_once<R: tauri::Runtime>(
         return Err("Invalid upload metadata".into());
     }
     let url = validate_byte_upload(&upload, bytes)?;
-    // Matches the existing byte-operation admission policy; no unbounded body clone.
-    let _place = crate::host_files::BYTE_WORK
-        .try_acquire()
-        .map_err(|_| "A byte operation is already under way")?;
     let operation = async {
+        // One FIFO queue and work permit for GET/save/upload; queue time is part
+        // of this call's entry deadline. Do not clone/build multipart while waiting.
+        let _place = crate::host_files::byte_admission(deadline).await?;
         byte_origin(manager, &id, &revision, &url).await?;
         calls.consume(
             webview.label(),

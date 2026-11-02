@@ -210,6 +210,11 @@ function OwnedAgentProfile({
           navigation={undefined}
         />
       )}
+      openSettings={
+        navigation &&
+        ((section) =>
+          void navigation.open({ version: 1, kind: "settings", section }))
+      }
     />
   );
 }

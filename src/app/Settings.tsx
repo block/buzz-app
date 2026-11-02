@@ -1223,6 +1223,7 @@ export function Settings({
             <DecisionsSettings
               decisions={decisions}
               active={() => selected === "decisions"}
+              onSection={onSection}
             />
           </div>
         )}

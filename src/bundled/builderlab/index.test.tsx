@@ -134,6 +134,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const decisions = new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    root.provide("navigation", { open: vi.fn() } as never);
     const knownCommunities = provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
@@ -221,6 +222,7 @@ it.each([undefined, false, true])(
     new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    root.provide("navigation", { open: vi.fn() } as never);
     provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
@@ -372,6 +374,7 @@ it.each([
     new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    root.provide("navigation", { open: vi.fn() } as never);
     provideKnownCommunities(root, community.viewer);
     provideAgents(root, community);
     const backupCalls = () =>
@@ -707,6 +710,7 @@ it.each([
   const decisions = new DecisionsService(root, localStorage);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
+  root.provide("navigation", { open: vi.fn() } as never);
   const knownCommunities = provideKnownCommunities(root, community.viewer);
   const agents = provideAgents(root, community);
   const plugin: PluginInfo = {

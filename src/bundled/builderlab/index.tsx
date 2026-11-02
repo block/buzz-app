@@ -11,6 +11,7 @@ import {
   browserLoginAvailable,
   oauthTarget,
 } from "./oauth/browser";
+import { brokerBuilderlab, createDevSession } from "./dev-session";
 import { createOAuthSession } from "./oauth/session";
 import { createNativeSession, nativeBuilderlab } from "./session";
 import { createAgentClient } from "./agents/client";
@@ -50,35 +51,38 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ? error.message
         : "Builderlab sign-in is unavailable.";
   }
-  // An FI build signs in with the native NIP-FI session, whose token stays
-  // in OS secure storage; otherwise the OAuth credential lives in memory.
-  const legacy = nativeBuilderlab()
-    ? undefined
-    : createOAuthSession(
-        (signal) => {
-          if (!browserLoginAvailable())
-            throw new Error(
-              "Open the Buzz desktop app to sign in with Builderlab.",
-            );
-          return browserCredential(ctx.host, signal);
-        },
-        (credential) => {
-          // Local guest teardown is immediate; the parent logout also revokes every server-side viewer child.
-          void ctx.host
-            .request({
-              url: `${oauthTarget()}/v1/auth/logout`,
-              method: "POST",
-              headers: { "X-BB-Session-Credential": credential.value },
-            })
-            .catch(() => {});
-        },
-        ctx.host,
-      );
-  const session = legacy ?? createNativeSession(ctx.federatedIdentity);
+  // The dev broker and FI host own their sessions; only the legacy build
+  // uses renderer-held OAuth.
+  const dev = brokerBuilderlab() ? createDevSession() : undefined;
+  const legacy =
+    nativeBuilderlab() || dev
+      ? undefined
+      : createOAuthSession(
+          (signal) => {
+            if (!browserLoginAvailable())
+              throw new Error(
+                "Open the Buzz desktop app to sign in with Builderlab.",
+              );
+            return browserCredential(ctx.host, signal);
+          },
+          (credential) => {
+            // Local guest teardown is immediate; the parent logout also revokes every server-side viewer child.
+            void ctx.host
+              .request({
+                url: `${oauthTarget()}/v1/auth/logout`,
+                method: "POST",
+                headers: { "X-BB-Session-Credential": credential.value },
+              })
+              .catch(() => {});
+          },
+          ctx.host,
+        );
+  const session =
+    dev?.session ?? legacy ?? createNativeSession(ctx.federatedIdentity);
   ctx.effect(() => () => session.dispose());
-  const loginAvailable = browserLoginAvailable() && !unavailable;
+  const loginAvailable = (!!dev || browserLoginAvailable()) && !unavailable;
   // An FI build signs out where its shared organization sign-in is managed.
-  const openIdentity = legacy
+  const openIdentity = !nativeBuilderlab()
     ? undefined
     : () =>
         void ctx.navigation.open({
@@ -86,7 +90,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           kind: "settings",
           section: "identity",
         });
-  applyApps(ctx, session, loginAvailable, legacy);
+  applyApps(ctx, session, loginAvailable, legacy, dev?.apps);
   const handoff = (signedIn: boolean) =>
     legacy
       ? handoffBackupSession(
@@ -110,7 +114,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // The account's community list follows this sign-in; see docs/communities.md.
   // Where no sign-in is possible, no owner runs, so the rail has no sync to
   // report on.
-  if (browserLoginAvailable() && !unavailable)
+  if (loginAvailable)
     ctx.effect(() =>
       startKnownCommunitiesSync({
         client: createKnownCommunitiesClient(session),
@@ -176,9 +180,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     });
     ctx.effect(() => () => stopProvider());
-    // Native `decide` sends the legacy credential; an FI build has none to
-    // hand it, so it does not offer Builderlab decisions.
-    if (legacy) offerBuilderlabDecisions(ctx, legacy, loginAvailable);
+    // Native validation stays in place; the dev transport uses a public revision.
+    // FI builds still do not offer this legacy decision backend.
+    if (legacy || dev)
+      offerBuilderlabDecisions(ctx, session, loginAvailable, dev?.decide);
     ctx.provide("builderlab", hostedAgentSettings(session, agents));
   }
   // Link the Buzz key at sign-in. Best effort: activation links again and
@@ -196,19 +201,27 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   // Desktop communities use this sign-in. Live development with a pinned
   // viewer keeps the broker, which signs in and signs bindings on its own.
-  const communities = !nativeIdentityEnabled()
-    ? brokerApi
-    : loginAvailable
-      ? createApi(createNativeBackend(session, () => linking))
-      : null;
+  const communities =
+    dev?.communities ??
+    (!nativeIdentityEnabled()
+      ? brokerApi
+      : loginAvailable
+        ? createApi(createNativeBackend(session, () => linking))
+        : null);
   const Communities = ({ active }: { active(): boolean }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
     if (!communities) return null;
     if (communities === brokerApi)
       return <HostedCommunities api={communities} active={active} />;
+    const viewer =
+      state.status === "signed-in" && dev ? session.viewerSession() : undefined;
     return state.status === "signed-in" ? (
       <HostedCommunities
-        key={state.account?.subject}
+        key={
+          viewer && "broker" in viewer
+            ? viewer.broker.revision
+            : state.account?.subject
+        }
         api={communities}
         active={active}
         sharedSignIn
@@ -234,7 +247,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             session={session}
             available={loginAvailable}
             unavailableReason={
-              browserLoginAvailable()
+              dev || browserLoginAvailable()
                 ? unavailable
                 : "Open the Buzz desktop app to sign in with Builderlab."
             }

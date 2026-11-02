@@ -179,8 +179,9 @@ pub(crate) async fn byte_admission(
     Ok(permit)
 }
 
-// Conservatively protect every app-owned host file read (including attachment reads).
-// A Send lease travels with the blocking work even when its async waiter times out.
+// App-wide, conservative deletion exclusion: any plugin's host.readFile call or
+// process named read/read-protected blocks every plugin's managed deletion.
+// Leases outlive async waiters until the actual blocking/process work completes.
 static FILE_READS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
 pub(crate) struct FileReadLease;
 impl FileReadLease {
@@ -452,7 +453,7 @@ fn delete_managed(
     let _lock = managed_lock(root)?;
     let reads = FILE_READS
         .try_lock()
-        .map_err(|_| "Managed file is in use")?;
+        .map_err(|_| "Managed file is in use by a file read")?;
     if *reads != 0 {
         return Err("Managed file is in use by a file read".into());
     }

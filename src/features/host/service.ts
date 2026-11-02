@@ -160,7 +160,8 @@ export interface Host {
     input: Readonly<{ sha256: string }>,
   ) => Promise<HostSavedBytes>;
   /** Removes this plugin's own managed file. Await attachment sends first;
-   * refuses while an app-owned native host file read is active. */
+   * Conservatively refuses app-wide while any plugin's host.readFile call or
+   * process named read/read-protected is active, regardless of program/path. */
   deleteManagedFile?: (path: string) => Promise<void>;
   /** Uploads a file as `request` sends a body. Desktop only. */
   upload?: (input: HostUpload) => Promise<HostResponse>;

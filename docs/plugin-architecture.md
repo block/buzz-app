@@ -1137,7 +1137,7 @@ entry.
 
 `host.requestOnce?.(request, { callId })` is an explicit opt-in, desktop-only POST
 primitive for non-idempotent submissions on compatible hosts.
-Ordinary `request`, byte GET/save, uploads, processes and publication do not
+Ordinary `request`, byte GET/save, archive uploads, processes and publication do not
 automatically opt in; there is no endpoint-specific URL or content logic. Check the method
 before starting work; missing native context also rejects without falling back to
 ordinary `request`. A compatible frontend **and** native release are required.
@@ -1188,6 +1188,51 @@ When supported by the destination, send the recorded `callId` as its server
 idempotency key as well (for example in an `Idempotency-Key` header). Do not mint
 a new key to recover an unknown outcome.
 Actual WebView fallback/runtime acceptance is distinct from native fixture tests.
+
+### Protected in-memory multipart uploads
+
+Compatible desktop frontend/native pairs expose optional
+`host.uploadBytesOnce(bytes, {url, field, name, contentType, fields?}, {callId, isEligible?})`.
+Check `typeof host.uploadBytesOnce === "function"` before work requiring it; an
+absent method or incompatible native host must fail closed, with no renderer
+fetch, ordinary request/upload, process, file, or IPC fallback.
+
+This POST sends one nonempty in-memory `Uint8Array` of at most 16 MiB. The host
+copies bytes and metadata synchronously before awaiting native authority, and
+builds the multipart boundary and body in native code. It requires only the exact
+HTTPS origin in `host.networkOrigins`: neither `host.files` nor
+`host.managedFiles` is needed, and no path is accepted. URL credentials, caller
+headers, cookies, redirects, and HTTP client retries are not permitted. Text
+fields are optional (at most 16, each value at most 8 KiB); field names, filename,
+and content type must be nonempty printable ASCII without spaces, quotes or
+backslashes, at most 256 bytes each. The full ASCII-escaped IPC metadata, including
+the authority envelope, is bounded to 16 KiB. The frontend reserves 512 bytes for
+that envelope. Unicode text values are preserved.
+
+The deadline is fixed at 30 seconds. Responses use the existing bounded
+`HostResponse`: status, at most 64 headers totaling 16 KiB excluding `Set-Cookie`,
+and at most 16 MiB of UTF-8 body. This operation shares the existing app-wide byte
+work permit; a concurrent byte operation can reject before dispatch.
+
+Upload authority uses the same boot/page, fiber activation, canonical UUID
+`callId`, final synchronous eligibility check, consumed-envelope storage and
+late-result suppression as `requestOnce`. Its operation kind is distinct from a
+text POST; use a separate recorded callId for each submission. The payload digest
+binds exact URL, form metadata and bytes, not a randomized multipart boundary.
+Repeated or conflicting native dispatch of the same upload envelope refuses,
+including after ambiguous failure, timeout, or a lost reply. This prevents
+same-envelope host/IPC resends, not durable exactly-once execution; use an upstream
+idempotency key when supported, and never mint a new callId to retry an unknown
+outcome. Missing raw IPC support rejects JSON/array fallback before consumption.
+
+Plugin author types export `AddedTool`, `BuzzClient` and `Media` from
+`@buzz/author`; an added tool can use its supplied `client.media(url)` to read
+community media. In the native client, optional base64 `Media.data` is present
+only for JPEG, PNG, GIF or WebP of at most 3,932,160 decoded bytes (3.75 MiB; up to
+5 MiB base64). Larger media can be saved by that API but omit `data`; the 16 MiB
+upload limit does not increase the inline-media limit. Consumers must handle
+missing data and validate their own media/type/size policy without assuming a
+file-read capability.
 
 ### Bounded binary retrieval and temporary managed files
 

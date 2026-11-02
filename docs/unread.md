@@ -175,7 +175,7 @@ even with no unread activity. They hide all unread dots, including
 thread activity dots. Thread activity remains available through the row's activity popover,
 and its unread count remains accessible to assistive technology. Unmute restores
 the dots from retained unread evidence. The promoted Bestie DM also hides muted
-unread dots; its label keeps ordinary DM unread emphasis.
+unread dots; its label follows the same mute rule.
 Solo chat labels strengthen for any observed unread message, including mentions,
 broadcasts and relevant replies, even when muted, so Solo rows omit the attention dot.
 Ordinary unread renders no row marker. Unmuted DMs, mentions, broadcasts, and

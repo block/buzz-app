@@ -663,19 +663,57 @@ it("a restoration scroll through unmeasured rows does not become bottom follow",
     anchor: { id: "last" },
   });
 });
-it.each([
-  { offset: 1234, bottom: false },
-  { offset: 1234, bottom: false, anchor: { id: "missing", y: 42 } },
-])(
-  "opens at the latest message, not a pixel offset, for a legacy position or an anchor outside the loaded rows: %j",
-  (initial) => {
-    const h = setup({ initial });
-    expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, {
-      align: "end",
+it("opens a legacy position without an anchor at the latest message, not a pixel offset", () => {
+  const h = setup({ initial: { offset: 1234, bottom: false } });
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+  expect(h.handle.scrollTo).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved()).toEqual({ bottom: true });
+});
+// On reload the saved IndexedDB head mounts first; the network head and notice
+// rows that may hold the saved row arrive in later rows.
+it("follows the latest message while a saved row is still loading, then restores it when it arrives", () => {
+  const h = setup({
+    initialRows: [timelineMessage("old")],
+    initial: { bottom: false, anchor: { id: "anchor", y: 42 } },
+  });
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(0, { align: "end" });
+  expect(h.handle.scrollTo).not.toHaveBeenCalled();
+  // The timeline's own end scroll must not replace the pending place.
+  h.scroll(false);
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(0, { align: "end" });
+  h.setRows([
+    timelineMessage("old"),
+    timelineMessage("anchor"),
+    timelineMessage("new"),
+  ]);
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, {
+    align: "start",
+    offset: -42,
+  });
+  h.unmount();
+  expect(h.saved()).toMatchObject({
+    bottom: false,
+    anchor: { id: "anchor", y: 42 },
+  });
+});
+it.each(["wheel", "pointer"])(
+  "%s reader input while a saved row is loading retires it, so its arrival does not move the reader",
+  (input) => {
+    const h = setup({
+      initialRows: [timelineMessage("old")],
+      initial: { bottom: false, anchor: { id: "anchor", y: 42 } },
     });
-    expect(h.handle.scrollTo).not.toHaveBeenCalled();
+    h.scroll(false);
+    h.gesture(input === "wheel");
+    h.handle.scrollToIndex.mockClear();
+    h.setRows([timelineMessage("old"), timelineMessage("anchor")]);
+    expect(h.handle.scrollToIndex).not.toHaveBeenCalledWith(1, {
+      align: "start",
+      offset: -42,
+    });
     h.unmount();
-    expect(h.saved()).toEqual({ bottom: true });
+    expect(h.saved()).not.toMatchObject({ anchor: { id: "anchor" } });
   },
 );
 it("keeps a placed reader in place when a resize finds their saved row gone", () => {

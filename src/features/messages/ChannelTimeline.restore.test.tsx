@@ -86,10 +86,11 @@ async function frame() {
     }
   });
 }
-function mount(bottom = false, revealOnMount = false) {
+function mount(bottom = false, revealOnMount = false, anchorLoaded = true) {
   const viewer = keypair(),
     relay = keypair();
   const target = message(viewer, "c", "Saved reading anchor", 1);
+  const earlier = message(viewer, "c", "Earlier message", 0);
   const owner = createRelaySession(
     scriptedTransport(viewer.pubkey, relay.pubkey).transport,
   );
@@ -106,20 +107,18 @@ function mount(bottom = false, revealOnMount = false) {
     hasMore: false,
     loadingOlder: false,
     error: undefined,
-    rows: [
-      {
-        id: target.id,
-        channelId: "c",
-        authorId: viewer.pubkey,
-        content: target.content,
-        createdAt: 1,
-        mentions: [],
-        participants: [],
-        attachments: [],
-        reactions: [],
-        replyCount: 0,
-      },
-    ],
+    rows: [anchorLoaded ? target : earlier].map((event) => ({
+      id: event.id,
+      channelId: "c",
+      authorId: viewer.pubkey,
+      content: event.content,
+      createdAt: event.created_at,
+      mentions: [],
+      participants: [],
+      attachments: [],
+      reactions: [],
+      replyCount: 0,
+    })),
   };
   const tree = (snapshot: ChannelWindow, revealMessageId?: string) => (
     <StrictMode>
@@ -174,6 +173,12 @@ function mount(bottom = false, revealOnMount = false) {
       // An older-history page lands while the sent row is still revealing.
       result.rerender(
         tree({ ...sentWindow, rows: [older, ...sentWindow.rows] }, sent.id),
+      );
+    },
+    /** The network head lands after the saved head, with the saved row in it. */
+    loadAnchor() {
+      result.rerender(
+        tree({ ...window, rows: [first, { ...first, id: target.id }] }),
       );
     },
     replaceAnchor() {
@@ -1069,3 +1074,25 @@ it.each(["scrollend", "pagehide"])(
     });
   },
 );
+
+it("a saved row missing from the first rows stays pending: the reader follows, scrollend keeps the place, and its arrival restores it", async () => {
+  const h = mount(false, false, false);
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(0, { align: "end" });
+  expect(scroll.toOffset).not.toHaveBeenCalled();
+  const region = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  // The timeline's own scroll to the end settles; the saved place survives it.
+  region.scrollTop = 1400;
+  fireEvent.scroll(region);
+  fireEvent(region, new Event("scrollend"));
+  expect(readView("scope", "scroll:c", null)).toEqual(h.saved);
+  scroll.toIndex.mockClear();
+  h.loadAnchor();
+  await frame();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(1, {
+    align: "start",
+    offset: -42,
+  });
+});

@@ -874,3 +874,128 @@ fn process_attachment_reader_blocks_delete_until_output_and_killed_child_complet
         delete_managed(&f.root(), path, &f.manager, "example.bytes", &f.revision).unwrap();
     });
 }
+
+#[test]
+fn managed_deletes_queue_behind_a_held_save_and_each_other() {
+    use std::io::Write as _;
+    let _serial = commands();
+    let f = Fixture::new(true, false);
+    let paths: Vec<_> = [b"first", b"other"]
+        .into_iter()
+        .map(|bytes| {
+            f.save(bytes, &digest(bytes)).unwrap()["path"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    let root = f.root();
+    let manager = f.manager.clone();
+    let revision = f.revision.clone();
+    let place = BYTE_WORK.try_acquire().unwrap();
+    let (started, ready) = std::sync::mpsc::sync_channel(1);
+    let (release, released) = std::sync::mpsc::sync_channel(1);
+    // Unwind also releases the held actual write, rather than stranding a worker.
+    struct Release(Option<std::sync::mpsc::SyncSender<()>>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+    let release = Release(Some(release));
+    let writer = managed_writer(place, move || {
+        save_managed_with_io(
+            ManagedSave {
+                root: &root,
+                bytes: b"saving",
+                hash: &digest(b"saving"),
+                deadline: std::time::Instant::now() + SAVE_WINDOW,
+                manager: &manager,
+                id: "example.bytes",
+                revision: &revision,
+            },
+            |file, bytes| {
+                file.write_all(bytes)?;
+                started.send(()).unwrap();
+                released.recv_timeout(SAVE_WINDOW).unwrap();
+                Ok(())
+            },
+            std::fs::File::sync_all,
+            |_| Ok(()),
+        )
+    });
+    ready.recv_timeout(SAVE_WINDOW).unwrap();
+    let deletions: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let view = f.view.clone();
+            let body = serde_json::json!({"id":"example.bytes","revision":f.revision,"path":path});
+            std::thread::spawn(move || {
+                tauri::test::get_ipc_response(
+                    &view,
+                    tauri::webview::InvokeRequest {
+                        cmd: "plugin_host_delete_managed_file".into(),
+                        callback: tauri::ipc::CallbackFn(0),
+                        error: tauri::ipc::CallbackFn(1),
+                        url: view.url().unwrap(),
+                        body: tauri::ipc::InvokeBody::Json(body),
+                        headers: Default::default(),
+                        invoke_key: INVOKE_KEY.into(),
+                    },
+                )
+                .map_err(|e| e.to_string())
+            })
+        })
+        .collect();
+    let watchdog = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while BYTE_WAITERS.available_permits() != 14 {
+        assert!(
+            !deletions.iter().any(|job| job.is_finished()),
+            "delete must queue, not refuse the held root"
+        );
+        assert!(
+            std::time::Instant::now() < watchdog,
+            "deletion admission watchdog"
+        );
+        std::thread::yield_now();
+    }
+    for path in &paths {
+        assert!(Path::new(path).exists());
+    }
+    drop(release);
+    tauri::async_runtime::block_on(writer).unwrap().unwrap();
+    for job in deletions {
+        job.join().unwrap().unwrap();
+    }
+    for path in paths {
+        assert!(!Path::new(&path).exists());
+    }
+}
+
+#[test]
+fn queued_managed_delete_timeout_never_dispatches_or_reports_unknown_outcome() {
+    let _serial = commands();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let _held = BYTE_WORK.acquire().await.unwrap();
+            let dispatched = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let seen = dispatched.clone();
+            let error =
+                delete_with_admission(tokio::time::Instant::now() + SAVE_WINDOW, move || {
+                    seen.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                })
+                .await
+                .unwrap_err();
+            assert!(error.contains("not deleted"), "{error}");
+            assert!(!error.contains("unknown"), "{error}");
+            assert!(!dispatched.load(std::sync::atomic::Ordering::SeqCst));
+            assert_eq!(BYTE_WAITERS.available_permits(), 16);
+        });
+}

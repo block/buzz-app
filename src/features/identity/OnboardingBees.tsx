@@ -134,7 +134,7 @@ export function OnboardingBees({ entering = false }: { entering?: boolean }) {
       cancelAnimationFrame(frame);
       previous = 0;
       remainder = 0;
-      if (!reduced.matches && !document.hidden)
+      if (width > 0 && height > 0 && !reduced.matches && !document.hidden)
         frame = requestAnimationFrame(tick);
     };
     const resize = new ResizeObserver(() => {
@@ -148,6 +148,7 @@ export function OnboardingBees({ entering = false }: { entering?: boolean }) {
       height = nextHeight;
       pointer = undefined;
       paint();
+      play();
     });
     const move = (event: PointerEvent) => {
       const bounds = area.getBoundingClientRect();

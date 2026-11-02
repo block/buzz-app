@@ -425,6 +425,25 @@ it("background enrichment does not reread a known absence until reconnect", asyn
   }
 });
 
+it("records no absence for a returned profile the cache evicted", async () => {
+  // A short response can still outgrow the directory's byte budget.
+  const big = profile(user, { name: "Big", about: "x".repeat(5 * 1024) });
+  const ids = Array.from({ length: 450 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  const first = "0".repeat(64);
+  const read = vi.fn(async () => ids.map((pubkey) => ({ ...big, pubkey })));
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure(ids, "background");
+    expect(directory.queries.snapshot().has(first)).toBe(false);
+    await directory.ensure([first], "background");
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    directory.dispose();
+  }
+});
+
 it("records no absence from a read that filled its page", async () => {
   const other = keypair();
   // A relay that keeps every kind 0 can fill the page from one author. The

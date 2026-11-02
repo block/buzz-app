@@ -206,8 +206,10 @@ export function createProfileDirectory(
     for (const listener of listeners) notify(listener);
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
-  function missed(ids: readonly string[]) {
-    for (const id of ids) if (!loaded.has(id)) absent.add(id);
+  function missed(ids: readonly string[], returned: ReadonlySet<string>) {
+    // The cache may already have evicted a returned kind 0; it is not absent.
+    for (const id of ids)
+      if (!loaded.has(id) && !returned.has(id)) absent.add(id);
     for (const id of absent) {
       if (absent.size <= 1024) break;
       absent.delete(id);
@@ -280,9 +282,13 @@ export function createProfileDirectory(
       }, signal)
         .then((result) => {
           if (signal.aborted) return;
-          accept(result.filter((event) => authors.includes(event.pubkey)));
+          const profiles = result.filter((event) =>
+            authors.includes(event.pubkey),
+          );
+          accept(profiles);
           // A page at the limit may have left out authors who do have one.
-          if (result.length < PROFILE_PAGE) missed(authors);
+          if (result.length < PROFILE_PAGE)
+            missed(authors, new Set(profiles.map((event) => event.pubkey)));
         })
         .catch((error: unknown) => {
           // The old directory contract silently discards a retired success.

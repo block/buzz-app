@@ -20,16 +20,10 @@ export function ShortcutsPanel({
 }: {
   services: SearchServices & Required<Pick<SearchServices, "plugins">>;
 }) {
-  const { shortcuts, shortcutBindings, plugins, navigation } = services;
+  const { shortcuts, navigation } = services;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const search = useRef<HTMLElement>(null);
-  const apple = isApplePlatform(navigator.platform);
-  const { shownGroups } = useShortcutGroups({
-    shortcuts,
-    bindings: shortcutBindings,
-    plugins,
-  });
   useEffect(
     () =>
       shortcuts.registerHost({
@@ -45,17 +39,6 @@ export function ShortcutsPanel({
       }),
     [shortcuts],
   );
-  const needle = query.trim().toLowerCase();
-  const groups = shownGroups
-    .map((group) => ({
-      ...group,
-      rows: needle
-        ? group.rows.filter((row) =>
-            `${row.title} ${group.label}`.toLowerCase().includes(needle),
-          )
-        : group.rows,
-    }))
-    .filter((group) => group.rows.length);
   return (
     <Dialog
       open={open}
@@ -88,29 +71,60 @@ export function ShortcutsPanel({
           onValueChange={setQuery}
           inputRef={search}
         />
-        {groups.length ? (
-          groups.map((group) => (
-            <section key={group.id}>
-              <InlineHeader title={group.label} subtitle={group.description} />
-              <SettingsGroup>
-                {group.rows.map((row) => (
-                  <PreferenceRow
-                    key={row.key}
-                    title={row.title}
-                    trailing={
-                      <ShortcutChords chords={row.effective} apple={apple} />
-                    }
-                  />
-                ))}
-              </SettingsGroup>
-            </section>
-          ))
-        ) : (
-          <p className="m-0 px-control-inset text-body-sm text-subtle">
-            No shortcuts match “{query.trim()}”.
-          </p>
-        )}
+        {/* Mounted only while open, so the closed panel doesn't follow every
+            shortcut and plugin change. */}
+        {open && <ShortcutList services={services} query={query} />}
       </div>
     </Dialog>
+  );
+}
+
+function ShortcutList({
+  services: { shortcuts, shortcutBindings, plugins },
+  query,
+}: {
+  services: SearchServices & Required<Pick<SearchServices, "plugins">>;
+  query: string;
+}) {
+  const apple = isApplePlatform(navigator.platform);
+  const { shownGroups } = useShortcutGroups({
+    shortcuts,
+    bindings: shortcutBindings,
+    plugins,
+  });
+  const needle = query.trim().toLowerCase();
+  const groups = shownGroups
+    .map((group) => ({
+      ...group,
+      rows: needle
+        ? group.rows.filter((row) =>
+            `${row.title} ${group.label}`.toLowerCase().includes(needle),
+          )
+        : group.rows,
+    }))
+    .filter((group) => group.rows.length);
+  return groups.length ? (
+    <>
+      {groups.map((group) => (
+        <section key={group.id}>
+          <InlineHeader title={group.label} subtitle={group.description} />
+          <SettingsGroup>
+            {group.rows.map((row) => (
+              <PreferenceRow
+                key={row.key}
+                title={row.title}
+                trailing={
+                  <ShortcutChords chords={row.effective} apple={apple} />
+                }
+              />
+            ))}
+          </SettingsGroup>
+        </section>
+      ))}
+    </>
+  ) : (
+    <p className="m-0 px-control-inset text-body-sm text-subtle">
+      No shortcuts match “{query.trim()}”.
+    </p>
   );
 }

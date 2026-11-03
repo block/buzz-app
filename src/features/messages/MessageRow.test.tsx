@@ -970,6 +970,7 @@ it("lets a plugin draw an image it claims, apart from the gallery", () => {
 
 it("lets a plugin open a file from the host file card, keeping Download", () => {
   const placements: unknown[] = [];
+  const messages: unknown[] = [];
   const viewer = {
     id: "pdf",
     title: "PDF",
@@ -982,10 +983,12 @@ it("lets a plugin open a file from the host file card, keeping Download", () => 
       attachment,
       source,
       placement,
+      message,
       FileCard,
       open,
     }: AttachmentRendererProps) => {
       placements.push(placement);
+      messages.push(message?.id);
       return FileCard ? (
         <FileCard
           attachment={attachment}
@@ -1030,6 +1033,7 @@ it("lets a plugin open a file from the host file card, keeping Download", () => 
     />,
   );
   expect(placements).toContain("message");
+  expect(messages).toContain(row.id);
   expect(screen.getByText("PDF · 2 KB")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Preview report.pdf" }));
   expect(open).toHaveBeenCalledWith("panel:report.pdf", { rootId: "root" });

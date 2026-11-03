@@ -92,6 +92,7 @@ export type AttachmentRendererProps = Readonly<{
   attachment: Attachment;
   source: string;
   placement?: "message" | "composer";
+  message?: ChannelMessage | undefined;
   FileCard?: ComponentType<FileCardProps> | undefined;
   onRemove?: (() => void) | undefined;
 }> &

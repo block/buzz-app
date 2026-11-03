@@ -1643,16 +1643,18 @@ bundled Reminders plugin is the first consumer.
 
 `registerAttachment({ id, title, matches, component })` draws a message or draft
 attachment the host would otherwise draw itself. Components receive
-`{ attachment, source, placement?, FileCard?, onRemove?, canOpen, open }`; the
+`{ attachment, source, placement?, message?, FileCard?, onRemove?, canOpen, open }`; the
 first active match wins, throwing matchers are skipped, and render failure or
 removal restores the host attachment. `placement` is `"message"` in message rows
-and `"composer"` in draft and voice-note surfaces. For file attachments the host
+and `"composer"` in draft and voice-note surfaces. Message rows also pass
+`message`, the message that holds the attachment, so a preview can name its
+author and conversation; drafts omit it. For file attachments the host
 also passes `FileCard`, its own file card. Rendering it with
 `onPreview` makes the card itself open the preview, typically `open(target)`
 for a panel, while a separate trailing action keeps the host's native or browser
 download. Offer `onPreview` only in message placement, and pass the renderer's
 `open` as `onOpenLink` so external files keep ordinary link activation. Older
-hosts may omit `placement` and `FileCard`.
+hosts may omit `placement`, `message` and `FileCard`.
 
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages

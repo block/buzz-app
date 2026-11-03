@@ -348,7 +348,7 @@ pub(crate) async fn plugin_host_upload_bytes_once<R: tauri::Runtime>(
 ) -> Result<HostResponse, String> {
     let deadline = tokio::time::Instant::now() + DEADLINE;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("Protected upload body must be raw bytes".into());
+        return Err("Protected upload body must be raw bytes; outcome may be unknown".into());
     };
     let metadata = request
         .headers()

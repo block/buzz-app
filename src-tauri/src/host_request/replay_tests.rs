@@ -642,7 +642,7 @@ fn upload_raw_ipc_consumes_once_without_files_and_binds_bytes_and_metadata() {
     )
     .unwrap_err();
     assert!(fallback_error.contains("raw bytes"));
-    assert!(!fallback_error.contains("outcome unknown"));
+    assert!(fallback_error.contains("outcome may be unknown"));
     calls.page_load();
     assert!(upload_ipc(&fixture, &metadata, raw())
         .unwrap_err()

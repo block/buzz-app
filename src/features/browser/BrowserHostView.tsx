@@ -117,6 +117,24 @@ export function BrowserHostView({
     if (!editing.current && status.url) setDraft(status.url);
   }, [status.url]);
 
+  // macOS mouse back/forward, sent here while this page has focus.
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const history = (value: BrowserAction) => (event: Event) => {
+      event.preventDefault();
+      action(value);
+    };
+    const back = history("back");
+    const forward = history("forward");
+    element.addEventListener("buzz:history-back", back);
+    element.addEventListener("buzz:history-forward", forward);
+    return () => {
+      element.removeEventListener("buzz:history-back", back);
+      element.removeEventListener("buzz:history-forward", forward);
+    };
+  });
+
   // In a tab, the page's title names it, so several websites tell apart.
   const tabHost = usePanelTabHost();
   const nameTab = tabHost?.title;

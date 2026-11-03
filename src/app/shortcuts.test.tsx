@@ -583,3 +583,38 @@ it.each([
     }
   },
 );
+
+it("mouse back/forward requests run app navigation unless a browser page took them", async () => {
+  const h = harness("MacIntel");
+  const controller = createNavigationController(createMemoryHistory());
+  const { navigation } = controller;
+  const remove = registerNavigationShortcuts(h.shortcuts, navigation);
+  const target = () => navigation.snapshot().attempt.entry.target;
+  const request = (name: string, handled = false) => {
+    const event = new Event(name, { cancelable: true });
+    if (handled) event.preventDefault();
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  try {
+    // Nothing behind or ahead yet: the request stays unhandled.
+    expect(request("buzz:history-back")).toBe(false);
+    void navigation.open({ version: 1, kind: "home" });
+    void navigation.open({ version: 1, kind: "settings" });
+    await vi.waitFor(() => expect(navigation.snapshot().canGoBack).toBe(true));
+    expect(request("buzz:history-back")).toBe(true);
+    await vi.waitFor(() =>
+      expect(target()).toEqual({ version: 1, kind: "home" }),
+    );
+    request("buzz:history-forward", true);
+    expect(target()).toEqual({ version: 1, kind: "home" });
+    expect(request("buzz:history-forward")).toBe(true);
+    await vi.waitFor(() =>
+      expect(target()).toEqual({ version: 1, kind: "settings" }),
+    );
+  } finally {
+    remove();
+    controller.dispose();
+    await h.dispose();
+  }
+});

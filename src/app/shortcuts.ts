@@ -318,6 +318,14 @@ export function registerNavigationShortcuts(
   shortcuts: ShortcutsService,
   navigation: import("../features/navigation/controller").Navigation,
 ) {
+  const back = {
+    when: () => navigation.snapshot().canGoBack,
+    run: navigation.back,
+  };
+  const forward = {
+    when: () => navigation.snapshot().canGoForward,
+    run: navigation.forward,
+  };
   const remove = [
     shortcuts.registerHost({
       id: "home",
@@ -347,8 +355,7 @@ export function registerNavigationShortcuts(
       order: HOST_SHORTCUT_ORDER.navigationBack,
       binding: { key: "[", mod: true },
       allowInEditable: true,
-      when: () => navigation.snapshot().canGoBack,
-      run: navigation.back,
+      ...back,
     }),
     shortcuts.registerHost({
       id: "navigation-forward",
@@ -356,11 +363,22 @@ export function registerNavigationShortcuts(
       order: HOST_SHORTCUT_ORDER.navigationForward,
       binding: { key: "]", mod: true },
       allowInEditable: true,
-      when: () => navigation.snapshot().canGoForward,
-      run: navigation.forward,
+      ...forward,
     }),
   ];
+  // macOS mouse back/forward requests a focused browser page left unhandled.
+  const history = (step: typeof back) => (event: Event) => {
+    if (event.defaultPrevented || !step.when()) return;
+    event.preventDefault();
+    step.run();
+  };
+  const historyBack = history(back);
+  const historyForward = history(forward);
+  window.addEventListener("buzz:history-back", historyBack);
+  window.addEventListener("buzz:history-forward", historyForward);
   return () => {
+    window.removeEventListener("buzz:history-back", historyBack);
+    window.removeEventListener("buzz:history-forward", historyForward);
     for (const dispose of remove) dispose();
   };
 }

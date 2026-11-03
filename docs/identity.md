@@ -16,12 +16,18 @@ wireframes. When a page replaces another, focus moves to the new page's
 heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
-Federated-identity builds (`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG`) do not yet
-support this flow. **Sign in with email** runs under the bundled Builderlab
-plugin's own network grant, which an FI build does not have (its Builderlab
-calls go through the native FI session; #1461), so sign-in fails with
-*Couldn’t sign in* after the browser step. FI builds need their own first-run
-path before adopting this flow.
+In federated-identity builds (`BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG`) the
+bundled Builderlab plugin has no network grant of its own: its Builderlab calls
+go through the native FI session (#1461). There, **Sign in with email** is the
+native [organization sign-in](#native-federated-session-module), whose browser
+step, code exchange and token stay native; a session that already exists signs
+in again, so the browser can choose the account. Setup's account calls then go
+through the native forwarder as the bundled plugin's installation, fenced to
+that session, and a backup hands the uploader the session's revision. Native
+admission checks only that installation's grant, so this works before the
+plugin starts. The forwarder grants no backup-status route, so Welcome back
+offers no restore and an imported key is offered the backup. The session
+outlives first run: sign-in at launch finds it signed in.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described

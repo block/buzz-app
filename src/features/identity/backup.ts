@@ -146,8 +146,9 @@ function failure(status: BackupStatus): BackupFailureKind | undefined {
 
 /**
  * Backs `pubkey` up through the native uploader, the only thing that runs a
- * pass: consent on, then the first-run credential handed to the shared
- * `builderlab` slot, whose ticket names the pass to wait for. The first status
+ * pass: consent on, then the first-run sign-in handed to the shared
+ * `builderlab` slot (its credential, or in an FI build its NIP-FI session
+ * revision), whose ticket names the pass to wait for. The first status
  * at or past it that is not `running` answers, or `timeout` does. The slot is
  * handed back on every exit after the handoff, so the credential never
  * outlives the step; a settled pass is not running, so that publishes nothing
@@ -161,7 +162,7 @@ function failure(status: BackupStatus): BackupFailureKind | undefined {
 export async function backUpWith(
   identity: Pick<Identity, "backup" | "setBackupChoice">,
   pubkey: string,
-  credential: string,
+  session: Readonly<{ credential: string } | { federated: string }>,
   {
     timeout = 60_000,
     after = timer,
@@ -183,7 +184,9 @@ export async function backUpWith(
   const settled = new AbortController();
   let unsubscribe = () => {};
   try {
-    const ticket = await handoffBackupSession("builderlab", credential, send);
+    const ticket = await ("federated" in session
+      ? handoffFederatedBackupSession(session.federated, send)
+      : handoffBackupSession("builderlab", session.credential, send));
     if (ticket === null) throw new BackupError("unavailable");
     const outcome = new Promise<BackupStatus>((resolve) => {
       const check = () => {

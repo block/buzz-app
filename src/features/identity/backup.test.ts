@@ -230,10 +230,15 @@ function backUp(host: ReturnType<typeof native>) {
       expire = resolve;
     });
   });
-  const done = backUpWith(identity, pubkey, "private-token", {
-    after,
-    send: host.send as Send,
-  });
+  const done = backUpWith(
+    identity,
+    pubkey,
+    { credential: "private-token" },
+    {
+      after,
+      send: host.send as Send,
+    },
+  );
   const failed = done.then(
     () => undefined,
     (error: unknown) => error,

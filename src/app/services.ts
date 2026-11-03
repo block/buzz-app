@@ -47,6 +47,8 @@ import { PagesService } from "../features/pages/service";
 import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
 import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
 import { bundledPlugins } from "../bundled";
+import { bundledFederatedIdentity } from "../bundled/builderlab/oauth/first-run";
+import { nativeBuilderlab } from "../bundled/builderlab/session";
 import { conversationFeatures } from "./conversation-features";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
@@ -58,6 +60,11 @@ export function createServices() {
   const ctx = new Context();
   new HostService(ctx);
   const federatedIdentity = new FederatedIdentityService(ctx);
+  // First run signs in before the Builderlab plugin starts; an FI build's
+  // Welcome calls the session as that plugin's bundled installation.
+  const firstRunFederatedIdentity = nativeBuilderlab()
+    ? bundledFederatedIdentity(ctx)
+    : undefined;
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
     builtIn: conversationFeatures,
@@ -232,6 +239,7 @@ export function createServices() {
     panels,
     plugins,
     federatedIdentity,
+    firstRunFederatedIdentity,
     relay,
     communities,
     invites,

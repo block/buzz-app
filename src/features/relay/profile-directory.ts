@@ -71,7 +71,8 @@ export function createProfileDirectory(
   // Replaced, never mutated, so stores can compare it like `snapshot`.
   let unnamed: ReadonlySet<string> = new Set();
   // Absences this connection has read. Background enrichment does not
-  // reread them: the live profiles route delivers a later kind 0.
+  // reread them: the live profiles route delivers a later kind 0. Scheduling
+  // state only; `unnamed` is what consumers see, and it survives reconnect.
   const absent = new Set<string>();
   // Keys with kind-0 metadata. A verified-only overlay must not satisfy ensure.
   let loaded: ReadonlySet<string> = new Set();
@@ -209,12 +210,18 @@ export function createProfileDirectory(
   function missed(ids: readonly string[], returned: ReadonlySet<string>) {
     // The cache may already have evicted a returned kind 0; it is not absent.
     for (const id of ids)
-      if (!loaded.has(id) && !returned.has(id)) absent.add(id);
+      if (!loaded.has(id) && !returned.has(id)) {
+        // Re-adding moves a reconfirmed absence to the end of the trim order.
+        absent.delete(id);
+        absent.add(id);
+      }
     for (const id of absent) {
       if (absent.size <= 1024) break;
       absent.delete(id);
     }
-    const fresh = ids.filter((id) => !snapshot.has(id) && !unnamed.has(id));
+    const fresh = ids.filter(
+      (id) => !snapshot.has(id) && !unnamed.has(id) && !returned.has(id),
+    );
     if (!fresh.length) return;
     unnamed = new Set([...unnamed, ...fresh].slice(-1024));
     for (const listener of listeners) notify(listener);
@@ -254,7 +261,12 @@ export function createProfileDirectory(
       return (
         !batch &&
         (refresh ||
-          !(loaded.has(id) || (priority === "background" && absent.has(id))))
+          !(
+            loaded.has(id) ||
+            // Only while still reported unnamed, so a skip never leaves an
+            // identity neither named nor unnamed.
+            (priority === "background" && absent.has(id) && unnamed.has(id))
+          ))
       );
     });
     for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {

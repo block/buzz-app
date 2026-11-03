@@ -437,8 +437,35 @@ it("records no absence for a returned profile the cache evicted", async () => {
   try {
     await directory.ensure(ids, "background");
     expect(directory.queries.snapshot().has(first)).toBe(false);
+    // Returned, so not known unnamed either.
+    expect(directory.queries.unnamed?.().has(first)).toBe(false);
     await directory.ensure([first], "background");
     expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    directory.dispose();
+  }
+});
+
+it("a background skip never leaves an identity neither named nor unnamed", async () => {
+  const ids = Array.from({ length: 1024 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  const first = "0".repeat(64);
+  const later = "f".repeat(64);
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  try {
+    await directory.ensure(ids, "background");
+    // Unnamed survives the reconnect; the absence does not.
+    await directory.reconnect();
+    await directory.ensure([first], "background");
+    // A new absence trims the oldest unnamed identity.
+    await directory.ensure([later], "background");
+    expect(directory.queries.unnamed?.().has(first)).toBe(false);
+    read.mockClear();
+    await directory.ensure([first], "background");
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(directory.queries.unnamed?.().has(first)).toBe(true);
   } finally {
     directory.dispose();
   }

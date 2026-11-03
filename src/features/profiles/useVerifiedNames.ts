@@ -43,11 +43,12 @@ function foundFor(
 /**
  * Community-verified names for people a search found that the shared profiles
  * have not verified. While `settled`, the unasked ones are read in the
- * background, a page at a time until all are asked; a changed `key` (the
- * typed query) or list cancels the read, and an unsettled list starts none.
- * Names
- * belong to the authority that checked them: when the community withdraws or
- * changes it, none are returned until they are checked again.
+ * background, a page at a time. One pass asks at most as many as the cache
+ * holds (PROFILE_CACHE_BASE); the rest of a longer list keep their profile
+ * names until a later pass. A changed `key` (the typed query) or list cancels
+ * the read, and an unsettled list starts none. Names belong to the authority
+ * that checked them: when the community withdraws or changes it, none are
+ * returned until they are checked again.
  */
 export function useVerifiedNames(
   session: VerifiedNamesSession,
@@ -85,7 +86,8 @@ export function useVerifiedNames(
       for (let start = 0; start < queue.length; start += BATCH) {
         const wanted = queue.slice(start, start + BATCH);
         const result = await read(wanted, controller.signal).catch(
-          // Without verified names the rows keep their profile names.
+          // A failed read checked nothing, like a changed authority: the pass
+          // ends, and the rows keep their profile names until asked again.
           () => undefined,
         );
         // Nothing was checked, or not by this authority: ask again later.

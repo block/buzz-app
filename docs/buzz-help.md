@@ -99,6 +99,10 @@ the interface unless an available tool actually supports that action.
 - **Sharing a Solo chat** grants access to its conversation history, not only
   the next message. Copying its link alone does not grant access. Check the
   intended people and destination before changing access.
+- **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
+  and use the Left/Right arrow keys. Double-click the handle to reset the width.
+  Messages and plugin pages share the saved width within the same community
+  and identity; narrow windows use a navigation drawer instead.
 
 ## Choosing and customizing agents
 
@@ -125,6 +129,11 @@ the interface unless an available tool actually supports that action.
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
   does not prove an agent is ready or running.
+- With the **Bestie** plugin on and no saved choice, **Choose your bestie agent**
+  offers a searchable agent picker and **Create agent**. Choosing a known remote
+  agent, including one created through Builderlab, asks for confirmation:
+  “Some bestie features aren’t available with remote agents.” Cancel leaves the
+  Bestie choice unchanged; it does not delete a newly created agent.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

@@ -1,4 +1,3 @@
-import { analyzeAudio } from "./analyze-audio";
 import { useMediaReadRecovery } from "../../features/messages/use-media-read-recovery";
 import { useMediaElementSource } from "../../features/messages/use-media-element-source";
 import { MediaDownloadAction } from "../../features/messages/MediaDownloadAction";
@@ -48,7 +47,7 @@ export function VoiceNoteCard(props: Props) {
   );
 }
 
-/** Visible clips load metadata; missing waveforms are derived from short audio. */
+/** Loads only after Play; metadata waveforms do not fetch or decode each chat clip. */
 function Player({
   source,
   downloadSource,
@@ -75,11 +74,6 @@ function Player({
   const progress = useRef<HTMLDivElement>(null);
   const attempt = useRef(0);
   const [count, setCount] = useState(38);
-  const [visible, setVisible] = useState(false);
-  const [analyzed, setAnalyzed] = useState<{
-    duration: number;
-    waveform: Float32Array;
-  }>();
   const [duration, setDuration] = useState(taggedDuration);
   const [metadataReady, setMetadataReady] = useState(false);
   const [time, setTime] = useState(0);
@@ -99,55 +93,9 @@ function Player({
       setLoading(false);
     },
   );
-  const displayedWaveform = waveform?.length ? waveform : analyzed?.waveform;
-  const peaks = displayedWaveform?.length
-    ? waveformPeaks(Float32Array.from(displayedWaveform.slice(0, 100)), count)
+  const peaks = waveform?.length
+    ? waveformPeaks(Float32Array.from(waveform.slice(0, 100)), count)
     : Array.from({ length: count }, () => 0);
-  useEffect(() => {
-    const element = track.current;
-    if (!element || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(([entry]) =>
-      setVisible(!!entry?.isIntersecting),
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  useEffect(() => {
-    if (
-      !active ||
-      !visible ||
-      !metadataReady ||
-      !duration ||
-      duration > 301 ||
-      waveform?.length ||
-      analyzed
-    )
-      return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([
-      controller.signal,
-      AbortSignal.timeout(30_000),
-    ]);
-    void analyzeAudio(downloadSource, signal)
-      .then((result) => {
-        if (!signal.aborted) {
-          setAnalyzed(result);
-          setDuration(result.duration);
-        }
-      })
-      .catch(() => {
-        /* Analysis must not prevent streaming playback. */
-      });
-    return () => controller.abort();
-  }, [
-    active,
-    visible,
-    metadataReady,
-    duration,
-    waveform,
-    analyzed,
-    downloadSource,
-  ]);
   useEffect(() => {
     const element = track.current;
     if (!element) return;
@@ -359,7 +307,7 @@ function Player({
       <audio
         ref={audio}
         src={source}
-        preload={active && visible ? "metadata" : "none"}
+        preload="none"
         onLoadedMetadata={(event) => {
           setMetadataReady(true);
           const value = event.currentTarget.duration;

@@ -278,13 +278,19 @@ export function createVerifiedProfileDirectory(
   function trim() {
     const gone = new Set<string>();
     for (const oldest of wanted) {
-      if (wanted.size <= limit) break;
-      wanted.delete(oldest);
-      heads.delete(oldest);
-      checked.delete(oldest);
+      if (wanted.size - gone.size <= limit) break;
       gone.add(oldest);
     }
+    forget(gone);
+  }
+  /** Evicted identities leave membership, so a later ensure asks again. */
+  function forget(gone: ReadonlySet<string>) {
     if (!gone.size) return;
+    for (const subject of gone) {
+      wanted.delete(subject);
+      heads.delete(subject);
+      checked.delete(subject);
+    }
     evicted = true;
     // A later ensure must issue a fresh REQ; the old one is past EOSE.
     for (const batch of batches)
@@ -306,8 +312,12 @@ export function createVerifiedProfileDirectory(
     resize(next: number) {
       if (closed || next === limit) return;
       limit = next;
-      heads.resize(limit, limit * PROFILE_ENTRY_BYTES);
+      // Request order decides who goes. After the trim every head is still
+      // wanted, so the head budget can only evict for bytes.
       trim();
+      const before = heads.keys();
+      if (heads.resize(limit, limit * PROFILE_ENTRY_BYTES))
+        forget(new Set(before.filter((subject) => !heads.peek(subject))));
       if (evicted) {
         evicted = false;
         changed();

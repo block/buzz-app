@@ -48,7 +48,11 @@ import {
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../../features/conversation/completion";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
-import { keypair, profile } from "../../features/relay/testing";
+import {
+  keypair,
+  profile,
+  unsignedProfiles,
+} from "../../features/relay/testing";
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -4022,7 +4026,7 @@ function rosterFixture(members: readonly string[]) {
 }
 
 it("loads an open channel's whole roster when it reserves room past the base", async () => {
-  const roster = Array.from({ length: 1100 }, () => keypair().pubkey);
+  const roster = unsignedProfiles(1100).map((event) => event.pubkey);
   const h = rosterFixture(roster);
   const release = h.directory.queries.reserve?.(roster.length);
   try {
@@ -4035,25 +4039,29 @@ it("loads an open channel's whole roster when it reserves room past the base", a
   }
 });
 
-it("asks again for a member's name after the cache evicted it", async () => {
+it("asks again for a member's name after the cache evicted it, but not for a known-unnamed one", async () => {
   const member = keypair();
-  const h = rosterFixture([member.pubkey]);
+  const ghost = keypair();
+  const h = rosterFixture([member.pubkey, ghost.pubkey]);
   try {
     h.directory.accept([profile(member, { name: "Jo" })]);
     let view = h.mount();
-    await act(async () => {});
+    // The read finds no profile for the ghost, so it is known unnamed.
+    await waitFor(() =>
+      expect(h.directory.queries.unnamed?.().has(ghost.pubkey)).toBe(true),
+    );
     view.unmount();
     expect(h.requested().has(member.pubkey)).toBe(false);
+    expect(h.reads).toHaveLength(1);
     // Unrelated profiles push the member out of the 1,024-entry base.
-    h.directory.accept(
-      Array.from({ length: 1024 }, (_, index) =>
-        profile(keypair(), { name: `Other ${index}` }),
-      ),
-    );
+    h.directory.accept(unsignedProfiles(1024, "Other "));
     expect(h.directory.queries.snapshot().has(member.pubkey)).toBe(false);
     view = h.mount();
     await waitFor(() => expect(h.requested().has(member.pubkey)).toBe(true));
     view.unmount();
+    expect(
+      h.reads.filter((read) => read.authors.includes(ghost.pubkey)),
+    ).toHaveLength(1);
   } finally {
     h.dispose();
   }

@@ -112,7 +112,10 @@ async function resolve(
   // read leaves its name missing, which only keeps the local step off.
   if (!roster && members.length)
     await session.profiles
-      .ensure(members.slice(0, 1024), "background")
+      .ensure(
+        members.slice(0, session.profiles.limit?.() ?? 1024),
+        "background",
+      )
       .catch(() => {});
   if (invite) {
     const release = session.agentChoices.retain();

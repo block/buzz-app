@@ -1043,3 +1043,31 @@ it("grows with the profile limit and evicts the least recently ensured when it s
     h.directory.dispose();
   }
 });
+
+it("shrinks a full head cache by request order, not by arrival order", async () => {
+  const h = harness();
+  const carol = keypair();
+  try {
+    // The directory follows any limit; three heads stand for a full cache.
+    h.directory.resize(3);
+    const subjects = [alice.pubkey, bob.pubkey, carol.pubkey];
+    h.directory.ensure(subjects);
+    await Promise.resolve();
+    const [batch] = h.subscriptions;
+    assert(batch);
+    for (const subject of subjects) batch.sink.event(projection(10, subject));
+    batch.sink.eose();
+    expect(h.directory.snapshot().size).toBe(3);
+    // The first head to arrive is now the most recently requested.
+    h.directory.ensure([alice.pubkey]);
+    h.changed.mockClear();
+    h.directory.resize(2);
+    const snapshot = h.directory.snapshot();
+    expect([...snapshot.keys()].sort()).toEqual(
+      [alice.pubkey, carol.pubkey].sort(),
+    );
+    expect(h.changed).toHaveBeenCalledTimes(1);
+  } finally {
+    h.directory.dispose();
+  }
+});

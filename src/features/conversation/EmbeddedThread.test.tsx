@@ -427,12 +427,13 @@ it("an open channel reserves profile room for its roster and returns it when it 
     canOpenLink: () => false,
     onOpenMediaReview: () => {},
   };
-  const page = (id?: string) => (
+  const page = (id?: string, active?: boolean) => (
     <ConversationChannel
       session={session}
       scope={props.scope}
       extensions={props.extensions}
       channel={id ? { id, name: "Channel" } : undefined}
+      active={active}
       interactions={interactions}
     >
       <input aria-label="Page state" />
@@ -444,6 +445,11 @@ it("an open channel reserves profile room for its roster and returns it when it 
   expect(release).toHaveBeenCalledOnce();
   view.rerender(page("d"));
   expect(reserve).toHaveBeenCalledTimes(2);
-  view.unmount();
+  // A retained tab in the background gives the room back until it is shown.
+  view.rerender(page("d", false));
   expect(release).toHaveBeenCalledTimes(2);
+  view.rerender(page("d", true));
+  expect(reserve).toHaveBeenCalledTimes(3);
+  view.unmount();
+  expect(release).toHaveBeenCalledTimes(3);
 });

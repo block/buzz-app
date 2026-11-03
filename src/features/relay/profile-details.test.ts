@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { expect, it, vi } from "vitest";
-import { eventDto } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import { selectProfiles } from "./profile-selection";
 import { foldProfiles } from "./profiles";
 import { createProfileDirectory } from "./profile-directory";
@@ -11,7 +11,13 @@ import {
   type RelayReader,
   type ReadOptions,
 } from "./reader";
-import { keypair, profile, scriptedTransport, signed } from "./testing";
+import {
+  keypair,
+  profile,
+  scriptedTransport,
+  signed,
+  unsignedProfiles,
+} from "./testing";
 const user = keypair();
 it("projects about safely and publishes an about-only replacement/removal", () => {
   const wire = scriptedTransport(user.pubkey, keypair().pubkey);
@@ -524,12 +530,10 @@ it("evicts the least recently ensured profile, not the oldest stored one", async
   const read = vi.fn(async () => []);
   const directory = createProfileDirectory({ read });
   try {
-    const people = Array.from({ length: 1024 }, () => keypair());
-    directory.accept(
-      people.map((key, index) => profile(key, { name: `P${index}` })),
-    );
+    const people = unsignedProfiles(1024);
+    directory.accept(people);
     expect(directory.queries.snapshot().size).toBe(1024);
-    const [oldest, next] = people as [typeof user, typeof user];
+    const [oldest, next] = people as [RelayEvent, RelayEvent];
     await directory.ensure([oldest.pubkey]);
     expect(read).not.toHaveBeenCalled();
     directory.accept([profile(keypair(), { name: "Newcomer" })]);
@@ -543,32 +547,42 @@ it("evicts the least recently ensured profile, not the oldest stored one", async
 });
 
 it("holds an open channel's roster on top of the base and shrinks back when released", async () => {
+  vi.useFakeTimers();
   const read = vi.fn(async () => []);
   const directory = createProfileDirectory({ read });
   const changed = vi.fn();
   const unsubscribe = directory.queries.subscribe(changed);
   try {
-    const people = Array.from({ length: 1524 }, () => keypair());
-    const ids = people.map((key) => key.pubkey);
-    const release = directory.queries.reserve?.(500);
+    const people = unsignedProfiles(1524);
+    const ids = people.map((event) => event.pubkey);
+    let release = directory.queries.reserve?.(500);
     expect(directory.queries.limit?.()).toBe(1524);
     // A whole roster fits in one request while the room is reserved.
     await directory.ensure(ids.slice(0, 1100));
     expect(read).toHaveBeenCalled();
-    directory.accept(
-      people.map((key, index) => profile(key, { name: `P${index}` })),
-    );
+    directory.accept(people);
     expect(directory.queries.snapshot().size).toBe(1524);
     expect(directory.queries.evictions?.()).toBe(0);
-    // A larger reservation wins; the smaller one keeps nothing when released.
+    // A larger reservation wins at once; giving it back keeps the smaller one.
     const larger = directory.queries.reserve?.(20_000);
     expect(directory.queries.limit?.()).toBe(10_240);
     larger?.();
+    await vi.runAllTimersAsync();
     expect(directory.queries.limit?.()).toBe(1524);
+    // A view that releases and reserves again in one commit, as an effect
+    // does when the member count changes, keeps the roster it loaded.
+    release?.();
+    release = directory.queries.reserve?.(500);
+    await vi.runAllTimersAsync();
+    expect(directory.queries.limit?.()).toBe(1524);
+    expect(directory.queries.snapshot().size).toBe(1524);
     await directory.ensure([ids[0] as string]);
     changed.mockClear();
     release?.();
     release?.();
+    // The shrink waits for the end of the task.
+    expect(directory.queries.limit?.()).toBe(1524);
+    await vi.runAllTimersAsync();
     expect(directory.queries.limit?.()).toBe(1024);
     const snapshot = directory.queries.snapshot();
     expect(snapshot.size).toBe(1024);
@@ -585,5 +599,30 @@ it("holds an open channel's roster on top of the base and shrinks back when rele
   } finally {
     unsubscribe();
     directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("returns known-unnamed identities past the base when it shrinks", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  try {
+    const ids = unsignedProfiles(1500).map((event) => event.pubkey);
+    const release = directory.queries.reserve?.(500);
+    await directory.ensure(ids);
+    expect(directory.queries.unnamed?.().size).toBe(1500);
+    const changed = vi.fn();
+    const unsubscribe = directory.queries.subscribe(changed);
+    release?.();
+    await vi.runAllTimersAsync();
+    unsubscribe();
+    expect(directory.queries.unnamed?.().size).toBe(1024);
+    expect(directory.queries.unnamed?.().has(ids[1499] as string)).toBe(true);
+    expect(directory.queries.unnamed?.().has(ids[0] as string)).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(1);
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
   }
 });

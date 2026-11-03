@@ -142,16 +142,18 @@ export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
   const channelName = props.channelName ?? channel?.name ?? "";
   // While the channel is open the profile cache keeps room for its whole roster
-  // on top of its base; leaving gives the room back.
+  // on top of its base; leaving gives the room back. A retained tab in the
+  // background and a preview that does not visit the channel hold none.
   const members = useListedChannel(
     session.channels,
     channel?.id,
     (listed) => listed?.members?.length ?? 0,
   );
+  const held = active === false ? 0 : members;
   const { profiles } = session;
   useEffect(
-    () => (members ? profiles.reserve?.(members) : undefined),
-    [profiles, members],
+    () => (held ? profiles.reserve?.(held) : undefined),
+    [profiles, held],
   );
   // One stable element, so selecting a channel never remounts the page below.
   const provide = (

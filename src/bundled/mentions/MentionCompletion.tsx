@@ -81,9 +81,15 @@ export function MentionCompletion({
     const requested = demand.ids;
     // An open channel reserves room for its whole roster (ConversationChannel).
     const limit = session.profiles.limit?.() ?? 1024;
+    // A member a completed read found no profile for stays known unnamed, so
+    // reopening the menu does not read it again; Retry does.
+    const unnamed = session.profiles.unnamed?.();
     const ids = memberKey
       .split(":")
-      .filter((id) => id && (attempt > 0 || !requested.has(id)))
+      .filter(
+        (id) =>
+          id && (attempt > 0 || (!requested.has(id) && !unnamed?.has(id))),
+      )
       .slice(0, attempt > 0 ? limit : Math.max(0, limit - requested.size));
     if (!ids.length) return;
     for (const id of ids) requested.add(id);

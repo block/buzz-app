@@ -39,7 +39,8 @@ export interface ProfileQueries {
    * reread. */
   generation?(): number;
   /** Room for `members` more profiles while a view of that many people is
-   * open, within the hard limit. Release returns the limit to the base and
+   * open, within the hard limit. Growth is immediate. After a release, the
+   * next task returns the limit to the largest remaining reservation and
    * evicts the least recently used profiles past it. */
   reserve?(members: number): () => void;
   /** Profiles the cache can hold now; one ensure may ask for at most this many. */
@@ -73,6 +74,7 @@ export function createProfileDirectory(
   const events = new ByteLru<RelayEvent>(limit, limit * PROFILE_ENTRY_BYTES);
   // One entry per open view; the largest sets the limit.
   const reservations = new Set<{ members: number }>();
+  let shrinking: ReturnType<typeof setTimeout> | undefined;
   const owners = new WeakMap<RelayEvent, string>();
   const pending = new Map<
     string,
@@ -345,6 +347,8 @@ export function createProfileDirectory(
     publish(true);
   }
   function resize() {
+    clearTimeout(shrinking);
+    shrinking = undefined;
     let reserved = 0;
     for (const { members } of reservations)
       reserved = Math.max(reserved, members);
@@ -352,7 +356,12 @@ export function createProfileDirectory(
     if (next === limit) return;
     limit = next;
     verified?.resize(limit);
-    if (events.resize(limit, limit * PROFILE_ENTRY_BYTES)) publish(true);
+    let dropped = events.resize(limit, limit * PROFILE_ENTRY_BYTES) > 0;
+    if (unnamed.size > limit) {
+      unnamed = new Set([...unnamed].slice(-limit));
+      dropped = true;
+    }
+    if (dropped) publish(true);
   }
   function reserve(members: number) {
     const reservation = {
@@ -361,8 +370,10 @@ export function createProfileDirectory(
     reservations.add(reservation);
     resize();
     return () => {
-      if (!reservations.delete(reservation)) return;
-      if (!closed) resize();
+      if (!reservations.delete(reservation) || closed) return;
+      // Shrink after the current task: a view that releases and reserves again
+      // in one commit (a roster count change, a remount) keeps its profiles.
+      shrinking ??= setTimeout(resize);
     };
   }
   const queries: ProfileQueries = Object.freeze({
@@ -425,6 +436,7 @@ export function createProfileDirectory(
       clear();
       // After clear(): disposing the verified directory schedules a flush.
       clearTimeout(verifiedFlush);
+      clearTimeout(shrinking);
       listeners.clear();
     },
   };

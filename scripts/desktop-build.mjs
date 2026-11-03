@@ -88,8 +88,7 @@ const result = spawnSync(
   ["tauri", "build", ...defaults, ...forwarded],
   {
     stdio: "inherit",
-    // `vite build` runs in production mode; give Cargo the same values.
-    env: launchEnvironment(root, "production"),
+    env: launchEnvironment(root),
   },
 );
 if (result.error) console.error(result.error.message);

@@ -595,6 +595,18 @@ for (const target of ["desktop", "desktop-bundle"])
       },
       { fi: "" },
     ],
+    [
+      "literal dollar",
+      {
+        local: `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG='{"organization":"$LOCAL_ONLY_SECRET"}'\nLOCAL_ONLY_SECRET=local\n`,
+      },
+      { fi: '{"organization":"$LOCAL_ONLY_SECRET"}' },
+    ],
+    [
+      "mode file ignored",
+      { mode: `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG='${descriptor}'\n` },
+      {},
+    ],
     ["unset", {}, {}],
   ])
     test(`${target} passes .env.local BUZZ_ values to Tauri: ${name}`, () => {

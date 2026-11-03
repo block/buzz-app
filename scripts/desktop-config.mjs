@@ -1,14 +1,25 @@
-import { loadEnv } from "vite";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parseEnv } from "node:util";
 import { worktreeIcon } from "./worktree-icon.mjs";
 
 // The environment a launcher gives Tauri: the process plus every `BUZZ_` value
-// Vite resolves for `mode` from `.env.local` and its mode files, so Cargo build
-// scripts and the native app see what the frontend sees. Process values win,
-// including an explicit empty one. Only `BUZZ_` names: the file can hold
-// unrelated credentials, and agent processes drop only `BUZZ_` and `NOSTR_`
-// names from the app's environment (`src-tauri/src/host_process.rs`).
-export function launchEnvironment(root, mode) {
-  return { ...process.env, ...loadEnv(mode, root, "BUZZ_") };
+// in repository-root `.env.local`, read as native builds read it: literally,
+// without `$VAR` expansion, and without Vite's mode files. Process values win,
+// including an explicit empty one. Names without the `BUZZ_` prefix stay out:
+// the file can hold unrelated settings and credentials.
+export function launchEnvironment(root) {
+  let text = "";
+  try {
+    text = readFileSync(join(root, ".env.local"), "utf8");
+  } catch (error) {
+    // Never echo the file: it can contain unrelated local credentials.
+    if (error?.code !== "ENOENT") throw new Error("Could not read .env.local");
+  }
+  const local = Object.entries(parseEnv(text.replace(/^\uFEFF/, ""))).filter(
+    ([name]) => name.startsWith("BUZZ_"),
+  );
+  return { ...Object.fromEntries(local), ...process.env };
 }
 
 // Pull `--<name> <value>` and `--<name>=<value>` out of a launcher's arguments.

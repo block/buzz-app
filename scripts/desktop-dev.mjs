@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { loadEnv } from "vite";
 import {
   desktopOverlay,
   launchEnvironment,
@@ -22,10 +23,12 @@ const port = values.port === undefined ? undefined : Number(values.port);
 
 const help = forwarded.some((arg) => arg === "--help" || arg === "-h");
 const root = fileURLToPath(new URL("../", import.meta.url));
-// Native agent starts must select the signer the development frontend actually
-// uses, so an unpinned launch passes an explicit empty pin.
-const env = launchEnvironment(root, "development");
-env.BUZZ_DEV_VIEWER ??= "";
+const env = launchEnvironment(root);
+// Give Rust the development frontend's effective public pin (including an
+// explicit empty override), so native agent starts select the signer the
+// frontend actually uses.
+env.BUZZ_DEV_VIEWER =
+  loadEnv("development", root, "BUZZ_DEV_VIEWER").BUZZ_DEV_VIEWER ?? "";
 // Stage the bundled helpers before Tauri compiles, outside its dev-server timeout.
 if (!help) {
   // Stage for the target Tauri is given, as Tauri tells beforeBuildCommand.

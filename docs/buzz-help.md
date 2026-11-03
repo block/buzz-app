@@ -59,6 +59,9 @@ the interface unless an available tool actually supports that action.
   more than one community.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile.
+- Where a community verifies names, the profile check appears beside the verified
+  full name, or the verified username when no full name is supplied. The profile
+  shows the issuer and verification time; cached verification has no check.
 
 ## Conversations and communities
 
@@ -139,6 +142,11 @@ the interface unless an available tool actually supports that action.
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
   does not prove an agent is ready or running.
+- With the **Bestie** plugin on and no saved choice, **Choose your bestie agent**
+  offers a searchable agent picker and **Create agent**. Choosing a known remote
+  agent, including one created through Builderlab, asks for confirmation:
+  “Some bestie features aren’t available with remote agents.” Cancel leaves the
+  Bestie choice unchanged; it does not delete a newly created agent.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

@@ -14,6 +14,7 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
   bundledHost,
   firstRunCredential,
+  type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
 import { communityDestination } from "../communities/destination";
@@ -35,6 +36,7 @@ import { BackupError } from "./backup";
 import { hostedByThisBuilderlab } from "./builderlab-hosted";
 import {
   builderlabAccount,
+  federatedBuilderlabAccount,
   type FirstRunAccount,
   type OwnedCommunity,
   seededAccount,
@@ -77,15 +79,22 @@ import { WireframeScreen } from "./Wireframe";
 /**
  * The signed-in account: the development seed when a dev server set one
  * (production builds define it empty), else the build URL's kgoose through
- * the same bundled grant the sign-in used, and the identity's native uploader.
+ * the same bundled grant the sign-in used (in an FI build, `federated`'s
+ * forwarder), and the identity's native uploader.
  */
-const firstRunAccount = (credential: Credential, identity: Identity) => {
+const firstRunAccount = (
+  credential: Credential,
+  identity: Identity,
+  federated?: FirstRunIdentity,
+) => {
   const seed = parseFirstRunAccountSeed(
     import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
   );
   return seed
     ? seededAccount(seed, identity)
-    : builderlabAccount(credential, bundledHost.request, identity);
+    : federated
+      ? federatedBuilderlabAccount(credential, federated, identity)
+      : builderlabAccount(credential, bundledHost.request, identity);
 };
 
 /**
@@ -97,8 +106,10 @@ export function Welcome({
   communities,
   invites,
   children,
-  connect = firstRunCredential,
-  account = firstRunAccount,
+  federatedIdentity,
+  connect = (signal) => firstRunCredential(signal, federatedIdentity),
+  account = (credential, identity) =>
+    firstRunAccount(credential, identity, federatedIdentity),
 }: {
   identity: Identity;
   /** The live startup service: joining through it is what selects the community. */
@@ -109,6 +120,12 @@ export function Welcome({
    */
   invites: Pick<ReturnType<typeof createInviteIntent>, "open">;
   children: ReactNode;
+  /**
+   * An FI build's NIP-FI session as the bundled Builderlab plugin calls it
+   * (`bundledFederatedIdentity`): sign-in and the account's calls go through
+   * it instead of the plugin's network grant, which an FI build lacks.
+   */
+  federatedIdentity?: FirstRunIdentity | undefined;
   connect?: (signal: AbortSignal) => Promise<Credential>;
   /** The account for a credential `connect` returned. */
   account?:

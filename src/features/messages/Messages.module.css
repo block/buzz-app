@@ -1773,6 +1773,16 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   font-size: var(--text-caption);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+/* Byline provenance for imported history, beside the timestamp. */
+.importedMarker {
+  color: var(--message-metadata, var(--text-metadata));
+  font-size: var(--text-caption);
+  letter-spacing: var(--text-caption--letter-spacing);
+  white-space: nowrap;
+}
+.importNoticeName {
+  font-weight: var(--type-weight-medium);
+}
 /* A plugin card's marker sits in its bubble, above the reactions. */
 .messagePayload > .edited,
 .messageBubble > .edited {

@@ -3,7 +3,9 @@ import type { EventData } from "./events";
 import { objectBody } from "./body";
 
 /** Content rows retained by channel history/live windows, not the unread kind set. */
-export const CHANNEL_ROW_KINDS = [9, 40002, 40008, 40099, 48100, 48103];
+export const CHANNEL_ROW_KINDS = [
+  9, 40002, 40008, 40099, 48100, 48103, 42110, 42111, 42112, 42113,
+];
 export const channelRowKind = (kind: number) =>
   CHANNEL_ROW_KINDS.includes(kind);
 const pubkey = (value: unknown): value is string =>
@@ -46,6 +48,11 @@ export function rowProfileIds(row: ChannelMessage): readonly string[] {
         ...row.mentions,
         ...(row.mentionReferences ?? []),
         ...row.participants,
+        ...(row.importRecord?.type === "proposal"
+          ? row.importRecord.proposal.content.participants.map(
+              (participant) => participant.pubkey,
+            )
+          : []),
       ];
 }
 
@@ -55,7 +62,13 @@ export function messagePreview(
 ): string | undefined {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
-    if (row && !row.membership && !row.huddle)
+    if (
+      row &&
+      !row.membership &&
+      !row.huddle &&
+      !row.importRecord &&
+      !row.imported
+    )
       return row.diff
         ? `Diff: ${row.diff.filePath || "patch"}${row.diff.description ? ` — ${row.diff.description}` : ""}`
         : row.content;

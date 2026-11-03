@@ -23,8 +23,12 @@ export function DeliveryNotice({
   }, [row.createdAt, row.delivery]);
   const feedback = deliveryFeedback(row, now);
   if (!feedback) return null;
+  // Import entries are retried only by the import service, never by hand.
   const canRetry =
-    (row.delivery === "failed" || row.delivery === "unknown") && retry;
+    (row.delivery === "failed" || row.delivery === "unknown") &&
+    !row.imported &&
+    !row.importRecord &&
+    retry;
   return (
     <div className={styles.delivery}>
       <span role="status" className={canRetry ? "sr-only" : undefined}>

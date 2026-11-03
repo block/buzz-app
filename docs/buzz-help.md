@@ -232,6 +232,13 @@ runs on a message, reaction, schedule or webhook. It starts disabled, and only
 its author can edit, enable or run it. Your agents follow only workflows that
 you or your agents own.
 
+The **Workflows** page lists automations by channel. A workflow message's
+**Workflow** byline opens its owner; its details offer **View workflows in
+#channel**. A selected workflow's channel name opens that channel. A finished
+run's **Open posted message** opens the message it sent. After **Run now**
+succeeds, **View run** shows its run history. Back restores your selection;
+closing its tab does not.
+
 ## Plugins
 
 **Settings → Plugins → Manage plugins** shows which plugins are on, turns them

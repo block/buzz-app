@@ -3034,7 +3034,7 @@ export function createChannelStore(
     if (disposed || !transport) return;
     for (const [id, head] of heads.entries())
       if (ownersChanged(foldOwners.get(head.rows)))
-        heads.set(id, {
+        heads.replace(id, {
           ...head,
           rows: Object.freeze(
             foldChannelMessages(id, transport.relayAuthor, head.events),
@@ -3054,7 +3054,7 @@ export function createChannelStore(
         owners: foldOwners.get(rows),
         head: markHead(head),
       });
-      tails.set(id, next, tailBytes(next));
+      tails.replace(id, next, tailBytes(next));
     }
     for (const state of windows.values()) setWindow(state, {});
     setList(list);

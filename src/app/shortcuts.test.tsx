@@ -730,25 +730,37 @@ it.each(["menu", "popover"] as const)(
       </Dialog>,
     );
     try {
-      void navigation.open({ version: 1, kind: "home" });
+      // Settings sits between two visits, so both directions are available.
+      const home = { version: 1, kind: "home" } as const;
+      void navigation.open(home);
       void navigation.open(settings);
-      await vi.waitFor(() =>
-        expect(navigation.snapshot().canGoBack).toBe(true),
-      );
+      void navigation.open(home);
+      await vi.waitFor(() => expect(target()).toEqual(home));
+      navigation.back();
+      await vi.waitFor(() => expect(target()).toEqual(settings));
+      expect(navigation.snapshot()).toMatchObject({
+        canGoBack: true,
+        canGoForward: true,
+      });
       await user.click(screen.getByRole("button", { name: "Open layer" }));
       const action = await screen.findByText("Layer action");
-      press(action, { ctrlKey: false, metaKey: true, key: "[" });
-      new Function(
-        "window",
-        "document",
-        "Event",
-        "CSS",
-        "browserSessionId",
-        "historyEvent",
-        `return eval(${JSON.stringify(historyRequest)})`,
-      )(window, document, Event, CSS, null, "buzz:history-back");
-      await act(async () => {});
-      expect(target()).toEqual(settings);
+      for (const [key, historyEvent] of [
+        ["[", "buzz:history-back"],
+        ["]", "buzz:history-forward"],
+      ] as const) {
+        press(action, { ctrlKey: false, metaKey: true, key });
+        new Function(
+          "window",
+          "document",
+          "Event",
+          "CSS",
+          "browserSessionId",
+          "historyEvent",
+          `return eval(${JSON.stringify(historyRequest)})`,
+        )(window, document, Event, CSS, null, historyEvent);
+        await act(async () => {});
+        expect(target()).toEqual(settings);
+      }
     } finally {
       remove();
       controller.dispose();

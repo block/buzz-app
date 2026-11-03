@@ -98,6 +98,9 @@ export function PrivateChannels({
   >({});
   /** The channels Add to all asked about. */
   const [confirming, setConfirming] = useState<readonly ChannelSummary[]>();
+  /** The channel Remove asked about, as the Members dialog asks first. */
+  const [removing, setRemoving] = useState<ChannelSummary>();
+  const cancelRemove = useRef<HTMLButtonElement>(null);
   /** The agent this section is for now, or none once it is gone, as after
    * Change: changes still to run for an earlier one aren't sent. */
   const current = useRef<string | undefined>(bestie);
@@ -173,7 +176,7 @@ export function PrivateChannels({
                 loading={busy.has(channel.id)}
                 disabled={channel.cached}
                 aria-label={`Remove Bestie from #${channel.name}`}
-                onClick={() => void remove(channel)}
+                onClick={() => setRemoving(channel)}
               >
                 Remove
               </Button>
@@ -277,6 +280,34 @@ export function PrivateChannels({
             </p>
           ))}
         </div>
+      )}
+      {removing && (
+        <AlertDialog
+          title={`Remove Bestie from #${removing.name}?`}
+          description="Bestie stops reading this channel. Its members see that you removed it."
+          initialFocus={cancelRemove}
+          onClose={() => setRemoving(undefined)}
+          actions={
+            <>
+              <Button
+                variant="subtle"
+                ref={cancelRemove}
+                onClick={() => setRemoving(undefined)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setRemoving(undefined);
+                  void remove(removing);
+                }}
+              >
+                Remove Bestie
+              </Button>
+            </>
+          }
+        />
       )}
       {confirming && (
         <AlertDialog

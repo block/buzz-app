@@ -29,6 +29,17 @@ const channel = (
   ...extra,
 });
 
+/** Clicks Remove on `name` and confirms it, as the Members dialog asks. */
+async function remove(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(
+    screen.getByRole("button", { name: `Remove Bestie from #${name}` }),
+  );
+  const ask = await screen.findByRole("alertdialog", {
+    name: `Remove Bestie from #${name}?`,
+  });
+  await user.click(within(ask).getByRole("button", { name: "Remove Bestie" }));
+}
+
 it("keeps only your private channels, split by Bestie's membership, most recent first", () => {
   const { joined, others } = privateChannels(
     [
@@ -113,6 +124,16 @@ it("removes Bestie from a channel it is in, as the Members dialog does", async (
   await user.click(
     screen.getByRole("button", { name: "Remove Bestie from #shared" }),
   );
+  // It asks first, with focus on Cancel, and Cancel removes nothing.
+  const ask = await screen.findByRole("alertdialog", {
+    name: "Remove Bestie from #shared?",
+  });
+  await vi.waitFor(() =>
+    expect(within(ask).getByRole("button", { name: "Cancel" })).toHaveFocus(),
+  );
+  await user.click(within(ask).getByRole("button", { name: "Cancel" }));
+  expect(run).not.toHaveBeenCalled();
+  await remove(user, "shared");
   expect(run).toHaveBeenCalledWith("id-shared", {
     pubkey: BESTIE,
     expectedRole: "bot",
@@ -198,9 +219,7 @@ it("says when a removal isn't confirmed, and offers none from a cached roster", 
   expect(
     screen.getByRole("button", { name: "Remove Bestie from #offline" }),
   ).toBeDisabled();
-  await user.click(
-    screen.getByRole("button", { name: "Remove Bestie from #shared" }),
-  );
+  await remove(user, "shared");
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "#shared: The change may have taken effect. Refresh to check.",
   );
@@ -226,15 +245,13 @@ it("offers no add to a channel known only from a cached roster", async () => {
   expect(add.mock.calls).toEqual([["id-alpha", BESTIE, GUEST]]);
 });
 
-it("removes Bestie on the first click after mounting under StrictMode", async () => {
+it("removes Bestie on the first Remove after mounting under StrictMode", async () => {
   const user = userEvent.setup();
   const { value, run } = session([channel("shared", [YOU, BESTIE])]);
   render(<PrivateChannels session={value} bestie={BESTIE} />, {
     reactStrictMode: true,
   });
-  await user.click(
-    screen.getByRole("button", { name: "Remove Bestie from #shared" }),
-  );
+  await remove(user, "shared");
   expect(run).toHaveBeenCalledOnce();
 });
 

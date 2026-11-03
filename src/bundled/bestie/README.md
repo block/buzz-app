@@ -55,7 +55,8 @@ deletes no memory, and the agent's core memory is still in every prompt;
 clear memory in the Memory tab.
 
 **Private channels Bestie can read** lists the private channels you share with
-Bestie, each with **Remove**. **Add to a channel** (**Choose…**) and **Add to
+Bestie, each with **Remove**, which asks first, as the Members dialog does.
+**Add to a channel** (**Choose…**) and **Add to
 all my private channels** add it to the private channels you are in, most
 recently active first; each channel's members see that you added it. Bestie
 joins as a guest, so it reads the channel but can't post there. Each

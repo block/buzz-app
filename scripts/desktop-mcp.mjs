@@ -3,12 +3,14 @@ import { fileURLToPath } from "node:url";
 import { nativeMcpInstance } from "./desktop-config.mjs";
 
 // Launch this worktree's native MCP test instance; arguments pass to `just desktop`.
+// `--print` prints the instance's identifier and base port without launching.
 const root = fileURLToPath(new URL("../", import.meta.url));
 const { identifier, port } = nativeMcpInstance(root);
 console.log(
   `Native MCP test instance ${identifier}, bridge base port ${port}. ` +
-    "Verify both with get_backend_state before acting.",
+    "Verify the identifier with get_backend_state before acting.",
 );
+if (process.argv[2] === "--print") process.exit(0);
 const result = spawnSync(
   "bin/just",
   [
@@ -25,7 +27,10 @@ const result = spawnSync(
     cwd: root,
     stdio: "inherit",
     // An empty pin disables the legacy broker, which native_mcp.rs requires.
+    // Saved organization sign-ins are keyed by profile, so the instance does not
+    // restore another debug build's session.
     env: {
+      BUZZODZ_PROFILE: `native-mcp-${identifier.slice(-12)}`,
       ...process.env,
       BUZZ_NATIVE_MCP_PORT: String(port),
       BUZZ_DEV_VIEWER: "",

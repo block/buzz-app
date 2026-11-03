@@ -6,13 +6,27 @@ The bridge is available only in macOS debug builds. Normal builds and launches
 do not register it. Release builds and other platforms refuse an explicit opt-in.
 This bridge is separate from the MCP servers that Buzz plugins can serve.
 
-## Use a disposable test instance
+## Choose the identity it runs as
 
 The bridge can execute JavaScript and native commands with the app's authority.
-Use a disposable macOS account or VM with generated test keys and a local test
-relay. Do not use production or staging accounts. A different app identifier,
-port, or `BUZZODZ_PROFILE` does **not** isolate the shared debug Keychain identity.
-Do not replace a developer's active identity. See [identity custody](identity.md).
+A test instance signs with the shared debug Keychain identity, the same key
+`bin/just desktop` and `bin/just web` use. A different app identifier, port or
+`BUZZODZ_PROFILE` does **not** isolate it, so whatever an agent does through
+the bridge, it does as that key, in that key's communities. Do not replace a
+developer's active identity. See [identity custody](identity.md).
+
+For automation you do not supervise, use a disposable macOS account or VM with
+generated test keys and a local test relay. To let an agent test against a live
+community as yourself:
+
+- Writes such as messages, reactions and joins publish as the signed-in key.
+  Tell the agent where it may write, such as a scratch channel.
+- Do not let an agent sign out. Sign out deletes the shared debug identity for
+  every debug build and removes saved organization sign-ins for every profile.
+- A person completes any organization sign-in in the browser. The bridge never
+  receives the session token.
+
+Each test instance keeps its app data under its identifier; nothing removes it.
 An opt-in launch also refuses a non-empty `BUZZ_DEV_VIEWER` legacy broker pin.
 
 Build and launch with all of these settings:
@@ -24,16 +38,18 @@ Build and launch with all of these settings:
 - Launch environment: `BUZZ_NATIVE_MCP_PORT`, an integer from `1024` through
   `65436`. Unset means off. Invalid settings fail before identity startup.
 
-For an already isolated environment, from the repository root:
+From the repository root:
 
 ```sh
 bin/node scripts/desktop-mcp.mjs
 ```
 
 It applies all of the settings above, with an identifier suffix and bridge base
-port derived from the worktree path, and prints both. Each worktree owns one
-test instance, and relaunches keep its app data. Other arguments pass to
-`just desktop`, such as `--port` for Vite. The equivalent manual launch is:
+port derived from the worktree path, and prints both; `--print` prints them
+without launching. Each worktree owns one test instance, and relaunches keep its
+app data. It also sets `BUZZODZ_PROFILE` to `native-mcp-` and the identifier
+suffix unless the environment sets one. Other arguments pass to `just desktop`,
+such as `--port` for Vite. The equivalent manual launch is:
 
 ```sh
 BUZZ_DEV_VIEWER= BUZZ_NATIVE_MCP_PORT=19423 bin/just desktop --features native-mcp \
@@ -57,11 +73,25 @@ The existing signed host commands and plugin sandbox still apply.
 
 ## Connect and verify the target
 
-The bridge binds only to `127.0.0.1`. It scans up to 100 ports from the selected
-base port. Read the actual port from its startup log, then verify backend metadata
-before any action. Do not assume the base port is the selected port. Connect to
-that exact loopback port and verify the complete test identifier, debug build,
-and `main` window. Do not let discovery or reconnection select another instance.
+The bridge binds only to `127.0.0.1` and takes the first free port of the 100
+from its base port. The repository's `.mcp.json` registers
+`@hypothesi/tauri-mcp-server@0.13.1` as `buzz-native`, through
+`scripts/native-mcp-client.mjs`, pointed at this worktree's base port. MCP
+clients that read project configuration, such as Claude Code, offer its tools
+after approval. Start `driver_session` without a port; it finds the bridge
+within those 100 ports.
+
+That search connects to whichever app answers, and reconnects do not check
+again. Two worktrees can share a port range. Before the first action, and after
+any reconnect, call `ipc_execute_command` with
+`{"command":"plugin:mcp-bridge|get_backend_state","args":{}}` and confirm:
+
+- `app.identifier` is the one `bin/node scripts/desktop-mcp.mjs --print` prints
+  for this worktree;
+- `environment.debug` is `true`;
+- `windows` includes `main`.
+
+If any check fails, stop the session and do nothing else in it.
 
 The pinned bridge revision is
 `1d5105e72835b28ca05a75bcd612b9127c12fe94` from
@@ -70,13 +100,8 @@ It rejects both `Origin` and `Sec-WebSocket-Origin` at the WebSocket handshake.
 Loopback clients without those headers still have full automation authority;
 this is a local test interface, not an authenticated service.
 
-Use `@hypothesi/tauri-mcp-server@0.13.1` with this bridge. The repository's
-`.mcp.json` registers it as `buzz-native`, through `scripts/native-mcp-client.mjs`,
-pointed at this worktree's base port on `127.0.0.1`. MCP clients that read
-project configuration, such as Claude Code, offer its tools after approval. If
-the bridge selected a higher port, pass that port to `driver_session`. Backend
-metadata uses `invoke_tauri` with `{"command":"plugin:mcp-bridge|get_backend_state","args":{}}`.
-The bridge reports version `0.12.0` and omits plugin-version metadata, so the
+The client is a pinned devDependency. The bridge reports version `0.12.0` and
+omits plugin-version metadata, so the
 standard client can show an upgrade warning. Do not replace the pinned revision
 with a release that lacks the Origin check to remove that warning.
 
@@ -85,16 +110,13 @@ element with `webview_wait_for` before the first action. Its `detached` state
 times out rather than resolving; check absence with `webview_execute_js`. The
 tools reach only the `main` window's web content: native dialogs and prompts,
 the Browser panel's website view, the huddle window and deep links need other
-automation. Writes such as messages, reactions and joins publish as the signed-in
-key. Sign out deletes the shared debug identity for every debug build.
+automation.
 
 A community that requires organization sign-in needs the launch environment to
 carry `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` (see
 [configuration](configuration.md#federated-identity-build-input)). Saved
-sign-ins are keyed by `BUZZODZ_PROFILE`, not the app identifier, so set a
-separate profile to keep the instance from restoring another debug build's
-session. A person completes the browser sign-in; the bridge never receives the
-session token.
+sign-ins are keyed by `BUZZODZ_PROFILE`, not the app identifier; the launcher's
+profile keeps a test instance from restoring another debug build's session.
 
 Verify session start, a DOM snapshot, an interaction, its resulting DOM state,
 and session stop against the real native app. Check that a browser-origin

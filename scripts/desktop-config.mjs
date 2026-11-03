@@ -40,7 +40,8 @@ export function desktopOverlay(root) {
 // Each worktree owns one native MCP test instance (docs/native-mcp.md), so
 // relaunches keep its app data and its client finds it rather than another
 // worktree's. The bridge scans 100 ports up from its base, so bases are 100
-// apart, in [20000, 59900]. native_mcp.rs enforces both shapes.
+// apart, in [20000, 59900]. native_mcp.rs checks the identifier shape and
+// that the base is within 1024-65436.
 export function nativeMcpInstance(root) {
   const digest = createHash("sha256").update(root, "utf8").digest("hex");
   return {

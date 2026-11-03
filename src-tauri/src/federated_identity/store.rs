@@ -344,7 +344,7 @@ impl SecureStore {
         if items::read(&self.root, &self.account)?.as_deref() != written.as_deref() {
             return Err("storage-corrupt");
         }
-        self.forget_item(key)?;
+        self.retire_item(key);
         Ok(Some(value))
     }
     /// Replaces or, with `None`, deletes the grant record at `key`. A deletion
@@ -376,7 +376,8 @@ impl SecureStore {
                     old.zeroize();
                 }
                 self.save(raw, &mut bundle)?;
-                self.forget_item(key)
+                self.retire_item(key);
+                Ok(())
             }
             None => {
                 self.forget_item(key)?;
@@ -389,6 +390,13 @@ impl SecureStore {
                 }
             }
         }
+    }
+    /// Cleans up the pre-bundle item at `key` once the bundle holds its
+    /// record. The commit stands: a failed cleanup keeps the item and its
+    /// index, which the bundle's copy overrides, for the next write or delete
+    /// of `key`, or the boot erase owner, to retry.
+    fn retire_item(&self, key: &str) {
+        let _ = self.forget_item(key);
     }
     /// Deletes the pre-bundle item at `key`, then its index entry. A failed
     /// deletion keeps the entry for the boot erase owner.
@@ -664,6 +672,34 @@ mod tests {
         assert!(item(&store, &other).is_none() && !index(&other).exists());
         assert!(store.grant(&other).unwrap().is_none());
         assert_eq!(store.grant(&key).unwrap().unwrap().as_slice(), b"new grant");
+    }
+
+    #[test]
+    fn a_committed_grant_stands_when_cleaning_up_its_old_item_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let store = secure(&root);
+        let (written, migrated) = (
+            agent_grant_key(&store.account, "owner", "written"),
+            agent_grant_key(&store.account, "owner", "migrated"),
+        );
+        // A directory where the index file belongs makes its removal fail.
+        for key in [&written, &migrated] {
+            items::compare(root.path(), key, None, Some(b"old grant")).unwrap();
+            fs::create_dir(root.path().join(format!("{key}.record"))).unwrap();
+        }
+        assert_eq!(store.set_grant(&written, Some(b"reservation")), Ok(()));
+        assert_eq!(
+            store.grant(&written).unwrap().unwrap().as_slice(),
+            b"reservation"
+        );
+        assert_eq!(
+            store.grant(&migrated).unwrap().unwrap().as_slice(),
+            b"old grant"
+        );
+        // The index stays for a retry, which an explicit delete still reports.
+        assert!(root.path().join(format!("{migrated}.record")).exists());
+        assert_eq!(store.set_grant(&migrated, None), Err("storage-unavailable"));
+        assert!(store.grant(&migrated).unwrap().is_some());
     }
 
     #[test]

@@ -80,12 +80,12 @@ from its base port. The repository's `.mcp.json` registers
 such as Claude Code, offer its tools after approval.
 
 Two worktrees can share a port range, and the client connects to whichever app
-answers, so the script points it at a loopback relay. The relay connects only to
-an app that reports this worktree's identifier, a debug build and a `main`
-window, and checks again on every new connection. Without one, a command fails
-and the next one looks again. When the app quits, the relay disconnects the
-client. Start `driver_session` without a port: a port passed there bypasses the
-relay.
+answers, so the script points it at a loopback relay. The relay forwards commands
+only to an app that reports this worktree's identifier, a debug build and a
+`main` window. It looks for one on a connection's first command; until it finds
+one, each command fails and the next looks again. When the app quits, the relay
+disconnects the client. Start `driver_session` without a port: a port passed
+there bypasses the relay.
 
 The pinned bridge revision is
 `1d5105e72835b28ca05a75bcd612b9127c12fe94` from

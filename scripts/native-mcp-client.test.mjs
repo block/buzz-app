@@ -1,9 +1,13 @@
+import { randomBytes } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { startRelay } from "./native-mcp-client.mjs";
 
-const identifier = "dev.local.buzz.foundation.nexus-test-0123456789ab";
-const other = "dev.local.buzz.foundation.nexus-test-ffffffffffff";
+// Per-run identifiers, so concurrent runs cannot answer for each other.
+const testIdentifier = () =>
+  `dev.local.buzz.foundation.nexus-test-${randomBytes(6).toString("hex")}`;
+const identifier = testIdentifier();
+const other = testIdentifier();
 const instance = {
   app: { identifier },
   environment: { debug: true },
@@ -28,7 +32,8 @@ function listening(server) {
   });
 }
 
-// A fake bridge that reports `state` and answers other commands with its port.
+// A fake bridge that reports `state`, or sends it as is when it is a string, and
+// answers other commands with its port.
 async function serveApp(state, from = start) {
   for (let port = from; port < from + 50; port++) {
     const app = new WebSocketServer({ host: "127.0.0.1", port });
@@ -45,7 +50,9 @@ async function serveApp(state, from = start) {
         const probe = args?.command === "plugin:mcp-bridge|get_backend_state";
         if (!probe) app.commands.push(command);
         socket.send(
-          JSON.stringify({ id, success: true, data: probe ? state : port }),
+          probe && typeof state === "string"
+            ? state
+            : JSON.stringify({ id, success: true, data: probe ? state : port }),
         );
       }),
     );
@@ -77,9 +84,10 @@ function send(socket, command) {
   });
 }
 
-it("forwards only to this worktree's app, past another app at the base port", async () => {
+it("forwards only to the lowest app reporting this worktree's identifier", async () => {
   const wrong = await serveApp({ ...instance, app: { identifier: other } });
   const ours = await serveApp(instance, wrong.port + 1);
+  const higher = await serveApp(instance, ours.port + 1);
   const client = await connect(startRelay(identifier, wrong.port));
 
   expect(await send(client, "ping")).toEqual({
@@ -89,6 +97,7 @@ it("forwards only to this worktree's app, past another app at the base port", as
   });
   expect(ours.app.commands).toEqual(["ping"]);
   expect(wrong.app.commands).toEqual([]);
+  expect(higher.app.commands).toEqual([]);
 });
 
 it.each([
@@ -96,6 +105,7 @@ it.each([
   ["a release build", { ...instance, environment: { debug: false } }],
   ["an app without a main window", { ...instance, windows: [{ label: "x" }] }],
   ["a malformed state", { ...instance, windows: {} }],
+  ["a reply that is not an object", "null"],
 ])("refuses %s", async (_, state) => {
   const { app, port } = await serveApp(state);
   const client = await connect(startRelay(identifier, port));

@@ -22,7 +22,8 @@ function openTestInstance(candidate, identifier) {
     const timer = setTimeout(() => finish(false), 2000);
     function finish(matches) {
       clearTimeout(timer);
-      socket.removeAllListeners("message");
+      // The relay attaches its own listeners to a match.
+      socket.removeAllListeners().on("error", () => {});
       if (!matches) socket.terminate();
       resolve(matches ? socket : undefined);
     }
@@ -30,12 +31,12 @@ function openTestInstance(candidate, identifier) {
     socket.on("open", () => socket.send(PROBE));
     socket.on("message", (data) => {
       try {
-        const { id, data: state } = JSON.parse(data);
+        const { id, success, data: state } = JSON.parse(data);
         if (id !== "buzz-target") return;
         finish(
-          state?.app?.identifier === identifier &&
+          success === true &&
+            state?.app?.identifier === identifier &&
             state.environment?.debug === true &&
-            Array.isArray(state.windows) &&
             state.windows.some((window) => window?.label === "main"),
         );
       } catch {
@@ -49,14 +50,16 @@ function openTestInstance(candidate, identifier) {
 // match wins. Probing in parallel keeps a scan within one probe timeout, well
 // inside the client's 5 s request timeout, after which it would scan on its own.
 async function connectTestInstance(identifier, port) {
-  const sockets = await Promise.all(
-    Array.from({ length: 100 }, (_, offset) =>
-      openTestInstance(port + offset, identifier),
-    ),
+  const probes = Array.from({ length: 100 }, (_, offset) =>
+    openTestInstance(port + offset, identifier),
   );
-  const [match, ...extra] = sockets.filter(Boolean);
-  for (const socket of extra) socket.terminate();
-  return match;
+  for (const [index, probe] of probes.entries()) {
+    const socket = await probe;
+    if (!socket) continue;
+    for (const extra of probes.slice(index + 1))
+      extra.then((other) => other?.terminate());
+    return socket;
+  }
 }
 
 export function startRelay(identifier, port) {
@@ -74,20 +77,23 @@ export function startRelay(identifier, port) {
   relay.on("connection", (client) => {
     let upstream;
     let queue = Promise.resolve();
-    // Commands run in order. Without an open app connection, the next command
-    // finds and checks the app again, or fails.
+    // Commands run in order. The first finds and checks the app; until one is
+    // found, each command fails and the next looks again. Once found, the app
+    // serves this client connection until either side closes it.
     client.on("message", (data) => {
       const text = data.toString();
       queue = queue
         .then(async () => {
-          if (upstream?.readyState !== WebSocket.OPEN) {
-            upstream = await connectTestInstance(identifier, port);
-            // Close the client with its app, so it sees the disconnect.
-            upstream
+          if (!upstream) {
+            const socket = await connectTestInstance(identifier, port);
+            socket
               ?.on("message", (reply) => client.send(reply.toString()))
               .on("close", () => client.close());
+            // It may have closed while lower ports were still being probed.
+            if (socket?.readyState === WebSocket.OPEN) upstream = socket;
           }
-          if (upstream) return upstream.send(text);
+          if (upstream?.readyState === WebSocket.OPEN)
+            return upstream.send(text);
           const { id } = JSON.parse(text);
           client.send(JSON.stringify({ id, success: false, error: refusal }));
         })

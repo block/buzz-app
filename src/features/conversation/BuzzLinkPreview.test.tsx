@@ -4,7 +4,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { BuzzLinkPreview } from "./BuzzLinkPreview";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
-import type { ChannelMessage, ChannelReference } from "../relay/contracts";
+import type {
+  ChannelList,
+  ChannelMessage,
+  ChannelReference,
+} from "../relay/contracts";
 import { mediaUrl } from "../relay/transport";
 
 afterEach(cleanup);
@@ -28,6 +32,7 @@ function setup(
   profiles = new Map<string, { name?: string; picture?: string }>(),
   reference?: ChannelReference,
   resolve?: (ids: readonly string[]) => Promise<void>,
+  status: ChannelList["status"] = "ready",
 ) {
   const view = {
     snapshot: () => snapshot,
@@ -40,7 +45,7 @@ function setup(
   const thread = vi.fn(() => view);
   // With a reference, the reader hasn't joined: the channel is unlisted.
   const list = {
-    status: "ready",
+    status,
     channels: reference ? [] : [{ id: "channel", name: "General" }],
   };
   const refer = vi.fn(() => () => {});
@@ -267,4 +272,19 @@ it("admits an unjoined open channel before reading its message", async () => {
   await Promise.resolve();
   await Promise.resolve();
   expect(closed.thread).not.toHaveBeenCalled();
+});
+it("reads at once without a lookup while the channel list isn't ready", () => {
+  // Discovery owns access: a lookup on an idle, loading or failed list would
+  // commit it as ready and hide that state, so the card reads as before.
+  const ready = { ...base, status: "ready" as const, root };
+  const reference: ChannelReference = { state: "unknown" };
+  for (const status of ["idle", "loading", "error"] as const) {
+    const resolve = vi.fn(async () => {});
+    const opened = setup(ready, root.id, new Map(), reference, resolve, status);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(opened.thread).toHaveBeenCalledWith("channel", root.id, {
+      exact: true,
+    });
+    opened.unmount();
+  }
 });

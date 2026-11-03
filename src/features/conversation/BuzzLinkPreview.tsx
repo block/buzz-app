@@ -46,14 +46,15 @@ export function BuzzLinkPreview({
       }
     };
     const channels = session.channels;
-    const listed = channels
-      .list()
-      .channels.some((item) => item.id === channelId);
+    const list = channels.list();
+    const listed = list.channels.some((item) => item.id === channelId);
     // An open channel the reader hasn't joined is readable once discovery
     // admits or revalidates it, as scoped search does; a failed lookup
-    // leaves the read to report access.
+    // leaves the read to report access. Only a ready list takes the lookup:
+    // resolving into an idle, loading or failed one would publish a ready
+    // list holding just this channel and hide the discovery state.
     const controller = new AbortController();
-    if (listed || !channels.resolve) open();
+    if (listed || !channels.resolve || list.status !== "ready") open();
     else
       void channels
         .resolve([channelId], { signal: controller.signal })

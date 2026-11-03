@@ -1,6 +1,18 @@
 import type { HostMcpServer, McpAuthorization } from "../host/service";
 import type { AgentKey } from "./membership";
 import type { Agents } from "./service";
+import { communityDestination } from "../communities/destination";
+
+export function externalMcpEnabled(community: string | null) {
+  if (!community) return false;
+  try {
+    return (import.meta.env.VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES ?? "")
+      .split(" ")
+      .includes(communityDestination(community).url);
+  } catch {
+    return false;
+  }
+}
 
 export type ExternalScope = "read" | "post";
 export type ExternalAuthorization = McpAuthorization &

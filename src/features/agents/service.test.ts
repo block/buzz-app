@@ -379,7 +379,10 @@ beforeEach(() => {
   records.unshare.mockReset();
   records.unshare.mockImplementation(async () => void steps.push("unshare"));
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 it("creates an agent in the community shown, with its type's defaults, and publishes its profile", async () => {
   const { service, native } = await setup();
@@ -12289,9 +12292,48 @@ it("exposes agent execution only inside an Attention source run", async () => {
   await expect(input.spawn("command", {})).rejects.toThrow();
 });
 
+it.each([
+  "",
+  "https://other.example.test",
+  "https://relay.example.test.evil.test",
+  "https://relay.example.test:8443",
+])(
+  "refuses external grants outside the enabled communities (%s)",
+  async (enabled) => {
+    vi.stubEnv("VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES", enabled);
+    const f = await setup();
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+      const serveMcp = vi.fn();
+      f.ctx.provide("host", {
+        serveMcp,
+      } as unknown as import("../host/service").Host);
+      const owner = f.ctx.extend({
+        pluginOwner: { id: "buzz.agents", revision: "one" },
+      });
+      expect(f.service.canConnectExternal(bot)).toBe(false);
+      await expect(
+        owner.agents.connectExternal(
+          bot,
+          new AbortController().signal,
+          () => {},
+        ),
+      ).rejects.toThrow("External apps are not enabled for this community.");
+      expect(serveMcp).not.toHaveBeenCalled();
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
 it.each(["disabled runtime", "lost custody"])(
   "reports external connection availability after %s and recovery",
   async (reason) => {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
     let active = true;
     const listeners = new Set<() => void>();
     const f = await setup({
@@ -12333,6 +12375,10 @@ it.each(["disabled runtime", "lost custody"])(
 it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   "ends an external grant on %s and refuses later tool calls",
   async (reason) => {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
     const f = await setup();
     Object.assign(f.session.agentChoices, {
       snapshot: () => ({ selectable: [{ pubkey: bot }] }),

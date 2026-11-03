@@ -3,6 +3,7 @@ import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
 import type { ExternalScope } from "./external-connection";
+import { externalMcpEnabled } from "./external-connection";
 import { connectMcp } from "../../buzz-mcp/connection";
 import type {
   HostMcpServer,
@@ -2454,7 +2455,11 @@ export class AgentsService extends Service implements Agents {
   }
   canConnectExternal(key: AgentKey) {
     const handle = this.runners.handle(key);
-    return !!handle && !handle.protection;
+    return (
+      externalMcpEnabled(this.communities.snapshot().selected) &&
+      !!handle &&
+      !handle.protection
+    );
   }
   async connectExternal(
     key: AgentKey,
@@ -2477,6 +2482,8 @@ export class AgentsService extends Service implements Agents {
     const agent = this.agent(key);
     const source = ownerReads(relay, handle.pubkey);
     const selected = this.communities.snapshot();
+    if (!externalMcpEnabled(selected.selected))
+      throw new Error("External apps are not enabled for this community.");
     if (
       !source ||
       !relay ||
@@ -2496,6 +2503,7 @@ export class AgentsService extends Service implements Agents {
       if (
         current.viewer !== selected.viewer ||
         current.selected !== selected.selected ||
+        !externalMcpEnabled(current.selected) ||
         ownerReads(this.relay(key), handle.pubkey)?.connection !==
           source.connection ||
         !session.agentChoices

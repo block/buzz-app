@@ -10,6 +10,7 @@ import { withImportScenario } from "../../features/developer/agent-import-scenar
 import { isTauri } from "@tauri-apps/api/core";
 import type {} from "../../features/agents/external-connection";
 import { ExternalConnectionSettings } from "./ExternalConnectionSettings";
+import { externalMcpEnabled } from "../../features/agents/external-connection";
 
 export const inject = [
   "pages",
@@ -44,6 +45,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.settingsCards.register({
       id: "external-apps",
       title: "External apps",
+      visibility: {
+        snapshot: () =>
+          externalMcpEnabled(ctx.communityReader.snapshot().selected),
+        subscribe: (listener) => ctx.communityReader.subscribe(listener),
+        ensure: () => () => {},
+      },
       component: () => <ExternalConnectionSettings connection={connection} />,
     });
   }

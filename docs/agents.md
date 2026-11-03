@@ -58,6 +58,11 @@ servers do not support these operations.
 
 ## External app authorization
 
+The build flag `BUZZ_EXTERNAL_MCP_COMMUNITIES` lists the allowed community
+origins. It defaults to no access. Desktop preview releases enable BBBlock only.
+Consent and Settings use this list. The Agents service also checks it before
+opening a connection and on each tool call. See [configuration](configuration.md#external-mcp-community-flag).
+
 Buzz desktop accepts `buzz://mcp-authorize` requests from local apps. Opening a
 link only shows consent. The owner selects a community and an app-held,
 unprotected agent, then selects **Authorize** or **Deny**. No plugin specific

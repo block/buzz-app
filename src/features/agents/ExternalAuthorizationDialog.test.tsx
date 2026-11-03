@@ -17,12 +17,16 @@ import type { Communities } from "../communities/service";
 import type { RelayData } from "../relay/service";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 it.each([
   ["Authorize", true],
   ["Deny", true],
   ["unavailable runtime", false],
   ["custody lost", true],
+  ["disabled community", true],
 ] as const)(
   "handles %s without an unintended authorization",
   async (action, runtimeReady) => {
@@ -31,6 +35,10 @@ it.each([
       secondKey = "c".repeat(64),
       viewer = "b".repeat(64),
       origin = "https://fixture.example.test";
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      action === "disabled community" ? "" : origin,
+    );
     const subscribe = () => () => {};
     const choices = {
       selectable: [{ pubkey: key }],
@@ -117,6 +125,18 @@ it.each([
     ).toBeVisible();
     expect(connect).not.toHaveBeenCalled();
     expect(deny).not.toHaveBeenCalled();
+    if (action === "disabled community") {
+      expect(screen.queryByRole("button", { name: "Authorize" })).toBeNull();
+      expect(
+        screen.getByText(/External apps are not enabled for this community/),
+      ).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Deny" }));
+      await waitFor(() => expect(deny).toHaveBeenCalledOnce());
+      expect(connection.snapshot().pending).toBeUndefined();
+      expect(connect).not.toHaveBeenCalled();
+      release();
+      return;
+    }
     if (action === "custody lost") {
       expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
       await user.click(screen.getByRole("combobox", { name: "Agent" }));

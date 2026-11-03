@@ -5,6 +5,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ExternalApps } from "./external-connection";
+import { externalMcpEnabled } from "./external-connection";
 import type { Agents } from "./service";
 import type { Communities } from "../communities/service";
 import type { RelayData } from "../relay/service";
@@ -36,7 +37,9 @@ export function ExternalAuthorizationDialog({
   return (
     <>
       {pending &&
-        (transport.status === "ready" && client.viewer === pending.viewer ? (
+        (transport.status === "ready" &&
+        client.viewer === pending.viewer &&
+        externalMcpEnabled(client.selected) ? (
           <ReadyConsent
             key={transport.scope}
             session={transport.session}
@@ -47,7 +50,9 @@ export function ExternalAuthorizationDialog({
         ) : (
           <ConsentDialog connection={connection} communities={communities}>
             <p role="status" className="m-0 text-body-sm text-secondary">
-              Select a connected community to authorize this app.
+              {externalMcpEnabled(client.selected)
+                ? "Select a connected community to authorize this app."
+                : "External apps are not enabled for this community. Select an enabled community."}
             </p>
           </ConsentDialog>
         ))}
@@ -116,6 +121,10 @@ function ConsentDialog({
                 options: client.memberships.map((membership) => ({
                   value: membership.id,
                   label: membership.name,
+                  disabled: !externalMcpEnabled(membership.id),
+                  description: externalMcpEnabled(membership.id)
+                    ? undefined
+                    : "External apps are not enabled here.",
                 })),
               },
             ]}

@@ -916,3 +916,32 @@ it("re-sends a batch a replaced socket ended and keeps its check quiet while con
     h.directory.dispose();
   }
 });
+
+it("publishes a pre-EOSE change after a second renewal", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const first = h.subscriptions[0];
+    assert(first);
+    first.sink.event(projection());
+    first.sink.eose();
+    first.sink.closed("disconnected: live connection lost");
+    await Promise.resolve();
+    const second = active()[0];
+    assert(second);
+    second.sink.event(projection(12));
+    h.changed.mockClear();
+    second.sink.closed("disconnected: live connection lost");
+    await Promise.resolve();
+    const third = active()[0];
+    assert(third && third !== second);
+    third.sink.event(projection(12));
+    third.sink.eose();
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    expect(h.directory.snapshot().get(alice.pubkey)?.verifiedAt).toBe(12);
+  } finally {
+    h.directory.dispose();
+  }
+});

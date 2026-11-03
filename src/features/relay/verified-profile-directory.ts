@@ -132,12 +132,13 @@ export function createVerifiedProfileDirectory(
   function start(
     currentAuthority: VerifiedProfileAuthority,
     chunk: readonly string[],
+    // A change accepted before EOSE that is not yet published.
+    dirty = false,
   ) {
     let active = true;
     let ready = false;
     const seen = new Set<string>();
     let count = 0;
-    let dirty = false;
     let stopWire: (() => void) | undefined;
     const batch: Batch = {
       subjects: chunk,
@@ -206,7 +207,7 @@ export function createVerifiedProfileDirectory(
               if (!active || !online) return fail();
               batch.stop();
               batches.delete(batch);
-              start(currentAuthority, batch.subjects);
+              start(currentAuthority, batch.subjects, !ready && dirty);
             });
           },
         },

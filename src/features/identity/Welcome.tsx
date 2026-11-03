@@ -634,6 +634,7 @@ export function Welcome({
         return linked ? (
           <>
             <WelcomeBack
+              email={auth.account?.email}
               npub={npubEncode(linked)}
               profile={returningProfile}
               onRestore={

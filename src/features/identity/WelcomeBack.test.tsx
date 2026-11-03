@@ -12,6 +12,7 @@ it.each([true, false])(
       enter = vi.fn();
     render(
       <WelcomeBack
+        email="ada@example.com"
         npub={npubEncode("ab".repeat(32))}
         profile={{ name: "Ada", picture: "" }}
         onRestore={backup ? restore : undefined}
@@ -19,6 +20,7 @@ it.each([true, false])(
         onSwitchAccount={vi.fn()}
       />,
     );
+    expect(screen.getByText("Signed in as ada@example.com")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Continue with Ada/ }));
     expect(restore).toHaveBeenCalledTimes(backup ? 1 : 0);
     expect(enter).toHaveBeenCalledTimes(backup ? 0 : 1);

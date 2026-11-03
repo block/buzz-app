@@ -7,12 +7,14 @@ import { abbreviatedPublicKey } from "../../shared/identity/public-key";
 /** Select the linked identity before entering its existing recovery flow. */
 export function WelcomeBack({
   npub,
+  email,
   profile,
   onRestore,
   onImport,
   onSwitchAccount,
 }: {
   npub: string;
+  email?: string | undefined;
   profile?: { name: string; picture: string } | undefined;
   onRestore?: (() => void) | undefined;
   onImport: () => void;
@@ -38,6 +40,11 @@ export function WelcomeBack({
             ? "Continue with your Buzz profile."
             : "We found the key to your account."}
         </p>
+        {email && (
+          <p className="mt-2 break-words text-body-sm text-subtle">
+            Signed in as {email}
+          </p>
+        )}
       </div>
       <div className="grid auto-rows-fr gap-2">
         <Button

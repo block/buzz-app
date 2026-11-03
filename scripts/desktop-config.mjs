@@ -4,8 +4,9 @@ import { parseEnv } from "node:util";
 import { worktreeIcon } from "./worktree-icon.mjs";
 
 // The environment a launcher gives Tauri: the process plus every `BUZZ_` value
-// in repository-root `.env.local`, read as native builds read it: literally,
-// without `$VAR` expansion, and without Vite's mode files. Process values win,
+// in repository-root `.env.local`. Like the native build, it skips Vite's mode
+// files; unlike it, values are always literal (no `$VAR` expansion, quoted or
+// not), as in the frontend's Builderlab URL reader. Process values win,
 // including an explicit empty one. Names without the `BUZZ_` prefix stay out:
 // the file can hold unrelated settings and credentials.
 export function launchEnvironment(root) {

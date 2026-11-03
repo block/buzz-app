@@ -1,0 +1,117 @@
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.facts dt {
+  color: var(--text-subtle);
+}
+.facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.members {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.member {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+.memberName {
+  font-weight: var(--type-weight-medium);
+}
+.memberMeta,
+.fingerprint {
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.fingerprint {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.unverified {
+  color: var(--text-danger);
+}
+.statement {
+  margin: 0;
+  font-weight: var(--type-weight-medium);
+}
+.refusal {
+  margin: 0;
+  color: var(--text-danger);
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.sectionTitle {
+  margin: 0 0 var(--space-2);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+  width: min(100%, 36rem);
+}
+.cardTitle {
+  margin: 0;
+  font-weight: var(--type-weight-medium);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.status {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.bannerText {
+  flex: 1;
+  min-width: 0;
+}
+.meter {
+  flex-shrink: 0;
+  width: 6rem;
+}
+.fact {
+  display: contents;
+}

@@ -281,26 +281,24 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .some((panel) => panel.pluginId === "buzz.agent-activity"),
     );
-    assert.equal(services.conversation.accessories.snapshot().length, 2);
-    assert.deepEqual(
+    // The host's conversation import banner is a built-in accessory.
+    const pluginAccessories = () =>
       services.conversation.accessories
         .snapshot()
-        .map(({ id, placement }) => [id, placement]),
+        .filter((item) => item.pluginId !== "buzz.conversation-import");
+    assert.equal(pluginAccessories().length, 2);
+    assert.deepEqual(
+      pluginAccessories().map(({ id, placement }) => [id, placement]),
       [
         ["activity", "message"],
         ["typing-presentation", undefined],
       ],
     );
-    assert.equal(
-      services.conversation.accessories.snapshot()[0].pluginId,
-      "buzz.agent-activity",
-    );
+    assert.equal(pluginAccessories()[0].pluginId, "buzz.agent-activity");
     await services.plugins.change("disable", "buzz.agent-activity");
-    assert.equal(services.conversation.accessories.snapshot().length, 0);
+    assert.equal(pluginAccessories().length, 0);
     await services.plugins.change("enable", "buzz.agent-activity");
-    await vi.waitFor(() =>
-      assert.equal(services.conversation.accessories.snapshot().length, 2),
-    );
+    await vi.waitFor(() => assert.equal(pluginAccessories().length, 2));
 
     await services.plugins.change("enable", "buzz.bestie");
     await vi.waitFor(() =>

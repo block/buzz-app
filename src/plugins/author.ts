@@ -161,3 +161,23 @@ export type {
   SessionSnapshot,
   AuthenticatedRequest,
 } from "../features/federated-identity/service";
+
+export type {
+  ConversationImportService,
+  ImportSourceKind,
+  VerifiedProfileView,
+  ProposalParticipant,
+  ImportProposalInput,
+  ImportStatus,
+  ImportCounts,
+  ImportSessionView,
+  PreparedImportEvent,
+  UnsignedImportEvent,
+  PublishProgress,
+  PublishReport,
+  ReadBackEvent,
+  ReadBackReport,
+  MembershipView,
+  ImportedAttachment,
+  AttachmentTagsInput,
+} from "../features/conversation-import/types";

@@ -78,6 +78,14 @@ the interface unless an available tool actually supports that action.
 - **Sharing a Solo chat** grants access to its conversation history, not only
   the next message. Copying its link alone does not grant access. Check the
   intended people and destination before changing access.
+- **Conversation import** brings history from another tool into a direct
+  message or channel when an import plugin is installed and the community's
+  relay supports it. Nothing is imported until every participant accepts the
+  proposal card in the conversation; each person then publishes only their own
+  messages, at their original times. Buzz confirms each step in its own dialog
+  and shows verified names and key fingerprints. Imported messages are marked
+  with their source and do not count as unread or send notifications. People
+  without a verified Buzz identity are left out.
 
 ## Choosing and customizing agents
 

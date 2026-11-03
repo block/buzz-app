@@ -24,6 +24,7 @@ import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { CreationReview } from "../bundled/agents/CreationReview";
+import { ConversationImportReview } from "../features/conversation-import/ConversationImportReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
@@ -635,6 +636,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             <RejectedLinkNotice links={services.rejectedLinks} />
             <InterruptedNotice agents={services.agents} />
             <CreationReview agents={services.agents} />
+            <ConversationImportReview
+              reviews={services.conversationImportReviews}
+            />
             <UpdateReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />

@@ -27,7 +27,12 @@ export function createVerifiedProfileDirectory(
   // Least recently ensured first.
   const wanted = new Set<string>();
   const checked = new Set<string>();
-  type Batch = { stop(): void; subjects: readonly string[] };
+  type Batch = {
+    stop(): void;
+    subjects: readonly string[];
+    /** A change accepted before EOSE that is not yet published. */
+    pending(): boolean;
+  };
   const batches = new Set<Batch>();
   // Every profile publish projects every head: reuse the last projection of
   // an unchanged event so publishes skip revalidation and compare by identity.
@@ -142,6 +147,7 @@ export function createVerifiedProfileDirectory(
     let stopWire: (() => void) | undefined;
     const batch: Batch = {
       subjects: chunk,
+      pending: () => !ready && dirty,
       stop() {
         active = false;
         clearTimeout(timeout);
@@ -207,7 +213,7 @@ export function createVerifiedProfileDirectory(
               if (!active || !online) return fail();
               batch.stop();
               batches.delete(batch);
-              start(currentAuthority, batch.subjects, !ready && dirty);
+              start(currentAuthority, batch.subjects, batch.pending());
             });
           },
         },
@@ -246,13 +252,17 @@ export function createVerifiedProfileDirectory(
         if (!unassigned.length) break;
         batch.stop();
         batches.delete(batch);
-        start(currentAuthority, [
-          ...batch.subjects,
-          ...unassigned.splice(
-            0,
-            VERIFIED_PROFILE_BATCH - batch.subjects.length,
-          ),
-        ]);
+        start(
+          currentAuthority,
+          [
+            ...batch.subjects,
+            ...unassigned.splice(
+              0,
+              VERIFIED_PROFILE_BATCH - batch.subjects.length,
+            ),
+          ],
+          batch.pending(),
+        );
       }
       while (unassigned.length)
         start(currentAuthority, unassigned.splice(0, VERIFIED_PROFILE_BATCH));

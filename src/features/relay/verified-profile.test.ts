@@ -945,3 +945,34 @@ it("publishes a pre-EOSE change after a second renewal", async () => {
     h.directory.dispose();
   }
 });
+
+it("publishes a pre-EOSE change after an open batch is rebuilt", async () => {
+  const h = harness();
+  const active = () => h.subscriptions.filter((item) => !item.stopped);
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const first = active()[0];
+    assert(first);
+    first.sink.event(projection());
+    first.sink.eose();
+    first.sink.closed("disconnected: live connection lost");
+    await Promise.resolve();
+    const renewed = active()[0];
+    assert(renewed);
+    renewed.sink.event(projection(12));
+    h.changed.mockClear();
+    h.directory.ensure([bob.pubkey]);
+    await Promise.resolve();
+    const rebuilt = active()[0];
+    assert(rebuilt && rebuilt !== renewed);
+    // An incomplete replay that flips no checked status.
+    rebuilt.sink.event(projection(12));
+    rebuilt.sink.event(projection(12));
+    rebuilt.sink.eose();
+    expect(h.changed).toHaveBeenCalledTimes(1);
+    expect(h.directory.snapshot().get(alice.pubkey)?.verifiedAt).toBe(12);
+  } finally {
+    h.directory.dispose();
+  }
+});

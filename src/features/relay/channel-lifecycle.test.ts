@@ -162,6 +162,24 @@ function harness(role = "owner", type = "stream", owners = 1) {
     },
   };
 }
+function preview(tags: string[][] = [["public"]]) {
+  const h = harness("member");
+  const metadata = h.record(39000, [
+    ["d", id],
+    ["t", "stream"],
+    ["name", "fixture"],
+    ...tags,
+  ]);
+  const roster = (...members: string[]) =>
+    h.record(39002, [["d", id], ...members.map((member) => ["p", member])]);
+  h.setEvents([metadata, roster(other)]);
+  // Nonmember previews never satisfy member-action access.
+  h.deny();
+  h.publish.mockImplementation(async (event: RelayEvent) => {
+    if (event.kind === 9021) h.setEvents([metadata, roster(other, viewer)]);
+  });
+  return { ...h, metadata, roster };
+}
 
 describe("bounded visibility recovery", () => {
   beforeEach(() => {
@@ -1093,14 +1111,19 @@ it("retiring a caller during publication keeps the outcome uncertain without rep
 it.each(
   (["scoped cancel", "cancel", "clear", "dispose", "caller"] as const).flatMap(
     (stop) =>
-      (["leave", "delete"] as const).flatMap((action) =>
-        (["publication", "confirmation read"] as const).map(
-          (phase) => [stop, action, phase] as const,
-        ),
-      ),
+      (
+        [
+          ["leave", "publication"],
+          ["leave", "confirmation read"],
+          ["delete", "publication"],
+          ["delete", "confirmation read"],
+          ["join", "confirmation read"],
+        ] as const
+      ).map(([action, phase]) => [stop, action, phase] as const),
   ),
 )("%s during a published %s's %s", async (stop, action, phase) => {
-  const h = harness("owner", "stream", 2);
+  const join = action === "join" ? preview() : undefined;
+  const h = join ?? harness("owner", "stream", 2);
   const caller = new AbortController();
   const started = deferred<void>();
   const gate = deferred<void>();
@@ -1133,21 +1156,32 @@ it.each(
     if (stop === "caller") caller.abort();
     else if (stop === "scoped cancel") h.owner.cancel([id]);
     else h.owner[stop]();
+    let roster: RelayEvent | undefined;
+    if (join) {
+      // Revocation purges discovery, so a join may accept only a roster
+      // read after it.
+      roster = join.roster(other, viewer);
+      join.setEvents([join.metadata, roster]);
+    }
     gate.resolve();
     if (stop === "scoped cancel" || stop === "cancel") {
-      // Losing access is what the command does; it still confirms.
+      // A published command outlives revocation, usually its own effect, and
+      // still confirms.
       await run;
-      expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+      if (roster)
+        expect(h.acceptDiscovery).toHaveBeenCalledExactlyOnceWith([roster]);
+      else expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
     } else {
       await expect(run).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
       expect(h.removed).not.toHaveBeenCalled();
+      expect(h.acceptDiscovery).not.toHaveBeenCalled();
     }
     expect(h.publish).toHaveBeenCalledOnce();
   } finally {
     h.owner.dispose();
   }
 });
-it.each(["after a macrotask", "synchronously"] as const)(
+it.each(["after a macrotask", "without a macrotask"] as const)(
   "a published leave whose confirmation reads are all retired %s is unconfirmed at the deadline",
   async (timing) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -2053,25 +2087,6 @@ describe("caller publication guard", () => {
 });
 
 describe("join from a public preview", () => {
-  function preview(tags: string[][] = [["public"]]) {
-    const h = harness("member");
-    const metadata = h.record(39000, [
-      ["d", id],
-      ["t", "stream"],
-      ["name", "fixture"],
-      ...tags,
-    ]);
-    const roster = (...members: string[]) =>
-      h.record(39002, [["d", id], ...members.map((member) => ["p", member])]);
-    h.setEvents([metadata, roster(other)]);
-    // Nonmember previews never satisfy member-action access.
-    h.deny();
-    h.publish.mockImplementation(async (event: RelayEvent) => {
-      if (event.kind === 9021) h.setEvents([metadata, roster(other, viewer)]);
-    });
-    return { ...h, metadata, roster };
-  }
-
   it("applies an existing membership without signing", async () => {
     const h = preview();
     h.setEvents([h.metadata, h.roster(viewer)]);

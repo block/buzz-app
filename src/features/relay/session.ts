@@ -25,7 +25,10 @@ import { createChannelDetails } from "./channel-details";
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported } from "./channel-labels";
 import { createWorkflows } from "../workflows/capability";
-import { isWorkflowOperation } from "../workflows/protocol";
+import {
+  isWorkflowOperation,
+  validateWorkflowEvent,
+} from "../workflows/protocol";
 import {
   createRelayReader,
   type Priority,
@@ -389,11 +392,26 @@ export function createRelaySession(
         unread.event(id),
     );
   }
+  // Workflow deletions name an address, not a message. They can describe local
+  // delivery without supplying source-channel evidence for the live/watch stream.
+  function ownWorkflowDeletion(event: EventData) {
+    if (event.kind !== 5 || !isWorkflowOperation(event)) return false;
+    try {
+      const { channelId } = validateWorkflowEvent(
+        event,
+        transport?.viewer ?? "",
+      );
+      return canAccess(channelId);
+    } catch {
+      return false;
+    }
+  }
   const local = () => {
     const visible = visibility();
     return rawLocal().filter(
-      (item) =>
-        item.event.kind !== PRODUCT_FEEDBACK_KIND && visible(item.event),
+      ({ event }) =>
+        event.kind !== PRODUCT_FEEDBACK_KIND &&
+        (visible(event) || ownWorkflowDeletion(event)),
     );
   };
   const localViews = writes
@@ -860,7 +878,9 @@ export function createRelaySession(
         if (closed || epoch !== accessEpoch) return;
         reads.accept(visible);
         unread.accept(visible);
-        writes?.observe(visible);
+        // The outbox matches exact local IDs. An own workflow-deletion echo
+        // can acknowledge delivery without entering retained views or watches.
+        writes?.observe([...visible, ...events.filter(ownWorkflowDeletion)]);
         if (epoch !== accessEpoch) return;
         // A profile read's signal lets the directory publish its pages once.
         profiles.accept(visible, signal);

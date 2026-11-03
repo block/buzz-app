@@ -5,6 +5,7 @@ import {
   type VerifiedProfileSink,
 } from "./verified-profile.ts";
 import { getLogger } from "../developer/logging.ts";
+import { CHANNEL_KINDS } from "./channel-kinds.ts";
 import { logSocketFrame, relayLabel } from "../developer/traffic.ts";
 
 import {
@@ -335,10 +336,7 @@ type Route = {
   retryAt?: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
-export const CHANNEL_KINDS = [
-  9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
-  39005, 20002, 45010, 48100, 48101, 48102, 48103,
-];
+export { CHANNEL_KINDS } from "./channel-kinds.ts";
 /** The browser socket and native header-capable facade share only frame transport. */
 export interface LiveSocket {
   readonly readyState: number;

@@ -4,6 +4,8 @@
 // local storage to the relay's encrypted addressable events.
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
+import { CHANNEL_KINDS } from "../relay/channel-kinds";
+import { reactionTarget } from "../relay/reaction-target";
 
 export const ATTENTION_SCHEMA = "agent-attention/v1";
 
@@ -358,6 +360,15 @@ export const tagsAgent = (event: EventData, agent: string) =>
  * agent's own events) belongs to the caller; classifiers are not run here. */
 export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (!watch.enabled || event.created_at < watch.since) return false;
+  // Watches consume the channel stream. Global profiles cannot gain a source
+  // channel by supplying h tags, and multiple homes are ambiguous.
+  const homes = event.tags.filter(([name]) => name === "h");
+  if (
+    !CHANNEL_KINDS.includes(event.kind) ||
+    homes.length !== 1 ||
+    !homes[0]?.[1]
+  )
+    return false;
   if (watch.channels !== "all") {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel || !watch.channels.includes(channel)) return false;
@@ -367,10 +378,12 @@ export function watchMatches(watch: EventWatch, event: EventData): boolean {
   if (watch.exclude_authors?.includes(event.pubkey)) return false;
   for (const [key, values] of Object.entries(watch.tags ?? {}))
     if (
-      !event.tags.some(
-        (tag) =>
-          tag[0] === key && tag[1] !== undefined && values.includes(tag[1]),
-      )
+      event.kind === 7 && key === "e"
+        ? !values.includes(reactionTarget(event) ?? "")
+        : !event.tags.some(
+            (tag) =>
+              tag[0] === key && tag[1] !== undefined && values.includes(tag[1]),
+          )
     )
       return false;
   // The relay's NIP-10 rule: only a `reply` marker makes a reply.

@@ -1956,7 +1956,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
     attention: {
       "watch/channel": null,
       "watch/a": watch("a", 9),
-      "watch/b": watch("b", 11),
+      "watch/b": watch("b", 40100),
     },
   });
   await settle();
@@ -1986,8 +1986,8 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
     events: [
       event("a1", { content: "a1", created_at: 101 }),
       event("a2", { content: "a2", created_at: 102 }),
-      event("b1", { content: "b1", kind: 11, created_at: 103 }),
-      event("b2", { content: "b2", kind: 11, created_at: 104 }),
+      event("b1", { content: "b1", kind: 40100, created_at: 103 }),
+      event("b2", { content: "b2", kind: 40100, created_at: 104 }),
     ],
   });
   await vi.waitFor(() => expect(working()).toEqual(["a1", "b1"]));
@@ -2025,7 +2025,8 @@ it("runs at most eight Interests at once, and the oldest waiting one next", asyn
       enabled: true,
       since: 1,
       channels: [channel],
-      kinds: [20 + i],
+      kinds: [9],
+      tags: { t: [String(i)] },
     };
   await service.save(bot, {
     attentionEnabled: true,
@@ -2042,7 +2043,14 @@ it("runs at most eight Interests at once, and the oldest waiting one next", asyn
   );
   emit({
     events: Array.from({ length: 10 }, (_, i) =>
-      event(`e${i}`, { content: `e${i}`, kind: 20 + i, created_at: 101 + i }),
+      event(`e${i}`, {
+        content: `e${i}`,
+        created_at: 101 + i,
+        tags: [
+          ["h", channel],
+          ["t", String(i)],
+        ],
+      }),
     ),
   });
   await vi.waitFor(() => expect(pending.size).toBe(8));
@@ -6392,7 +6400,7 @@ it("gives the classifier Buzz's thread parent: the marked reply, in any case; a 
   ]);
 });
 
-it("keeps encrypted DMs and reactions to its own messages away from watches", async () => {
+it("keeps encrypted DMs, unscoped reactions and global notes away from channel watches", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
@@ -6419,6 +6427,7 @@ it("keeps encrypted DMs and reactions to its own messages away from watches", as
       // p1 is what the run above published.
       event("like", { kind: 7, tags: [["e", "p1".padEnd(64, "0")]] }),
       event("note", { kind: 1 }),
+      event("channel-note"),
     ],
   });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
@@ -6427,7 +6436,7 @@ it("keeps encrypted DMs and reactions to its own messages away from watches", as
   expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
     type: "watch",
     slug: "watch/everything",
-    event: { id: "note".padEnd(64, "0") },
+    event: { id: "channel-note".padEnd(64, "0") },
   });
 });
 

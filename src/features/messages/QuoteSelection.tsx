@@ -1,6 +1,11 @@
+import type { Node as EditorNode } from "prosemirror-model";
 import { useCallback, useEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { QuotesIcon } from "../../shared/design-system/icons/index";
+import {
+  behindActiveOverlay,
+  observeOverlays,
+} from "../../shared/design-system/overlayLayer";
 import { Button } from "../../shared/design-system/ui/Button";
 import { buzzCopyDocument } from "./composer-clipboard";
 import { composerSchema } from "./composer-document";
@@ -11,13 +16,13 @@ import styles from "./Messages.module.css";
 const elementOf = (node: Node) =>
   node instanceof Element ? node : node.parentElement;
 
-/** The selected part of one message body in `scroller`, or null. A
- * triple-click ends the range at the start of the next block, past the body;
- * a tail with no text still quotes just the body. */
+/** The selected part of one message body in `scroller` and its quote, or
+ * null. A triple-click ends the range at the start of the next block, past the
+ * body; a tail with no text still quotes just the body. */
 export function quotableSelection(
   scroller: Element,
   selection: Selection | null,
-): { body: Element; range: Range } | null {
+): { range: Range; doc: EditorNode } | null {
   if (!selection || selection.isCollapsed || selection.rangeCount !== 1)
     return null;
   const range = selection.getRangeAt(0);
@@ -36,13 +41,15 @@ export function quotableSelection(
     quoted = range.cloneRange();
     quoted.setEnd(body, body.childNodes.length);
   }
-  return quoted.toString().trim() ? { body, range: quoted } : null;
+  // Chrome such as "(edited)" is selectable text that copies leave out.
+  const doc = quoteDocument(body, quoted);
+  return doc ? { range: quoted, doc } : null;
 }
 
 /** The selection as the composer's own blocks: a quote, then an empty line
  * for the reply. Built like a paste of the same selection, so mentions stay
  * text and notify no one. */
-export function quoteDocument(body: Element, range: Range) {
+function quoteDocument(body: Element, range: Range) {
   const copied = buzzCopyDocument(
     `<div data-buzz-copy="timeline">${serializeNode(body, "html", range)}</div>`,
   );
@@ -104,7 +111,9 @@ export function QuoteSelection({
       setAnchor(null);
       document.getSelection()?.removeAllRanges();
     };
-    // A hidden timeline, such as a retained thread pane, leaves no action.
+    // A hidden timeline, such as a retained thread pane, or one behind a
+    // dialog or menu leaves no action.
+    const unobserveOverlays = observeOverlays(read);
     const visibility =
       typeof IntersectionObserver === "function"
         ? new IntersectionObserver(read)
@@ -125,6 +134,7 @@ export function QuoteSelection({
     return () => {
       cancelAnimationFrame(frame);
       visibility?.disconnect();
+      unobserveOverlays();
       window.removeEventListener("keydown", dismiss, true);
       document.removeEventListener("selectionchange", read);
       element.removeEventListener("pointerdown", down);
@@ -138,10 +148,7 @@ export function QuoteSelection({
   const quote = () => {
     const element = scroller.current;
     const selection = document.getSelection();
-    const quotable = element && quotableSelection(element, selection);
-    const doc = quotable
-      ? quoteDocument(quotable.body, quotable.range)
-      : undefined;
+    const doc = element && quotableSelection(element, selection)?.doc;
     if (!selection || !doc || !scope?.quote) return;
     const range = selection.getRangeAt(0);
     // Drop the timeline range before the composer takes focus; clearing it
@@ -196,7 +203,8 @@ function anchorOf(range: Range, scroller: Element): Anchor | null {
     last.bottom < bounds.top ||
     first.top > bounds.bottom ||
     scroller.checkVisibility?.() === false ||
-    scroller.closest("[inert]")
+    scroller.closest("[inert]") ||
+    behindActiveOverlay(scroller)
   )
     return null;
   return { first, last, bounds };

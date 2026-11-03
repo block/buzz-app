@@ -3,7 +3,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectComposerDocument } from "./composer-document";
 import { composerMarkdown } from "./composer-markdown";
-import { quotableSelection, quoteDocument } from "./QuoteSelection";
+import { quotableSelection } from "./QuoteSelection";
 
 const person = "a".repeat(64);
 const mention = `<button type="button" data-mention-kind="person" data-profile-target="nostr:${npubEncode(person)}" data-mention-name="Morgan">Morgan</button>`;
@@ -34,8 +34,7 @@ const text = (selector: string) =>
   document.querySelector(selector)?.firstChild as Text;
 
 function quoted(root: Element, selection: Selection) {
-  const quotable = quotableSelection(root, selection);
-  const doc = quotable && quoteDocument(quotable.body, quotable.range);
+  const doc = quotableSelection(root, selection)?.doc;
   return doc && projectComposerDocument(doc).draft;
 }
 
@@ -81,6 +80,18 @@ describe("quote selection", () => {
     const next = document.querySelector("#b") as Element;
     const draft = quoted(root, select(text("#a"), 0, next, 0));
     expect(draft && composerMarkdown(draft)).toBe("> Whole paragraph\n\n");
+  });
+
+  it("offers nothing for a selection of only chrome that copies omit", () => {
+    const root = scroller(
+      row(
+        "m1",
+        `<p>Body<span id="e" style="user-select: none"> (edited)</span></p>`,
+      ),
+    );
+    expect(
+      quotableSelection(root, select(text("#e"), 1, text("#e"), 9)),
+    ).toBeNull();
   });
 
   it("offers nothing outside a message body or in a nested timeline", () => {

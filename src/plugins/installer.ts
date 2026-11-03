@@ -195,7 +195,7 @@ export function createPluginInstallRequests({
      * Refused, and settled unavailable, while another review dialog is open.
      */
     claim(id: number) {
-      if (current?.request.id !== id) return false;
+      if (current?.request.id !== id || current.confirmed) return false;
       if (reviews > 0) {
         settle(id, "unavailable");
         return false;
@@ -218,7 +218,10 @@ export function createPluginInstallRequests({
         if (current.ended) settle(id, "cancelled");
       };
     },
-    /** The requester went away: cancels the request unless an install is confirmed. */
+    /**
+     * The requester or the review went away: cancels the request unless a
+     * confirmed install is still running, which then reports its own outcome.
+     */
     end(id: number) {
       if (current?.request.id !== id) return;
       if (current.confirmed) current.ended = true;

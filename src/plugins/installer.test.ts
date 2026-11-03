@@ -187,6 +187,7 @@ it("lets a confirmed install outlive its requester and cancels once it is releas
   requests.confirm(keptId);
   requests.end(keptId);
   expect(requests.snapshot()?.id).toBe(keptId);
+  expect(requests.claim(keptId)).toBe(false);
   requests.settle(keptId, "updated");
   await expect(kept).resolves.toBe("updated");
 

@@ -12,7 +12,10 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
-import type { PluginInstallRequest } from "../plugins/installer";
+import {
+  createPluginInstallRequests,
+  type PluginInstallRequest,
+} from "../plugins/installer";
 import { PluginImport } from "./PluginImport";
 import userEvent from "@testing-library/user-event";
 import { cloneElement, StrictMode } from "react";
@@ -2683,6 +2686,74 @@ it("keeps a requested source through Strict Mode remounts and cancels it when un
     await Promise.resolve();
   });
   expect(settled).toHaveBeenCalledExactlyOnceWith(7, "cancelled");
+});
+
+function confirmedThenUnmounted(success: boolean) {
+  const harness = requestedHarness(requestedPreview(pinned));
+  let finish: (ok: boolean) => void = () => {};
+  harness.installImport.mockImplementationOnce(
+    () => new Promise<boolean>((resolve) => (finish = resolve)),
+  );
+  const requests = createPluginInstallRequests();
+  const outcome = requests.request(
+    {
+      repository: "https://example.com/plugins.git",
+      reference: "v1",
+      commit: pinned,
+    },
+    { id: "example.market", name: "Market" },
+  );
+  const request = requests.snapshot();
+  if (!request) throw new Error("the request was refused");
+  const view = render(
+    <PluginImport
+      {...harness.element.props}
+      request={request}
+      onRequestSettled={requests.settle}
+      onRequestClaimed={requests.claim}
+      onRequestConfirmed={requests.confirm}
+      onRequestEnded={requests.end}
+      holdReview={requests.holdReview}
+    />,
+  );
+  return {
+    harness,
+    requests,
+    outcome,
+    view,
+    finish: (ok = success) => finish(ok),
+  };
+}
+
+it("reports a confirmed install's real outcome after its review unmounts mid-install", async () => {
+  const { harness, requests, outcome, view, finish } =
+    confirmedThenUnmounted(true);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() => expect(harness.installImport).toHaveBeenCalledOnce());
+  view.unmount();
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(requests.snapshot()).toBeDefined();
+  expect(requests.claim(requests.snapshot()?.id ?? 0)).toBe(false);
+  await act(async () => finish());
+  await expect(outcome).resolves.toBe("installed");
+  expect(requests.snapshot()).toBeUndefined();
+});
+
+it("cancels a confirmed request whose install fails after its review unmounts", async () => {
+  const { harness, outcome, view, finish } = confirmedThenUnmounted(false);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() => expect(harness.installImport).toHaveBeenCalledOnce());
+  view.unmount();
+  await act(async () => finish());
+  await expect(outcome).resolves.toBe("cancelled");
 });
 
 const installedFrom = (

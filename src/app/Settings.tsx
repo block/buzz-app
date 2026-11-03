@@ -673,7 +673,7 @@ export function Settings({
       queueMicrotask(() => {
         const waiting = installRequests?.snapshot();
         if (!settingsMounted.current && waiting)
-          installRequests?.settle(waiting.id, "cancelled");
+          installRequests?.end(waiting.id);
       });
     };
   }, [installRequests]);
@@ -1419,6 +1419,7 @@ export function Settings({
                 onRequestSettled={installRequests?.settle}
                 onRequestClaimed={installRequests?.claim}
                 onRequestConfirmed={installRequests?.confirm}
+                onRequestEnded={installRequests?.end}
                 holdReview={installRequests?.holdReview}
                 plugins={plugins}
                 catalog={catalog}

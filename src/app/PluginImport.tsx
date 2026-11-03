@@ -81,6 +81,7 @@ export function PluginImport({
   onRequestSettled,
   onRequestClaimed,
   onRequestConfirmed,
+  onRequestEnded,
   holdReview,
 }: {
   initialGit?: GitPluginSource | undefined;
@@ -105,6 +106,8 @@ export function PluginImport({
     | undefined;
   onRequestClaimed?: ((id: number) => boolean) | undefined;
   onRequestConfirmed?: ((id: number) => () => void) | undefined;
+  /** The review went away; a confirmed install still settles its own outcome. */
+  onRequestEnded?: ((id: number) => void) | undefined;
   /** Marks a review dialog as open so a plugin request cannot open a second one. */
   holdReview?: (() => () => void) | undefined;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
@@ -221,16 +224,20 @@ export function PluginImport({
   const lastClaimed = useRef(0);
   const boundId = useRef<number>(undefined);
   const settleRequest = useRef(onRequestSettled);
+  const endRequest = useRef(onRequestEnded);
   useEffect(() => {
     settleRequest.current = onRequestSettled;
+    endRequest.current = onRequestEnded;
   });
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       queueMicrotask(() => {
-        if (!mounted.current && boundId.current !== undefined)
-          settleRequest.current?.(boundId.current, "cancelled");
+        const id = boundId.current;
+        if (mounted.current || id === undefined) return;
+        if (endRequest.current) endRequest.current(id);
+        else settleRequest.current?.(id, "cancelled");
       });
     };
   }, []);
@@ -958,9 +965,11 @@ export function PluginImport({
                       pending.current = true;
                       setLoading(true);
                       setError(null);
-                      const unconfirm = bound
-                        ? onRequestConfirmed?.(bound.id)
-                        : undefined;
+                      const requestId = bound?.id;
+                      const unconfirm =
+                        requestId === undefined
+                          ? undefined
+                          : onRequestConfirmed?.(requestId);
                       try {
                         const success = await plugins.installImport(
                           preview.token,
@@ -981,6 +990,11 @@ export function PluginImport({
                         if (!existing && enableOnInstall)
                           await plugins.change("enable", candidate.manifest.id);
                         if (!current.active) {
+                          if (requestId !== undefined)
+                            settleRequest.current?.(
+                              requestId,
+                              existing ? "updated" : "installed",
+                            );
                           onClosed?.();
                           return;
                         }

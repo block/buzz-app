@@ -2503,3 +2503,25 @@ it("refuses a plugin request while the add dialog is open", async () => {
     "unavailable",
   );
 });
+
+it("leaves a confirmed install's request to the install when Settings closes", async () => {
+  const { cards, plugins, requests } = installRequestFixture(undefined);
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  const outcome = requests.request(requestedSource, market);
+  const id = requests.snapshot()?.id ?? 0;
+  expect(requests.claim(id)).toBe(true);
+  const unconfirm = requests.confirm(id);
+  view.unmount();
+  await Promise.resolve();
+  expect(requests.snapshot()?.id).toBe(id);
+  requests.settle(id, "installed");
+  unconfirm();
+  await expect(outcome).resolves.toBe("installed");
+});

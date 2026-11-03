@@ -5894,3 +5894,89 @@ it("keeps a row found by its profile name once a verified name replaces it, drop
     owner.dispose();
   }
 });
+
+it("labels a row by its verified name over a cached profile name without a naming policy", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    fake = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+    async query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        return [
+          eventDto(
+            signed(fake, {
+              kind: 0,
+              created_at: 1_000_000,
+              content: JSON.stringify({ name: "fak" }),
+              tags: [],
+            }),
+          ),
+        ];
+      const filter = filters.find((item) => item.kinds?.includes(30382));
+      if (!filter?.["#d"]?.includes(fake.pubkey)) return [];
+      return [
+        eventDto(
+          signed(relay, {
+            kind: 30382,
+            created_at: 1_000_000,
+            content: "",
+            tags: [
+              ["d", fake.pubkey],
+              ["p", fake.pubkey],
+              ["active", "true"],
+              ["display_name", "fname"],
+              ["username", "fname"],
+              ["issuer_label", "Block"],
+              ["verified_at", "1000000"],
+            ],
+          }),
+        ),
+      ];
+    },
+    subscribe(callbacks) {
+      callbacks.state({ status: "connected", routes: [] });
+      return {
+        update() {},
+        retry() {},
+        dispose() {},
+        syncVerifiedProfiles: () => () => {},
+      };
+    },
+  });
+  const t = peopleSession(owner.session, [
+    { pubkey: fake.pubkey, name: "fak" },
+  ]);
+  try {
+    // The shared profiles hold their kind-0 name but no verified name.
+    void owner.session.profiles.ensure([fake.pubkey]);
+    await waitFor(() =>
+      expect(owner.session.profiles.snapshot().get(fake.pubkey)?.name).toBe(
+        "fak",
+      ),
+    );
+    render(
+      <SearchResults
+        session={t.session}
+        query="fak"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={vi.fn()}
+      />,
+    );
+    const people = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(within(people).getByRole("option")).toHaveTextContent(
+        /fnameStart a direct message$/,
+      ),
+    );
+    expect(owner.session.profiles.snapshot().get(fake.pubkey)?.verified).toBe(
+      undefined,
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

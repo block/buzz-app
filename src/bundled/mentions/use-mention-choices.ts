@@ -146,12 +146,18 @@ export function namedCandidates(
   // or when a verified name replaced the one the shared profiles show: the
   // label must be the name the mention inserts.
   const shared = session.profiles.snapshot();
+  const pageVerified = new Set(
+    outside
+      .filter(
+        (person) =>
+          !!person.profileNames && !shared.get(person.pubkey)?.verified,
+      )
+      .map((person) => person.pubkey),
+  );
   const facts = [
     ...outside
       .filter(
-        (person) =>
-          !known?.(person.pubkey) ||
-          (!!person.profileNames && !shared.get(person.pubkey)?.verified),
+        (person) => !known?.(person.pubkey) || pageVerified.has(person.pubkey),
       )
       .map(({ pubkey, name, isAgent }) => ({
         pubkey,
@@ -163,7 +169,14 @@ export function namedCandidates(
   // One naming scope per choice set, not one normalization per row.
   const name = session.names?.scope(keys, facts);
   const choices: readonly MentionChoice[] = candidates.map((choice) => {
-    const named = name?.(choice.recipient.pubkey);
+    const key = choice.recipient.pubkey;
+    // Without a naming policy the scope falls back to the public profile,
+    // which must not outrank the verified name the mention inserts.
+    const found = name?.(key);
+    const named =
+      found?.source === "public-profile" && pageVerified.has(key)
+        ? undefined
+        : found;
     return {
       ...choice,
       label: named?.name ?? choice.recipient.name,

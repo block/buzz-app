@@ -659,7 +659,13 @@ export function SearchResults({
       const dm = relationships.dm(pubkey);
       const agentName =
         messageableAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
-      const label = named?.(pubkey)?.name ?? source.name;
+      // Without a naming policy the scope falls back to the public profile,
+      // which must not outrank a name verified for this page.
+      const found = named?.(pubkey);
+      const label =
+        (found?.source === "public-profile" && pageVerified(pubkey)
+          ? undefined
+          : found?.name) ?? source.name;
       const fullName = verifiedOf(pubkey)?.fullName;
       people.push({
         pubkey,

@@ -153,3 +153,26 @@ it("names people by shared, then searched, verified names and keeps what found t
   // Nobody verified: the same array.
   expect(withVerifiedNames(people, new Map(), new Map())).toBe(people);
 });
+
+it("asks every page of a longer list, and asks again once a lookup is stale", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const t = fake();
+    const people = Array.from({ length: 45 }, (_, n) => ({
+      pubkey: key(n + 1),
+    }));
+    const hook = renderHook(() => useVerifiedNames(t.session, people));
+    await waitFor(() => expect(hook.result.current.size).toBe(45));
+    expect(t.reads.map((read) => read.subjects.length)).toEqual([30, 15]);
+    // Within the discovery refresh interval a remount asks nobody.
+    hook.unmount();
+    renderHook(() => useVerifiedNames(t.session, people)).unmount();
+    expect(t.reads).toHaveLength(2);
+    vi.advanceTimersByTime(5 * 60_000);
+    const later = renderHook(() => useVerifiedNames(t.session, people));
+    await waitFor(() => expect(t.reads).toHaveLength(4));
+    expect(later.result.current.size).toBe(45);
+  } finally {
+    vi.useRealTimers();
+  }
+});

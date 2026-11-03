@@ -13,14 +13,18 @@ export type VerifiedNamesSession = {
   profiles: ProfileQueries;
   directMessages: Partial<Pick<RelaySession["directMessages"], "verified">>;
 };
-type Found = Map<string, VerifiedProfile | undefined>;
+type Found = Map<string, { profile: VerifiedProfile | undefined; at: number }>;
 
 /** Subjects per read: one people page. */
 const BATCH = 30;
+/** How long a lookup answers before it is asked again, as the shared
+ * directory refreshes discovery. */
+const FRESH_MS = 5 * 60_000;
 const none: ReadonlyMap<string, VerifiedProfile> = new Map();
 // People looked up per session and authority, so a picker that remounts on
-// each keystroke does not ask again. Bounded like the shared profile cache;
-// another authority, or the same key re-enabled, starts over.
+// each keystroke does not ask again. Bounded like the shared profile cache and
+// re-asked after FRESH_MS; another authority, or the same key re-enabled,
+// starts over.
 const lookups = new WeakMap<
   ProfileQueries,
   { authority: VerifiedProfileAuthority; found: Found }
@@ -39,7 +43,8 @@ function foundFor(
 /**
  * Community-verified names for people a search found that the shared profiles
  * have not verified. Once `people` settles, the unasked ones are read in the
- * background, a page at a time, and cancelled when `people` changes. Names
+ * background, a page at a time until all are asked, and cancelled when
+ * `people` changes. Names
  * belong to the authority that checked them: when the community withdraws or
  * changes it, none are returned until they are checked again.
  */
@@ -56,13 +61,19 @@ export function useVerifiedNames(
   const subjects = people
     .flatMap(({ pubkey, isAgent }) => (isAgent ? [] : [pubkey]))
     .join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read asks the next page.
   useEffect(() => {
     if (!authority || !read || !subjects) return;
     const found = foundFor(profiles, authority);
     const shared = profiles.snapshot();
+    const now = Date.now();
     const wanted = subjects
       .split(",")
-      .filter((pubkey) => !found.has(pubkey) && !shared.get(pubkey)?.verified)
+      .filter(
+        (pubkey) =>
+          now - (found.get(pubkey)?.at ?? -Infinity) >= FRESH_MS &&
+          !shared.get(pubkey)?.verified,
+      )
       .slice(0, BATCH);
     if (!wanted.length) return;
     const controller = new AbortController();
@@ -71,28 +82,30 @@ export function useVerifiedNames(
         // Nothing was checked, or not by this authority: ask again later.
         if (controller.signal.aborted || result?.authority !== authority)
           return;
+        const at = Date.now();
         for (const pubkey of wanted) {
           found.delete(pubkey);
-          found.set(pubkey, result.profiles.get(pubkey));
+          found.set(pubkey, { profile: result.profiles.get(pubkey), at });
         }
         for (const pubkey of found.keys()) {
           if (found.size <= PROFILE_CACHE_BASE) break;
           found.delete(pubkey);
         }
+        // Also asks the next page of a longer list.
         setRevision((value) => value + 1);
       },
       // Without verified names the rows keep their profile names.
       () => {},
     );
     return () => controller.abort();
-  }, [profiles, read, authority, subjects]);
+  }, [profiles, read, authority, subjects, revision]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read moves the revision.
   return useMemo(() => {
     const current = authority && lookups.get(profiles);
     if (!current || current.authority !== authority || !subjects) return none;
     const named = new Map<string, VerifiedProfile>();
     for (const pubkey of subjects.split(",")) {
-      const profile = current.found.get(pubkey);
+      const profile = current.found.get(pubkey)?.profile;
       if (profile) named.set(pubkey, profile);
     }
     return named.size ? named : none;

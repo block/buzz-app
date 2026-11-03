@@ -354,7 +354,7 @@ it.each([
     const removeButton = screen.getByRole("button", { name: `Remove ${name}` });
     expect(retryButton.textContent).toBe("Retry");
     expect(removeButton.textContent).toBe("Remove");
-    fireEvent.focus(retryButton);
+    act(() => retryButton.focus());
     expect((await screen.findByRole("tooltip")).textContent).toBe(
       "The relay rejected this file. Press Delete to remove.",
     );

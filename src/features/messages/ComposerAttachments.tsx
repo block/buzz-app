@@ -441,9 +441,10 @@ function AttachmentItem({
                   remove(item.id);
                 }
               }}
-              onClick={() => {
-                // Retry replaces these actions; keep keyboard focus on the item.
-                previewButton.current?.focus();
+              onClick={(event) => {
+                // Retry replaces this control. Hand off only focus that it owns.
+                if (document.activeElement === event.currentTarget)
+                  previewButton.current?.focus();
                 retry(item.id);
               }}
             >

@@ -730,7 +730,7 @@ it("a mention keystroke checks longer names only on choices the query matches", 
 
 it("Retry rereads members whose names a background read found missing", async () => {
   const h = fixture({ count: 3 });
-  const nameless = h.people[2]!.pubkey;
+  const nameless = h.people[2]?.pubkey ?? "";
   (h.session.profiles.snapshot() as Map<string, unknown>).delete(nameless);
   const ensure = vi.fn(async () => {});
   Object.assign(h.session.profiles, { ensure });

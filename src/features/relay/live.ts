@@ -364,6 +364,13 @@ type Route = {
   /** Replay events per channel: each channel has its own filter and limit, so
    * `count`, the route's total, cannot tell which one the limit cut. */
   counts?: Map<string, number>;
+  /** Channels whose replay does not close their gap even below the limit: it
+   * carried an edit or reaction that arrived before its target, a reply or
+   * a deletion (they change a thread summary the relay never stores), or an
+   * event dropped before it was counted. */
+  repairs?: Set<string>;
+  /** Events an edit or reaction in this replay refers to. */
+  targets?: Set<string>;
   quotaRetries: number;
   /** Its REQ was sent before a grant for one of its channels arrived, so the
    * relay may have left that channel out. Re-send at its EOSE. */
@@ -631,6 +638,8 @@ export function subscribeRelayTraffic(
       quotaRetries: 0,
       ...(previous ? { previous, previousChannels } : {}),
     };
+    delete next.repairs;
+    delete next.targets;
     delete next.replayChannels;
     if (replayChannels?.length) next.replayChannels = replayChannels;
     delete next.wire;
@@ -1000,6 +1009,12 @@ export function subscribeRelayTraffic(
     pump();
     settle();
   }
+  /** A replay event leaves `channels` owed their catch-up. */
+  const owesRepair = (route: Route, channels: readonly string[]) => {
+    if (route.status !== "pending" || route.liveOnly) return;
+    route.repairs ??= new Set();
+    for (const id of channels) route.repairs.add(id);
+  };
   const establish = (route: Route) => {
     if (route.id === "profiles" || route.id === "membership")
       callbacks.established(
@@ -1022,7 +1037,8 @@ export function subscribeRelayTraffic(
             (id) =>
               route.resumedChannels?.has(id) &&
               (!route.replayChannels || route.replayChannels.includes(id)) &&
-              (route.counts?.get(id) ?? 0) < LIVE_REPLAY_LIMIT,
+              (route.counts?.get(id) ?? 0) < LIVE_REPLAY_LIMIT &&
+              !route.repairs?.has(id),
           );
       const channels = route.channelIds ?? route.channelId;
       if (continuous.length)
@@ -1659,6 +1675,7 @@ export function subscribeRelayTraffic(
           // It still took a slot in the relay's limit, so a full replay must
           // not look complete.
           if (route.status === "pending" && !route.liveOnly) route.count++;
+          owesRepair(route, scope(route));
           return;
         }
         const incoming = checked;
@@ -1680,8 +1697,12 @@ export function subscribeRelayTraffic(
           ids.length &&
           tags.length &&
           !tags.some(([, id]) => id && ids.includes(id))
-        )
+        ) {
+          // The relay stored it in one of these channels and spent that
+          // channel's replay slot on it.
+          owesRepair(route, ids);
           return;
+        }
         if (previous) {
           const retained = currentRoute.previousChannels ?? scope(currentRoute);
           // Untagged auxiliary events cannot inherit a narrowed scope. Preserve
@@ -1708,6 +1729,26 @@ export function subscribeRelayTraffic(
           route.counts ??= new Map();
           for (const id of channelId ? [channelId] : ids)
             route.counts.set(id, (route.counts.get(id) ?? 0) + 1);
+          const owners = channelId ? [channelId] : ids;
+          const targets = incoming.tags.flatMap(([name, value]) =>
+            name === "e" && value ? [value] : [],
+          );
+          // The replay is newest first: an edit or reaction to a message sent
+          // in the outage arrives before its target, and the session drops it.
+          if (route.targets?.has(incoming.id)) owesRepair(route, owners);
+          if (incoming.kind === 7 || incoming.kind === 40003)
+            for (const id of targets) {
+              route.targets ??= new Set();
+              route.targets.add(id);
+            }
+          // A reply or a deletion changes a thread summary, which the relay
+          // never stores, so no replay carries it.
+          else if (
+            targets.length ||
+            incoming.kind === 5 ||
+            incoming.kind === 9005
+          )
+            owesRepair(route, owners);
         }
         if (replaying && route.page) {
           const { page } = route;
@@ -2070,6 +2111,8 @@ export function subscribeRelayTraffic(
           route.status = "pending";
           route.count = 0;
           route.counts = new Map();
+          delete route.repairs;
+          delete route.targets;
           route.quotaRetries = 0;
         }
         pump();

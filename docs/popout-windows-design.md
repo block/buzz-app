@@ -1,8 +1,9 @@
 # Pop-out conversation windows — design proposal
 
 Status: **proposal, not implemented.** Worktree `design/popout-window` at
-`origin/main` 92d4c36. Authored by Jaw-fable51-pi for jaw; adversarial review by
-jaw-gpt56sol requested before any implementation checkpoint.
+`origin/main` 92d4c36. Authored by Jaw-fable51-pi for jaw. Revision 2 after
+jaw-gpt56sol's adversarial review (findings 1–5 in §5 and §9 accepted; review at
+`~/.buzz/RESEARCH/BUZZ_POPOUT_ADVERSARIAL_REVIEW_2026_11_03.md`).
 
 Requests: jaw ([buzz link](buzz://message?channel=ad8a406e-8554-4345-818d-44d824476fdc&id=617ac90f03732fb1026b19d4ac0cbba34ef3a34a953c9cb22feb5e8488a914b3&thread=ee272234fd46a925e151a44998a1d781108b9ac9b00b0c01507408654b9d5069)):
 "sometimes I want a new window of a thread or a channel"; miread
@@ -13,25 +14,25 @@ this needs a desktop (Tauri) change.
 
 ## 1. The Slack reference
 
-Slack desktop's **Open in new window** (shipped 2023). From product knowledge;
-the Slack Help Center could not be fetched from this environment (bot challenge),
-so items marked (?) should be confirmed in a Slack client before being treated
-as parity targets.
+Slack desktop's **Open separate windows** — official help:
+<https://slack.com/help/articles/4403608802963-Open-separate-windows-in-Slack>
+(fetched 2026-11-03). Documented facts:
 
-| Aspect | Slack behavior |
+| Aspect | Slack behavior (documented) |
 | --- | --- |
-| Targets | Channels, DMs/group DMs, threads, canvases, huddles |
-| Entry points | Right-click a sidebar conversation → *Open in new window*; conversation-name header menu → *Open in new window*; thread pane `⋯` → *Open in new window* |
-| Window contents | Conversation header (name, basic actions), message list, full composer. No sidebar, no global search/nav |
-| Count | Many pop-outs at once; macOS *Window* menu lists them |
-| Same target twice | Reopening focuses the existing pop-out rather than making a second (?) |
-| Main + pop-out both showing the same conversation | Allowed; both live, both update |
-| Drafts | Shared — Slack drafts are server-synced, so main and pop-out show the same draft |
-| Read state | One account state; reading in the pop-out clears unread in main |
-| Links clicked inside a pop-out | Other conversations open in the **main** window (?) |
-| Closing main | App keeps running (tray/dock); pop-outs keep working |
-| Persistence | Pop-outs are not restored after app restart (?) |
-| Keyboard | No dedicated shortcut; menu-driven |
+| Purpose | "multi-task and keep up with a few channels or DMs at once" |
+| Targets | Any channel or DM; threads; Activity and To-dos tabs; canvases |
+| Channel/DM entry | **Cmd-click (Mac) / Ctrl-click (Win/Linux)** the conversation name in Home |
+| Thread entry | Thread pane `⋯` → **Open in new window** |
+| Activity/To-dos | Hover preview → window icon, or Cmd/Ctrl-click in sidebar |
+| Count | "as many windows as you'd like", drag to arrange |
+
+Not documented by Slack (product-knowledge only, (?) = confirm in a client before
+treating as a target): window contents are header + messages + composer without
+sidebar/search; reopening the same target focuses the existing window (?);
+main and pop-out can both show one conversation; drafts are shared because they
+are server-synced; one read state; links inside a pop-out open in main (?);
+closing main keeps pop-outs alive; pop-outs are not restored after restart (?).
 
 The *job* behind the feature (both requesters): keep one conversation visible and
 answerable while the main window moves elsewhere. Reading, replying and
@@ -98,9 +99,9 @@ Agents, Workflows), not Settings, not Canvas (separate request if wanted).
 
 | Surface | Item | Notes |
 | --- | --- | --- |
-| Sidebar row right-click / `…` menu (channel, DM, Solo chat) | **Open in new window** | Same menu that holds Copy link / Mark read |
+| Sidebar row right-click / `…` menu (channel, DM, Solo chat) | **Open in new window** | Same menu that holds Copy link / Mark read. Also **Cmd/Ctrl-click** the row, matching Slack's documented gesture (S2) |
 | Conversation header *Channel actions* menu | **Open in new window** | |
-| Conversation tab strip tab menu | **Open in new window** | Pops the tab's conversation or thread out; the tab closes (see §5.1) |
+| Conversation tab strip tab menu | **Open in new window** | Pops the tab's conversation or thread out; **the source tab stays open** (§5.1, §5.7) |
 | Thread pane header | **Open in new window** icon (external-link glyph) next to the existing "Open in channel" | The primary thread path — the requesters' case |
 | Message action bar / message `…` menu | **Open thread in new window** | Only on messages with a thread or as a reply target |
 | macOS *Window* menu | one row per open pop-out | Free with Tauri window titles |
@@ -122,16 +123,16 @@ sidebar, no page nav, no search, no Settings.
 1. Many pop-outs at once, one per distinct target. Opening an already-open
    target focuses its window.
 2. Main and pop-out may both show the target. Both live-update. One persisted
-   draft per target, shared (last writer wins; the other composer refreshes on
-   `storage` — already the contract). Attachment drafts stay with the window that
-   added them (as Huddle: "closing the panel releases its local files").
-3. Reading in the pop-out counts as a visit for unread, exactly as a Channels
-   tab does (one read-state owner: main).
+   draft per target, shared, governed by the composer's **existing conflict
+   contract** (§5.1). Attachment drafts stay with the window that added them.
+3. Reading in the pop-out earns unread marks through main's reading owner with
+   the same geometry/focus/dwell rules as a Channels tab (§5.6). Opening a
+   pop-out never marks anything read by itself.
 4. Links to other conversations clicked inside a pop-out open in **main** and
    focus it (`openLink` is forwarded as an action). `https` links open in the OS
    browser (Huddle already has `opener:allow-open-url`).
-5. *Open in main window* closes the pop-out and opens the target as a main tab,
-   keeping the draft.
+5. *Open in main window* shows/focuses main and opens the target as a main tab;
+   **the pop-out stays open** (no move semantics in S1; see §5.2).
 6. Closing main (macOS hide): pop-outs keep working because the owner renderer is
    alive. Linux/Windows: closing main closes all pop-outs after flushing drafts
    (S1); keeping them open there would require hide-on-close parity for main,
@@ -207,27 +208,61 @@ Explicitly record the fidelity gap and the trigger for moving to C.
 ### 5.1 Same conversation open twice; who owns the draft
 
 One persisted draft per target, owned by **storage**, not a window. The composer
-already uses `replaceView` with revision comparison and `subscribeView` listens
-to other windows' writes. Policy: last writer wins; a composer that receives a
-`storage` change while **not focused** reloads the draft; a focused composer
-keeps its in-progress text and the next keystroke writes it (today's single-window
-behavior unchanged). Send clears the persisted draft from main
-(Huddle: "An admitted message clears its persisted draft in the main app even if
-the companion closes before acknowledgment"). To keep the first slice simple,
-**popping a tab out closes that tab in main** (Slack does not do this; it avoids
-the two-live-composers case most of the time while still allowing the user to
-reopen the conversation in main). Reopen-in-main is one click.
+already implements the cross-editor contract and the pop-out runs the real
+`MessageComposer`, so it inherits it unchanged: an external revision arriving
+while the editor is dirty or a send is in flight sets **conflict**; local edits
+are retained, sending is blocked until the user resolves (keep mine / load
+theirs); an external revision arriving while clean is loaded
+(`src/features/messages/MessageComposer.tsx:1247-1261`). `replaceView` is a
+foreground comparison, not a lock — the conflict state is what makes that safe.
+(Revision 1 proposed last-writer-wins and focus-based reload; withdrawn — it
+contradicted the implementation.) Send clears the persisted draft from main only
+if the stored revision still equals the one the sender saw
+(`composer-owner.ts:280-287` pattern). **Open in new window leaves the source
+tab open** (Slack semantics; also avoids §5.7). S1 tests: two editors typing on
+one thread draft → conflict in the dirty one; send from A while B has a newer
+unsaved draft → B keeps its text, A's stored-draft clear is skipped.
 
-### 5.2 Which window owns signing / session actions
+### 5.2 Open in main window must not lose work
+
+Attachment drafts are local to the window that added them and Huddle releases
+them on close; conflicted or storage-failed text can exist only in one editor.
+So S1 has **no move**: *Open in main window* = show+focus main, open the target
+tab, leave the pop-out as is. **Explicit close** of a pop-out (red button,
+Cmd+W, retirement by main) runs the same guards as closing a tab: pending
+attachment drafts or an unresolved conflict → confirm dialog naming what would be
+lost. Retirement forced by scope change (§5.8) closes without prompting but
+posts the loss in the main toast. A later "move" variant needs an acknowledged
+handoff that keeps the source until the destination exists.
+
+### 5.3 Which window owns signing / session actions; binding
 
 **Main, only.** Pop-outs get a capability modeled on `huddle.json`: `watch`,
-`action`, `media-download` (restricted to sources in its current projection, as
-`media_download` already does for `huddle`), `clipboard-write-text`,
-`opener:allow-open-url`. No `relay-*`, `identity-*`, `sign-*`. Every action is
-re-validated in main against current membership/writability before it reaches
-the outbox, as the composer owner does today.
+`action`, `media-download` (restricted to sources in **that window's** current
+projection — `media_download` today keys the check on the single `huddle`
+label; it becomes per-label), `clipboard-write-text`, `opener:allow-open-url`.
+No `relay-*`, `identity-*`, `sign-*`. Each window is bound at open to
+`{ scope, viewer, channelId, threadRootId, sessionIncarnation }`; native stores
+the binding with the session and rejects `watch`/`action`/`download` whose
+caller label or binding doesn't match. Every action is re-validated in main
+against current membership/writability before it reaches the outbox, as the
+composer owner does today. Tests: two roots in one channel do not cross; an
+action carrying a retired incarnation is dropped, not replayed.
 
-### 5.3 Main window closes
+### 5.4 Huddle's "thread" is a room stream — S1 needs real thread semantics
+
+`HuddleDiscussion` streams a room's top-level messages: its composer has
+`messages.reply: unavailable` (`composer-client.ts:246`), sends with top-level
+`messages.send` and clears `draft:<room>` (`composer-owner.ts:271-287`). A thread
+pop-out instead needs: verified-root loading (the `ThreadPanel`/`useMessageOpening`
+reader rules — cached rows decide nothing), `messages.reply` to the root, the
+thread draft key `draft:<channel>:thread:<root>`, and admission bound to the
+target (§5.3). So S1 reuses the **composer projection** (contract/owner/client)
+and the window/validation plumbing, but the **read projection is new**: a
+`ThreadView` produced from the existing thread reader, not `discussion.ts`. This
+is the main reason the S1 estimate rose (§5.8).
+
+### 5.5 Main window closes
 
 - macOS: hidden, renderer alive → pop-outs keep working. Add: a pop-out's
   *Open in main window* must `show()`+focus main (hidden main is the common case).
@@ -235,30 +270,62 @@ the outbox, as the composer owner does today.
   main with pop-outs open, close pop-outs first (drafts are already persisted on
   each change). Alternative (hide main on close, as macOS) is a separate
   product decision; listed in §8.
-- Renderer reload/crash of main: native holds the last validated projection per
-  pop-out (Huddle `watch` re-sends the cached presentation); on main reload the
-  renderer re-registers owners for live pop-outs or retires them with an
-  in-window "Reopen from Buzz" notice (Huddle's `reset_incoming` pattern).
+- Renderer reload/crash of main: native keeps the last validated projection per
+  pop-out and bumps `sessionIncarnation`. The companion shows the cached
+  messages read-only with a "Buzz is reconnecting…" notice, its composer is
+  disabled, and any action carrying the old incarnation is rejected — **no send
+  replay**. On main startup S1 **retires** surviving pop-outs with an in-window
+  "Reopen from Buzz" notice (persisted drafts are already in storage); re-adopting
+  them is an S2/S3 item. (Huddle's `reset_incoming` only covers
+  incoming/connecting calls, so this is new, small native state — not inherited.)
+- **Cmd+W**: `close_menu.rs` routes Close Tab to the focused *main* webview only.
+  With a pop-out focused, Cmd+W must close that pop-out (through §5.2 guards);
+  Cmd+Shift+W stays main-only. Linux/Windows have no app menu equivalent;
+  the window's own close control applies.
 
-### 5.4 Community or scope changes
+### 5.6 Reading and unread parity
+
+Unread is earned, never granted: `docs/unread.md` requires a focused active
+reading surface, visible document, settled positioning, fully visible rows and
+300 ms dwell, with cancel/restart on scroll/content/focus change and manual
+unread respected during dwell. The Huddle bridge has no reading path. S1 adds
+one: the companion runs the same reading-observer module over its own geometry
+and focus (window focused, `document.visibilityState`, rows fully visible, dwell)
+and sends `observe(ids)` actions; main validates that the ids are in that
+window's projection and feeds them to the session's reading owner, which holds
+the lease. Main hidden (macOS) does not block it; a minimized/backgrounded
+companion observes nothing; manual *Mark unread* in main during dwell wins.
+Opening a pop-out marks nothing. Tests as listed. If this pushes S1 over budget
+it ships as **S1b** before S2, because "don't lose the message" needs unread to
+be truthful.
+
+### 5.7 Navigation history
+
+A pop-out is a native window, not an addressable dialog or tab, so it creates no
+history visit. Because the source tab stays open (§5.1) no existing content
+history changes; *Open in main window* opens an ordinary tab visit. Failed
+opens (window creation error) leave the source exactly as it was and toast in
+main.
+
+### 5.8 Community or scope changes
 
 Projection carries `scope`. Switching community, sign-out, relay-session
 replacement, membership loss, channel archive → main retires the pop-outs of the
 affected scope (`update(id, null)` → native `destroy()`), with one toast in main
 naming what closed. Identical to the Huddle rule set.
 
-### 5.5 Initial slice vs full parity
+### 5.9 Initial slice vs full parity
 
 | Slice | Content | Approx. production diff (excl. tests/docs) |
 | --- | --- | --- |
-| **S1 — Thread pop-out** | Entry points: thread pane header, tab menu, message `…` (when a thread exists). Native: `popout_window_open/update/watch/action` generalized from Huddle with a `HashMap<label, Session>`; capability `popout.json` with glob label. Renderer: `popout.html` entry; `ConversationView` = Huddle `Discussion` + `scope`, `title`, `target {channelId, threadRootId}`; reuse `HuddleDiscussionView`/`HuddleComposer` moved to a shared owner. Actions: send/older/retry/discard/openLink/openInMain/closed. Focus-existing on reopen. Lifecycle rules §5.3–5.4. | ~900–1,300 lines (native 300–400, projection generalization 300–500, UI 200–300, menu items 50–100) |
+| **S1 — Thread pop-out** | Entry points: thread pane header, tab menu, message `…` (when a thread exists). Native: `popout_window_open/update/watch/action` generalized from Huddle with `HashMap<label, Session>`, per-window binding + incarnation (§5.3), per-label download gate, Cmd+W routing. Renderer: `popout.html` entry; new `ThreadView` read projection from the thread reader (§5.4); composer projection reused with `reply` + thread draft key; `HuddleDiscussionView`/`HuddleComposer` moved to a shared owner; reading observations (§5.6, or S1b). Actions: send/older/retry/discard/openLink/openInMain/observe/closed. Focus-existing on reopen. Close guards (§5.2). | ~1,300–1,800 lines (native 400–550, thread projection + owner 400–600, composer generalization 150–250, UI 250–300, menus/shortcut 100) — above the 1k mark; split S1a (window+read-only+composer) / S1b (reading) if review asks |
 | **S2 — Channel / DM / Solo chat pop-out** | Same window, target without thread root: top-level stream, day dividers, "Reply in thread" action that opens the thread in **main** (or in another pop-out), typing indicator, members count. Sidebar row and header menu entry points. | ~400–700 |
 | **S3 — Fidelity** | Reactions (read + add), edit/delete own messages, link previews/cards, read-marker. Each as its own small PR; at this point evaluate Option C instead of adding more projection fields. | per item 150–400 |
 
 Non-goals for S1–S2: canvases, pages, Settings, restoring pop-outs after
 restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
 
-### 5.6 Validation
+### 5.10 Validation
 
 - Native: wire encoding/validation tests beside the Huddle ones
   (`huddle_window.rs` tests); label-gating tests for the new capability.
@@ -276,10 +343,10 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
    precedent shows the pattern is already accepted. Frame S1 as "generalize the
    existing companion to conversation threads", not "add multi-window".
 2. **Scope checkpoint before code** (publish in the PR/issue): required behavior
-   (§3 S1 rows), non-goals (§5.5), owners reused (`huddle_window.rs`,
+   (§3 S1 rows), non-goals (§5.9), owners reused (`huddle_window.rs`,
    `composer-owner/client`, `discussion.ts`, `HuddleDiscussionView`,
    `ContextMenu`/`MenuItem`, `PageTabs` tabMenu, `ThreadPanel` header), expected
-   files, diff budget (§5.5).
+   files, diff budget (§5.9).
 3. **FOUNDATION check.** None of the files named in §5.5 carry a `FOUNDATION`
    marker at 92d4c36 (`huddle_window.rs`, `lib.rs`, `capabilities/*`,
    `features/huddle/*`, `bundled/huddles/*`, `ThreadPanel.tsx`, `PageTabs.tsx`);
@@ -306,6 +373,10 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
 
 ## 7. Risks
 
+- **Scope.** S1 is now ~1.3–1.8k production lines; the honest comparison is "a
+  second Huddle-sized feature", not a menu item. Mitigation: S1a/S1b split; ship
+  read-only+compose first.
+
 - **Fidelity expectation.** Users may expect reactions/threads in the pop-out
   immediately. Mitigation: S1 header shows *Open in main window* prominently;
   release note names what the pop-out does and does not do.
@@ -321,11 +392,25 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
 
 1. Slack details marked (?) in §1 — confirm from your client: focus-existing on
    reopen; links inside a pop-out open in main; pop-outs not restored on restart.
-2. Popping a tab out: close the main tab (proposed) or keep both (Slack)?
+2. Reviewer-settled: Open in new window keeps the source tab; Open in main keeps
+   the pop-out. Any objection?
 3. Linux/Windows: accept "closing main closes pop-outs" for S1?
-4. Is S1 = threads only acceptable as the first PR, with channels/DMs/Solo in S2?
+4. Is S1 = threads only acceptable as the first PR, with channels/DMs/Solo in
+   S2? And is an S1a (no unread marking from the pop-out) / S1b split acceptable
+   if the first PR runs long?
 5. Does this belong in `block/buzz-app` core (recommended; needs native) or
    should the entry points also be exposed to plugins later (`ctx.windows.open`)?
    Core first; plugin API only on demand.
 6. Window title/branding for pop-outs ("Thread — #channel — Buzz"?), and
    whether the pop-out should show the member avatar stack or only the name.
+
+## 9. Review log
+
+- 2026-11-03 jaw-gpt56sol adversarial review at `dae45a5` (7/10 readiness).
+  Findings accepted and folded in: (1) draft policy → existing conflict contract
+  (§5.1); (2) Open in main as focus-not-move, close guards (§5.2); (3) Huddle
+  thread is a room stream → new thread read projection, binding and incarnation
+  (§5.3–5.4); (4) unread parity via main-owned reading leases (§5.6); (5) history
+  untouched by keeping the source tab open (§5.7). Evidence corrections: Slack
+  official help cited (§1); `reset_incoming` not generalizable, reload recovery
+  specified; Cmd+W routing (§5.5). Estimate raised accordingly (§5.9).

@@ -137,6 +137,7 @@ export function createVerifiedProfileDirectory(
     let ready = false;
     const seen = new Set<string>();
     let count = 0;
+    let dirty = false;
     let stopWire: (() => void) | undefined;
     const batch: Batch = {
       subjects: chunk,
@@ -169,7 +170,7 @@ export function createVerifiedProfileDirectory(
             if (!ready) {
               count++;
               seen.add(subject);
-              accept(event);
+              if (accept(event)) dirty = true;
             } else if (accept(event)) changed();
           },
           eose() {
@@ -180,15 +181,34 @@ export function createVerifiedProfileDirectory(
             // never evidence that an omitted key has no current projection.
             const complete = count < chunk.length || seen.size === chunk.length;
             for (const subject of chunk) {
+              const had = checked.has(subject);
               if (wanted.has(subject) && (seen.has(subject) || complete))
                 checked.add(subject);
               // An incomplete replacement cannot confirm inherited status.
               else checked.delete(subject);
-              if (complete && !seen.has(subject)) heads.delete(subject);
+              if (had !== checked.has(subject)) dirty = true;
+              if (complete && !seen.has(subject) && heads.peek(subject)) {
+                heads.delete(subject);
+                dirty = true;
+              }
             }
-            changed();
+            // A replay that confirmed what was already shown changes nothing.
+            if (dirty) changed();
           },
-          closed: fail,
+          closed(reason) {
+            if (!reason.startsWith("disconnected:")) return fail();
+            // A replaced socket ends every sent sync. An outage then reports
+            // the connection down in the same task, which stops every batch.
+            // A planned renewal keeps it up: send the batch again and keep
+            // its checked status until the replacement answers, as a rebuilt
+            // batch does.
+            queueMicrotask(() => {
+              if (!active || !online) return fail();
+              batch.stop();
+              batches.delete(batch);
+              start(currentAuthority, batch.subjects);
+            });
+          },
         },
       );
       if (!stopWire) fail();

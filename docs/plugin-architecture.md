@@ -1693,7 +1693,10 @@ untrusted string `params`. Once the plugin runtime has settled, the host resolve
 in place to an ordinary page target: the named page, else the plugin's primary page,
 else its first page. `params` become that page's route params only when the page
 declares a route and its `validate` accepts them; otherwise the page opens without
-params. A plugin that is absent, disabled, or lacks the page fails `unavailable`.
+params. A plugin that is absent, disabled, or lacks the page fails `unavailable`; the
+failure notice (`pluginLinkProblem`) then names which of the three it was, from the
+local catalog, managed recommendations and activation state, and offers **Manage
+plugins** for the first two. It never installs or enables the plugin.
 Conversation targets may include `panel: "members"` to restore that channel’s
 Members dialog without replacing its channel/message identity. Unknown panel
 values are rejected; this is presentation state, never mutation or confirmation state.

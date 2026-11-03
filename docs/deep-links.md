@@ -60,8 +60,18 @@ page's own `route.validate` decides whether they apply: when the page declares n
 route, or validation fails or throws, the page opens without params, never with
 partial ones. A repeated `id`, `page` or `route.<key>` is ambiguous and rejected like
 any other duplicate. A plugin that is not installed or enabled, or that has no such
-page, fails with the ordinary "This page isn’t available" notice; installing or
-enabling the plugin and choosing **Try again** reopens the same link. The plugin is
+page, fails `unavailable`, and the notice names the cause instead of the generic
+"This page isn’t available": "<name> isn’t installed" or "<name> is turned off",
+each with a **Manage plugins** button that opens **Settings > Plugins**, and
+"<name> has no page “<page>”" (or "has no pages") with no plugin action. When a
+[managed plugin](managed-plugins.md) recommendation lists the missing plugin, the
+notice also says who recommends it, and its **Review and install** row is in
+Manage plugins. The link never installs or enables anything: installing still
+goes through the access review, and enabling is a user action in Manage plugins.
+A plugin that is enabled but not running, failed to start, or whose settings
+could not be read keeps the generic notice. The cause comes from local plugin
+state only and is shown nowhere else. Installing or enabling the plugin and
+choosing **Try again** reopens the same link. The plugin is
 resolved only once the plugin runtime has settled, so a cold-start link waits for
 activation rather than failing early. Like the entity links, the form binds to the
 selected community and viewer, and a link is not authorization for anything the

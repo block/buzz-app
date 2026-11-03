@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import type { PageProps } from "../features/pages/service";
@@ -74,6 +75,16 @@ vi.mock("../bundled", () => ({
             title: "Second",
             component: Params,
           });
+        },
+      },
+    },
+    {
+      manifest: { id: "test.off", name: "Dormant", apiVersion: 1 },
+      enabledByDefault: false,
+      module: {
+        inject: ["pages"],
+        apply(ctx: Context) {
+          ctx.pages.register({ id: "main", title: "Main", component: Params });
         },
       },
     },
@@ -176,20 +187,62 @@ it("opens the first page of a plugin with no primary page", async () => {
   expect(await screen.findByText("first:null")).toBeVisible();
 });
 
-it.each([
-  ["a plugin that is not installed", { pluginId: "test.absent" }],
-  [
-    "a page the plugin does not have",
-    { pluginId: "test.plain", pageId: "nope" },
-  ],
-])("fails %s as unavailable", async (_name, fields) => {
+it("explains a plugin that is not installed and opens Manage plugins on request", async () => {
   gate.release();
-  const current = start(link(fields));
+  const user = userEvent.setup();
+  const current = start(link({ pluginId: "test.absent" }));
   expect(
-    await screen.findByRole("heading", { name: "This page isn’t available" }),
+    await screen.findByRole("heading", { name: "test.absent isn’t installed" }),
   ).toBeVisible();
   expect(current.navigation.snapshot()).toMatchObject({
     status: "failed",
     reason: "unavailable",
   });
+  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Manage plugins" }));
+  await waitFor(() =>
+    expect(current.navigation.snapshot().entry.target).toMatchObject({
+      kind: "settings",
+      section: "plugins",
+    }),
+  );
+});
+
+it("explains a plugin that is turned off without enabling it", async () => {
+  gate.release();
+  const current = start(link({ pluginId: "test.off" }));
+  expect(
+    await screen.findByRole("heading", { name: "Dormant is turned off" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Manage plugins" })).toBeVisible();
+  const catalog = current.plugins.snapshot().configuration;
+  expect(
+    catalog.status === "ready" &&
+      catalog.catalog.plugins.find(
+        (plugin) => plugin.manifest.id === "test.off",
+      )?.enabled,
+  ).toBe(false);
+});
+
+it("names the missing page of an enabled plugin and offers no install action", async () => {
+  gate.release();
+  start(link({ pluginId: "test.plain", pageId: "nope" }));
+  expect(
+    await screen.findByRole("heading", { name: "Plain has no page “nope”" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Manage plugins" })).toBeNull();
+});
+
+it("keeps the generic notice when a page target, not a plugin link, fails", async () => {
+  gate.release();
+  start({
+    version: 1,
+    kind: "page",
+    pluginId: "test.absent",
+    pageId: "main",
+  });
+  expect(
+    await screen.findByRole("heading", { name: "This page isn’t available" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Manage plugins" })).toBeNull();
 });

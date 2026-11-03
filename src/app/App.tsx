@@ -491,6 +491,47 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             </>
           }
         />
+      ) : route.linkProblem ? (
+        <EmptyState
+          icon={<WarningCircleIcon />}
+          title={
+            route.linkProblem.reason === "missing"
+              ? `${route.linkProblem.name} isn’t installed`
+              : route.linkProblem.reason === "disabled"
+                ? `${route.linkProblem.name} is turned off`
+                : route.linkProblem.pageId === undefined
+                  ? `${route.linkProblem.name} has no pages`
+                  : `${route.linkProblem.name} has no page “${route.linkProblem.pageId}”`
+          }
+          description={
+            route.linkProblem.reason === "missing"
+              ? route.linkProblem.source
+                ? `${route.linkProblem.source} recommends it. Review and install it in Manage plugins, then try again.`
+                : "Install it in Manage plugins, then try again."
+              : route.linkProblem.reason === "disabled"
+                ? "Turn it on in Manage plugins, then try again."
+                : "The link may be out of date, or the plugin may need an update."
+          }
+          action={
+            route.linkProblem.reason === "no-page" ? (
+              <>
+                {messagesButton("primary")}
+                {retryButton(leaveForMessages ? "quiet" : "primary")}
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => openSettingsSection("plugins")}
+                >
+                  Manage plugins
+                </Button>
+                {retryButton("quiet")}
+              </>
+            )
+          }
+        />
       ) : route.failure || failureReason === "not-found" ? (
         <EmptyState
           icon={<WarningCircleIcon />}

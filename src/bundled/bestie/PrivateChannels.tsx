@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { administerMember } from "../../features/channel-members/administration";
 import { canAddMembers } from "../../features/channel-members/members";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { useChannelList } from "../../features/relay/react";
@@ -47,18 +48,16 @@ async function removeMember(
   channelId: string,
   pubkey: string,
 ) {
-  const admin = session.memberAdministration;
-  await admin.refresh(channelId);
-  const read = admin.snapshot(channelId);
-  if (read.status !== "ready")
-    throw new Error(read.error ?? "Member roles are unavailable. Try again.");
-  const expectedRole = read.authority.roles[pubkey];
-  // Already gone: nothing to send.
-  if (!expectedRole) return;
-  await admin.run(channelId, { pubkey, expectedRole, role: "remove" });
-  const { operation, error } = admin.snapshot(channelId);
-  if (operation?.change.pubkey !== pubkey || operation.status !== "confirmed")
-    throw new Error(error ?? "The removal isn't confirmed. Try again.");
+  const result = await administerMember(
+    session.memberAdministration,
+    channelId,
+    pubkey,
+    // Already gone: nothing to send.
+    (role) => (role ? { expectedRole: role, role: "remove" } : undefined),
+    "Member roles are unavailable. Try again.",
+  );
+  if (result.status !== "confirmed")
+    throw new Error(result.error ?? "The removal isn't confirmed. Try again.");
 }
 
 const message = (error: unknown) =>

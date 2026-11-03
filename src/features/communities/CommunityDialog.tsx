@@ -1,5 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { communityName } from "./community-name";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -264,9 +266,22 @@ export function CommunityDialog({
               ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
               : "Use your identity across communities. Your profile and conversations stay separate in each one."
             : step === "access"
-              ? info?.name && info.name !== "Buzz Relay"
-                ? info.name
-                : destination?.name
+              ? destination && (
+                  <span className="flex items-center gap-3 rounded-[var(--radius-row)] bg-surface-inset p-4">
+                    {info?.icon && (
+                      <Avatar
+                        alt=""
+                        src={info.icon}
+                        fallback={communityName(info.name, destination.name)}
+                        shape="squircle"
+                        size="large"
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 break-words text-body text-standard">
+                      {communityName(info?.name, destination.name)}
+                    </span>
+                  </span>
+                )
               : mode === "profile"
                 ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
                 : original?.exists

@@ -9,6 +9,7 @@ export function communityName(name: unknown, host: string): string {
     return name;
   for (const suffix of [
     ".communities.buzz.xyz",
+    ".communities.block.xyz",
     ".communities.public.builderlabstaging.xyz",
   ]) {
     if (host.endsWith(suffix) && host.length > suffix.length)

@@ -1147,6 +1147,68 @@ it.each(
     h.owner.dispose();
   }
 });
+it.each(["after a macrotask", "synchronously"] as const)(
+  "a published leave whose confirmation reads are all retired %s is unconfirmed at the deadline",
+  async (timing) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // Node's native AbortSignal timer is not driven by Vitest's clock.
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((milliseconds) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), milliseconds);
+        return controller.signal;
+      });
+    const h = harness("owner", "stream", 2);
+    const currentRead = h.read.getMockImplementation();
+    assert(currentRead);
+    const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+    let retired = 0;
+    let unyielded = 0;
+    h.read.mockImplementation(async (filters, options) => {
+      if (!filters.every((filter) => filter.consistency === "strong"))
+        return currentRead(filters, options);
+      retired++;
+      // A reread that never yields starves the clock; fail it rather than
+      // freeze the worker.
+      if (++unyielded > 100) throw new Error("Reread without yielding");
+      void turn().then(() => {
+        unyielded = 0;
+      });
+      if (timing === "after a macrotask") await turn();
+      throw cancelled();
+    });
+    let settled = false;
+    const outcome = h.owner.capability
+      .run("leave", id)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      .finally(() => {
+        settled = true;
+      });
+    // Retired reads are still being reread, so the leave is still pending.
+    const rereading = async () => {
+      const seen = retired;
+      while (retired < seen + 2 && !settled) await turn();
+      expect(settled).toBe(false);
+    };
+    try {
+      await rereading();
+      await vi.advanceTimersByTimeAsync(19_999);
+      await rereading();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await outcome).toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      expect(h.removed).not.toHaveBeenCalled();
+      expect(h.publish).toHaveBeenCalledOnce();
+    } finally {
+      h.owner.dispose();
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
 it("reads exact relay-owned coordinates fresh both before sign and before publish", async () => {
   const h = harness();
   await h.owner.capability.run("delete", id);

@@ -5,6 +5,7 @@ import type { RelayWriter } from "./transport";
 import { PublishRejected } from "./outbox";
 import { isTransientFailure, readErrorKind } from "./errors";
 import { retryRead } from "./read-retry";
+import { yieldToHost } from "./yield";
 import { hasTag, newer, type RelayEvent } from "./events";
 import { openMetadata } from "./discovery";
 import {
@@ -145,6 +146,21 @@ export function createChannelLifecycle({
     if (events.some((event) => !kinds.includes(event.kind)))
       throw new Error("Unexpected channel state response");
     return events;
+  }
+  /** Any revocation, a published command's own included, retires shared
+   * reads. That is not a failed attempt for this channel; read again under
+   * the same deadline. A closed reader rejects without a macrotask, so yield
+   * one first or the deadline could never fire. */
+  async function reread<T>(signal: AbortSignal, attempt: () => Promise<T>) {
+    for (;;) {
+      try {
+        return await attempt();
+      } catch (error) {
+        if (signal.aborted || readErrorKind(error) !== "cancelled") throw error;
+      }
+      await yieldToHost();
+      signal.throwIfAborted();
+    }
   }
   type OwnedAgentAction = "archive" | "unarchive" | "delete";
   async function load(
@@ -344,18 +360,7 @@ export function createChannelLifecycle({
     async load(value: string, caller?: AbortSignal) {
       const id = lifecycleChannelId(value);
       return owned({ id, caller }, (signal) =>
-        retryRead(async () => {
-          for (;;) {
-            try {
-              return await load(id, signal);
-            } catch (error) {
-              // Another channel's revocation retires shared reads. It is not
-              // a failed attempt for this channel; reread under the same deadline.
-              if (signal.aborted || readErrorKind(error) !== "cancelled")
-                throw error;
-            }
-          }
-        }, signal),
+        retryRead(() => reread(signal, () => load(id, signal)), signal),
       );
     },
     async run(
@@ -442,17 +447,6 @@ export function createChannelLifecycle({
             throw new DOMException("Channel action cancelled", "AbortError");
           scope.published = true;
           await writer.publish(signed, signal);
-          // Any revocation, this command's own included, retires shared reads.
-          const confirm = async <T>(read: () => Promise<T>) => {
-            for (;;) {
-              try {
-                return await read();
-              } catch (error) {
-                if (signal.aborted || readErrorKind(error) !== "cancelled")
-                  throw error;
-              }
-            }
-          };
           // An accepted write may precede its relay-owned side effects. Do not
           // optimistically revoke membership or confuse a failed read with absence.
           for (const delay of [0, 250, 750, 1500]) {
@@ -470,12 +464,12 @@ export function createChannelLifecycle({
                 signal.addEventListener("abort", abort, { once: true });
               });
             if (action === "hide") {
-              if (
-                (await confirm(() => readVisibility(signal, true))).includes(id)
-              )
-                return;
+              const hidden = await reread(signal, () =>
+                readVisibility(signal, true),
+              );
+              if (hidden.includes(id)) return;
             } else if (action === "join") {
-              const events = await confirm(() =>
+              const events = await reread(signal, () =>
                 read([39002], id, signal, true, true),
               );
               const roster = lifecycleRecord(events, 39002, id, relayAuthor);
@@ -485,7 +479,7 @@ export function createChannelLifecycle({
               }
             } else {
               const kind = action === "leave" ? 39002 : 39000;
-              const events = await confirm(() =>
+              const events = await reread(signal, () =>
                 read([kind], id, signal, action === "leave", true),
               );
               const record = lifecycleRecord(events, kind, id, relayAuthor);

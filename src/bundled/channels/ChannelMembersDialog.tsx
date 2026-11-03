@@ -1747,6 +1747,8 @@ export function ChannelMembersDialog({
   const dialog = (
     <Dialog
       open
+      // Its confirmation step is a nested surface, not part of the visit.
+      visit={!selection}
       dismissOnOutsideClick
       preventClose={share.busy}
       step={

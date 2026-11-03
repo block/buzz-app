@@ -1,6 +1,7 @@
 // FOUNDATION: One dispatcher; plugin readiness/lifetime remain owned by Cordis.
 import { TERMINAL_KEY_EVENT } from "./terminal-key-event";
 import { Service, type Context } from "@deepseek-ai/cordis";
+import { activeModal } from "../../shared/design-system/overlayLayer";
 import {
   createContributions,
   type Contribution,
@@ -88,9 +89,10 @@ export class ShortcutsService extends Service implements Shortcuts {
       const editable = inEditable(event);
       const modal =
         modalOpen() ||
-        event
-          .composedPath()
-          .some((target) => (target as Element).matches?.(MODAL));
+        ((!host?.document || !activeModal(host.document)) &&
+          event
+            .composedPath()
+            .some((target) => (target as Element).matches?.(MODAL)));
       const eligible = (shortcut: Shortcut) =>
         eligibleIn(shortcut, editable, modal);
       // Host chords are reserved even while unavailable (e.g. Settings behind a modal).
@@ -113,7 +115,12 @@ export class ShortcutsService extends Service implements Shortcuts {
       if (event.repeat && !shortcut.repeat) return;
       runShortcut(shortcut);
     };
-    const modalOpen = () => !!host?.document.querySelector(MODAL);
+    // An addressable dialog is a navigation visit, not a modal interruption:
+    // shortcuts, Back included, work in it as in the view it covers.
+    const modalOpen = () => {
+      const modal = host?.document && activeModal(host.document);
+      return !!modal && !modal.matches("[data-navigation-visit]");
+    };
     // A non-keyboard request for a host shortcut, such as macOS mouse
     // back/forward: the chord's own eligibility, outside any editable.
     this.runHost = (id: string) => {

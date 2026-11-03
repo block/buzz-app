@@ -629,3 +629,60 @@ it("mouse back/forward requests run the Back/Forward shortcuts, not behind a mod
     await h.dispose();
   }
 });
+
+it("Back and Forward step through an addressable dialog, not past a confirmation over it", async () => {
+  const h = harness("MacIntel");
+  const controller = createNavigationController(createMemoryHistory());
+  const { navigation } = controller;
+  const remove = registerNavigationShortcuts(h.shortcuts, navigation);
+  const target = () => navigation.snapshot().attempt.entry.target;
+  const keyboard = (key: string) =>
+    press(document.body, { ctrlKey: false, metaKey: true, key });
+  const mouse = (historyEvent: string) =>
+    new Function(
+      "window",
+      "document",
+      "Event",
+      "CSS",
+      "browserSessionId",
+      "historyEvent",
+      `return eval(${JSON.stringify(historyRequest)})`,
+    )(window, document, Event, CSS, null, historyEvent);
+  // As the shared Dialog renders a visit, and an AlertDialog over it.
+  const visit = document.createElement("div");
+  visit.setAttribute("role", "dialog");
+  visit.setAttribute("aria-modal", "true");
+  visit.dataset.navigationVisit = "";
+  const confirmation = document.createElement("div");
+  confirmation.setAttribute("role", "alertdialog");
+  confirmation.setAttribute("aria-modal", "true");
+  const settings = { version: 1, kind: "settings" } as const;
+  const home = { version: 1, kind: "home" } as const;
+  try {
+    const inputs: [() => void, () => void][] = [
+      [() => keyboard("["), () => keyboard("]")],
+      [() => mouse("buzz:history-back"), () => mouse("buzz:history-forward")],
+    ];
+    for (const [back, forward] of inputs) {
+      void navigation.open(home);
+      void navigation.open(settings);
+      await vi.waitFor(() => expect(target()).toEqual(settings));
+      document.body.append(visit, confirmation);
+      back();
+      await Promise.resolve();
+      expect(target()).toEqual(settings);
+      confirmation.remove();
+      back();
+      await vi.waitFor(() => expect(target()).toEqual(home));
+      forward();
+      await vi.waitFor(() => expect(target()).toEqual(settings));
+      visit.remove();
+    }
+  } finally {
+    visit.remove();
+    confirmation.remove();
+    remove();
+    controller.dispose();
+    await h.dispose();
+  }
+});

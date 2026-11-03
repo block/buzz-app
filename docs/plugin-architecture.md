@@ -2223,10 +2223,9 @@ Mark all as read. The message editor's own keys (`composerFormats` and `linkBind
 read-only under Message formatting, which says once under its heading that they
 belong to the editor; the editor matches them before any shortcut,
 so rebinding a shortcut onto one warns. Slack's ⌘⇧C (code), ⌘⇧9 (quote), ⌘⌥⇧C
-(code block) and ⌘⇧U (link) are aliases of Buzz's chords. ⌘/ opens a searchable, read-only Keyboard shortcuts panel
-(`app/shell/ShortcutsPanel.tsx`) built from the same groups as Settings →
-Shortcuts (`useShortcutGroups`), so rebinds and plugin keys show as they fire; its
-footer opens Settings to change them. ⌘⇧Y opens Set a status while the profile menu
+(code block) and ⌘⇧U (link) are aliases of Buzz's chords. ⌘/ opens Settings →
+Shortcuts, which is built the first time it is shown rather than with every
+Settings open. ⌘⇧Y opens Set a status while the profile menu
 can (the message editor keeps it as Redo). Home is on the placeholder ⌘⇧O while
 ⌘⇧A opens Inbox's unread view. Inbox's ⌘⇧A, ⌘⇧T, ⌘⇧M and ⌘⇧K are ordinary
 `buzz.inbox` plugin contributions, so they follow the plugin precedence above: a

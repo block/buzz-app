@@ -29,7 +29,6 @@ export const HOST_SHORTCUT_ORDER = {
   search: 70,
   settings: 80,
   shortcutsHelp: 81,
-  shortcuts: 81,
   status: 83,
   nextTab: 82,
   previousTab: 84,

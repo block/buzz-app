@@ -25,7 +25,6 @@ import { CommunityPicker } from "../../features/communities/CommunityPicker";
 import { ProfileButton } from "./ProfileButton";
 import { CommunityShortcuts } from "./CommunityShortcuts";
 import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
-import { ShortcutsPanel } from "./ShortcutsPanel";
 import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { headerPageSelection, pagePlacement, orderPages } from "./presentation";
@@ -591,11 +590,6 @@ function AppShellContent({
         </div>
       </div>
       {creationAction?.(creationOpen, setCreationOpen, creationContainer)}
-      {searchServices?.plugins && (
-        <ShortcutsPanel
-          services={{ ...searchServices, plugins: searchServices.plugins }}
-        />
-      )}
       {searchServices && (
         <>
           <MarkAllReadShortcut

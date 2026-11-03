@@ -8,7 +8,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -27,8 +26,6 @@ import { createNavigationController } from "../features/navigation/controller";
 import { createMemoryHistory } from "../features/navigation/history";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
 import { PageSearch, type SearchServices } from "./shell/PageSearch";
-import { ShortcutsPanel } from "./shell/ShortcutsPanel";
-import type { ComponentProps } from "react";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
 
@@ -291,16 +288,6 @@ it("presents actual host registrations in navigation, interface sizing, search/s
               shortcuts,
               shortcutBindings: bindings,
             } as unknown as SearchServices
-          }
-        />
-        <ShortcutsPanel
-          services={
-            {
-              shortcuts,
-              shortcutBindings: bindings,
-              plugins: catalog([]),
-              navigation: navigation.navigation,
-            } as unknown as ComponentProps<typeof ShortcutsPanel>["services"]
           }
         />
         <ShortcutSettings
@@ -1128,59 +1115,6 @@ it("lists the message editor's formatting keys read-only and warns when a shortc
       "The message editor handles Ctrl+Shift+U itself while you are typing",
     );
   } finally {
-    await h.dispose();
-  }
-});
-
-it("opens a searchable, read-only shortcut list on Control+/ and links to Settings to change keys", async () => {
-  const h = await harness();
-  const open = vi.fn(async () => {});
-  try {
-    render(
-      <ShortcutsPanel
-        services={
-          {
-            shortcuts: h.shortcuts,
-            shortcutBindings: h.bindings,
-            plugins: h.plugins,
-            navigation: { open },
-          } as unknown as ComponentProps<typeof ShortcutsPanel>["services"]
-        }
-      />,
-    );
-    expect(h.press("/")).toBe(false);
-    const dialog = await screen.findByRole("dialog", {
-      name: "Keyboard shortcuts",
-    });
-    const search = within(dialog).getByRole("searchbox", {
-      name: "Search shortcuts",
-    });
-    await waitFor(() => expect(search).toHaveFocus());
-    expect(within(dialog).getByText("Search Buzz")).toBeVisible();
-    expect(within(dialog).getByText("Shortcut counter")).toBeVisible();
-    expect(within(dialog).getByText("Message formatting")).toBeVisible();
-    expect(
-      within(dialog).queryByRole("button", { name: /Change shortcut for/ }),
-    ).toBeNull();
-    const user = userEvent.setup();
-    await user.type(search, "quote");
-    expect(within(dialog).getByText("Quote")).toBeVisible();
-    expect(within(dialog).queryByText("Search Buzz")).toBeNull();
-    await user.clear(search);
-    await user.type(search, "zzz");
-    expect(within(dialog).getByText("No shortcuts match “zzz”.")).toBeVisible();
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "Change shortcuts in Settings",
-      }),
-    );
-    expect(open).toHaveBeenCalledExactlyOnceWith({
-      version: 1,
-      kind: "settings",
-      section: "shortcuts",
-    });
-  } finally {
-    cleanup();
     await h.dispose();
   }
 });

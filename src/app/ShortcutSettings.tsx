@@ -33,7 +33,7 @@ import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import type { ShortcutsService } from "../features/shortcuts/service";
 import type { PluginManager } from "../plugins/manager";
 
-export type Row = Readonly<{
+type Row = Readonly<{
   key: string;
   title: string;
   owner: string;
@@ -45,7 +45,7 @@ export type Row = Readonly<{
   override: KeyBinding | undefined;
   effective: readonly KeyBinding[];
 }>;
-export type Group = Readonly<{
+type Group = Readonly<{
   id: string;
   label: string;
   /** Stable owner identity for equal display labels. */
@@ -154,11 +154,11 @@ const byPresentation = (a: Row, b: Row) =>
   a.title.localeCompare(b.title);
 
 /**
- * Every listed shortcut, grouped as Settings and the ⌘/ panel show them: host,
+ * Every listed shortcut, grouped as Settings shows them: host,
  * then plugins by name, then the editor's read-only keys. `rows` are only the
  * dispatcher's, which are the ones that can conflict or be rebound.
  */
-export function useShortcutGroups({
+function useShortcutGroups({
   shortcuts,
   bindings,
   plugins,
@@ -268,7 +268,7 @@ export function useShortcutGroups({
 }
 
 /** A row's distinct chords, "⌘K or ⌘T". */
-export function ShortcutChords({
+function ShortcutChords({
   chords,
   apple,
 }: {

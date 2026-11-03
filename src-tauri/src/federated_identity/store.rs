@@ -1,14 +1,18 @@
 //! Secure records plus durable, nonsensitive refusal markers outside wiped app data.
-use std::{fs, path::PathBuf};
-use zeroize::Zeroizing;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fs, path::PathBuf, sync::Mutex};
+use zeroize::{Zeroize, Zeroizing};
 
 pub(crate) const SERVICE: &str = if cfg!(debug_assertions) {
     "xyz.block.buzz.desktop.federated-session.debug"
 } else {
     "xyz.block.buzz.desktop.federated-session"
 };
+const MAX_BUNDLE: usize = 1024 * 1024;
 
 pub(crate) type LoadedRecord = (Option<Zeroizing<Vec<u8>>>, Option<String>);
+/// A secure item as read, if present.
+type Item = Option<Zeroizing<Vec<u8>>>;
 
 pub(crate) trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str>;
@@ -26,9 +30,58 @@ pub(crate) struct SecureStore {
     pub(super) root: PathBuf,
 }
 
+/// The one secure item per profile and configuration: the owner's session
+/// record and every agent grant (or retirement record), each as its exact
+/// bytes, so every update compares the slot it read. Grants outlive the session.
+#[derive(Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Bundle {
+    bundle: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    grants: BTreeMap<String, String>,
+}
+impl Drop for Bundle {
+    fn drop(&mut self) {
+        self.session.zeroize();
+        self.grants.values_mut().for_each(Zeroize::zeroize);
+    }
+}
+/// Before bundles, the item held only the session record: read it as one.
+fn decode(raw: &[u8]) -> Result<Bundle, &'static str> {
+    if raw.len() > MAX_BUNDLE {
+        return Err("storage-corrupt");
+    }
+    if let Ok(bundle) = serde_json::from_slice::<Bundle>(raw) {
+        return if bundle.bundle == 1 {
+            Ok(bundle)
+        } else {
+            Err("storage-corrupt")
+        };
+    }
+    serde_json::from_slice::<super::Record>(raw).map_err(|_| "storage-corrupt")?;
+    Ok(Bundle {
+        bundle: 1,
+        session: Some(text(raw)?),
+        grants: BTreeMap::new(),
+    })
+}
+fn text(raw: &[u8]) -> Result<String, &'static str> {
+    String::from_utf8(raw.to_vec()).map_err(|_| "storage-corrupt")
+}
+
+// Session and grant transactions share one item. Serialize them within this
+// process, so only another Buzz instance can find the account lock busy.
+static TRANSACTIONS: Mutex<()> = Mutex::new(());
+
 // Releasing the transaction must not wait for inherited/duplicated handles.
 // This matches the existing credential-store account lock's explicit unlock.
-struct Transaction(std::fs::File);
+// The file unlocks before the process guard (field 1) is released.
+struct Transaction(
+    std::fs::File,
+    #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
+);
 impl Drop for Transaction {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.0);
@@ -47,6 +100,95 @@ fn error(error: buzz_credential_store::Error) -> &'static str {
     }
 }
 
+/// The OS secure items under `SERVICE`.
+#[cfg(not(test))]
+mod items {
+    use super::{error, SERVICE};
+    use std::path::Path;
+    use zeroize::Zeroizing;
+    pub(super) fn read(
+        _: &Path,
+        account: &str,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        match buzz_credential_store::read_session(SERVICE, account) {
+            Ok(value) => Ok(Some(value)),
+            Err(buzz_credential_store::Error::Absent) => Ok(None),
+            Err(value) => Err(error(value)),
+        }
+    }
+    pub(super) fn compare(
+        _: &Path,
+        account: &str,
+        expected: Option<&[u8]>,
+        replacement: Option<&[u8]>,
+    ) -> Result<(), &'static str> {
+        buzz_credential_store::compare_session(SERVICE, account, expected, replacement)
+            .map_err(error)
+    }
+    pub(super) fn delete(_: &Path, account: &str) -> Result<(), &'static str> {
+        match buzz_credential_store::delete_session(SERVICE, account) {
+            Ok(()) | Err(buzz_credential_store::Error::Absent) => Ok(()),
+            Err(value) => Err(error(value)),
+        }
+    }
+}
+
+/// Test builds never touch OS credentials: items live in memory for roots a
+/// test opts in with `enable`, and every other root is unavailable.
+#[cfg(test)]
+pub(crate) mod items {
+    use std::{collections::HashMap, path::Path, path::PathBuf, sync::Mutex};
+    use zeroize::Zeroizing;
+    type Items = HashMap<PathBuf, HashMap<String, Vec<u8>>>;
+    static ITEMS: Mutex<Option<Items>> = Mutex::new(None);
+    pub(crate) fn enable(root: &Path) {
+        ITEMS
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .entry(root.into())
+            .or_default();
+    }
+    pub(crate) fn with<T>(
+        root: &Path,
+        run: impl FnOnce(&mut HashMap<String, Vec<u8>>) -> T,
+    ) -> Result<T, &'static str> {
+        let mut items = ITEMS.lock().unwrap();
+        let items = items.as_mut().and_then(|all| all.get_mut(root));
+        items.map(run).ok_or("storage-unavailable")
+    }
+    pub(crate) fn read(
+        root: &Path,
+        account: &str,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        with(root, |items| {
+            items.get(account).cloned().map(Zeroizing::new)
+        })
+    }
+    pub(crate) fn compare(
+        root: &Path,
+        account: &str,
+        expected: Option<&[u8]>,
+        replacement: Option<&[u8]>,
+    ) -> Result<(), &'static str> {
+        with(root, |items| {
+            if items.get(account).map(Vec::as_slice) != expected {
+                return Err("session-changed");
+            }
+            match replacement {
+                Some(value) => items.insert(account.into(), value.to_vec()),
+                None => items.remove(account),
+            };
+            Ok(())
+        })?
+    }
+    pub(crate) fn delete(root: &Path, account: &str) -> Result<(), &'static str> {
+        with(root, |items| {
+            items.remove(account);
+        })
+    }
+}
+
 impl SecureStore {
     fn marker(&self, revision: &str) -> Result<PathBuf, &'static str> {
         let revision = uuid::Uuid::parse_str(revision).map_err(|_| "storage-corrupt")?;
@@ -60,6 +202,9 @@ impl SecureStore {
     /// Every cooperating FI reader/writer holds this account lock across both
     /// the secure-record operation and its nonsensitive refusal marker.
     fn lock(&self) -> Result<Transaction, &'static str> {
+        let process = TRANSACTIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         fs::create_dir_all(&self.root).map_err(|_| "storage-unavailable")?;
         let file = fs::OpenOptions::new()
             .read(true)
@@ -75,7 +220,7 @@ impl SecureStore {
                 "storage-unavailable"
             }
         })?;
-        Ok(Transaction(file))
+        Ok(Transaction(file, process))
     }
     fn refused(&self, revision: &str) -> Result<Option<String>, &'static str> {
         match fs::read_to_string(self.marker(revision)?) {
@@ -105,20 +250,121 @@ impl SecureStore {
             Err(_) => Err("storage-unavailable"),
         }
     }
+    /// The item as read, and the bundle it holds.
+    fn bundle(&self) -> Result<(Item, Bundle), &'static str> {
+        let raw = items::read(&self.root, &self.account)?;
+        let bundle = match raw.as_deref() {
+            Some(raw) => decode(raw)?,
+            None => Bundle::default(),
+        };
+        Ok((raw, bundle))
+    }
+    /// Replaces the item read as `current` with `bundle`, deleting it once
+    /// empty, and reads it back.
+    fn save(&self, current: Option<&[u8]>, bundle: &mut Bundle) -> Result<(), &'static str> {
+        // Register before writing any secret. Buzz identity deletion walks these
+        // public account keys even after configuration or profile changes.
+        fs::create_dir_all(&self.root).map_err(|_| "storage-unavailable")?;
+        fs::write(self.index(), b"1").map_err(|_| "storage-unavailable")?;
+        bundle.bundle = 1;
+        let next = if bundle.session.is_none() && bundle.grants.is_empty() {
+            None
+        } else {
+            let next = serde_json::to_vec(&*bundle).map_err(|_| "storage-corrupt")?;
+            Some(Zeroizing::new(next))
+        };
+        let next = next.as_deref().map(Vec::as_slice);
+        if next.is_some_and(|next| next.len() > MAX_BUNDLE) {
+            return Err("storage-unavailable");
+        }
+        items::compare(&self.root, &self.account, current, next)?;
+        if items::read(&self.root, &self.account)?
+            .as_deref()
+            .map(Vec::as_slice)
+            != next
+        {
+            return Err("storage-corrupt");
+        }
+        Ok(())
+    }
+    /// Compare-and-swap the session slot, keeping every grant.
+    fn swap(
+        &self,
+        expected: Option<&[u8]>,
+        replacement: Option<&[u8]>,
+    ) -> Result<(), &'static str> {
+        let (raw, mut bundle) = self.bundle()?;
+        if bundle.session.as_deref().map(str::as_bytes) != expected {
+            return Err("session-changed");
+        }
+        bundle.session.zeroize();
+        bundle.session = replacement.map(text).transpose()?;
+        self.save(raw.as_deref().map(Vec::as_slice), &mut bundle)
+    }
+    /// The grant (or retirement) record at `key`. Only absence from a
+    /// successfully loaded bundle moves the pre-bundle item at `key` into it,
+    /// and that item is deleted once the bundle holding it is written and
+    /// read back.
+    pub(crate) fn grant(&self, key: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        let _transaction = self.lock()?;
+        let (raw, mut bundle) = self.bundle()?;
+        if let Some(value) = bundle.grants.get(key) {
+            return Ok(Some(Zeroizing::new(value.as_bytes().to_vec())));
+        }
+        let Some(value) = items::read(&self.root, key)? else {
+            return Ok(None);
+        };
+        bundle.grants.insert(key.into(), text(&value)?);
+        self.save(raw.as_deref().map(Vec::as_slice), &mut bundle)?;
+        self.forget_item(key)?;
+        Ok(Some(value))
+    }
+    /// Replaces or, with `None`, deletes the grant record at `key`. A deletion
+    /// removes the pre-bundle item first, so a failure never lets a later read
+    /// move it back; a write saves the bundle first, which reads then prefer.
+    pub(crate) fn set_grant(&self, key: &str, value: Option<&[u8]>) -> Result<(), &'static str> {
+        let _transaction = self.lock()?;
+        let (raw, mut bundle) = self.bundle()?;
+        let raw = raw.as_deref().map(Vec::as_slice);
+        match value {
+            Some(value) => {
+                if let Some(mut old) = bundle.grants.insert(key.into(), text(value)?) {
+                    old.zeroize();
+                }
+                self.save(raw, &mut bundle)?;
+                self.forget_item(key)
+            }
+            None => {
+                self.forget_item(key)?;
+                match bundle.grants.remove(key) {
+                    Some(mut old) => {
+                        old.zeroize();
+                        self.save(raw, &mut bundle)
+                    }
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+    /// Deletes the pre-bundle item at `key`, then its index entry. A failed
+    /// deletion keeps the entry for the boot erase owner.
+    fn forget_item(&self, key: &str) -> Result<(), &'static str> {
+        items::delete(&self.root, key)?;
+        match fs::remove_file(self.root.join(format!("{key}.record"))) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("storage-unavailable"),
+        }
+    }
 }
 
 impl Store for SecureStore {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
-        #[cfg(not(test))]
-        {
-            match buzz_credential_store::read_session(SERVICE, &self.account) {
-                Ok(value) => Ok(Some(value)),
-                Err(buzz_credential_store::Error::Absent) => Ok(None),
-                Err(value) => Err(error(value)),
-            }
-        }
-        #[cfg(test)]
-        Err("storage-unavailable")
+        let (_, bundle) = self.bundle()?;
+        Ok(bundle
+            .session
+            .as_ref()
+            .map(|session| Zeroizing::new(session.as_bytes().to_vec())))
     }
     fn compare(
         &self,
@@ -126,20 +372,7 @@ impl Store for SecureStore {
         replacement: Option<&[u8]>,
     ) -> Result<(), &'static str> {
         let _transaction = self.lock()?;
-        // Register before writing any secret. Buzz identity deletion walks these
-        // public account keys even after configuration or profile changes.
-        fs::create_dir_all(&self.root).map_err(|_| "storage-unavailable")?;
-        fs::write(self.index(), b"1").map_err(|_| "storage-unavailable")?;
-        #[cfg(not(test))]
-        {
-            buzz_credential_store::compare_session(SERVICE, &self.account, expected, replacement)
-                .map_err(error)
-        }
-        #[cfg(test)]
-        {
-            let _ = (expected, replacement);
-            Err("storage-unavailable")
-        }
+        self.swap(expected, replacement)
     }
     fn load(&self) -> Result<LoadedRecord, &'static str> {
         let _transaction = self.lock()?;
@@ -160,65 +393,19 @@ impl Store for SecureStore {
         // Revision-scoped files cannot overwrite a newer record's refusal.
         self.refuse(revision)?;
         let _transaction = self.lock()?;
-        #[cfg(not(test))]
-        buzz_credential_store::compare_session(SERVICE, &self.account, Some(expected), None)
-            .map_err(error)?;
-        #[cfg(test)]
-        {
-            let _ = expected;
-            Err("storage-unavailable")
-        }
-        #[cfg(not(test))]
+        self.swap(Some(expected), None)?;
         self.clear_refusal(revision)
     }
 }
 
-/// Secure-store account for one agent's grant, beside (never inside) the
-/// owner's session record: same profile and deployment scoping, its own key.
-#[allow(dead_code)] // Consumed by the agent token client.
+/// Key of one agent's grant inside the owner's bundle, and of its item from
+/// before bundles: same profile and deployment scoping, its own key.
 pub(crate) fn agent_grant_key(account: &str, owner: &str, agent: &str) -> String {
     use sha2::{Digest, Sha256};
     format!(
         "{:x}",
         Sha256::digest(format!("agent-grant\0{account}\0{owner}\0{agent}"))
     )
-}
-
-/// Runs `write` for the agent grant at `key` under its account lock, after
-/// registering `key` in the index the boot erase owner walks, so a full Buzz
-/// sign-out removes the grant like any session record.
-pub(crate) fn register_grant<T>(
-    root: PathBuf,
-    key: &str,
-    write: impl FnOnce() -> Result<T, &'static str>,
-) -> Result<T, &'static str> {
-    let store = SecureStore {
-        account: key.to_owned(),
-        root,
-    };
-    let _transaction = store.lock()?;
-    fs::write(store.index(), b"1").map_err(|_| "storage-unavailable")?;
-    write()
-}
-
-/// Runs `delete` for the agent grant at `key` under its account lock, then
-/// drops its index entry. A failed deletion keeps the entry for the boot owner.
-pub(crate) fn unregister_grant(
-    root: PathBuf,
-    key: &str,
-    delete: impl FnOnce() -> Result<(), &'static str>,
-) -> Result<(), &'static str> {
-    let store = SecureStore {
-        account: key.to_owned(),
-        root,
-    };
-    let _transaction = store.lock()?;
-    delete()?;
-    match fs::remove_file(store.index()) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err("storage-unavailable"),
-    }
 }
 
 pub(crate) fn root() -> Result<PathBuf, &'static str> {
@@ -252,14 +439,7 @@ pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
         let _transaction = store.lock()?;
         // The boot owner's durable pending sign-out fences all app activity.
         // Wiping an indexed slot needs neither its schema nor read permission.
-        #[cfg(not(test))]
-        match buzz_credential_store::delete_session(SERVICE, account) {
-            Ok(()) | Err(buzz_credential_store::Error::Absent) => {}
-            Err(value) => return Err(error(value).into()),
-        }
-        #[cfg(test)]
-        return Err("storage-unavailable".into());
-        #[cfg(not(test))]
+        items::delete(&root, account)?;
         fs::remove_file(path).map_err(|_| "Federated session index removal failed")?;
     }
     Ok(())
@@ -268,6 +448,27 @@ pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The account lock as another Buzz instance holds it.
+    fn elsewhere(store: &SecureStore) -> fs::File {
+        fs::create_dir_all(&store.root).unwrap();
+        let path = store.root.join(format!("{}.lock", store.account));
+        let file = fs::File::create(path).unwrap();
+        fs2::FileExt::try_lock_exclusive(&file).unwrap();
+        file
+    }
+    fn secure(root: &tempfile::TempDir) -> SecureStore {
+        items::enable(root.path());
+        SecureStore {
+            account: "ab".repeat(32),
+            root: root.path().into(),
+        }
+    }
+    fn item(store: &SecureStore, account: &str) -> Option<Vec<u8>> {
+        items::read(&store.root, account)
+            .unwrap()
+            .map(|raw| raw.to_vec())
+    }
 
     #[test]
     fn identity_wipe_ignores_stray_indices_and_retains_failed_deletions() {
@@ -281,12 +482,12 @@ mod tests {
             account,
             root: root.path().into(),
         };
-        let held = store.lock().unwrap();
+        let held = elsewhere(&store);
         assert_eq!(remove_all(root.path().into()), Err("storage-busy".into()));
         assert!(index.exists());
         drop(held);
-        // This test build denies OS credential access. A failed delete must
-        // leave its index for the boot owner's pending sign-out retry.
+        // This root denies secure-store access. A failed delete must leave
+        // its index for the boot owner's pending sign-out retry.
         assert_eq!(
             remove_all(root.path().into()),
             Err("storage-unavailable".into())
@@ -295,27 +496,149 @@ mod tests {
     }
 
     #[test]
-    fn agent_grants_are_indexed_for_the_identity_wipe_before_they_are_written() {
+    fn one_item_holds_the_session_and_every_grant_and_the_wipe_erases_it() {
         let root = tempfile::tempdir().unwrap();
-        let key = agent_grant_key("profile", "owner", "agent");
-        let index = root.path().join(format!("{key}.record"));
-        // Registered before the secret write, which here fails: kept anyway.
-        let failed: Result<(), _> =
-            register_grant(root.path().into(), &key, || Err("storage-unavailable"));
-        assert!(failed.is_err());
-        assert!(index.exists());
-        // The boot owner walks it (and this build denies the OS delete).
-        assert_eq!(
-            remove_all(root.path().into()),
-            Err("storage-unavailable".into())
+        let store = secure(&root);
+        let session = super::super::tests::record();
+        store.compare(None, Some(&session.raw)).unwrap();
+        let (first, second) = (
+            agent_grant_key(&store.account, "owner", "one"),
+            agent_grant_key(&store.account, "owner", "two"),
         );
-        assert!(index.exists());
-        // A failed grant deletion keeps the index; a completed one drops it.
-        assert!(unregister_grant(root.path().into(), &key, || Err("storage-unavailable")).is_err());
-        assert!(index.exists());
-        unregister_grant(root.path().into(), &key, || Ok(())).unwrap();
-        assert!(!index.exists());
-        assert!(remove_all(root.path().into()).is_ok());
+        store.set_grant(&first, Some(b"grant one")).unwrap();
+        store.set_grant(&second, Some(b"retiring")).unwrap();
+        assert_eq!(items::with(root.path(), |all| all.len()), Ok(1));
+        assert_eq!(store.read().unwrap().unwrap().as_slice(), &session.raw[..]);
+        assert_eq!(
+            store.grant(&first).unwrap().unwrap().as_slice(),
+            b"grant one"
+        );
+
+        // Each update compares the whole item: a stale session is refused and
+        // changes nothing, and the session's removal keeps every grant.
+        let stale = super::super::tests::record();
+        assert_eq!(
+            store.compare(Some(&stale.raw), None),
+            Err("session-changed")
+        );
+        store
+            .remove(&session.raw, &session.record.revision)
+            .unwrap();
+        assert!(store.refused(&session.record.revision).unwrap().is_none());
+        assert!(store.read().unwrap().is_none());
+        assert_eq!(
+            store.grant(&second).unwrap().unwrap().as_slice(),
+            b"retiring"
+        );
+        // The item goes once its last record does.
+        store.set_grant(&first, None).unwrap();
+        store.set_grant(&first, None).unwrap();
+        assert!(item(&store, &store.account).is_some());
+        store.set_grant(&second, None).unwrap();
+        assert!(item(&store, &store.account).is_none());
+
+        store.set_grant(&first, Some(b"grant one")).unwrap();
+        assert!(store.index().exists());
+        remove_all(root.path().into()).unwrap();
+        assert!(item(&store, &store.account).is_none());
+        assert!(!store.index().exists());
+    }
+
+    #[test]
+    fn a_session_item_from_before_bundles_is_read_and_replaced_in_place() {
+        let root = tempfile::tempdir().unwrap();
+        let store = secure(&root);
+        let session = super::super::tests::record();
+        items::compare(root.path(), &store.account, None, Some(&session.raw)).unwrap();
+        let (raw, refusal) = store.load().unwrap();
+        assert_eq!(raw.unwrap().as_slice(), &session.raw[..]);
+        assert!(refusal.is_none());
+
+        let key = agent_grant_key(&store.account, "owner", "agent");
+        store.set_grant(&key, Some(b"grant")).unwrap();
+        assert_eq!(store.read().unwrap().unwrap().as_slice(), &session.raw[..]);
+        let renewed = super::super::tests::record();
+        store
+            .compare(Some(&session.raw), Some(&renewed.raw))
+            .unwrap();
+        assert_eq!(store.read().unwrap().unwrap().as_slice(), &renewed.raw[..]);
+        assert_eq!(store.grant(&key).unwrap().unwrap().as_slice(), b"grant");
+
+        // Anything else is corrupt, never an empty bundle to write over.
+        items::compare(
+            root.path(),
+            &store.account,
+            item(&store, &store.account).as_deref(),
+            Some(b"{}"),
+        )
+        .unwrap();
+        assert_eq!(store.read().err(), Some("storage-corrupt"));
+        assert_eq!(
+            store.set_grant(&key, Some(b"other")),
+            Err("storage-corrupt")
+        );
+        assert_eq!(
+            item(&store, &store.account).as_deref(),
+            Some(b"{}".as_slice())
+        );
+    }
+
+    #[test]
+    fn grant_items_from_before_bundles_move_in_only_from_a_loaded_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let store = secure(&root);
+        let (key, other) = (
+            agent_grant_key(&store.account, "owner", "agent"),
+            agent_grant_key(&store.account, "owner", "other"),
+        );
+        let index = |key: &str| root.path().join(format!("{key}.record"));
+        for key in [&key, &other] {
+            items::compare(root.path(), key, None, Some(b"old grant")).unwrap();
+            fs::write(index(key), b"1").unwrap();
+        }
+
+        // An unreadable bundle never takes or loses the old item.
+        items::compare(root.path(), &store.account, None, Some(b"corrupt")).unwrap();
+        assert_eq!(store.grant(&key).err(), Some("storage-corrupt"));
+        assert!(item(&store, &key).is_some() && index(&key).exists());
+        items::delete(root.path(), &store.account).unwrap();
+
+        // Moved in, then the old item and its index go.
+        assert_eq!(store.grant(&key).unwrap().unwrap().as_slice(), b"old grant");
+        assert!(item(&store, &key).is_none() && !index(&key).exists());
+        assert_eq!(store.grant(&key).unwrap().unwrap().as_slice(), b"old grant");
+        // The bundle's copy wins over an old item that reappears.
+        items::compare(root.path(), &key, None, Some(b"stale")).unwrap();
+        assert_eq!(store.grant(&key).unwrap().unwrap().as_slice(), b"old grant");
+        // A write or delete also retires the old item, so it cannot move back.
+        store.set_grant(&key, Some(b"new grant")).unwrap();
+        assert!(item(&store, &key).is_none());
+        store.set_grant(&other, None).unwrap();
+        assert!(item(&store, &other).is_none() && !index(&other).exists());
+        assert!(store.grant(&other).unwrap().is_none());
+        assert_eq!(store.grant(&key).unwrap().unwrap().as_slice(), b"new grant");
+    }
+
+    #[test]
+    fn grant_and_session_transactions_in_one_process_queue_rather_than_fail() {
+        let root = tempfile::tempdir().unwrap();
+        let store = std::sync::Arc::new(secure(&root));
+        let keys: Vec<_> = (0..8)
+            .map(|agent| agent_grant_key(&store.account, "owner", &agent.to_string()))
+            .collect();
+        std::thread::scope(|scope| {
+            for key in &keys {
+                let store = store.clone();
+                scope.spawn(move || store.set_grant(key, Some(b"grant")).unwrap());
+            }
+        });
+        for key in &keys {
+            assert!(store.grant(key).unwrap().is_some());
+        }
+        // Another instance holding the lock is still reported, not waited on.
+        let held = elsewhere(&store);
+        assert_eq!(store.grant(&keys[0]).err(), Some("storage-busy"));
+        drop(held);
     }
 
     #[test]
@@ -328,8 +651,7 @@ mod tests {
         let old = uuid::Uuid::new_v4().to_string();
         let newer = uuid::Uuid::new_v4().to_string();
         store.refuse(&newer).unwrap();
-        let transaction = store.lock().unwrap();
-        let inherited = transaction.0.try_clone().unwrap();
+        let held = elsewhere(&store);
         assert_eq!(
             store.remove(b"known in-memory record", &old),
             Err("storage-busy")
@@ -339,9 +661,13 @@ mod tests {
             store.refused(&newer).unwrap().as_deref(),
             Some(newer.as_str())
         );
-        drop(transaction);
+        drop(held);
+        let inherited = {
+            let transaction = store.lock().unwrap();
+            transaction.0.try_clone().unwrap()
+        };
         store.clear_refusal(&old).unwrap();
-        // The test build denies secure-store access instead of touching OS credentials.
+        // This root denies secure-store access instead of touching OS credentials.
         assert_eq!(
             store.remove(b"known in-memory record", &old),
             Err("storage-unavailable")

@@ -2555,6 +2555,8 @@ export function createUnread({
     purge,
     /** `covered`: the membership route's replay was continuous, so read state
      * resumes from it instead of reading its snapshot again. */
+    /** A repair failed or the stream dropped, and no repair has completed since. */
+    owed: () => requested && freshness === "stale",
     reconnect(covered = false) {
       if (requested)
         void (covered ? reads.resume() : reads.refresh()).then(() =>

@@ -3080,11 +3080,12 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
-  /** When unread was last asked to repair: a connection's first
+  /** When unread was last asked for a full repair: a connection's first
    * establishment, then the recovery tick's backstop. */
   let unreadRepairedAt = 0;
-  const repairUnread = (covered?: boolean) => {
-    unreadRepairedAt = Date.now();
+  const repairUnread = (covered = false) => {
+    // A covered resume reads no snapshot, so it cannot replace the backstop.
+    if (!covered) unreadRepairedAt = Date.now();
     unread.reconnect(covered);
   };
   /** Held profiles still need a full read: none has completed since the
@@ -3536,7 +3537,11 @@ export function createRelaySession(
         Date.now() - rosterReadAt >= ROSTER_BACKSTOP_INTERVAL
       )
         refreshRoster();
-      if (Date.now() - unreadRepairedAt >= UNREAD_BACKSTOP_INTERVAL)
+      // A failed repair retries on the next tick, as the roster does.
+      if (
+        unread.owed() ||
+        Date.now() - unreadRepairedAt >= UNREAD_BACKSTOP_INTERVAL
+      )
         repairUnread();
     },
     denied(channelId, reason) {

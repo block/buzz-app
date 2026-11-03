@@ -177,6 +177,10 @@ export async function respondExternal(
       for (const name of policy.required ?? [])
         if (typeof values[name] !== "string" || !values[name].trim())
           throw new Error(`${name} is required.`);
+      if (tool.name === "read")
+        for (const name of ["channel", "thread", "message_url"])
+          if (values[name] !== undefined && !(values[name] as string).trim())
+            throw new Error(`${name} must not be blank.`);
       if (
         tool.name === "read" &&
         !values.channel &&

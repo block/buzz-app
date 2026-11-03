@@ -102,8 +102,12 @@ tools cannot enroll in this policy.
 set is `read` and `post`. Tool discovery does not grant access. Each call checks
 the grant against the trusted policy. A missing scope returns `isError: true`
 and `_meta["buzz/error"]: {code: "authorization_required", required_scopes: [...]}`.
-The external app can start setup again for those scopes. It must not retry the
-call automatically after approval. New classified tools use this same contract.
+`required_scopes` lists the missing scopes. Each approval replaces the previous
+grant. The external app must request all scopes it still needs, including scopes
+it already has. For example, an app with `read` that needs `post` requests
+`scope=read post`. Use `buzz/grantedScopes` from discovery to retain current access.
+The app must not retry the call automatically after approval. New classified tools
+use this same contract.
 
 The shared schemas apply with explicit
 targets: `read` needs `channel`, `thread`, or `message_url`. A `message_url` uses

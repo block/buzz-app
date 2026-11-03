@@ -55,6 +55,7 @@ export function ExternalAuthorizationDialog({
         <ToastNotice
           title="External app authorization failed"
           description={state.error}
+          onDismiss={connection.clearError}
         />
       )}
     </>

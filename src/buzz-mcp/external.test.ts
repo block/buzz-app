@@ -122,6 +122,10 @@ it.each([
     { channel: "chan", text: "text", audience: "everyone", mentions: [false] },
   ],
   ["read", { q: "text" }],
+  ["read", { channel: " ", q: "needle" }],
+  ["read", { channel: " " }],
+  ["read", { thread: " " }],
+  ["read", { message_url: " " }],
   ["read", { message_url: "https://example.test/message" }],
   ["read", { message_url: `buzz://channel/chan` }],
   [

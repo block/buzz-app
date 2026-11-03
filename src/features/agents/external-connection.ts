@@ -161,6 +161,9 @@ export function createExternalApps() {
     },
     deny,
     revoke,
+    clearError() {
+      update({ ...state, error: undefined });
+    },
     async approve(agent: AgentKey) {
       const pending = state.pending,
         bound = host;

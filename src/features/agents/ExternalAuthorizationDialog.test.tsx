@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ExternalAuthorizationDialog } from "./ExternalAuthorizationDialog";
@@ -8,6 +14,7 @@ import { createExternalApps } from "./external-connection";
 import type { Agents } from "./service";
 import type { Communities } from "../communities/service";
 import type { RelayData } from "../relay/service";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 afterEach(cleanup);
 it.each(["Authorize", "Deny"])(
@@ -101,3 +108,49 @@ it.each(["Authorize", "Deny"])(
     release();
   },
 );
+
+it("lets the owner dismiss an authorization error without starting setup again", async () => {
+  const connection = createExternalApps();
+  connection.bind({
+    connect: async () => {
+      throw new Error("App is closed");
+    },
+    deny: async () => {},
+  });
+  connection.open(
+    {
+      version: 1,
+      client: "Test app",
+      callback: "http://127.0.0.1:1234/buzz/authorize",
+      state: "A".repeat(43),
+      scope: ["read"],
+      code_challenge: "A".repeat(43),
+      code_challenge_method: "S256",
+    },
+    "viewer",
+  );
+  await connection.approve("test-agent");
+  const subscribe = () => () => {};
+  const client = { viewer: "viewer" };
+  const transport = { status: "idle" };
+  render(
+    <ToastProvider>
+      <ExternalAuthorizationDialog
+        connection={connection}
+        agents={{} as Agents}
+        communities={
+          { subscribe, snapshot: () => client } as unknown as Communities
+        }
+        relay={{ subscribe, snapshot: () => transport } as unknown as RelayData}
+      />
+    </ToastProvider>,
+  );
+  const notice = await screen.findByRole("dialog", {
+    name: "External app authorization failed",
+  });
+  expect(notice).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
+  await waitFor(() => expect(notice).not.toBeInTheDocument());
+  expect(connection.snapshot().error).toBeUndefined();
+  expect(connection.snapshot().grant?.phase).toBe("ended");
+});

@@ -414,8 +414,7 @@ function AttachmentItem({
         {failed && <span className="sr-only">Preview unavailable</span>}
       </div>
       {uploadFailed && (
-        <p role="alert" className={styles.error}>
-          <span className="sr-only">{item.file.name}: </span>
+        <p className={styles.error}>
           Upload failed. Retry or remove it to send.
         </p>
       )}
@@ -425,6 +424,9 @@ function AttachmentItem({
       >
         {uploadFailed ? (
           <>
+            <span role="alert" className="sr-only">
+              {item.error || "Upload failed. Retry or remove it to send."}
+            </span>
             <Button
               size="sm"
               disabled={disabled}

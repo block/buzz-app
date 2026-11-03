@@ -957,9 +957,10 @@ test("local previews stay interactive during eager upload and removal collapses 
     const retry = form.getByRole("button", { name: "Retry photo.png" });
     await editor.focus();
     await editor.hover();
-    const failure = form
-      .getByRole("alert")
-      .filter({ hasText: "Upload failed. Retry or remove it to send." });
+    const failure = form.getByText(
+      "Upload failed. Retry or remove it to send.",
+      { exact: true },
+    );
     await expect(failure).toBeVisible();
     await expect(failure).toHaveCSS("clip-path", "none");
     // A 1px, clipped ancestor can still satisfy Playwright's toBeVisible.

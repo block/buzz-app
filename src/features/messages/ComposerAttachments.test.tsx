@@ -342,8 +342,13 @@ it.each([
         media={() => undefined}
       />,
     );
-    expect(screen.getByRole("alert").textContent).toContain(
-      "Upload failed. Retry or remove it to send.",
+    expect(
+      screen.getByText("Upload failed. Retry or remove it to send.", {
+        selector: "p",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "The relay rejected this file.",
     );
     const retryButton = screen.getByRole("button", { name: `Retry ${name}` });
     const removeButton = screen.getByRole("button", { name: `Remove ${name}` });

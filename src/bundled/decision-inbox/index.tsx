@@ -39,6 +39,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       !message.huddle,
     component: ({ message, session, close }) => (
       <DecisionDialog
+        relay={ctx.relay}
         scope={session.scope}
         message={message}
         current={() => current(session)}

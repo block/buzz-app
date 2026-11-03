@@ -8,3 +8,5 @@ Keep Buzz messages that need your decision and a handoff in one place. Each item
 2. Open a message's menu and choose **Save to Decision Inbox**. Enter the question and next actor.
 3. Open **Decision Inbox** to see what needs a decision or handoff.
 4. Use **Update** to record the decision and mark the handoff done. **Open source** returns to the message; **Remove** deletes a saved item after confirmation.
+
+Unsaved edits remain available when you reopen the same message or item after changing pages while Buzz stays open. An identified cached session can read its saved decisions while disconnected; reconnect to change them.

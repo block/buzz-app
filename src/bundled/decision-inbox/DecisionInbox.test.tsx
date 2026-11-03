@@ -12,6 +12,7 @@ import { viewRevision, writeView } from "../../shared/view-state";
 import { DecisionInboxPage } from "./DecisionInboxPage";
 import { apply } from "./index";
 import { key, readList } from "./model";
+import { installTestLocks } from "./test-locks";
 
 const viewer = "a".repeat(64);
 const scope = `https://one.test:${viewer}`;
@@ -57,6 +58,10 @@ function fixture() {
     navigator,
     session,
     action,
+    cached() {
+      state = { ...state, status: "error", cached: true } as RelaySnapshot;
+      for (const listener of listeners) listener();
+    },
     switchScope() {
       state = {
         status: "ready",
@@ -69,10 +74,14 @@ function fixture() {
   };
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  installTestLocks();
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(navigator, "locks");
 });
 
 it("captures a message, records the decision and handoff, and opens its source", async () => {
@@ -229,6 +238,107 @@ it("keeps an unsaved capture when dismissal is cancelled", async () => {
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("restores an unsaved capture after its message row unmounts on navigation", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const Action = h.action.component;
+  const props = {
+    message,
+    session: h.session,
+    close: vi.fn(),
+    canOpen: () => false,
+    open: () => false,
+  };
+  const first = render(<Action {...props} />);
+  await user.type(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    "Decide after navigation",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Next actor" }),
+    "Morgan",
+  );
+  first.unmount();
+
+  const secondView = render(<Action {...props} />);
+  expect(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  ).toHaveValue("Decide after navigation");
+  expect(screen.getByRole("textbox", { name: "Next actor" })).toHaveValue(
+    "Morgan",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  secondView.unmount();
+
+  render(<Action {...props} />);
+  expect(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  ).toHaveValue("");
+});
+
+it("reads the identified cached scope but blocks edits until reconnect", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  writeView(scope, key, [
+    {
+      channelId: "room",
+      messageId: message.id,
+      preview: "source",
+      question: "Cached decision",
+      nextActor: "Morgan",
+      decision: "",
+      stage: "decision",
+      createdAt: 1,
+    },
+  ]);
+  act(() => h.cached());
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Cached decision")).toBeVisible();
+  expect(
+    screen.getByText("Saved decisions are read-only until you reconnect."),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+  expect(h.action.matches(message, h.session)).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Open source" }));
+  expect(h.navigator.open).toHaveBeenCalledOnce();
+  act(() => h.switchScope());
+  expect(screen.queryByText("Cached decision")).not.toBeInTheDocument();
+});
+
+it("restores an unsaved update after navigating away from the page", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const item = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Ship?",
+    nextActor: "Morgan",
+    decision: "",
+    stage: "decision" as const,
+    createdAt: 1,
+  };
+  writeView(scope, key, [item]);
+  const first = render(
+    <DecisionInboxPage relay={h.relay} navigator={h.navigator} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Decision Optional" }),
+    "Ship tomorrow",
+  );
+  first.unmount();
+
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  expect(
+    screen.getByRole("textbox", { name: "Decision Optional" }),
+  ).toHaveValue("Ship tomorrow");
+  expect(readList(viewRevision(scope, key))).toMatchObject({ records: [item] });
 });
 
 it("keeps the capture form and explains a failed device save", async () => {

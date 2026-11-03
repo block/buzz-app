@@ -71,35 +71,78 @@ export function readList(revision: string | null | undefined): List {
 export const sourceKey = (item: Pick<Decision, "channelId" | "messageId">) =>
   JSON.stringify([item.channelId, item.messageId]);
 
+type WriteResult =
+  | "saved"
+  | "changed"
+  | "failed"
+  | "scope-changed"
+  | "unavailable";
+
+async function writeWithLock<T extends string>(
+  scope: string,
+  current: () => boolean,
+  write: () => T,
+): Promise<T | "scope-changed" | "unavailable" | "failed"> {
+  if (!current()) return "scope-changed";
+  const locks = navigator.locks;
+  if (!locks?.request) return "unavailable";
+  try {
+    return await locks.request(
+      `buzz-decision-inbox:${scope}`,
+      { mode: "exclusive" },
+      () => (current() ? write() : "scope-changed"),
+    );
+  } catch {
+    return "failed";
+  }
+}
+
 export function save(
   scope: string,
   expected: string | null | undefined,
   record: Decision,
-): "saved" | "changed" | "failed" | "damaged" | "full" {
-  const list = readList(expected);
-  if (list.status !== "ready")
-    return list.status === "damaged" ? "damaged" : "failed";
-  const records = list.records.filter(
-    (item) => sourceKey(item) !== sourceKey(record),
-  );
-  if (!valid(record)) return "failed";
-  if (records.length >= 500) return "full";
-  return replaceView(scope, key, expected, [record, ...records]);
+  current: () => boolean,
+): Promise<WriteResult | "damaged" | "full"> {
+  return writeWithLock(scope, current, () => {
+    const list = readList(expected);
+    if (list.status !== "ready")
+      return list.status === "damaged" ? "damaged" : "failed";
+    const records = list.records.filter(
+      (item) => sourceKey(item) !== sourceKey(record),
+    );
+    if (!valid(record)) return "failed";
+    if (records.length >= 500) return "full";
+    return replaceView(scope, key, expected, [record, ...records]);
+  });
 }
 
 export function remove(
   scope: string,
   expected: string | null | undefined,
   record: Pick<Decision, "channelId" | "messageId">,
-): "saved" | "changed" | "failed" | "damaged" {
-  const list = readList(expected);
-  if (list.status !== "ready")
-    return list.status === "damaged" ? "damaged" : "failed";
-  const records = list.records.filter(
-    (item) => sourceKey(item) !== sourceKey(record),
-  );
-  if (records.length === list.records.length) return "changed";
-  return replaceView(scope, key, expected, records);
+  current: () => boolean,
+): Promise<WriteResult | "damaged"> {
+  return writeWithLock(scope, current, () => {
+    const list = readList(expected);
+    if (list.status !== "ready")
+      return list.status === "damaged" ? "damaged" : "failed";
+    const records = list.records.filter(
+      (item) => sourceKey(item) !== sourceKey(record),
+    );
+    if (records.length === list.records.length) return "changed";
+    return replaceView(scope, key, expected, records);
+  });
+}
+
+export function reset(
+  scope: string,
+  expected: string,
+  current: () => boolean,
+): Promise<WriteResult> {
+  return writeWithLock(scope, current, () => {
+    if (readList(expected).status !== "damaged") return "changed";
+    return replaceView(scope, key, expected, []);
+  });
 }
 
 export function capture(

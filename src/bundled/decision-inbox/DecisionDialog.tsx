@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChannelMessage } from "../../features/relay/contracts";
+import type { RelayData } from "../../features/relay/service";
 import { messagePreview } from "../../features/notifications/content";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -24,7 +25,25 @@ const stages = [
   { value: "done", label: "Handed off · done" },
 ];
 
+type Draft = {
+  expected: string | null | undefined;
+  question: string;
+  nextActor: string;
+  decision: string;
+  stage: Stage;
+};
+const drafts = new WeakMap<RelayData, Map<string, Draft>>();
+function draftStore(relay: RelayData) {
+  let store = drafts.get(relay);
+  if (!store) {
+    store = new Map();
+    drafts.set(relay, store);
+  }
+  return store;
+}
+
 export function DecisionDialog({
+  relay,
   scope,
   message,
   record,
@@ -32,6 +51,7 @@ export function DecisionDialog({
   current,
   close,
 }: {
+  relay: RelayData;
   scope: string;
   message?: ChannelMessage;
   record?: Decision;
@@ -39,15 +59,34 @@ export function DecisionDialog({
   current(): boolean;
   close(): void;
 }) {
-  const [expected] = useState(() =>
-    expectedRevision === undefined ? revision(scope) : expectedRevision,
+  const draftKey = JSON.stringify([
+    scope,
+    message ? "capture" : "edit",
+    (message ?? record)?.channelId,
+    message?.id ?? record?.messageId,
+  ]);
+  const [draft, setDraft] = useState<Draft>(
+    () =>
+      draftStore(relay).get(draftKey) ?? {
+        expected:
+          expectedRevision === undefined ? revision(scope) : expectedRevision,
+        question: record?.question ?? "",
+        nextActor: record?.nextActor ?? "",
+        decision: record?.decision ?? "",
+        stage: record?.stage ?? "decision",
+      },
   );
-  const [question, setQuestion] = useState(record?.question ?? "");
-  const [nextActor, setNextActor] = useState(record?.nextActor ?? "");
-  const [decision, setDecision] = useState(record?.decision ?? "");
-  const [stage, setStage] = useState<Stage>(record?.stage ?? "decision");
+  const draftRef = useRef(draft);
+  const { expected, question, nextActor, decision, stage } = draft;
+  const change = (patch: Partial<Draft>) => {
+    const next = { ...draftRef.current, ...patch };
+    draftRef.current = next;
+    draftStore(relay).set(draftKey, next);
+    setDraft(next);
+  };
   const [error, setError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [busy, setBusy] = useState(false);
   const saved = readList(expected);
   const duplicate =
     message && saved.status === "ready"
@@ -66,13 +105,23 @@ export function DecisionDialog({
     nextActor !== (record?.nextActor ?? "") ||
     decision !== (record?.decision ?? "") ||
     stage !== (record?.stage ?? "decision");
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const requestClose = () => {
+    if (busy) return;
     if (confirmDiscard) setConfirmDiscard(false);
     else if (dirty) setConfirmDiscard(true);
     else close();
   };
-  const submit = () => {
-    if (!valid || duplicate || (!record && !message)) return;
+  const submit = async () => {
+    if (busy || !valid || duplicate || (!record && !message)) return;
     if (!current()) {
       setError("The account or community changed. Reopen this item there.");
       return;
@@ -99,21 +148,29 @@ export function DecisionDialog({
           }
         : undefined;
     if (!next) return;
-    const result = save(scope, expected, next);
-    if (result === "saved") close();
-    else if (result === "changed")
+    setBusy(true);
+    const result = await save(scope, expected, next, current);
+    setBusy(false);
+    if (result === "saved") {
+      draftStore(relay).delete(draftKey);
+      close();
+    } else if (result === "changed")
       setError(
-        "The saved list changed in another window. Close and reopen this item to review the latest version.",
+        `The saved list changed in another window. Your edits are still here. Copy them if needed, then discard this draft and reopen ${message ? "the message" : "the item"}.`,
       );
     else if (result === "full")
       setError(
         "Decision Inbox is full. Remove a saved item before trying again.",
       );
+    else if (result === "scope-changed")
+      setError("The account or community changed. Reopen this item there.");
     else
       setError(
         result === "damaged"
           ? "The saved list cannot be read. Open Decision Inbox to recover it."
-          : "Could not save on this device. Check available storage and try again.",
+          : result === "unavailable"
+            ? "This device cannot safely save decisions from multiple windows."
+            : "Could not save on this device. Check available storage and try again.",
       );
   };
   return (
@@ -135,7 +192,9 @@ export function DecisionDialog({
       description={
         confirmDiscard
           ? "Your decision has unsaved changes."
-          : "Saved on this device for this account and community."
+          : message
+            ? "Saved on this device for this account and community. If you change pages, reopen this message to continue editing."
+            : "Saved on this device for this account and community. If you change pages, reopen this item to continue editing."
       }
       onOpenChange={(open) => !open && requestClose()}
       actions={
@@ -144,15 +203,27 @@ export function DecisionDialog({
             <Button onClick={() => setConfirmDiscard(false)}>
               Keep editing
             </Button>
-            <Button variant="destructive" onClick={close}>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                draftStore(relay).delete(draftKey);
+                close();
+              }}
+            >
               Discard changes
             </Button>
           </>
         ) : (
           <>
-            <Button onClick={requestClose}>Cancel</Button>
+            <Button disabled={busy} onClick={requestClose}>
+              Cancel
+            </Button>
             {!duplicate && saved.status === "ready" && (
-              <Button variant="prominent" disabled={!valid} onClick={submit}>
+              <Button
+                variant="prominent"
+                disabled={!valid || busy}
+                onClick={submit}
+              >
                 Save
               </Button>
             )}
@@ -167,8 +238,9 @@ export function DecisionDialog({
           {message && (
             <p className="text-body-sm text-subtle">
               Source:{" "}
-              {messagePreview(message.content).slice(0, 160) ||
-                "Message without text"}
+              {Array.from(messagePreview(message.content))
+                .slice(0, 160)
+                .join("") || "Message without text"}
             </p>
           )}
           {duplicate ? (
@@ -183,7 +255,7 @@ export function DecisionDialog({
                 <Textarea
                   value={question}
                   maxLength={1000}
-                  onChange={(event) => setQuestion(event.target.value)}
+                  onChange={(event) => change({ question: event.target.value })}
                 />
               </Field>
               <Field
@@ -193,7 +265,9 @@ export function DecisionDialog({
                 <Input
                   value={nextActor}
                   maxLength={200}
-                  onChange={(event) => setNextActor(event.target.value)}
+                  onChange={(event) =>
+                    change({ nextActor: event.target.value })
+                  }
                 />
               </Field>
               {!message && (
@@ -202,14 +276,16 @@ export function DecisionDialog({
                     <Textarea
                       value={decision}
                       maxLength={2000}
-                      onChange={(event) => setDecision(event.target.value)}
+                      onChange={(event) =>
+                        change({ decision: event.target.value })
+                      }
                     />
                   </Field>
                   <Select
                     label="Status"
                     variant="field"
                     value={stage}
-                    onValueChange={(value) => setStage(value as Stage)}
+                    onValueChange={(value) => change({ stage: value as Stage })}
                     groups={[{ label: "", options: stages }]}
                   />
                   {stage !== "decision" && !decision.trim() && (

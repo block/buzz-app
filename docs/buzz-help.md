@@ -97,7 +97,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
   starts playing.
-- **Decision Inbox** is optional. Enable it in **Settings → Plugins → Manage plugins** to save Buzz messages that need your decision and a handoff. Open a message's menu and choose **Save to Decision Inbox**, then enter the question and next actor. On the Decision Inbox page, use **Update** to record the decision and mark the handoff done, **Open source** to return to the message, or **Remove** to delete a saved item after confirmation. Records stay on this device for the current account and community; they do not send a message or sync to another device.
+- **Decision Inbox** is optional. Enable it in **Settings → Plugins → Manage plugins** to save Buzz messages that need your decision and a handoff. Open a message's menu and choose **Save to Decision Inbox**, then enter the question and next actor. On the Decision Inbox page, use **Update** to record the decision and mark the handoff done, **Open source** to return to the message, or **Remove** to delete a saved item after confirmation. If you change pages while Buzz stays open, reopen the same message or item to continue an unsaved edit; discarding asks for confirmation. Records stay on this device for the current account and community, and an identified cached session can read them while disconnected. Reconnect to change them. They do not send a message or sync to another device.
 
 - Long message bubbles use the available conversation width, stopping 32px
   before the opposite speaker’s avatar column. Short messages hug their text.

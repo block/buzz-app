@@ -13,12 +13,12 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { replaceView, subscribeView } from "../../shared/view-state";
+import { subscribeView } from "../../shared/view-state";
 import { DecisionDialog } from "./DecisionDialog";
 import {
-  key,
   readList,
   remove,
+  reset,
   revision,
   sourceKey,
   type Decision,
@@ -34,7 +34,8 @@ const groups: readonly { stage: Stage; title: string }[] = [
 
 function activeScope(connection: RelaySnapshot) {
   if (
-    connection.status !== "ready" ||
+    (connection.status !== "ready" && !connection.cached) ||
+    connection.denied ||
     !connection.viewer ||
     !connection.scope ||
     connection.session.scope !== connection.scope ||
@@ -63,6 +64,7 @@ export function DecisionInboxPage({
             relay={relay}
             navigator={navigator}
             partition={connection.scope}
+            writable={connection.status === "ready" && !connection.cached}
           />
         ) : (
           <div className={styles.page}>
@@ -92,10 +94,12 @@ function ScopedPage({
   relay,
   navigator,
   partition,
+  writable,
 }: {
   relay: RelayData;
   navigator: Navigation;
   partition: string;
+  writable: boolean;
 }) {
   const subscribe = useCallback(
     (listener: () => void) => subscribeView(partition, listener),
@@ -114,15 +118,19 @@ function ScopedPage({
   }>();
   const [resetting, setResetting] = useState<string>();
   const [error, setError] = useState("");
-  const current = () => {
+  const sameScope = () => {
     const connection = relay.snapshot();
     return (
       connection.scope === partition && activeScope(connection) !== undefined
     );
   };
+  const current = () => {
+    const connection = relay.snapshot();
+    return connection.status === "ready" && !connection.cached && sameScope();
+  };
   const openSource = (item: Decision) => {
     const scope = splitPartition(partition);
-    if (!scope || !current()) return;
+    if (!scope || !sameScope()) return;
     setError("");
     void navigator
       .open({
@@ -139,42 +147,55 @@ function ScopedPage({
       })
       .catch(() => setError("This source message could not be opened."));
   };
-  const reset = () => {
+  const confirmReset = async () => {
     if (!current()) {
       setError("The account or community changed. Reopen Decision Inbox.");
       return;
     }
     if (resetting === undefined || readList(resetting).status !== "damaged")
       return;
-    const result = replaceView(partition, key, resetting, []);
+    const expected = resetting;
+    setResetting(undefined);
+    const result = await reset(partition, expected, current);
     if (result === "saved") {
-      setResetting(undefined);
       setError("");
     } else {
       setError(
         result === "changed"
           ? "The saved list changed in another window. Review the latest version before trying again."
-          : "Could not reset the saved list on this device.",
+          : result === "scope-changed"
+            ? "The account or community changed. Reopen Decision Inbox."
+            : result === "unavailable"
+              ? "This device cannot safely save decisions from multiple windows."
+              : "Could not reset the saved list on this device.",
       );
-      setResetting(undefined);
     }
   };
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     if (!removing) return;
     setRemoving(undefined);
     if (!current()) {
       setError("The account or community changed. Reopen Decision Inbox.");
       return;
     }
-    const result = remove(partition, removing.revision, removing.record);
+    const result = await remove(
+      partition,
+      removing.revision,
+      removing.record,
+      current,
+    );
     setError(
       result === "saved"
         ? ""
         : result === "changed"
           ? "The saved list changed in another window. Review the latest version before trying again."
-          : result === "damaged"
-            ? "The saved list cannot be read. Recover it before trying again."
-            : "Could not remove this decision on this device. Check available storage and try again.",
+          : result === "scope-changed"
+            ? "The account or community changed. Reopen Decision Inbox."
+            : result === "unavailable"
+              ? "This device cannot safely save decisions from multiple windows."
+              : result === "damaged"
+                ? "The saved list cannot be read. Recover it before trying again."
+                : "Could not remove this decision on this device. Check available storage and try again.",
     );
   };
   return (
@@ -193,6 +214,11 @@ function ScopedPage({
             Saved on this device for this account and community. Capture a
             source message from its menu.
           </p>
+          {!writable && (
+            <p role="status" className="text-body-sm text-subtle">
+              Saved decisions are read-only until you reconnect.
+            </p>
+          )}
           {error && (
             <p role="alert" className={styles.notice}>
               {error}
@@ -205,6 +231,7 @@ function ScopedPage({
               description="The saved list is damaged. You can start a new list on this device."
               action={
                 <Button
+                  disabled={!writable}
                   onClick={() => savedRevision && setResetting(savedRevision)}
                 >
                   Reset saved list
@@ -267,6 +294,7 @@ function ScopedPage({
                           <Button
                             size="sm"
                             variant="outline"
+                            disabled={!writable}
                             onClick={() =>
                               setEditing({
                                 record: item,
@@ -279,6 +307,7 @@ function ScopedPage({
                           <Button
                             size="sm"
                             variant="ghost"
+                            disabled={!writable}
                             onClick={() =>
                               setRemoving({
                                 record: item,
@@ -301,6 +330,7 @@ function ScopedPage({
       {editing && (
         <DecisionDialog
           key={sourceKey(editing.record)}
+          relay={relay}
           scope={partition}
           record={editing.record}
           expectedRevision={editing.revision}
@@ -337,7 +367,7 @@ function ScopedPage({
           actions={
             <>
               <Button onClick={() => setResetting(undefined)}>Cancel</Button>
-              <Button variant="prominent" onClick={reset}>
+              <Button variant="prominent" onClick={confirmReset}>
                 Reset list
               </Button>
             </>

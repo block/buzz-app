@@ -52,8 +52,15 @@ test("capture a source message and finish its decision handoff", async ({
   await expect(inbox.getByText("Handed off to Morgan")).toBeVisible();
 
   const mode = testInfo.project.name === "webkit" ? "dark" : "light";
-  await page.evaluate((value) => {
-    document.documentElement.dataset.colorMode = value;
+  await page.evaluate(async (value) => {
+    const root = document.documentElement;
+    root.dataset.paletteChanging = "";
+    root.dataset.colorMode = value;
+    void root.offsetHeight;
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+    delete root.dataset.paletteChanging;
   }, mode);
   await page.mouse.move(0, 0);
   await page.screenshot({

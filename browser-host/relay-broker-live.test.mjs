@@ -126,7 +126,7 @@ async function harness(
       const response = await fetch(`${base}/api/relay/stream`, {
         method: "POST",
         headers: { Origin: origin, "Content-Type": "application/json" },
-        body: JSON.stringify({ channels }),
+        body: JSON.stringify({ channels, statusDeltas: options.statusDeltas }),
         signal: controller.signal,
       });
       return { response, abort: () => controller.abort() };
@@ -1682,6 +1682,60 @@ test("startup response ABA retires an old wire before applying the latest intere
     release?.();
     traffic?.dispose();
     vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
+test("a re-added pending route replaces its queued removal before drain", async () => {
+  let response;
+  let backpressured = false;
+  const deltas = [];
+  const h = await harness(0, undefined, {
+    holdSetup: true,
+    statusDeltas: true,
+    response(res) {
+      response = res;
+      Object.defineProperty(res, "writableNeedDrain", {
+        get: () => backpressured,
+      });
+      const write = res.write.bind(res);
+      res.write = (chunk, ...args) => {
+        const text = String(chunk);
+        if (text.startsWith("event: state-delta\n"))
+          deltas.push(JSON.parse(text.split("data: ")[1]));
+        return write(chunk, ...args);
+      };
+    },
+  });
+  try {
+    const opened = await h.post(["a"]);
+    await until(() => h.requests.some((r) => r.filter["#h"]?.includes("a")));
+    const control = async (channels, interestRevision) => {
+      const result = await fetch(`${h.base}/api/relay/stream-interests`, {
+        method: "POST",
+        headers: { Origin: h.base, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamId: opened.response.headers.get("x-buzz-live-id"),
+          channels,
+          interestRevision,
+        }),
+      });
+      expect(result.status).toBe(200);
+      await result.text();
+    };
+    backpressured = true;
+    await control([], 1);
+    await control(["a"], 2);
+    const before = deltas.length;
+    backpressured = false;
+    response.emit("drain");
+    const drained = deltas.slice(before);
+    expect(drained.flatMap((d) => d.removed)).not.toContain("channel:a");
+    expect(drained.flatMap((d) => d.routes)).toContainEqual(
+      expect.objectContaining({ id: "channel:a", status: "pending" }),
+    );
+    expect(drained.every((d) => d.interestRevision === 2)).toBe(true);
+  } finally {
     await h.close();
   }
 });

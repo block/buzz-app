@@ -1981,7 +1981,10 @@ export function relayBrokerPlugin({
                       route.status === "pending" &&
                       route.replay === "unknown" &&
                       !route.error;
-                    if (!implicit && !sameRoute(previous, route)) {
+                    if (
+                      (!implicit || dirtyRoutes.get(route.id) === null) &&
+                      !sameRoute(previous, route)
+                    ) {
                       dirtyRoutes.set(route.id, route);
                       if (
                         (previous?.status === "live" &&

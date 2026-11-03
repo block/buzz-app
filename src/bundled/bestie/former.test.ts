@@ -328,6 +328,30 @@ it("turns memory on for a local agent made Bestie here, unless it has it", async
   expect(edited.save).not.toHaveBeenCalled();
 });
 
+it("turns memory on for no remote agent made Bestie, as its instructions aren't here", async () => {
+  const { relay } = community();
+  const hosted = { ...bea, place: "hosted" } as Agent;
+  const elsewhere = { ...agent("c"), place: "elsewhere" } as Agent;
+  const { agents, save } = host([hosted, elsewhere]);
+  await rememberNewBestie(relay, agents, hosted.pubkey);
+  await rememberNewBestie(relay, agents, elsewhere.pubkey);
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("stops a local former Bestie's check-ins when a remote agent is Bestie, and leaves the remote one alone", async () => {
+  const { relay, settle } = community();
+  const remote = { ...agent("c", checkingIn, TIMER), place: "hosted" } as Agent;
+  const sky = { ...agent("d"), place: "elsewhere" } as Agent;
+  const { agents, save } = host([ada, remote, sky]);
+  const stop = stopFormerCheckIns(relay, agents);
+  await settle(sky.pubkey);
+  await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  // Only Ada, on this device, is stopped; the remote agent's timers are its
+  // own.
+  expect(save.mock.calls.map(([key]) => key)).toEqual([ada.key, ada.key]);
+  stop();
+});
+
 it("counts a former Bestie as on while it has a section, or a private channel once seen as Bestie", async () => {
   const channel = {
     id: "c1",

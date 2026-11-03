@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState } from "react";
 import { watchSlug } from "../../features/agents/attention";
 import type {
   Agent,
@@ -17,7 +17,6 @@ import {
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
-  MenuNote,
   MenuPopup,
   MenuRoot,
   MenuTrigger,
@@ -25,11 +24,7 @@ import {
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
-import {
-  BESTIE_LOCAL_ONLY,
-  bestieName,
-  useBestieChoice,
-} from "../agents/BestieChoice";
+import { bestieName, useBestieChoice } from "../agents/BestieChoice";
 import {
   FEATURES,
   type Feature,
@@ -48,8 +43,8 @@ import {
 } from "./save";
 import { inCommunity, savedBestie } from "./saved";
 
-/** The agents a tab saves to, and reads to know which are on this device. */
-type TabAgents = FeatureAgents & Pick<Agents, "snapshot" | "subscribe">;
+/** The agents a tab saves to, and finds to know which are remote. */
+type TabAgents = FeatureAgents & Pick<Agents, "find">;
 
 /** The Bestie tab, on the agent saved as Bestie in its community. */
 export function bestieTab(relay: RelayData, agents: TabAgents): AgentAddedTab {
@@ -116,20 +111,17 @@ function BestieTab({
   former?: boolean;
 }) {
   const { session, scope } = useRelayConnection(relay);
-  const bestie = useBestieChoice(session, scope ?? "");
+  // A remote agent is asked about before it is made Bestie.
+  const bestie = useBestieChoice(
+    session,
+    scope ?? "",
+    (pubkey) => agents.find(pubkey)?.place,
+  );
   // One save at a time: each switch saves from the instructions it shows.
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const { agents: saved } = useSyncExternalStore(
-    agents.subscribe,
-    agents.snapshot,
-  );
-  // Only an agent on this device can be Bestie for now: a remote one isn't
-  // set up for it yet.
-  const here = (pubkey: string) =>
-    saved.some((each) => each.pubkey === pubkey && each.place === "here");
   const others = bestie.choices.selectable.filter(
-    (choice) => choice.pubkey !== agent.pubkey && here(choice.pubkey),
+    (choice) => choice.pubkey !== agent.pubkey,
   );
   const name = agent.name || "This agent";
   const switches = (features: readonly Feature[]) =>
@@ -154,12 +146,10 @@ function BestieTab({
           <PreferenceRow
             icon={<BestieIcon size="1rem" />}
             title={`${name} is no longer your Bestie. These are still on.`}
-            subtitle={here(agent.pubkey) ? undefined : BESTIE_LOCAL_ONLY}
             trailing={
               <Button
                 variant="outline"
                 disabled={
-                  !here(agent.pubkey) ||
                   !bestie.choices.selectable.some(
                     (choice) => choice.pubkey === agent.pubkey,
                   )
@@ -174,12 +164,7 @@ function BestieTab({
           <PreferenceRow
             icon={<BestieIcon size="1rem" />}
             title="This is your Bestie"
-            subtitle={
-              // With no agent to change to, the menu's note can't be read.
-              others.length
-                ? "It's pinned at the top of Buzz, with your DM as its home."
-                : `It's pinned at the top of Buzz, with your DM as its home. ${BESTIE_LOCAL_ONLY}`
-            }
+            subtitle="It's pinned at the top of Buzz, with your DM as its home."
             trailing={
               <MenuRoot>
                 <MenuTrigger
@@ -198,7 +183,6 @@ function BestieTab({
                       </MenuItem>
                     ))}
                   </MenuGroup>
-                  <MenuNote>{BESTIE_LOCAL_ONLY}</MenuNote>
                 </MenuPopup>
               </MenuRoot>
             }

@@ -87,21 +87,26 @@ export function bindFocusStatus(
       const latest = await latestStatusEvent(session, viewer);
       if (closed || focus.snapshot().until !== until) return;
       let previous: StatusInput | null;
+      if (carried?.until === until && latest?.id !== carried.replaced) {
+        // Something was published since the earlier set for this Focus. If it
+        // is that set's telescope, which landed without an answer, adopt it;
+        // a status from another device is left alone.
+        const landed =
+          latest &&
+          isFocusEvent(latest) &&
+          latest.tags.find(([key]) => key === "expiration")?.[1] ===
+            String(until);
+        focus.recordStatus(
+          landed
+            ? { ...carried, published: latest.created_at }
+            : { ...carried, previous: null },
+        );
+        failedUntil = undefined;
+        savedUntil = until;
+        return;
+      }
       if (carried?.until === until) {
-        // An earlier set for this Focus may have landed without an answer.
-        if (latest && isFocusEvent(latest)) {
-          focus.recordStatus({ ...carried, published: latest.created_at });
-          failedUntil = undefined;
-          savedUntil = until;
-          return;
-        }
-        // A newer status since then, from another device, is left alone.
-        if (latest?.created_at !== carried.replaced) {
-          focus.recordStatus({ ...carried, previous: null });
-          failedUntil = undefined;
-          savedUntil = until;
-          return;
-        }
+        // The earlier set never landed and nothing replaced what it would.
         previous = carried.previous;
       } else if (carried && focusOwnsStatus(latest, carried)) {
         // An earlier Focus's telescope, expired or not: keep what it replaced.
@@ -122,12 +127,12 @@ export function bindFocusStatus(
       }
       // Remember first: a crash or a failed save that still reached the
       // relay keeps the old status to restore.
-      // `replaced` tells a retry whether anything newer was published since.
+      // `replaced` tells a retry whether anything was published since.
       focus.recordStatus({
         until,
         scope,
         previous,
-        ...(latest ? { replaced: latest.created_at } : {}),
+        ...(latest ? { replaced: latest.id } : {}),
       });
       await statuses.save({ ...FOCUS_STATUS, expiresAt: until });
       failedUntil = undefined;

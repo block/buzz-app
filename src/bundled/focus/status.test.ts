@@ -93,9 +93,12 @@ function relay(initial?: StatusInput) {
   return {
     data,
     save,
-    /** Another device or the status dialog publishes a newer status. */
-    publish(input: StatusInput) {
-      latest = raw(input, at(0) + clock++);
+    /** Another device or the status dialog publishes a newer status, or one
+     * that wins a timestamp tie with a lower id. */
+    publish(input: StatusInput, tie?: { createdAt: number; id: string }) {
+      latest = tie
+        ? { ...raw(input, tie.createdAt), id: tie.id }
+        : raw(input, at(0) + clock++);
     },
     /** The relay has nothing, as one that drops expired events would. */
     forget() {
@@ -134,7 +137,7 @@ it("sets the telescope until the deadline and restores the previous status", asy
     scope: "wss://a:viewer",
     previous: lunch,
     published: at(0),
-    replaced: at(-100),
+    replaced: `event-${at(-100)}`,
   });
   focus.end();
   await flush();
@@ -398,6 +401,58 @@ it("a new Focus after the earlier telescope expired offline keeps the earlier st
     until: at(180),
     previous: lunch,
   });
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenLastCalledWith(lunch);
+});
+
+it("a retry leaves alone a status that won a timestamp tie elsewhere", async () => {
+  const community = relay({ text: "Lunch", emoji: "🥪" });
+  community.save.mockRejectedValueOnce(new Error("offline"));
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data, () => {});
+  focus.start(at(60));
+  await flush();
+  community.connection("connecting");
+  // Same second as "Lunch", lower id: the relay keeps this one.
+  community.publish(
+    { text: "Travelling", emoji: "✈️" },
+    { createdAt: at(-100), id: "event-0" },
+  );
+  community.connection("ready");
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(1);
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(1);
+});
+
+it("a retry after an earlier Focus expired sets the new telescope", async () => {
+  const lunch = { text: "Lunch", emoji: "🥪" };
+  const community = relay(lunch);
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data, () => {});
+  focus.start(at(60));
+  await flush();
+  community.connection("connecting");
+  await vi.advanceTimersByTimeAsync(60_000);
+  focus.start(at(180));
+  // The second Focus's set fails before it reaches the relay, so the newest
+  // event is still the first Focus's expired telescope.
+  community.save.mockRejectedValueOnce(new Error("offline"));
+  community.connection("ready");
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(2);
+  community.connection("connecting");
+  community.connection("ready");
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(3);
+  expect(community.save).toHaveBeenLastCalledWith({
+    ...FOCUS_STATUS,
+    expiresAt: at(180),
+  });
+  expect(focus.snapshot().status).toMatchObject({ previous: lunch });
+  expect(focus.snapshot().status?.published).toBeDefined();
   focus.end();
   await flush();
   expect(community.save).toHaveBeenLastCalledWith(lunch);

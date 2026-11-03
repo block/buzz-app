@@ -58,7 +58,7 @@ it("restores an active Focus after a restart and drops an expired one", () => {
     scope: "wss://a:viewer",
     previous: null,
     published: at(-61),
-    replaced: at(-200),
+    replaced: "event-before",
   };
   expect(createFocus(browser({ until: at(60) }).host).snapshot().until).toBe(
     at(60),

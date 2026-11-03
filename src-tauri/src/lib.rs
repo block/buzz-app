@@ -892,6 +892,15 @@ pub fn run() {
                     })?;
                 }
             }
+            // WKWebView ignores trackpad swipes unless enabled; they traverse the
+            // same session history as Buzz's Back/Forward controls.
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main") {
+                main.with_webview(|webview| unsafe {
+                    let view: &objc2_web_kit::WKWebView = &*webview.inner().cast();
+                    view.setAllowsBackForwardNavigationGestures(true);
+                })?;
+            }
             relay::set_user_agent(&app.package_info().version);
             app.state::<federated_identity::FederatedIdentity>()
                 .watch(app.handle().clone());

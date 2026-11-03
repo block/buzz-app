@@ -10,7 +10,11 @@ import {
   ChatCircleIcon,
 } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
-import { membershipRows, withoutStartingAgents } from "./membership-rows";
+import {
+  membershipRows,
+  renderedRowIndex,
+  withoutStartingAgents,
+} from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -39,6 +43,8 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
+import { moveMessageSelection } from "./message-selection";
+import { useMessageSelection } from "./use-message-selection";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -326,6 +332,7 @@ function Timeline({
   );
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
+  useMessageSelection(scroller, rows, queries);
   // Keep pagination space through EOF so removing its control cannot change
   // Virtua's start margin in the same measurement cycle as a prepend.
   const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
@@ -900,11 +907,7 @@ function Timeline({
         : null;
     const anchor = saved?.anchor;
     const restoreIndex = anchor
-      ? rows.findIndex(
-          (row) =>
-            row.id === anchor.id ||
-            row.membershipRows?.some((member) => member.id === anchor.id),
-        )
+      ? renderedRowIndex(rows, visibleRows, anchor.id)
       : -1;
     // Only a loaded row is a place to return to. Until it loads, an opening
     // reader follows the latest message and the saved row stays pending; a
@@ -1004,6 +1007,7 @@ function Timeline({
     };
   }, [
     rows,
+    visibleRows,
     size,
     prepend,
     recordPosition,
@@ -1106,7 +1110,10 @@ function Timeline({
         );
         touchY.current = next;
       }}
-      onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
+      onKeyDown={(event) => {
+        moveMessageSelection(event);
+        gesture(scrollsHistoryUp(event));
+      }}
       onPointerDown={() => {
         pointerHeld.current = true;
         // A press can end outside history.

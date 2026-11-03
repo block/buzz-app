@@ -1,6 +1,8 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
+import { moveMessageSelection } from "./message-selection";
+import { MessageSelection } from "./use-message-selection";
 import { MessageEditScope } from "./MessageEditScope";
 import { useMessageSelectionCopy } from "./selection-copy";
 import { QuoteSelection } from "./QuoteSelection";
@@ -126,6 +128,8 @@ export function ThreadPanel(props: ThreadPanelProps) {
         // Portalled viewers bubble here through React but own their Escape.
         if (
           event.key === "Escape" &&
+          !event.shiftKey &&
+          !event.defaultPrevented &&
           !tabbed &&
           close &&
           event.currentTarget.contains(event.target as Node)
@@ -1647,6 +1651,8 @@ function ThreadMessages({
         }}
         onPointerDown={keepReadingPosition}
         onKeyDown={(event) => {
+          moveMessageSelection(event);
+          if (event.defaultPrevented) return;
           if (
             [
               "ArrowUp",
@@ -1784,6 +1790,8 @@ function ThreadMessages({
         />
       </section>
       <QuoteSelection scroller={scroller} />
+      {/* After the scroller, so its ref is attached when this registers. */}
+      <MessageSelection list={scroller} rows={rows} session={session} />
       {preview && (
         <ChannelJoinNotice
           ready={

@@ -18,6 +18,8 @@ type EditScopeValue = {
   current: EditHandler | undefined;
   quote?: QuoteTarget | undefined;
   input: RefObject<HTMLElement | null>;
+  /** The scope's message list, where Up from an empty composer selects. */
+  list: RefObject<HTMLElement | null>;
   focusTarget(): HTMLElement | null;
   exactRows?: (() => readonly ChannelMessage[]) | undefined;
 };
@@ -29,6 +31,7 @@ export function MessageEditScope({ children }: { children: ReactNode }) {
   const scope = useRef<EditScopeValue>({
     current: undefined,
     input: { current: null },
+    list: { current: null },
     focusTarget(): HTMLElement | null {
       const input = scope.current.input.current;
       return input?.isConnected ? input : (parent?.focusTarget() ?? null);

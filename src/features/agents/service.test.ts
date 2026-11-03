@@ -34,7 +34,10 @@ import {
   it,
   vi,
 } from "vitest";
-import { forgetDefaultAgent } from "../solo/default-agent";
+import {
+  clearDeletedDefaultAgent,
+  forgetDefaultAgent,
+} from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
@@ -105,6 +108,7 @@ const records = vi.hoisted(() => ({
 }));
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
+  clearDeletedDefaultAgent: vi.fn(async () => false),
   forgetDefaultAgent: vi.fn(),
 }));
 // Each community's config channels, when a test brings them up: the service's
@@ -379,7 +383,10 @@ beforeEach(() => {
   records.unshare.mockReset();
   records.unshare.mockImplementation(async () => void steps.push("unshare"));
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 it("creates an agent in the community shown, with its type's defaults, and publishes its profile", async () => {
   const { service, native } = await setup();
@@ -4624,11 +4631,29 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     fresh: true,
   });
   expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
+  expect(clearDeletedDefaultAgent).toHaveBeenCalledWith(
+    session,
+    `https://relay.example.test:${viewer}`,
+    bot,
+  );
   expect(
     vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],
   ).toBeLessThan(
     vi.mocked(forgetDefaultAgent).mock.invocationCallOrder[0] ?? 0,
   );
+});
+
+it("reports a Bestie account cleanup failure after the agent is deleted", async () => {
+  const { service } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  vi.mocked(clearDeletedDefaultAgent).mockRejectedValueOnce(
+    new Error("account offline"),
+  );
+  await expect(service.remove(bot)).rejects.toThrow(
+    "Echo was deleted, but Buzz couldn't clear it as your Bestie",
+  );
+  expect(service.find(bot)).toBeUndefined();
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -12326,6 +12351,183 @@ it("exposes agent execution only inside an Attention source run", async () => {
   await settle();
   await expect(input.spawn("command", {})).rejects.toThrow();
 });
+
+it.each([
+  "",
+  "https://other.example.test",
+  "https://relay.example.test.evil.test",
+  "https://relay.example.test:8443",
+])(
+  "refuses external grants outside the enabled communities (%s)",
+  async (enabled) => {
+    vi.stubEnv("VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES", enabled);
+    const f = await setup();
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+      const serveMcp = vi.fn();
+      f.ctx.provide("host", {
+        serveMcp,
+      } as unknown as import("../host/service").Host);
+      const owner = f.ctx.extend({
+        pluginOwner: { id: "buzz.agents", revision: "one" },
+      });
+      expect(f.service.canConnectExternal(bot)).toBe(false);
+      await expect(
+        owner.agents.connectExternal(
+          bot,
+          new AbortController().signal,
+          () => {},
+        ),
+      ).rejects.toThrow("External apps are not enabled for this community.");
+      expect(serveMcp).not.toHaveBeenCalled();
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
+it.each(["disabled runtime", "lost custody"])(
+  "reports external connection availability after %s and recovery",
+  async (reason) => {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
+    let active = true;
+    const listeners = new Set<() => void>();
+    const f = await setup({
+      pluginActive: () => active,
+      subscribePlugin: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+      expect(f.service.canConnectExternal(bot)).toBe(true);
+      if (reason === "disabled runtime") {
+        active = false;
+        for (const listener of listeners) listener();
+      } else {
+        f.native.claim.mockResolvedValue(false);
+        f.emit({ events: [event("1", { tags: [["p", bot]] })] });
+      }
+      await vi.waitFor(() =>
+        expect(f.plugin.agents.handle(bot)).toBeUndefined(),
+      );
+      expect(f.service.find(bot)?.place).toBe("here");
+      expect(f.service.canConnectExternal(bot)).toBe(false);
+      active = true;
+      f.native.claim.mockResolvedValue(true);
+      for (const listener of listeners) listener();
+      f.emit({ events: [event("2", { tags: [["p", bot]] })] });
+      await vi.waitFor(() =>
+        expect(f.service.canConnectExternal(bot)).toBe(true),
+      );
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
+it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
+  "ends an external grant on %s and refuses later tool calls",
+  async (reason) => {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
+    const f = await setup();
+    Object.assign(f.session.agentChoices, {
+      snapshot: () => ({ selectable: [{ pubkey: bot }] }),
+      subscribe: () => () => {},
+    });
+    let handler: import("../host/service").McpHandler | undefined;
+    const closed = runnerGate();
+    const close = vi.fn(async () => {
+      closed.resolve();
+    });
+    f.ctx.provide("host", {
+      serveMcp: async (receive: import("../host/service").McpHandler) => {
+        handler = receive;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          closed: closed.promise,
+          close,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const owner = f.ctx.extend({
+      pluginOwner: { id: "buzz.agents", revision: "one" },
+    });
+    const controller = new AbortController();
+    const admitted = vi.fn();
+    const server = await owner.agents.connectExternal(
+      bot,
+      controller.signal,
+      admitted,
+    );
+    const call = handler;
+    if (!call) throw new Error("Missing server handler");
+    expect(
+      await call({
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18" },
+      }),
+    ).toHaveProperty("result.protocolVersion", "2025-06-18");
+    const post = {
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { channel, text: "External test", audience: "everyone" },
+      },
+    };
+    expect(await call(post)).toHaveProperty(
+      "result.content.0.text",
+      expect.stringContaining("sent "),
+    );
+    expect(f.native.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ pubkey: bot }),
+      expect.objectContaining({ content: "External test" }),
+    );
+    const published = f.native.publish.mock.calls.length;
+    const entered = runnerGate(),
+      release = runnerGate();
+    const starting = vi
+      .spyOn(f.session.channelWrites, "starting")
+      .mockImplementation(() => {
+        entered.resolve();
+        return release.promise;
+      });
+    const outcome = call(post).catch((error) => error);
+    try {
+      await entered.promise;
+      if (reason === "community selection")
+        f.select("https://other.example.test");
+      else if (reason === "reconnect") f.connect(true);
+      else if (reason === "identity") f.signIn(other);
+      else if (reason === "runtime") {
+        f.plugin.agents.register({ ...f.type, id: "replacement" });
+        await f.service.retype(bot, "example/replacement");
+      } else controller.abort();
+    } finally {
+      release.resolve();
+      starting.mockRestore();
+    }
+    expect(await outcome).toBeInstanceOf(Error);
+    await vi.waitFor(() => expect(close).toHaveBeenCalled());
+    await expect(call(post)).rejects.toThrow();
+    expect(f.native.publish).toHaveBeenCalledTimes(published);
+    await server.close();
+  },
+);
 
 it.each(["return", "throw"])(
   "revokes source commands on %s without losing queued output",

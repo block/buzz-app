@@ -7,6 +7,7 @@ import { opensInBrowser, saveOpensInBrowser } from "./links";
 /** Where github.com links in messages open. */
 export function LinkSettings() {
   const [browser, setBrowser] = useState(opensInBrowser);
+  const [failed, setFailed] = useState(false);
   return (
     <section aria-label="GitHub links settings">
       <Header title="GitHub links" />
@@ -16,10 +17,20 @@ export function LinkSettings() {
           description="Links in messages open in your browser instead of the side panel. Pull request links keep their state icon."
           checked={browser}
           onCheckedChange={(on) => {
-            saveOpensInBrowser(on);
-            setBrowser(on);
+            try {
+              saveOpensInBrowser(on);
+              setBrowser(on);
+              setFailed(false);
+            } catch {
+              setFailed(true);
+            }
           }}
         />
+        {failed && (
+          <p role="alert" className="m-0 text-body-sm text-danger">
+            Couldn’t save this setting on this device.
+          </p>
+        )}
       </SettingsGroup>
     </section>
   );

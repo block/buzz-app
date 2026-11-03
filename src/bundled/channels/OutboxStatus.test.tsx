@@ -119,7 +119,9 @@ it("routes an unadopted no-role invitation through member verification", async (
   });
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() =>
-    expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person"),
+    expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person", {
+      retry: true,
+    }),
   );
   expect(retry).not.toHaveBeenCalled();
 });
@@ -146,7 +148,9 @@ it("routes an ordinary addition retry through fresh membership checks", async ()
   });
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() =>
-    expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person"),
+    expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person", {
+      retry: true,
+    }),
   );
   expect(retry).not.toHaveBeenCalled();
 });
@@ -168,6 +172,7 @@ it("retries a guest addition as a guest", async () => {
   await waitFor(() =>
     expect(add).toHaveBeenCalledExactlyOnceWith("channel", "person", {
       role: "guest",
+      retry: true,
     }),
   );
 });

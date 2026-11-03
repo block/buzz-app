@@ -75,7 +75,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
   );
   const publications = [];
   let joined = false;
-  let checkingReplacement = false;
+  let checkingRecovery = false;
   let membershipReads = 0;
   let releaseRoster;
   const heldRoster = new Promise((resolve) => {
@@ -94,6 +94,12 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
   });
   await page.route("**/api/relay/**/query", async (route) => {
     const filters = route.request().postDataJSON();
+    if (
+      filters.some(
+        (filter) => filter.kinds?.includes(0) && filter.search === "Aria",
+      )
+    )
+      return route.fulfill({ json: [person] });
     // The legacy command was applied, then the target was removed. Recording
     // that ID changes the receipt to Seen during the real Retry operation.
     if (
@@ -106,16 +112,15 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
     if (!filters.some((filter) => filter.kinds?.includes(39002)))
       return route.continue();
     if (
-      checkingReplacement &&
+      checkingRecovery &&
       filters.some(
         (filter) =>
           filter.kinds?.includes(39002) && filter["#d"]?.includes(chat),
       )
     ) {
       membershipReads++;
-      // Old ordering reaches this read after retirement but before publication.
-      // The handoff queues its replacement first, then confirms its signed roster.
-      if (membershipReads === 3) {
+      // Hold fresh reconciliation while the original remains recoverable.
+      if (membershipReads === 2) {
         await heldRoster;
       }
     }
@@ -176,11 +181,11 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
       });
   }
   await page.clock.setFixedTime(new Date(now + 2000));
-  checkingReplacement = true;
+  checkingRecovery = true;
   await outbox.getByRole("button", { name: "Retry", exact: true }).click();
   try {
-    await expect.poll(() => membershipReads).toBe(3);
-    expect(publications).toHaveLength(1);
+    await expect.poll(() => membershipReads).toBe(2);
+    expect(publications).toHaveLength(0);
     await expect(summary).toHaveText("Outbox · 1 items");
     const saved = await savedInvitations(
       page,
@@ -188,13 +193,67 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
     );
     expect(
       saved.find((item) => item.event.id === original.id)?.acknowledged,
-    ).toBe(true);
-    expect(
-      saved.find((item) => item.event.id === publications[0].id)?.recovery,
-    ).toBeDefined();
+    ).toBeFalsy();
   } finally {
     releaseRoster();
   }
+  await expect
+    .poll(async () => {
+      const saved = await savedInvitations(
+        page,
+        `https://primary.example:${app.viewer}`,
+      );
+      return saved.find((item) => item.event.id === original.id)?.acknowledged;
+    })
+    .toBe(true);
+  await expect(summary).toHaveText("Outbox · 0 items");
+  await expect(outbox.getByRole("alert")).toHaveCount(0);
+  expect(publications).toHaveLength(0);
+  await page.reload();
+  await openPage(page, "Messages");
+  await page
+    .getByRole("button", { name: "Project updates", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", {
+      name: "Message #Project updates",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await openChannelDetails(page);
+  await expect(summary).toHaveText("Outbox · 0 items");
+  expect(publications).toHaveLength(0);
+
+  // Only an explicit People Add may re-invite the removed person.
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "conversation",
+        channelId: chat,
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      }),
+    )}`,
+  );
+  await expect(
+    page.getByRole("button", { name: "Chat actions", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Share access", exact: true })
+    .last()
+    .click();
+  const access = page.getByRole("dialog", {
+    name: "Share access",
+    exact: true,
+  });
+  await access
+    .getByRole("searchbox", { name: "Search people and channels" })
+    .fill("Aria");
+  await access.getByRole("button", { name: /^Add Aria / }).click();
+  await expect.poll(() => publications.length).toBe(1);
   // Publication is not completion: observe the actual acknowledgement commit.
   await expect
     .poll(async () => {
@@ -206,9 +265,11 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
         ?.acknowledged;
     })
     .toBe(true);
-  await expect(summary).toHaveText("Outbox · 0 items");
-  await expect(outbox.getByRole("alert")).toHaveCount(0);
-  expect(publications).toHaveLength(1);
+  await expect(
+    access
+      .getByRole("region", { name: "People", exact: true })
+      .getByRole("button", { name: "Actions for Aria", exact: true }),
+  ).toBeVisible();
   await page.reload();
   await openPage(page, "Messages");
   await page

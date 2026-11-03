@@ -181,6 +181,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   or add the person again if the receipt is already Seen. After its 15-minute
   delivery window, Buzz verifies the original command and current membership
   before allowing a fresh participation invitation; failed checks keep the original.
+  If the original invitation was applied and the person was later removed, Retry
+  clears the old row without re-adding them. Use **Add** in People to invite them again.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community

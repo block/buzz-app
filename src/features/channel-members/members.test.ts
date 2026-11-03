@@ -1068,26 +1068,38 @@ it("does not confirm a legacy invitation from stale roles during another member 
   expect(t.publish).toHaveBeenCalledOnce();
 });
 
-it("retires an expired unapplied legacy invitation before sending and confirming a fresh Member grant", async () => {
-  const t = setup("solo", "public", "guest");
-  await t.ready();
-  const original = await savedNoRoleInvitation(t);
-  const created = t.records()[0]?.event.created_at;
-  if (created === undefined) throw new Error("Expected saved invitation");
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime((created + 901) * 1000);
-  await t.managedAdd();
-  expect(t.publish).toHaveBeenCalledTimes(2);
-  expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
-  expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual(["role", "member"]);
-  expect(t.records().find((item) => item.event.id === original)).toMatchObject({
-    acknowledged: true,
-  });
-  t.restart();
-  await t.ready();
-  await t.managedAdd();
-  expect(t.publish).toHaveBeenCalledTimes(2);
-});
+it.each([false, true])(
+  "retires an expired unapplied legacy invitation before a fresh Member grant (Retry=%s)",
+  async (retry) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    const created = t.records()[0]?.event.created_at;
+    if (created === undefined) throw new Error("Expected saved invitation");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime((created + 901) * 1000);
+    await t.session.memberAdditions.add(
+      t.id,
+      t.person.pubkey,
+      retry ? { retry: true } : {},
+    );
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+    expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "role",
+      "member",
+    ]);
+    expect(
+      t.records().find((item) => item.event.id === original),
+    ).toMatchObject({
+      acknowledged: true,
+    });
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+  },
+);
 
 function afterInvitationWindow(t: ReturnType<typeof setup>, seconds = 901) {
   const created = t.records()[0]?.event.created_at;
@@ -1095,6 +1107,74 @@ function afterInvitationWindow(t: ReturnType<typeof setup>, seconds = 901) {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime((created + seconds) * 1000);
 }
+it.each([false, true])(
+  "Outbox Retry retires a recorded removal without granting, then Add invites once (restart=%s)",
+  async (restart) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    const original = await savedNoRoleInvitation(t);
+    t.recordOriginal();
+    afterInvitationWindow(t);
+    if (restart) {
+      await t.session.read([{ kinds: [9000], ids: [original], limit: 1 }], {
+        fresh: true,
+      });
+      t.restart();
+      await t.ready();
+    }
+    await t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true });
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()).toHaveLength(1);
+    expect(t.records()[0]).toMatchObject({
+      event: { id: original },
+      acknowledged: true,
+    });
+    expect(t.session.channels.list().channels[0]?.members).not.toContain(
+      t.person.pubkey,
+    );
+    if (restart) {
+      t.restart();
+      await t.ready();
+    }
+    await t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true });
+    expect(t.publish).toHaveBeenCalledOnce();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0].id).not.toBe(original);
+    expect(t.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "role",
+      "member",
+    ]);
+  },
+);
+it.each(["read", "roster", "storage"])(
+  "Outbox Retry preserves recorded recovery on %s failure",
+  async (failure) => {
+    const t = setup("solo", "public", "guest");
+    await t.ready();
+    await savedNoRoleInvitation(t);
+    t.recordOriginal();
+    afterInvitationWindow(t);
+    if (failure === "read") t.setInvitationReadFailure(true);
+    else if (failure === "roster")
+      t.onInvitationRead(() => t.setRosterFailure(true));
+    else t.setAcknowledgementFailure(true);
+    const retry = () =>
+      t.session.memberAdditions.add(t.id, t.person.pubkey, { retry: true });
+    await expect(retry()).rejects.toThrow();
+    expect(t.records()[0]?.acknowledged).toBeUndefined();
+    expect(t.publish).toHaveBeenCalledOnce();
+    t.onInvitationRead(() => {});
+    t.setRosterFailure(false);
+    t.setInvitationReadFailure(false);
+    t.setAcknowledgementFailure(false);
+    t.restart();
+    await t.ready();
+    await retry();
+    expect(t.records()[0]?.acknowledged).toBe(true);
+    expect(t.publish).toHaveBeenCalledOnce();
+  },
+);
 it.each([false, true])(
   "reconciles a recorded then removed invitation after restart=%s",
   async (restart) => {

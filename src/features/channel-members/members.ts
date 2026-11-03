@@ -87,6 +87,8 @@ export type MemberAdditionIntent = {
   dismissed?: boolean;
   /** Adds the person as a guest, who can read but not post. */
   role?: "guest";
+  /** Outbox recovery is not an explicit request to re-invite a removed member. */
+  retry?: true;
 };
 
 /** Explicit single-person intent. Membership truth and pending writes stay session-owned. */
@@ -188,6 +190,8 @@ export async function addChannelMember(
       );
   };
   check();
+  // A completed or missing receipt is not permission for Retry to create a grant.
+  if (intent.retry && !pending) return;
   const confirmAddition = async (id: string) => {
     intent.id = id;
     intent.dismissed = false;
@@ -221,11 +225,12 @@ export async function addChannelMember(
   if (soloParticipant && pending && noRole(pending.event)) {
     if (!channel()?.members?.includes(pubkey)) {
       let replacement: string | undefined;
+      let recorded = false;
       await outbox.acknowledge(
         pending.event.id,
         async (event) => {
           check();
-          const recorded = await session.channelWrites.additionRecorded(
+          recorded = await session.channelWrites.additionRecorded(
             event,
             signal,
           );
@@ -237,7 +242,11 @@ export async function addChannelMember(
         {
           input: () => {
             check();
-            if (channel()?.members?.includes(pubkey)) return undefined;
+            if (
+              channel()?.members?.includes(pubkey) ||
+              (intent.retry && recorded)
+            )
+              return undefined;
             beforeDispatch?.();
             return invitation();
           },
@@ -247,7 +256,11 @@ export async function addChannelMember(
         },
       );
       if (replacement) return confirmAddition(replacement);
+      check();
       intent.confirmed = true;
+      // Retiring a recorded command must not fall through to a new grant.
+      if (intent.retry && recorded && !channel()?.members?.includes(pubkey))
+        return;
       // A joined target still needs role reconciliation; never overwrite a Guest.
       return addChannelMember(
         session,

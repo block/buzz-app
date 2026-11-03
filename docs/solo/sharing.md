@@ -75,7 +75,9 @@ replayed as a participation invitation. **Retry** keeps it protected during the
 relay's 15-minute intake window. After expiry, Retry fences local delivery and
 checks the original event ID with a fresh strong read. Verified absence can
 resolve it. If the command is recorded, a fresh signed roster reconciles its
-result, including a member who has since been removed. Add finishes its fresh
+result. If that person has since been removed, Outbox **Retry** durably clears
+the old row without re-inviting them. An explicit **Add** from People still
+re-invites them in one action, including when the old receipt remains. Add finishes its fresh
 membership check before atomically retiring the original and saving a new
 explicit Member invitation. Closing or restarting keeps either original recovery
 or the replacement receipt. Failed reads or storage, active delivery, and an echo

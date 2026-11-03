@@ -59,7 +59,6 @@ import {
 import { rememberAgentsPreference } from "./mention-preferences";
 import { useChosenAgent } from "../solo/default-agent";
 import { useAgentChoices } from "../agents/use-choices";
-import { ownSolo } from "../solo/labels";
 import {
   soloAgentsOnly,
   soloHasPeople,
@@ -153,6 +152,7 @@ import { TargetOpenerProvider } from "../conversation/opener";
 import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
+import { followUpMessage } from "./follow-up-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
@@ -923,6 +923,7 @@ function Composer({
     return result;
   }
   const [error, setError] = useState<string>();
+  const [pasteTooLong, setPasteTooLong] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string>();
   const focusRestoredDraft = useRef(false);
   const beforeEdit = useRef<
@@ -941,6 +942,10 @@ function Composer({
     setLinkEdit(null);
     completion.invalidate();
   });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A changed draft or edit target retires feedback about the previous paste.
+  useEffect(() => {
+    setPasteTooLong(false);
+  }, [draft, editing.target]);
   const editScope = useMessageEditScope();
   const editableRows = () =>
     editMessages ??
@@ -2559,28 +2564,6 @@ function Composer({
       ) {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        const destination = session.channels
-          .list()
-          .channels.find((channel) => channel.id === channelId);
-        if (
-          queueFollowUp &&
-          (!destination || destination.archived || destination.readOnly)
-        )
-          throw new Error("This chat is no longer available for sending.");
-        if (
-          queueFollowUp &&
-          (!ownSolo(destination, session.viewer) ||
-            recipients.some(
-              (key) =>
-                archivedMention(session, key) ||
-                !session.agentChoices
-                  .snapshot()
-                  .selectable.some((agent) => agent.pubkey === key),
-            ))
-        )
-          throw new Error(
-            "This Solo chat or its recipients are no longer available.",
-          );
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -2612,28 +2595,35 @@ function Composer({
       ) => {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        return queueFollowUp && host
-          ? followUpQueue(host).submit(
-              {
-                channelId,
-                text: content,
-                recipients,
-                beforeRelease: async () => {
-                  const channel =
-                    await session.channelWrites.refreshMembership(channelId);
-                  if (recipients.some((key) => !channel.members?.includes(key)))
-                    throw new Error(
-                      "A queued recipient is no longer a member of this chat.",
-                    );
-                },
-                publish: () => publishNow(uploaded, host),
-                onSend: (id) => {
-                  if (live.current) onSend?.(id);
-                },
-              },
-              validated,
-            )
-          : publishNow(uploaded, session);
+        if (!queueFollowUp || !host) return publishNow(uploaded, session);
+        const message = {
+          channelId,
+          text: content,
+          recipients,
+          attachments: uploaded,
+          references,
+          picks: sentPicks,
+        };
+        const send = followUpMessage(host, message);
+        return followUpQueue(host).submit(
+          {
+            ...message,
+            message,
+            beforeRelease: send.beforeRelease,
+            ready: send.ready,
+            publish: (recovery) => {
+              if (compactingNow(recipients))
+                throw new Error(
+                  "Wait for compaction to finish, or interrupt it.",
+                );
+              return send.publish(recovery);
+            },
+            onSend: (id) => {
+              if (live.current) onSend?.(id);
+            },
+          },
+          validated,
+        );
       };
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
@@ -3044,6 +3034,7 @@ function Composer({
                 attachments.store.remove(id);
                 if (item?.status === "error" && item.error === error)
                   setError(undefined);
+                input.current?.focus();
               }}
               retry={(id) => {
                 const item = attachments.items.find(
@@ -3084,7 +3075,12 @@ function Composer({
               channelId={channelId}
               extensions={extensions}
               emoji={emojiCatalog.entries}
+              onPasteTooLong={() => setPasteTooLong(true)}
+              aria-describedby={
+                pasteTooLong ? `${inputId}-paste-error` : undefined
+              }
               onDraftChange={(next) => {
+                setPasteTooLong(false);
                 const textChanged = next.text !== valueRef.current.text;
                 // The default tag's prefill shows without being saved.
                 if (seeding.current) {
@@ -3357,6 +3353,14 @@ function Composer({
         {!editing.target && compacting && (
           <p className={styles.composerStatus} role="status">
             Compacting session…
+          </p>
+        )}
+        {pasteTooLong && (
+          <p id={`${inputId}-paste-error`} role="alert">
+            This paste would make your message too long.{" "}
+            {canAttach && !editing.target
+              ? "Shorten it or attach the text as a file."
+              : "Shorten the text and try again."}
           </p>
         )}
         {(error || editing.error) && (

@@ -1,4 +1,6 @@
+import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
+import { removeSessionPrompts } from "./session-prompts";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
@@ -1724,6 +1726,29 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
+      resumeFollowUps: (agent, turns) => {
+        const session = this.bindingOf(agent)?.session;
+        if (session)
+          followUpQueue(session).resumeAfter(agent.pubkey, turns, (entry) => {
+            if (
+              this.state.running.some(
+                (recipient) =>
+                  entry.recipients.includes(recipient.pubkey) &&
+                  this.bindingOf(recipient)?.session === session &&
+                  this.sessionState(recipient.key, {
+                    channelId: entry.channelId,
+                  }) === "compacting",
+              )
+            )
+              throw new Error(
+                "Wait for compaction to finish, or interrupt it.",
+              );
+          });
+      },
+      abandonFollowUps: (agent, turns) => {
+        const session = this.bindingOf(agent)?.session;
+        if (session) followUpQueue(session).pauseAfter(agent.pubkey, turns);
+      },
       records: () => Object.values(this.records),
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(this.storage)),
@@ -4654,8 +4679,11 @@ export class AgentsService extends Service implements Agents {
     if (given === base) return;
     const next = given && key !== pubkeyOf(key) ? ownRecord(key, given) : given;
     if (next) await writeRecord(this.storage, next);
-    else if (this.storage.get(recordKey(key)) !== null)
-      await removeRecord(this.storage, key);
+    else {
+      if (this.storage.get(recordKey(key)) !== null)
+        await removeRecord(this.storage, key);
+      await removeSessionPrompts(this.storage, key);
+    }
     const { [key]: _, ...others } = this.records;
     this.records = next ? { ...others, [key]: next } : others;
   }

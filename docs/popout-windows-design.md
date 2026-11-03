@@ -229,11 +229,17 @@ Attachment drafts are local to the window that added them and Huddle releases
 them on close; conflicted or storage-failed text can exist only in one editor.
 So S1 has **no move**: *Open in main window* = show+focus main, open the target
 tab, leave the pop-out as is. **Explicit close** of a pop-out (red button,
-Cmd+W, retirement by main) runs the same guards as closing a tab: pending
-attachment drafts or an unresolved conflict → confirm dialog naming what would be
-lost. Retirement forced by scope change (§5.8) closes without prompting but
-posts the loss in the main toast. A later "move" variant needs an acknowledged
-handoff that keeps the source until the destination exists.
+Cmd+W) runs the same guards as closing a tab, for all of: pending attachment
+drafts, an unresolved draft conflict, text whose last persist **failed**
+(`writeView` returned false), and pending operations in that window (send
+awaiting admission, upload in progress) → confirm dialog naming what would be
+lost. **Voluntary** exits that would retire pop-outs — community switch,
+sign-out, Linux/Windows main Close — run the same guards first and can be
+cancelled; a toast after the fact is not a guard. **Access revocation**
+(membership loss, archive, relay session replaced by the server, plugin
+disabled) retires immediately without prompting, because unauthorized context
+must leave the screen; main toasts what closed. A later "move" variant needs an
+acknowledged handoff that keeps the source until the destination exists.
 
 ### 5.3 Which window owns signing / session actions; binding
 
@@ -267,8 +273,9 @@ is the main reason the S1 estimate rose (§5.8).
 - macOS: hidden, renderer alive → pop-outs keep working. Add: a pop-out's
   *Open in main window* must `show()`+focus main (hidden main is the common case).
 - Linux/Windows: destroying main destroys the owner. S1: on `CloseRequested` of
-  main with pop-outs open, close pop-outs first (drafts are already persisted on
-  each change). Alternative (hide main on close, as macOS) is a separate
+  main with pop-outs open, run the §5.2 guards across them (a persist can have
+  failed; not every keystroke is necessarily in storage), then close pop-outs
+  first; cancelling keeps main open. Alternative (hide main on close, as macOS) is a separate
   product decision; listed in §8.
 - Renderer reload/crash of main: native keeps the last validated projection per
   pop-out and bumps `sessionIncarnation`. The companion shows the cached
@@ -295,9 +302,13 @@ and sends `observe(ids)` actions; main validates that the ids are in that
 window's projection and feeds them to the session's reading owner, which holds
 the lease. Main hidden (macOS) does not block it; a minimized/backgrounded
 companion observes nothing; manual *Mark unread* in main during dwell wins.
-Opening a pop-out marks nothing. Tests as listed. If this pushes S1 over budget
-it ships as **S1b** before S2, because "don't lose the message" needs unread to
-be truthful.
+Opening a pop-out marks nothing. Observations carry the companion's focus/
+visibility generation and the incarnation; main drops an `observe` whose
+generation predates a blur, hide, or a newer manual *Mark unread* — **delayed IPC
+must not resurrect cancelled reading intent**. Acceptance includes that case.
+Shipping without this path (**S1a**) is a product tradeoff — unread stays lit
+for messages read in a pop-out — for jaw to accept explicitly, not a
+line-budget shortcut.
 
 ### 5.7 Navigation history
 
@@ -309,10 +320,11 @@ main.
 
 ### 5.8 Community or scope changes
 
-Projection carries `scope`. Switching community, sign-out, relay-session
-replacement, membership loss, channel archive → main retires the pop-outs of the
-affected scope (`update(id, null)` → native `destroy()`), with one toast in main
-naming what closed. Identical to the Huddle rule set.
+Projection carries `scope`. Voluntary switches (community, sign-out) run the
+§5.2 guards and may be cancelled; revocations (relay-session replacement,
+membership loss, channel archive) retire the affected pop-outs immediately
+(`update(id, null)` → native `destroy()`) with one toast in main naming what
+closed. Huddle's rule set plus the voluntary/revoked distinction.
 
 ### 5.9 Initial slice vs full parity
 
@@ -396,8 +408,9 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
    the pop-out. Any objection?
 3. Linux/Windows: accept "closing main closes pop-outs" for S1?
 4. Is S1 = threads only acceptable as the first PR, with channels/DMs/Solo in
-   S2? And is an S1a (no unread marking from the pop-out) / S1b split acceptable
-   if the first PR runs long?
+   S2? If S1 runs long, do you accept **S1a** — pop-outs that read and reply but
+   do **not** clear unread (unread stays lit for messages you read there) —
+   as an interim product state, with S1b following?
 5. Does this belong in `block/buzz-app` core (recommended; needs native) or
    should the entry points also be exposed to plugins later (`ctx.windows.open`)?
    Core first; plugin API only on demand.
@@ -414,3 +427,8 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
   untouched by keeping the source tab open (§5.7). Evidence corrections: Slack
   official help cited (§1); `reset_incoming` not generalizable, reload recovery
   specified; Cmd+W routing (§5.5). Estimate raised accordingly (§5.9).
+- 2026-11-03 second pass at `4cf951e`: 1, 3, 5 addressed; 4 stated. Finding 2
+  extended: close guards also cover storage-failed text and pending operations;
+  voluntary switch/close is cancellable, revocation is immediate (§5.2, §5.5,
+  §5.8); delayed-IPC reading observations must not revive cancelled intent
+  (§5.6); S1a framed as an explicit product tradeoff (§8 Q2/Q4).

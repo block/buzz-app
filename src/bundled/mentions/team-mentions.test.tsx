@@ -689,6 +689,30 @@ it("directory pages rebuild the name index only for people they add", async () =
   h.library.dispose();
 });
 
+it("a mention keystroke checks longer names only on choices the query matches", async () => {
+  const h = fixture({ count: 300 });
+  const menu = inline(h.session);
+  try {
+    await waitFor(() => expect(menu.result()?.items.length).toBeGreaterThan(0));
+    const longer = vi.spyOn(personMatch, "extendsName");
+    menu.view.rerender(
+      <MentionCompletion
+        {...menu.props}
+        query={{ start: 0, end: 3, query: "zz" }}
+      />,
+    );
+    await waitFor(() => expect(menu.result()?.items).toEqual([]));
+    // No member name starts with `zz`, so none can continue it. Team names
+    // are checked separately.
+    expect(
+      longer.mock.calls.filter(([name]) => name.startsWith("Person")),
+    ).toEqual([]);
+  } finally {
+    menu.view.unmount();
+    h.library.dispose();
+  }
+});
+
 it("an open chooser relabels choices when only names change", async () => {
   const h = fixture();
   let name = "Before";

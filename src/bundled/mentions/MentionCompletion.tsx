@@ -8,7 +8,7 @@ import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { outsideMentionDetail } from "./mention-candidates";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
-import { continuedMention } from "./mention-ranking";
+import { continuedMention, matchingMentions } from "./mention-ranking";
 import { resolveSpaceMention } from "./resolve-space-mention";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
@@ -117,6 +117,11 @@ export function MentionCompletion({
         if (withdraw) withdraw();
       };
     }
+    // Each shown row asks both; one pass each instead of one scan per row.
+    const memberKeys = new Set(members);
+    const agentKeys = new Set(
+      model.candidates.flatMap((c) => (c.agent ? [c.recipient.pubkey] : [])),
+    );
     const available = [
       ...matching.map(({ recipient, label, elsewhere, disabled }) => ({
         disabled,
@@ -127,7 +132,7 @@ export function MentionCompletion({
         label,
         detail:
           disabled ??
-          (members.includes(recipient.pubkey)
+          (memberKeys.has(recipient.pubkey)
             ? recipient.pubkey
             : inviteAgents
               ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
@@ -144,13 +149,7 @@ export function MentionCompletion({
               session.media,
             )}
             size="default"
-            shape={
-              model.candidates.some(
-                (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
-              )
-                ? "squircle"
-                : "circle"
-            }
+            shape={agentKeys.has(recipient.pubkey) ? "squircle" : "circle"}
           />
         ),
         edit: { mention: recipient },
@@ -207,7 +206,11 @@ export function MentionCompletion({
       admitted &&
       model.spaceId === undefined &&
       !teams.blocksSpace &&
-      !continuedMention(model.candidates, query.query) &&
+      // A continuing name starts with the query: only indexed matches can have one.
+      !continuedMention(
+        matchingMentions(model.candidates, query.query),
+        query.query,
+      ) &&
       (model.pending || model.directory.loading) &&
       pendingMentionQuery(query.query);
     const withdraw = publish({

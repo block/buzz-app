@@ -68,6 +68,7 @@ export function ProfileStep({
         >
           Set up your profile
         </h1>
+        <p className="mt-2 break-all text-body text-subtle">{found.url}</p>
         <p className="mt-2 text-body text-subtle">
           Enter a name for your community profile. You can change it later.
         </p>

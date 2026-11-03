@@ -186,9 +186,10 @@ export function FindCommunity({
           shape="squircle"
           size="large"
         />
-        <p className="m-0 min-w-0 flex-1 break-words text-body text-standard">
-          {name}
-        </p>
+        <div className="min-w-0 flex-1">
+          <p className="m-0 break-words text-body text-standard">{name}</p>
+          <p className="m-0 break-all text-body text-subtle">{found.url}</p>
+        </div>
       </div>
       {(needsAge || needsAgreement) && (
         <div className="flex flex-col gap-3">

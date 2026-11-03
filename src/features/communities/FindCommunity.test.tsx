@@ -93,6 +93,7 @@ it("shows the host while finding, then only published facts, gating Join on ever
   );
   // Nothing the relay does not publish: no name, description, counts or version.
   expect(document.body).not.toHaveTextContent(/member|owner|invite|v1\.4/i);
+  expect(screen.getByText(url)).toBeVisible();
   const terms = screen.getByRole("link", { name: "Terms of Service" });
   expect(terms).toHaveAttribute("href", `${url}/api/join-policy/terms`);
   expect(terms).toHaveAttribute("target", "_blank");

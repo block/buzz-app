@@ -1023,3 +1023,23 @@ it("publishes a pre-EOSE change after an open batch is rebuilt", async () => {
     h.directory.dispose();
   }
 });
+
+it("grows with the profile limit and evicts the least recently ensured when it shrinks", async () => {
+  const h = harness();
+  try {
+    h.directory.resize(1025);
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    h.subscriptions[0]?.sink.event(projection());
+    h.directory.ensure(
+      Array.from({ length: 1024 }, (_, i) => i.toString(16).padStart(64, "0")),
+    );
+    expect(h.directory.snapshot().has(alice.pubkey)).toBe(true);
+    h.changed.mockClear();
+    h.directory.resize(1024);
+    expect(h.directory.snapshot().has(alice.pubkey)).toBe(false);
+    expect(h.changed).toHaveBeenCalledTimes(1);
+  } finally {
+    h.directory.dispose();
+  }
+});

@@ -1183,7 +1183,10 @@ The port retains the prepared-store implementation and its behavior tests:
   retained-window live catch-up. Optional profile enrichment stays background.
   Selecting an already-queued catch-up promotes that existing read without adding
   a request or resetting its deadline.
-- 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
+- 1,024 profile entries / 2 KiB per entry signed-record budget, evicting the least
+  recently requested profile. An open channel reserves room for its whole roster on
+  top of that base, up to 10,240 entries, and leaving gives the room back at once.
+  Narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour

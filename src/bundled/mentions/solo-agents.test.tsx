@@ -3969,3 +3969,92 @@ it("Space keeps waiting after a member's profile read fails until a retry settle
     h.dispose();
   }
 });
+
+function rosterFixture(members: readonly string[]) {
+  const h = setup();
+  const reads: { authors: readonly string[] }[] = [];
+  const directory = createProfileDirectory({
+    read: async (filters) => {
+      reads.push({ authors: filters[0]?.authors ?? [] });
+      return [];
+    },
+  });
+  const list = {
+    status: "ready" as const,
+    channels: [{ id: "parent", channelType: "stream" as const, members }],
+  };
+  const names = bindNames(
+    { profiles: directory.queries, agentLibrary: h.library.queries },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
+  const session = {
+    ...h.session,
+    profiles: directory.queries,
+    names,
+    channels: { ...h.session.channels, list: () => list },
+    directMessages: {
+      ...h.session.directMessages,
+      people: () => new Promise<DirectoryPage>(() => {}),
+    },
+  } as unknown as RelaySession;
+  const mount = () =>
+    render(
+      <MentionCompletion
+        session={session}
+        scope="space-test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@jo", start: 3, end: 3 }}
+        query={{ start: 0, end: 3, query: "jo" }}
+        publish={vi.fn()}
+      />,
+    );
+  return {
+    reads,
+    directory,
+    mount,
+    requested: () => new Set(reads.flatMap((read) => read.authors)),
+    dispose() {
+      names.dispose();
+      directory.dispose();
+      h.library.dispose();
+    },
+  };
+}
+
+it("loads an open channel's whole roster when it reserves room past the base", async () => {
+  const roster = Array.from({ length: 1100 }, () => keypair().pubkey);
+  const h = rosterFixture(roster);
+  const release = h.directory.queries.reserve?.(roster.length);
+  try {
+    const view = h.mount();
+    await waitFor(() => expect(h.requested().size).toBe(1100));
+    view.unmount();
+  } finally {
+    release?.();
+    h.dispose();
+  }
+});
+
+it("asks again for a member's name after the cache evicted it", async () => {
+  const member = keypair();
+  const h = rosterFixture([member.pubkey]);
+  try {
+    h.directory.accept([profile(member, { name: "Jo" })]);
+    let view = h.mount();
+    await act(async () => {});
+    view.unmount();
+    expect(h.requested().has(member.pubkey)).toBe(false);
+    // Unrelated profiles push the member out of the 1,024-entry base.
+    h.directory.accept(
+      Array.from({ length: 1024 }, (_, index) =>
+        profile(keypair(), { name: `Other ${index}` }),
+      ),
+    );
+    expect(h.directory.queries.snapshot().has(member.pubkey)).toBe(false);
+    view = h.mount();
+    await waitFor(() => expect(h.requested().has(member.pubkey)).toBe(true));
+    view.unmount();
+  } finally {
+    h.dispose();
+  }
+});

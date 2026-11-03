@@ -137,11 +137,31 @@ export function createNameProvider(
       };
     });
     const displayedKeys = new Set(displayed.map((fact) => fact.pubkey));
+    // A scope only labels its selection and its agents' owners. Look those up
+    // instead of passing every cached identity, so a scope costs its own size
+    // rather than the whole profile cache.
+    let rows: Iterable<NamingIdentity> = identities.values();
+    if (selection) {
+      const selected = new Set(selection);
+      const picked = new Map<string, NamingIdentity>();
+      for (const key of selected) {
+        const row = identities.get(key);
+        if (row) picked.set(key, row);
+      }
+      const owners = [...picked.values(), ...displayed].flatMap((row) =>
+        row.ownerPubkey && selected.has(row.pubkey)
+          ? [row.ownerPubkey.toLowerCase()]
+          : [],
+      );
+      for (const key of owners) {
+        const row = identities.get(key);
+        if (row) picked.set(key, row);
+      }
+      rows = picked.values();
+    }
     return policy.resolve(
       [
-        ...[...identities.values()].filter(
-          (row) => !displayedKeys.has(row.pubkey),
-        ),
+        ...[...rows].filter((row) => !displayedKeys.has(row.pubkey)),
         ...displayed,
       ],
       source.viewer,

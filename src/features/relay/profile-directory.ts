@@ -8,7 +8,12 @@ import { retryRead } from "./read-retry";
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "./events";
 import type { Outbox } from "./outbox";
-import { ByteLru } from "./budget";
+import {
+  ByteLru,
+  PROFILE_CACHE_BASE,
+  PROFILE_CACHE_MAX,
+  PROFILE_ENTRY_BYTES,
+} from "./budget";
 import type { Profile } from "./contracts";
 import type { RelayEvent } from "./events";
 import { newer } from "./events";
@@ -33,6 +38,15 @@ export interface ProfileQueries {
    * notifies after it removes content, so only names still on screen are
    * reread. */
   generation?(): number;
+  /** Room for `members` more profiles while a view of that many people is
+   * open, within the hard limit. Release returns the limit to the base and
+   * evicts the least recently used profiles past it. */
+  reserve?(members: number): () => void;
+  /** Profiles the cache can hold now; one ensure may ask for at most this many. */
+  limit?(): number;
+  /** Moves when the budget drops loaded profiles. A view that requested names
+   * once and skips repeats must request again after it moves. */
+  evictions?(): number;
 }
 
 /** Authors per profile read, the reader's largest page. A page that fills it
@@ -55,7 +69,10 @@ export function createProfileDirectory(
     ): (() => void) | undefined;
   },
 ) {
-  const events = new ByteLru<RelayEvent>(1024, 2 * 1024 * 1024);
+  let limit = PROFILE_CACHE_BASE;
+  const events = new ByteLru<RelayEvent>(limit, limit * PROFILE_ENTRY_BYTES);
+  // One entry per open view; the largest sets the limit.
+  const reservations = new Set<{ members: number }>();
   const owners = new WeakMap<RelayEvent, string>();
   const pending = new Map<
     string,
@@ -223,7 +240,7 @@ export function createProfileDirectory(
       (id) => !snapshot.has(id) && !unnamed.has(id) && !returned.has(id),
     );
     if (!fresh.length) return;
-    unnamed = new Set([...unnamed, ...fresh].slice(-1024));
+    unnamed = new Set([...unnamed, ...fresh].slice(-limit));
     for (const listener of listeners) notify(listener);
   }
   async function ensure(
@@ -233,7 +250,7 @@ export function createProfileDirectory(
   ) {
     if (closed) throw new DOMException("Session closed", "AbortError");
     const unique = [...new Set(ids)];
-    if (!refresh && unique.length > 1024)
+    if (!refresh && unique.length > limit)
       throw new Error("Profile request exceeds the directory budget");
     // A hit marks the profile recently used, so the budget evicts profiles
     // nobody has asked for rather than the oldest ones still on screen.
@@ -327,6 +344,27 @@ export function createProfileDirectory(
     // Notify even when nothing was loaded: an aborted read still needs a retry.
     publish(true);
   }
+  function resize() {
+    let reserved = 0;
+    for (const { members } of reservations)
+      reserved = Math.max(reserved, members);
+    const next = Math.min(PROFILE_CACHE_MAX, PROFILE_CACHE_BASE + reserved);
+    if (next === limit) return;
+    limit = next;
+    verified?.resize(limit);
+    if (events.resize(limit, limit * PROFILE_ENTRY_BYTES)) publish(true);
+  }
+  function reserve(members: number) {
+    const reservation = {
+      members: Number.isFinite(members) ? Math.max(0, Math.floor(members)) : 0,
+    };
+    reservations.add(reservation);
+    resize();
+    return () => {
+      if (!reservations.delete(reservation)) return;
+      if (!closed) resize();
+    };
+  }
   const queries: ProfileQueries = Object.freeze({
     snapshot: () => snapshot,
     subscribe(listener: () => void) {
@@ -339,6 +377,9 @@ export function createProfileDirectory(
     event: (pubkey: string) => events.peek(pubkey),
     unnamed: () => unnamed,
     generation: () => generation,
+    reserve,
+    limit: () => limit,
+    evictions: () => events.evictions,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

@@ -19,7 +19,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 // the same network request on every query keystroke; explicit retry remains available.
 const demands = new WeakMap<
   ComposerSession,
-  { generation: number; ids: Set<string> }
+  { generation: number; evictions: number; ids: Set<string> }
 >();
 export function MentionCompletion({
   session,
@@ -67,17 +67,24 @@ export function MentionCompletion({
   useEffect(() => {
     if (draftRoster) return;
     session.channels.ensureList();
-    // An access purge drops loaded names, so its reads start a new budget.
+    // An access purge or an eviction drops loaded names, so its reads start a
+    // new budget. Names still loaded cost no read when requested again.
+    const evictions = session.profiles.evictions?.() ?? 0;
     let demand = demands.get(session);
-    if (demand?.generation !== profileGeneration) {
-      demand = { generation: profileGeneration, ids: new Set() };
+    if (
+      demand?.generation !== profileGeneration ||
+      demand.evictions !== evictions
+    ) {
+      demand = { generation: profileGeneration, evictions, ids: new Set() };
       demands.set(session, demand);
     }
     const requested = demand.ids;
+    // An open channel reserves room for its whole roster (ConversationChannel).
+    const limit = session.profiles.limit?.() ?? 1024;
     const ids = memberKey
       .split(":")
       .filter((id) => id && (attempt > 0 || !requested.has(id)))
-      .slice(0, attempt > 0 ? 1024 : Math.max(0, 1024 - requested.size));
+      .slice(0, attempt > 0 ? limit : Math.max(0, limit - requested.size));
     if (!ids.length) return;
     for (const id of ids) requested.add(id);
     let live = true;

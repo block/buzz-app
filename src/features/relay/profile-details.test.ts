@@ -541,3 +541,49 @@ it("evicts the least recently ensured profile, not the oldest stored one", async
     directory.dispose();
   }
 });
+
+it("holds an open channel's roster on top of the base and shrinks back when released", async () => {
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read });
+  const changed = vi.fn();
+  const unsubscribe = directory.queries.subscribe(changed);
+  try {
+    const people = Array.from({ length: 1524 }, () => keypair());
+    const ids = people.map((key) => key.pubkey);
+    const release = directory.queries.reserve?.(500);
+    expect(directory.queries.limit?.()).toBe(1524);
+    // A whole roster fits in one request while the room is reserved.
+    await directory.ensure(ids.slice(0, 1100));
+    expect(read).toHaveBeenCalled();
+    directory.accept(
+      people.map((key, index) => profile(key, { name: `P${index}` })),
+    );
+    expect(directory.queries.snapshot().size).toBe(1524);
+    expect(directory.queries.evictions?.()).toBe(0);
+    // A larger reservation wins; the smaller one keeps nothing when released.
+    const larger = directory.queries.reserve?.(20_000);
+    expect(directory.queries.limit?.()).toBe(10_240);
+    larger?.();
+    expect(directory.queries.limit?.()).toBe(1524);
+    await directory.ensure([ids[0] as string]);
+    changed.mockClear();
+    release?.();
+    release?.();
+    expect(directory.queries.limit?.()).toBe(1024);
+    const snapshot = directory.queries.snapshot();
+    expect(snapshot.size).toBe(1024);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.evictions?.()).toBe(500);
+    // The least recently used go first: P0 was just ensured, P1..P500 were not.
+    expect(snapshot.get(ids[0] as string)?.name).toBe("P0");
+    expect(snapshot.has(ids[1] as string)).toBe(false);
+    expect(snapshot.has(ids[500] as string)).toBe(false);
+    expect(snapshot.get(ids[501] as string)?.name).toBe("P501");
+    await expect(directory.ensure(ids.slice(0, 1100))).rejects.toThrow(
+      "exceeds the directory budget",
+    );
+  } finally {
+    unsubscribe();
+    directory.dispose();
+  }
+});

@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -23,6 +24,7 @@ import {
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
+import { useListedChannel } from "../relay/listed-channel";
 import { ownSolo } from "../solo/labels";
 import { useSoloHasPeople } from "../solo/people";
 import {
@@ -139,6 +141,18 @@ type ChannelProps = Pick<Conversation, "session" | "scope" | "extensions"> & {
 export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
   const channelName = props.channelName ?? channel?.name ?? "";
+  // While the channel is open the profile cache keeps room for its whole roster
+  // on top of its base; leaving gives the room back.
+  const members = useListedChannel(
+    session.channels,
+    channel?.id,
+    (listed) => listed?.members?.length ?? 0,
+  );
+  const { profiles } = session;
+  useEffect(
+    () => (members ? profiles.reserve?.(members) : undefined),
+    [profiles, members],
+  );
   // One stable element, so selecting a channel never remounts the page below.
   const provide = (
     interactions: ConversationInteractions,

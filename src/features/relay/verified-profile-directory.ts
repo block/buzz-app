@@ -1,4 +1,4 @@
-import { ByteLru } from "./budget";
+import { ByteLru, PROFILE_CACHE_BASE, PROFILE_ENTRY_BYTES } from "./budget";
 import { newer, type RelayEvent } from "./events";
 import {
   VERIFIED_PROFILE_BATCH,
@@ -23,7 +23,8 @@ export function createVerifiedProfileDirectory(
     signal: AbortSignal,
   ) => Promise<VerifiedProfileAuthority | null>,
 ) {
-  const heads = new ByteLru<RelayEvent>(1024, 2 * 1024 * 1024);
+  let limit = PROFILE_CACHE_BASE;
+  const heads = new ByteLru<RelayEvent>(limit, limit * PROFILE_ENTRY_BYTES);
   // Least recently ensured first.
   const wanted = new Set<string>();
   const checked = new Set<string>();
@@ -273,6 +274,22 @@ export function createVerifiedProfileDirectory(
       }
     });
   }
+  /** Drops the least recently ensured identities past the limit. */
+  function trim() {
+    const gone = new Set<string>();
+    for (const oldest of wanted) {
+      if (wanted.size <= limit) break;
+      wanted.delete(oldest);
+      heads.delete(oldest);
+      checked.delete(oldest);
+      gone.add(oldest);
+    }
+    if (!gone.size) return;
+    evicted = true;
+    // A later ensure must issue a fresh REQ; the old one is past EOSE.
+    for (const batch of batches)
+      batch.subjects = batch.subjects.filter((key) => !gone.has(key));
+  }
   return {
     ensure(subjects: readonly string[]) {
       if (closed) return;
@@ -281,22 +298,20 @@ export function createVerifiedProfileDirectory(
         wanted.delete(subject);
         wanted.add(subject);
       }
-      const gone = new Set<string>();
-      for (const oldest of wanted) {
-        if (wanted.size <= 1024) break;
-        wanted.delete(oldest);
-        heads.delete(oldest);
-        checked.delete(oldest);
-        gone.add(oldest);
-      }
-      if (gone.size) {
-        evicted = true;
-        // A later ensure must issue a fresh REQ; the old one is past EOSE.
-        for (const batch of batches)
-          batch.subjects = batch.subjects.filter((key) => !gone.has(key));
-      }
+      trim();
       schedule();
       if (!refreshTimer && !discovery) armRefresh();
+    },
+    /** Follows the profile directory's limit; shrinking evicts and notifies now. */
+    resize(next: number) {
+      if (closed || next === limit) return;
+      limit = next;
+      heads.resize(limit, limit * PROFILE_ENTRY_BYTES);
+      trim();
+      if (evicted) {
+        evicted = false;
+        changed();
+      }
     },
     snapshot(): ReadonlyMap<string, VerifiedProfile> {
       const currentAuthority = authority;

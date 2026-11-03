@@ -102,10 +102,11 @@ async function federatedCredential(
   let browsed = false;
   const unsubscribe = identity.subscribe(() => {
     wake();
-    if (identity.snapshot().status !== "signing-in") return;
+    if (browsed || identity.snapshot().status !== "signing-in") return;
     browsed = true;
     // Native began it after a Cancel that arrived while it was still
-    // restoring, which canceled nothing.
+    // restoring, which canceled nothing. Only the first is this call's: a
+    // later one is a newer sign-in's, begun after Cancel.
     if (signal.aborted) cancel();
   });
   signal.addEventListener("abort", cancel, { once: true });

@@ -337,7 +337,20 @@ describe("an FI build", () => {
       expect(fi.service.signIn).toHaveBeenCalledOnce();
     });
 
-    it("cancels a browser step that begins after Cancel found nothing to cancel", async () => {
+    it("fails without signing in again when the restore fails again", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+      const fi = federatedFixture();
+      fi.publish({ status: "unavailable", failure: "network-unavailable" });
+      vi.mocked(fi.service.signIn).mockImplementationOnce(async () =>
+        fi.service.snapshot(),
+      );
+      await expect(
+        firstRunCredential(new AbortController().signal, fi.service),
+      ).rejects.toThrow(new Error("Sign-in did not finish. Try again."));
+      expect(fi.service.signIn).toHaveBeenCalledOnce();
+    });
+
+    it("cancels a browser step that begins after Cancel found nothing to cancel, but not a newer sign-in's", async () => {
       vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
       const fi = federatedFixture();
       fi.publish({ status: "unavailable", failure: "network-unavailable" });
@@ -362,7 +375,12 @@ describe("an FI build", () => {
         );
         fi.publish({ status: "signing-in", revision: "login", failure: null });
         await canceled;
-        return fi.service.snapshot();
+        fi.publish({ status: "signed-out", failure: "sign-in-canceled" });
+        const answer = fi.service.snapshot();
+        // Signing in again after Cancel opens the browser before this call's
+        // answer arrives.
+        fi.publish({ status: "signing-in", revision: "newer", failure: null });
+        return answer;
       });
       const attempt = new AbortController();
       const credential = firstRunCredential(attempt.signal, fi.service);
@@ -375,6 +393,7 @@ describe("an FI build", () => {
         expect(fi.service.cancelSignIn).toHaveBeenCalledTimes(2),
       );
       await canceled;
+      expect(fi.service.cancelSignIn).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -386,13 +405,19 @@ describe("an FI build", () => {
       started = resolve;
     });
     vi.mocked(fi.service.signIn).mockImplementationOnce(async () => {
+      fi.publish({ status: "signing-in", revision: "login" });
       started();
       await new Promise<void>((resolve) =>
         vi
           .mocked(fi.service.cancelSignIn)
           .mockImplementationOnce(async () => resolve()),
       );
-      return fi.service.snapshot();
+      fi.publish({ status: "signed-out", failure: "sign-in-canceled" });
+      const answer = fi.service.snapshot();
+      // Signing in again after Cancel opens the browser before this call's
+      // answer arrives.
+      fi.publish({ status: "signing-in", revision: "newer" });
+      return answer;
     });
     const attempt = new AbortController();
     const credential = firstRunCredential(attempt.signal, fi.service);

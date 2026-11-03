@@ -392,6 +392,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   meant; then pick from the list. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+  Repeated mentions of the same person or agent appear once in the invitation
+  prompt; all mentions stay in your message.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders

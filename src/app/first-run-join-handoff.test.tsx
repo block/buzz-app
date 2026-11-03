@@ -247,12 +247,11 @@ async function firstRunWithAddress(
     `${address}{Enter}`,
   );
   await user.click(
-    await screen.findByRole("button", { name: "Sign in with email" }),
+    await screen.findByRole("button", { name: "Sign in with Builderlab" }),
   );
   await user.click(
     await screen.findByRole("button", { name: "Create my key" }),
   );
-  await user.click(await screen.findByRole("button", { name: "Back it up" }));
   const dialog = await screen.findByRole("dialog", {
     name: "Join a community",
   });

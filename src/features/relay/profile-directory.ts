@@ -120,8 +120,22 @@ export function createProfileDirectory(
       },
       verification.refresh,
     );
+  // A background read of many pages publishes once, when its pages settle:
+  // every publish refolds all profiles and wakes every listener, and an open
+  // mention menu re-ranks its whole roster on each one. The session accepts
+  // each page before the read returns it, so a page is recognised by its
+  // pending batch, not by its caller.
+  let folded = false;
+  function flush() {
+    if (folded && !closed) publish(true);
+  }
   function accept(incoming: readonly RelayEvent[]) {
     if (closed) return;
+    const fold = incoming.every(
+      (event) =>
+        event.kind !== 0 ||
+        pending.get(event.pubkey)?.priority === "background",
+    );
     let changed = false;
     const attested: Promise<boolean>[] = [];
     for (const event of incoming) {
@@ -141,7 +155,8 @@ export function createProfileDirectory(
         );
       changed = true;
     }
-    if (changed) publish(true);
+    if (changed && fold) folded = true;
+    else if (changed) publish(true);
     // One notification per batch: every publish refolds all profiles, and
     // listeners refold every cached channel.
     if (attested.length)
@@ -151,6 +166,7 @@ export function createProfileDirectory(
   }
   /** Notifies on display changes, and on winning-event changes for `event()` readers. */
   function publish(headChanged = false) {
+    folded = false;
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);
@@ -231,10 +247,15 @@ export function createProfileDirectory(
     for (const listener of listeners) notify(listener);
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
-  function missed(ids: readonly string[], returned: ReadonlySet<string>) {
+  function missed(
+    ids: readonly string[],
+    returned: ReadonlySet<string>,
+    fold = false,
+  ) {
     // The cache may already have evicted a returned kind 0; it is not absent.
+    // A folded page is accepted but not yet published.
     for (const id of ids)
-      if (!loaded.has(id) && !returned.has(id)) {
+      if (!loaded.has(id) && !events.peek(id) && !returned.has(id)) {
         // Re-adding moves a reconfirmed absence to the end of the trim order.
         absent.delete(id);
         absent.add(id);
@@ -244,11 +265,16 @@ export function createProfileDirectory(
       absent.delete(id);
     }
     const fresh = ids.filter(
-      (id) => !snapshot.has(id) && !unnamed.has(id) && !returned.has(id),
+      (id) =>
+        !snapshot.has(id) &&
+        !events.peek(id) &&
+        !unnamed.has(id) &&
+        !returned.has(id),
     );
     if (!fresh.length) return;
     unnamed = new Set([...unnamed, ...fresh].slice(-limit));
-    for (const listener of listeners) notify(listener);
+    if (fold) folded = true;
+    else for (const listener of listeners) notify(listener);
   }
   async function ensure(
     ids: readonly string[],
@@ -286,7 +312,9 @@ export function createProfileDirectory(
         !batch &&
         (refresh ||
           !(
+            // A folded page is loaded before its publish.
             loaded.has(id) ||
+            events.peek(id) ||
             // Only while still reported unnamed, so a skip never leaves an
             // identity neither named nor unnamed.
             (priority === "background" && absent.has(id) && unnamed.has(id))
@@ -323,13 +351,19 @@ export function createProfileDirectory(
       )
         .then((result) => {
           if (signal.aborted || batch.cancel.signal.aborted) return;
+          // A foreground reader that joined this read gets its names at once.
+          const fold = batch.priority === "background";
           const profiles = result.filter((event) =>
             authors.includes(event.pubkey),
           );
           accept(profiles);
           // A page at the limit may have left out authors who do have one.
           if (result.length < PROFILE_PAGE)
-            missed(authors, new Set(profiles.map((event) => event.pubkey)));
+            missed(
+              authors,
+              new Set(profiles.map((event) => event.pubkey)),
+              fold,
+            );
         })
         .catch((error: unknown) => {
           // A shrink cancels a background read quietly; evictions() tells its
@@ -341,11 +375,16 @@ export function createProfileDirectory(
         .finally(() => {
           for (const id of authors)
             if (pending.get(id) === batch) pending.delete(id);
+          // A failed page ends its ensure early; publish the rest once idle.
+          if (!pending.size) flush();
         });
       for (const id of authors) pending.set(id, batch);
       waiting.add(batch.work);
     }
     await Promise.all(waiting);
+    // Every caller sees its names published when its ensure resolves, also
+    // one that joined another caller's read.
+    flush();
   }
   function clear() {
     controller.abort();

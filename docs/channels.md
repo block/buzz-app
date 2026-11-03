@@ -1191,7 +1191,11 @@ The port retains the prepared-store implementation and its behavior tests:
   profiles; the shrink cancels background profile reads still in flight, and
   stops the verified-name syncs it emptied. Verified-name syncs (128 people
   each) have their own pool of 80, enough for the largest cache, apart from the
-  32 artifact syncs. Narrow row profile selectors,
+  32 artifact syncs. A background profile read of many pages publishes once,
+  when its pages settle (a foreground read that joins it publishes at once), so
+  an open mention menu re-ranks a large roster once instead of per page. The
+  channel avatar preview reads at most the first 1,024 members; only the mention
+  menu reads a whole large roster. Narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour

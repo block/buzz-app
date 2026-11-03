@@ -680,3 +680,80 @@ it("returns known-unnamed identities past the base when it shrinks", async () =>
     vi.useRealTimers();
   }
 });
+
+it("publishes a background read's pages once, also when the session accepts each page first", async () => {
+  vi.useFakeTimers();
+  const answers: {
+    authors: readonly string[];
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const read = vi.fn(
+    (filters: readonly { authors?: readonly string[] | undefined }[]) =>
+      new Promise<RelayEvent[]>((resolve) => {
+        answers.push({ authors: filters[0]?.authors ?? [], resolve });
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const roster = unsignedProfiles(1500, "R");
+    const row = unsignedProfiles(1, "S");
+    const release = directory.queries.reserve?.(1500);
+    const changed = vi.fn();
+    const unsubscribe = directory.queries.subscribe(changed);
+    const menu = directory.ensure(
+      roster.map((event) => event.pubkey),
+      "background",
+    );
+    const shown = directory.ensure([row[0]?.pubkey as string]);
+    expect(answers).toHaveLength(4);
+    // The session accepts every read's events before the read returns them.
+    const answer = (index: number, events: RelayEvent[]) => {
+      const page = events.filter((event) =>
+        answers[index]?.authors.includes(event.pubkey),
+      );
+      directory.accept(page);
+      answers[index]?.resolve(page);
+    };
+    answer(0, roster);
+    await vi.runAllTimersAsync();
+    expect(changed).not.toHaveBeenCalled();
+    expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
+      false,
+    );
+    // An accepted page counts as loaded before its publish: asking again
+    // for it reads nothing, and that caller gets its names when it resolves.
+    await directory.ensure(
+      roster.slice(0, 500).map((event) => event.pubkey),
+      "background",
+    );
+    await vi.runAllTimersAsync();
+    expect(answers).toHaveLength(4);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
+      true,
+    );
+    changed.mockClear();
+    // A foreground read still publishes its page at once.
+    answer(3, row);
+    await shown;
+    await vi.runAllTimersAsync();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().has(row[0]?.pubkey as string)).toBe(
+      true,
+    );
+    changed.mockClear();
+    answer(1, roster);
+    await vi.runAllTimersAsync();
+    expect(changed).not.toHaveBeenCalled();
+    answer(2, roster);
+    await menu;
+    await vi.runAllTimersAsync();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().size).toBe(1501);
+    unsubscribe();
+    release?.();
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});

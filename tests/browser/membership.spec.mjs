@@ -121,12 +121,15 @@ test("Channels renders grouped history and live membership without turning activ
   app.membership("member_removed", 0);
   await expect(groups).toHaveCount(1);
   await expect(groups.last()).toContainText(
-    "Pinky and 1 other were added · Pinky was removed",
+    "Brain was added · Pinky was removed",
   );
   await expect(groups.last().locator("p")).toHaveAttribute(
     "title",
     /Pinky was removed by you/,
   );
+  await groups.last().screenshot({
+    path: testInfo.outputPath("latest-membership-change.png"),
+  });
   app.membership("member_joined", 0, -1, true);
   // Place a genuine message after the forgery: seeing it proves the batch was processed.
   const after = app.append("primary", "alpha", "After membership activity");

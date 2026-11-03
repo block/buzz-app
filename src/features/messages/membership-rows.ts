@@ -78,12 +78,14 @@ export function membershipDescription(
   viewer?: string,
   resolveName?: (id: string, fallback: string) => string,
 ) {
-  const changes = rows.flatMap((row) =>
-    row.membership && visibleMembership(row.membership) ? [row.membership] : [],
-  );
+  const latest = new Map<string, MembershipChange>();
+  for (const row of rows)
+    if (row.membership && visibleMembership(row.membership))
+      latest.set(row.membership.target, row.membership);
+  const changes = [...latest.values()];
   const first = changes[0];
   if (!first) return { targets: [], parts: [], text: "", title: "" };
-  const targets = [...new Set(changes.map((change) => change.target))];
+  const targets = [...latest.keys()];
   const name = (id: string, subject = false): MembershipPart => ({
     id,
     text:
@@ -106,7 +108,7 @@ export function membershipDescription(
           : plain(part.value),
       );
   };
-  // Count people once per action; retain distinct actors in the detail.
+  // Each person appears only under their latest visible action.
   const kinds = new Set(changes.map((change) => change.type));
   if (
     targets.length > 3 ||

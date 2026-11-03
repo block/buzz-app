@@ -161,6 +161,30 @@ it("collapses high-volume mixed activity and deduplicates repeat arrivals withou
   expect(summary.title.match(/member-0 was added by adder/g)).toHaveLength(1);
   expect(grouped[1]?.id).toBe("message");
 });
+it("describes each person by their latest visible change in the run", () => {
+  const changes = [
+    row("added", joined(wes, pinky)),
+    row("removed", removed(brain, pinky)),
+    row("added-back", joined(brain, pinky)),
+  ];
+  const group = membershipRows(changes)[0];
+  expect(group?.membershipRows).toEqual(changes);
+  expect(membershipDescription(changes, profiles).text).toBe(
+    "Pinky added by Brain",
+  );
+  expect(membershipDescription(changes.slice(0, 2), profiles).text).toBe(
+    "Pinky was removed by Brain",
+  );
+  const mixed = membershipDescription(
+    [...changes, row("other-removal", removed(wes, brain))],
+    profiles,
+  );
+  expect(mixed.text).toBe("Pinky was added · Brain was removed");
+  expect(mixed.title).toBe(
+    "Pinky was added by Brain; Brain was removed by Wes",
+  );
+  expect(mixed.targets).toEqual([pinky, brain]);
+});
 it("every grouped input remains represented for mixed three-event sequences", () => {
   const changes = [
     joined(wes, pinky),

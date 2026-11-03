@@ -2246,11 +2246,8 @@ it("restores a persisted binding after reload and starts fresh in a different wo
   // and its first turn's context.
   const [[thread, parts] = []] = savedPrompts(f.storage);
   expect(parts).toEqual([
-    [
-      "developer instructions",
-      expect.stringContaining("a coding agent in Buzz"),
-    ],
-    ["turn context", expect.stringContaining("<agent-instructions>")],
+    ["base", expect.stringContaining("a coding agent in Buzz")],
+    ["each-turn", expect.stringContaining("<agent-instructions>")],
   ]);
   const restored = fixture();
   for (const [key, value] of f.storage) restored.storage.set(key, value);

@@ -139,15 +139,26 @@ export function sessionPrompts(
   };
 }
 
+/** The label of a piece sent with each turn rather than once; a session
+ * keeps its first turn's copy. */
+export const EACH_TURN = "each-turn";
+const EACH_TURN_GROUP = "Sent with each turn (copy from the first turn)";
+
 /** The sections a saved prompt shows: each piece's own tagged sections, and
- * its other text under its label. */
+ * its other text under its label. A piece sent with each turn shows only its
+ * tagged sections, under one heading: its loose lines only restate the
+ * identity and say the sections replace earlier ones. */
 const sections = (parts: readonly PromptPart[]): PromptSection[] =>
   parts.flatMap(({ label, text }) =>
-    promptSections(text).map((section) =>
-      section.tag === "text" && label
-        ? { tag: label, body: section.body }
-        : section,
-    ),
+    label === EACH_TURN
+      ? promptSections(text)
+          .filter((section) => section.tag !== "text")
+          .map((section) => ({ ...section, group: EACH_TURN_GROUP }))
+      : promptSections(text).map((section) =>
+          section.tag === "text" && label
+            ? { tag: label, body: section.body }
+            : section,
+        ),
   );
 
 /** `turns`, already cut to the shown window, with each session's prompt at

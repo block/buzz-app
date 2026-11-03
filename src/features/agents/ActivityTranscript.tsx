@@ -7,12 +7,14 @@ import {
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type {
-  ToolDiff,
-  ToolItem,
-  Transcript,
-  TranscriptItem,
-  TranscriptTurn,
+import {
+  sectionTitle,
+  type PromptSection,
+  type ToolDiff,
+  type ToolItem,
+  type Transcript,
+  type TranscriptItem,
+  type TranscriptTurn,
 } from "./activity-transcript";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 import {
@@ -288,7 +290,7 @@ function Sections({
   sections,
 }: {
   title: string;
-  sections: readonly { tag: string; body: string }[];
+  sections: readonly PromptSection[];
 }) {
   return (
     <details className={styles.context}>
@@ -300,13 +302,18 @@ function Sections({
       </summary>
       {sections.map((section, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
-        <details key={index} className={styles.section}>
-          <summary className="text-body-sm text-subtle">
-            <CaretRightIcon size={14} aria-hidden="true" />
-            <span>{section.tag}</span>
-          </summary>
-          <pre className={styles.pre}>{section.body}</pre>
-        </details>
+        <Fragment key={index}>
+          {section.group && section.group !== sections[index - 1]?.group && (
+            <p className="text-body-sm text-subtle">{section.group}</p>
+          )}
+          <details className={styles.section}>
+            <summary className="text-body-sm text-subtle">
+              <CaretRightIcon size={14} aria-hidden="true" />
+              <span>{sectionTitle(section.tag)}</span>
+            </summary>
+            <pre className={styles.pre}>{section.body}</pre>
+          </details>
+        </Fragment>
       ))}
     </details>
   );

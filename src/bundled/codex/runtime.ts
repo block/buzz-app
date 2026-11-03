@@ -11,7 +11,10 @@ import {
 } from "../../features/agent-harness/plugin-wake";
 import type { AgentKey } from "../../features/agents/membership";
 import type { AgentReads } from "../../features/agents/reads";
-import { sessionPrompts } from "../../features/agents/session-prompts";
+import {
+  EACH_TURN,
+  sessionPrompts,
+} from "../../features/agents/session-prompts";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
@@ -1684,11 +1687,11 @@ export class CodexRuntime {
       if (fresh)
         void this.prompts(agent.key).save(active.threadId, [
           {
-            label: "developer instructions",
+            label: "base",
             text: params.developerInstructions,
           },
           {
-            label: "turn context",
+            label: EACH_TURN,
             text: Object.values(additionalContext)
               .map(({ value }) => value)
               .join(""),

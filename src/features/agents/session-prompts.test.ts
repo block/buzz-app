@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
-import type { TranscriptTurn } from "./activity-transcript";
+import { sectionTitle, type TranscriptTurn } from "./activity-transcript";
 import { localStore, type AgentStore } from "./store";
 import {
+  EACH_TURN,
   PROMPTS_BUDGET,
   removeSessionPrompts,
   sessionPrompts,
@@ -92,4 +93,32 @@ it("removes an agent's prompts of every type, and only that agent's", async () =
     expect(sessionPrompts(storage, type, AGENT).get("s")).toBeUndefined();
     expect(sessionPrompts(storage, type, other).get("s")).toEqual(part);
   }
+});
+
+it("titles known sections readably and shows unknown tags as they are", () => {
+  expect(sectionTitle("community-repositories")).toBe("Repositories folder");
+  expect(sectionTitle("agent-instructions")).toBe("Agent instructions");
+  expect(sectionTitle("some-new-tag")).toBe("some-new-tag");
+});
+
+it("shows a Codex prompt as Base and the first turn's tagged context", async () => {
+  const prompts = sessionPrompts(memory(), "codex", AGENT);
+  const context =
+    "You are X (pubkey p).\nCurrent Buzz custom instructions replace all prior Buzz custom instructions.\n<agent-instructions>\nBe kind.\n</agent-instructions>\n\nCurrent core memory replaces all prior core memory.\n<core-memory>\nm\n</core-memory>\n\n<community-repositories>\nr\n</community-repositories>";
+  await prompts.save("s1", [
+    { label: "base", text: "You are X.\nBase text." },
+    { label: EACH_TURN, text: context },
+  ]);
+  const [shown] = prompts.shown([turn({ sessionId: "s1", newSession: true })]);
+  const group = "Sent with each turn (copy from the first turn)";
+  expect(shown?.items[0]).toMatchObject({
+    type: "system",
+    sections: [
+      { tag: "base", body: "You are X.\nBase text." },
+      { tag: "agent-instructions", body: "Be kind.", group },
+      { tag: "core-memory", body: "m", group },
+      { tag: "community-repositories", body: "r", group },
+    ],
+  });
+  expect(prompts.get("s1")?.[1]?.text).toBe(context);
 });

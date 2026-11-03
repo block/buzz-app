@@ -514,5 +514,5 @@ it("divides sessions, and shows each one's prompt once at its top", () => {
       .map((line) => line.textContent),
   ).toEqual(["Session continued; earlier turns not shown", "New session"]);
   expect(screen.getAllByText(/System prompt/)).toHaveLength(1);
-  expect(screen.getByText("agent-instructions")).toBeInTheDocument();
+  expect(screen.getByText("Agent instructions")).toBeInTheDocument();
 });

@@ -1,6 +1,12 @@
 import { eventDto } from "../../../src/features/relay/events";
 import { foldMessages } from "../../../src/features/relay/fold";
 import { keypair, signed } from "../../../src/features/relay/testing";
+import {
+  importedMessages,
+  importProposal,
+  importRecords,
+  importRelayKey,
+} from "./import-examples";
 import type {
   ChannelMessage,
   Profile,
@@ -928,6 +934,34 @@ export const groups: Group[] = [
             ),
           },
         ],
+      },
+    ],
+  },
+  {
+    id: "conversation-import",
+    title: "Conversation import",
+    description:
+      "A consented import from another tool: the proposal card, its system lines, and imported history.",
+    examples: [
+      {
+        id: "import-proposal",
+        title: "Import proposal",
+        description:
+          "Verified names, usernames and fingerprints for each participant, the counts and the manifest fingerprint.",
+        rows: foldMessages("studio", importRelayKey, [importProposal]),
+      },
+      {
+        id: "import-records",
+        title: "Consent and completion",
+        description: "Import records render as quiet system lines.",
+        rows: foldMessages("studio", importRelayKey, importRecords),
+      },
+      {
+        id: "imported-messages",
+        title: "Imported messages",
+        description:
+          "Imported history shows its source and original time; a source edit shows the edited marker.",
+        rows: foldMessages("studio", importRelayKey, importedMessages),
       },
     ],
   },

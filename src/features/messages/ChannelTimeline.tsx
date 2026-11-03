@@ -9,6 +9,7 @@ import {
   ChatCircleIcon,
 } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
+import { ImportNoticeRow } from "./ImportNoticeRow";
 import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
@@ -842,6 +843,7 @@ function Timeline({
     const arrivals = rows.filter(
       (row, index) =>
         !previousIds.has(row.id) &&
+        !row.imported &&
         (!paged || index > tail) &&
         (row.createdAt > floor || (row.createdAt === floor && !paged)),
     ).length;
@@ -1310,6 +1312,15 @@ function Timeline({
                       day={day}
                       onOpenLink={onOpenLink}
                       canOpenLink={canOpenLink}
+                    />
+                  ) : row.importRecord &&
+                    row.importRecord.type !== "proposal" ? (
+                    <ImportNoticeRow
+                      row={row}
+                      profiles={profiles}
+                      viewer={viewer}
+                      day={day}
+                      resolveName={resolveName}
                     />
                   ) : (
                     <MessageRow

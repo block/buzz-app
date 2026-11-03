@@ -226,6 +226,85 @@ it("reads back expired delivery with strong consistency without re-signing or pu
     vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
   ).toBe(false);
 });
+it("publishes imported history on its first attempt without a read-back, and reads back only an unsettled retry", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.writer);
+  const writer = transport.writer;
+  const event = signed(viewer, {
+    kind: 9,
+    created_at: 1_600_000_000,
+    content: "archived message",
+    tags: [
+      ["h", "channel"],
+      ["import", "1".repeat(64)],
+      ["source", "slack", "1"],
+    ],
+  });
+  const paths = async (run: () => Promise<unknown>) => {
+    requests.length = 0;
+    await run().catch(() => {});
+    return requests.filter((r) => r.path !== "/").map((r) => r.path);
+  };
+  const publish = () => writer.publish(event, new AbortController().signal);
+  respond = () => ({ status: 503, body: { error: "offline" } });
+  expect(await paths(publish)).toEqual(["/events"]);
+  respond = (request) =>
+    request.path === "/query"
+      ? { body: [event] }
+      : { body: { accepted: true, event_id: event.id } };
+  expect(await paths(publish)).toEqual(["/query"]);
+  // Confirmed, so the id is forgotten and a new attempt is a first attempt.
+  expect(await paths(publish)).toEqual(["/events"]);
+
+  respond = () => ({
+    body: { accepted: false, event_id: event.id, message: "invalid: no" },
+  });
+  expect(await paths(publish)).toEqual(["/events"]);
+  respond = () => ({ body: { accepted: true, event_id: event.id } });
+  // A refusal is terminal too: nothing was stored to read back.
+  expect(await paths(publish)).toEqual(["/events"]);
+
+  respond = () => ({ status: 503, body: { error: "offline" } });
+  for (let i = 0; i <= 4096; i++)
+    await writer
+      .publish(
+        { ...event, id: i.toString(16).padStart(64, "0") },
+        new AbortController().signal,
+      )
+      .catch(() => {});
+  respond = (request) =>
+    request.path === "/query"
+      ? { body: [] }
+      : { body: { accepted: true, event_id: event.id } };
+  // The oldest unsettled id was evicted; the newest still reads back.
+  expect(
+    await paths(() =>
+      writer.publish(
+        { ...event, id: "0".repeat(64) },
+        new AbortController().signal,
+      ),
+    ),
+  ).toEqual(["/events"]);
+  expect(
+    await paths(() =>
+      writer.publish(
+        { ...event, id: (4096).toString(16).padStart(64, "0") },
+        new AbortController().signal,
+      ),
+    ),
+  ).toEqual(["/query", "/events"]);
+});
+
+it("advertises conversation import only when the relay lists NIP-CI", async () => {
+  expect((await connectNativeTransport(community)).conversationImport).toBe(
+    undefined,
+  );
+  discovery = { supported_extensions: ["nip-ci"] };
+  expect((await connectNativeTransport(community)).conversationImport).toBe(
+    true,
+  );
+});
+
 it("publishes config artifacts straight to the relay, re-sending identical bytes and keeping typed refusals", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.configArtifacts);

@@ -8,6 +8,9 @@ export function continuesMessageGroup(
     !!previous &&
     !previous.membership &&
     !current.membership &&
+    !previous.importRecord &&
+    !current.importRecord &&
+    !previous.imported === !current.imported &&
     // Legacy output has no workflow ID: one relay signer is not one workflow.
     !previous.workflowOwnerId &&
     !current.workflowOwnerId &&

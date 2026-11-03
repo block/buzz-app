@@ -6,6 +6,12 @@ import { agentAudience } from "./audience";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
+import {
+  IMPORT_RECORD_KINDS,
+  importedMarker,
+  importRecord,
+  importRecordText,
+} from "../conversation-import/protocol";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import {
@@ -373,6 +379,28 @@ export function foldMessages(
         );
       continue;
     }
+    if (IMPORT_RECORD_KINDS.includes(event.kind)) {
+      const record = importRecord(event);
+      if (record)
+        rows.push(
+          Object.freeze({
+            id: event.id,
+            channelId,
+            authorId: event.pubkey,
+            createdAt: event.created_at,
+            createdAtMs: eventMs(event),
+            content: importRecordText(record),
+            importRecord: record,
+            mentions: Object.freeze([]),
+            attachments: Object.freeze([]),
+            reactions: Object.freeze([]),
+            replyCount: 0,
+            participants: Object.freeze([]),
+          }),
+        );
+      continue;
+    }
+    const imported = importedMarker(event);
     const edits = aux
       .filter(
         (item) =>
@@ -462,6 +490,7 @@ export function foldMessages(
             }
           : {}),
         ...(edits.length ? { edited: true as const } : {}),
+        ...(imported ? { imported } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(

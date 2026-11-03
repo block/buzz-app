@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createUpstream,
   validFilters,
+  validImportRecordTemplate,
   validMessageTemplate,
 } from "./relay-broker.mjs";
 
@@ -229,4 +230,44 @@ test("workflow list batches alone may exceed four filters, with 128 unique chann
     [...batch.slice(0, 5), null],
   ])
     assert.equal(validFilters(invalid), false);
+});
+
+test("broker signs only well-formed conversation import records", () => {
+  const channel = "f0".repeat(16);
+  const proposal = "1".repeat(64);
+  const record = (kind, tags, content = '{"v":1}') => ({
+    kind,
+    content,
+    created_at: 1_740_000_000,
+    tags,
+  });
+  assert.equal(
+    validImportRecordTemplate(record(42110, [["h", channel]])),
+    true,
+  );
+  assert.equal(
+    validImportRecordTemplate(
+      record(42111, [
+        ["e", proposal],
+        ["h", channel],
+      ]),
+    ),
+    true,
+  );
+  for (const bad of [
+    record(42110, [
+      ["h", channel],
+      ["e", proposal],
+    ]),
+    record(42112, [["h", channel]]),
+    record(42113, [
+      ["e", "x"],
+      ["h", channel],
+    ]),
+    record(42111, [["e", proposal]]),
+    record(42110, [["h", channel]], '{"v":2}'),
+    record(42110, [["h", channel]], "not json"),
+    record(9, [["h", channel]]),
+  ])
+    assert.equal(validImportRecordTemplate(bad), false);
 });

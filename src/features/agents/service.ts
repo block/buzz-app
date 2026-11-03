@@ -1,3 +1,4 @@
+import { withoutImported } from "../conversation-import/protocol";
 import type {} from "../navigation/service";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
@@ -5168,7 +5169,8 @@ export class AgentsService extends Service implements Agents {
     if (connected) Object.assign(connection, { epoch: 1, since });
     const heard = (agent: Agent) => originOf(agent.relay) === origin;
     const stopEvents = session.subscribeLive(
-      (batch) => this.runners.dispatch(batch, heard, since),
+      // Imported history never triggers agents.
+      (batch) => this.runners.dispatch(withoutImported(batch), heard, since),
       { replay: true },
     );
     const stopStatus = session.live.subscribe(() => {

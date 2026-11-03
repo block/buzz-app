@@ -43,6 +43,8 @@ export type OutgoingEvent = Readonly<{
   /** The relay refused the last attempt, rather than it failing on this
    * device, being asked to wait, or going unanswered. */
   refused?: true | undefined;
+  /** The relay's own refusal text for the last attempt, when it sent one. */
+  reason?: string | undefined;
 }>;
 export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
@@ -74,6 +76,13 @@ type SendObserver = (
   signal: AbortSignal,
 ) => ((pending: readonly EventData[]) => void) | undefined;
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
+/** A fully specified imported event; see `sendAt` in `createOutbox`. */
+export type ExplicitTimestampInput = Readonly<{
+  kind: 9 | 7;
+  created_at: number;
+  tags: readonly (readonly string[])[];
+  content: string;
+}>;
 export interface OutboxStorage {
   close?(): void;
   load(): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
@@ -98,6 +107,16 @@ export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
+const IMPORT_ONLY =
+  "Conversation import events are published only by the host import service";
+
+/** Import records (kinds 42110 to 42113) and imported history. */
+function importEntry(event: Pick<EventData, "kind" | "tags">) {
+  return (
+    (event.kind >= 42110 && event.kind <= 42113) ||
+    event.tags.some((tag) => tag[0] === "import")
+  );
+}
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
 export function createOutbox(
@@ -146,6 +165,12 @@ export function createOutbox(
   };
   let snapshot: readonly OutgoingEvent[] = Object.freeze([]);
   let visible: readonly OutgoingEvent[] = snapshot;
+  // A refused import entry waits only for the import service to dismiss it;
+  // it never holds back ordinary sends.
+  const outstanding = () =>
+    snapshot.filter(
+      (item) => !(item.delivery === "failed" && importEntry(item.event)),
+    ).length;
   let finalSnapshot: readonly OutgoingEvent[] | undefined;
   let finalVisible: readonly OutgoingEvent[] | undefined;
   const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, 8 * 1024 * 1024);
@@ -587,6 +612,7 @@ export function createOutbox(
             !(error instanceof PublishNotSent)
               ? true
               : undefined,
+          reason: error instanceof PublishRejected ? error.reason : undefined,
           error: awaitsReceipt(latest.event)
             ? publishing && !(error instanceof PublishRejected)
               ? "Workflow delivery could not be confirmed; inspect recent activity before submitting another command."
@@ -632,12 +658,276 @@ export function createOutbox(
       pumpDeliveries();
     }
   }
+  /** Conversation import records (kinds 42110 to 42113), host service only. */
+  function sendRecord(input: Pick<EventTemplate, "kind" | "content" | "tags">) {
+    if (input.kind < 42110 || input.kind > 42113)
+      throw new Error("Not a conversation import record");
+    return sendInternal(input, undefined, undefined, true);
+  }
+  function enqueue(
+    event: EventData,
+    savedRecovery?: OutboxRecovery,
+    active?: () => boolean,
+  ) {
+    profiling.measure("send.local", event.id, () => {
+      snapshot = Object.freeze([
+        ...snapshot,
+        Object.freeze({
+          event,
+          delivery: "sending" as const,
+          ...(savedRecovery ? { recovery: savedRecovery } : {}),
+          ...(active ? { guarded: true } : {}),
+        }),
+      ]);
+      notify();
+    });
+    const intent = ready.then(() => {
+      if (storageError) throw new Error(storageError);
+      return persist(event.id);
+    });
+    void intent.catch(() => {}); // Delivery reports persistence errors; disposal still saves queued intent.
+    schedule(event.id, intent);
+  }
+  /** Conversation import only: publishes exactly the caller's tags at the
+   * caller's created_at so every participant derives the same event id. No
+   * client-id or ms tag, no send clock and no send observers: an imported
+   * message is history, not fresh intent. */
+  function sendAt(input: ExplicitTimestampInput) {
+    if (closed) throw abortError();
+    if (storageError) throw new Error(storageError);
+    if (!hydrated)
+      throw new Error("Message history is still loading. Try again.");
+    if ((input.kind !== 9 && input.kind !== 7) || !outbox.supports(input.kind))
+      throw new Error("This relay connection cannot publish that event kind");
+    if (
+      !Number.isSafeInteger(input.created_at) ||
+      input.created_at < 0 ||
+      input.created_at > Math.floor(Date.now() / 1000) + 900
+    )
+      throw new Error("Imported event time is invalid");
+    if (
+      !Array.isArray(input.tags) ||
+      input.tags.some(
+        (tag) =>
+          !Array.isArray(tag) ||
+          !tag.length ||
+          tag.some((value) => typeof value !== "string"),
+      ) ||
+      input.tags.filter(([name]) => name === "import").length !== 1
+    )
+      throw new Error("An imported event needs exactly one import tag");
+    if (
+      typeof input.content !== "string" ||
+      (input.kind === 9 && !input.content.trim()) ||
+      byteSize({
+        kind: input.kind,
+        content: input.content,
+        tags: input.tags,
+      }) > OUTBOX_INPUT_MAX_BYTES
+    )
+      throw new Error("Message is empty or too large");
+    const template = {
+      kind: input.kind,
+      content: input.content,
+      pubkey: viewer,
+      created_at: input.created_at,
+      tags: input.tags.map((tag) => [...tag]),
+    };
+    const id = getEventHash(template);
+    // A resumed run may resubmit an event this journal already holds.
+    if (visible.some((item) => item.event.id === id)) return id;
+    if (outstanding() >= MAX_PENDING)
+      throw new Error(
+        "Too many outstanding operations; resolve or dismiss a pending operation",
+      );
+    enqueue(
+      Object.freeze({
+        ...template,
+        tags: Object.freeze(
+          template.tags.map((tag) => Object.freeze(tag)),
+        ) as unknown as string[][],
+        id,
+      }),
+    );
+    return id;
+  }
   const subscribe = (set: Set<() => void>, listener: () => void) => {
     set.add(listener);
     return () => {
       set.delete(listener);
     };
   };
+  function sendInternal(
+    {
+      supersedes,
+      ...input
+    }: Pick<EventTemplate, "kind" | "content" | "tags"> & {
+      supersedes?: number;
+    },
+    recovery: OutboxRecovery | undefined,
+    active: (() => boolean) | undefined,
+    record: boolean,
+  ) {
+    if (active && !active())
+      throw new DOMException("Channel addition cancelled", "AbortError");
+    if (closed) throw abortError();
+    if (storageError) throw new Error(storageError);
+    // Consent records and imported history are signed only after the
+    // host's own confirmation, never through the plugin-visible outbox.
+    if (!record && importEntry(input)) throw new Error(IMPORT_ONLY);
+    const savedRecovery = recoveryValue(recovery);
+    if (
+      savedRecovery &&
+      (!hydrated ||
+        snapshot.some((item) => item.recovery?.key === savedRecovery.key))
+    )
+      throw new Error("Recover the earlier message before sending another");
+    if (
+      !Number.isInteger(input.kind) ||
+      input.kind < 0 ||
+      input.kind > 65535 ||
+      !outbox.supports(input.kind)
+    )
+      throw new Error("This relay connection cannot publish that event kind");
+    const catalog = isCatalogKind(input.kind);
+    if (
+      (input.kind === 9 && !input.content.trim()) ||
+      // NIP-AP admits larger public definitions than ordinary input.
+      (catalog
+        ? bytes(input.content) > MAX_CONTENT_BYTES ||
+          byteSize(input) > MAX_EVENT_BYTES
+        : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
+    )
+      throw new Error("Message is empty or too large");
+    if (outstanding() >= MAX_PENDING)
+      throw new Error(
+        "Too many outstanding operations; resolve or dismiss a pending operation",
+      );
+    // Rendered messages carry send order within their second; the optimistic
+    // row and the signed event share this exact ms and created_at.
+    // Import records carry exactly their protocol tags, so no ms tag.
+    const channelId =
+      !record && channelRowKind(input.kind)
+        ? input.tags.find(([name]) => name === "h")?.[1]
+        : undefined;
+    const ms = channelId ? clock.next(channelId) : Date.now();
+    let createdAt = Math.floor(ms / 1000);
+    if (input.kind === 40003) {
+      if (!hydrated)
+        throw new Error("Message history is still loading. Try again.");
+      const target = input.tags.find(([name]) => name === "e")?.[1];
+      const channel = input.tags.find(([name]) => name === "h")?.[1];
+      // Edits use second precision on every client. Preserve retained local
+      // submission order without changing the protocol's event-ID tie-break.
+      for (const { event } of visible) {
+        if (
+          target &&
+          channel &&
+          event.kind === 40003 &&
+          event.pubkey === viewer &&
+          event.tags.some(([name, id]) => name === "e" && id === target) &&
+          event.tags.some(([name, id]) => name === "h" && id === channel)
+        )
+          createdAt = Math.max(createdAt, event.created_at + 1);
+      }
+      // Stay well inside the signer's 15-minute clock-skew allowance.
+      if (createdAt > Math.floor(ms / 1000) + 60)
+        throw new Error(
+          "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
+        );
+    }
+    if (catalog) {
+      // NIP-AP: max(now, head + 1) over the observed relay head and this
+      // device's retained writes, so a replacement can never lose or tie.
+      if (supersedes !== undefined)
+        createdAt = Math.max(createdAt, supersedes + 1);
+      const d = input.tags.find(([name]) => name === "d")?.[1];
+      for (const { event } of visible)
+        if (
+          event.kind === input.kind &&
+          event.pubkey === viewer &&
+          event.tags.some(([name, value]) => name === "d" && value === d)
+        )
+          createdAt = Math.max(createdAt, event.created_at + 1);
+      if (createdAt > Math.floor(ms / 1000) + 60)
+        throw new Error(
+          "Sharing is changing too quickly or your clock changed. Wait a moment and try again.",
+        );
+    }
+    if (record) {
+      // A later record about the same proposal must not tie an earlier one.
+      const target = input.tags.find(([name]) => name === "e")?.[1];
+      for (const { event } of visible)
+        if (
+          event.kind === input.kind &&
+          event.pubkey === viewer &&
+          target &&
+          event.tags.some(([name, id]) => name === "e" && id === target)
+        )
+          createdAt = Math.max(createdAt, event.created_at + 1);
+    }
+    const template = {
+      ...input,
+      pubkey: viewer,
+      created_at: createdAt,
+      tags: record
+        ? input.tags.map((tag) => [...tag])
+        : [
+            ...input.tags.map((tag) => [...tag]),
+            ["client-id", crypto.randomUUID()],
+            ...(channelId ? [["ms", String(ms % 1000)]] : []),
+          ],
+    };
+    const event = Object.freeze({
+      ...template,
+      tags: Object.freeze(
+        template.tags.map((tag) => Object.freeze(tag)),
+      ) as unknown as string[][],
+      id: getEventHash(template),
+    });
+    if (active) admissionGates.set(event.id, active);
+    if (!record) captureSend(event);
+    enqueue(event, savedRecovery, active);
+    return event.id;
+  }
+  function retryInternal(
+    id: string,
+    active: (() => boolean) | undefined,
+    host: boolean,
+  ) {
+    const item = find(id);
+    if (item && !host && importEntry(item.event)) throw new Error(IMPORT_ONLY);
+    if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
+      throw new DOMException("Channel addition cancelled", "AbortError");
+    // Workflow recovery is inspect/dismiss only, including restored intents.
+    if (
+      !closed &&
+      item &&
+      !(item.event.kind === 9000 && item.acknowledged) &&
+      !isWorkflowOperation(item.event) &&
+      !attempts.has(id) &&
+      !dismissing.has(id)
+    ) {
+      // A profile retry can reuse an older, unguarded saved invitation.
+      // Promote that intent before scheduling so signing and publication honor
+      // the renewed caller policy, including after the next hydration.
+      if (active) admissionGates.set(id, active);
+      if (
+        !importEntry(item.event) &&
+        (item.delivery === "failed" || item.delivery === "unknown")
+      )
+        captureSend(item.event);
+      replace({
+        ...item,
+        ...(active ? { guarded: true } : {}),
+        delivery: "sending",
+        error: undefined,
+        refused: undefined,
+        reason: undefined,
+      });
+      schedule(id, undefined, item.delivery);
+    }
+  }
   const outbox: Outbox = Object.freeze({
     snapshot: () => finalSnapshot ?? snapshot,
     subscribe: (listener: () => void) => subscribe(listeners, listener),
@@ -673,7 +963,7 @@ export function createOutbox(
         )
       )
         throw new Error("Recover the earlier message before sending another");
-      if (!find(id) && snapshot.length >= MAX_PENDING)
+      if (!find(id) && outstanding() >= MAX_PENDING)
         throw new Error(
           "Too many outstanding operations; resolve a pending operation",
         );
@@ -705,163 +995,16 @@ export function createOutbox(
       await persist(id, "acknowledge");
     },
     send(
-      {
-        supersedes,
-        ...input
-      }: Pick<EventTemplate, "kind" | "content" | "tags"> & {
+      input: Pick<EventTemplate, "kind" | "content" | "tags"> & {
         supersedes?: number;
       },
       recovery?: OutboxRecovery,
       active?: () => boolean,
     ) {
-      if (active && !active())
-        throw new DOMException("Channel addition cancelled", "AbortError");
-      if (closed) throw abortError();
-      if (storageError) throw new Error(storageError);
-      const savedRecovery = recoveryValue(recovery);
-      if (
-        savedRecovery &&
-        (!hydrated ||
-          snapshot.some((item) => item.recovery?.key === savedRecovery.key))
-      )
-        throw new Error("Recover the earlier message before sending another");
-      if (
-        !Number.isInteger(input.kind) ||
-        input.kind < 0 ||
-        input.kind > 65535 ||
-        !outbox.supports(input.kind)
-      )
-        throw new Error("This relay connection cannot publish that event kind");
-      const catalog = isCatalogKind(input.kind);
-      if (
-        (input.kind === 9 && !input.content.trim()) ||
-        // NIP-AP admits larger public definitions than ordinary input.
-        (catalog
-          ? bytes(input.content) > MAX_CONTENT_BYTES ||
-            byteSize(input) > MAX_EVENT_BYTES
-          : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
-      )
-        throw new Error("Message is empty or too large");
-      if (snapshot.length >= MAX_PENDING)
-        throw new Error(
-          "Too many outstanding operations; resolve or dismiss a pending operation",
-        );
-      // Rendered messages carry send order within their second; the optimistic
-      // row and the signed event share this exact ms and created_at.
-      const channelId = channelRowKind(input.kind)
-        ? input.tags.find(([name]) => name === "h")?.[1]
-        : undefined;
-      const ms = channelId ? clock.next(channelId) : Date.now();
-      let createdAt = Math.floor(ms / 1000);
-      if (input.kind === 40003) {
-        if (!hydrated)
-          throw new Error("Message history is still loading. Try again.");
-        const target = input.tags.find(([name]) => name === "e")?.[1];
-        const channel = input.tags.find(([name]) => name === "h")?.[1];
-        // Edits use second precision on every client. Preserve retained local
-        // submission order without changing the protocol's event-ID tie-break.
-        for (const { event } of visible) {
-          if (
-            target &&
-            channel &&
-            event.kind === 40003 &&
-            event.pubkey === viewer &&
-            event.tags.some(([name, id]) => name === "e" && id === target) &&
-            event.tags.some(([name, id]) => name === "h" && id === channel)
-          )
-            createdAt = Math.max(createdAt, event.created_at + 1);
-        }
-        // Stay well inside the signer's 15-minute clock-skew allowance.
-        if (createdAt > Math.floor(ms / 1000) + 60)
-          throw new Error(
-            "Edits are arriving too quickly or your clock changed. Wait a moment and try again.",
-          );
-      }
-      if (catalog) {
-        // NIP-AP: max(now, head + 1) over the observed relay head and this
-        // device's retained writes, so a replacement can never lose or tie.
-        if (supersedes !== undefined)
-          createdAt = Math.max(createdAt, supersedes + 1);
-        const d = input.tags.find(([name]) => name === "d")?.[1];
-        for (const { event } of visible)
-          if (
-            event.kind === input.kind &&
-            event.pubkey === viewer &&
-            event.tags.some(([name, value]) => name === "d" && value === d)
-          )
-            createdAt = Math.max(createdAt, event.created_at + 1);
-        if (createdAt > Math.floor(ms / 1000) + 60)
-          throw new Error(
-            "Sharing is changing too quickly or your clock changed. Wait a moment and try again.",
-          );
-      }
-      const template = {
-        ...input,
-        pubkey: viewer,
-        created_at: createdAt,
-        tags: [
-          ...input.tags.map((tag) => [...tag]),
-          ["client-id", crypto.randomUUID()],
-          ...(channelId ? [["ms", String(ms % 1000)]] : []),
-        ],
-      };
-      const event = Object.freeze({
-        ...template,
-        tags: Object.freeze(
-          template.tags.map((tag) => Object.freeze(tag)),
-        ) as unknown as string[][],
-        id: getEventHash(template),
-      });
-      if (active) admissionGates.set(event.id, active);
-      captureSend(event);
-      profiling.measure("send.local", event.id, () => {
-        snapshot = Object.freeze([
-          ...snapshot,
-          Object.freeze({
-            event,
-            delivery: "sending" as const,
-            ...(savedRecovery ? { recovery: savedRecovery } : {}),
-            ...(active ? { guarded: true } : {}),
-          }),
-        ]);
-        notify();
-      });
-      const intent = ready.then(() => {
-        if (storageError) throw new Error(storageError);
-        return persist(event.id);
-      });
-      void intent.catch(() => {}); // Delivery reports persistence errors; disposal still saves queued intent.
-      schedule(event.id, intent);
-      return event.id;
+      return sendInternal(input, recovery, active, false);
     },
     retry(id: string, active?: () => boolean) {
-      const item = find(id);
-      if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
-        throw new DOMException("Channel addition cancelled", "AbortError");
-      // Workflow recovery is inspect/dismiss only, including restored intents.
-      if (
-        !closed &&
-        item &&
-        !(item.event.kind === 9000 && item.acknowledged) &&
-        !isWorkflowOperation(item.event) &&
-        !attempts.has(id) &&
-        !dismissing.has(id)
-      ) {
-        // A profile retry can reuse an older, unguarded saved invitation.
-        // Promote that intent before scheduling so signing and publication honor
-        // the renewed caller policy, including after the next hydration.
-        if (active) admissionGates.set(id, active);
-        if (item.delivery === "failed" || item.delivery === "unknown")
-          captureSend(item.event);
-        replace({
-          ...item,
-          ...(active ? { guarded: true } : {}),
-          delivery: "sending",
-          error: undefined,
-          refused: undefined,
-        });
-        schedule(id, undefined, item.delivery);
-      }
+      retryInternal(id, active, false);
     },
     observeDismiss(listener: (item: OutgoingEvent) => void) {
       dismissListeners.add(listener);
@@ -893,6 +1036,10 @@ export function createOutbox(
   });
   return {
     outbox,
+    sendAt,
+    sendRecord,
+    /** Host import service retry; the public retry refuses import entries. */
+    retryImport: (id: string) => retryInternal(id, undefined, true),
     local: Object.freeze({
       snapshot: () => finalVisible ?? visible,
       subscribe: (listener: () => void) => subscribe(localListeners, listener),

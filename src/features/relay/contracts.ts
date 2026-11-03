@@ -1,4 +1,8 @@
 import type { VerifiedProfile } from "./verified-profile";
+import type {
+  ImportedMarker,
+  ImportRecord,
+} from "../conversation-import/protocol";
 import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
@@ -145,6 +149,10 @@ export type ChannelMessage = Readonly<{
   }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
+  /** Kind 9 history brought in by a consented conversation import (NIP-CI). */
+  imported?: ImportedMarker;
+  /** A conversation import proposal, consent, withdrawal or completion. */
+  importRecord?: ImportRecord;
   /** Offsets in `content` where attachment removal joined once-separate text; a
    * bound name never spans one. */
   attachmentSeams?: readonly number[];

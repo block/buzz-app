@@ -1,4 +1,6 @@
 import { ArtifactStorageService } from "../features/artifact-storage/service";
+import { createConversationImportHost } from "../features/conversation-import/service";
+import { createImportReviews } from "../features/conversation-import/reviews";
 import { createAdminAccess } from "../bundled/admin-access";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
@@ -99,6 +101,13 @@ export function createServices() {
   });
   const relay = communities.relay;
   const artifactStorage = new ArtifactStorageService(ctx);
+  const conversationImportReviews = createImportReviews();
+  const conversationImport = createConversationImportHost(
+    ctx,
+    relay,
+    conversationImportReviews,
+  );
+  ctx.effect(() => () => conversationImportReviews.dispose());
   // Expose v2 only with the complete label/projection/frame/Destination/guard slice.
   new SoloNavigationService(ctx, relay, plugins);
   // The one recovery point for federated sign-in; see onSignedIn.
@@ -225,6 +234,8 @@ export function createServices() {
     shortcutBindings,
     conversation,
     artifactStorage,
+    conversationImport,
+    conversationImportReviews,
     settingsCards,
     adminAccess,
     pages,

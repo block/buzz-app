@@ -75,6 +75,7 @@ import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
+import { ImportedMarker, markedEdited } from "./ImportedMarker";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
@@ -537,7 +538,7 @@ function MessageRowContent({
       canOpenLink={canOpenLink}
       participantProfiles={participantProfiles}
       largeEmoji={emojiOnly}
-      edited={editedInBody && displayRow.edited}
+      edited={editedInBody && markedEdited(displayRow)}
     />
   );
   const avatar = row.workflowOwnerId ? (
@@ -924,6 +925,7 @@ function MessageRowContent({
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
+                !row.importRecord &&
                 !renderMessage &&
                 messageActions()}
               {/* Screen-reader text stays out of selections: the clipboard carries
@@ -972,6 +974,9 @@ function MessageRowContent({
                 {!stackPrevious && (
                   <MessageTimestamp createdAt={row.createdAt} />
                 )}
+                {!stackPrevious && row.imported && (
+                  <ImportedMarker imported={row.imported} />
+                )}
                 {session &&
                   actions.map(
                     (action) =>
@@ -985,6 +990,9 @@ function MessageRowContent({
                       ),
                   )}
               </div>
+              {stackPrevious && row.imported && (
+                <ImportedMarker imported={row.imported} compact />
+              )}
             </div>
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
@@ -1086,7 +1094,7 @@ function MessageRowContent({
                   ) : (
                     body
                   )}
-                  {editedInBubble && shown.edited && <EditedMarker />}
+                  {editedInBubble && markedEdited(shown) && <EditedMarker />}
                   {reactionsInBubble && reactionContent}
                 </div>
               )}
@@ -1282,7 +1290,7 @@ function MessageRowContent({
                   })}
                 </div>
               )}
-              {!editedInBody && !editedInBubble && shown.edited && (
+              {!editedInBody && !editedInBubble && markedEdited(shown) && (
                 <EditedMarker />
               )}
             </MessageTimestampHint>

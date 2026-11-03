@@ -7,6 +7,9 @@ import { createRoot } from "react-dom/client";
 import { continuesMessageGroup } from "../../../src/features/messages/message-grouping";
 import { MessageRow } from "../../../src/features/messages/MessageRow";
 import { MembershipRow } from "../../../src/features/messages/MembershipRow";
+import { ImportNoticeRow } from "../../../src/features/messages/ImportNoticeRow";
+import { ImportConsentCard } from "../../../src/features/conversation-import/ImportCards";
+import { importRelay, importService } from "./import-examples";
 import { Button } from "../../../src/shared/design-system/ui/Button";
 import { LinkLabel, linkKind } from "../../../src/bundled/links/InlineLink";
 import { DiffMessage } from "../../../src/bundled/diffs/DiffMessage";
@@ -86,6 +89,21 @@ const messages: readonly Contribution<MessageRenderer>[] = [
     matches: (row) => !!row.diff,
     component: DiffMessage,
   },
+  {
+    id: "import-proposal",
+    key: "gallery/import-proposal",
+    pluginId: "gallery",
+    revision: "1",
+    title: "Conversation import proposal",
+    matches: (row) => row.importRecord?.type === "proposal",
+    component: ({ message }) => (
+      <ImportConsentCard
+        message={message}
+        relay={importRelay}
+        service={importService}
+      />
+    ),
+  },
 ];
 const codeBlocks: readonly Contribution<CodeBlockRenderer>[] = [
   {
@@ -136,6 +154,14 @@ function Specimen({ example }: { example: Example }) {
               viewer={reader}
               media={media}
               agentPubkeys={agentPubkeys}
+              day={!!example.day && index === 0}
+            />
+          ) : row.importRecord && row.importRecord.type !== "proposal" ? (
+            <ImportNoticeRow
+              key={row.id}
+              row={row}
+              profiles={profiles}
+              viewer={reader}
               day={!!example.day && index === 0}
             />
           ) : (

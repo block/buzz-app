@@ -1,3 +1,4 @@
+import { isImportedEvent } from "../conversation-import/protocol";
 import { byteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
@@ -56,7 +57,10 @@ export function createInboxFeed({
   // Metadata can hide a row without revoking access. Settle its overlays before
   // later ordinary metadata can reveal the retained mention.
   const admitted = (event: RelayEvent) => {
-    if (!event.tags.some(([name, value]) => name === "p" && value === viewer))
+    if (
+      isImportedEvent(event) ||
+      !event.tags.some(([name, value]) => name === "p" && value === viewer)
+    )
       return false;
     const hs = event.tags.filter(([name]) => name === "h");
     return (

@@ -1,0 +1,7 @@
+{
+  "id": "buzz.decision-inbox",
+  "name": "Decision Inbox",
+  "apiVersion": 1,
+  "description": "Capture Buzz messages that need a decision and handoff.",
+  "discovery": { "category": "productivity", "tags": ["decisions"] }
+}

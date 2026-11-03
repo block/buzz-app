@@ -46,6 +46,8 @@ import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
+import decisionInboxManifest from "./decision-inbox/manifest.json";
+import * as decisionInbox from "./decision-inbox";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
 import workflowsManifest from "./workflows/manifest.json";
@@ -162,6 +164,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...remindersManifest, apiVersion: 1 },
     module: reminders,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...decisionInboxManifest, apiVersion: 1 },
+    module: decisionInbox,
     enabledByDefault: true,
   },
   {

@@ -1,0 +1,355 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { MessageAction } from "../../features/conversation/contracts";
+import type { Navigation } from "../../features/navigation/controller";
+import type { ChannelMessage } from "../../features/relay/contracts";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import type { RelaySession } from "../../features/relay/session";
+import { viewRevision, writeView } from "../../shared/view-state";
+import { DecisionInboxPage } from "./DecisionInboxPage";
+import { apply } from "./index";
+import { key, readList } from "./model";
+
+const viewer = "a".repeat(64);
+const scope = `https://one.test:${viewer}`;
+const second = `https://two.test:${viewer}`;
+const message = {
+  id: "e".repeat(64),
+  channelId: "room",
+  content: "Please decide whether to ship.",
+} as ChannelMessage;
+
+function fixture() {
+  const session = { viewer, scope } as RelaySession;
+  let state = { status: "ready", viewer, scope, session } as RelaySnapshot;
+  const listeners = new Set<() => void>();
+  const relay = {
+    snapshot: () => state,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  } satisfies RelayData;
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" })),
+  } as unknown as Navigation;
+  const actions: MessageAction[] = [];
+  apply({
+    relay,
+    navigation: navigator,
+    pages: { register: vi.fn() },
+    conversation: {
+      registerMessageAction: (action: MessageAction) => actions.push(action),
+    },
+  } as unknown as Parameters<typeof apply>[0]);
+  const action = actions[0];
+  if (!action) throw new Error("Decision action was not registered");
+  return {
+    relay,
+    navigator,
+    session,
+    action,
+    switchScope() {
+      state = {
+        status: "ready",
+        viewer,
+        scope: second,
+        session: { viewer, scope: second } as RelaySession,
+      } as RelaySnapshot;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+beforeEach(() => localStorage.clear());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+it("captures a message, records the decision and handoff, and opens its source", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  expect(h.action.matches(message, h.session)).toBe(true);
+  const Action = h.action.component;
+  const close = vi.fn();
+  const actionView = render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    "Ship now?",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Next actor" }),
+    "Morgan",
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(close).toHaveBeenCalledOnce();
+  expect(readList(viewRevision(scope, key))).toMatchObject({
+    status: "ready",
+    records: [{ stage: "decision", question: "Ship now?" }],
+  });
+  actionView.unmount();
+
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Ship now?")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Decision Optional" }),
+    "Ship tomorrow",
+  );
+  await user.click(screen.getByRole("combobox", { name: "Status" }));
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Decision made · awaiting handoff",
+    }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }),
+  );
+  expect(screen.getByText("Decision: Ship tomorrow")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  await user.click(screen.getByRole("combobox", { name: "Status" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Handed off · done" }),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }),
+  );
+  expect(readList(viewRevision(scope, key))).toMatchObject({
+    status: "ready",
+    records: [{ stage: "done", nextActor: "Morgan" }],
+  });
+  await user.click(screen.getByRole("button", { name: "Open source" }));
+  expect(h.navigator.open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "conversation",
+    scope: { communityOrigin: "https://one.test", viewer },
+    channelId: "room",
+    messageId: message.id,
+  });
+});
+
+it("does not show or save the old community after switching", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  writeView(scope, key, [
+    {
+      channelId: "room",
+      messageId: message.id,
+      preview: "source",
+      question: "Old decision",
+      nextActor: "Morgan",
+      decision: "",
+      stage: "decision",
+      createdAt: 1,
+    },
+  ]);
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Old decision")).toBeVisible();
+  act(() => h.switchScope());
+  expect(screen.queryByText("Old decision")).not.toBeInTheDocument();
+  expect(screen.getByText("No decisions saved")).toBeVisible();
+  expect(h.action.matches(message, h.session)).toBe(false);
+  const Action = h.action.component;
+  render(
+    <Action
+      message={{ ...message, id: "f".repeat(64) }}
+      session={h.session}
+      close={() => {}}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    "Stale question",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Next actor" }), "Laura");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "account or community changed",
+  );
+  expect(readList(viewRevision(scope, key))).toMatchObject({
+    status: "ready",
+    records: [{ question: "Old decision" }],
+  });
+});
+
+it("keeps an unsaved capture when dismissal is cancelled", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const Action = h.action.component;
+  const close = vi.fn();
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    "Decide this",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    screen.getByRole("dialog", { name: "Discard changes?" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  ).toHaveValue("Decide this");
+  expect(close).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(close).toHaveBeenCalledOnce();
+});
+
+it("keeps the capture form and explains a failed device save", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const Action = h.action.component;
+  const close = vi.fn();
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    "Choose a date",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Next actor" }),
+    "Morgan",
+  );
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not save on this device",
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  ).toHaveValue("Choose a date");
+  expect(close).not.toHaveBeenCalled();
+});
+
+it("shows malformed data and resets only after confirmation", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  localStorage.setItem(`buzz-view.v1:${JSON.stringify([scope, key])}`, "{bad");
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Saved decisions cannot be read")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Reset saved list" }));
+  expect(viewRevision(scope, key)).toBe("{bad");
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Reset list",
+    }),
+  );
+  expect(screen.getByText("No decisions saved")).toBeVisible();
+  expect(readList(viewRevision(scope, key))).toEqual({
+    status: "ready",
+    records: [],
+  });
+});
+
+it("does not reset data repaired in another window while confirmation is open", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  localStorage.setItem(`buzz-view.v1:${JSON.stringify([scope, key])}`, "{bad");
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await user.click(screen.getByRole("button", { name: "Reset saved list" }));
+  const repaired = [
+    {
+      channelId: "room",
+      messageId: message.id,
+      preview: "source",
+      question: "Recovered",
+      nextActor: "Morgan",
+      decision: "",
+      stage: "decision",
+      createdAt: 1,
+    },
+  ];
+  act(() => {
+    writeView(scope, key, repaired);
+  });
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Reset list",
+    }),
+  );
+  expect(readList(viewRevision(scope, key))).toEqual({
+    status: "ready",
+    records: repaired,
+  });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "changed in another window",
+  );
+});
+
+it("does not overwrite a newer decision when a stale row opens the editor", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const original = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Original",
+    nextActor: "Morgan",
+    decision: "",
+    stage: "decision",
+    createdAt: 1,
+  };
+  writeView(scope, key, [original]);
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Original")).toBeVisible();
+  const newer = { ...original, question: "Newer" };
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([scope, key])}`,
+    JSON.stringify([newer]),
+  );
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  await user.clear(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    "Stale edit",
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "changed in another window",
+  );
+  expect(readList(viewRevision(scope, key))).toEqual({
+    status: "ready",
+    records: [newer],
+  });
+});

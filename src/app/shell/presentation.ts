@@ -8,6 +8,7 @@ import {
   NoteIcon,
   GearIcon,
   LightningIcon,
+  ListChecksIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -45,6 +46,7 @@ export function orderPages(pages: readonly RegisteredPage[]) {
 
 const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
+  ["buzz.decision-inbox/decision-inbox", ListChecksIcon],
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.bestie/bestie", BestieIcon],
   ["buzz.agents/agents", RobotIcon],

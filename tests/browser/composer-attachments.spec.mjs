@@ -676,11 +676,13 @@ test("local previews stay interactive during eager upload and removal collapses 
         visibility: "visible",
       });
 
-    // Hovering a sibling may scroll the strip. Measure its resting alignment.
+    // Hover can scroll the entrance's overflow-clipping section as well as the
+    // strip. Measure resting alignment with both horizontal offsets cleared.
     await form
-      .locator('section[aria-label="Attachments"] ul')
-      .evaluate((el) => {
-        el.scrollLeft = 0;
+      .getByRole("region", { name: "Attachments" })
+      .evaluate((section) => {
+        section.scrollLeft = 0;
+        section.querySelector("ul").scrollLeft = 0;
       });
     await expect
       .poll(() =>

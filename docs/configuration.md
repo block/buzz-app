@@ -89,7 +89,9 @@ nonempty `BUZZ_BUILDERLAB_URL` fails the build.
 
 `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` is a public JSON descriptor supplied to
 Cargo through the build environment. It is validated and compiled into native
-code, with no runtime override or credential field:
+code, with no runtime override or credential field. For `just desktop` and
+`just desktop-bundle`, it can be set in `.env.local` (single-quote the JSON);
+see [launch environment](#launch-environment).
 
 ```json
 {
@@ -255,3 +257,14 @@ copied here.
 Ignored `.env.local` can contain unrelated development settings. Only the inputs
 with current consumers listed above have an effect. Do not use any build input
 for private keys, tokens or raw agent configuration.
+
+## Launch environment
+
+`just desktop` and `just desktop-bundle` add every `BUZZ_` value from
+repository-root `.env.local` and Vite's mode files (`development` for
+`just desktop`, `production` for the bundle) to the environment of Tauri, Cargo
+and the native app. A value already in the process environment wins, including
+an explicit empty one. Names without the `BUZZ_` prefix stay out: the file can
+hold unrelated credentials, and agent processes remove only `BUZZ_` and `NOSTR_`
+names from the app's environment. Direct `pnpm tauri build` and `cargo`
+invocations do not load `.env.local` this way.

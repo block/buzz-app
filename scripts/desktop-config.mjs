@@ -1,4 +1,15 @@
+import { loadEnv } from "vite";
 import { worktreeIcon } from "./worktree-icon.mjs";
+
+// The environment a launcher gives Tauri: the process plus every `BUZZ_` value
+// Vite resolves for `mode` from `.env.local` and its mode files, so Cargo build
+// scripts and the native app see what the frontend sees. Process values win,
+// including an explicit empty one. Only `BUZZ_` names: the file can hold
+// unrelated credentials, and agent processes drop only `BUZZ_` and `NOSTR_`
+// names from the app's environment (`src-tauri/src/host_process.rs`).
+export function launchEnvironment(root, mode) {
+  return { ...process.env, ...loadEnv(mode, root, "BUZZ_") };
+}
 
 // Pull `--<name> <value>` and `--<name>=<value>` out of a launcher's arguments.
 // Scanning stops at `--`, after which everything belongs to Tauri's runner, and the

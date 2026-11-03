@@ -11,11 +11,11 @@ import type { Credential } from "../../bundled/builderlab/oauth/browser";
 import {
   bundledHost,
   firstRunCredential,
+  type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
 import { createOAuthSession } from "../../bundled/builderlab/oauth/session";
 import { communityDestination } from "../communities/destination";
 import { FindCommunity, type JoinConsent } from "../communities/FindCommunity";
-import type { FederatedIdentity } from "../federated-identity/service";
 import type { FoundCommunity } from "../communities/find-community";
 import type { createInviteIntent } from "../communities/invite-intent";
 import {
@@ -82,7 +82,7 @@ import { WireframeScreen } from "./Wireframe";
 const firstRunAccount = (
   credential: Credential,
   identity: Identity,
-  federated?: FederatedIdentity,
+  federated?: FirstRunIdentity,
 ) => {
   const seed = parseFirstRunAccountSeed(
     import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT,
@@ -122,7 +122,7 @@ export function Welcome({
    * (`bundledFederatedIdentity`): sign-in and the account's calls go through
    * it instead of the plugin's network grant, which an FI build lacks.
    */
-  federatedIdentity?: FederatedIdentity | undefined;
+  federatedIdentity?: FirstRunIdentity | undefined;
   connect?: (signal: AbortSignal) => Promise<Credential>;
   /** The account for a credential `connect` returned. */
   account?:

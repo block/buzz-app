@@ -199,8 +199,8 @@ describe("an FI build", () => {
       (fi: ReturnType<typeof federatedFixture>) =>
         vi
           .mocked(fi.service.signIn)
-          .mockRejectedValueOnce(new Error("login-refused")),
-      "Sign-in did not finish. Try again.",
+          .mockRejectedValueOnce(new Error("storage-busy")),
+      "Secure storage is busy. Close another Buzz instance and try again.",
     ],
     [
       "the account read is not JSON",
@@ -238,6 +238,144 @@ describe("an FI build", () => {
     await expect(
       firstRunCredential(new AbortController().signal, fi.service),
     ).rejects.toThrow(new Error(message));
+  });
+
+  it("continues as the account the browser chose again for a session that already exists", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+    const fi = federatedFixture();
+    fi.publish({ status: "signed-in", revision: "existing" });
+    fi.request.mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify(me),
+    });
+    const credential = await firstRunCredential(
+      new AbortController().signal,
+      fi.service,
+    );
+    expect(credential.value).toBe("user:1");
+    expect(fi.service.signIn).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the stored session to be restored, then signs in again rather than continuing as it", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+    const fi = federatedFixture();
+    fi.publish({ status: "restoring" });
+    const subscribe = vi.spyOn(fi.service, "subscribe");
+    // The renewal is canceled in the browser.
+    vi.mocked(fi.service.signIn).mockImplementationOnce(async () =>
+      fi.service.snapshot(),
+    );
+    const credential = firstRunCredential(
+      new AbortController().signal,
+      fi.service,
+    );
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalled());
+    expect(fi.service.signIn).not.toHaveBeenCalled();
+    fi.publish({ status: "signed-in", revision: "restored" });
+    await expect(credential).rejects.toThrow(
+      "Sign-in was canceled. Sign in when you’re ready.",
+    );
+    expect(fi.service.signIn).toHaveBeenCalledOnce();
+  });
+
+  it("cancels while waiting for the restore without signing in", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+    const fi = federatedFixture();
+    fi.publish({ status: "restoring" });
+    const subscribe = vi.spyOn(fi.service, "subscribe");
+    // Native has no sign-in to cancel yet, so nothing is published.
+    vi.mocked(fi.service.cancelSignIn).mockImplementationOnce(async () => {});
+    const attempt = new AbortController();
+    const credential = firstRunCredential(attempt.signal, fi.service);
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalled());
+    attempt.abort();
+    await expect(credential).rejects.toThrow("Sign-in canceled.");
+    expect(fi.service.signIn).not.toHaveBeenCalled();
+  });
+
+  describe("after a failed restore", () => {
+    const account = (fi: ReturnType<typeof federatedFixture>) =>
+      fi.request.mockResolvedValueOnce({
+        status: 200,
+        headers: {},
+        body: JSON.stringify(me),
+      });
+
+    it("renews a stored session that signing in restores with no browser step", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+      const fi = federatedFixture();
+      fi.publish({ status: "unavailable", failure: "network-unavailable" });
+      account(fi);
+      vi.mocked(fi.service.signIn).mockImplementationOnce(async () => {
+        fi.publish({ status: "signed-in", revision: "stored", failure: null });
+        return fi.service.snapshot();
+      });
+      const credential = await firstRunCredential(
+        new AbortController().signal,
+        fi.service,
+      );
+      expect(credential.value).toBe("user:1");
+      expect(fi.service.signIn).toHaveBeenCalledTimes(2);
+    });
+
+    it("continues after a browser sign-in, without renewing it", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+      const fi = federatedFixture();
+      fi.publish({ status: "unavailable", failure: "network-unavailable" });
+      account(fi);
+      vi.mocked(fi.service.signIn).mockImplementationOnce(async () => {
+        fi.publish({ status: "signing-in", revision: "login", failure: null });
+        fi.publish({ status: "signed-in", revision: "chosen" });
+        return fi.service.snapshot();
+      });
+      const credential = await firstRunCredential(
+        new AbortController().signal,
+        fi.service,
+      );
+      expect(credential.value).toBe("chosen");
+      expect(fi.service.signIn).toHaveBeenCalledOnce();
+    });
+
+    it("cancels a browser step that begins after Cancel found nothing to cancel", async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(catalog(true));
+      const fi = federatedFixture();
+      fi.publish({ status: "unavailable", failure: "network-unavailable" });
+      // Native is still restoring when Cancel arrives, so it cancels nothing.
+      vi.mocked(fi.service.cancelSignIn).mockImplementationOnce(async () => {});
+      let restored!: () => void;
+      const restoring = new Promise<void>((resolve) => {
+        restored = resolve;
+      });
+      let started!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      vi.mocked(fi.service.signIn).mockImplementationOnce(async () => {
+        started();
+        await restoring;
+        // The browser step ends only when it is canceled.
+        const canceled = new Promise<void>((resolve) =>
+          vi
+            .mocked(fi.service.cancelSignIn)
+            .mockImplementationOnce(async () => resolve()),
+        );
+        fi.publish({ status: "signing-in", revision: "login", failure: null });
+        await canceled;
+        return fi.service.snapshot();
+      });
+      const attempt = new AbortController();
+      const credential = firstRunCredential(attempt.signal, fi.service);
+      await pending;
+      attempt.abort();
+      expect(fi.service.cancelSignIn).toHaveBeenCalledOnce();
+      const canceled = expect(credential).rejects.toThrow("Sign-in canceled.");
+      restored();
+      await vi.waitFor(() =>
+        expect(fi.service.cancelSignIn).toHaveBeenCalledTimes(2),
+      );
+      await canceled;
+    });
   });
 
   it("cancels the native sign-in when first run cancels", async () => {

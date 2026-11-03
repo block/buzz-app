@@ -156,8 +156,11 @@ function failure(status: BackupStatus): BackupFailureKind | undefined {
  * Builderlab sign-in may finish what the user asked for; declining turns it off.
  * The caller must hold the `builderlab` slot alone for the step: handing it
  * back empties it rather than restoring an earlier credential, so a signed-in
- * Builderlab plugin would lose its native session until its own changes.
- * Rejects with a `BackupError`.
+ * Builderlab plugin would lose its native session until its own changes. An
+ * FI revision is the session that plugin hands over too, so after a completed
+ * pass it stays in the slot, at the cost of a fresh pass. After a failure it
+ * is emptied: a fresh pass would hold the consent lease that Try again's
+ * consent write needs. Rejects with a `BackupError`.
  */
 export async function backUpWith(
   identity: Pick<Identity, "backup" | "setBackupChoice">,
@@ -183,6 +186,7 @@ export async function backUpWith(
   });
   const settled = new AbortController();
   let unsubscribe = () => {};
+  let completed = false;
   try {
     const ticket = await ("federated" in session
       ? handoffFederatedBackupSession(session.federated, send)
@@ -203,10 +207,14 @@ export async function backUpWith(
     ]);
     const kind = result ? failure(result) : "timeout";
     if (kind) throw new BackupError(kind);
+    completed = true;
   } finally {
     unsubscribe();
     settled.abort();
-    // After a timeout this also retires the pass still running.
-    await handoffBackupSession("builderlab", null, send);
+    // After a timeout this also retires the pass still running. Native
+    // refuses an FI revision that is no longer current.
+    await (completed && "federated" in session
+      ? handoffFederatedBackupSession(session.federated, send)
+      : handoffBackupSession("builderlab", null, send));
   }
 }

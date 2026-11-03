@@ -60,8 +60,8 @@ export function createServices() {
   const ctx = new Context();
   new HostService(ctx);
   const federatedIdentity = new FederatedIdentityService(ctx);
-  // First run signs in before the Builderlab plugin starts; an FI build's
-  // Welcome calls the session as that plugin's bundled installation.
+  // An FI build's Welcome calls the session as the Builderlab plugin's
+  // bundled installation, which works whether or not the plugin has started.
   const firstRunFederatedIdentity = nativeBuilderlab()
     ? bundledFederatedIdentity(ctx)
     : undefined;

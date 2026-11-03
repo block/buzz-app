@@ -1321,6 +1321,19 @@ describe("federatedBuilderlabAccount", () => {
     expect(fi.request).not.toHaveBeenCalled();
   });
 
+  it("refuses without a request while the session it signed in with is unavailable", async () => {
+    const fi = await signedIn();
+    const account = federatedBuilderlabAccount(
+      fi.credential,
+      fi.service,
+      untouched,
+    );
+    fi.publish({ status: "unavailable", failure: "storage-unavailable" });
+    expect(fi.service.snapshot().revision).toBe(fi.credential.value);
+    await expect(account.linkedKey()).rejects.toThrow(signedOut);
+    expect(fi.request).not.toHaveBeenCalled();
+  });
+
   it("answers backup status as unavailable without a request and hands the uploader the session revision", async () => {
     const fi = await signedIn();
     const watchers: { onmessage: (status: BackupStatus) => void }[] = [];
@@ -1359,11 +1372,13 @@ describe("federatedBuilderlabAccount", () => {
           generation: expect.any(Number),
         },
       ],
+      // The Builderlab plugin hands over the same session, so it stays.
       [
         "nsec_backup_session",
         {
           source: "builderlab",
           credential: null,
+          federated: fi.credential.value,
           generation: expect.any(Number),
         },
       ],

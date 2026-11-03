@@ -344,7 +344,11 @@ export function SearchResults({
     peopleNeedle,
     peopleActive,
   );
-  const directoryVerified = useVerifiedNames(session, personDirectory.people);
+  // Typing cancels the page's read; the next settled page reads again.
+  const directoryVerified = useVerifiedNames(session, personDirectory.people, {
+    key: peopleNeedle,
+    settled: !personDirectory.loading,
+  });
   useMentionArchives(session, showAuthorPicker || peopleActive);
   // People labels come from one names scope built each render.
   useNamesRevision(session.names, peopleActive);

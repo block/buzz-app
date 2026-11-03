@@ -863,7 +863,10 @@ export function ChannelMembersDialog({
     canAddPeople || (largeRoster && !solo && channel?.channelType !== "dm"),
   );
   // Searched people the community verified carry their verified names.
-  const searchVerified = useVerifiedNames(session, search.people);
+  const searchVerified = useVerifiedNames(session, search.people, {
+    key: query,
+    settled: !search.loading,
+  });
   const searchPeople = useMemo(
     () => withVerifiedNames(search.people, searchVerified, profiles),
     [search.people, searchVerified, profiles],

@@ -42,15 +42,17 @@ function foundFor(
 
 /**
  * Community-verified names for people a search found that the shared profiles
- * have not verified. Once `people` settles, the unasked ones are read in the
- * background, a page at a time until all are asked, and cancelled when
- * `people` changes. Names
+ * have not verified. While `settled`, the unasked ones are read in the
+ * background, a page at a time until all are asked; a changed `key` (the
+ * typed query) or list cancels the read, and an unsettled list starts none.
+ * Names
  * belong to the authority that checked them: when the community withdraws or
  * changes it, none are returned until they are checked again.
  */
 export function useVerifiedNames(
   session: VerifiedNamesSession,
   people: readonly { pubkey: string; isAgent?: boolean | undefined }[],
+  { key = "", settled = true }: { key?: string; settled?: boolean } = {},
 ): ReadonlyMap<string, VerifiedProfile> {
   const { profiles } = session;
   const read = session.directMessages?.verified;
@@ -63,7 +65,7 @@ export function useVerifiedNames(
     .join(",");
   // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read asks the next page.
   useEffect(() => {
-    if (!authority || !read || !subjects) return;
+    if (!settled || !authority || !read || !subjects) return;
     const found = foundFor(profiles, authority);
     const shared = profiles.snapshot();
     const now = Date.now();
@@ -98,7 +100,7 @@ export function useVerifiedNames(
       () => {},
     );
     return () => controller.abort();
-  }, [profiles, read, authority, subjects, revision]);
+  }, [profiles, read, authority, subjects, settled, key, revision]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read moves the revision.
   return useMemo(() => {
     const current = authority && lookups.get(profiles);
@@ -110,6 +112,18 @@ export function useVerifiedNames(
     }
     return named.size ? named : none;
   }, [profiles, authority, subjects, revision]);
+}
+
+/** A person's verified name as these lookups or the shared profiles hold it
+ * now, for matching a page a hook has already named. */
+export function verifiedName(profiles: ProfileQueries, pubkey: string) {
+  const shared = profiles.snapshot().get(pubkey)?.verified;
+  if (shared) return shared;
+  const authority = profiles.verifiedAuthority?.();
+  const current = authority && lookups.get(profiles);
+  return current && current.authority === authority
+    ? current.found.get(pubkey)?.profile
+    : undefined;
 }
 
 /** A searched person as its community verified them, when it has. */

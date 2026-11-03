@@ -176,3 +176,20 @@ it("asks every page of a longer list, and asks again once a lookup is stale", as
     vi.useRealTimers();
   }
 });
+
+it("starts no read until the list settles, and a new query cancels a held one", async () => {
+  const t = fake();
+  t.holdReads();
+  const people = [{ pubkey: key(1) }];
+  let options = { key: "fak", settled: false };
+  const hook = renderHook(() => useVerifiedNames(t.session, people, options));
+  expect(t.reads).toHaveLength(0);
+  options = { key: "fak", settled: true };
+  hook.rerender();
+  await waitFor(() => expect(t.reads).toHaveLength(1));
+  // Typing on: the same page stays shown while the next one loads.
+  options = { key: "kevi", settled: false };
+  hook.rerender();
+  expect(t.reads[0]?.signal.aborted).toBe(true);
+  expect(t.reads).toHaveLength(1);
+});

@@ -270,7 +270,10 @@ export function useMentionChoices(
   const same = installed?.session === session && installed.key === key;
   const carried = same ? installed.people : none;
   // Searched people the community verified carry their verified names.
-  const verified = useVerifiedNames(session, directory.people);
+  const verified = useVerifiedNames(session, directory.people, {
+    key: query,
+    settled: !directory.loading,
+  });
   const searched = useMemo(
     () => withVerifiedNames(directory.people, verified, profiles),
     [directory.people, verified, profiles],

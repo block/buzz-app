@@ -7,6 +7,8 @@ import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { messageAuthor } from "./fold";
 import { threadReference } from "./thread-reference";
+import { inlineUiMessage } from "../inline-ui/spec";
+import { ANSWER_TAG, answerContent, canAnswer } from "../inline-ui/answers";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
 
@@ -449,6 +451,45 @@ export function createMessages(
       return content.trim()
         ? edit(messageId, content, attachmentSourceId, authorization)
         : remove([messageId], authorization);
+    },
+    /** Answer a message's Inline UI as the viewer: an ordinary message in
+     * its channel and thread whose text is the answer, tagging the asker. */
+    async answer(messageId: string, value: string, own?: string) {
+      const original = find(messageId);
+      const channelId = original?.tags.find(([name]) => name === "h")?.[1];
+      const asked =
+        original?.kind === 9 &&
+        inlineUiMessage(original.content, original.tags);
+      if (!original || !channelId || !asked || !viewer)
+        throw new Error("Load the message before answering it");
+      const authorId = messageAuthor(original, signingAuthority);
+      const mentions = original.tags.flatMap(([name, key]) =>
+        name === "p" && key ? [key] : [],
+      );
+      // Only a form checks the owner; load the agent's profile so its
+      // verified owner is known before deciding.
+      if (asked.ui.type === "form") await profiles?.ensure([authorId]);
+      const owner = (agent: string) => profiles?.owner?.(agent);
+      if (!canAnswer({ authorId, mentions, inlineUi: asked }, viewer, owner))
+        throw new Error("This isn’t yours to answer");
+      const content = answerContent(asked.ui, value, own);
+      if (!content) throw new Error("That isn’t one of its answers");
+      const thread = threadReference(original);
+      return writer(9, channelId).send({
+        kind: 9,
+        content,
+        tags: [
+          ["h", channelId],
+          ...(thread
+            ? [
+                ["e", thread.rootId, "", "root"],
+                ["e", original.id, "", "reply"],
+              ]
+            : []),
+          ...mentionTags(channelId, [authorId]),
+          [ANSWER_TAG, original.id, value],
+        ],
+      });
     },
     react(messageId: string, content: string, emoji?: CustomEmoji) {
       const original = find(messageId);

@@ -562,7 +562,9 @@ development-broker routes or the packaged native `relay_channel_sign` and
 A dispatched Leave keeps its bounded, fresh, strong viewer-roster confirmation
 when membership loss retires access-dependent work. Retired confirmation reads
 are reread; caller cancellation, session clear/disposal and the original deadline
-still stop it. An aborted read alone never confirms Leave.
+still abort its signal. A rejected publication or definitive confirmation-read
+failure still fails Leave; an aborted read alone never confirms it. These signals
+do not forcibly interrupt an in-flight native publication IPC.
 Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive)
 or `archived=false` (Unarchive); other values, extra tags, cross-route commands and
 altered or foreign signatures are rejected. Hosts without this capability display

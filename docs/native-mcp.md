@@ -20,11 +20,20 @@ Build and launch with all of these settings:
 - Cargo feature: `native-mcp`.
 - Tauri config overlay: `src-tauri/tauri.native-mcp.conf.json`.
 - A separate identifier overlay: `dev.local.buzz.foundation.nexus-test-` followed
-  by 12 random lowercase hexadecimal digits.
+  by 12 lowercase hexadecimal digits unique to the test instance.
 - Launch environment: `BUZZ_NATIVE_MCP_PORT`, an integer from `1024` through
   `65436`. Unset means off. Invalid settings fail before identity startup.
 
 For an already isolated environment, from the repository root:
+
+```sh
+bin/node scripts/desktop-mcp.mjs
+```
+
+It applies all of the settings above, with an identifier suffix and bridge base
+port derived from the worktree path, and prints both. Each worktree owns one
+test instance, and relaunches keep its app data. Other arguments pass to
+`just desktop`, such as `--port` for Vite. The equivalent manual launch is:
 
 ```sh
 BUZZ_DEV_VIEWER= BUZZ_NATIVE_MCP_PORT=19423 bin/just desktop --features native-mcp \
@@ -61,11 +70,31 @@ It rejects both `Origin` and `Sec-WebSocket-Origin` at the WebSocket handshake.
 Loopback clients without those headers still have full automation authority;
 this is a local test interface, not an authenticated service.
 
-Use `@hypothesi/tauri-mcp-server@0.13.1` with this bridge. Backend metadata uses
-`invoke_tauri` with `{"command":"plugin:mcp-bridge|get_backend_state","args":{}}`.
+Use `@hypothesi/tauri-mcp-server@0.13.1` with this bridge. The repository's
+`.mcp.json` registers it as `buzz-native`, through `scripts/native-mcp-client.mjs`,
+pointed at this worktree's base port on `127.0.0.1`. MCP clients that read
+project configuration, such as Claude Code, offer its tools after approval. If
+the bridge selected a higher port, pass that port to `driver_session`. Backend
+metadata uses `invoke_tauri` with `{"command":"plugin:mcp-bridge|get_backend_state","args":{}}`.
 The bridge reports version `0.12.0` and omits plugin-version metadata, so the
 standard client can show an upgrade warning. Do not replace the pinned revision
 with a release that lacks the Origin check to remove that warning.
+
+The bridge listens before the app has rendered its shell, so wait for the target
+element with `webview_wait_for` before the first action. Its `detached` state
+times out rather than resolving; check absence with `webview_execute_js`. The
+tools reach only the `main` window's web content: native dialogs and prompts,
+the Browser panel's website view, the huddle window and deep links need other
+automation. Writes such as messages, reactions and joins publish as the signed-in
+key. Sign out deletes the shared debug identity for every debug build.
+
+A community that requires organization sign-in needs the launch environment to
+carry `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` (see
+[configuration](configuration.md#federated-identity-build-input)). Saved
+sign-ins are keyed by `BUZZODZ_PROFILE`, not the app identifier, so set a
+separate profile to keep the instance from restoring another debug build's
+session. A person completes the browser sign-in; the bridge never receives the
+session token.
 
 Verify session start, a DOM snapshot, an interaction, its resulting DOM state,
 and session stop against the real native app. Check that a browser-origin

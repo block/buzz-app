@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { worktreeIcon } from "./worktree-icon.mjs";
 
 // Pull `--<name> <value>` and `--<name>=<value>` out of a launcher's arguments.
@@ -34,4 +35,16 @@ export function desktopOverlay(root) {
   const icon = worktreeIcon(root);
   if (icon) config.bundle = { icon: [icon] };
   return config;
+}
+
+// Each worktree owns one native MCP test instance (docs/native-mcp.md), so
+// relaunches keep its app data and its client finds it rather than another
+// worktree's. The bridge scans 100 ports up from its base, so bases are 100
+// apart, in [20000, 59900]. native_mcp.rs enforces both shapes.
+export function nativeMcpInstance(root) {
+  const digest = createHash("sha256").update(root, "utf8").digest("hex");
+  return {
+    identifier: `dev.local.buzz.foundation.nexus-test-${digest.slice(0, 12)}`,
+    port: 20000 + Number(BigInt(`0x${digest}`) % 400n) * 100,
+  };
 }

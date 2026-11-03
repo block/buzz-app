@@ -65,6 +65,9 @@ Until your channel list has loaded in full, the section says so instead of
 saying Bestie is in none: a failed read offers **Retry**, the channels already
 known keep their rows, and **Add to all** waits for the full list. A channel
 known only from a cached list offers no change until it is read again.
+When a row or the Add rows leave with focus in them, focus moves to the
+control now in their place, or to the section heading if none is left, unless
+you already moved it elsewhere.
 Changing your Bestie stops an **Add to all** still under way.
 Public channels
 need nothing: agents read them already. Check-ins and adding Bestie to new

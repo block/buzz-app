@@ -300,3 +300,68 @@ it("keeps the channels it knows from a partial roster, and holds Add to all", as
   await user.click(await screen.findByRole("menuitem", { name: "#alpha" }));
   expect(add).toHaveBeenCalledWith("id-alpha", BESTIE, GUEST);
 });
+
+it("hands focus to the next row when a confirmed Remove drops its own", async () => {
+  const user = userEvent.setup();
+  const alpha = channel("alpha", [YOU, BESTIE]);
+  const beta = channel("beta", [YOU, BESTIE]);
+  const { value } = session([alpha, beta]);
+  const { rerender } = render(
+    <PrivateChannels session={value} bestie={BESTIE} />,
+  );
+  await remove(user, "alpha");
+  const left = session([channel("alpha", [YOU]), beta]).value;
+  rerender(<PrivateChannels session={left} bestie={BESTIE} />);
+  expect(
+    screen.getByRole("button", { name: "Remove Bestie from #beta" }),
+  ).toHaveFocus();
+});
+
+it("hands focus to the new row when the last channel to add is added", async () => {
+  const user = userEvent.setup();
+  const { value, add } = session([channel("alpha", [YOU])]);
+  const { rerender } = render(
+    <PrivateChannels session={value} bestie={BESTIE} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Choose…" }));
+  await user.click(await screen.findByRole("menuitem", { name: "#alpha" }));
+  expect(add).toHaveBeenCalled();
+  const added = session([channel("alpha", [YOU, BESTIE])]).value;
+  rerender(<PrivateChannels session={added} bestie={BESTIE} />);
+  expect(screen.queryByRole("button", { name: "Choose…" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Remove Bestie from #alpha" }),
+  ).toHaveFocus();
+});
+
+it("hands focus to the section heading when no control is left", () => {
+  const { value } = session([channel("alpha", [YOU, BESTIE])]);
+  const { rerender } = render(
+    <PrivateChannels session={value} bestie={BESTIE} />,
+  );
+  act(() =>
+    screen.getByRole("button", { name: "Remove Bestie from #alpha" }).focus(),
+  );
+  rerender(<PrivateChannels session={session([]).value} bestie={BESTIE} />);
+  expect(
+    screen.getByRole("heading", { name: "Private channels Bestie can read" }),
+  ).toHaveFocus();
+});
+
+it("leaves focus where the person moved it when a row goes", () => {
+  const alpha = channel("alpha", [YOU, BESTIE]);
+  const beta = channel("beta", [YOU, BESTIE]);
+  const page = (value: RelaySession) => (
+    <>
+      <button type="button">Elsewhere</button>
+      <PrivateChannels session={value} bestie={BESTIE} />
+    </>
+  );
+  const { rerender } = render(page(session([alpha, beta]).value));
+  act(() =>
+    screen.getByRole("button", { name: "Remove Bestie from #alpha" }).focus(),
+  );
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  rerender(page(session([channel("alpha", [YOU]), beta]).value));
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+});

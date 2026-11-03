@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { canAddMembers } from "../../features/channel-members/members";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { useChannelList } from "../../features/relay/react";
@@ -64,6 +64,13 @@ async function removeMember(
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+/** The buttons someone can focus in `node`, in page order. */
+function controls(node: HTMLElement | null) {
+  return [
+    ...(node?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? []),
+  ];
+}
+
 /** The private channels Bestie reads because it is a member. */
 export function PrivateChannels({
   session,
@@ -101,6 +108,47 @@ export function PrivateChannels({
   /** The channel Remove asked about, as the Members dialog asks first. */
   const [removing, setRemoving] = useState<ChannelSummary>();
   const cancelRemove = useRef<HTMLButtonElement>(null);
+  const headingId = useId();
+  const section = useRef<HTMLDivElement>(null);
+  /** The control here that has focus, and its place among them. */
+  const focused = useRef<{ element: HTMLElement; index: number } | null>(null);
+  useEffect(() => {
+    const node = section.current;
+    if (!node) return;
+    const enter = (event: FocusEvent) => {
+      const target = event.target as HTMLElement;
+      const index = controls(node).indexOf(target);
+      focused.current = index < 0 ? null : { element: target, index };
+    };
+    // Focus that leaves for elsewhere, a dialog or menu included, is the
+    // person's to place. It comes back with the control it returns to.
+    const leave = (event: FocusEvent) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && !node.contains(next)) focused.current = null;
+    };
+    node.addEventListener("focusin", enter);
+    node.addEventListener("focusout", leave);
+    return () => {
+      node.removeEventListener("focusin", enter);
+      node.removeEventListener("focusout", leave);
+    };
+  }, []);
+  // A removed row, or Add controls with nothing left to add, take their
+  // focused button with them, and DOM removal sends no blur. Hand focus to the
+  // control now in its place, else the section heading, unless the person has
+  // already moved it somewhere else.
+  useLayoutEffect(() => {
+    const last = focused.current;
+    if (!last || last.element.isConnected) return;
+    focused.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const left = controls(section.current);
+    const heading = document.getElementById(headingId);
+    const target = left[Math.min(last.index, left.length - 1)] ?? heading;
+    if (target === heading) heading?.setAttribute("tabindex", "-1");
+    target?.focus();
+  });
   /** The agent this section is for now, or none once it is gone, as after
    * Change: changes still to run for an earlier one aren't sent. */
   const current = useRef<string | undefined>(bestie);
@@ -160,8 +208,9 @@ export function PrivateChannels({
   );
 
   return (
-    <>
+    <div ref={section} className="contents">
       <InlineHeader
+        id={headingId}
         title="Private channels Bestie can read"
         subtitle="Bestie already reads every public channel. In a channel you add it to, it reads along as a guest and can't post there."
       />
@@ -330,6 +379,6 @@ export function PrivateChannels({
           }
         />
       )}
-    </>
+    </div>
   );
 }

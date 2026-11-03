@@ -93,10 +93,11 @@ export function MentionCompletion({
     const admitted =
       matchesMentionQuery(
         query.query,
-        [...model.candidates, ...choices].flatMap((c) => [
-          ...c.aliases,
-          c.label,
-        ]),
+        // Both rules need a name that starts with the query.
+        [
+          ...matchingMentions(model.candidates, query.query),
+          ...choices,
+        ].flatMap((c) => [...c.aliases, c.label]),
       ) ||
       (teams.names.length > 0 && matchesMentionQuery(query.query, teams.names));
     const matching = admitted ? choices : [];
@@ -206,13 +207,13 @@ export function MentionCompletion({
       admitted &&
       model.spaceId === undefined &&
       !teams.blocksSpace &&
+      (model.pending || model.directory.loading) &&
+      pendingMentionQuery(query.query) &&
       // A continuing name starts with the query: only indexed matches can have one.
       !continuedMention(
         matchingMentions(model.candidates, query.query),
         query.query,
-      ) &&
-      (model.pending || model.directory.loading) &&
-      pendingMentionQuery(query.query);
+      );
     const withdraw = publish({
       spaceId: teams.blocksSpace ? undefined : model.spaceId,
       ...(undecided

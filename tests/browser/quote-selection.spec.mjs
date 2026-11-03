@@ -111,6 +111,12 @@ test.describe("in a thread", () => {
     const body = history.locator(
       `[data-message-id="${root.id}"] [data-message-body] p`,
     );
+    // Escape dismisses the action first; the thread stays open.
+    await drag(page, body);
+    await expect(quote(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(quote(page)).toHaveCount(0);
+    await expect(reply).toBeVisible();
     await drag(page, body);
     await quote(page).click();
     await expect(reply).toBeFocused();

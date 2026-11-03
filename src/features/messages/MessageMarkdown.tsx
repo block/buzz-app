@@ -712,6 +712,7 @@ function PreparedMessageMarkdown({
           {...props}
           className={largeEmoji ? styles.text : undefined}
           data-single-emoji={largeEmoji || undefined}
+          data-message-body={largeEmoji ? "" : undefined}
           data-leading-mention={leadingMention || undefined}
         />
       );

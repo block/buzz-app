@@ -77,6 +77,7 @@ export function QuoteSelection({
     if (!scope || !element) return;
     let frame = 0;
     let dragging = false;
+    let shown = false;
     const read = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
@@ -84,13 +85,31 @@ export function QuoteSelection({
           !dragging && scope.quote?.available()
             ? quotableSelection(element, document.getSelection())
             : null;
-        setAnchor(quotable && anchorOf(quotable.range, element));
+        const next = quotable && anchorOf(quotable.range, element);
+        shown = !!next;
+        setAnchor(next);
       });
     };
     const down = () => {
       dragging = true;
+      shown = false;
       setAnchor(null);
     };
+    // Escape dismisses the action before a parent surface handles it.
+    const dismiss = (event: KeyboardEvent) => {
+      if (!shown || event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      shown = false;
+      setAnchor(null);
+      document.getSelection()?.removeAllRanges();
+    };
+    // A hidden timeline, such as a retained thread pane, leaves no action.
+    const visibility =
+      typeof IntersectionObserver === "function"
+        ? new IntersectionObserver(read)
+        : undefined;
+    visibility?.observe(element);
     const up = () => {
       if (!dragging) return;
       dragging = false;
@@ -102,8 +121,11 @@ export function QuoteSelection({
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     window.addEventListener("resize", read);
+    window.addEventListener("keydown", dismiss, true);
     return () => {
       cancelAnimationFrame(frame);
+      visibility?.disconnect();
+      window.removeEventListener("keydown", dismiss, true);
       document.removeEventListener("selectionchange", read);
       element.removeEventListener("pointerdown", down);
       element.removeEventListener("scroll", read);
@@ -162,13 +184,20 @@ export function QuoteSelection({
   );
 }
 
-/** Null once the selection scrolls out of the timeline's view. */
+/** Null once the selection scrolls out of view or its timeline is hidden. */
 function anchorOf(range: Range, scroller: Element): Anchor | null {
   const rects = range.getClientRects();
   const first = rects[0];
   const last = rects[rects.length - 1];
   const bounds = scroller.getBoundingClientRect();
-  if (!first || !last || last.bottom < bounds.top || first.top > bounds.bottom)
+  if (
+    !first ||
+    !last ||
+    last.bottom < bounds.top ||
+    first.top > bounds.bottom ||
+    scroller.checkVisibility?.() === false ||
+    scroller.closest("[inert]")
+  )
     return null;
   return { first, last, bounds };
 }

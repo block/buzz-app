@@ -820,17 +820,19 @@ describe("Markdown inline extensions", () => {
       media: () => "https://media.test/emoji.png",
     });
     expect(html).toContain(
-      `class="${styles.text}" data-single-emoji="true"><img`,
+      `class="${styles.text}" data-single-emoji="true" data-message-body=""><img`,
     );
     expect(html).not.toContain("<div");
     expect(render(":party_parrot:", options)).toContain(
-      'data-single-emoji="true">:party_parrot:</p>',
+      'data-single-emoji="true" data-message-body="">:party_parrot:</p>',
     );
     expect(
       render(":party_parrot:", { ...options, extensions: undefined }),
-    ).toContain('data-single-emoji="true">:party_parrot:</p>');
+    ).toContain(
+      'data-single-emoji="true" data-message-body="">:party_parrot:</p>',
+    );
     expect(render("😀", { largeEmoji: true })).toContain(
-      'data-single-emoji="true">😀</p>',
+      'data-single-emoji="true" data-message-body="">😀</p>',
     );
   });
 });

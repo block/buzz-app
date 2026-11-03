@@ -12,7 +12,7 @@ export type SetupStep = Readonly<{
 }>;
 /**
  * Where setup rests for a decision: the connect choice for a found
- * community that is not Builderlab-hosted, the key choice, an import, the backup offer after an import,
+ * community that is not Builderlab-hosted, the key choice, an import,
  * or the returning-user pages (Welcome back, a restore from backup, the
  * start-over page for a lost key).
  */
@@ -21,7 +21,6 @@ export type SetupPause =
   | "key-choice"
   | "key-import"
   | "welcome-back"
-  | "backup-offer"
   | "key-restore"
   | "key-lost";
 export type SetupSnapshot = Readonly<
@@ -203,7 +202,7 @@ export function restoreCommunities(
 
 /**
  * Real: the keys the signed-in account holds a backup of, which decide whether
- * Welcome back offers a restore and an import still needs the backup offer.
+ * Welcome back offers a restore and an import still needs backup.
  * Reported as `undefined` where backup status is unavailable (most Builderlab
  * deployments today) or failed, never as a failed setup: the pages work without it, and
  * no copy implies the user lost a backup.
@@ -227,8 +226,7 @@ export function checkBackup(
  * done, or a pause the caller resumes with another `start` — unless a step
  * picked another resting state. No steps means "nothing more to do" and
  * rests at once. A failed setup may also be resumed: by `retry` from the
- * failed step, or once a key exists, by Continue from the failed page, which
- * skips the steps left and rests on the Join page rather than the landing.
+ * failed step. First run does not skip unfinished linking or backup.
  */
 export function createSetup() {
   let state: SetupSnapshot = { status: "idle" };

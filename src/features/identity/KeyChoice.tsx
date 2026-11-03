@@ -2,7 +2,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./IdentitySetup.module.css";
 import { OnboardingScreen } from "./OnboardingScreen";
 
-/** Create and link a key, or import one, before choosing optional backup. */
+/** Create and link a key, or import one, with automatic Builderlab backup. */
 export function KeyChoice({
   email,
   onCreate,
@@ -10,7 +10,7 @@ export function KeyChoice({
   onSwitchAccount,
 }: {
   email?: string | undefined;
-  /** Create the key, link it to the account, then offer optional backup. */
+  /** Create the key, link it to the account, then back it up. */
   onCreate: () => void;
   /** The user already has a key: open the import page. */
   onImport: () => void;
@@ -31,8 +31,8 @@ export function KeyChoice({
             Get started with Buzz
           </h1>
           <p className="text-body text-subtle">
-            We’ll create a private key that represents you in Buzz. You can also
-            use it in other compatible apps.
+            We’ll create a private key that represents you in Buzz. Your key is
+            backed up to your Builderlab account automatically.
           </p>
           {email && (
             <p className="break-words text-body-sm text-subtle">

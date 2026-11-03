@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { inspectProfile } from "../communities/api";
 import { OnboardingBack } from "./OnboardingBack";
 import {
   useEffect,
@@ -32,7 +31,7 @@ import { createJoinJournal, JournalError } from "../communities/join-journal";
 import type { Communities, PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
-import { BackupOffer } from "./BackupOffer";
+import { BackupError } from "./backup";
 import { hostedByThisBuilderlab } from "./builderlab-hosted";
 import {
   builderlabAccount,
@@ -69,7 +68,6 @@ import {
   type Resting,
   restoreCommunities,
   type SetupPause,
-  type SetupStep,
   unlinkKey,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
@@ -130,7 +128,6 @@ export function Welcome({
   // The hex key the account check found bound to the account: the returning-
   // user lane. Cleared by Start over and on the landing.
   const [linked, setLinked] = useState<string>();
-  const [returningProfile, setReturningProfile] = useState<PersonalProfile>();
   const [switchError, setSwitchError] = useState<string>();
   // The communities that key owns; `undefined` until found, or when the list failed.
   const [owned, setOwned] = useState<readonly OwnedCommunity[]>();
@@ -139,22 +136,8 @@ export function Welcome({
   // failed. The account's, not a key's, so it lives as long as `reads`: Start
   // over keeps it and the landing clears it.
   const known = useRef<readonly string[] | undefined>(undefined);
-  // Resume the chosen lane after the independent backup decision.
-  const backupContinuation = useRef<() => SetupStep[]>(() => []);
-  // The keys the account holds a backup of; `undefined` until listed, or when
-  // backup status is unavailable or failed. Cleared on the landing.
+  // Backup status belongs to this signed-in account and is cleared on the landing.
   const [backups, setBackups] = useState<readonly string[]>();
-  const declineBackup = (): SetupStep[] => [
-    {
-      label: "Saving your choice…",
-      run: async () => {
-        const choice = await identity.getBackupChoice();
-        if (choice.available)
-          await identity.setBackupChoice(choice.pubkey, false);
-      },
-    },
-    ...backupContinuation.current(),
-  ];
 
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
@@ -174,6 +157,8 @@ export function Welcome({
     denied?: Denied;
     /** Why the relay refused the code the join claimed. */
     codeError?: string | undefined;
+    /** Admission already succeeded; retry only local completion. */
+    admitted?: ProfileStepState;
   }>();
   const [retrying, setRetrying] = useState<"read" | "code">();
   // Set for a user with no profile yet once the relay admits the key; the
@@ -280,7 +265,7 @@ export function Welcome({
   );
   if (state.status === "ready" && progress.status === "idle") return children;
   // The linked key is backed up: Welcome back offers a restore, and an
-  // import of it skips the backup offer.
+  // import of it skips another backup.
   const backedUp = !!linked && !!backups?.includes(linked);
   /**
    * Sign-in leads to the account check, which picks the lane: a linked key
@@ -363,13 +348,15 @@ export function Welcome({
     const admitted = outcomes.filter((outcome) => outcome.kind === "admitted");
     const typed = finding ? communityDestination(finding).id : undefined;
     const chosen =
-      admitted.find((outcome) => outcome.id === typed) ?? admitted[0];
+      admitted.find((outcome) => outcome.id === typed) ??
+      admitted.find((outcome) => outcome.read?.exists) ??
+      admitted[0];
     if (!chosen?.read) return undefined;
     communities.select(chosen.id);
     handoff.current = chosen.id === typed ? undefined : finding;
     // `joined` adopts a relay profile only into an empty local default, so
     // with no relay profile read the local one is unchanged by the restore.
-    if (!chosen.read.profile.name.trim()) {
+    if (!chosen.read.exists) {
       setProfileStep({ found: chosen, read: chosen.read });
       return undefined;
     }
@@ -388,6 +375,39 @@ export function Welcome({
       : []),
     ...restore(),
   ];
+  /** A retry after expiration reacquires the same account before uploading. */
+  const backupKey = (initial: FirstRunAccount) => {
+    const original = login.credential().account;
+    let currentAccount = initial;
+    let expired = false;
+    return backUp(identity, {
+      ...initial,
+      backUp: async (pubkey) => {
+        if (expired) {
+          await login.signIn();
+          if (login.snapshot().status !== "signed-in")
+            throw new Error("Sign in again to finish backing up your key.");
+          const credential = login.credential();
+          if (credential.account.subject !== original.subject) {
+            login.signOut();
+            throw new Error(
+              `Sign in as ${original.email} to back up this key.`,
+            );
+          }
+          currentAccount = account(credential, identity);
+          reads.current = currentAccount;
+          expired = false;
+        }
+        try {
+          await currentAccount.backUp(pubkey);
+        } catch (error) {
+          if (error instanceof BackupError && error.kind === "signed_out")
+            expired = true;
+          throw error;
+        }
+      },
+    });
+  };
   /** A submitted address or invite link: what to look up, and the code to claim. */
   const find = (origin: string, code = "") => {
     setFinding(origin);
@@ -398,7 +418,6 @@ export function Welcome({
     setOtherOptions(false);
     setFinding(undefined);
     setInviteCode("");
-    setReturningProfile(undefined);
     setSwitchError(undefined);
     setLinked(undefined);
     setOwned(undefined);
@@ -455,6 +474,20 @@ export function Welcome({
     if (step.admission)
       await reads.current?.saveCommunity(step.found.url).catch(() => {});
     leave();
+  };
+  const finishAdmitted = async (step: ProfileStepState) => {
+    setRetrying("read");
+    try {
+      await finishJoin(step);
+    } catch (error) {
+      setJoinError({
+        title: "Couldn’t finish joining",
+        error: error instanceof Error ? error.message : String(error),
+        admitted: step,
+      });
+    } finally {
+      setRetrying(undefined);
+    }
   };
   /**
    * The same join the Add-a-community dialog performs, through its owner:
@@ -517,13 +550,9 @@ export function Welcome({
     }
     if (!admission) return;
     const step = { found, read: admission.found, admission };
-    // Require a nonempty relay name before completing this join.
-    if (!admission.found.profile.name.trim()) return setProfileStep(step);
-    try {
-      await finishJoin(step);
-    } catch (error) {
-      return fail(error instanceof Error ? error.message : String(error));
-    }
+    // Existing relay profiles are preserved; only a missing profile needs setup.
+    if (!admission.found.exists) return setProfileStep(step);
+    await finishAdmitted(step);
   };
   /** Try again repeats the read; a typed code is claimed first. */
   const retry = async ({ found, consent }: Denied, code = "") => {
@@ -535,15 +564,11 @@ export function Welcome({
     }
   };
   const denied = joinError?.denied;
-  // A failure once a key is saved. A failed link (or the unlink before it)
-  // blocks: nothing links the key later, so letting the user past it would
-  // leave the key on this device only, and the page offers the error and Try
-  // again until Builderlab answers. A failed backup may be skipped: a later
-  // sign-in may retry only while the user has enabled automatic backup.
+  const admitted = joinError?.admitted;
+  // Once a key exists, failures stay in setup until the remaining steps succeed.
   const failedAfterKey =
     progress.status === "failed" && state.status === "ready";
   const blocked = failedAfterKey && progress.skipsLink;
-  const skipped = failedAfterKey && !blocked ? SKIPPED_BACKUP : undefined;
   /**
    * The pages setup rests on. The first two may be reached before any sign-in,
    * for a found community; the rest only after one. A pause this
@@ -570,12 +595,12 @@ export function Welcome({
         // With no account this run (the connect choice), the key is nobody's
         // to link or back up, so the import is the whole setup. On the linked
         // lane only the linked key is accepted, so there is nothing to link.
-        // Otherwise an imported key is linked like a created one. Either way
-        // the backup is offered, never assumed: the key may be used elsewhere.
-        // The linked lane skips the offer when status already lists the key.
+        // A Builderlab import is linked and backed up automatically; an
+        // independent community import never uploads to Builderlab.
         return (
           <KeyImport
             expectedPubkey={linked}
+            automaticBackup={!!current && !backedUp}
             onLost={
               linked && current
                 ? () =>
@@ -597,15 +622,13 @@ export function Welcome({
             }
             onImport={async (nsec) => {
               await importKey(identity, nsec);
-              backupContinuation.current = finish;
               if (!current) void setup.start([]);
-              else if (!linked)
-                void setup.start([linkKey(identity, current)], {
-                  status: "paused",
-                  at: "backup-offer",
-                });
-              else if (!backedUp) pause("backup-offer");
-              else void setup.start(finish());
+              else
+                void setup.start([
+                  ...(!linked ? [linkKey(identity, current)] : []),
+                  ...(!backedUp ? [backupKey(current)] : []),
+                  ...finish(),
+                ]);
             }}
           />
         );
@@ -613,18 +636,19 @@ export function Welcome({
     if (!current) return null;
     // A new key becomes the account's before it is backed up.
     const link = linkKey(identity, current);
-    const backUpKey = backUp(identity, current);
+    const backUpKey = backupKey(current);
     switch (at) {
       case "key-choice":
         return (
           <KeyChoice
             email={auth.account?.email}
             onCreate={() => {
-              backupContinuation.current = finish;
-              void setup.start([createKey(identity), link], {
-                status: "paused",
-                at: "backup-offer",
-              });
+              void setup.start([
+                createKey(identity),
+                link,
+                backUpKey,
+                ...finish(),
+              ]);
             }}
             onImport={() => pause("key-import")}
             onSwitchAccount={backToLanding}
@@ -636,7 +660,6 @@ export function Welcome({
             <WelcomeBack
               email={auth.account?.email}
               npub={npubEncode(linked)}
-              profile={returningProfile}
               onRestore={
                 viewer === linked
                   ? () => void setup.start(finish())
@@ -665,6 +688,7 @@ export function Welcome({
         return linked ? (
           <KeyRestore
             recovery={current.recovery}
+            email={auth.account?.email}
             expectedPubkey={linked}
             onBack={() => back("welcome-back", "restore")}
             onImport={() => pause("key-import")}
@@ -678,44 +702,10 @@ export function Welcome({
               const restored = identity.snapshot();
               if (restored.status !== "ready" || restored.viewer !== linked)
                 return;
-              void setup.start(
-                [
-                  {
-                    label: "Loading your profile…",
-                    run: async () => {
-                      for (const destination of (known.current ?? []).slice(
-                        0,
-                        3,
-                      )) {
-                        if (!mounted.current || reads.current !== current)
-                          return;
-                        const found = await inspectProfile(destination).catch(
-                          () => undefined,
-                        );
-                        if (!mounted.current || reads.current !== current)
-                          return;
-                        if (found?.exists) {
-                          setReturningProfile(found.profile);
-                          break;
-                        }
-                      }
-                    },
-                  },
-                ],
-                { status: "paused", at: "welcome-back" },
-              );
+              void setup.start(finish());
             }}
           />
         ) : null;
-      case "backup-offer":
-        return (
-          <BackupOffer
-            onSkip={() => void setup.start(declineBackup())}
-            onBackUp={() =>
-              void setup.start([backUpKey, ...backupContinuation.current()])
-            }
-          />
-        );
       case "key-lost":
         // Starting over creates a new key, as Create my key does, and the old
         // key's communities are not offered to it (so the lane ends with the
@@ -730,15 +720,13 @@ export function Welcome({
             onStartOver={() => {
               setLinked(undefined);
               setOwned(undefined);
-              backupContinuation.current = restore;
-              void setup.start(
-                [
-                  createKey(identity),
-                  unlinkKey(identity, current, linked),
-                  link,
-                ],
-                { status: "paused", at: "backup-offer" },
-              );
+              void setup.start([
+                createKey(identity),
+                unlinkKey(identity, current, linked),
+                link,
+                backUpKey,
+                ...restore(),
+              ]);
             }}
           />
         ) : null;
@@ -848,7 +836,7 @@ export function Welcome({
             void signIn();
           }}
         >
-          Sign in with email
+          Sign in with Builderlab
         </Button>
         <Button
           size="lg"
@@ -899,17 +887,13 @@ export function Welcome({
             read={profileStep.read}
             defaultName={auth.account?.email.split("@")[0] ?? ""}
             onContinue={(next) => finishJoin(profileStep, next)}
-            onBack={async () => {
-              setProfileStep(undefined);
-              setFinding(undefined);
-            }}
           />
         ) : joinError ? (
           // Back returns to the find page, which looks the community up again.
           <Failure
             title={joinError.title}
             error={joinError.error}
-            onBack={() => setJoinError(undefined)}
+            onBack={admitted ? undefined : () => setJoinError(undefined)}
             publicKey={denied ? npubOf(state) : undefined}
             invite={
               denied && {
@@ -917,7 +901,11 @@ export function Welcome({
                 onSubmit: (code) => void retry(denied, code),
               }
             }
-            onRetry={denied && (() => void retry(denied))}
+            onRetry={
+              admitted
+                ? () => void finishAdmitted(admitted)
+                : denied && (() => void retry(denied))
+            }
             busy={retrying}
           />
         ) : finding ? (
@@ -934,24 +922,18 @@ export function Welcome({
       ) : progress.status === "paused" ? (
         paused(progress.at)
       ) : progress.status === "failed" ? (
-        // Once a key is saved, the way on is Join without the steps left:
-        // `backToLanding` would reset to idle, and with identity ready the
-        // gate would lift into the app with no community.
         <Failure
           title="Couldn’t finish setup"
           error={progress.error}
-          note={blocked ? UNLINKED_NOTE : skipped?.note}
-          backLabel={skipped?.label}
-          onBack={
+          note={
             blocked
-              ? undefined
-              : skipped
-                ? () => void setup.start(declineBackup())
-                : backToLanding
+              ? UNLINKED_NOTE
+              : failedAfterKey
+                ? "Your key is saved on this device."
+                : undefined
           }
-          onRetry={
-            blocked || progress.retryable ? () => void setup.retry() : undefined
-          }
+          onBack={failedAfterKey ? undefined : backToLanding}
+          onRetry={() => void setup.retry()}
         />
       ) : auth.error ? (
         <Failure
@@ -1008,12 +990,6 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 const UNLINKED_NOTE =
   "Your key is saved on this device, but it isn’t linked to your account or backed up yet.";
 
-/** The failed page's way on when only the backup is left undone. */
-const SKIPPED_BACKUP = {
-  label: "Continue without backup",
-  note: "Your key is saved on this device, but it isn’t backed up yet.",
-} as const;
-
 function Failure({
   title,
   error,
@@ -1053,9 +1029,9 @@ function Failure({
         {title}
       </h1>
       <p role="alert" className="text-body text-danger">
+        {note && <span>{note} </span>}
         {error}
       </p>
-      {note && <p className="text-body text-subtle">{note}</p>}
       {invite && (
         <InviteCodeField
           error={invite.error}

@@ -9,6 +9,7 @@ import { recoveryOff } from "./service";
 export function KeyRestore({
   recovery,
   expectedPubkey,
+  email,
   onBack,
   onLost,
   onImport,
@@ -16,6 +17,7 @@ export function KeyRestore({
 }: {
   recovery: Recovery;
   expectedPubkey: string;
+  email?: string | undefined;
   onBack: () => void;
   onLost?: (() => void) | undefined;
   onImport: () => void;
@@ -61,7 +63,7 @@ export function KeyRestore({
             ? "Restoring your key…"
             : canceling
               ? "Canceling recovery…"
-              : "Sign in to your Builderlab account in the browser to restore your key on this device.";
+              : "Restoring your key…";
   return (
     <OnboardingScreen
       labelledBy="welcome-title"
@@ -74,12 +76,22 @@ export function KeyRestore({
           >
             {failed ? "Couldn’t restore your key" : "Restore your key"}
           </h1>
+          {email && (
+            <p className="break-words text-body-sm text-subtle">
+              Signed in as {email}
+            </p>
+          )}
           <p
             role={failed ? "alert" : "status"}
             className="mt-2 text-body text-subtle"
           >
             {description}
           </p>
+          {state?.status === "waiting" && (
+            <p className="text-body-sm text-subtle">
+              Complete sign-in in your browser if prompted.
+            </p>
+          )}
         </>
       }
     >

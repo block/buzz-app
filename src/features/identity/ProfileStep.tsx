@@ -6,11 +6,10 @@ import type { PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
 import { WireframePanel } from "./Wireframe";
-import { OnboardingBack } from "./OnboardingBack";
 
 /**
  * First-run profile, shown once the relay has admitted the key and before the
- * gate lifts. A pure form: the caller owns what Continue and Go back do with the
+ * gate lifts. A pure form: the caller owns what Continue does with the
  * draft (the join's completion, which publishes the kind 0 through the shared
  * owner and saves the membership after it), and a rejection stays here with
  * the error inline and the draft intact.
@@ -20,7 +19,6 @@ export function ProfileStep({
   read,
   defaultName,
   onContinue,
-  onBack,
 }: {
   found: Pick<FoundCommunity, "url" | "host">;
   /** The admission read that joined the community: the prefill. */
@@ -29,8 +27,6 @@ export function ProfileStep({
   defaultName: string;
   /** Publishes the trimmed draft and finishes the join; a rejection keeps the step. */
   onContinue: (profile: PersonalProfile) => Promise<void>;
-  /** Returns to community selection without publishing or joining. */
-  onBack: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState<PersonalProfile>(() =>
     read.exists ? read.profile : { name: defaultName, picture: "", about: "" },
@@ -73,7 +69,7 @@ export function ProfileStep({
           Set up your profile
         </h1>
         <p className="mt-2 text-body text-subtle">
-          You need to enter a name to join a community. You can change it later.
+          Enter a name for your community profile. You can change it later.
         </p>
       </div>
       <WireframePanel>
@@ -93,13 +89,7 @@ export function ProfileStep({
           {error}
         </p>
       )}
-      {/* Footer order: secondary first, primary last. */}
       <div data-onboarding-actions="">
-        <OnboardingBack
-          aria-label="Go back"
-          onClick={() => void run(onBack)}
-          disabled={busy}
-        />
         <Button
           type="submit"
           size="lg"
@@ -120,7 +110,7 @@ export function ProfileStep({
  * shown as is. */
 function publishFailure(host: string, error: unknown) {
   if (readErrorKind(error) === "denied")
-    return `${host} no longer admits this key. Go back and ask a community administrator.`;
+    return `${host} no longer admits this key. Ask a community administrator to restore your access.`;
   return error instanceof Error
     ? error.message
     : "Could not reach the relay. Check your connection and try again.";

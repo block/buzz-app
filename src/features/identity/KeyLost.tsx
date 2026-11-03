@@ -3,7 +3,7 @@ import type { OwnedCommunity } from "./builderlab-account";
 import { WireframePanel } from "./Wireframe";
 
 /** Recovery guidance and consequences before replacing a linked key.
- * Backup is offered separately after the replacement has been linked. */
+ * The replacement is automatically backed up after linking. */
 export function KeyLost({
   owned,
   onBack,
@@ -31,7 +31,8 @@ export function KeyLost({
         <p className="mt-2 text-body text-subtle">
           Starting over replaces the key linked to your Builderlab account. Your
           profile, messages, and community access won’t carry over. Your old
-          content won’t be deleted.
+          content won’t be deleted. The new key will be backed up to your
+          Builderlab account automatically.
         </p>
       </div>
       {(owned === undefined || owned.length > 0) && (

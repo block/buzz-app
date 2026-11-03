@@ -18,10 +18,11 @@ the interface unless an available tool actually supports that action.
 ## Identity and getting connected
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
-  **Sign in with email**. **Other options** reveals a **Community URL** field
+  **Sign in with Builderlab**. **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
   With no communities yet, **Join** advances through full-page access and profile
-  steps. **Back** returns to the entered link. An invite-code field appears for
+  steps. Before joining, **Back** returns to the entered link; after admission,
+  profile setup continues forward. An invite-code field appears for
   a supplied invite or denied access on a community that enforces membership;
   community policy links open separately.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
@@ -29,9 +30,10 @@ the interface unless an available tool actually supports that action.
   The key-import field masks your key. Use the eye inside the field to reveal
   or hide it. Check the signed-in email before creating a key.
   Setup then creates a new key or takes an existing private key, and may link
-  it to the signed-in account. **Back it up** explicitly enables online backup;
-  **Not now** continues with automatic backup disabled. A name is required to
-  finish joining a community; an avatar is optional. A returning account may restore
+  it to the signed-in account. Builderlab setup backs the key up automatically;
+  if backup fails, retry to complete setup. Independent-community key imports
+  without Builderlab sign-in do not upload a backup. Existing community profiles
+  are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
   brings that identity over without signing in; **Not now** keeps the welcome

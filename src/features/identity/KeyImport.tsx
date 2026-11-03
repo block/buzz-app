@@ -26,12 +26,14 @@ import { SetupProgress } from "./SetupProgress";
  */
 export function KeyImport({
   expectedPubkey,
+  automaticBackup = false,
   onBack,
   onLost,
   onImport,
 }: {
   /** The hex key linked to the signed-in account, when the lane has one. */
   expectedPubkey?: string | undefined;
+  automaticBackup?: boolean;
   onBack: () => void;
   onLost?: (() => void) | undefined;
   /** Rejects with the native refusal, shown under the field. */
@@ -125,6 +127,13 @@ export function KeyImport({
                 Paste your private key to sign in to Buzz. You can also select
                 or drop a text file with your key.
               </p>
+              {automaticBackup && (
+                <p className="text-body-sm text-subtle">
+                  Your key will be backed up to your Builderlab account
+                  automatically. Block can use that copy to restore this key,
+                  including anywhere else you use it.
+                </p>
+              )}
               <div className={styles.importForm}>
                 <Field
                   label="Private key (nsec)"

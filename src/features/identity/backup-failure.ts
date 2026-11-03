@@ -21,7 +21,8 @@ const SIGNED_OUT =
  */
 export const BACKUP_FAILURES = {
   unavailable: {
-    message: "Key backup isn’t available in this version of Buzz.",
+    message:
+      "Couldn’t back up your key. This build needs Builderlab backup support to finish setup.",
     retryable: false,
   },
   busy: retry(

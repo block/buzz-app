@@ -30,7 +30,7 @@ it("retries from the failed step and rests where the steps would have", async ()
   const after = ok("After");
   await setup.start([before, failing.step, after], {
     status: "paused",
-    at: "backup-offer",
+    at: "key-choice",
   });
   expect(setup.snapshot()).toEqual({
     status: "failed",
@@ -41,7 +41,7 @@ it("retries from the failed step and rests where the steps would have", async ()
 
   failing.heal();
   await setup.retry();
-  expect(setup.snapshot()).toEqual({ status: "paused", at: "backup-offer" });
+  expect(setup.snapshot()).toEqual({ status: "paused", at: "key-choice" });
   expect(before.run).toHaveBeenCalledTimes(1);
   expect(failing.run).toHaveBeenCalledTimes(2);
   expect(after.run).toHaveBeenCalledTimes(1);

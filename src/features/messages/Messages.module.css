@@ -168,13 +168,13 @@
   min-width: 0;
 }
 /* Long bubbles stop 32px before the opposite avatar's visible inner edge.
-   Avatars sit space-2 from their body, including the wider timeline gutter. */
+   Avatars sit space-1 from their body, including the wider timeline gutter. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: calc(
     100% -
     2 *
     var(--message-side-space) +
-    var(--space-2) -
+    var(--space-1) -
     var(--space-8)
   );
 }
@@ -2995,12 +2995,12 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   user-select: none;
   position: absolute;
   bottom: 0;
-  right: calc(100% + var(--space-2));
+  right: calc(100% + var(--space-1));
   display: flex;
 }
 .message[data-viewer-message] .messageAvatar {
   right: auto;
-  left: calc(100% + var(--space-2));
+  left: calc(100% + var(--space-1));
 }
 .messageBubble > :is(.text, .plainText) {
   margin: 0;

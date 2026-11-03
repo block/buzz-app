@@ -1594,8 +1594,8 @@ Values scale with the host interface-size preference.
   independent from caption even though their sizes currently match. `text-mono-lg` and
   `text-mono-sm` are compatibility aliases for this same setting, not extra sizes.
 - Caption uses 12/16 and 0.0133em tracking. Buzz’s `text-body` uses 14/20; `text-label` uses 16/24 and `text-body-lg` uses 20/28.
-- Message prose uses `text-message`: 14px with 1.625 leading (22.75px at
-  default), matching Berd’s relaxed reply rhythm for both sent and received
+- Message prose uses `text-message`: 14px with 22/14 leading (22px at
+  default), keeping a compact reading rhythm for both sent and received
   messages. The message renderer uses `space-4` between prose blocks, with
   `space-2` between an introductory paragraph and its following list. Labels,
   controls, code, tables and headings retain their existing type roles.

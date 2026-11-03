@@ -1,5 +1,6 @@
 import type { Navigation } from "../../features/navigation/controller";
 import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
+import { retainTabWorkspace } from "../../features/messages/tab-workspace-lifetime";
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import {
   useCallback,
@@ -8,7 +9,16 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type { PanelOpening } from "../../features/panels/service";
+import type {
+  ChannelPanelContext,
+  PanelOpening,
+} from "../../features/panels/service";
+import {
+  readTabWorkspaces,
+  saveTabWorkspaces,
+  savedPanelId,
+  type SavedPanel,
+} from "./tab-workspace-storage";
 
 export type ConversationTab =
   | {
@@ -50,8 +60,10 @@ type VisitSelection = {
   mainSelected?: string | undefined;
   paneOpen: boolean;
 };
-type State = {
+export type TabWorkspaceState = {
   entries: PanelOpening[];
+  /** Targets waiting for their current panel contribution to register. */
+  pendingEntries?: SavedPanel[] | undefined;
   /** Panel tabs moved to the main pane, by tab id; the rest are in the side. */
   mainEntries?: string[] | undefined;
   tabs: ConversationTab[];
@@ -78,6 +90,7 @@ type State = {
   /** A launcher's side panel shows in the pane; the page owns that panel. */
   sidePanel?: boolean;
 };
+type State = TabWorkspaceState;
 // Apply one history visit once. Leaving a visit remembers its selection, so
 // Back/Forward restore which tabs were selected and never close any.
 const snapshotOf = (state: State): VisitSelection => ({
@@ -89,6 +102,9 @@ const snapshotOf = (state: State): VisitSelection => ({
     state.paneOpen &&
     !!(
       state.tabs.some((tab) => tabPane(tab) === "side") ||
+      state.pendingEntries?.some(
+        (entry) => !state.mainEntries?.includes(savedPanelId(entry)),
+      ) ||
       sideEntries(state).length ||
       state.settings ||
       state.thread
@@ -129,6 +145,9 @@ const sideSelection = (state: State) =>
     ...(state.settings ? ["settings"] : []),
     ...state.tabs.filter((tab) => tabPane(tab) === "side").map((tab) => tab.id),
     ...sideEntries(state).map(panelTabId),
+    ...(state.pendingEntries ?? [])
+      .filter((entry) => !state.mainEntries?.includes(savedPanelId(entry)))
+      .map(savedPanelId),
   ]);
 
 /** A channel's open tab for a thread: by its verified root, or until then by
@@ -207,9 +226,40 @@ function withThread(
     : { ...state, tabs, selected: id, paneOpen: true };
 }
 
+function withoutMenuEntries(s: State): State {
+  const retired = new Set([
+    ...s.entries.filter((entry) => entry.panel.channelMenu).map(panelTabId),
+    ...(s.pendingEntries ?? [])
+      .filter((entry) => entry.channelMenu)
+      .map(savedPanelId),
+  ]);
+  if (!retired.size) return s;
+  return {
+    ...s,
+    entries: s.entries.filter((entry) => !retired.has(panelTabId(entry))),
+    pendingEntries: s.pendingEntries?.filter(
+      (entry) => !retired.has(savedPanelId(entry)),
+    ),
+    mainEntries: s.mainEntries?.filter((id) => !retired.has(id)),
+    mainSelected: retired.has(s.mainSelected ?? "")
+      ? undefined
+      : s.mainSelected,
+    selected: retired.has(s.selected) ? "thread" : s.selected,
+  };
+}
+
 // Pages mount and unmount during navigation; their tab descriptors belong to
-// the community session. Weak ownership retires them with that session.
+// the community session. Window-session storage also survives a document reload.
 const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
+// Old session callbacks may still update their own retained in-memory store,
+// but only the newest session for this partition may save reload state.
+const writers = new Map<
+  string,
+  {
+    viewer: string;
+    store: ReturnType<typeof createTabStore>;
+  }
+>();
 // History outlives a relay session. Retain only dismissal identities per
 // account/community, never layout, panel objects, editors or callbacks.
 type Retirement = Pick<State, "routedVisits" | "detailVisits">;
@@ -217,12 +267,28 @@ const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
 const forgetVisits = (scope: string) => {
   visitOwners.delete(scope);
 };
-function createTabStore(scope?: string) {
+function createTabStore(
+  session: RelaySession,
+  initial = readTabWorkspaces(session),
+) {
+  const scope = session.viewer ? session.scope : undefined;
   const owner = { channels: (scope && visitOwners.get(scope)?.channels) || {} };
-  let channels: Record<string, State> = Object.fromEntries(
-    Object.entries(owner.channels).map(([key, visits]) => [
+  let channels: Record<string, State> = { ...initial };
+  for (const [key, visits] of Object.entries(owner.channels)) {
+    const state = channels[key] ?? empty;
+    channels[key] = {
+      ...state,
+      routedVisits: { ...state.routedVisits, ...visits.routedVisits },
+      detailVisits: { ...state.detailVisits, ...visits.detailVisits },
+    };
+  }
+  owner.channels = Object.fromEntries(
+    Object.entries(channels).map(([key, state]) => [
       key,
-      { ...empty, ...visits },
+      {
+        routedVisits: state.routedVisits,
+        detailVisits: state.detailVisits,
+      },
     ]),
   );
   if (scope) {
@@ -231,7 +297,14 @@ function createTabStore(scope?: string) {
   }
   const listeners = new Set<() => void>();
   const mounts = new Map<string, number>();
-  return {
+  const store = {
+    enterChannel(page: string, channelId: string) {
+      const prefix = `${JSON.stringify([page]).slice(0, -1)},`;
+      for (const key of Object.keys(channels))
+        if (key.startsWith(prefix) && key !== keyOf(page, channelId))
+          store.update(key, withoutMenuEntries);
+    },
+    mounted: () => mounts.size > 0,
     visible: (key: string) => mounts.has(key),
     mount(key: string) {
       mounts.set(key, (mounts.get(key) ?? 0) + 1);
@@ -294,17 +367,32 @@ function createTabStore(scope?: string) {
             detailVisits: next.detailVisits,
           },
         };
+      if (writers.get(session.scope)?.store === store)
+        saveTabWorkspaces(session, channels);
       for (const listener of listeners) listener();
     },
   };
+  return store;
 }
 const keyOf = (page: string, channelId: string) =>
   JSON.stringify([page, channelId]);
 function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore(session.viewer ? session.scope : undefined);
+    const current =
+      session.scope && session.viewer ? writers.get(session.scope) : undefined;
+    // Retained reconnects keep mounted content regardless of which caller asks
+    // first. A fresh host still reconstructs addresses through recovery policy.
+    const continuing =
+      current && current.viewer === session.viewer && current.store.mounted()
+        ? current.store.snapshot()
+        : undefined;
+    store = createTabStore(session, continuing);
     sessions.set(session, store);
+    if (session.scope && session.viewer) {
+      writers.set(session.scope, { viewer: session.viewer, store });
+      retainTabWorkspace(session.scope, () => writers.delete(session.scope));
+    }
   }
   return store;
 }
@@ -451,7 +539,10 @@ export function useChannelTabState(
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
   // Retain descriptors across navigation, but protect only a mounted workspace.
-  useLayoutEffect(() => store.mount(key), [key, store]);
+  useLayoutEffect(() => {
+    if (channelId) store.enterChannel(page, channelId);
+    return store.mount(key);
+  }, [key, store, page, channelId]);
   const state = channels[key] ?? empty;
   const update = useCallback(
     (change: (previous: State) => State) => store.update(key, change),
@@ -461,32 +552,106 @@ export function useChannelTabState(
     (entries: PanelOpening[]) =>
       update((s) => {
         // A closed panel tab forgets its pane.
-        const ids = new Set(entries.map(panelTabId));
+        const ids = new Set([
+          ...entries.map(panelTabId),
+          ...(s.pendingEntries ?? []).map(savedPanelId),
+        ]);
         const mainEntries = s.mainEntries?.filter((id) => ids.has(id));
+        // Pending indices count both resolved and unresolved panels. Removing
+        // a live panel must also move the still-unresolved descriptors forward.
+        const kept = new Set(entries.map(panelTabId));
+        const pendingEntries =
+          s.pendingEntries &&
+          [...s.pendingEntries]
+            .sort((a, b) => a.index - b.index)
+            .map((saved, index) => ({
+              ...saved,
+              index:
+                index +
+                s.entries
+                  .slice(0, saved.index - index)
+                  .filter((entry) => kept.has(panelTabId(entry))).length,
+            }));
         return {
           ...s,
           entries,
+          pendingEntries,
           mainEntries: mainEntries?.length ? mainEntries : undefined,
         };
       }),
     [update],
   );
-  const retireMenuEntries = useCallback(
-    () =>
-      update((s) => {
-        const entries = s.entries.filter((entry) => !entry.panel.channelMenu);
-        if (entries.length === s.entries.length) return s;
+  const restoreEntries = useCallback(
+    (
+      resolve: (
+        key: string,
+        target: string,
+        channelBound?: boolean,
+      ) => PanelOpening["panel"] | undefined,
+      channelContext?: (saved: SavedPanel) => ChannelPanelContext | undefined,
+    ) =>
+      update((state) => {
+        if (!state.pendingEntries?.length) return state;
+        const pendingEntries: SavedPanel[] = [];
+        const entries = [...state.entries];
+        for (const saved of [...state.pendingEntries].sort(
+          (a, b) => a.index - b.index,
+        )) {
+          const panel = resolve(saved.key, saved.target, saved.channelBound);
+          const context = saved.channelBound
+            ? channelContext?.(saved)
+            : undefined;
+          if (panel && (!saved.channelBound || context)) {
+            if (
+              entries.some(
+                (entry) =>
+                  entry.panel.key === saved.key &&
+                  entry.target === saved.target,
+              )
+            )
+              continue;
+            entries.splice(
+              Math.max(0, saved.index - pendingEntries.length),
+              0,
+              {
+                panel,
+                target: saved.target,
+                channelId: saved.channelId,
+                restored: true,
+                ...(context && { channelContext: context }),
+                ...(saved.rootId && { rootId: saved.rootId }),
+              },
+            );
+          } else pendingEntries.push(saved);
+        }
+        return pendingEntries.length === state.pendingEntries.length
+          ? state
+          : { ...state, entries, pendingEntries };
+      }),
+    [update],
+  );
+  const closePendingEntry = useCallback(
+    (id: string) =>
+      update((state) => {
+        const closed = state.pendingEntries?.find(
+          (entry) => savedPanelId(entry) === id,
+        );
+        if (!closed) return state;
         return {
-          ...s,
-          entries,
-          selected: s.entries.some(
-            (entry) =>
-              entry.panel.channelMenu && panelTabId(entry) === s.selected,
-          )
-            ? "thread"
-            : s.selected,
+          ...state,
+          pendingEntries: state.pendingEntries
+            ?.filter((entry) => entry !== closed)
+            .map((entry) => ({
+              ...entry,
+              index: entry.index > closed.index ? entry.index - 1 : entry.index,
+            })),
+          mainEntries: state.mainEntries?.filter((entry) => entry !== id),
         };
       }),
+    [update],
+  );
+  const retireMenuEntries = useCallback(
+    () => update(withoutMenuEntries),
     [update],
   );
   const setTabs = useCallback(
@@ -822,16 +987,21 @@ export function useChannelTabState(
       update((s) => {
         const tab = s.tabs.find((item) => item.id === keep);
         const entry = s.entries.find((item) => panelTabId(item) === keep);
+        const pending = s.pendingEntries?.find(
+          (item) => savedPanelId(item) === keep,
+        );
         const settings = keep === "settings" ? s.settings : undefined;
         const main =
           (!!tab && tabPane(tab) === "main") ||
-          (!!entry && entryPane(s.mainEntries, entry) === "main");
+          (!!entry && entryPane(s.mainEntries, entry) === "main") ||
+          (!!pending && !!s.mainEntries?.includes(keep ?? ""));
         // The channel conversation is not stored: keeping it closes them all.
-        const side = !main && !!(tab || entry || settings);
+        const side = !main && !!(tab || entry || pending || settings);
         return {
           ...s,
           entries: entry ? [entry] : [],
-          mainEntries: entry && main ? [panelTabId(entry)] : undefined,
+          pendingEntries: pending ? [pending] : undefined,
+          mainEntries: main && (entry || pending) && keep ? [keep] : undefined,
           tabs: tab ? [tab] : [],
           selected: (side && keep) || "",
           mainSelected: main ? keep : undefined,
@@ -903,6 +1073,8 @@ export function useChannelTabState(
       threadVisits,
       detailVisits,
       setEntries,
+      restoreEntries,
+      closePendingEntry,
       retireMenuEntries,
       setTabs,
       openThreadTab,
@@ -928,6 +1100,8 @@ export function useChannelTabState(
       threadVisits,
       detailVisits,
       setEntries,
+      restoreEntries,
+      closePendingEntry,
       retireMenuEntries,
       setTabs,
       openThreadTab,

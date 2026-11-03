@@ -73,6 +73,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   };
   ctx.panels.register({
     id: "object",
+    restore: "view",
     title: "GitHub",
     channelLauncher: (props) => (
       <SoloPullLauncher {...props} relay={ctx.relay} pullsFor={pullsFor} />

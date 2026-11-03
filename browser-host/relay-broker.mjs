@@ -332,6 +332,10 @@ async function relayAuthority(fetch, relay) {
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("buzz-search-sort"),
+    // NIP-CI: the relay admits consented conversation imports.
+    conversationImport:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("nip-ci"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -510,6 +514,38 @@ export function validMessageTemplate(event) {
             references[0][1] !== references[1][1];
     })()
   );
+}
+/** NIP-CI proposal, consent, withdrawal or completion: one channel, JSON
+ * content within 16 KiB, and a proposal reference on everything but the
+ * proposal itself. The relay decides membership and session rules. */
+export function validImportRecordTemplate(event) {
+  if (
+    !event ||
+    !(event.kind >= 42110 && event.kind <= 42113) ||
+    typeof event.content !== "string" ||
+    Buffer.byteLength(event.content) > 16 * 1024 ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length >= 2 &&
+        tag.every((value) => typeof value === "string"),
+    ) ||
+    event.tags.filter((tag) => tag[0] === "h" && tag[1]).length !== 1
+  )
+    return false;
+  try {
+    const body = JSON.parse(event.content);
+    if (!body || typeof body !== "object" || body.v !== 1) return false;
+  } catch {
+    return false;
+  }
+  const references = event.tags.filter((tag) => tag[0] === "e");
+  return event.kind === 42110
+    ? !references.length
+    : references.length === 1 && /^[0-9a-f]{64}$/.test(references[0][1]);
 }
 /** NIP-56 message report: exactly one author and one typed message target. */
 export function validReport(event) {
@@ -1548,6 +1584,10 @@ export function relayBrokerPlugin({
                 9,
                 40003,
                 42000,
+                42110,
+                42111,
+                42112,
+                42113,
                 9000,
                 9001,
                 30078,
@@ -2756,6 +2796,12 @@ export function relayBrokerPlugin({
               if (!validCatalogEnvelope(filters))
                 return json(res, 400, {
                   error: "Malformed catalog publication",
+                  sent: false,
+                });
+            } else if (filters?.kind >= 42110 && filters?.kind <= 42113) {
+              if (!validImportRecordTemplate(filters))
+                return json(res, 400, {
+                  error: "Conversation import record rejected",
                   sent: false,
                 });
             } else if (filters?.kind === 45010) {

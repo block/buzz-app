@@ -2,6 +2,7 @@ import { assert, afterEach, expect, it, vi } from "vitest";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
+import { claimImportWriter } from "./import-writes";
 import { mentionConformance } from "../../bundled/mentions/mention-rules.conformance";
 import {
   flush,
@@ -31,6 +32,7 @@ function setup(soloMode = false) {
   });
   let currentRoster: RelayEvent | undefined;
   let replicaRoster: RelayEvent | undefined;
+  const strongRosterReads = { count: 0 };
   const profileEvents: RelayEvent[] = [];
   const owner = createRelaySession(
     {
@@ -40,7 +42,8 @@ function setup(soloMode = false) {
           filters[0]?.authors?.[0] === relay.pubkey &&
           filters[0]?.kinds?.[0] === 39002 &&
           filters[0]?.limit === 1
-        )
+        ) {
+          if (filters[0]?.consistency === "strong") strongRosterReads.count++;
           return Promise.resolve(
             replicaRoster && filters[0]?.consistency !== "strong"
               ? [replicaRoster]
@@ -48,6 +51,7 @@ function setup(soloMode = false) {
                 ? [currentRoster]
                 : [],
           );
+        }
         if (
           soloMode &&
           filters.every((filter) => filter.kinds?.every((kind) => kind === 0))
@@ -105,6 +109,7 @@ function setup(soloMode = false) {
     ...wire,
     ...owner,
     members,
+    strongRosterReads,
     lagReplica: () => {
       replicaRoster = currentRoster;
     },
@@ -155,6 +160,39 @@ it.each([false, true])(
     expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
   },
 );
+it("checks mentions in imported history against the current roster before signing and publishing", async () => {
+  const h = setup();
+  await h.members([viewer.pubkey, honey.pubkey]);
+  const writer = claimImportWriter(h.session, {});
+  assert.exists(writer);
+  await h.session.outbox?.ready();
+  const imported = (key: string, ref: string) => ({
+    kind: 9 as const,
+    created_at: 1_690_000_000,
+    content: `[@Someone](nostr:${key}) archived`,
+    tags: [
+      ["h", "c"],
+      ["p", key],
+      ["import", "1".repeat(64)],
+      ["source", "slack", ref],
+    ],
+  });
+  const reads = h.strongRosterReads.count;
+  const id = writer.sendAt(imported(honey.pubkey, "1"));
+  await vi.waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  const event = h.publish.mock.calls[0]?.[0];
+  expect(event?.id).toBe(id);
+  expect(event?.created_at).toBe(1_690_000_000);
+  expect(event?.tags).toContainEqual(["p", honey.pubkey]);
+  expect(h.strongRosterReads.count).toBeGreaterThan(reads);
+  const refused = writer.sendAt(imported(namesake.pubkey, "2"));
+  await vi.waitFor(() =>
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === refused),
+    ).toMatchObject({ delivery: "failed" }),
+  );
+  expect(h.publish).toHaveBeenCalledOnce();
+});
 it("mentions a just-added member despite an older replica roster", async () => {
   const h = setup();
   await h.members([viewer.pubkey]);

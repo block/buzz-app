@@ -1,3 +1,4 @@
+import { isImportedEvent } from "../conversation-import/protocol";
 import {
   verifiedProfileAuthority,
   verifiedProfileDiscovery,
@@ -95,6 +96,10 @@ export const nativeWriteKinds = [
   40003,
   40100,
   42000,
+  42110,
+  42111,
+  42112,
+  42113,
   45010,
   ...WORKFLOW_KINDS,
 ] as const;
@@ -316,6 +321,9 @@ export function nativeRelaySigner(community: string): Signer {
   };
 }
 
+/** Imported events whose next attempt reads back first. */
+const ATTEMPTED_IMPORTS_MAX = 4096;
+
 export const NOT_A_COMMUNITY_ERROR =
   "That URL didn't look like a Buzz community. Enter a community URL like wss://communities.buzz.xyz.";
 
@@ -354,6 +362,9 @@ export async function connectNativeTransport(
   const searchSort =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
+  const conversationImport =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("nip-ci");
   const artifacts = info.artifacts as
     | { sync?: { version?: unknown } }
     | undefined;
@@ -366,6 +377,7 @@ export async function connectNativeTransport(
   );
   signal?.throwIfAborted();
   const writer = transport.writer;
+  const attemptedImports = new Set<string>();
   const readCommunity = readSnapshotCommunity(info.read_state_snapshot);
   if (!writer) throw new Error("Native relay writer is unavailable");
   const commandWriter = (
@@ -412,6 +424,44 @@ export async function connectNativeTransport(
       );
     },
   });
+  type Publish = NonNullable<typeof writer>["publish"];
+  async function publishChecked(
+    event: Parameters<Publish>[0],
+    signal: Parameters<Publish>[1],
+    imported: boolean,
+    confirm: boolean,
+  ) {
+    if (!writer) throw new Error("Native relay writer is unavailable");
+    // The relay rejects old events before deduplication. An explicit retry
+    // can confirm the original ID, but must never silently re-date it.
+    if (confirm && event.created_at < Math.floor(Date.now() / 1000) - 15 * 60) {
+      const found = await transport.query(
+        [
+          {
+            kinds: [event.kind],
+            ids: [event.id],
+            authors: [event.pubkey],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
+        signal,
+      );
+      if (found.some((value) => value.id === event.id)) {
+        attemptedImports.delete(event.id);
+        return "";
+      }
+      // Imported history keeps its original time by design; the relay
+      // admits it only under an active consented import session.
+      if (!imported)
+        throw new PublishRejected(
+          "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
+        );
+    }
+    const result = (await writer.publish(event, signal)) ?? "";
+    attemptedImports.delete(event.id);
+    return result;
+  }
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
@@ -795,6 +845,7 @@ export async function connectNativeTransport(
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
+    ...(conversationImport ? { conversationImport: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
     verifiedProfiles: verifiedProfileAuthority(info),
     async readVerifiedProfileAuthority(signal) {
@@ -804,27 +855,26 @@ export async function connectNativeTransport(
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,
       async publish(event, signal) {
-        // The relay rejects old events before deduplication. An explicit retry
-        // can confirm the original ID, but must never silently re-date it.
-        if (event.created_at < Math.floor(Date.now() / 1000) - 15 * 60) {
-          const found = await transport.query(
-            [
-              {
-                kinds: [event.kind],
-                ids: [event.id],
-                authors: [event.pubkey],
-                limit: 1,
-                consistency: "strong",
-              },
-            ],
-            signal,
-          );
-          if (found.some((value) => value.id === event.id)) return "";
-          throw new PublishRejected(
-            "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
-          );
+        const imported = isImportedEvent(event);
+        // A first attempt at imported history has nothing to confirm yet.
+        const confirm = !imported || attemptedImports.has(event.id);
+        if (imported) {
+          attemptedImports.delete(event.id);
+          attemptedImports.add(event.id);
+          // An evicted id only loses the read-back on retry; the relay
+          // still deduplicates the republished event.
+          if (attemptedImports.size > ATTEMPTED_IMPORTS_MAX)
+            attemptedImports.delete(
+              attemptedImports.values().next().value as string,
+            );
         }
-        return (await writer.publish(event, signal)) ?? "";
+        try {
+          return await publishChecked(event, signal, imported, confirm);
+        } catch (error) {
+          if (error instanceof PublishRejected)
+            attemptedImports.delete(event.id);
+          throw error;
+        }
       },
     },
   };

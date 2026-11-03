@@ -153,6 +153,49 @@ fn agent_presence_signs_only_a_status_and_agent_keys() {
 }
 
 #[test]
+fn import_records_sign_only_the_broker_shape() {
+    let record = |kind: u16, content: &str, tags: &[&[&str]]| EventTemplate {
+        kind,
+        created_at: 1,
+        content: content.into(),
+        tags: tags
+            .iter()
+            .map(|tag| tag.iter().map(|value| value.to_string()).collect())
+            .collect(),
+    };
+    let proposal = "a".repeat(64);
+    let h: &[&str] = &["h", "channel"];
+    let e: &[&str] = &["e", &proposal];
+    let body = r#"{"v":1}"#;
+    for accepted in [
+        record(42110, body, &[h, &["p", &proposal]]),
+        record(42111, body, &[h, e]),
+        record(42112, body, &[h, e]),
+        record(42113, body, &[h, e]),
+    ] {
+        assert!(validate_event("https://relay.test", &accepted).is_ok());
+    }
+    let upper = "A".repeat(64);
+    let large = format!(r#"{{"v":1,"pad":"{}"}}"#, "x".repeat(16 * 1024));
+    for rejected in [
+        record(42110, body, &[h, e]),
+        record(42111, body, &[h]),
+        record(42111, body, &[h, e, e]),
+        record(42111, body, &[h, &["e", &upper]]),
+        record(42111, body, &[e]),
+        record(42111, body, &[h, h, e]),
+        record(42111, body, &[&["h", ""], e]),
+        record(42111, body, &[h, e, &["p"]]),
+        record(42111, r#"{"v":2}"#, &[h, e]),
+        record(42111, "[1]", &[h, e]),
+        record(42111, "not json", &[h, e]),
+        record(42111, &large, &[h, e]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+}
+
+#[test]
 fn member_commands_sign_only_the_broker_shape() {
     let command = |kind: u16, content: &str, tags: &[&[&str]]| EventTemplate {
         kind,

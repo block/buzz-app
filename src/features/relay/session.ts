@@ -63,6 +63,8 @@ import { createUnread } from "./unread";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
+import { registerImportWriter } from "./import-writes";
+import { isImportedEvent } from "../conversation-import/protocol";
 import type {
   IncomingListener,
   IncomingMessage,
@@ -307,7 +309,8 @@ export function createRelaySession(
               const id = event.tags.find(([name]) => name === "h")?.[1];
               if (!id) return;
               const ready = channelWrites.starting(id);
-              if (ready && event.kind === 9) hearStarting(event, id);
+              if (ready && event.kind === 9 && !isImportedEvent(event))
+                hearStarting(event, id);
               return ready;
             },
             preparePublish: async (event, signal) => {
@@ -852,6 +855,7 @@ export function createRelaySession(
   }
   /** The relay's ACK or read-back verifies an own send before any live echo. */
   function acceptOwnActivity(event: RelayEvent) {
+    if (isImportedEvent(event)) return;
     const channelId = event.tags.find(([name]) => name === "h")?.[1];
     if (!cacheClearing && channelId && canReadRemote(channelId))
       channelActivity.accept([event]);
@@ -2647,6 +2651,8 @@ export function createRelaySession(
     },
     /** Whether read() search filters may ask for `search_sort: "newest"`. */
     searchSort: transport?.searchSort === true,
+    /** The relay advertises NIP-CI consented conversation import. */
+    conversationImport: transport?.conversationImport === true,
     /** NIP-AR sync: an exact, kept-current set of current artifacts for a
      * filter that names its channels with `#h`. Status `unsupported` means
      * this relay has no sync; use read() with `artifact: "current"` instead.
@@ -3261,7 +3267,12 @@ export function createRelaySession(
       const delivered = new Set<string>();
       const incoming: readonly IncomingMessage[] = Object.freeze(
         visible.flatMap((event) => {
-          if (!candidates.has(event.id) || delivered.has(event.id)) return [];
+          if (
+            !candidates.has(event.id) ||
+            delivered.has(event.id) ||
+            isImportedEvent(event)
+          )
+            return [];
           delivered.add(event.id);
           const body =
             event.kind === 40002 ? objectBody(event.content) : undefined;
@@ -3442,6 +3453,14 @@ export function createRelaySession(
   const stopInterests = channels.queries.subscribeList(updateInterests);
   updateInterests();
   refreshChannelActivity();
+  if (writes)
+    registerImportWriter(session, {
+      sendAt: writes.sendAt,
+      sendRecord: writes.sendRecord,
+      retry: writes.retryImport,
+      dismiss: writes.outbox.dismiss,
+      local: writes.local,
+    });
 
   return {
     session,

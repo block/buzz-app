@@ -133,6 +133,9 @@ export interface ReadTransport {
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
+  /** The relay advertises NIP-CI (`nip-ci` in NIP-11 `supported_extensions`):
+   * it admits consented conversation imports. */
+  readonly conversationImport?: true;
   /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
    * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
   readonly artifactSync?: true;
@@ -471,6 +474,7 @@ export async function connectBrokerTransport(
     channelKit?: boolean;
     channelIdentity?: boolean;
     searchSort?: boolean;
+    conversationImport?: boolean;
     artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
@@ -801,6 +805,9 @@ export async function connectBrokerTransport(
       ? { channelIdentity: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
+    ...(session.conversationImport === true
+      ? { conversationImport: true as const }
+      : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
     ...(session.channelKit
       ? {

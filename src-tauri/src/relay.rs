@@ -390,6 +390,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !valid_member_command(event) {
             return Err("Invalid member change".into());
         }
+    } else if matches!(event.kind, 42110..=42113) {
+        if !valid_import_record(event) {
+            return Err("Malformed conversation import record".into());
+        }
     } else if !matches!(
         event.kind,
         0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
@@ -397,6 +401,32 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         return Err("This event is not supported by the packaged relay connection".into());
     }
     Ok(())
+}
+
+/** Match the broker's import record shape (`validImportRecordTemplate` in
+ * `browser-host/relay-broker.mjs`); the relay decides consent and authority. */
+fn valid_import_record(event: &EventTemplate) -> bool {
+    if event.content.len() > 16 * 1024
+        || !event.tags.iter().all(|tag| tag.len() >= 2)
+        || event
+            .tags
+            .iter()
+            .filter(|tag| tag[0] == "h" && !tag[1].is_empty())
+            .count()
+            != 1
+        || serde_json::from_str::<serde_json::Value>(&event.content)
+            .ok()
+            .and_then(|body| body.get("v").and_then(serde_json::Value::as_u64))
+            != Some(1)
+    {
+        return false;
+    }
+    let references: Vec<_> = event.tags.iter().filter(|tag| tag[0] == "e").collect();
+    if event.kind == 42110 {
+        references.is_empty()
+    } else {
+        matches!(references.as_slice(), [tag] if hex_key(&tag[1]))
+    }
 }
 
 /** Match the broker's NIP-43 member command shape (`memberCommand` in

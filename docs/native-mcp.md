@@ -76,22 +76,15 @@ The existing signed host commands and plugin sandbox still apply.
 The bridge binds only to `127.0.0.1` and takes the first free port of the 100
 from its base port. The repository's `.mcp.json` registers
 `@hypothesi/tauri-mcp-server@0.13.1` as `buzz-native`, through
-`scripts/native-mcp-client.mjs`, pointed at this worktree's base port. MCP
-clients that read project configuration, such as Claude Code, offer its tools
-after approval. Start `driver_session` without a port; it finds the bridge
-within those 100 ports.
+`scripts/native-mcp-client.mjs`. MCP clients that read project configuration,
+such as Claude Code, offer its tools after approval.
 
-That search connects to whichever app answers, and reconnects do not check
-again. Two worktrees can share a port range. Before the first action, and after
-any reconnect, call `ipc_execute_command` with
-`{"command":"plugin:mcp-bridge|get_backend_state","args":{}}` and confirm:
-
-- `app.identifier` is the one `bin/node scripts/desktop-mcp.mjs --print` prints
-  for this worktree;
-- `environment.debug` is `true`;
-- `windows` includes `main`.
-
-If any check fails, stop the session and do nothing else in it.
+Two worktrees can share a port range, and the client connects to whichever app
+answers. So the script points the client at a loopback relay instead. Before
+each command, the relay confirms the app it forwards to reports this worktree's
+identifier, a debug build and a `main` window. If no app in the 100 ports does,
+the command fails and the next one checks again. Start `driver_session` without
+a port: a port passed there bypasses the relay.
 
 The pinned bridge revision is
 `1d5105e72835b28ca05a75bcd612b9127c12fe94` from

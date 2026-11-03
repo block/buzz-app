@@ -83,6 +83,7 @@ const nonIconDependencies = new Set([
   "virtua",
   "vite",
   "vitest",
+  "ws", // The native MCP client's loopback relay.
   "yaml",
 ]);
 const allowedDependencies = new Set([...approved, ...nonIconDependencies]);

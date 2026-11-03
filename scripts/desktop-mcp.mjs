@@ -7,8 +7,7 @@ import { nativeMcpInstance } from "./desktop-config.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const { identifier, port } = nativeMcpInstance(root);
 console.log(
-  `Native MCP test instance ${identifier}, bridge base port ${port}. ` +
-    "Verify the identifier with get_backend_state before acting.",
+  `Native MCP test instance ${identifier}, bridge base port ${port}.`,
 );
 if (process.argv[2] === "--print") process.exit(0);
 const result = spawnSync(

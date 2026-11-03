@@ -63,24 +63,31 @@ export function useVerifiedNames(
   const subjects = people
     .flatMap(({ pubkey, isAgent }) => (isAgent ? [] : [pubkey]))
     .join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read asks the next page.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a changed key cancels the read.
   useEffect(() => {
     if (!settled || !authority || !read || !subjects) return;
     const found = foundFor(profiles, authority);
     const shared = profiles.snapshot();
     const now = Date.now();
-    const wanted = subjects
+    // One pass asks each unasked person once, in pages, at most as many as the
+    // cache holds; eviction during the pass cannot ask anyone again.
+    const queue = subjects
       .split(",")
       .filter(
         (pubkey) =>
           now - (found.get(pubkey)?.at ?? -Infinity) >= FRESH_MS &&
           !shared.get(pubkey)?.verified,
       )
-      .slice(0, BATCH);
-    if (!wanted.length) return;
+      .slice(0, PROFILE_CACHE_BASE);
+    if (!queue.length) return;
     const controller = new AbortController();
-    read(wanted, controller.signal).then(
-      (result) => {
+    void (async () => {
+      for (let start = 0; start < queue.length; start += BATCH) {
+        const wanted = queue.slice(start, start + BATCH);
+        const result = await read(wanted, controller.signal).catch(
+          // Without verified names the rows keep their profile names.
+          () => undefined,
+        );
         // Nothing was checked, or not by this authority: ask again later.
         if (controller.signal.aborted || result?.authority !== authority)
           return;
@@ -93,14 +100,11 @@ export function useVerifiedNames(
           if (found.size <= PROFILE_CACHE_BASE) break;
           found.delete(pubkey);
         }
-        // Also asks the next page of a longer list.
         setRevision((value) => value + 1);
-      },
-      // Without verified names the rows keep their profile names.
-      () => {},
-    );
+      }
+    })();
     return () => controller.abort();
-  }, [profiles, read, authority, subjects, settled, key, revision]);
+  }, [profiles, read, authority, subjects, settled, key]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read moves the revision.
   return useMemo(() => {
     const current = authority && lookups.get(profiles);

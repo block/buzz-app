@@ -193,3 +193,18 @@ it("starts no read until the list settles, and a new query cancels a held one", 
   expect(t.reads[0]?.signal.aborted).toBe(true);
   expect(t.reads).toHaveLength(1);
 });
+
+it("asks each person of a list larger than the cache once, and stops", async () => {
+  const t = fake();
+  const people = Array.from({ length: 1050 }, (_, n) => ({
+    pubkey: key(n + 1),
+  }));
+  const hook = renderHook(() => useVerifiedNames(t.session, people));
+  await waitFor(() => expect(hook.result.current.size).toBe(1024));
+  // Settle any further passes before counting.
+  await act(async () => {});
+  const asked = t.reads.flatMap((read) => read.subjects);
+  expect(t.reads).toHaveLength(35);
+  expect(new Set(asked).size).toBe(asked.length);
+  expect(asked).toHaveLength(1024);
+});

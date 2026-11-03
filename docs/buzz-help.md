@@ -112,6 +112,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+  Repeated mentions of the same person or agent appear once in the invitation
+  prompt; all mentions stay in your message.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders

@@ -7579,6 +7579,92 @@ for (const channelType of ["stream", "forum"] as const)
     expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
   });
 
+it.each(["Invite", "Do nothing", "Close"])(
+  "deduplicates repeated outside mentions before %s without changing the text",
+  async (action) => {
+    const h = mount();
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const add = vi.fn(async (_channel: string, pubkey: string) => {
+      list.channels[0]?.members.push(pubkey);
+    });
+    Object.assign(h.session, {
+      viewer: "d".repeat(64),
+      channels: { list: () => list, subscribeList: () => () => {} },
+      memberAdditions: { add },
+    });
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+    const link = `[@Honey](${profileTarget(first.pubkey)})`;
+    pasteText(h.input(), `Ask ${link} and ${link} again `);
+    expect(h.input()).toHaveValue("Ask @Honey and @Honey again ");
+    fireEvent.submit(screen.getByRole("form"));
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: action }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    if (action === "Close") {
+      expect(h.input()).toHaveValue("Ask @Honey and @Honey again ");
+      expect(add).not.toHaveBeenCalled();
+      expect(h.messages.send).not.toHaveBeenCalled();
+      return;
+    }
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(
+      "Ask @Honey and @Honey again ",
+    );
+    if (action === "Invite") {
+      expect(add).toHaveBeenCalledExactlyOnceWith("channel", first.pubkey);
+    } else {
+      expect(add).not.toHaveBeenCalled();
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+      expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+    }
+  },
+);
+
+it("invites distinct outside identities with the same name", async () => {
+  const h = mount();
+  const list = {
+    status: "ready",
+    channels: [
+      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+    ],
+  };
+  const add = vi.fn(async (_channel: string, pubkey: string) => {
+    list.channels[0]?.members.push(pubkey);
+  });
+  Object.assign(h.session, {
+    viewer: "d".repeat(64),
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add },
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey" }],
+      [second.pubkey, { name: "Honey" }],
+    ]),
+  );
+  const links = [first, second, first].map(
+    (person) => `[@Honey](${profileTarget(person.pubkey)})`,
+  );
+  pasteText(h.input(), `Ask ${links.join(" and ")} `);
+  fireEvent.submit(screen.getByRole("form"));
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Honey, Honey are not in this channel.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add.mock.calls).toEqual([
+    ["channel", first.pubkey],
+    ["channel", second.pubkey],
+  ]);
+});
+
 it("keeps pasted identity links display-only during edits", () => {
   const h = mount({}, undefined, first.pubkey);
   h.setRows([editableMessage()]);
@@ -8080,11 +8166,12 @@ it("Enter on a deliberately focused Invite adds a nonmember before sending", asy
 });
 
 it.each([
-  ["", false],
-  [", taking it out of its archive here after a Remove", true],
+  ["", false, false],
+  [", taking it out of its archive here after a Remove", true, false],
+  [", with repeated mentions", false, true],
 ])(
   "asks before bringing another community's agent in, then adds it and sends%s",
-  async (_, archived) => {
+  async (_, archived, repeated) => {
     const calls: string[] = [];
     const join = vi.fn(async () => {
       calls.push("join");
@@ -8135,6 +8222,11 @@ it.each([
       return "channel-id";
     });
     act(() => h.commands().insertMention(first));
+    if (repeated) {
+      h.setProfiles(new Map([[first.pubkey, { name: "Honey" }]]));
+      pasteText(h.input(), `again [@Honey](${profileTarget(first.pubkey)}) `);
+    }
+    const draft = h.input().value;
     fireEvent.submit(screen.getByRole("form"));
     expect(await screen.findByRole("dialog")).toHaveTextContent(
       "Bring Honey into relay.example.test?",
@@ -8150,16 +8242,19 @@ it.each([
     expect(join).not.toHaveBeenCalled();
     expect(add).not.toHaveBeenCalled();
     expect(h.messages.send).not.toHaveBeenCalled();
-    expect(h.input()).toHaveValue("@Honey ");
+    expect(h.input()).toHaveValue(draft);
     // Confirming joins first, then adds to the channel, then sends.
     fireEvent.submit(screen.getByRole("form"));
     fireEvent.click(
       await screen.findByRole("button", { name: "Bring it here" }),
     );
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-    expect(join).toHaveBeenCalledWith(first.pubkey);
+    expect(join).toHaveBeenCalledExactlyOnceWith(first.pubkey);
     expect(calls).toEqual(["join", "add", "send"]);
-    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(draft);
+    expect(new Set(h.messages.send.mock.calls[0]?.[2] as string[])).toEqual(
+      new Set([first.pubkey]),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
   },
 );

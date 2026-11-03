@@ -2426,6 +2426,12 @@ function Composer({
           .list()
           .channels.find((item) => item.id === channelId);
         if (channel?.members && allowsOutsideMentions(channel)) {
+          // Draft spans preserve every occurrence; admission asks once per identity.
+          const people = [
+            ...new Map(
+              captured.recipients.map((person) => [person.pubkey, person]),
+            ).values(),
+          ];
           const current = () =>
             valueRef.current === captured &&
             sameAttachmentSelection(
@@ -2438,7 +2444,7 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          const bring = people.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
@@ -2455,7 +2461,7 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          const missing = people.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),

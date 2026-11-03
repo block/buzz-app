@@ -50,7 +50,7 @@ the interface unless an available tool actually supports that action.
 ## Connect an external app
 
 External apps are available only in communities enabled for this build.
-Desktop preview releases enable BBBlock only. Other communities cannot grant access.
+Desktop preview releases enable bb-block only. Other communities cannot grant access.
 
 Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, check the requested access, then select

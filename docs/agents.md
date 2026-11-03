@@ -59,7 +59,7 @@ servers do not support these operations.
 ## External app authorization
 
 The build flag `BUZZ_EXTERNAL_MCP_COMMUNITIES` lists the allowed community
-origins. It defaults to no access. Desktop preview releases enable BBBlock only.
+origins. It defaults to no access. Desktop preview releases enable bb-block only.
 Consent and Settings use this list. The Agents service also checks it before
 opening a connection and on each tool call. See [configuration](configuration.md#external-mcp-community-flag).
 

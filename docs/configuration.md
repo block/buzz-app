@@ -37,7 +37,7 @@ access in all communities. Invalid origins fail the build. The value is
 compiled into the frontend; a launched app cannot change it through its environment.
 
 The desktop preview workflow sets this flag to
-`https://buzz.block.builderlab.xyz` for BBBlock only. Community names do not
+`https://buzz.block.builderlab.xyz` for bb-block only. Community names do not
 grant access. The Agents service compares the exact canonical origin before
 opening a connection and on each tool call. Consent disables other communities,
 and Settings hides External apps there. Normal agent MCP servers are unchanged.

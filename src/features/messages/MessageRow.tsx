@@ -542,16 +542,21 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
+  const avatarSize = compactAvatar
+    ? "tiny"
+    : layout === "timeline"
+      ? "default"
+      : "small";
   const avatar = row.workflowOwnerId ? (
-    <Avatar
-      alt="Workflow"
-      fallback="Workflow"
-      fallbackContent={<LightningIcon size={20} />}
-      shape="squircle"
-      size={
-        compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-      }
-    />
+    <span className={styles.nestedAvatar}>
+      <Avatar
+        alt="Workflow"
+        fallback="Workflow"
+        fallbackContent={<LightningIcon size={16} />}
+        shape="squircle"
+        size={avatarSize}
+      />
+    </span>
   ) : clickable ? (
     <ProfilePeek
       key={`${scope}:${viewer}:${row.authorId}`}
@@ -567,7 +572,7 @@ function MessageRowContent({
       onFocusChange={setAvatarFocused}
       trigger={
         <IconButton
-          size={layout === "timeline" ? "default" : "sm"}
+          size="sm"
           shape="round"
           aria-label={`View ${name} profile`}
           aria-describedby={presence !== "unknown" ? presenceId : undefined}
@@ -577,7 +582,7 @@ function MessageRowContent({
                 src={picture}
                 alt=""
                 fallback={name}
-                size={compactAvatar ? "small" : "fill"}
+                size={avatarSize}
                 shape={avatarShape}
                 statusBadge={presence === "unknown" ? undefined : presence}
               />
@@ -592,7 +597,7 @@ function MessageRowContent({
       }
     />
   ) : (
-    <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
+    <span className={styles.nestedAvatar}>
       <Avatar
         src={picture}
         alt={
@@ -603,9 +608,7 @@ function MessageRowContent({
               : `${name} avatar`
         }
         fallback={name}
-        size={
-          compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-        }
+        size={avatarSize}
         shape={avatarShape}
         statusBadge={presence === "unknown" ? undefined : presence}
       />

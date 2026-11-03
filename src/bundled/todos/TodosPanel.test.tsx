@@ -124,6 +124,7 @@ it("nests tasks across statuses without repeating parent titles and saves only t
     context.channelId,
     content.replace("[ ] Build", "[x] Build"),
     head.id,
+    { preserveApproval: true },
   );
   expect(screen.getByRole("checkbox", { name: "Ship" })).toHaveAttribute(
     "aria-checked",
@@ -148,6 +149,7 @@ it("adds and checks tasks, saves exact base, preserves other Markdown and restor
     context.channelId,
     original.replace("## Todos", "## Todos\n\n- [x] New item\n"),
     "b".repeat(64),
+    { preserveApproval: true },
   );
   expect(
     readView(context.scope, `todos-draft-v1:${context.channelId}`, null),
@@ -177,6 +179,7 @@ it("moves a task through To do, In progress and Done, editing only its Canvas ma
       context.channelId,
       content,
       base,
+      { preserveApproval: true },
     );
   await screen.findByRole("checkbox", { name: "First" });
   expect(
@@ -369,6 +372,7 @@ it("rebases an input-only recovery draft without discarding the typed item", asy
     context.channelId,
     expect.stringContaining("Remote edit."),
     "c".repeat(64),
+    { preserveApproval: true },
   );
 });
 it("keeps the editor usable when local recovery storage is unavailable", async () => {
@@ -487,6 +491,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     context.channelId,
     expected,
     head.id,
+    { preserveApproval: true },
   );
   act(() => {
     roster = {
@@ -515,6 +520,7 @@ it("keeps exact assignees through rename, failed-save recovery and member remova
     context.channelId,
     original,
     "b".repeat(64),
+    { preserveApproval: true },
   );
   restored.unmount();
   names.dispose();

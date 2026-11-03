@@ -19,6 +19,7 @@ import {
   type KitValue,
 } from "./model";
 import { TEAM_MANIFEST_TAG } from "./team-payload";
+import { approvedCanvas, CANVAS_INSTRUCTIONS } from "./canvas-approval";
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -391,7 +392,13 @@ export function createChannelKit({
             : undefined,
       };
     },
-    async save(channel: string, content: string, expected: string | undefined) {
+    async save(
+      channel: string,
+      content: string,
+      expected: string | undefined,
+      /** Partial editors retain approval; only a full-document save grants it. */
+      options?: { preserveApproval: boolean },
+    ) {
       signal.throwIfAborted();
       if (!outbox?.supports(40100) || !canWrite(channel))
         throw new Error("Canvas writing is unavailable in this channel");
@@ -401,6 +408,10 @@ export function createChannelKit({
       signal.throwIfAborted();
       const head = await canvas.read(channel);
       if (head?.id !== expected) throw new CanvasConflictError();
+      const unapproved =
+        options?.preserveApproval &&
+        (!head || !(await approvedCanvas(head, viewer)));
+      signal.throwIfAborted();
       const pending = local
         ?.snapshot()
         .find(
@@ -422,6 +433,7 @@ export function createChannelKit({
         tags: [
           ["h", channel],
           ["expected-revision", expected ?? "none"],
+          ...(unapproved ? [[CANVAS_INSTRUCTIONS, "unapproved"]] : []),
         ],
       });
       await confirm(id);

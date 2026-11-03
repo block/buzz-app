@@ -1,3 +1,4 @@
+import { isImportedEvent } from "../conversation-import/protocol";
 import type { RelayEvent } from "./events";
 
 export const CHANNEL_ACTIVITY_KINDS = [9, 40002, 40008, 45001, 45003] as const;
@@ -35,7 +36,11 @@ export function createChannelActivity(
     if (closed) return;
     let changed = false;
     for (const event of events) {
-      if (!CHANNEL_ACTIVITY_KINDS.includes(event.kind as never)) continue;
+      if (
+        !CHANNEL_ACTIVITY_KINDS.includes(event.kind as never) ||
+        isImportedEvent(event)
+      )
+        continue;
       const channelId = channelOf(event);
       if (!channelId || event.created_at <= (values.get(channelId) ?? -1))
         continue;
@@ -98,6 +103,7 @@ export function createChannelActivity(
               channelId &&
               batch.includes(channelId) &&
               CHANNEL_ACTIVITY_KINDS.includes(event.kind as never) &&
+              !isImportedEvent(event) &&
               event.created_at > (refreshed.get(channelId) ?? -1)
             )
               refreshed.set(channelId, event.created_at);

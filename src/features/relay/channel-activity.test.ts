@@ -59,6 +59,35 @@ it("reads authoritative activity in 128-channel batches across message and forum
   expect(activity.status()).toBe("ready");
 });
 
+it("never bumps a channel for imported history, read or live", async () => {
+  const peer = keypair();
+  const wire = deferredReader();
+  const activity = createChannelActivity(wire.read);
+  const imported = (created_at: number) =>
+    signed(peer, {
+      kind: 9,
+      created_at,
+      content: "archived",
+      tags: [
+        ["h", "room"],
+        ["import", "1".repeat(64)],
+        ["source", "slack", String(created_at)],
+      ],
+    });
+  const refresh = activity.refresh(["room"]);
+  await flush();
+  take(wire.pending).resolve([
+    message(peer, "room", "live", 100),
+    imported(200),
+  ]);
+  await refresh;
+  expect(activity.last("room")).toBe(100);
+  activity.accept([imported(300)]);
+  expect(activity.last("room")).toBe(100);
+  activity.accept([message(peer, "room", "later", 150)]);
+  expect(activity.last("room")).toBe(150);
+});
+
 it("keeps the last good projection on failure and never rolls back newer live activity", async () => {
   const peer = keypair();
   const wire = deferredReader();

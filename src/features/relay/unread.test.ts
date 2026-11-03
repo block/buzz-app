@@ -4012,3 +4012,23 @@ it("catch-up and explicit unread intent still apply to agent-audience rows", asy
   await unread.markMessageRead("room", progress.id);
   expect(h.snapshot()).toMatchObject({ observedCount: 0 });
 });
+
+it("imported history never counts as unread, attention or latest activity", () => {
+  const h = setup();
+  h.grant("room");
+  const proposal = "1".repeat(64);
+  const imported = message(h.alice, "room", "from the archive", 11, [
+    ["p", h.viewer.pubkey],
+    ["import", proposal],
+    ["source", "slack", "1735732800.000100"],
+  ]);
+  h.emit([imported]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: null,
+    attentionCount: null,
+  });
+  expect(h.snapshot().latestMessage).toBeUndefined();
+  const live = message(h.alice, "room", "hello", 12, [["p", h.viewer.pubkey]]);
+  h.emit([live]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+});

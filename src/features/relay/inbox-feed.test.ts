@@ -106,6 +106,30 @@ it("reads addressed history independently of the retained unread window, never a
     { kinds: [40002, 9], "#p": [h.viewer.pubkey], limit: 50 },
   ]);
 });
+it("keeps imported history out of the inbox, from a read or live", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const imported = (content: string, at: number) =>
+    message(h.alice, "room", content, at, [
+      ["p", h.viewer.pubkey],
+      ["import", "1".repeat(64)],
+      ["source", "slack", String(at)],
+    ]);
+  const plain = message(h.alice, "room", "live mention", 21, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const work = h.session.inboxFeed.ensure();
+  const mentions = await take(h, 9);
+  mentions.resolve([imported("archived mention", 20), plain]);
+  await work;
+  expect(h.session.unread.inbox().items.map((item) => item.messageId)).toEqual([
+    plain.id,
+  ]);
+  h.live.receive([imported("archived live", 22)]);
+  expect(h.session.unread.inbox().items.map((item) => item.messageId)).toEqual([
+    plain.id,
+  ]);
+});
 it("reconciles live addressed updates and drops membership-revoked history before listeners", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);

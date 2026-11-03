@@ -4,6 +4,7 @@ import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
+import { isImportedEvent } from "../conversation-import/protocol";
 import {
   effectiveFrontier,
   overrideActive,
@@ -1822,6 +1823,7 @@ export function createUnread({
     for (const event of batch) {
       if (
         ![9, 40002, 40008, 40003, 5, 9005].includes(event.kind) ||
+        isImportedEvent(event) ||
         events.has(event.id)
       )
         continue;

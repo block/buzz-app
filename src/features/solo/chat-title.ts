@@ -7,6 +7,24 @@ import { scanMarkdown } from "../relay/message-content";
 
 /** Remove only structured leading recipient tags; literal @ text remains title content. */
 export function startingChatTitle(value: MentionDraft | string): string {
+  return chatTitle(value, true);
+}
+
+/** Older clients persisted literal Markdown; accept their default during automatic naming. */
+export function isStartingChatTitle(
+  name: string,
+  value: MentionDraft | string,
+): boolean {
+  const current = canonicalDetailsName(name);
+  return (
+    current === startingChatTitle(value) || current === chatTitle(value, false)
+  );
+}
+
+function chatTitle(
+  value: MentionDraft | string,
+  readableLinks: boolean,
+): string {
   const draft = stageChatCards(mentionDraft(value), []);
   // Match main’s caption-first title; cards remain the fallback for card-only sends.
   const text =
@@ -29,14 +47,16 @@ export function startingChatTitle(value: MentionDraft | string): string {
     draftStart = recipient.end;
   }
   const body = text.slice(start).trim();
+  // A link-only prompt falls back to its cards, then "Chat".
+  const source =
+    withoutLeadingBuzzLinks(body) || (draft.chatCards ?? []).join("\n\n");
   return (
     canonicalDetailsName(
       [
-        ...// A link-only prompt falls back to its cards, then "Chat"; the raw
-        // link is never the title.
-        readableLinkLabels(
-          withoutLeadingBuzzLinks(body) || (draft.chatCards ?? []).join("\n\n"),
-        ).replace(/\s+/g, " "),
+        ...(readableLinks ? readableLinkLabels(source) : source).replace(
+          /\s+/g,
+          " ",
+        ),
       ]
         .slice(0, 80)
         .join(""),

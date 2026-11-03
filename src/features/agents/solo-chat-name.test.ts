@@ -369,6 +369,54 @@ it.each([
   },
 );
 
+it.each([
+  "Review [\\#design](buzz://channel/design)",
+  `Review [\\#design](buzz://channel/${"x".repeat(100)})`,
+  `Review 😀 [\\#design](buzz://channel/${"x".repeat(100)})`,
+  "[Session: Fix](buzz://channel/session-id)",
+])(
+  "recognizes the legacy starting title for %s without overwriting chosen names",
+  async (caption) => {
+    // Persist the old algorithm's literal, truncated title, not the new helper's result.
+    const legacyName = [...caption].slice(0, 80).join("");
+    const sent = { ...event, content: `@Agent ${caption}` };
+    let name = legacyName;
+    let labels: string[] = [];
+    const save = vi.fn(async (_base, draft) => {
+      name = draft.name;
+    });
+    const relay = connection(() => ({
+      status: "ready",
+      viewer: owner,
+      session: {
+        channels: soloChannels,
+        read: async () => [sent],
+        profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
+        agentChoices: { snapshot: () => ({ identities: [] }) },
+        channelDetails: {
+          available: true,
+          load: async () => ({ name, labels, canEdit: true }),
+          save,
+        },
+      },
+    }));
+    // Even a chosen name equal to the legacy default must remain protected.
+    labels = ["buzz.session.named"];
+    await nameSoloChat(relay, owner, first, sent, "Useful title");
+    expect(save).not.toHaveBeenCalled();
+    labels = [];
+    name = "My manual title";
+    await nameSoloChat(relay, owner, first, sent, "Useful title");
+    expect(save).not.toHaveBeenCalled();
+    name = legacyName;
+    await nameSoloChat(relay, owner, first, sent, "Useful title");
+    expect(save).toHaveBeenCalledOnce();
+    expect(name).toBe("Useful title");
+    await nameSoloChat(relay, owner, first, sent, "Another title");
+    expect(save).toHaveBeenCalledOnce();
+  },
+);
+
 it("an agent tag without a caption retains the session-card starting title", async () => {
   const { startingChatTitle } = await import("../solo/chat-title");
   expect(

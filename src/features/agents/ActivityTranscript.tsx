@@ -302,18 +302,13 @@ function Sections({
       </summary>
       {sections.map((section, index) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
-        <Fragment key={index}>
-          {section.group && section.group !== sections[index - 1]?.group && (
-            <p className="text-body-sm text-subtle">{section.group}</p>
-          )}
-          <details className={styles.section}>
-            <summary className="text-body-sm text-subtle">
-              <CaretRightIcon size={14} aria-hidden="true" />
-              <span>{sectionTitle(section.tag)}</span>
-            </summary>
-            <pre className={styles.pre}>{section.body}</pre>
-          </details>
-        </Fragment>
+        <details key={index} className={styles.section}>
+          <summary className="text-body-sm text-subtle">
+            <CaretRightIcon size={14} aria-hidden="true" />
+            <span>{sectionTitle(section.tag)}</span>
+          </summary>
+          <pre className={styles.pre}>{section.body}</pre>
+        </details>
       ))}
     </details>
   );

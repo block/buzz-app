@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
 import { sectionTitle, type TranscriptTurn } from "./activity-transcript";
+import { coreMemorySection } from "../agent-harness/core-memory";
+import { systemPrompt } from "../../bundled/claude-code/prompt";
 import { localStore, type AgentStore } from "./store";
 import {
   EACH_TURN,
@@ -111,15 +113,45 @@ it("shows a Codex prompt as Base and the first turn's tagged context", async () 
     { label: EACH_TURN, text: context },
   ]);
   const [shown] = prompts.shown([turn({ sessionId: "s1", newSession: true })]);
-  const group = "Sent with each turn (copy from the first turn)";
   expect(shown?.items[0]).toMatchObject({
     type: "system",
     sections: [
       { tag: "base", body: "You are X.\nBase text." },
-      { tag: "agent-instructions", body: "Be kind.", group },
-      { tag: "core-memory", body: "m", group },
-      { tag: "community-repositories", body: "r", group },
+      { tag: "agent-instructions", body: "Be kind." },
+      { tag: "core-memory", body: "m" },
+      { tag: "community-repositories", body: "r" },
     ],
   });
   expect(prompts.get("s1")?.[1]?.text).toBe(context);
+});
+
+it("shows a Pi prompt as the full system prompt's tagged sections", async () => {
+  const prompts = sessionPrompts(memory(), "pi", AGENT);
+  await prompts.save("s1", [
+    {
+      label: "instructions",
+      text: systemPrompt({
+        scope: "thread",
+        cwd: "/w",
+        repositories: "<community-repositories>\nr\n</community-repositories>",
+        agent: { name: "X", pubkey: "p" },
+        instructions: "Be kind.",
+        team: "<team>\nt\n</team>",
+      }),
+    },
+    { label: "core memory", text: coreMemorySection("m") },
+  ]);
+  const [shown] = prompts.shown([turn({ sessionId: "s1", newSession: true })]);
+  const item = shown?.items[0];
+  expect(
+    item?.type === "system" && item.sections.map((section) => section.tag),
+  ).toEqual([
+    "identity",
+    "base",
+    "workspace",
+    "community-repositories",
+    "agent-instructions",
+    "team",
+    "core-memory",
+  ]);
 });

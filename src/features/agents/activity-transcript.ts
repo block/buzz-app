@@ -10,12 +10,7 @@ export type TranscriptScope = Readonly<{
   agent: string;
   channelId?: string | undefined;
 }>;
-/** `group`, when set, is a heading shared by consecutive sections. */
-export type PromptSection = Readonly<{
-  tag: string;
-  body: string;
-  group?: string;
-}>;
+export type PromptSection = Readonly<{ tag: string; body: string }>;
 type Base = { id: string; at: number };
 /** ACP `diff` tool content; a missing old text is a new file. */
 export type ToolDiff = { path: string; oldText?: string; newText: string };
@@ -106,7 +101,6 @@ const TITLES = new Map(
     workspace: "Workspace",
     "community-repositories": "Repositories folder",
     "agent-instructions": "Agent instructions",
-    instructions: "Agent instructions",
     team: "Team",
     "core-memory": "Core memory",
     "recent-notes": "Recent notes",

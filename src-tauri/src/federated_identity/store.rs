@@ -28,7 +28,13 @@ pub(crate) trait Store: Send + Sync {
 pub(crate) struct SecureStore {
     pub(super) account: String,
     pub(super) root: PathBuf,
+    /// Whether grants share the session's item; otherwise each record is an
+    /// item of its own, as before bundles.
+    pub(super) bundled: bool,
 }
+/// Only macOS prompts once per item, and a Windows credential holds at most
+/// 2,560 bytes, so only macOS bundles (as the native agent key bundle does).
+pub(crate) const BUNDLED: bool = cfg!(target_os = "macos");
 
 /// The one secure item per profile and configuration: the owner's session
 /// record and every agent grant (or retirement record), each as its exact
@@ -260,8 +266,9 @@ impl SecureStore {
         Ok((raw, bundle))
     }
     /// Replaces the item read as `current` with `bundle`, deleting it once
-    /// empty, and reads it back.
-    fn save(&self, current: Option<&[u8]>, bundle: &mut Bundle) -> Result<(), &'static str> {
+    /// empty, and returns what it wrote. As before bundles, an error means
+    /// nothing was written: a login abandons its retirement on one.
+    fn save(&self, current: Option<&[u8]>, bundle: &mut Bundle) -> Result<Item, &'static str> {
         // Register before writing any secret. Buzz identity deletion walks these
         // public account keys even after configuration or profile changes.
         fs::create_dir_all(&self.root).map_err(|_| "storage-unavailable")?;
@@ -269,23 +276,29 @@ impl SecureStore {
         bundle.bundle = 1;
         let next = if bundle.session.is_none() && bundle.grants.is_empty() {
             None
+        } else if !self.bundled {
+            // Never drop grants another platform's bundle may hold.
+            if !bundle.grants.is_empty() {
+                return Err("storage-corrupt");
+            }
+            bundle
+                .session
+                .as_ref()
+                .map(|session| Zeroizing::new(session.as_bytes().to_vec()))
         } else {
             let next = serde_json::to_vec(&*bundle).map_err(|_| "storage-corrupt")?;
             Some(Zeroizing::new(next))
         };
-        let next = next.as_deref().map(Vec::as_slice);
-        if next.is_some_and(|next| next.len() > MAX_BUNDLE) {
+        if next.as_ref().is_some_and(|next| next.len() > MAX_BUNDLE) {
             return Err("storage-unavailable");
         }
-        items::compare(&self.root, &self.account, current, next)?;
-        if items::read(&self.root, &self.account)?
-            .as_deref()
-            .map(Vec::as_slice)
-            != next
-        {
-            return Err("storage-corrupt");
-        }
-        Ok(())
+        items::compare(
+            &self.root,
+            &self.account,
+            current,
+            next.as_deref().map(Vec::as_slice),
+        )?;
+        Ok(next)
     }
     /// Compare-and-swap the session slot, keeping every grant.
     fn swap(
@@ -300,12 +313,25 @@ impl SecureStore {
         bundle.session.zeroize();
         bundle.session = replacement.map(text).transpose()?;
         self.save(raw.as_deref().map(Vec::as_slice), &mut bundle)
+            .map(drop)
+    }
+    /// The store for `key`'s own item, as before bundles.
+    fn item(&self, key: &str) -> Self {
+        Self {
+            account: key.into(),
+            root: self.root.clone(),
+            bundled: false,
+        }
     }
     /// The grant (or retirement) record at `key`. Only absence from a
     /// successfully loaded bundle moves the pre-bundle item at `key` into it,
     /// and that item is deleted once the bundle holding it is written and
     /// read back.
     pub(crate) fn grant(&self, key: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {
+        if !self.bundled {
+            let _transaction = self.item(key).lock()?;
+            return items::read(&self.root, key);
+        }
         let _transaction = self.lock()?;
         let (raw, mut bundle) = self.bundle()?;
         if let Some(value) = bundle.grants.get(key) {
@@ -315,7 +341,10 @@ impl SecureStore {
             return Ok(None);
         };
         bundle.grants.insert(key.into(), text(&value)?);
-        self.save(raw.as_deref().map(Vec::as_slice), &mut bundle)?;
+        let written = self.save(raw.as_deref().map(Vec::as_slice), &mut bundle)?;
+        if items::read(&self.root, &self.account)?.as_deref() != written.as_deref() {
+            return Err("storage-corrupt");
+        }
         self.forget_item(key)?;
         Ok(Some(value))
     }
@@ -323,6 +352,22 @@ impl SecureStore {
     /// removes the pre-bundle item first, so a failure never lets a later read
     /// move it back; a write saves the bundle first, which reads then prefer.
     pub(crate) fn set_grant(&self, key: &str, value: Option<&[u8]>) -> Result<(), &'static str> {
+        if !self.bundled {
+            let item = self.item(key);
+            let _transaction = item.lock()?;
+            let Some(value) = value else {
+                return self.forget_item(key);
+            };
+            // Registered before the write, so a full Buzz sign-out erases it.
+            fs::write(item.index(), b"1").map_err(|_| "storage-unavailable")?;
+            let current = items::read(&self.root, key)?;
+            return items::compare(
+                &self.root,
+                key,
+                current.as_deref().map(Vec::as_slice),
+                Some(value),
+            );
+        }
         let _transaction = self.lock()?;
         let (raw, mut bundle) = self.bundle()?;
         let raw = raw.as_deref().map(Vec::as_slice);
@@ -339,7 +384,7 @@ impl SecureStore {
                 match bundle.grants.remove(key) {
                     Some(mut old) => {
                         old.zeroize();
-                        self.save(raw, &mut bundle)
+                        self.save(raw, &mut bundle).map(drop)
                     }
                     None => Ok(()),
                 }
@@ -435,6 +480,7 @@ pub(crate) fn remove_all(root: PathBuf) -> Result<(), String> {
         let store = SecureStore {
             account: account.to_owned(),
             root: root.clone(),
+            bundled: BUNDLED,
         };
         let _transaction = store.lock()?;
         // The boot owner's durable pending sign-out fences all app activity.
@@ -462,6 +508,7 @@ mod tests {
         SecureStore {
             account: "ab".repeat(32),
             root: root.path().into(),
+            bundled: true,
         }
     }
     fn item(store: &SecureStore, account: &str) -> Option<Vec<u8>> {
@@ -481,6 +528,7 @@ mod tests {
         let store = SecureStore {
             account,
             root: root.path().into(),
+            bundled: true,
         };
         let held = elsewhere(&store);
         assert_eq!(remove_all(root.path().into()), Err("storage-busy".into()));
@@ -620,6 +668,48 @@ mod tests {
     }
 
     #[test]
+    fn without_bundles_each_record_keeps_an_item_within_the_windows_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SecureStore {
+            bundled: false,
+            ..secure(&root)
+        };
+        let session = super::super::tests::record();
+        store.compare(None, Some(&session.raw)).unwrap();
+        let grant = [b'g'; 600];
+        let keys: Vec<_> = (0..8)
+            .map(|agent| agent_grant_key(&store.account, "owner", &agent.to_string()))
+            .collect();
+        for key in &keys {
+            store.set_grant(key, Some(&grant)).unwrap();
+            assert!(root.path().join(format!("{key}.record")).exists());
+        }
+        // A Windows credential holds 2,560 bytes of UTF-16: no item grows
+        // with the number of agents, and the session item is the bare record.
+        let sizes = items::with(root.path(), |all| {
+            all.values().map(Vec::len).collect::<Vec<_>>()
+        });
+        let sizes = sizes.unwrap();
+        assert_eq!(sizes.len(), 1 + keys.len());
+        assert!(sizes.iter().all(|size| size * 2 <= 2560));
+        assert_eq!(item(&store, &store.account).unwrap(), session.raw.to_vec());
+        assert_eq!(
+            store.grant(&keys[0]).unwrap().unwrap().as_slice(),
+            &grant[..]
+        );
+
+        store
+            .remove(&session.raw, &session.record.revision)
+            .unwrap();
+        assert!(item(&store, &store.account).is_none());
+        store.set_grant(&keys[0], None).unwrap();
+        assert!(!root.path().join(format!("{}.record", keys[0])).exists());
+        assert!(store.grant(&keys[0]).unwrap().is_none());
+        remove_all(root.path().into()).unwrap();
+        assert_eq!(items::with(root.path(), |all| all.len()), Ok(0));
+    }
+
+    #[test]
     fn grant_and_session_transactions_in_one_process_queue_rather_than_fail() {
         let root = tempfile::tempdir().unwrap();
         let store = std::sync::Arc::new(secure(&root));
@@ -647,6 +737,7 @@ mod tests {
         let store = SecureStore {
             account: "fixture".into(),
             root: root.path().into(),
+            bundled: true,
         };
         let old = uuid::Uuid::new_v4().to_string();
         let newer = uuid::Uuid::new_v4().to_string();

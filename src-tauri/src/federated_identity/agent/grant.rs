@@ -81,7 +81,7 @@ pub(crate) fn load(
     }
 }
 
-/// Grants inside the owner's bundle: its account, under the session's lock.
+/// Grants in the owner's bundle where it exists (see `store::BUNDLED`).
 pub(crate) struct SecureGrantStore(pub(crate) String);
 
 impl SecureGrantStore {
@@ -89,6 +89,7 @@ impl SecureGrantStore {
         Ok(store::SecureStore {
             account: self.0.clone(),
             root: store::root().map_err(|_| "Secure storage is unavailable")?,
+            bundled: store::BUNDLED,
         })
     }
     fn raw(&self, key: &str) -> Result<Option<Zeroizing<Vec<u8>>>, &'static str> {

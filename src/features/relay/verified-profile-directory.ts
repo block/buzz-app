@@ -28,6 +28,8 @@ export function createVerifiedProfileDirectory(
   // Least recently ensured first.
   const wanted = new Set<string>();
   const checked = new Set<string>();
+  // Subjects whose head changed since the owner last took them.
+  const accepted = new Set<string>();
   type Batch = {
     stop(): void;
     subjects: readonly string[];
@@ -135,6 +137,7 @@ export function createVerifiedProfileDirectory(
     const old = heads.peek(subject);
     if (newer(old, event) === old) return false;
     heads.set(subject, event);
+    accepted.add(subject);
     return true;
   }
   function start(
@@ -333,6 +336,12 @@ export function createVerifiedProfileDirectory(
     /** Whether a head is held for `subject`: its snapshot entry, or its absence
      * for an inactive or malformed head, is then the answer. */
     holds: (subject: string) => enabled && !!heads.peek(subject),
+    /** Subjects whose head changed since the last call, held or since evicted. */
+    takeAccepted() {
+      const taken = [...accepted];
+      accepted.clear();
+      return taken;
+    },
     snapshot(): ReadonlyMap<string, VerifiedProfile> {
       const currentAuthority = authority;
       if (!enabled || !currentAuthority) return new Map();

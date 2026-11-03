@@ -39,22 +39,28 @@ function foundFor(
   const found: Found = new Map();
   // A shared head supersedes a search's answer for good, mounted or not, so
   // the answer cannot return once the shared cache evicts that head.
-  const stop = onHeads(profiles, () => {
+  let seen = profiles.verifiedRevision?.() ?? 0;
+  const stop = profiles.subscribe(() => {
+    const since = seen;
+    seen = profiles.verifiedRevision?.() ?? 0;
+    if (seen === since) return;
     for (const pubkey of found.keys())
-      if (profiles.verifiedHeld?.(pubkey)) found.delete(pubkey);
+      if (superseded(profiles, pubkey, since)) found.delete(pubkey);
   });
   lookups.set(profiles, { authority, found, stop });
   return found;
 }
-/** Calls `changed` when the shared verified heads change. */
-function onHeads(profiles: ProfileQueries, changed: () => void) {
-  let seen = profiles.verifiedRevision?.();
-  return profiles.subscribe(() => {
-    const next = profiles.verifiedRevision?.();
-    if (next === seen) return;
-    seen = next;
-    changed();
-  });
+/** Whether a shared head outranks a search's answer from `revision`: one is
+ * held now, or a later one arrived, even if the shared cache evicted it. */
+function superseded(
+  profiles: ProfileQueries,
+  pubkey: string,
+  revision: number,
+) {
+  return (
+    !!profiles.verifiedHeld?.(pubkey) ||
+    !!profiles.verifiedSince?.(pubkey, revision)
+  );
 }
 
 /**
@@ -106,16 +112,10 @@ export function useVerifiedNames(
       .slice(0, PROFILE_CACHE_BASE);
     if (!queue.length) return;
     const controller = new AbortController();
-    // A shared head that arrives while its read is out supersedes the answer,
-    // even once the shared cache evicts that head again.
-    const superseded = new Set<string>();
-    const stop = onHeads(profiles, () => {
-      for (const pubkey of queue)
-        if (profiles.verifiedHeld?.(pubkey)) superseded.add(pubkey);
-    });
     void (async () => {
       for (let start = 0; start < queue.length; start += BATCH) {
         const wanted = queue.slice(start, start + BATCH);
+        const asked = profiles.verifiedRevision?.() ?? 0;
         const result = await read(wanted, controller.signal).catch(
           // A failed read checked nothing, like a changed authority: the pass
           // ends, and the rows keep their profile names until asked again.
@@ -127,7 +127,8 @@ export function useVerifiedNames(
         const at = Date.now();
         for (const pubkey of wanted) {
           found.delete(pubkey);
-          if (!superseded.has(pubkey) && !profiles.verifiedHeld?.(pubkey))
+          // A shared head that arrived during the read answers instead.
+          if (!superseded(profiles, pubkey, asked))
             found.set(pubkey, { profile: result.profiles.get(pubkey), at });
         }
         for (const pubkey of found.keys()) {
@@ -136,11 +137,8 @@ export function useVerifiedNames(
         }
         setRevision((value) => value + 1);
       }
-    })().finally(stop);
-    return () => {
-      controller.abort();
-      stop();
-    };
+    })();
+    return () => controller.abort();
   }, [profiles, read, authority, subjects, settled, key]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a landed read moves the revision.
   return useMemo(() => {

@@ -59,6 +59,10 @@ export interface ProfileQueries {
   /** Moves with every change to the shared verified heads, including one that
    * leaves every profile as it was (a first inactive head), and notifies. */
   verifiedRevision?(): number;
+  /** Whether a `verifiedRevision()` after `revision` accepted a head for
+   * `pubkey`, even one the cache evicted before publishing it. Past what it
+   * remembers it answers yes, never no for a head it accepted. */
+  verifiedSince?(pubkey: string, revision: number): boolean;
 }
 
 /** Authors per profile read, the reader's largest page. A page that fills it
@@ -119,6 +123,10 @@ export function createProfileDirectory(
   // input and paint run between refolds instead of behind a burst.
   let verifiedFlush: ReturnType<typeof setTimeout> | undefined;
   let verifiedRevision = 0;
+  // The revision that published each subject's latest accepted head, oldest
+  // first, so a search can tell a head the cache has already dropped.
+  const acceptedAt = new Map<string, number>();
+  let forgottenAt = 0;
   const verified =
     verification &&
     createVerifiedProfileDirectory(
@@ -128,6 +136,15 @@ export function createProfileDirectory(
         verifiedFlush ??= setTimeout(() => {
           verifiedFlush = undefined;
           verifiedRevision++;
+          for (const subject of verified?.takeAccepted() ?? []) {
+            acceptedAt.delete(subject);
+            acceptedAt.set(subject, verifiedRevision);
+          }
+          for (const [subject, revision] of acceptedAt) {
+            if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
+            acceptedAt.delete(subject);
+            forgottenAt = revision;
+          }
           if (!closed) publish();
         });
       },
@@ -482,6 +499,9 @@ export function createProfileDirectory(
     verifiedAuthority: () => verified?.authority(),
     verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
     verifiedRevision: () => verifiedRevision,
+    verifiedSince: (pubkey: string, revision: number) =>
+      (acceptedAt.get(pubkey) ?? (revision < forgottenAt ? Infinity : 0)) >
+      revision,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

@@ -29,6 +29,9 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
   };
   const listeners = new Set<() => void>();
   const held = new Set<string>();
+  // The revision each held head arrived in, as the shared directory keeps it.
+  const arrived = new Map<string, number>();
+  let revision = 0;
   const reads: { subjects: readonly string[]; signal: AbortSignal }[] = [];
   let release = () => {};
   let hold = false;
@@ -57,7 +60,9 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
       ensure: async () => {},
       verifiedAuthority: () => authority,
       verifiedHeld: (pubkey: string) => held.has(pubkey),
-      verifiedRevision: () => held.size,
+      verifiedRevision: () => revision,
+      verifiedSince: (pubkey: string, since: number) =>
+        (arrived.get(pubkey) ?? 0) > since,
     },
     directMessages: { verified },
   } as unknown as VerifiedNamesSession;
@@ -72,6 +77,7 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
     /** The shared directory takes a head for `pubkey`, verified or not. */
     hold(pubkey: string) {
       held.add(pubkey);
+      arrived.set(pubkey, ++revision);
       act(() => {
         for (const listener of listeners) listener();
       });
@@ -79,6 +85,7 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
     /** The shared cache evicts that head. */
     evict(pubkey: string) {
       held.delete(pubkey);
+      revision++;
       act(() => {
         for (const listener of listeners) listener();
       });
@@ -272,6 +279,98 @@ it.each([
     await act(async () => t.release());
     if (!early) t.evict(key(1));
     expect(hook.result.current.size).toBe(0);
+  },
+);
+
+it.each([
+  ["landed", false],
+  ["out", true],
+])(
+  "keeps no answer whose shared head the cache evicted before publishing it, with the read %s",
+  async (_, pending) => {
+    vi.useFakeTimers();
+    const relay = keypair(),
+      person = keypair();
+    const authority = { pubkey: relay.pubkey, multipleIssuers: false };
+    let sink: { event(event: unknown): void; eose(): void } | undefined;
+    const directory = createProfileDirectory(
+      { read: async () => [] } as never,
+      undefined,
+      undefined,
+      {
+        authority,
+        subscribe: (_filter, next) => {
+          sink ??= next;
+          return () => {};
+        },
+      },
+    );
+    try {
+      directory.accept([
+        eventDto(
+          signed(person, {
+            kind: 0,
+            content: JSON.stringify({ name: "Profile" }),
+            tags: [],
+            created_at: 1,
+          }),
+        ),
+      ]);
+      await directory.ensure([person.pubkey]);
+      await act(async () => {});
+      sink?.eose();
+      await act(async () => vi.runOnlyPendingTimersAsync());
+      let release = () => {};
+      const session = {
+        profiles: directory.queries,
+        directMessages: {
+          verified: async () => {
+            if (pending) await new Promise<void>((done) => (release = done));
+            return {
+              authority,
+              profiles: new Map([[person.pubkey, name("fname")]]),
+            };
+          },
+        },
+      };
+      const hook = renderHook(() =>
+        useVerifiedNames(session, [{ pubkey: person.pubkey }]),
+      );
+      await act(async () => {});
+      if (!pending)
+        expect(hook.result.current.get(person.pubkey)?.displayName).toBe(
+          "fname",
+        );
+      await act(async () => {
+        sink?.event(
+          eventDto(
+            signed(relay, {
+              kind: 30382,
+              content: "",
+              created_at: 2,
+              tags: [
+                ["d", person.pubkey],
+                ["p", person.pubkey],
+                ["active", "false"],
+              ],
+            }),
+          ),
+        );
+        expect(directory.queries.verifiedHeld?.(person.pubkey)).toBe(true);
+        // Unrelated people evict the revoking head before it is published.
+        await directory.ensure(
+          Array.from({ length: 1024 }, (_, n) => key(n + 1)),
+        );
+        expect(directory.queries.verifiedHeld?.(person.pubkey)).toBe(false);
+        await vi.runOnlyPendingTimersAsync();
+      });
+      await act(async () => release());
+      expect(hook.result.current.has(person.pubkey)).toBe(false);
+    } finally {
+      cleanup();
+      directory.dispose();
+      vi.useRealTimers();
+    }
   },
 );
 

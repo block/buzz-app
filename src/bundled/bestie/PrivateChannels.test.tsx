@@ -206,6 +206,26 @@ it("says when a removal isn't confirmed, and offers none from a cached roster", 
   );
 });
 
+it("offers no add to a channel known only from a cached roster", async () => {
+  const user = userEvent.setup();
+  const { value, add } = session([
+    channel("alpha", [YOU]),
+    channel("offline", [YOU], { cached: true }),
+  ]);
+  render(<PrivateChannels session={value} bestie={BESTIE} />);
+  await user.click(screen.getByRole("button", { name: "Choose…" }));
+  const items = await screen.findAllByRole("menuitem");
+  expect(items.map((item) => item.textContent)).toEqual(["#alpha"]);
+  await user.keyboard("{Escape}");
+  expect(screen.getByText(/1 channel without Bestie/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Add to all" }));
+  const ask = await screen.findByRole("alertdialog", {
+    name: "Add Bestie to 1 private channel?",
+  });
+  await user.click(within(ask).getByRole("button", { name: "Add to all" }));
+  expect(add.mock.calls).toEqual([["id-alpha", BESTIE, GUEST]]);
+});
+
 it("removes Bestie on the first click after mounting under StrictMode", async () => {
   const user = userEvent.setup();
   const { value, run } = session([channel("shared", [YOU, BESTIE])]);

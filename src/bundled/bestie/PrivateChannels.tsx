@@ -78,7 +78,11 @@ export function PrivateChannels({
     session.viewer ?? "",
     bestie,
   );
-  const addable = others.filter((channel) => canAddMembers(session, channel));
+  // A cached row may be stale offline, so it is offered for no change, as
+  // Remove isn't.
+  const addable = others.filter(
+    (channel) => !channel.cached && canAddMembers(session, channel),
+  );
   // Only a complete, current roster shows which channels Bestie is not in.
   const complete = list.status === "ready" && list.coverage !== "partial";
   const retry = () =>

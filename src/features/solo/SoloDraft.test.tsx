@@ -2367,3 +2367,89 @@ it("does not start a named Solo chat from a file alone", async () => {
   expect(test.channelWrites.create).not.toHaveBeenCalled();
   expect(test.messages.send).not.toHaveBeenCalled();
 });
+
+it("a chat started from a channel saves the Canvas copied into its draft", async () => {
+  const test = setup();
+  const saveCanvas = vi.fn(async () => {});
+  Object.assign(test.session, {
+    canvas: { read: async () => undefined, save: saveCanvas },
+  });
+  const linkedId = "33333333-3333-4333-8333-333333333333";
+  const source: LinkedChat = {
+    channelId: "handoff",
+    link: "buzz://channel/handoff",
+  };
+  writeView("test", linkedDraftKey(linkedId), source);
+  const copied =
+    "> Copied from the Canvas of #Handoff (buzz://channel/handoff), written by that channel’s members.\n\n# Handoff\n\nNext: review";
+  writeView("test", `${linkedDraftKey(linkedId)}:settings`, {
+    canvas: copied,
+  });
+  const onStarted = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      focusRequest={1}
+      onStarted={onStarted}
+    />,
+  );
+  expect(
+    screen.getByText(
+      /^Starts with instructions copied from the source channel’s/,
+    ),
+  ).toBeInTheDocument();
+  const review = screen.getByRole("button", {
+    name: "Review copied instructions",
+  });
+  await user.click(review);
+  expect(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+  ).toHaveValue(copied);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(review).toHaveFocus());
+  await user.type(
+    screen.getByRole("textbox", { name: "Message your agents" }),
+    "What's left?{Enter}",
+  );
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(saveCanvas).toHaveBeenCalledWith(
+      test.channelWrites.create.mock.calls[0]?.[0],
+      copied,
+      undefined,
+    ),
+  );
+});
+
+it("a linked draft whose Instructions weren't copied shows no copy notice", async () => {
+  const test = setup();
+  const linkedId = "44444444-4444-4444-8444-444444444444";
+  const source: LinkedChat = {
+    channelId: "handoff",
+    link: "buzz://channel/handoff",
+  };
+  writeView("test", linkedDraftKey(linkedId), source);
+  writeView("test", `${linkedDraftKey(linkedId)}:settings`, {
+    canvas: "My own instructions",
+  });
+  render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      linkedId={linkedId}
+      source={source}
+      onStarted={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("textbox", { name: "Message your agents" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/^Starts with instructions copied/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Review copied instructions" }),
+  ).toBeNull();
+});

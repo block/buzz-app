@@ -1,4 +1,8 @@
-import { linkedDraftKey, type LinkedChat } from "./linked-chat";
+import {
+  copiedCanvasLead,
+  linkedDraftKey,
+  type LinkedChat,
+} from "./linked-chat";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -7,6 +11,7 @@ import { startingChatTitle } from "./chat-title";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GearIcon } from "../../shared/design-system/icons";
 import {
@@ -62,6 +67,14 @@ function readDraftSettings(scope: string, draftKey: string) {
       | number
       | undefined,
   };
+}
+
+/** The channel a linked draft came from, as the sidebar names it. */
+function sourceName(session: RelaySession, source: LinkedChat) {
+  const channel = session.channels
+    .list()
+    .channels.find(({ id }) => id === source.channelId);
+  return channel?.name ? `#${channel.name}` : "the source channel";
 }
 
 export function resetNewChatProject(scope: string, projectId: string) {
@@ -162,6 +175,8 @@ export function SoloDraft({
     return typeof saved === "string" ? saved : (projectId ?? "");
   });
   const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
+  const [settingsOpener, setSettingsOpener] = useState(settingsTrigger);
   const [draftSettings, setDraftSettings] = useState(() =>
     readDraftSettings(scope, draftKey),
   );
@@ -515,6 +530,25 @@ export function SoloDraft({
           saved.
         </p>
       )}
+      {source && draftCanvas?.startsWith(copiedCanvasLead) && (
+        <p className={styles.availability}>
+          Starts with instructions copied from {sourceName(session, source)}’s
+          Canvas.{" "}
+          <Button
+            ref={reviewTrigger}
+            aria-label="Review copied instructions"
+            variant="link"
+            size="inline"
+            disabled={busy}
+            onClick={() => {
+              setSettingsOpener(reviewTrigger);
+              setSettingsOpen(true);
+            }}
+          >
+            Review
+          </Button>
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
     </div>
   );
@@ -528,14 +562,18 @@ export function SoloDraft({
           title="Chat settings"
           icon={<GearIcon size="1rem" aria-hidden="true" />}
           disabled={busy}
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => {
+            setSettingsOpener(settingsTrigger);
+            setSettingsOpen(true);
+          }}
         />
       }
     >
       {composer}
       {settingsOpen && (
         <DraftSettings
-          finalFocus={settingsTrigger}
+          // Review is gone once its Instructions are cleared.
+          finalFocus={() => settingsOpener.current ?? settingsTrigger.current}
           session={session}
           projectId={selectedProject || undefined}
           canvas={draftCanvas}

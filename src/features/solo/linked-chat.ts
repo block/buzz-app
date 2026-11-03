@@ -22,6 +22,8 @@ export function readLinkedChat(
     return;
   return value as LinkedChat;
 }
+/** How a Canvas copied into a linked draft begins; the draft says so while it does. */
+export const copiedCanvasLead = "> Copied from the Canvas of ";
 export const linkedDraftKey = (id: string) => `solo:linked:${id}`;
 /** One draft per source: starting again from it returns to the unsent prompt
  * instead of stranding it under a fresh key. */

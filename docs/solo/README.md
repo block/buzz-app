@@ -379,6 +379,21 @@ transcript copy remains. The shortcut uses ordinary Solo creation; it needs no n
 relay capability. The chat stays private until it is shared through the existing
 Share flow. A leading source link is not used for the chat's starting title.
 
+Started from a channel (not a message) with a Canvas, the draft's Chat settings
+start with a copy of that Canvas as its Instructions, editable like any other,
+under a first line naming the channel it came from. While that line leads them,
+a line under the draft's composer says the chat starts with them, and
+**Review copied instructions** opens Chat settings. The first send saves it as
+the new chat's Canvas, written by the chat's owner, so their agents treat it as
+the owner's own standing instructions even though the channel's members wrote
+it. A workspace block in the source is dropped, and the first line keeps any
+other copy of one from parsing, so its folders never become ones the owner's
+agents may work in. Sharing the chat later shares the copy with it. It is a
+one-time copy: later source edits do not follow. Returning to an unsent draft
+keeps a Canvas it was given or edited; other draft settings are kept alongside
+the copy. Where Canvas is unavailable nothing is copied. If the source Canvas
+can't be read, nothing is created and the start can be retried.
+
 Source permissions still apply when an agent follows the ordinary link; seeing a
 link does not mean it can read or post in that source. Rendered, live
 cross-account, restart and real-agent acceptance remain separate from focused

@@ -94,9 +94,9 @@ beforeEach(() => {
   installTestLocks();
 });
 afterEach(() => {
+  cleanup();
   clearDrafts(scope);
   clearDrafts(second);
-  cleanup();
   vi.restoreAllMocks();
   Reflect.deleteProperty(navigator, "locks");
 });
@@ -391,6 +391,66 @@ it("clears retained drafts with community data and protects them after navigatio
   expect(
     screen.getByRole("textbox", { name: "Question or decision needed" }),
   ).toHaveValue("");
+});
+
+it("closes a mounted editor when its community is removed", () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const close = vi.fn();
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Question or decision needed",
+  });
+  fireEvent.change(input, { target: { value: "Remove with community" } });
+  const draftKey = JSON.stringify([scope, "capture", "room", message.id]);
+  act(() => clearViewScope(scope));
+  expect(close).toHaveBeenCalledOnce();
+  fireEvent.change(input, { target: { value: "Cannot restore this" } });
+  expect(draftFor(draftKey)).toBeUndefined();
+});
+
+it("keeps a draft when its purge marker is temporarily unreadable", () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const view = render(
+    <Action
+      message={message}
+      session={h.session}
+      close={() => {}}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    {
+      target: { value: "Keep while storage fails" },
+    },
+  );
+  view.unmount();
+  const original = Storage.prototype.getItem;
+  const read = vi
+    .spyOn(Storage.prototype, "getItem")
+    .mockImplementation(function (this: Storage, key) {
+      if (key.includes("decision-inbox:unsaved-draft"))
+        throw new Error("storage unavailable");
+      return original.call(this, key);
+    });
+  act(() => {
+    writeView(scope, "another-view", true);
+  });
+  read.mockRestore();
+  expect(
+    draftFor(JSON.stringify([scope, "capture", "room", message.id]))?.question,
+  ).toBe("Keep while storage fails");
 });
 
 it("evicts a draft whose changes were undone before closing", async () => {

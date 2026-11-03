@@ -17,6 +17,7 @@ const marker = "decision-inbox:unsaved-draft";
 const marked = JSON.stringify(true);
 const entries = new Map<string, { scope: string; draft: Draft }>();
 const subscriptions = new Map<string, () => void>();
+const purgeListeners = new Map<string, Set<() => void>>();
 let warningActive = false;
 
 const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -55,6 +56,20 @@ export function clearDrafts(scope: string) {
   subscriptions.get(scope)?.();
   subscriptions.delete(scope);
   updateWarning();
+  for (const listener of purgeListeners.get(scope) ?? []) listener();
+}
+
+export function onDraftPurge(scope: string, listener: () => void) {
+  let listeners = purgeListeners.get(scope);
+  if (!listeners) {
+    listeners = new Set();
+    purgeListeners.set(scope, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) purgeListeners.delete(scope);
+  };
 }
 
 /** The scope marker is removed by the existing view-state community purge. */
@@ -65,7 +80,7 @@ export function keepDraft(scope: string, key: string, draft: Draft) {
     return false;
   if (!subscriptions.has(scope)) {
     const stop = subscribeView(scope, () => {
-      if (viewRevision(scope, marker) !== marked) clearDrafts(scope);
+      if (viewRevision(scope, marker) === null) clearDrafts(scope);
     });
     subscriptions.set(scope, stop);
   }

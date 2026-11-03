@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { messagePreview } from "../../features/notifications/content";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -16,7 +16,13 @@ import {
   type Decision,
   type Stage,
 } from "./model";
-import { draftFor, forgetDraft, keepDraft, type Draft } from "./drafts";
+import {
+  draftFor,
+  forgetDraft,
+  keepDraft,
+  onDraftPurge,
+  type Draft,
+} from "./drafts";
 import styles from "./DecisionInbox.module.css";
 
 const stages = [
@@ -58,6 +64,15 @@ export function DecisionDialog({
       },
   );
   const draftRef = useRef(draft);
+  const purged = useRef(false);
+  useEffect(
+    () =>
+      onDraftPurge(scope, () => {
+        purged.current = true;
+        close();
+      }),
+    [scope, close],
+  );
   const { expected, question, nextActor, decision, stage } = draft;
   const [error, setError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -68,6 +83,7 @@ export function DecisionDialog({
     value.decision !== (record?.decision ?? "") ||
     value.stage !== (record?.stage ?? "decision");
   const change = (patch: Partial<Draft>) => {
+    if (purged.current) return;
     const next = { ...draftRef.current, ...patch };
     draftRef.current = next;
     if (isDirty(next)) {
@@ -102,7 +118,8 @@ export function DecisionDialog({
     }
   };
   const submit = async () => {
-    if (busy || !valid || duplicate || (!record && !message)) return;
+    if (purged.current || busy || !valid || duplicate || (!record && !message))
+      return;
     if (!current()) {
       setError("The account or community changed. Reopen this item there.");
       return;

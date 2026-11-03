@@ -1656,6 +1656,28 @@ describe("recovery tick roster backstop", () => {
     }
   });
 
+  it("an exact join read does not restart the window", async () => {
+    const h = setup();
+    try {
+      await readyRoster(h);
+      at(10 * 60_000);
+      h.live.receive([membershipHint(h, "a")]);
+      await flush();
+      const exact = h.wire.next();
+      expect(exact.filters).toEqual(exactFilters(h, ["a"]));
+      exact.respond([
+        metadata(h.relay, "a", "Alpha"),
+        roster(h.relay, "a", [h.viewer.pubkey]),
+      ]);
+      await flush();
+      expect(h.owner.session.channels.get?.("a")).toBeDefined();
+      expect(h.wire.pending).toHaveLength(0);
+      await expectBackstopFrom(h, 0);
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
   it("retries a failed full read on the next tick", async () => {
     const h = setup();
     try {

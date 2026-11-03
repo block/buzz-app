@@ -60,8 +60,12 @@ export function useVerifiedNames(
   const authority = useSyncExternalStore(profiles.subscribe, () =>
     profiles.verifiedAuthority?.(),
   );
-  // A shared head that arrives later outranks a search's answer.
-  const shared = useSyncExternalStore(profiles.subscribe, profiles.snapshot);
+  // A shared head that arrives later outranks a search's answer, even one that
+  // leaves the shared profiles as they were.
+  const heads = useSyncExternalStore(
+    profiles.subscribe,
+    () => profiles.verifiedRevision?.() ?? 0,
+  );
   const [revision, setRevision] = useState(0);
   const subjects = people
     .flatMap(({ pubkey, isAgent }) => (isAgent ? [] : [pubkey]))
@@ -121,7 +125,7 @@ export function useVerifiedNames(
         named.set(pubkey, profile);
     }
     return named.size ? named : none;
-  }, [profiles, authority, subjects, revision, shared]);
+  }, [profiles, authority, subjects, revision, heads]);
 }
 
 /** A person's verified name as these lookups or the shared profiles hold it

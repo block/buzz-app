@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { eventDto } from "../relay/events";
+import { createProfileDirectory } from "../relay/profile-directory";
+import { keypair, signed } from "../relay/testing";
 import type { VerifiedProfile } from "../relay/verified-profile";
 import {
   useVerifiedNames,
@@ -26,7 +29,6 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
   };
   const listeners = new Set<() => void>();
   const held = new Set<string>();
-  let current = shared;
   const reads: { subjects: readonly string[]; signal: AbortSignal }[] = [];
   let release = () => {};
   let hold = false;
@@ -47,7 +49,7 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
   );
   const session = {
     profiles: {
-      snapshot: () => current,
+      snapshot: () => shared,
       subscribe(listener: () => void) {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -55,6 +57,7 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
       ensure: async () => {},
       verifiedAuthority: () => authority,
       verifiedHeld: (pubkey: string) => held.has(pubkey),
+      verifiedRevision: () => held.size,
     },
     directMessages: { verified },
   } as unknown as VerifiedNamesSession;
@@ -69,8 +72,6 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
     /** The shared directory takes a head for `pubkey`, verified or not. */
     hold(pubkey: string) {
       held.add(pubkey);
-      // Its profile changes, so the shared snapshot is new.
-      current = new Map(current);
       act(() => {
         for (const listener of listeners) listener();
       });
@@ -230,4 +231,75 @@ it("yields to a head the shared directory holds, so a later revocation is not un
   // verified name, and the search's older answer must not bring one back.
   t.hold(key(1));
   expect([...hook.result.current.keys()]).toEqual([key(2)]);
+});
+
+it("drops a searched name when the shared directory's first head for that person is inactive", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    person = keypair();
+  const authority = { pubkey: relay.pubkey, multipleIssuers: false };
+  let sink: { event(event: unknown): void; eose(): void } | undefined;
+  const directory = createProfileDirectory({} as never, undefined, undefined, {
+    authority,
+    subscribe: (_filter, next) => {
+      sink = next;
+      return () => {};
+    },
+  });
+  try {
+    directory.accept([
+      eventDto(
+        signed(person, {
+          kind: 0,
+          content: JSON.stringify({ name: "Profile" }),
+          tags: [],
+          created_at: 1,
+        }),
+      ),
+    ]);
+    await directory.ensure([person.pubkey]);
+    await act(async () => {});
+    sink?.eose();
+    await act(async () => vi.runOnlyPendingTimersAsync());
+    const session = {
+      profiles: directory.queries,
+      directMessages: {
+        verified: async () => ({
+          authority,
+          profiles: new Map([[person.pubkey, name("old")]]),
+        }),
+      },
+    };
+    const hook = renderHook(() =>
+      useVerifiedNames(session, [{ pubkey: person.pubkey }]),
+    );
+    await act(async () => {});
+    expect(hook.result.current.get(person.pubkey)?.displayName).toBe("old");
+    const before = directory.queries.snapshot();
+    await act(async () => {
+      sink?.event(
+        eventDto(
+          signed(relay, {
+            kind: 30382,
+            content: "",
+            created_at: 2,
+            tags: [
+              ["d", person.pubkey],
+              ["p", person.pubkey],
+              ["active", "false"],
+            ],
+          }),
+        ),
+      );
+      await vi.runOnlyPendingTimersAsync();
+    });
+    // The shared profile is unchanged, yet the revoking head now decides.
+    expect(directory.queries.snapshot()).toBe(before);
+    expect(directory.queries.verifiedHeld?.(person.pubkey)).toBe(true);
+    expect(hook.result.current.has(person.pubkey)).toBe(false);
+  } finally {
+    cleanup();
+    directory.dispose();
+    vi.useRealTimers();
+  }
 });

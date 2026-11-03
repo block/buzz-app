@@ -56,6 +56,9 @@ export interface ProfileQueries {
    * profile's `verified`, present or not, then outranks a search's answer:
    * a newer inactive or malformed head revokes an older name. */
   verifiedHeld?(pubkey: string): boolean;
+  /** Moves with every change to the shared verified heads, including one that
+   * leaves every profile as it was (a first inactive head), and notifies. */
+  verifiedRevision?(): number;
 }
 
 /** Authors per profile read, the reader's largest page. A page that fills it
@@ -115,6 +118,7 @@ export function createProfileDirectory(
   // every profile. Coalesce them to one publish per macrotask so socket frames,
   // input and paint run between refolds instead of behind a burst.
   let verifiedFlush: ReturnType<typeof setTimeout> | undefined;
+  let verifiedRevision = 0;
   const verified =
     verification &&
     createVerifiedProfileDirectory(
@@ -123,6 +127,7 @@ export function createProfileDirectory(
       () => {
         verifiedFlush ??= setTimeout(() => {
           verifiedFlush = undefined;
+          verifiedRevision++;
           if (!closed) publish();
         });
       },
@@ -171,8 +176,10 @@ export function createProfileDirectory(
       });
   }
   let publishedAuthority: VerifiedProfileAuthority | undefined;
+  let publishedRevision = 0;
   /** Notifies on display changes, on winning-event changes for `event()`
-   * readers, and on verified-authority changes for `verifiedAuthority()`. */
+   * readers, and on verified-authority and head changes for
+   * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
     folded = false;
     const next = foldProfiles([
@@ -251,9 +258,14 @@ export function createProfileDirectory(
       snapshot = next;
       if ([...unnamed].some((id) => next.has(id)))
         unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
-    } else if (!headChanged && publishedAuthority === verified?.authority())
+    } else if (
+      !headChanged &&
+      publishedAuthority === verified?.authority() &&
+      publishedRevision === verifiedRevision
+    )
       return;
     publishedAuthority = verified?.authority();
+    publishedRevision = verifiedRevision;
     for (const listener of listeners) notify(listener);
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
@@ -469,6 +481,7 @@ export function createProfileDirectory(
     evictions: () => events.evictions + cancelled,
     verifiedAuthority: () => verified?.authority(),
     verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
+    verifiedRevision: () => verifiedRevision,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

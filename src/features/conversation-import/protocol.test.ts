@@ -253,6 +253,32 @@ describe("records", () => {
     );
     expect(parseSnapshot(signedFrom(alice, snapshot), relay)).toBeUndefined();
   });
+
+  it("reads the warm-up time from a snapshot and ignores a malformed one", () => {
+    const snapshot = (value?: string) => ({
+      kind: 30623,
+      content: JSON.stringify({
+        v: 1,
+        status: "active",
+        required: [alice],
+        consents: { [alice]: "accept" },
+        published: {},
+        completed: [],
+        expires_at: now + 60,
+      }),
+      tags: [
+        ["d", proposalId],
+        ["h", channel],
+        ...(value === undefined ? [] : [["accepts_after", value]]),
+      ],
+    });
+    const read = (value?: string) =>
+      parseSnapshot(signedFrom(relay, snapshot(value)), relay);
+    expect(read(String(now + 90))?.accepts_after).toBe(now + 90);
+    expect(read()).not.toHaveProperty("accepts_after");
+    for (const value of ["soon", "-5", "1.5", ""])
+      expect(read(value)).not.toHaveProperty("accepts_after");
+  });
 });
 
 describe("imported events", () => {

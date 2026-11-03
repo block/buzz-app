@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -234,6 +235,50 @@ it("counts people done against every participant", () => {
   });
   render(<ImportProgressBanner channelId={channel} service={active.service} />);
   expect(screen.getByText(/1 of 2 people done/)).toBeTruthy();
+});
+
+it("counts down to the relay's start time while the import warms up", () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  try {
+    vi.setSystemTime(now * 1000);
+    const { row, relay, service } = harness({
+      status: "active",
+      acceptsAfter: now + 65,
+    });
+    render(<ImportConsentCard message={row} relay={relay} service={service} />);
+    expect(screen.getByText(/^Starting at .+ \(in 1:05\)$/)).toBeTruthy();
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(screen.getByText(/\(in 0:59\)$/)).toBeTruthy();
+    act(() => vi.advanceTimersByTime(59_000));
+    expect(screen.getByText("Importing")).toBeTruthy();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows no countdown without a start time or before the import is active", () => {
+  const active = harness({ status: "active" });
+  render(
+    <ImportConsentCard
+      message={active.row}
+      relay={active.relay}
+      service={active.service}
+    />,
+  );
+  expect(screen.getByText("Importing")).toBeTruthy();
+  cleanup();
+  const proposed = harness({
+    status: "proposed",
+    acceptsAfter: Date.now() / 1000 + 60,
+  });
+  render(
+    <ImportConsentCard
+      message={proposed.row}
+      relay={proposed.relay}
+      service={proposed.service}
+    />,
+  );
+  expect(screen.queryByText(/Starting at/)).toBeNull();
 });
 
 it("shows a compact imported marker on continuation rows", () => {

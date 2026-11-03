@@ -63,6 +63,10 @@ const PARENT_POLL_MS = 5_000;
 /** How long a missing parent may wait without any partner progress. */
 const PARENT_STALL_MS = 10 * 60_000;
 const RATE_LIMIT_WAIT_MS = 15_000;
+/** Retry delay for a warming refusal when the snapshot gives no later time. */
+const WARMING_RETRY_MS = 5_000;
+/** The relay's refusal while a newly active session's replica catches up. */
+const WARMING = /\bimport session warming\b/;
 /** Above the outbox's own delivery timeout. */
 const SETTLE_AFTER_STOP_MS = 30_000;
 const READ_PAGE = 200;
@@ -101,6 +105,8 @@ type HostState = {
   loaded: boolean;
   entries: Map<string, Entry>;
   orphans: Map<string, ParsedSnapshot>;
+  /** Each snapshot's `accepts_after` on this device's clock. */
+  starts: WeakMap<ParsedSnapshot, number>;
   known: Map<string, Set<string>>;
   views: readonly ImportSessionView[];
   listeners: Set<(sessions: readonly ImportSessionView[]) => void>;
@@ -152,7 +158,11 @@ function verifiedView(
   });
 }
 
-function sessionView(entry: Entry, now: number): ImportSessionView {
+function sessionView(
+  entry: Entry,
+  now: number,
+  acceptsAfter?: number,
+): ImportSessionView {
   const { proposal, snapshot } = entry;
   const expired = !snapshot && proposal.content.expires_at <= now;
   return Object.freeze({
@@ -169,9 +179,16 @@ function sessionView(entry: Entry, now: number): ImportSessionView {
     published: snapshot?.published ?? Object.freeze({}),
     completed: snapshot?.completed ?? Object.freeze([]),
     expires_at: snapshot?.expires_at ?? proposal.content.expires_at,
+    ...(acceptsAfter !== undefined ? { acceptsAfter } : {}),
     confirmed: !!snapshot,
   });
 }
+
+const startOf = (state: HostState, entry: Entry) =>
+  entry.snapshot && state.starts.get(entry.snapshot);
+
+const viewOf = (state: HostState, entry: Entry) =>
+  sessionView(entry, state.now(), startOf(state, entry));
 
 /** Publishing needs the relay's own word that the session is active. */
 function inactiveReason(entry: Entry, now: number, viewer: string) {
@@ -358,6 +375,7 @@ export class ConversationImportHost
       loaded: false,
       entries: new Map(),
       orphans: new Map(),
+      starts: new WeakMap(),
       known: new Map(),
       views: Object.freeze([]),
       listeners: new Set(),
@@ -687,7 +705,7 @@ export class ConversationImportHost
       throw new Error(
         "That source identity does not match your entry in the proposal.",
       );
-    const status = sessionView(entry, state.now()).status;
+    const status = viewOf(state, entry).status;
     if (status !== "proposed" && status !== "active")
       throw new Error(`This import is ${status}.`);
     const pubkeys = content.participants.map((item) => item.pubkey);
@@ -846,7 +864,7 @@ export class ConversationImportHost
     const known = state.entries.get(proposalId);
     const entry = known ?? (await entryFor(state, proposalId, signal));
     if (known) await refreshSnapshot(state, entry, signal);
-    return sessionView(entry, state.now());
+    return viewOf(state, entry);
   }
 
   subscribe(cb: (sessions: readonly ImportSessionView[]) => void) {
@@ -951,8 +969,18 @@ export class ConversationImportHost
     const total = events.length;
     let lastSend = 0;
     let pending: string | undefined;
+    const starting = async (ms: number) => {
+      opts.onProgress?.({ phase: "starting", published: ids.length, total });
+      await state.wait(ms, signal);
+    };
     try {
-      for (const [index, event] of events.entries()) {
+      const inactive = total && inactiveReason(entry, state.now(), viewer);
+      if (inactive) return report("stopped", 0, inactive);
+      const ready = startOf(state, entry);
+      if (total && ready !== undefined && ready > state.now())
+        await starting((ready - state.now()) * 1000);
+      for (let index = 0; index < total; ) {
+        const event = events[index] as PreparedImportEvent;
         signal?.throwIfAborted();
         const stopped = inactiveReason(entry, state.now(), viewer);
         if (stopped) return report("stopped", index, stopped);
@@ -985,11 +1013,20 @@ export class ConversationImportHost
         pending = id;
         const result = await sendImported(state, writer, event, signal);
         pending = undefined;
+        if (result !== id && result && WARMING.test(result)) {
+          // Nothing was stored, so the same event goes again once warm.
+          await refreshSnapshot(state, entry, signal).catch(() => {});
+          const until = startOf(state, entry);
+          const ms = until === undefined ? 0 : (until - state.now()) * 1000;
+          await starting(ms > 0 ? ms : WARMING_RETRY_MS);
+          continue;
+        }
         if (result !== id)
           return report("rejected", index, result ?? "Delivery failed");
         ids.push(id);
         rememberIds(state, channelId, [id]);
         opts.onProgress?.({ published: ids.length, total });
+        index++;
       }
     } catch (error) {
       if (pending) {
@@ -1619,6 +1656,15 @@ function ingest(state: HostState, events: readonly RelayEvent[]) {
     } else if (event.kind === IMPORT_SNAPSHOT_KIND) {
       const snapshot = parseSnapshot(event, session?.relayAuthor);
       if (!snapshot) continue;
+      // A snapshot stamped ahead of this device shows the relay's clock runs
+      // ahead by at least that much. A relay clock running behind cannot be
+      // seen here; its warming refusal covers that case.
+      if (snapshot.accepts_after !== undefined)
+        state.starts.set(
+          snapshot,
+          snapshot.accepts_after -
+            Math.max(0, snapshot.createdAt - state.now()),
+        );
       const entry = state.entries.get(snapshot.proposalId);
       if (!entry) {
         const prior = state.orphans.get(snapshot.proposalId);
@@ -1645,7 +1691,7 @@ function publishViews(state: HostState) {
   const now = state.now();
   state.views = Object.freeze(
     [...state.entries.values()]
-      .map((entry) => sessionView(entry, now))
+      .map((entry) => sessionView(entry, now, startOf(state, entry)))
       .sort(
         (a, b) =>
           b.proposedAt - a.proposedAt ||

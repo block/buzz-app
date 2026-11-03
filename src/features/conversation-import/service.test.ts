@@ -84,9 +84,19 @@ function verifiedRecord(pubkey: string, username: string, displayName: string) {
   );
 }
 
-function snapshotRecord(proposalId: string, status: string) {
+function snapshotRecord(
+  proposalId: string,
+  status: string,
+  warmUp: {
+    acceptsAfter?: number | undefined;
+    createdAt?: number | undefined;
+  } = {},
+) {
   return eventDto(
     signed(authority, {
+      ...(warmUp.createdAt !== undefined
+        ? { created_at: warmUp.createdAt }
+        : {}),
       kind: 30623,
       content: JSON.stringify({
         v: 1,
@@ -103,6 +113,9 @@ function snapshotRecord(proposalId: string, status: string) {
         ["h", channel],
         ["p", viewer],
         ["p", partner],
+        ...(warmUp.acceptsAfter !== undefined
+          ? [["accepts_after", String(warmUp.acceptsAfter)]]
+          : []),
       ],
     }),
   );
@@ -143,6 +156,10 @@ function setup(
     supported?: boolean;
     channel?: Partial<Channel>;
     roster?: (channelId: string) => readonly string[] | undefined;
+    acceptsAfter?: number;
+    snapshotAt?: number;
+    /** Waits of this length block until aborted. */
+    hold?: (ms: number) => boolean;
   } = {},
 ) {
   const current = options.proposal ?? proposal;
@@ -233,7 +250,16 @@ function setup(
         );
     if (filter.kinds?.includes(30623))
       return options.status
-        ? [snapshotRecord((filter["#d"] as string[])[0] ?? "", options.status)]
+        ? [
+            snapshotRecord(
+              (filter["#d"] as string[])[0] ?? "",
+              options.status,
+              {
+                acceptsAfter: options.acceptsAfter,
+                createdAt: options.snapshotAt,
+              },
+            ),
+          ]
         : [];
     if (filter.kinds?.includes(39002)) {
       const id = (filter["#d"] as string[])[0] ?? "";
@@ -332,6 +358,13 @@ function setup(
     clock: () => 0,
     wait: async (ms, signal) => {
       waits.push(ms);
+      if (options.hold?.(ms))
+        await new Promise<void>((_, reject) => {
+          if (signal?.aborted) reject(signal.reason);
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
       // The give-up wait after a stop resolves only when a test expires it.
       if (ms === 30_000)
         await new Promise<void>((resolve, reject) => {
@@ -498,6 +531,126 @@ it("publishes paced events in order and reports their ids", async () => {
   );
   expect(waits).toEqual([125, 125]);
   expect(progress).toHaveBeenLastCalledWith({ published: 3, total: 3 });
+  // Without a warm-up time from the relay, publishing starts at once.
+  expect(progress).not.toHaveBeenCalledWith(
+    expect.objectContaining({ phase: "starting" }),
+  );
+  expect(service.session(proposal.id)).not.toHaveProperty("acceptsAfter");
+});
+
+it("waits for the relay's warm-up time before signing the first event", async () => {
+  const { service, sent, waits } = setup({
+    status: "active",
+    acceptsAfter: now + 90,
+  });
+  const progress = vi.fn((update: { phase?: string }) => {
+    if (update.phase) expect(sent).toHaveLength(0);
+  });
+  const report = await service.publish(
+    proposal.id,
+    [message(1_735_732_800, "1"), message(1_735_732_801, "2")],
+    { onProgress: progress },
+  );
+  expect(report.status).toBe("done");
+  expect(waits).toEqual([90_000, 125]);
+  expect(progress).toHaveBeenNthCalledWith(1, {
+    phase: "starting",
+    published: 0,
+    total: 2,
+  });
+  expect(service.session(proposal.id)?.acceptsAfter).toBe(now + 90);
+});
+
+it("moves the start earlier by how far the relay's clock runs ahead", async () => {
+  const { service, waits } = setup({
+    status: "active",
+    acceptsAfter: now + 90,
+    snapshotAt: now + 20,
+  });
+  const report = await service.publish(
+    proposal.id,
+    [message(1_735_732_800, "1")],
+    {},
+  );
+  expect(report.status).toBe("done");
+  expect(waits).toEqual([70_000]);
+  expect(service.session(proposal.id)?.acceptsAfter).toBe(now + 70);
+});
+
+it("stops without signing when cancelled during the warm-up wait", async () => {
+  const { service, sent, waits } = setup({
+    status: "active",
+    acceptsAfter: now + 90,
+    hold: (ms) => ms === 90_000,
+  });
+  const controller = new AbortController();
+  const run = service.publish(
+    proposal.id,
+    [message(1_735_732_800, "1")],
+    {},
+    controller.signal,
+  );
+  await vi.waitFor(() => expect(waits).toContain(90_000));
+  controller.abort();
+  expect(await run).toMatchObject({ status: "stopped", published: 0 });
+  expect(sent).toHaveLength(0);
+});
+
+it("retries the same event after a warming refusal and never skips it", async () => {
+  let count = 0;
+  const warming = () =>
+    ++count === 2
+      ? {
+          delivery: "failed" as const,
+          error: "invalid: import session warming",
+        }
+      : { delivery: "accepted" as const };
+  const { service, sent, waits } = setup({ status: "active", decide: warming });
+  const progress = vi.fn();
+  const events = [
+    message(1_735_732_800, "1"),
+    message(1_735_732_801, "2"),
+    message(1_735_732_802, "3"),
+  ];
+  const report = await service.publish(proposal.id, events, {
+    onProgress: progress,
+  });
+  expect(report.status).toBe("done");
+  const ids = events.map((event) =>
+    service.eventId({ ...event, pubkey: viewer }),
+  );
+  expect(report.ids).toEqual(ids);
+  expect(sent.map((event) => event.id)).toEqual([
+    ids[0],
+    ids[1],
+    ids[1],
+    ids[2],
+  ]);
+  expect(waits).toContain(5_000);
+  expect(progress).toHaveBeenCalledWith({
+    phase: "starting",
+    published: 1,
+    total: 3,
+  });
+
+  count = 0;
+  const later = setup({
+    status: "active",
+    acceptsAfter: now + 40,
+    decide: () =>
+      ++count === 1
+        ? { delivery: "failed", error: "invalid: import session warming" }
+        : { delivery: "accepted" },
+  });
+  const retried = await later.service.publish(
+    proposal.id,
+    [message(1_735_732_800, "1")],
+    {},
+  );
+  expect(retried.status).toBe("done");
+  // Backs off to the snapshot's start time rather than the fixed delay.
+  expect(later.waits).toEqual([40_000, 40_000]);
+  expect(later.sent).toHaveLength(2);
 });
 
 it("stops on the first rejection, surfaces the relay text verbatim and dismisses the refused event", async () => {

@@ -455,6 +455,9 @@ export type ParsedSnapshot = Readonly<{
   published: Readonly<Record<string, ImportCounts>>;
   completed: readonly string[];
   expires_at: number;
+  /** Relay-clock Unix seconds before which the relay refuses imported events
+   * while the session warms up. */
+  accepts_after?: number;
 }>;
 
 /** Only the community's relay key may state session status. */
@@ -506,6 +509,12 @@ export function parseSnapshot(
       reactions: value.reactions,
     });
   }
+  // A malformed value is ignored: a warming refusal still says when to retry.
+  const acceptsAfter = tagValue(event.tags, "accepts_after");
+  const accepts_after =
+    acceptsAfter && /^\d{1,15}$/.test(acceptsAfter)
+      ? Number(acceptsAfter)
+      : undefined;
   return Object.freeze({
     proposalId,
     channelId,
@@ -516,6 +525,7 @@ export function parseSnapshot(
     published: Object.freeze(published),
     completed: Object.freeze(body.completed.map(String)),
     expires_at: body.expires_at,
+    ...(accepts_after !== undefined ? { accepts_after } : {}),
   });
 }
 

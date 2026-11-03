@@ -33,6 +33,31 @@ function formatDate(seconds: number) {
   });
 }
 
+function formatTime(seconds: number) {
+  return new Date(seconds * 1000).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/** Whole seconds left until `at`, ticking each second until it passes. */
+function useSecondsUntil(at: number | undefined) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (at === undefined) return;
+    const tick = () => {
+      const current = Date.now() / 1000;
+      setNow(current);
+      if (current >= at) clearInterval(timer);
+    };
+    const timer = setInterval(tick, 1000);
+    tick();
+    return () => clearInterval(timer);
+  }, [at]);
+  return at === undefined ? 0 : Math.max(0, Math.ceil(at - now));
+}
+
 /** The live read model, seeded by one relay read so that members outside
  * the session still see its current status. */
 function useImportSession(
@@ -98,6 +123,8 @@ export function ImportConsentCard({
     () => session?.profiles.snapshot() ?? emptyProfiles,
   );
   const view = useImportSession(service, proposal?.id ?? "");
+  const startsAt = view?.status === "active" ? view.acceptsAfter : undefined;
+  const startsIn = useSecondsUntil(startsAt);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const participantKeys =
@@ -178,7 +205,9 @@ export function ImportConsentCard({
         Import {content.source.label} from {sourceLabel(content.source.type)}
       </p>
       <p className={styles.status}>
-        {STATUS_TEXT[status]}
+        {startsAt !== undefined && startsIn > 0
+          ? `Starting at ${formatTime(startsAt)} (in ${Math.floor(startsIn / 60)}:${String(startsIn % 60).padStart(2, "0")})`
+          : STATUS_TEXT[status]}
         {status === "proposed" && view?.confirmed
           ? ` (${accepted} of ${content.participants.length} accepted)`
           : ""}

@@ -69,6 +69,9 @@ export type ImportSessionView = Readonly<{
   published: Readonly<Record<string, ImportCounts>>;
   completed: readonly string[];
   expires_at: number;
+  /** Unix seconds on this device's clock from which the relay accepts
+   * imported events. Absent when the relay has not set a warm-up time. */
+  acceptsAfter?: number;
   /** False until a relay-signed snapshot for this proposal has been read. */
   confirmed: boolean;
 }>;
@@ -84,6 +87,9 @@ export type UnsignedImportEvent = PreparedImportEvent &
   Readonly<{ pubkey: string }>;
 
 export type PublishProgress = Readonly<{
+  /** `starting`: waiting for the relay to finish warming up the session,
+   * until the session's `acceptsAfter` when it has one. */
+  phase?: "starting";
   published: number;
   total: number;
   /** Display name of the participant whose parent event is awaited. */
@@ -195,7 +201,10 @@ export interface ConversationImportService {
    * `expectedMembers` exactly. For direct message and private channel sources
    * it defaults to the proposal's participants; for direct messages it must
    * equal them, and for private channels it must be a subset of them. A
-   * change stops the run with status `stopped`. */
+   * change stops the run with status `stopped`.
+   * Before the session's `acceptsAfter`, and whenever the relay answers that
+   * the session is still warming up, it waits (progress phase `starting`)
+   * and then publishes the same event. */
   publish(
     proposalId: string,
     events: readonly PreparedImportEvent[],

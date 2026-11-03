@@ -7,12 +7,13 @@
 //!
 //! - `otherMouseUp` button 3/4: mice whose X1/X2 buttons arrive as plain
 //!   mouse buttons. A sent release is consumed; the inert press passes through.
-//! - `swipe` (`swipeWithEvent:`): mouse drivers that synthesize a page-swipe
-//!   for those buttons. `deltaX > 0` is back. Swipes pass through so AppKit
-//!   gesture tracking is undisturbed.
+//! - `swipe` (`swipeWithEvent:`): three-finger trackpad swipes when "Swipe
+//!   between pages" is set to three fingers, and mouse drivers that
+//!   synthesize a page-swipe for their buttons. `deltaX > 0` is back. Swipes
+//!   pass through so AppKit gesture tracking is undisturbed.
 //!
-//! Trackpad and Magic Mouse swipes arrive as phased scroll-wheel events and
-//! are not handled here.
+//! Two-finger trackpad and Magic Mouse swipes arrive as phased scroll-wheel
+//! events and are not handled here.
 use std::ptr::NonNull;
 
 use block2::RcBlock;

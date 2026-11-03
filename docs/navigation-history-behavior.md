@@ -59,8 +59,8 @@ not add new history visits to every existing confirmation or editor.
 
 ## History and lifetime boundaries
 
-App arrows, supported history shortcuts and mouse Back/Forward use the same
-navigation driver. Browsers retain their physical history entries; the driver
+App arrows, supported history shortcuts, mouse Back/Forward buttons and, in
+the macOS app, three-finger trackpad swipes use the same navigation driver. Browsers retain their physical history entries; the driver
 skips retired entries rather than claiming to delete arbitrary native history.
 The app's traversal affordances account for those skipped entries. The managed
 window is capped at 100 visits, including its persisted dismissal associations;

@@ -9,6 +9,9 @@ type Addition = Readonly<{
   error?: string;
 }>;
 
+const differentRole =
+  "This member is already being added with another role. Wait for it to finish or show Not sent in Outbox, then try again.";
+
 /** Session-owned continuation and recovery; closing a view never cancels intent. */
 export function createMemberAdditions(
   signal: AbortSignal,
@@ -57,7 +60,12 @@ export function createMemberAdditions(
         return Promise.reject(new Error("The community connection closed."));
       const key = JSON.stringify([channelId, pubkey]);
       const existing = pending.get(key);
-      if (existing) return existing;
+      // An addition under way keeps the role it asked for; another role
+      // waits for it rather than joining it or racing it with a second write.
+      if (existing)
+        return intents.get(key)?.role === options.role
+          ? existing
+          : Promise.reject(new Error(differentRole));
       const matches = (item: Addition) =>
         item.channelId === channelId && item.pubkey === pubkey;
       const previous = snapshot.find(matches);

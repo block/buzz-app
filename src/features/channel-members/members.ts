@@ -149,15 +149,15 @@ export async function addChannelMember(
               ) &&
               event.tags.some(
                 ([tag, value]) => tag === "p" && value === pubkey,
-              ) &&
-              !event.tags.some(
-                ([tag, value]) =>
-                  tag === "role" &&
-                  (intent.role
-                    ? value !== intent.role
-                    : value !== "bot" && value !== "member"),
               ),
         );
+  // A saved addition finishes only with the role this one asks for: a guest
+  // add never sends an earlier Bot or Member grant, nor the reverse. The
+  // receipt stays, and no second write competes with it.
+  const savedRole = pending?.event.tags.find(([tag]) => tag === "role")?.[1];
+  const sameRole = intent.role
+    ? savedRole === intent.role
+    : savedRole === undefined || savedRole === "bot" || savedRole === "member";
   const recovery = { key: `member-add:${channelId}:${pubkey}`, value: "1" };
   // A saved share may finish its exact Bot grant; it cannot authorize a new one.
   const recoveringSoloAgent =
@@ -187,6 +187,10 @@ export async function addChannelMember(
   if (pending?.guarded && !channel()?.members?.includes(pubkey))
     throw new Error(
       "Retry this invitation from the agent’s profile so its eligibility can be checked.",
+    );
+  if (pending && !sameRole && !channel()?.members?.includes(pubkey))
+    throw new Error(
+      "An addition of this member with another role is still in Outbox. Retry it there to finish it, or remove it once it shows Not sent, then try again.",
     );
   if (pending && !pending.acknowledged)
     await outbox.recover(pending.event.id, recovery);

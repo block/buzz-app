@@ -422,12 +422,12 @@ export function MentionPicker({
                             />
                           </span>
                           {reason && <small>{reason}</small>}
-                          {(fullName ||
+                          {((fullName && fullName !== label) ||
                             !members?.includes(recipient.pubkey)) && (
                             <small className="text-caption text-subtle">
                               {/* A verified full name sits beside the detail. */}
                               {[
-                                fullName,
+                                fullName !== label ? fullName : undefined,
                                 members?.includes(recipient.pubkey)
                                   ? undefined
                                   : inviteAgents

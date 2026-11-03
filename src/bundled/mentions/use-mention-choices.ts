@@ -142,10 +142,17 @@ export function namedCandidates(
     ]),
   ];
   // Directory pages are menu-local, not cached profiles. Name them only when no
-  // other source knows the key, so namesakes in this choice set are qualified.
+  // other source knows the key, so namesakes in this choice set are qualified,
+  // or when a verified name replaced the one the shared profiles show: the
+  // label must be the name the mention inserts.
+  const shared = session.profiles.snapshot();
   const facts = [
     ...outside
-      .filter((person) => !known?.(person.pubkey))
+      .filter(
+        (person) =>
+          !known?.(person.pubkey) ||
+          (!!person.profileNames && !shared.get(person.pubkey)?.verified),
+      )
       .map(({ pubkey, name, isAgent }) => ({
         pubkey,
         name,

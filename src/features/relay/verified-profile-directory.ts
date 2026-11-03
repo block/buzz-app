@@ -330,6 +330,9 @@ export function createVerifiedProfileDirectory(
     /** The current authority, or undefined while discovery disables marks. */
     authority: (): VerifiedProfileAuthority | undefined =>
       enabled ? authority : undefined,
+    /** Whether a head is held for `subject`: its snapshot entry, or its absence
+     * for an inactive or malformed head, is then the answer. */
+    holds: (subject: string) => enabled && !!heads.peek(subject),
     snapshot(): ReadonlyMap<string, VerifiedProfile> {
       const currentAuthority = authority;
       if (!enabled || !currentAuthority) return new Map();

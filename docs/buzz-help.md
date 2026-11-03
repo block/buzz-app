@@ -65,9 +65,9 @@ the interface unless an available tool actually supports that action.
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.
   When you search for people (search, @mentions and adding channel members), a
-  verified person shows their verified name with the full name beside it, and
-  the full name matches as you type. People are still found by their profile
-  names first.
+  verified person shows their verified name with the full name beside it.
+  Search finds people by their profile names; once found, a verified full name
+  also matches as you refine.
 
 ## Connect an external app
 

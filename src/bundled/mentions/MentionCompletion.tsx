@@ -172,7 +172,7 @@ export function MentionCompletion({
             disabled ??
             // A verified full name sits beside the detail.
             [
-              fullName,
+              fullName !== label ? fullName : undefined,
               memberKeys.has(recipient.pubkey)
                 ? recipient.pubkey
                 : inviteAgents

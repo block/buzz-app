@@ -659,12 +659,14 @@ export function SearchResults({
       const dm = relationships.dm(pubkey);
       const agentName =
         messageableAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
+      const label = named?.(pubkey)?.name ?? source.name;
+      const fullName = verifiedOf(pubkey)?.fullName;
       people.push({
         pubkey,
-        label: named?.(pubkey)?.name ?? source.name,
-        // A verified username is often the verified name itself.
+        label,
+        // A verified username or full name is often the label itself.
         username: source.username !== source.name ? source.username : undefined,
-        fullName: verifiedOf(pubkey)?.fullName,
+        fullName: fullName !== label ? fullName : undefined,
         agentName: agentName !== source.name ? agentName : undefined,
         profileNames: searched.get(pubkey),
         agent,

@@ -297,7 +297,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
               {name}
               {pubkey === session.viewer ? " (you)" : ""}
             </span>
-            {fullName && (
+            {fullName && fullName !== name && (
               <span className="min-w-0 truncate text-caption text-subtle">
                 {fullName}
               </span>
@@ -877,6 +877,11 @@ export function ChannelMembersDialog({
   const members = new Set(channel?.members ?? []);
   const archived = new Set(archives.archived);
   const label = (key: string, fallback?: string) =>
+    // A name verified for this search is the label where the shared profiles
+    // show another, so the row reads as Command-K and mentions do.
+    (profiles.get(key)?.verified
+      ? undefined
+      : searchVerified.get(key)?.displayName) ??
     resolveName(
       key,
       profiles.get(key)?.name ??

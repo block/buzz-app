@@ -60,6 +60,8 @@ export function useVerifiedNames(
   const authority = useSyncExternalStore(profiles.subscribe, () =>
     profiles.verifiedAuthority?.(),
   );
+  // A shared head that arrives later outranks a search's answer.
+  const shared = useSyncExternalStore(profiles.subscribe, profiles.snapshot);
   const [revision, setRevision] = useState(0);
   const subjects = people
     .flatMap(({ pubkey, isAgent }) => (isAgent ? [] : [pubkey]))
@@ -68,7 +70,7 @@ export function useVerifiedNames(
   useEffect(() => {
     if (!settled || !authority || !read || !subjects) return;
     const found = foundFor(profiles, authority);
-    const shared = profiles.snapshot();
+    const known = profiles.snapshot();
     const now = Date.now();
     // One pass asks each unasked person once, in pages, at most as many as the
     // cache holds; eviction during the pass cannot ask anyone again.
@@ -77,7 +79,8 @@ export function useVerifiedNames(
       .filter(
         (pubkey) =>
           now - (found.get(pubkey)?.at ?? -Infinity) >= FRESH_MS &&
-          !shared.get(pubkey)?.verified,
+          !known.get(pubkey)?.verified &&
+          !profiles.verifiedHeld?.(pubkey),
       )
       .slice(0, PROFILE_CACHE_BASE);
     if (!queue.length) return;
@@ -114,17 +117,18 @@ export function useVerifiedNames(
     const named = new Map<string, VerifiedProfile>();
     for (const pubkey of subjects.split(",")) {
       const profile = current.found.get(pubkey)?.profile;
-      if (profile) named.set(pubkey, profile);
+      if (profile && !profiles.verifiedHeld?.(pubkey))
+        named.set(pubkey, profile);
     }
     return named.size ? named : none;
-  }, [profiles, authority, subjects, revision]);
+  }, [profiles, authority, subjects, revision, shared]);
 }
 
 /** A person's verified name as these lookups or the shared profiles hold it
  * now, for matching a page a hook has already named. */
 export function verifiedName(profiles: ProfileQueries, pubkey: string) {
   const shared = profiles.snapshot().get(pubkey)?.verified;
-  if (shared) return shared;
+  if (shared || profiles.verifiedHeld?.(pubkey)) return shared;
   const authority = profiles.verifiedAuthority?.();
   const current = authority && lookups.get(profiles);
   return current && current.authority === authority

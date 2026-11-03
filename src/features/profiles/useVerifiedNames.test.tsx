@@ -25,6 +25,8 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
     multipleIssuers: false,
   };
   const listeners = new Set<() => void>();
+  const held = new Set<string>();
+  let current = shared;
   const reads: { subjects: readonly string[]; signal: AbortSignal }[] = [];
   let release = () => {};
   let hold = false;
@@ -45,13 +47,14 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
   );
   const session = {
     profiles: {
-      snapshot: () => shared,
+      snapshot: () => current,
       subscribe(listener: () => void) {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
       ensure: async () => {},
       verifiedAuthority: () => authority,
+      verifiedHeld: (pubkey: string) => held.has(pubkey),
     },
     directMessages: { verified },
   } as unknown as VerifiedNamesSession;
@@ -63,6 +66,15 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
       hold = true;
     },
     release: () => release(),
+    /** The shared directory takes a head for `pubkey`, verified or not. */
+    hold(pubkey: string) {
+      held.add(pubkey);
+      // Its profile changes, so the shared snapshot is new.
+      current = new Map(current);
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
     setAuthority(next: typeof authority) {
       authority = next;
       act(() => {
@@ -207,4 +219,15 @@ it("asks each person of a list larger than the cache once, and stops", async () 
   expect(t.reads).toHaveLength(35);
   expect(new Set(asked).size).toBe(asked.length);
   expect(asked).toHaveLength(1024);
+});
+
+it("yields to a head the shared directory holds, so a later revocation is not undone", async () => {
+  const t = fake();
+  const people = [{ pubkey: key(1) }, { pubkey: key(2) }];
+  const hook = renderHook(() => useVerifiedNames(t.session, people));
+  await waitFor(() => expect(hook.result.current.size).toBe(2));
+  // A newer inactive head reaches the shared directory: its profile has no
+  // verified name, and the search's older answer must not bring one back.
+  t.hold(key(1));
+  expect([...hook.result.current.keys()]).toEqual([key(2)]);
 });

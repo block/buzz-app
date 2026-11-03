@@ -52,6 +52,10 @@ export interface ProfileQueries {
   /** The community's current verified-profile authority, or undefined while
    * it advertises none. Subscribers are notified when it changes. */
   verifiedAuthority?(): VerifiedProfileAuthority | undefined;
+  /** Whether the shared verified directory holds a head for `pubkey`. Its
+   * profile's `verified`, present or not, then outranks a search's answer:
+   * a newer inactive or malformed head revokes an older name. */
+  verifiedHeld?(pubkey: string): boolean;
 }
 
 /** Authors per profile read, the reader's largest page. A page that fills it
@@ -464,6 +468,7 @@ export function createProfileDirectory(
     limit: () => limit,
     evictions: () => events.evictions + cancelled,
     verifiedAuthority: () => verified?.authority(),
+    verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

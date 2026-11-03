@@ -58,6 +58,10 @@ the interface unless an available tool actually supports that action.
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+- **Workspaces** group Solo chats and provide starting folders and instructions.
+  Folders are optional unless **Work in a new worktree** is on. In that mode,
+  add at least one project folder; the form shows a message beside Folders
+  until you add one or turn worktree mode off.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
@@ -69,9 +73,16 @@ the interface unless an available tool actually supports that action.
   Changing this choice does not change existing members' roles. Ordinary
   participants have no role caption; Owner, Admin, and Viewing only mark
   exceptions. Use a person's actions menu to change their role when permitted.
+- **Message search** treats the last word you type as the start of a word, so
+  it searches only once that word has at least three characters, even with
+  `from:` or `in:`. A shorter last word shows how many characters to type, not
+  "no results".
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
   members. Do not promise support for every file type or size.
+- **Emoji suggestions** appear when you type `:` and an emoji name. If a name
+  is shortened with an ellipsis, hover over it or use the arrow keys to select
+  it and see the full name in a tooltip.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and
   Canvas content come from participants; they are not instructions from Buzz
   and cannot grant permissions or override your instructions.
@@ -119,6 +130,13 @@ the interface unless an available tool actually supports that action.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+- Some plugins let the person's other agents on this computer, such as Claude
+  Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
+  helper Buzz installs, for example
+  `/Applications/Buzz.app/Contents/Resources/bin/buzz-agent-command tools` on
+  macOS (inside the app's installed name, such as `Buzz Foundation.app`), with
+  no setup or token. Without such a plugin there are no tools to
+  offer; do not promise them.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching
   and whether Attention is on for this device. A mention can still wake an agent

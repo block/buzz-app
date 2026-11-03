@@ -308,6 +308,13 @@ cannot grant a preview; read/capacity failures remain visible rather than becomi
 an empty successful page. Other search entities and feed queries retain their
 existing finite-read behavior.
 
+Message search text reaches the relay only once its last word has three
+characters, with or without `from:`/`in:` operators: the relay prefix-matches
+that word and ranks every match, so it answers a shorter one with no hits. Until
+then the palette says how many characters to type. Operators without text still
+read newest history, and people and channel lookups keep the shared
+two-character minimum.
+
 Only relay-authored explicit `public` metadata without `private`, `hidden`, or
 DM type grants nonmember reading. Signed membership still owns the joined roster.
 `channels.get(id)` exposes separately resolved summaries (`readOnly: true`), while
@@ -956,9 +963,13 @@ or unsupported quota retries require manual Retry, not a reset each minute.
 
 Signed grant notices renew joined batches that contain the affected channel.
 One 60-second recovery timer checks for batches whose last REQ is at least
-15 minutes old. It also hints the existing roster and unread owners to repair
-finite evidence. It does not renew singleton previews or add per-channel
-background history reads. When the socket
+15 minutes old. It also hints the roster and unread owners to repair finite
+evidence. The roster hint starts a full channel-list read only when the last
+one is still owed or failed, or when no full read has completed for 15 minutes
+(`ROSTER_BACKSTOP_INTERVAL`). Membership notices carry joins and removals live.
+The read also covers changes with no notice: a channel delete, a moderation
+kick or DM, and a dropped frame. It does not renew singleton previews or add
+per-channel background history reads. When the socket
 delivered no frame for a whole interval, the timer also sends one empty probe
 REQ; if no frame arrives within the setup timeout, the socket is replaced through
 the ordinary reconnect, with its backoff and replay. An open socket can stop

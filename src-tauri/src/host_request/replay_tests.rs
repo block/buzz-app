@@ -605,9 +605,8 @@ fn upload_raw_ipc_consumes_once_without_files_and_binds_bytes_and_metadata() {
         listener
     });
     let raw = || tauri::ipc::InvokeBody::Raw(PNG_UPLOAD.to_vec());
-    assert!(upload_ipc(&fixture, &metadata, raw())
-        .unwrap_err()
-        .contains("Host request failed"));
+    let dispatch_error = upload_ipc(&fixture, &metadata, raw()).unwrap_err();
+    assert!(dispatch_error.contains("Host request failed; outcome unknown"));
     let listener = server.join().unwrap();
     assert!(upload_ipc(&fixture, &metadata, raw())
         .unwrap_err()

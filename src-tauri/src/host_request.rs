@@ -379,7 +379,9 @@ pub(crate) async fn plugin_host_upload_bytes_once<R: tauri::Runtime>(
             &once,
             upload.fingerprint(bytes)?,
         )?;
-        send_byte_upload(url, &upload, bytes).await
+        send_byte_upload(url, &upload, bytes)
+            .await
+            .map_err(|error| format!("{error}; outcome unknown"))
     };
     tokio::time::timeout_at(deadline, operation)
         .await

@@ -94,7 +94,7 @@ it("publishes a description-only edit to an existing community profile", async (
   await waitFor(() =>
     expect(screen.getByLabelText("Display name")).toHaveFocus(),
   );
-  expect(screen.getByText("https://relay.example")).toBeVisible();
+  expect(screen.queryByText("https://relay.example")).not.toBeInTheDocument();
   await user.clear(description);
   await user.type(description, "After");
   // A stray outside click keeps the dialog and the typed profile.
@@ -180,7 +180,7 @@ it.each([false, true])(
     fireEvent.change(description, { target: { value: about } });
     await user.clear(name);
     await user.type(name, "Fixture");
-    await user.click(screen.getByRole("button", { name: "Open community" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(api.publishProfile).not.toHaveBeenCalled();
     expect(communities.joined).toHaveBeenCalledWith(
       expect.objectContaining({ id: "https://relay.example" }),
@@ -282,9 +282,8 @@ it.each([
       "wss://relay.example",
     );
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(
-      await screen.findByRole("button", { name: "Open community" }),
-    );
+    await screen.findByLabelText("Display name");
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
     expect(api.publishProfile).not.toHaveBeenCalled();
     expect(communities.joined).toHaveBeenCalledWith(
       expect.objectContaining({ id: "https://relay.example" }),
@@ -626,9 +625,8 @@ it("opens a checked connection address separately without replacing or removing 
     expect(address).toHaveValue("wss://new.example");
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(communities.snapshot().selected).toBe(original);
-    await user.click(
-      await screen.findByRole("button", { name: "Open community" }),
-    );
+    await screen.findByLabelText("Display name");
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
     await waitFor(() =>
       expect(communities.snapshot().selected).toBe("https://new.example"),
     );

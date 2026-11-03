@@ -51,7 +51,7 @@ afterEach(() => {
 it("suggests and focuses the default name, needs a name to continue, and hands the trimmed profile to Continue", async () => {
   const { onContinue, onBack, user } = step();
   const name = screen.getByRole("textbox", { name: "Display name" });
-  expect(screen.getByText(found.url)).toBeVisible();
+  expect(screen.queryByText(found.url)).not.toBeInTheDocument();
   expect(name).toHaveValue("ada");
   expect(name).toHaveFocus();
   await user.clear(name);

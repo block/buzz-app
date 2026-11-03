@@ -277,7 +277,7 @@ it("retains submitted profile progress through publication and local membership-
       if (key.startsWith("buzz-client.v1:")) throw new Error("Full disk");
       setItem.call(this, key, value);
     });
-  await user.click(screen.getByRole("button", { name: "Open community" }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not save this community",
   );
@@ -288,9 +288,8 @@ it("retains submitted profile progress through publication and local membership-
   await second.stop();
   const third = await open();
   await user.click(screen.getByRole("button", { name: "Continue" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Open community" }),
-  );
+  await screen.findByLabelText("Display name");
+  await user.click(await screen.findByRole("button", { name: "Continue" }));
   await waitFor(() => expect(third.close).toHaveBeenCalledOnce());
   expect(calls.filter((call) => call.path === "/events")).toHaveLength(1);
   expect(calls.some((call) => call.path === "/api/invites/claim")).toBe(false);

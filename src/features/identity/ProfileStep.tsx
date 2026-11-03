@@ -6,6 +6,7 @@ import type { PersonalProfile } from "../communities/service";
 import { readErrorKind } from "../relay/errors";
 import { Button } from "../../shared/design-system/ui/Button";
 import { WireframePanel } from "./Wireframe";
+import { OnboardingBack } from "./OnboardingBack";
 
 /**
  * First-run profile, shown once the relay has admitted the key and before the
@@ -74,7 +75,6 @@ export function ProfileStep({
         <p className="mt-2 text-body text-subtle">
           You need to enter a name to join a community. You can change it later.
         </p>
-        <p className="mt-2 break-all text-body-sm text-subtle">{found.url}</p>
       </div>
       <WireframePanel>
         <ProfileFields
@@ -95,9 +95,11 @@ export function ProfileStep({
       )}
       {/* Footer order: secondary first, primary last. */}
       <div data-onboarding-actions="">
-        <Button size="lg" onClick={() => void run(onBack)} disabled={busy}>
-          Go back
-        </Button>
+        <OnboardingBack
+          aria-label="Go back"
+          onClick={() => void run(onBack)}
+          disabled={busy}
+        />
         <Button
           type="submit"
           size="lg"

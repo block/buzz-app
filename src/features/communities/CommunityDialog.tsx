@@ -259,46 +259,37 @@ export function CommunityDialog({
           : field;
       }}
       description={
-        unavailable ? undefined : step === "destination" ? (
-          connectionFrom ? (
-            "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
-          ) : (
-            "Use your identity across communities. Your profile and conversations stay separate in each one."
-          )
-        ) : step === "access" ? (
-          destination && (
-            <span className="flex items-center gap-3 rounded-[var(--radius-row)] bg-surface-inset p-4">
-              {info?.icon && (
-                <Avatar
-                  alt=""
-                  src={info.icon}
-                  fallback={communityName(info.name, destination.name)}
-                  shape="squircle"
-                  size="large"
-                />
-              )}
-              <span className="min-w-0 flex-1 break-words text-body text-standard">
-                <span>{communityName(info?.name, destination.name)}</span>
-                <span className="block break-all text-body-sm text-subtle">
-                  {destination.url}
-                </span>
-              </span>
-            </span>
-          )
-        ) : mode === "profile" ? (
-          "Your local default. Use it when joining communities; saving here does not publish changes to them."
-        ) : (
-          <span>
-            {original?.exists
-              ? "Your existing community profile is loaded. Keep it or update it here."
-              : "Start with your local profile, or choose how you appear in this community."}
-            {destination && (
-              <span className="mt-2 block break-all text-body-sm text-subtle">
-                {destination.url}
-              </span>
-            )}
-          </span>
-        )
+        unavailable
+          ? undefined
+          : step === "destination"
+            ? connectionFrom
+              ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
+              : "Use your identity across communities. Your profile and conversations stay separate in each one."
+            : step === "access"
+              ? destination && (
+                  <span className="flex items-center gap-3 rounded-[var(--radius-row)] bg-surface-inset p-4">
+                    {info?.icon && (
+                      <Avatar
+                        alt=""
+                        src={info.icon}
+                        fallback={communityName(info.name, destination.name)}
+                        shape="squircle"
+                        size="large"
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 break-words text-body text-standard">
+                      <span>{communityName(info?.name, destination.name)}</span>
+                      <span className="block break-all text-body-sm text-subtle">
+                        {destination.url}
+                      </span>
+                    </span>
+                  </span>
+                )
+              : mode === "profile"
+                ? "Your local default. Use it when joining communities; saving here does not publish changes to them."
+                : original?.exists
+                  ? undefined
+                  : "Start with your local profile, or choose how you appear in this community."
       }
       leadingActions={
         !unavailable && (
@@ -347,7 +338,7 @@ export function CommunityDialog({
                 ? mode === "profile"
                   ? "Save profile"
                   : keepsProfile
-                    ? "Open community"
+                    ? "Continue"
                     : "Publish profile & open"
                 : "Continue"}
           </Button>
@@ -357,7 +348,7 @@ export function CommunityDialog({
         mode === "profile"
           ? "Your profile"
           : step === "profile"
-            ? `Your profile in ${info?.name && info.name !== "Buzz Relay" ? info.name : destination?.name}`
+            ? "Your profile"
             : connectionFrom
               ? "Edit connection"
               : "Join a community"

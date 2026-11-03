@@ -1422,7 +1422,7 @@ function Composer({
   const insertQuote = useEffectEvent((doc: EditorNode) => {
     if (!editable()) return false;
     const inserted = !!input.current?.insertDocument(doc);
-    if (!inserted) setError("Message is too long to add this quote");
+    setError(inserted ? undefined : "Message is too long to add this quote");
     return inserted;
   });
   function insert(

@@ -219,12 +219,11 @@ impl SecureStore {
             .truncate(false)
             .open(self.root.join(format!("{}.lock", self.account)))
             .map_err(|_| "storage-unavailable")?;
-        fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::WouldBlock {
-                "storage-busy"
-            } else {
-                "storage-unavailable"
-            }
+        // std reports contention as WouldBlock on every OS, including
+        // Windows' lock violation, as the credential-store lock relies on.
+        file.try_lock().map_err(|error| match error {
+            fs::TryLockError::WouldBlock => "storage-busy",
+            fs::TryLockError::Error(_) => "storage-unavailable",
         })?;
         Ok(Transaction(file, process))
     }
@@ -500,7 +499,7 @@ mod tests {
         fs::create_dir_all(&store.root).unwrap();
         let path = store.root.join(format!("{}.lock", store.account));
         let file = fs::File::create(path).unwrap();
-        fs2::FileExt::try_lock_exclusive(&file).unwrap();
+        file.try_lock().unwrap();
         file
     }
     fn secure(root: &tempfile::TempDir) -> SecureStore {

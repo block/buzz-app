@@ -209,3 +209,25 @@ it("a step that rests idle ends setup past the caller's rest, also when a retry 
   await setup.start([], { status: "paused", at: "key-choice" });
   expect(setup.snapshot()).toEqual({ status: "paused", at: "key-choice" });
 });
+
+it.each([
+  ["transient backup", true, false, "timeout"],
+  ["non-backup step", false, false, "unavailable"],
+  ["unfinished linking", true, true, "not_offered"],
+] as const)("cannot bypass %s", async (_name, backup, links, kind) => {
+  const setup = createSetup();
+  const after = ok("Finish");
+  await setup.start([
+    {
+      label: "Fail",
+      backup,
+      run: async () => {
+        throw new BackupError(kind);
+      },
+    },
+    { ...after, links },
+  ]);
+  await setup.continueWithoutBackup();
+  expect(setup.snapshot().status).toBe("failed");
+  expect(after.run).not.toHaveBeenCalled();
+});

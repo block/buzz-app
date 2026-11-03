@@ -1,3 +1,4 @@
+import { BackupError } from "./backup";
 import type { Communities } from "../communities/service";
 import type { FirstRunAccount, OwnedCommunity } from "./builderlab-account";
 import { type Restored, restoreKnown } from "./restore-communities";
@@ -9,6 +10,8 @@ export type SetupStep = Readonly<{
   run: () => Promise<void> | Promise<Resting | undefined>;
   /** Links the key on this device to the account: skipping it leaves the key unlinked. */
   links?: boolean;
+  /** Only backup steps may be continued when the deployment lacks support. */
+  backup?: boolean;
 }>;
 /**
  * Where setup rests for a decision: the connect choice for a found
@@ -34,6 +37,7 @@ export type SetupSnapshot = Readonly<
       retryable: boolean;
       /** Continuing past the failure skips the link, so the key stays unlinked. */
       skipsLink: boolean;
+      unsupportedBackup?: boolean;
     }
   | { status: "done" }
 >;
@@ -156,6 +160,7 @@ export function backUp(
 ): SetupStep {
   return {
     label: "Backing up your key…",
+    backup: true,
     run: () => account.backUp(viewer(identity)),
   };
 }
@@ -226,7 +231,8 @@ export function checkBackup(
  * done, or a pause the caller resumes with another `start` — unless a step
  * picked another resting state. No steps means "nothing more to do" and
  * rests at once. A failed setup may also be resumed: by `retry` from the
- * failed step. First run does not skip unfinished linking or backup.
+ * failed step. Only explicitly unsupported backup can be continued without;
+ * unfinished linking and transient backup failures cannot be skipped.
  */
 export function createSetup() {
   let state: SetupSnapshot = { status: "idle" };
@@ -259,6 +265,12 @@ export function createSetup() {
             "retryable" in error &&
             error.retryable === true,
           skipsLink: left.some((step) => step.links === true),
+          ...(step.backup &&
+          !left.some((step) => step.links) &&
+          error instanceof BackupError &&
+          (error.kind === "unavailable" || error.kind === "not_offered")
+            ? { unsupportedBackup: true }
+            : {}),
         });
         return;
       }
@@ -287,6 +299,16 @@ export function createSetup() {
       if (!from) return;
       failed = undefined;
       await run(from.steps, from.rest);
+    },
+    /** Continue only an unsupported backup, preserving every subsequent step. */
+    async continueWithoutBackup() {
+      const from =
+        state.status === "failed" && state.unsupportedBackup
+          ? failed
+          : undefined;
+      if (!from) return;
+      failed = undefined;
+      await run(from.steps.slice(1), from.rest);
     },
     reset() {
       if (state.status === "running") return;

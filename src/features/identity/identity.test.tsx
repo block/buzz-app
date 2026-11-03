@@ -6751,3 +6751,53 @@ it("an FI build's Sign in with Builderlab signs in through the native session an
   expect(commands()).not.toContain("oauth_callback_begin");
   identity.dispose();
 });
+
+it.each(["unavailable", "not_offered"] as const)(
+  "continues community setup with the saved linked key when backup is %s",
+  async (kind) => {
+    const bind = vi.fn(async () => {});
+    const backUp = vi.fn(async () => {
+      throw new BackupError(kind);
+    });
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "identity_restore") return null;
+      if (command === "identity_legacy_available") return false;
+      if (command === "identity_create") return viewer;
+      throw new Error(`Unexpected command ${command}`);
+    });
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    render(
+      <Welcome
+        identity={identity}
+        communities={noJoin}
+        invites={invites}
+        account={unlinkedWith(bind, { backUp })}
+        connect={async () => credential}
+      >
+        <p>Signed in</p>
+      </Welcome>,
+    );
+    await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+    expect(
+      await screen.findByText(/Block can use that copy to restore this key/),
+    ).toBeVisible();
+    await createMyKey(user);
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Continue without backup" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Connect to a community" }),
+    ).toBeVisible();
+    expect(bind).toHaveBeenCalledExactlyOnceWith(viewer);
+    expect(backUp).toHaveBeenCalledExactlyOnceWith(viewer);
+    expect(identity.snapshot()).toMatchObject({ status: "ready", viewer });
+    expect(invoke).not.toHaveBeenCalledWith(
+      "nsec_backup_set_choice",
+      expect.anything(),
+    );
+    identity.dispose();
+  },
+);

@@ -32,7 +32,8 @@ export function KeyLost({
           Starting over replaces the key linked to your Builderlab account. Your
           profile, messages, and community access won’t carry over. Your old
           content won’t be deleted. The new key will be backed up to your
-          Builderlab account automatically.
+          Builderlab account automatically. Block can use that copy to restore
+          this key, including anywhere else you use it.
         </p>
       </div>
       {(owned === undefined || owned.length > 0) && (

@@ -950,7 +950,14 @@ export function Welcome({
                 : undefined
           }
           onBack={failedAfterKey ? undefined : backToLanding}
-          onRetry={() => void setup.retry()}
+          onRetry={
+            progress.unsupportedBackup ? undefined : () => void setup.retry()
+          }
+          onContinue={
+            progress.unsupportedBackup
+              ? () => void setup.continueWithoutBackup()
+              : undefined
+          }
         />
       ) : auth.error ? (
         <Failure
@@ -1016,6 +1023,7 @@ function Failure({
   publicKey,
   invite,
   onRetry,
+  onContinue,
   busy,
 }: {
   title: string;
@@ -1033,6 +1041,7 @@ function Failure({
     | undefined;
   /** Offers Try again; no action can start while `busy`. */
   onRetry?: (() => void) | undefined;
+  onContinue?: (() => void) | undefined;
   /** Which action is in flight: Try again's read, or the code's claim. */
   busy?: "read" | "code" | undefined;
 }) {
@@ -1066,6 +1075,11 @@ function Failure({
             disabled={!!busy}
             aria-label={backLabel}
           />
+        )}
+        {onContinue && (
+          <Button variant="prominent" size="lg" onClick={onContinue}>
+            Continue without backup
+          </Button>
         )}
         {onRetry && (
           // Loading keeps focus here, so a repeated denial, which leaves the

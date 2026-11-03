@@ -31,7 +31,9 @@ the interface unless an available tool actually supports that action.
   or hide it. Check the signed-in email before creating a key.
   Setup then creates a new key or takes an existing private key, and may link
   it to the signed-in account. Builderlab setup backs the key up automatically;
-  if backup fails, retry to complete setup. Independent-community key imports
+  if backup fails temporarily, retry to complete setup. If backup is not supported
+  by the build or account, choose **Continue without backup** to finish setup.
+  Independent-community key imports
   without Builderlab sign-in do not upload a backup. Existing community profiles
   are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app

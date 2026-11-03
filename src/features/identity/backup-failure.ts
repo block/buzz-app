@@ -22,7 +22,7 @@ const SIGNED_OUT =
 export const BACKUP_FAILURES = {
   unavailable: {
     message:
-      "Couldn’t back up your key. This build needs Builderlab backup support to finish setup.",
+      "Key backup isn’t configured for this build. You can continue without a backup.",
     retryable: false,
   },
   busy: retry(

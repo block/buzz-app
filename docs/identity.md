@@ -180,12 +180,14 @@ which stays on the error and is logged in development builds. Once a key is on
 the device, the page also says what is undone: *Your key is saved on this
 device, but it isn’t linked to your account or backed up yet.* when
 the unlink or link failed (a key that isn't linked can't be backed up),
-otherwise *Your key is saved on this device, but setup isn’t complete yet.
-Retry to continue.* **Try again** repeats the failed step and the rest of the
+otherwise *Your key is saved on this device.* **Try again** repeats the failed step and the rest of the
 lane without creating another key. An expired backup session prompts sign-in
 again and verifies the original account subject before uploading. Canceled or
-wrong-account sign-in leaves setup and the key intact. Unsupported backup builds
-show configuration guidance. Failed linking and backup cannot be bypassed.
+wrong-account sign-in leaves setup and the key intact. When backup is explicitly unavailable in the build or not offered by the
+account, **Continue without backup** skips only that backup step and runs the
+remaining community setup. It retains the saved linked key and does not persist
+a backup opt-out. Transient backup failures remain retry-only; linking cannot
+be bypassed.
 Before a key exists, the page also offers **Back** to the welcome screen.
 
 Within one first-run session the Join page exits only through a join or a
@@ -530,7 +532,7 @@ stays on after a failure, so a later
 Builderlab sign-in may still finish the backup the user asked for. The step
 hands a sign-in over only when this build's uploader can back up to Builderlab.
 Anywhere else (a build without backup configured) the step fails at once as
-*Couldn’t back up your key. This build needs Builderlab backup support to finish setup.* without saving
+*Key backup isn’t configured for this build. You can continue without a backup.* without saving
 the choice. First-run failures offer retry and preserve the saved key.
 
 When secure storage confirms absence, native recovery commands support explicit

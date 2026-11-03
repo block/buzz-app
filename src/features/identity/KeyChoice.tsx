@@ -32,7 +32,8 @@ export function KeyChoice({
           </h1>
           <p className="text-body text-subtle">
             We’ll create a private key that represents you in Buzz. Your key is
-            backed up to your Builderlab account automatically.
+            backed up to your Builderlab account automatically. Block can use
+            that copy to restore this key, including anywhere else you use it.
           </p>
           {email && (
             <p className="break-words text-body-sm text-subtle">

@@ -121,10 +121,8 @@ the interface unless an available tool actually supports that action.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires.
-- **Back and Forward**: in the macOS app, a three-finger swipe goes back or
-  forward, like the ← → arrows in the header, when System Settings → Trackpad
-  → Swipe between pages includes three fingers. Two-finger scrolling does not
-  navigate.
+- **Back and Forward**: in the macOS app, swipe with three fingers to go back
+  or forward, like the ← → arrows in the header.
 - **Sharing a Solo chat** grants access to its conversation history, not only
   the next message. Copying its link alone does not grant access. Check the
   intended people and destination before changing access.

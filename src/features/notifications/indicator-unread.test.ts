@@ -3,6 +3,7 @@ import type { Communities } from "../communities/service";
 import { createRelaySession } from "../relay/session";
 import type { RelayEvent } from "../relay/events";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { bindUnreadIndicator } from "./indicator-unread";
 
@@ -98,6 +99,37 @@ function setup() {
         metadata(relay, id, id, time),
       ]);
     },
+  };
+}
+/** Confirms "room" muted; the returned setter replaces the confirmed list. */
+async function withMute(
+  h: ReturnType<typeof setup>,
+  channelType?: "dm" | "solo",
+) {
+  let muted = ["room"];
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: async () => ({ sections: [], assignments: {}, starred: [], muted }),
+  });
+  cleanups.push(() => preferences.dispose());
+  await preferences.queries.refresh();
+  const original = h.session;
+  h.relayState.session = {
+    ...original,
+    sidebarPreferences: preferences.queries,
+    channels: {
+      ...original.channels,
+      list: () => ({
+        ...original.channels.list(),
+        channels: original.channels
+          .list()
+          .channels.map((c) => (channelType ? { ...c, channelType } : c)),
+      }),
+    },
+  };
+  return async (next: string[]) => {
+    muted = next;
+    await preferences.queries.refresh();
   };
 }
 const target = { kind: "channel", channelId: "room" } as const;
@@ -239,3 +271,47 @@ it("stays off for coordination between agents and lights for the next message to
   h.emit([message(h.peer, "room", "Done", 12)]);
   expect(h.project).toHaveBeenLastCalledWith(true);
 });
+
+it("keeps confirmed-muted backlog off the Dock; unmute and re-mute flip it without new messages", async () => {
+  const h = setup();
+  h.grant();
+  const setMuted = await withMute(h);
+  h.bind();
+  h.emit([message(h.peer, "room", "muted backlog", 11)]);
+  expect(h.session.unread.snapshot(target).observedCount).toBe(1);
+  expect(h.project.mock.calls).toEqual([[false]]);
+  await setMuted([]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  await setMuted(["room"]);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+});
+
+it("lights a muted channel for attention and manual unread", async () => {
+  const h = setup();
+  h.grant();
+  await withMute(h);
+  h.bind();
+  h.emit([message(h.peer, "room", "ordinary", 11)]);
+  expect(h.project.mock.calls).toEqual([[false]]);
+  const mention = message(h.peer, "room", "mention", 12, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  await h.session.unread.markThrough(target, mention.id);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  await h.session.unread.markUnreadLocal(target);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});
+
+it.each(["dm", "solo"] as const)(
+  "keeps muted %s backlog on the Dock, as the sidebar does",
+  async (channelType) => {
+    const h = setup();
+    h.grant();
+    await withMute(h, channelType);
+    h.bind();
+    h.emit([message(h.peer, "room", "arrival", 11)]);
+    expect(h.project).toHaveBeenLastCalledWith(true);
+  },
+);

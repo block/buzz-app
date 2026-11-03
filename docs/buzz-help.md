@@ -91,7 +91,9 @@ the interface unless an available tool actually supports that action.
   Mute suppresses notifications for messages that do not mention you; mentions can still notify
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
-  dots; muting does not mark messages or threads as read.
+  dots; muting does not mark messages or threads as read. On macOS, a muted
+  channel lights the Dock dot only for messages that need your attention, such
+  as mentions, or when you mark it unread; muted DMs and Solo chats still light it.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

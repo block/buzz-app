@@ -200,7 +200,12 @@ observed unread messages (including thread replies) or explicit channel-unread
 intent. It is not an exact message count or evidence of complete history. Unknown
 and observed-zero both omit the dot. Existing bounded evidence/read-state owns
 startup and updates; this projection adds no relay reads, network subscriptions,
-or storage. Channel mute does not remove retained unread evidence from this community-wide dot, so muted ordinary backlog can keep it on while the channel's ordinary sidebar cues are quiet. Personal space, account/session changes, access loss and host disposal
+or storage. Each channel counts only when the sidebar treats it as unread: confirmed
+channel mute quiets ordinary backlog, while manual unread and observed attention
+(mentions, broadcasts and replies in the viewer's conversations) still light the dot. Muted DMs and Solo chats keep
+lighting it, as they keep their sidebar unread state. Mute and unmute recompute the
+dot without a new message; a pending mute change, or preferences not yet loaded,
+quiet nothing. Personal space, account/session changes, access loss and host disposal
 clear or recompute the indicator. Disabling Channels does not stop host ownership.
 Desktop alert preferences do not alter this unread indicator.
 

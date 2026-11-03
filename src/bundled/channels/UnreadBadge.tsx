@@ -6,6 +6,10 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import {
+  channelUnread,
+  confirmedMute,
+} from "../../features/channels/channel-unread";
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
 
@@ -24,12 +28,11 @@ export function ordinaryUnread(
   );
 }
 
-/** Observe only confirmed preferences; optimistic menu intents do not quiet unread. */
 export function useConfirmedMute(session: RelaySession, channelId: string) {
-  const get = useCallback(() => {
-    const snapshot = session.sidebarPreferences.snapshot();
-    return !snapshot.cached && !!snapshot.data?.muted.includes(channelId);
-  }, [session, channelId]);
+  const get = useCallback(
+    () => confirmedMute(session.sidebarPreferences.snapshot(), channelId),
+    [session, channelId],
+  );
   return useSyncExternalStore(session.sidebarPreferences.subscribe, get, get);
 }
 
@@ -69,9 +72,7 @@ export function useUnreadState(
   const muted = useConfirmedMute(session, channelId);
   const count = snapshot.observedCount;
   const manual = snapshot.manual !== "none";
-  const unread =
-    manual ||
-    ((count ?? 0) > 0 && (dm || !muted || (snapshot.attentionCount ?? 0) > 0));
+  const unread = channelUnread(snapshot, !dm && muted);
   const ordinary = ordinaryUnread(snapshot, dm, muted);
   const threadCount = activity.items?.length ?? 0;
   return {

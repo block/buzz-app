@@ -170,9 +170,11 @@ function ReadyConsent({
       choices.selectable.some((choice) => choice.pubkey === agent.pubkey),
   );
   const usable = eligible.filter((agent) => available.has(agent.key));
-  const chosen =
-    usable.find((agent) => agent.key === selected) ??
-    (usable.length === 1 ? usable[0] : undefined);
+  const chosen = selected
+    ? usable.find((agent) => agent.key === selected)
+    : usable.length === 1
+      ? usable[0]
+      : undefined;
   return (
     <ConsentDialog
       connection={connection}

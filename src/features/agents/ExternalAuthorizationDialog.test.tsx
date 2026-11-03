@@ -26,7 +26,9 @@ it.each([
 ] as const)(
   "handles %s without an unintended authorization",
   async (action, runtimeReady) => {
+    const user = userEvent.setup();
     const key = "a".repeat(64),
+      secondKey = "c".repeat(64),
       viewer = "b".repeat(64),
       origin = "https://fixture.example.test";
     const subscribe = () => () => {};
@@ -48,6 +50,15 @@ it.each([
     const inventory = {
       agents: [{ key, pubkey: key, name: "Test agent", place: "here" }],
     };
+    if (action === "custody lost") {
+      inventory.agents.push({
+        key: secondKey,
+        pubkey: secondKey,
+        name: "Other agent",
+        place: "here",
+      });
+      choices.selectable.push({ pubkey: secondKey });
+    }
     let available = runtimeReady;
     const listeners = new Set<() => void>();
     let stop!: () => void;
@@ -87,7 +98,8 @@ it.each([
               return () => listeners.delete(listener);
             },
             snapshot: () => inventory,
-            canConnectExternal: () => available,
+            canConnectExternal: (agent: string) =>
+              agent === secondKey || available,
           } as unknown as Agents
         }
         communities={
@@ -106,7 +118,19 @@ it.each([
     expect(connect).not.toHaveBeenCalled();
     expect(deny).not.toHaveBeenCalled();
     if (action === "custody lost") {
+      expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
+      await user.click(screen.getByRole("combobox", { name: "Agent" }));
+      await user.keyboard("{Home}{Enter}");
+      await waitFor(() =>
+        expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute(
+          "aria-expanded",
+          "false",
+        ),
+      );
       expect(screen.getByRole("button", { name: "Authorize" })).toBeEnabled();
+      expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+        "Test agent",
+      );
       act(() => {
         available = false;
         for (const listener of listeners) listener();
@@ -114,15 +138,25 @@ it.each([
     }
     if (!available) {
       expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
-      await userEvent
-        .setup()
-        .click(screen.getByRole("combobox", { name: "Agent" }));
+      act(() => screen.getByRole("combobox", { name: "Agent" }).focus());
+      await user.keyboard("{Enter}");
       expect(
-        screen.getByRole("option", { name: /Test agent/ }),
+        await screen.findByRole("option", { name: /Test agent/ }),
       ).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByText(/Enable its runtime plugin/)).toBeVisible();
       expect(connection.snapshot().pending).toBeDefined();
       expect(connect).not.toHaveBeenCalled();
+      if (action === "custody lost") {
+        await user.keyboard("{End}{Enter}");
+        await user.click(screen.getByRole("button", { name: "Authorize" }));
+        await waitFor(() => expect(authorize).toHaveBeenCalledOnce());
+        expect(connect).toHaveBeenCalledWith(
+          secondKey,
+          expect.any(AbortSignal),
+          expect.any(Function),
+          ["read", "post"],
+        );
+      }
       cleanup();
       release();
       return;
@@ -130,7 +164,7 @@ it.each([
     expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
       "Test agent",
     );
-    await userEvent.setup().click(screen.getByRole("button", { name: action }));
+    await user.click(screen.getByRole("button", { name: action }));
     if (action === "Authorize") {
       await waitFor(() => expect(authorize).toHaveBeenCalledOnce());
       expect(connect).toHaveBeenCalledWith(

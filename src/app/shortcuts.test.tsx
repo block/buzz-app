@@ -13,6 +13,7 @@ import { createNavigationController } from "../features/navigation/controller";
 import { createMemoryHistory } from "../features/navigation/history";
 import { createAppearance } from "../shared/theme/service";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
+import historyRequest from "../../src-tauri/src/history-request.js?raw";
 
 const close = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => true) }));
@@ -584,35 +585,45 @@ it.each([
   },
 );
 
-it("mouse back/forward requests run app navigation unless a browser page took them", async () => {
+it("mouse back/forward requests run the Back/Forward shortcuts, not behind a modal", async () => {
   const h = harness("MacIntel");
   const controller = createNavigationController(createMemoryHistory());
   const { navigation } = controller;
   const remove = registerNavigationShortcuts(h.shortcuts, navigation);
   const target = () => navigation.snapshot().attempt.entry.target;
-  const request = (name: string, handled = false) => {
-    const event = new Event(name, { cancelable: true });
-    if (handled) event.preventDefault();
-    window.dispatchEvent(event);
-    return event.defaultPrevented;
-  };
+  // As the macOS monitor evaluates it in the main view, no browser focused.
+  const request = (historyEvent: string) =>
+    new Function(
+      "window",
+      "document",
+      "Event",
+      "CSS",
+      "browserSessionId",
+      "historyEvent",
+      `return eval(${JSON.stringify(historyRequest)})`,
+    )(window, document, Event, CSS, null, historyEvent);
+  const confirmation = document.createElement("div");
+  confirmation.setAttribute("role", "alertdialog");
+  confirmation.setAttribute("aria-modal", "true");
   try {
-    // Nothing behind or ahead yet: the request stays unhandled.
-    expect(request("buzz:history-back")).toBe(false);
     void navigation.open({ version: 1, kind: "home" });
     void navigation.open({ version: 1, kind: "settings" });
     await vi.waitFor(() => expect(navigation.snapshot().canGoBack).toBe(true));
-    expect(request("buzz:history-back")).toBe(true);
+    document.body.append(confirmation);
+    request("buzz:history-back");
+    await Promise.resolve();
+    expect(target()).toEqual({ version: 1, kind: "settings" });
+    confirmation.remove();
+    request("buzz:history-back");
     await vi.waitFor(() =>
       expect(target()).toEqual({ version: 1, kind: "home" }),
     );
-    request("buzz:history-forward", true);
-    expect(target()).toEqual({ version: 1, kind: "home" });
-    expect(request("buzz:history-forward")).toBe(true);
+    request("buzz:history-forward");
     await vi.waitFor(() =>
       expect(target()).toEqual({ version: 1, kind: "settings" }),
     );
   } finally {
+    confirmation.remove();
     remove();
     controller.dispose();
     await h.dispose();

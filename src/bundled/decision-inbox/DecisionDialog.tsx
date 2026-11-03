@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { ChannelMessage } from "../../features/relay/contracts";
-import type { RelayData } from "../../features/relay/service";
 import { messagePreview } from "../../features/notifications/content";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -17,6 +16,7 @@ import {
   type Decision,
   type Stage,
 } from "./model";
+import { draftFor, forgetDraft, keepDraft, type Draft } from "./drafts";
 import styles from "./DecisionInbox.module.css";
 
 const stages = [
@@ -25,25 +25,7 @@ const stages = [
   { value: "done", label: "Handed off · done" },
 ];
 
-type Draft = {
-  expected: string | null | undefined;
-  question: string;
-  nextActor: string;
-  decision: string;
-  stage: Stage;
-};
-const drafts = new WeakMap<RelayData, Map<string, Draft>>();
-function draftStore(relay: RelayData) {
-  let store = drafts.get(relay);
-  if (!store) {
-    store = new Map();
-    drafts.set(relay, store);
-  }
-  return store;
-}
-
 export function DecisionDialog({
-  relay,
   scope,
   message,
   record,
@@ -51,7 +33,6 @@ export function DecisionDialog({
   current,
   close,
 }: {
-  relay: RelayData;
   scope: string;
   message?: ChannelMessage;
   record?: Decision;
@@ -67,7 +48,7 @@ export function DecisionDialog({
   ]);
   const [draft, setDraft] = useState<Draft>(
     () =>
-      draftStore(relay).get(draftKey) ?? {
+      draftFor(draftKey) ?? {
         expected:
           expectedRevision === undefined ? revision(scope) : expectedRevision,
         question: record?.question ?? "",
@@ -78,15 +59,25 @@ export function DecisionDialog({
   );
   const draftRef = useRef(draft);
   const { expected, question, nextActor, decision, stage } = draft;
-  const change = (patch: Partial<Draft>) => {
-    const next = { ...draftRef.current, ...patch };
-    draftRef.current = next;
-    draftStore(relay).set(draftKey, next);
-    setDraft(next);
-  };
   const [error, setError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
+  const isDirty = (value: Draft) =>
+    value.question !== (record?.question ?? "") ||
+    value.nextActor !== (record?.nextActor ?? "") ||
+    value.decision !== (record?.decision ?? "") ||
+    value.stage !== (record?.stage ?? "decision");
+  const change = (patch: Partial<Draft>) => {
+    const next = { ...draftRef.current, ...patch };
+    draftRef.current = next;
+    if (isDirty(next)) {
+      if (!keepDraft(scope, draftKey, next))
+        setError(
+          "Could not keep unsaved changes on this device. Copy them before leaving.",
+        );
+    } else forgetDraft(draftKey);
+    setDraft(next);
+  };
   const saved = readList(expected);
   const duplicate =
     message && saved.status === "ready"
@@ -100,25 +91,15 @@ export function DecisionDialog({
     question.trim().length > 0 &&
     nextActor.trim().length > 0 &&
     (stage === "decision" || decision.trim().length > 0);
-  const dirty =
-    question !== (record?.question ?? "") ||
-    nextActor !== (record?.nextActor ?? "") ||
-    decision !== (record?.decision ?? "") ||
-    stage !== (record?.stage ?? "decision");
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  const dirty = isDirty(draft);
   const requestClose = () => {
     if (busy) return;
     if (confirmDiscard) setConfirmDiscard(false);
     else if (dirty) setConfirmDiscard(true);
-    else close();
+    else {
+      forgetDraft(draftKey);
+      close();
+    }
   };
   const submit = async () => {
     if (busy || !valid || duplicate || (!record && !message)) return;
@@ -152,7 +133,7 @@ export function DecisionDialog({
     const result = await save(scope, expected, next, current);
     setBusy(false);
     if (result === "saved") {
-      draftStore(relay).delete(draftKey);
+      forgetDraft(draftKey);
       close();
     } else if (result === "changed")
       setError(
@@ -206,7 +187,7 @@ export function DecisionDialog({
             <Button
               variant="destructive"
               onClick={() => {
-                draftStore(relay).delete(draftKey);
+                forgetDraft(draftKey);
                 close();
               }}
             >
@@ -253,6 +234,7 @@ export function DecisionDialog({
             <>
               <Field label="Question or decision needed">
                 <Textarea
+                  disabled={busy}
                   value={question}
                   maxLength={1000}
                   onChange={(event) => change({ question: event.target.value })}
@@ -263,6 +245,7 @@ export function DecisionDialog({
                 description="Who should act after the decision?"
               >
                 <Input
+                  disabled={busy}
                   value={nextActor}
                   maxLength={200}
                   onChange={(event) =>
@@ -274,6 +257,7 @@ export function DecisionDialog({
                 <>
                   <Field label="Decision" optional>
                     <Textarea
+                      disabled={busy}
                       value={decision}
                       maxLength={2000}
                       onChange={(event) =>
@@ -282,6 +266,7 @@ export function DecisionDialog({
                     />
                   </Field>
                   <Select
+                    disabled={busy}
                     label="Status"
                     variant="field"
                     value={stage}

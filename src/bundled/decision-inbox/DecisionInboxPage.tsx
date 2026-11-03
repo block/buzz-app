@@ -330,7 +330,6 @@ function ScopedPage({
       {editing && (
         <DecisionDialog
           key={sourceKey(editing.record)}
-          relay={relay}
           scope={partition}
           record={editing.record}
           expectedRevision={editing.revision}

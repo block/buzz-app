@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { MessageAction } from "../../features/conversation/contracts";
@@ -8,8 +16,13 @@ import type { Navigation } from "../../features/navigation/controller";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { viewRevision, writeView } from "../../shared/view-state";
+import {
+  clearViewScope,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { DecisionInboxPage } from "./DecisionInboxPage";
+import { clearDrafts, draftFor } from "./drafts";
 import { apply } from "./index";
 import { key, readList } from "./model";
 import { installTestLocks } from "./test-locks";
@@ -75,10 +88,14 @@ function fixture() {
 }
 
 beforeEach(() => {
+  clearDrafts(scope);
+  clearDrafts(second);
   localStorage.clear();
   installTestLocks();
 });
 afterEach(() => {
+  clearDrafts(scope);
+  clearDrafts(second);
   cleanup();
   vi.restoreAllMocks();
   Reflect.deleteProperty(navigator, "locks");
@@ -339,6 +356,121 @@ it("restores an unsaved update after navigating away from the page", async () =>
     screen.getByRole("textbox", { name: "Decision Optional" }),
   ).toHaveValue("Ship tomorrow");
   expect(readList(viewRevision(scope, key))).toMatchObject({ records: [item] });
+});
+
+it("clears retained drafts with community data and protects them after navigation", () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const props = {
+    message,
+    session: h.session,
+    close: vi.fn(),
+    canOpen: () => false,
+    open: () => false,
+  };
+  const view = render(<Action {...props} />);
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    {
+      target: { value: "Keep this draft" },
+    },
+  );
+  const draftKey = JSON.stringify([scope, "capture", "room", message.id]);
+  expect(draftFor(draftKey)?.question).toBe("Keep this draft");
+  view.unmount();
+  const pendingUnload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(pendingUnload);
+  expect(pendingUnload.defaultPrevented).toBe(true);
+
+  act(() => clearViewScope(scope));
+  expect(draftFor(draftKey)).toBeUndefined();
+  const clearedUnload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(clearedUnload);
+  expect(clearedUnload.defaultPrevented).toBe(false);
+  render(<Action {...props} />);
+  expect(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  ).toHaveValue("");
+});
+
+it("evicts a draft whose changes were undone before closing", async () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const close = vi.fn();
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Question or decision needed",
+  });
+  fireEvent.change(input, { target: { value: "Temporary" } });
+  fireEvent.change(input, { target: { value: "" } });
+  await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
+  expect(close).toHaveBeenCalledOnce();
+  expect(
+    draftFor(JSON.stringify([scope, "capture", "room", message.id])),
+  ).toBeUndefined();
+});
+
+it("freezes fields while a save waits for another window", async () => {
+  const h = fixture();
+  const Action = h.action.component;
+  let entered = () => {};
+  let release = () => {};
+  const acquired = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const blocker = navigator.locks.request(
+    `buzz-decision-inbox:${scope}`,
+    { mode: "exclusive" },
+    async () => {
+      entered();
+      await held;
+    },
+  );
+  await acquired;
+  const close = vi.fn();
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    {
+      target: { value: "Ship?" },
+    },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Next actor" }), {
+    target: { value: "Morgan" },
+  });
+  try {
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      screen.getByRole("textbox", { name: "Question or decision needed" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Next actor" })).toBeDisabled();
+  } finally {
+    release();
+    await blocker;
+  }
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(readList(viewRevision(scope, key))).toMatchObject({
+    records: [{ question: "Ship?" }],
+  });
 });
 
 it("keeps the capture form and explains a failed device save", async () => {

@@ -1397,6 +1397,7 @@ function MessageRowContent({
                             attachment={{ ...attachment, url }}
                             source={source}
                             placement="message"
+                            message={row}
                             FileCard={FileAttachment}
                             fallback={fallback}
                           />
@@ -1416,6 +1417,7 @@ function MessageRowContent({
                                 attachment={{ ...attachment, url }}
                                 source={source}
                                 placement="message"
+                                message={row}
                                 fallback={
                                   <AudioAttachment
                                     attachment={{ ...attachment, url }}
@@ -1505,6 +1507,7 @@ function MessageRowContent({
                             attachment={{ ...attachment, url }}
                             source={source}
                             placement="message"
+                            message={row}
                             fallback={image}
                           />
                         ) : (

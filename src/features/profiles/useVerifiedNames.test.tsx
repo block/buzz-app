@@ -256,17 +256,24 @@ it("retires a searched name a shared head superseded, so evicting the head while
   expect(t.reads[1]?.subjects).toEqual([key(1)]);
 });
 
-it("keeps no answer for a person whose shared head arrived during the read", async () => {
-  const t = fake();
-  t.holdReads();
-  const people = [{ pubkey: key(1) }];
-  const hook = renderHook(() => useVerifiedNames(t.session, people));
-  await waitFor(() => expect(t.reads).toHaveLength(1));
-  t.hold(key(1));
-  await act(async () => t.release());
-  t.evict(key(1));
-  expect(hook.result.current.size).toBe(0);
-});
+it.each([
+  ["after", false],
+  ["before", true],
+])(
+  "keeps no answer for a person whose shared head arrived during the read, evicted %s it lands",
+  async (_, early) => {
+    const t = fake();
+    t.holdReads();
+    const people = [{ pubkey: key(1) }];
+    const hook = renderHook(() => useVerifiedNames(t.session, people));
+    await waitFor(() => expect(t.reads).toHaveLength(1));
+    t.hold(key(1));
+    if (early) t.evict(key(1));
+    await act(async () => t.release());
+    if (!early) t.evict(key(1));
+    expect(hook.result.current.size).toBe(0);
+  },
+);
 
 it("drops a searched name when the shared directory's first head for that person is inactive", async () => {
   vi.useFakeTimers();

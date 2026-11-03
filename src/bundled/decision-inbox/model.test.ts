@@ -51,6 +51,41 @@ it("captures a source message and keeps records in their viewer and community", 
   });
 });
 
+it("keeps a Unicode preview on whole code points", () => {
+  const item = capture(
+    { ...message, content: "😀".repeat(250) },
+    "Ship today?",
+    "Morgan",
+  );
+  expect(item.preview).toBe(`${"😀".repeat(199)}…`);
+  expect(save(first, null, item)).toBe("saved");
+  expect(readList(revision(first))).toEqual({
+    status: "ready",
+    records: [item],
+  });
+});
+
+it("reads a valid full list whose serialized form exceeds the old cutoff", () => {
+  const base: Decision = {
+    ...capture(message, "Question", "Actor"),
+    channelId: "r".repeat(256),
+    preview: "😀".repeat(200),
+    question: "q".repeat(1000),
+    nextActor: "a".repeat(200),
+    decision: "d".repeat(2000),
+    stage: "done",
+  };
+  const records = Array.from({ length: 500 }, (_, index) => ({
+    ...base,
+    messageId: index.toString(16).padStart(64, "0"),
+  }));
+  expect(JSON.stringify(records).length).toBeGreaterThan(512 * 1024);
+  expect(writeView(first, key, records)).toBe(true);
+  const list = readList(revision(first));
+  expect(list.status).toBe("ready");
+  if (list.status === "ready") expect(list.records).toHaveLength(500);
+});
+
 it("requires a decision before handoff, preserves the source, and replaces the same item", () => {
   const item = capture(message, "Ship today?", "Laura");
   expect(save(first, null, item)).toBe("saved");

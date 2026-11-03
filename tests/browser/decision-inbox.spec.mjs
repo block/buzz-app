@@ -48,6 +48,9 @@ test("capture a source message and finish its decision handoff", async ({
   await expect(
     inbox.getByText("Next: You decide · Then: Morgan"),
   ).toBeVisible();
+  await page.reload();
+  await openPage(page, "Decision Inbox");
+  await expect(inbox.getByText("Ship the pilot?")).toBeVisible();
   await inbox.getByRole("button", { name: "Update" }).click();
   const edit = page.getByRole("dialog", { name: "Update decision" });
   await edit

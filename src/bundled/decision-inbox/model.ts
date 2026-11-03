@@ -33,7 +33,7 @@ function valid(value: unknown): value is Decision {
     (item.channelId as string).length > 0 &&
     messageId(item.messageId) &&
     (item.threadRootId === undefined || messageId(item.threadRootId)) &&
-    text(item.preview, 300) &&
+    text(item.preview, 400) &&
     text(item.question, 1000) &&
     (item.question as string).trim().length > 0 &&
     text(item.nextActor, 200) &&
@@ -52,7 +52,6 @@ function valid(value: unknown): value is Decision {
 export function readList(revision: string | null | undefined): List {
   if (revision === undefined) return { status: "unavailable" };
   if (revision === null) return { status: "ready", records: [] };
-  if (revision.length > 512 * 1024) return { status: "damaged" };
   try {
     const data: unknown = JSON.parse(revision);
     if (
@@ -112,7 +111,7 @@ export function capture(
     channelId: message.channelId,
     messageId: message.id,
     ...(message.threadRootId ? { threadRootId: message.threadRootId } : {}),
-    preview: messagePreview(message.content).slice(0, 300),
+    preview: messagePreview(message.content),
     question: question.trim(),
     nextActor: nextActor.trim(),
     decision: "",

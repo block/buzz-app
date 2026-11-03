@@ -210,8 +210,9 @@ export type PullStates = Readonly<{
     options?: Readonly<{ polling?: Polling; wantsText?: WantsText }>,
   ): () => void;
   /** Calls `listener` after any read records a changed state, for any pull
-   * request. Unlike `watch`, it keeps nothing current and reads nothing: an
-   * observer sees only what readers had read anyway. */
+   * request, or a change in why reading it again failed (failing, failing
+   * otherwise, or no longer failing). Unlike `watch`, it keeps nothing current
+   * and reads nothing: an observer sees only what readers had read anyway. */
   observe(listener: () => void): () => void;
   /** Its latest state, kept when a later read fails; `"failed"` when it was
    * never read or `url` is neither a pull request's nor an issue's, or
@@ -775,8 +776,9 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   /** Those told of every change, who keep nothing read (see `observe`). */
   const observers = new Set<() => void>();
   /** Tells whoever watches `urls`, and every observer, that their states
-   * were recorded. */
-  const notify = (urls: readonly string[]) => {
+   * were recorded; observers also hear of a change in why `failing` could not
+   * be read again, which watchers do not. */
+  const notify = (urls: readonly string[], failing: readonly string[] = []) => {
     // One reader that throws neither fails the read nor keeps it from
     // the rest.
     for (const url of urls)
@@ -788,7 +790,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         }
     // Observers are other plugins' code: one that throws must not fail this
     // read or keep the rest from hearing of it.
-    if (urls.length)
+    if (urls.length || failing.length)
       for (const observer of [...observers])
         try {
           observer();
@@ -971,6 +973,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       // One that timed out still records what it read, and what it could not.
       if (current.signal.aborted) return;
       const changed: string[] = [];
+      const failing: string[] = [];
       for (const [i, url] of reading.entries()) {
         // Those a public poll could not afford wait for the next read earned,
         // all together, so the longest unread of them takes it whenever each
@@ -998,6 +1001,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         polledAt.set(url, now);
         notBefore.delete(url);
         if (plannedAll(url)) needed.delete(url);
+        const failed = errors.get(url)?.message;
         if (error) {
           errors.set(url, error);
           unreadable.add(url);
@@ -1005,6 +1009,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
           errors.delete(url);
           unreadable.delete(url);
         }
+        if (error?.message !== failed) failing.push(url);
         const at = readAt.get(url) ?? now;
         for (const { resolve } of asked.get(url)?.waiting ?? [])
           resolve({ state, readAt: at, error });
@@ -1014,7 +1019,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         states.set(url, state);
         changed.push(url);
       }
-      notify(changed);
+      notify(changed, failing);
       reason = new GitHubRateLimited(publicEarnedTo + PUBLIC_READ_EARNED_MS);
     } catch (error) {
       reason = error;
@@ -1023,11 +1028,15 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       // reads wait for the limit to lift.
       if (current.signal.aborted) return;
       const failure = error instanceof Error ? error : new Error(String(error));
+      const failing = reading.filter(
+        (url) => errors.get(url)?.message !== failure.message,
+      );
       for (const url of reading) {
         errors.set(url, failure);
         polledAt.set(url, now);
         if (plannedAll(url)) needed.delete(url);
       }
+      notify([], failing);
     } finally {
       // A reader not answered gets what is held, with why it was not read
       // again; only one with nothing held is refused.

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { nativeMcpInstance } from "./desktop-config.mjs";
@@ -76,28 +75,39 @@ export function startRelay(identifier, port) {
   });
   relay.on("connection", (client) => {
     let upstream;
+    let unanswered;
+    const refuse = (id) =>
+      client.send(JSON.stringify({ id, success: false, error: refusal }));
     let queue = Promise.resolve();
-    // Commands run in order. The first finds and checks the app; until one is
-    // found, each command fails and the next looks again. Once found, the app
-    // serves this client connection until either side closes it.
+    // Commands run in order. Each finds and checks the app if none is open;
+    // until one is found, each command fails and the next looks again. When the
+    // app goes, its unanswered commands fail and the client stays connected: a
+    // closed connection or failed start makes the client fall back to an
+    // unchecked port scan of its own.
     client.on("message", (data) => {
       const text = data.toString();
       queue = queue
         .then(async () => {
-          if (!upstream) {
-            const socket = await connectTestInstance(identifier, port);
-            // It may have closed while lower ports were still being probed.
-            if (socket?.readyState === WebSocket.OPEN)
-              upstream = socket
-                .on("message", (reply) => client.send(reply.toString()))
-                .on("close", () => client.close());
+          if (upstream?.readyState !== WebSocket.OPEN) {
+            upstream = await connectTestInstance(identifier, port);
+            const sent = new Set();
+            unanswered = sent;
+            upstream
+              ?.on("message", (reply) => {
+                try {
+                  sent.delete(JSON.parse(reply).id);
+                } catch {}
+                client.send(reply.toString());
+              })
+              .on("close", () => sent.forEach(refuse));
           }
           // The client may have gone while the app was being found.
           if (client.readyState !== WebSocket.OPEN) return;
-          if (upstream?.readyState === WebSocket.OPEN)
-            return upstream.send(text);
           const { id } = JSON.parse(text);
-          client.send(JSON.stringify({ id, success: false, error: refusal }));
+          // The app may have closed while lower ports were still being probed.
+          if (upstream?.readyState !== WebSocket.OPEN) return refuse(id);
+          unanswered.add(id);
+          upstream.send(text);
         })
         .catch(() => {});
     });
@@ -116,31 +126,18 @@ if (import.meta.main) {
     process.exit(1);
   });
   relay.on("listening", () => {
-    const child = spawn(
-      process.execPath,
-      ["node_modules/@hypothesi/tauri-mcp-server/dist/index.js"],
-      {
-        cwd: root,
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          MCP_BRIDGE_HOST: "127.0.0.1",
-          MCP_BRIDGE_PORT: String(relay.address().port),
-        },
-      },
+    // The client reads these when it connects, not when it loads. Its package
+    // exports only its API, so load the server entry by path; loading starts it.
+    process.env.MCP_BRIDGE_HOST = "127.0.0.1";
+    process.env.MCP_BRIDGE_PORT = String(relay.address().port);
+    // MCP clients stop a stdio server by closing its input first; the relay
+    // would otherwise keep this process alive.
+    process.stdin.on("end", () => process.exit(0));
+    import(
+      new URL(
+        "../node_modules/@hypothesi/tauri-mcp-server/dist/index.js",
+        import.meta.url,
+      ).href
     );
-    // MCP clients stop a stdio server by signalling only its process; pass the
-    // signal on so the server, and any bridge session it holds, does not outlive it.
-    const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
-    for (const signal of signals) process.on(signal, () => child.kill(signal));
-    child.on("error", (error) => {
-      console.error(error.message);
-      process.exit(1);
-    });
-    child.on("exit", (status, signal) => {
-      if (!signal) process.exit(status ?? 1);
-      for (const name of signals) process.removeAllListeners(name);
-      process.kill(process.pid, signal);
-    });
   });
 }

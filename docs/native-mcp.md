@@ -88,10 +88,11 @@ such as Claude Code, offer its tools after approval.
 Two worktrees can share a port range, and the client connects to whichever app
 answers, so the script points it at a loopback relay. The relay forwards commands
 only to an app that reports this worktree's identifier, a debug build and a
-`main` window. It looks for one on a connection's first command; until it finds
-one, each command fails and the next looks again. When the app quits, the relay
-disconnects the client. Start `driver_session` without a port: a port passed
-there bypasses the relay.
+`main` window. Whenever it has no open connection to one, it looks again on the
+next command, and fails that command if none answers. When the app quits,
+commands it has not answered fail and the session stays connected, so it reaches
+the app again after a rebuild or relaunch. Start `driver_session` without a
+port: a port passed there bypasses the relay.
 
 The pinned bridge revision is
 `1d5105e72835b28ca05a75bcd612b9127c12fe94` from

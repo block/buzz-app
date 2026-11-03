@@ -121,7 +121,7 @@ it.each([
   expect(app.commands).toEqual([]);
 });
 
-it("finds an app launched later, and closes the client when that app goes", async () => {
+it("finds an app launched later, and again after it restarts", async () => {
   const free = await serveApp(instance);
   await close(servers.pop());
   const client = await connect(startRelay(identifier, free.port));
@@ -130,9 +130,33 @@ it("finds an app launched later, and closes the client when that app goes", asyn
   const { app } = await serveApp(instance, free.port);
   expect(await send(client, "ping")).toMatchObject({ success: true });
 
-  const closed = new Promise((resolve) => client.once("close", resolve));
   await close(servers.splice(servers.indexOf(app), 1)[0]);
-  await closed;
+  const restarted = await serveApp(instance, free.port);
+  // A command can still reach the old app before the relay sees it close.
+  await expect
+    .poll(async () => (await send(client, "ping")).success)
+    .toBe(true);
+  expect(restarted.app.commands).toContain("ping");
+});
+
+it("fails a command in flight when the app quits, and keeps the client", async () => {
+  const { app, port } = await serveApp(instance);
+  const client = await connect(startRelay(identifier, port));
+  expect(await send(client, "ping")).toMatchObject({ success: true });
+
+  // The app quits with a command unanswered, as on a rebuild during a start.
+  const [socket] = app.clients;
+  socket.removeAllListeners("message");
+  const received = new Promise((resolve) => socket.once("message", resolve));
+  const reply = send(client, "start");
+  await received;
+  await close(servers.splice(servers.indexOf(app), 1)[0]);
+
+  expect(await reply).toMatchObject({
+    success: false,
+    error: expect.stringContaining(identifier),
+  });
+  expect(client.readyState).toBe(WebSocket.OPEN);
 });
 
 it.each([

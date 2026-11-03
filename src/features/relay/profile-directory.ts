@@ -341,10 +341,11 @@ export function createProfileDirectory(
     stats: () => events.stats(),
     dispose() {
       closed = true;
-      clearTimeout(verifiedFlush);
       verified?.dispose();
       unsubscribeLocal?.();
       clear();
+      // After clear(): disposing the verified directory schedules a flush.
+      clearTimeout(verifiedFlush);
       listeners.clear();
     },
   };

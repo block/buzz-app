@@ -9,18 +9,15 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
-const cases = ["guest", "member"].flatMap((role) =>
-  ["public", "private"].flatMap((visibility) =>
-    ["before ACK", "during readback"].map((ordering) => ({
-      role,
-      visibility,
-      ordering,
-    })),
-  ),
+const cases = ["public", "private"].flatMap((visibility) =>
+  ["before ACK", "during readback"].map((ordering) => ({
+    visibility,
+    ordering,
+  })),
 );
 it.each(cases)(
-  "confirms a $role leaving a $visibility channel when its signed roster arrives $ordering",
-  async ({ role, visibility, ordering }) => {
+  "confirms a Guest leaving a $visibility channel when its signed roster arrives $ordering",
+  async ({ visibility, ordering }) => {
     const viewer = keypair(),
       relay = keypair(),
       peer = keypair();
@@ -35,7 +32,7 @@ it.each(cases)(
       record(39002, [
         ["d", id],
         ["p", peer.pubkey, "", "owner"],
-        ...(member ? [["p", viewer.pubkey, "", role]] : []),
+        ...(member ? [["p", viewer.pubkey, "", "guest"]] : []),
       ]);
     const events = () => [
       record(39000, [

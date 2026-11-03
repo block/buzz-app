@@ -262,10 +262,14 @@ for private keys, tokens or raw agent configuration.
 
 `just desktop` and `just desktop-bundle` add every `BUZZ_` value from
 repository-root `.env.local` to the environment of Tauri, Cargo and the native
-app. Values are literal: `$VAR` is not expanded, so a value needs no escaping.
-Vite's `.env` and mode-specific files are not read for this. A value already in
-the process environment wins, including an explicit empty one. Names without
-the `BUZZ_` prefix stay out, because `.env.local` can hold unrelated settings
-and credentials. `BUZZ_` values reach child processes of the app, so keep them
+app. Values are read as the frontend's Builderlab URL reader reads them (Node
+`parseEnv`): `$VAR` is never expanded, quoted or not, so a value needs no
+escaping. Vite's `.env` and mode-specific files are not read for this. Because
+the Vite dev server inherits this environment, a `.env.local` value also beats
+the same name in a mode file for the frontend, so frontend and native agree. A
+value already in the process environment wins, including an explicit empty
+one. Names without the `BUZZ_` prefix stay out, because `.env.local` can hold
+unrelated settings and credentials, and so do the release-only
+`BUZZ_UPDATER_*` inputs. `BUZZ_` values reach child processes of the app, so keep them
 to public configuration. Direct `pnpm tauri build` and `cargo` runs do not load
 `.env.local` this way.

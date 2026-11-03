@@ -8,7 +8,8 @@ import { worktreeIcon } from "./worktree-icon.mjs";
 // files; unlike it, values are always literal (no `$VAR` expansion, quoted or
 // not), as in the frontend's Builderlab URL reader. Process values win,
 // including an explicit empty one. Names without the `BUZZ_` prefix stay out:
-// the file can hold unrelated settings and credentials.
+// the file can hold unrelated settings and credentials. Updater inputs stay
+// release-only, from the process environment.
 export function launchEnvironment(root) {
   let text = "";
   try {
@@ -18,7 +19,7 @@ export function launchEnvironment(root) {
     if (error?.code !== "ENOENT") throw new Error("Could not read .env.local");
   }
   const local = Object.entries(parseEnv(text.replace(/^\uFEFF/, ""))).filter(
-    ([name]) => name.startsWith("BUZZ_"),
+    ([name]) => name.startsWith("BUZZ_") && !name.startsWith("BUZZ_UPDATER_"),
   );
   return { ...Object.fromEntries(local), ...process.env };
 }

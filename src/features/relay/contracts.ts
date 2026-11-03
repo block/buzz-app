@@ -51,7 +51,7 @@ export type ChannelSummary = Readonly<{
   parentChannelId?: string | undefined;
   /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
   huddle?: true;
-  /** Metadata update time used for stable work-history ordering. */
+  /** Metadata update time in Unix seconds, used as the activity-sort fallback. */
   updatedAt?: number;
   archived?: true;
   /** Signed metadata cleanup interval in seconds; absent means ongoing or unknown. */

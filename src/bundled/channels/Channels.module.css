@@ -453,6 +453,9 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   color: var(--text-subtle);
   transition: transform 160ms ease-out;
 }
+.sectionHeader > details .sectionChevron {
+  margin-inline-start: auto;
+}
 .sectionHeader details:not([open]) .sectionChevron {
   transform: rotate(-90deg);
 }
@@ -484,6 +487,34 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
 }
 .untitledSectionContent {
   padding-inline-end: calc(var(--space-8) + var(--space-1));
+}
+/* Keep disclosure actions in flow so enlarged controls cannot consume the
+   label's entire width. The rem basis follows the interface-size preference. */
+.sectionHeader:has(> details) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.sectionHeader > details {
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+.sectionHeader > :where(details) > summary {
+  flex-wrap: wrap;
+  padding-inline-end: var(--space-1);
+}
+.sectionHeader > details .sectionLabel {
+  flex: 1 1 max-content;
+}
+.sectionHeader > details .sectionTitle {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sectionHeader:has(> details) > .sectionActions {
+  position: static;
+  transform: none;
+  margin-inline-start: auto;
+  margin-inline-end: var(--space-1);
 }
 html[data-keyboard-navigation] .sectionActions:focus-within,
 .sectionHeader:hover :is(.sectionActions, .sectionChevron),

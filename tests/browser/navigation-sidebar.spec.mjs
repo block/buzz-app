@@ -241,11 +241,11 @@ creationSidebar(
     await summary.hover();
     await expect(createContainer).toHaveCSS("opacity", "1");
     await expect(create).toHaveAttribute("data-icon-shape", "control");
-    const [summaryBox, createBox] = await Promise.all([
-      summary.boundingBox(),
+    const [headerBox, createBox] = await Promise.all([
+      channels.locator("..").boundingBox(),
       create.boundingBox(),
     ]);
-    expect(summaryBox.x + summaryBox.width).toBeCloseTo(
+    expect(headerBox.x + headerBox.width).toBeCloseTo(
       createBox.x + createBox.width + 4,
       0,
     );

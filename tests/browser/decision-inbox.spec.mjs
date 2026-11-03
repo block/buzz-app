@@ -1,6 +1,12 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
+import { pluginAction } from "./plugin-settings.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 
 test.use({ productionBroker: true, historyCounts: { alpha: 1, beta: 1 } });
 
@@ -10,6 +16,14 @@ test("capture a source message and finish its decision handoff", async ({
   page,
   app,
 }, testInfo) => {
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const plugin = pluginAction(page, "Decision Inbox");
+  await expect(plugin).toHaveAccessibleName("Enable Decision Inbox");
+  await plugin.click();
+  await expect(plugin).toHaveAccessibleName("Disable Decision Inbox");
+  await closeSettings(page);
   await open(page, app);
   const source = app.append("primary", "alpha", "Pilot source message");
   const row = page.locator(
@@ -32,7 +46,7 @@ test("capture a source message and finish its decision handoff", async ({
   const inbox = page.getByRole("region", { name: "Decision Inbox" });
   await expect(inbox.getByText("Ship the pilot?")).toBeVisible();
   await expect(
-    inbox.getByText("Next: Laura decides · Then: Morgan"),
+    inbox.getByText("Next: You decide · Then: Morgan"),
   ).toBeVisible();
   await inbox.getByRole("button", { name: "Update" }).click();
   const edit = page.getByRole("dialog", { name: "Update decision" });
@@ -85,4 +99,10 @@ test("capture a source message and finish its decision handoff", async ({
   await expect(
     page.locator(`[data-message-id="${source.id}"]`).first(),
   ).toBeVisible();
+  await openPage(page, "Decision Inbox");
+  await inbox.getByRole("button", { name: "Remove" }).click();
+  const removal = page.getByRole("dialog", { name: "Remove saved decision?" });
+  await expect(removal.getByText("Ship the pilot?")).toBeVisible();
+  await removal.getByRole("button", { name: "Remove decision" }).click();
+  await expect(inbox.getByText("No decisions saved")).toBeVisible();
 });

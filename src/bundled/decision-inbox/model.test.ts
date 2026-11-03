@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../../features/relay/contracts";
-import { key, capture, readList, revision, save, type Decision } from "./model";
+import { writeView } from "../../shared/view-state";
+import {
+  key,
+  capture,
+  readList,
+  remove,
+  revision,
+  save,
+  type Decision,
+} from "./model";
 
 const first = `https://one.test:${"a".repeat(64)}`;
 const second = `https://one.test:${"b".repeat(64)}`;
@@ -94,4 +103,39 @@ it("holds malformed saved data for explicit recovery and reports failed storage"
     "failed",
   );
   expect(readList(revision(first))).toEqual({ status: "ready", records: [] });
+});
+
+it("removes only the selected saved item and rejects a stale removal", () => {
+  const item = capture(message, "Ship today?", "Morgan");
+  const other = { ...item, messageId: "d".repeat(64), question: "Ship later?" };
+  expect(save(first, null, item)).toBe("saved");
+  expect(save(first, revision(first), other)).toBe("saved");
+  const old = revision(first);
+  expect(remove(first, old, item)).toBe("saved");
+  expect(remove(first, old, other)).toBe("changed");
+  expect(readList(revision(first))).toEqual({
+    status: "ready",
+    records: [other],
+  });
+  expect(readList(revision(second))).toEqual({ status: "ready", records: [] });
+});
+
+it("frees a full list for a new capture and reports failed device removal", () => {
+  const item = capture(message, "Ship today?", "Morgan");
+  const records = Array.from({ length: 500 }, (_, index) => ({
+    ...item,
+    messageId: index.toString(16).padStart(64, "0"),
+  }));
+  const firstRecord = records[0];
+  if (!firstRecord) throw new Error("Missing first record");
+  expect(writeView(first, key, records)).toBe(true);
+  expect(save(first, revision(first), item)).toBe("full");
+  expect(remove(first, revision(first), firstRecord)).toBe("saved");
+  expect(save(first, revision(first), item)).toBe("saved");
+  const before = revision(first);
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  expect(remove(first, before, item)).toBe("failed");
+  expect(revision(first)).toBe(before);
 });

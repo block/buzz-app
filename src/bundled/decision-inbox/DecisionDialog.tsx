@@ -19,7 +19,7 @@ import {
 import styles from "./DecisionInbox.module.css";
 
 const stages = [
-  { value: "decision", label: "Awaiting Laura's decision" },
+  { value: "decision", label: "Awaiting your decision" },
   { value: "handoff", label: "Decision made · awaiting handoff" },
   { value: "done", label: "Handed off · done" },
 ];
@@ -104,6 +104,10 @@ export function DecisionDialog({
     else if (result === "changed")
       setError(
         "The saved list changed in another window. Close and reopen this item to review the latest version.",
+      );
+    else if (result === "full")
+      setError(
+        "Decision Inbox is full. Remove a saved item before trying again.",
       );
     else
       setError(

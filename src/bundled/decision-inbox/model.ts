@@ -76,6 +76,22 @@ export function save(
   scope: string,
   expected: string | null | undefined,
   record: Decision,
+): "saved" | "changed" | "failed" | "damaged" | "full" {
+  const list = readList(expected);
+  if (list.status !== "ready")
+    return list.status === "damaged" ? "damaged" : "failed";
+  const records = list.records.filter(
+    (item) => sourceKey(item) !== sourceKey(record),
+  );
+  if (!valid(record)) return "failed";
+  if (records.length >= 500) return "full";
+  return replaceView(scope, key, expected, [record, ...records]);
+}
+
+export function remove(
+  scope: string,
+  expected: string | null | undefined,
+  record: Pick<Decision, "channelId" | "messageId">,
 ): "saved" | "changed" | "failed" | "damaged" {
   const list = readList(expected);
   if (list.status !== "ready")
@@ -83,8 +99,8 @@ export function save(
   const records = list.records.filter(
     (item) => sourceKey(item) !== sourceKey(record),
   );
-  if (records.length >= 500 || !valid(record)) return "failed";
-  return replaceView(scope, key, expected, [record, ...records]);
+  if (records.length === list.records.length) return "changed";
+  return replaceView(scope, key, expected, records);
 }
 
 export function capture(

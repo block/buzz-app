@@ -108,6 +108,7 @@ it("captures a message, records the decision and handoff, and opens its source",
 
   render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
   expect(screen.getByText("Ship now?")).toBeVisible();
+  expect(screen.getByText("Next: You decide · Then: Morgan")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Update" }));
   await user.type(
     screen.getByRole("textbox", { name: "Decision Optional" }),
@@ -162,7 +163,14 @@ it("does not show or save the old community after switching", async () => {
   ]);
   render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
   expect(screen.getByText("Old decision")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  expect(
+    screen.getByRole("dialog", { name: "Remove saved decision?" }),
+  ).toBeVisible();
   act(() => h.switchScope());
+  expect(
+    screen.queryByRole("dialog", { name: "Remove saved decision?" }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText("Old decision")).not.toBeInTheDocument();
   expect(screen.getByText("No decisions saved")).toBeVisible();
   expect(h.action.matches(message, h.session)).toBe(false);
@@ -352,4 +360,105 @@ it("does not overwrite a newer decision when a stale row opens the editor", asyn
     status: "ready",
     records: [newer],
   });
+});
+
+it("removes a saved decision only after confirmation", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const item = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Decision to remove",
+    nextActor: "Morgan",
+    decision: "Ship tomorrow",
+    stage: "done",
+    createdAt: 1,
+  };
+  writeView(scope, key, [item]);
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  const dialog = screen.getByRole("dialog", { name: "Remove saved decision?" });
+  expect(dialog).toHaveTextContent("The source message stays in Buzz.");
+  expect(readList(viewRevision(scope, key))).toMatchObject({
+    records: [item],
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText("Decision to remove")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Remove decision",
+    }),
+  );
+  expect(screen.getByText("No decisions saved")).toBeVisible();
+  expect(readList(viewRevision(scope, key))).toEqual({
+    status: "ready",
+    records: [],
+  });
+});
+
+it("keeps a newer saved decision when removal was opened from a stale list", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const item = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Original",
+    nextActor: "Morgan",
+    decision: "",
+    stage: "decision",
+    createdAt: 1,
+  };
+  writeView(scope, key, [item]);
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  const newer = [{ ...item, question: "Changed in another window" }];
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([scope, key])}`,
+    JSON.stringify(newer),
+  );
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Remove decision",
+    }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "changed in another window",
+  );
+  expect(readList(viewRevision(scope, key))).toEqual({
+    status: "ready",
+    records: newer,
+  });
+});
+
+it("explains a failed removal and leaves the saved item in place", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const item = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Keep this decision",
+    nextActor: "Morgan",
+    decision: "",
+    stage: "decision",
+    createdAt: 1,
+  };
+  writeView(scope, key, [item]);
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Remove decision",
+    }),
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Could not remove this decision on this device",
+  );
+  expect(readList(viewRevision(scope, key))).toMatchObject({ records: [item] });
 });

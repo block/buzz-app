@@ -169,7 +169,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...decisionInboxManifest, apiVersion: 1 },
     module: decisionInbox,
-    enabledByDefault: true,
+    enabledByDefault: false,
   },
   {
     manifest: { ...reposManifest, apiVersion: 1 },

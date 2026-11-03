@@ -18,6 +18,7 @@ import { DecisionDialog } from "./DecisionDialog";
 import {
   key,
   readList,
+  remove,
   revision,
   sourceKey,
   type Decision,
@@ -26,7 +27,7 @@ import {
 import styles from "./DecisionInbox.module.css";
 
 const groups: readonly { stage: Stage; title: string }[] = [
-  { stage: "decision", title: "Awaiting Laura's decision" },
+  { stage: "decision", title: "Awaiting your decision" },
   { stage: "handoff", title: "Decision made · awaiting handoff" },
   { stage: "done", title: "Handed off · done" },
 ];
@@ -107,6 +108,10 @@ function ScopedPage({
     record: Decision;
     revision: string | null | undefined;
   }>();
+  const [removing, setRemoving] = useState<{
+    record: Decision;
+    revision: string | null | undefined;
+  }>();
   const [resetting, setResetting] = useState<string>();
   const [error, setError] = useState("");
   const current = () => {
@@ -153,6 +158,24 @@ function ScopedPage({
       );
       setResetting(undefined);
     }
+  };
+  const confirmRemove = () => {
+    if (!removing) return;
+    setRemoving(undefined);
+    if (!current()) {
+      setError("The account or community changed. Reopen Decision Inbox.");
+      return;
+    }
+    const result = remove(partition, removing.revision, removing.record);
+    setError(
+      result === "saved"
+        ? ""
+        : result === "changed"
+          ? "The saved list changed in another window. Review the latest version before trying again."
+          : result === "damaged"
+            ? "The saved list cannot be read. Recover it before trying again."
+            : "Could not remove this decision on this device. Check available storage and try again.",
+    );
   };
   return (
     <div className={styles.page}>
@@ -221,7 +244,7 @@ function ScopedPage({
                           </strong>
                           <p className="text-body-sm text-subtle">
                             {stage === "decision"
-                              ? `Next: Laura decides · Then: ${item.nextActor}`
+                              ? `Next: You decide · Then: ${item.nextActor}`
                               : stage === "handoff"
                                 ? `Next: Hand off to ${item.nextActor}`
                                 : `Handed off to ${item.nextActor}`}
@@ -253,6 +276,18 @@ function ScopedPage({
                           >
                             Update
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              setRemoving({
+                                record: item,
+                                revision: savedRevision,
+                              })
+                            }
+                          >
+                            Remove
+                          </Button>
                         </div>
                       </li>
                     ))}
@@ -272,6 +307,25 @@ function ScopedPage({
           current={current}
           close={() => setEditing(undefined)}
         />
+      )}
+      {removing && (
+        <Dialog
+          open
+          size="compact"
+          title="Remove saved decision?"
+          description="This removes the decision from this device. The source message stays in Buzz."
+          onOpenChange={(open) => !open && setRemoving(undefined)}
+          actions={
+            <>
+              <Button onClick={() => setRemoving(undefined)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmRemove}>
+                Remove decision
+              </Button>
+            </>
+          }
+        >
+          <p className="text-body">{removing.record.question}</p>
+        </Dialog>
       )}
       {resetting !== undefined && (
         <Dialog

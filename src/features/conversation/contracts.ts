@@ -81,9 +81,18 @@ export type ComposerCaptureProps = Readonly<{
   accept(recording: VoiceRecording): boolean;
   cancel(): void;
 }>;
+export type FileCardProps = Readonly<{
+  attachment: Attachment;
+  source: string;
+  onOpenLink(url: string): boolean;
+  onPreview?: (() => void) | undefined;
+  typeLabel?: string | undefined;
+}>;
 export type AttachmentRendererProps = Readonly<{
   attachment: Attachment;
   source: string;
+  placement?: "message" | "composer";
+  FileCard?: ComponentType<FileCardProps> | undefined;
   onRemove?: (() => void) | undefined;
 }> &
   TargetOpener;

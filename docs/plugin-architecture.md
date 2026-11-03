@@ -1641,6 +1641,19 @@ with an open action stays mounted while it scrolls out of view. Icon, component
 and marker failures each render nothing and leave the row and menu usable. The
 bundled Reminders plugin is the first consumer.
 
+`registerAttachment({ id, title, matches, component })` draws a message or draft
+attachment the host would otherwise draw itself. Components receive
+`{ attachment, source, placement?, FileCard?, onRemove?, canOpen, open }`; the
+first active match wins, throwing matchers are skipped, and render failure or
+removal restores the host attachment. `placement` is `"message"` in message rows
+and `"composer"` in draft and voice-note surfaces. For file attachments the host
+also passes `FileCard`, its own file card. Rendering it with
+`onPreview` makes the card itself open the preview, typically `open(target)`
+for a panel, while a separate trailing action keeps the host's native or browser
+download. Offer `onPreview` only in message placement, and pass the renderer's
+`open` as `onOpenLink` so external files keep ordinary link activation. Older
+hosts may omit `placement` and `FileCard`.
+
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages
 independently of the plugin, preserving raw patches rather than interpreting them

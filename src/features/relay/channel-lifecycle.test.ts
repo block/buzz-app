@@ -829,13 +829,14 @@ describe("Leave confirmation across access revocation", () => {
         h.read.mockRejectedValueOnce(cancelled()).mockRejectedValueOnce(error);
       });
       try {
-        await expect(
-          h.owner.capability.run("leave", id),
-        ).rejects.toBeInstanceOf(
+        const run = h.owner.capability.run("leave", id);
+        await expect(run).rejects.toBeInstanceOf(
           error instanceof PublishRejected
             ? PublishRejected
             : ChannelLifecycleUnconfirmed,
         );
+        await expect(run).rejects.toThrow(error.message);
+        expect(h.read).toHaveBeenCalledTimes(phase === "publication" ? 2 : 4);
         expect(h.publish).toHaveBeenCalledOnce();
         expect(h.removed).not.toHaveBeenCalled();
       } finally {

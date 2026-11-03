@@ -13,6 +13,19 @@ import { createNavigationController } from "../features/navigation/controller";
 import { createMemoryHistory } from "../features/navigation/history";
 import { createAppearance } from "../shared/theme/service";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
+import userEvent from "@testing-library/user-event";
+import { Dialog } from "../shared/design-system/ui/Dialog";
+import {
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+  MenuTrigger,
+} from "../shared/design-system/ui/Menu";
+import {
+  PopoverPopup,
+  PopoverRoot,
+  PopoverTrigger,
+} from "../shared/design-system/ui/Popover";
 import historyRequest from "../../src-tauri/src/history-request.js?raw";
 
 const close = vi.hoisted(() => vi.fn(async () => {}));
@@ -686,3 +699,60 @@ it("Back and Forward step through an addressable dialog, not past a confirmation
     await h.dispose();
   }
 });
+
+it.each(["menu", "popover"] as const)(
+  "Back and Forward stay put while a %s is open over an addressable dialog",
+  async (surface) => {
+    const h = harness("MacIntel");
+    const controller = createNavigationController(createMemoryHistory());
+    const { navigation } = controller;
+    const remove = registerNavigationShortcuts(h.shortcuts, navigation);
+    const target = () => navigation.snapshot().attempt.entry.target;
+    const settings = { version: 1, kind: "settings" } as const;
+    const user = userEvent.setup();
+    render(
+      <Dialog open visit title="Visit" onOpenChange={() => {}}>
+        {surface === "menu" ? (
+          <MenuRoot>
+            <MenuTrigger>Open layer</MenuTrigger>
+            <MenuPopup>
+              <MenuItem>Layer action</MenuItem>
+            </MenuPopup>
+          </MenuRoot>
+        ) : (
+          <PopoverRoot>
+            <PopoverTrigger>Open layer</PopoverTrigger>
+            <PopoverPopup>
+              <button type="button">Layer action</button>
+            </PopoverPopup>
+          </PopoverRoot>
+        )}
+      </Dialog>,
+    );
+    try {
+      void navigation.open({ version: 1, kind: "home" });
+      void navigation.open(settings);
+      await vi.waitFor(() =>
+        expect(navigation.snapshot().canGoBack).toBe(true),
+      );
+      await user.click(screen.getByRole("button", { name: "Open layer" }));
+      const action = await screen.findByText("Layer action");
+      press(action, { ctrlKey: false, metaKey: true, key: "[" });
+      new Function(
+        "window",
+        "document",
+        "Event",
+        "CSS",
+        "browserSessionId",
+        "historyEvent",
+        `return eval(${JSON.stringify(historyRequest)})`,
+      )(window, document, Event, CSS, null, "buzz:history-back");
+      await act(async () => {});
+      expect(target()).toEqual(settings);
+    } finally {
+      remove();
+      controller.dispose();
+      await h.dispose();
+    }
+  },
+);

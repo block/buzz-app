@@ -676,10 +676,10 @@ it("explains imported agents with the current community's badge and nested popov
     expect(screen.queryByRole("dialog", { name: "Agents scope" })).toBeNull(),
   );
   expect(screen.getByRole("dialog", { name: "Manage members" })).toBeVisible();
-  // Members is its own navigation visit, so Back closes it.
+  // A locally opened Members is not a navigation visit: Back stays blocked.
   expect(
     screen.getByRole("dialog", { name: "Manage members" }),
-  ).toHaveAttribute("data-navigation-visit");
+  ).not.toHaveAttribute("data-navigation-visit");
   await vi.waitFor(() => expect(badge).toHaveFocus());
   expect(t.publish).not.toHaveBeenCalled();
 });

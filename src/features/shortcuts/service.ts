@@ -1,7 +1,10 @@
 // FOUNDATION: One dispatcher; plugin readiness/lifetime remain owned by Cordis.
 import { TERMINAL_KEY_EVENT } from "./terminal-key-event";
 import { Service, type Context } from "@deepseek-ai/cordis";
-import { activeModal } from "../../shared/design-system/overlayLayer";
+import {
+  activeModal,
+  behindActiveOverlay,
+} from "../../shared/design-system/overlayLayer";
 import {
   createContributions,
   type Contribution,
@@ -120,8 +123,11 @@ export class ShortcutsService extends Service implements Shortcuts {
     };
     const modalOpen = (): Modal => {
       if (!host?.document.querySelector(MODAL)) return false;
-      // Only the topmost modal can be the current navigation visit.
-      return activeModal(host.document)?.matches("[data-navigation-visit]")
+      // Only the topmost modal can be the current navigation visit, and
+      // not while a menu or popover over it holds the interaction.
+      const modal = activeModal(host.document);
+      return modal?.matches("[data-navigation-visit]") &&
+        !behindActiveOverlay(modal)
         ? "visit"
         : true;
     };

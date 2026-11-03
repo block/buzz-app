@@ -32,7 +32,21 @@ export async function conversationHistory(
         ]
       : [{ ...filter, limit: 50 }],
   );
-  const ids = found.map((message) => message.id);
+  const cutoff = {
+    id: event.id,
+    createdAt: event.created_at,
+    createdAtMs: eventMs(event),
+  };
+  // The cutoff selects messages, not revisions. Apply current edits/deletions
+  // so history agrees with the conversation rather than reviving replaced text.
+  const earlier = found.filter(
+    (item) =>
+      compareMessages(
+        { id: item.id, createdAt: item.created_at, createdAtMs: eventMs(item) },
+        cutoff,
+      ) < 0,
+  );
+  const ids = earlier.map((message) => message.id);
   const changes = ids.length
     ? await read([
         {
@@ -40,24 +54,9 @@ export async function conversationHistory(
           "#h": [channelId],
           "#e": ids,
           limit: 500,
-          until: event.created_at,
         },
       ])
     : [];
-  const cutoff = {
-    id: event.id,
-    createdAt: event.created_at,
-    createdAtMs: eventMs(event),
-  };
-  // Relay `until` is inclusive to the second. Apply Buzz's full ordering before
-  // folding so later same-second messages, edits and deletions cannot leak in.
-  const earlier = [...found, ...changes].filter(
-    (item) =>
-      compareMessages(
-        { id: item.id, createdAt: item.created_at, createdAtMs: eventMs(item) },
-        cutoff,
-      ) < 0,
-  );
   const owners = new Map<string, { owner: string; profile: RelayEvent }>();
   if (profiles && found.length) {
     const authors = [
@@ -74,7 +73,7 @@ export async function conversationHistory(
       }),
     );
   }
-  const messages = foldMessages(channelId, "", earlier, {
+  const messages = foldMessages(channelId, "", [...earlier, ...changes], {
     includeReplies: true,
     signingAuthority,
     agentOwner: (author) => {

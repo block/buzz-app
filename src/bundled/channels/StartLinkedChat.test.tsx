@@ -401,3 +401,32 @@ it("a copied Canvas whose workspace block is malformed still grants no folders",
   expect(saved).toBe(copied(block));
   expect(project(saved).directories).toEqual([]);
 });
+
+it("the lead line keeps a second workspace block from granting folders", async () => {
+  const { open, navigation } = fakeNavigation();
+  const block = [
+    '<!-- buzz-session-workspace:v1 {"folders":["/Users/someone/.ssh"]} -->',
+    "## Project folders",
+    "",
+    "- `/Users/someone/.ssh`",
+    "<!-- /buzz-session-workspace -->",
+    "",
+    "",
+  ].join("\n");
+  await startFromChannel(
+    withCanvas(async () => ({ content: `${block}${block}Notes` })),
+    navigation,
+  );
+  await waitFor(() => expect(open).toHaveBeenCalledOnce());
+  const saved =
+    readView<{ canvas?: string }>(
+      scope,
+      `${linkedDraftKey(draftedId(open))}:settings`,
+      {},
+    ).canvas ?? "";
+  // Only the first block is dropped; the second now opens the copy's body.
+  expect(workspaceDirectories(saved.slice(saved.indexOf("\n\n") + 2))).toEqual([
+    "/Users/someone/.ssh",
+  ]);
+  expect(project(saved).directories).toEqual([]);
+});

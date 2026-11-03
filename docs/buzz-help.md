@@ -327,7 +327,7 @@ available rather than silently discarding it.
 - Some desktop plugins can upload images you provide to services they declare.
 - **Focus**, when its optional plugin is on, is in the profile menu. For a
   chosen time it shows only Solo chats in the sidebar and lets only Solo chats
-  show banners, play sounds or light the Dock dot. Links and search still open
+  in the selected community show banners, play sounds or light the Dock dot. Links and search still open
   any conversation. Other alerts are not shown or saved, and those
   conversations keep their unread state. Focus sets 🔭 Focusing as the status
   in the selected community. When Focus ends there, the earlier status comes

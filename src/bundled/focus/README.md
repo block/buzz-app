@@ -8,8 +8,8 @@ Work with your agents without the rest of Buzz competing for attention.
 2. Pick how long, from 30 minutes to the rest of today or a custom end time,
    then choose **Start focus**. Or press ⌥F (Alt+F) to focus for an hour, and
    again to end it.
-3. The sidebar now shows only your Solo chats, and only they can show banners,
-   play sounds or light the Dock dot. Search (⌘K) and links still open any
+3. The sidebar now shows only your Solo chats, and only Solo chats in the
+   selected community can show banners, play sounds or light the Dock dot. Search (⌘K) and links still open any
    channel or DM. Your status becomes 🔭 Focusing.
 4. Focus ends by itself, or choose **End** in the sidebar. Your tabs and
    earlier status come back.

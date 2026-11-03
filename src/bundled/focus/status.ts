@@ -13,8 +13,9 @@ const isFocusStatus = (status: UserStatus | undefined) =>
   status?.text === FOCUS_STATUS.text && status.emoji === FOCUS_STATUS.emoji;
 
 /** Whether the viewer's newest status event, including a clear or an expired
- * one, is still the telescope Focus published. A relay that dropped it after
- * it expired returns nothing, which also counts as still Focus's. */
+ * one, is still the telescope Focus published. The Buzz relay keeps expired
+ * events. A relay that drops them returns nothing, which counts as Focus's,
+ * so there a newer status that also expired cannot be told apart. */
 async function focusOwnsStatus(
   session: RelaySession,
   viewer: string,
@@ -58,6 +59,7 @@ export function bindFocusStatus(
   // One attempt per Focus deadline and connection: a failed set is retried
   // when the connection comes back, not on every relay change.
   let failedUntil: number | undefined;
+  let savedUntil: number | undefined;
   const connected = () => {
     const { status, cached } = relay.snapshot();
     return status === "ready" && !cached;
@@ -69,35 +71,42 @@ export function bindFocusStatus(
     const statuses = session.statuses;
     if (!statuses.writable) return;
     const { until, status: record } = focus.snapshot();
-    // A record from an earlier Focus that never got back to its community
-    // does not block this one.
+    // This community's record, from this Focus or one still waiting to restore.
+    const carried = record?.scope === scope ? record : undefined;
+    // A record from an earlier Focus that never got back to its community does
+    // not block this one. A set that may not have landed is tried again.
     if (
       until !== undefined &&
-      record?.until !== until &&
-      failedUntil !== until
+      failedUntil !== until &&
+      savedUntil !== until &&
+      (record?.until !== until ||
+        (carried?.until === until && carried.published === undefined))
     ) {
       failedUntil = until;
-      const current = await statuses.current(viewer);
-      if (closed || focus.snapshot().until !== until) return;
-      const previous: StatusInput | null =
-        current && !isFocusStatus(current) && (current.text || current.emoji)
-          ? {
-              text: current.text,
-              emoji: current.emoji,
-              ...(current.expiresAt === undefined
-                ? {}
-                : { expiresAt: current.expiresAt }),
-            }
-          : null;
-      // Remember first: a crash after saving still restores the old status.
-      focus.recordStatus({ until, scope, previous });
-      try {
-        await statuses.save({ ...FOCUS_STATUS, expiresAt: until });
-        failedUntil = undefined;
-      } catch (error) {
-        focus.recordStatus(undefined);
-        throw error;
+      let previous: StatusInput | null;
+      if (carried?.until === until) previous = carried.previous;
+      else {
+        const current = await statuses.current(viewer);
+        if (closed || focus.snapshot().until !== until) return;
+        // A telescope still showing is an earlier Focus's: keep what it replaced.
+        previous = isFocusStatus(current)
+          ? (carried?.previous ?? null)
+          : current && (current.text || current.emoji)
+            ? {
+                text: current.text,
+                emoji: current.emoji,
+                ...(current.expiresAt === undefined
+                  ? {}
+                  : { expiresAt: current.expiresAt }),
+              }
+            : null;
       }
+      // Remember first: a crash or a failed save that still reached the
+      // relay keeps the old status to restore.
+      focus.recordStatus({ until, scope, previous });
+      await statuses.save({ ...FOCUS_STATUS, expiresAt: until });
+      failedUntil = undefined;
+      savedUntil = until;
       // Remember which event is Focus's, so a later status is never undone.
       const published = statuses.snapshot().get(viewer);
       const saved = focus.snapshot().status;

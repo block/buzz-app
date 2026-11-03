@@ -279,7 +279,6 @@ it("retries a failed set once the connection comes back, not before", async () =
   await flush();
   expect(report).toHaveBeenCalledTimes(1);
   expect(community.save).toHaveBeenCalledTimes(1);
-  expect(focus.snapshot().status).toBeUndefined();
   community.connection("connecting");
   await flush();
   community.connection("ready");
@@ -290,6 +289,49 @@ it("retries a failed set once the connection comes back, not before", async () =
     expiresAt: at(60),
   });
   expect(focus.snapshot().status).toMatchObject({ until: at(60) });
+});
+
+it("restores after a save that failed but still reached the relay", async () => {
+  const lunch = { text: "Lunch", emoji: "🥪" };
+  const community = relay(lunch);
+  const save = community.save.getMockImplementation();
+  community.save.mockImplementationOnce(async (input) => {
+    await save?.(input);
+    throw new Error("timed out");
+  });
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data, () => {});
+  focus.start(at(60));
+  await flush();
+  community.connection("connecting");
+  community.connection("ready");
+  await flush();
+  expect(focus.snapshot().status?.previous).toEqual(lunch);
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenLastCalledWith(lunch);
+});
+
+it("a new Focus before the earlier restore ran keeps the earlier status", async () => {
+  const lunch = { text: "Lunch", emoji: "🥪" };
+  const community = relay(lunch);
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data);
+  focus.start(at(60));
+  await flush();
+  // Focus ends while offline, then starts again before the restore can run.
+  community.connection("connecting");
+  focus.end();
+  focus.start(at(120));
+  community.connection("ready");
+  await flush();
+  expect(focus.snapshot().status).toMatchObject({
+    until: at(120),
+    previous: lunch,
+  });
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenLastCalledWith(lunch);
 });
 
 it("recognises only listed Solo conversations", () => {

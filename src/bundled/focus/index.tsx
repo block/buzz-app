@@ -30,7 +30,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
   });
   const banner = () => <FocusBanner focus={focus} />;
-  // Hold the gate and the sidebar restriction only while Focus is on, so
+  // Register the gate and the sidebar restriction only while Focus is on, so
   // disabling the plugin releases both even mid-Focus.
   ctx.effect(() => {
     let release: (() => void) | undefined;

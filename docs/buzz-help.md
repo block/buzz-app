@@ -54,6 +54,8 @@ dialog. Select a community and an agent, check the requested access, then select
 **Authorize**. The app completes setup automatically. Keys stay in Buzz.
 Only authorize an app when you started its setup. The displayed name comes from
 that app. Protected agents cannot use this connection. Keep Buzz open.
+An unavailable agent cannot authorize access. Enable its runtime plugin or use
+the Buzz copy that runs it.
 
 Use **Settings → External apps → Revoke access** to stop it. Changing community
 or identity also ends access. If a connection ends, start setup in the external

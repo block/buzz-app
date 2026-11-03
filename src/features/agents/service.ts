@@ -1074,6 +1074,7 @@ export type Agents = {
    * it; like any type whose agents run here, it has `run`. A kept handle
    * throws once this no longer holds, so ask again when acting. */
   handle(agent: AgentKey): AgentHandle | undefined;
+  canConnectExternal(agent: AgentKey): boolean;
   /** Creates a separate owner-approved external grant in the selected community. */
   connectExternal(
     agent: AgentKey,
@@ -2450,6 +2451,10 @@ export class AgentsService extends Service implements Agents {
   handle(key: AgentKey) {
     const owner = this.ctx.pluginOwner;
     return owner && this.runners.handle(key, owner.id);
+  }
+  canConnectExternal(key: AgentKey) {
+    const handle = this.runners.handle(key);
+    return !!handle && !handle.protection;
   }
   async connectExternal(
     key: AgentKey,

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -17,9 +18,14 @@ import type { RelayData } from "../relay/service";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 
 afterEach(cleanup);
-it.each(["Authorize", "Deny"])(
-  "requires the owner to choose %s before it sends a result",
-  async (action) => {
+it.each([
+  ["Authorize", true],
+  ["Deny", true],
+  ["unavailable runtime", false],
+  ["custody lost", true],
+] as const)(
+  "handles %s without an unintended authorization",
+  async (action, runtimeReady) => {
     const key = "a".repeat(64),
       viewer = "b".repeat(64),
       origin = "https://fixture.example.test";
@@ -42,6 +48,8 @@ it.each(["Authorize", "Deny"])(
     const inventory = {
       agents: [{ key, pubkey: key, name: "Test agent", place: "here" }],
     };
+    let available = runtimeReady;
+    const listeners = new Set<() => void>();
     let stop!: () => void;
     const closed = new Promise<void>((resolve) => {
       stop = resolve;
@@ -72,7 +80,16 @@ it.each(["Authorize", "Deny"])(
     render(
       <ExternalAuthorizationDialog
         connection={connection}
-        agents={{ subscribe, snapshot: () => inventory } as unknown as Agents}
+        agents={
+          {
+            subscribe: (listener: () => void) => {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+            snapshot: () => inventory,
+            canConnectExternal: () => available,
+          } as unknown as Agents
+        }
         communities={
           {
             subscribe,
@@ -86,11 +103,33 @@ it.each(["Authorize", "Deny"])(
     expect(
       await screen.findByRole("dialog", { name: "Authorize app" }),
     ).toBeVisible();
+    expect(connect).not.toHaveBeenCalled();
+    expect(deny).not.toHaveBeenCalled();
+    if (action === "custody lost") {
+      expect(screen.getByRole("button", { name: "Authorize" })).toBeEnabled();
+      act(() => {
+        available = false;
+        for (const listener of listeners) listener();
+      });
+    }
+    if (!available) {
+      expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("combobox", { name: "Agent" }));
+      expect(
+        screen.getByRole("option", { name: /Test agent/ }),
+      ).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByText(/Enable its runtime plugin/)).toBeVisible();
+      expect(connection.snapshot().pending).toBeDefined();
+      expect(connect).not.toHaveBeenCalled();
+      cleanup();
+      release();
+      return;
+    }
     expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
       "Test agent",
     );
-    expect(connect).not.toHaveBeenCalled();
-    expect(deny).not.toHaveBeenCalled();
     await userEvent.setup().click(screen.getByRole("button", { name: action }));
     if (action === "Authorize") {
       await waitFor(() => expect(authorize).toHaveBeenCalledOnce());

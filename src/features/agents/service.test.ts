@@ -12289,6 +12289,47 @@ it("exposes agent execution only inside an Attention source run", async () => {
   await expect(input.spawn("command", {})).rejects.toThrow();
 });
 
+it.each(["disabled runtime", "lost custody"])(
+  "reports external connection availability after %s and recovery",
+  async (reason) => {
+    let active = true;
+    const listeners = new Set<() => void>();
+    const f = await setup({
+      pluginActive: () => active,
+      subscribePlugin: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+      expect(f.service.canConnectExternal(bot)).toBe(true);
+      if (reason === "disabled runtime") {
+        active = false;
+        for (const listener of listeners) listener();
+      } else {
+        f.native.claim.mockResolvedValue(false);
+        f.emit({ events: [event("1", { tags: [["p", bot]] })] });
+      }
+      await vi.waitFor(() =>
+        expect(f.plugin.agents.handle(bot)).toBeUndefined(),
+      );
+      expect(f.service.find(bot)?.place).toBe("here");
+      expect(f.service.canConnectExternal(bot)).toBe(false);
+      active = true;
+      f.native.claim.mockResolvedValue(true);
+      for (const listener of listeners) listener();
+      f.emit({ events: [event("2", { tags: [["p", bot]] })] });
+      await vi.waitFor(() =>
+        expect(f.service.canConnectExternal(bot)).toBe(true),
+      );
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
 it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   "ends an external grant on %s and refuses later tool calls",
   async (reason) => {

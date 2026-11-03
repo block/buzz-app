@@ -75,7 +75,13 @@ function Fixture() {
       <ExternalConnectionSettings connection={connection} />
       <ExternalAuthorizationDialog
         connection={connection}
-        agents={{ subscribe, snapshot: () => inventory } as unknown as Agents}
+        agents={
+          {
+            subscribe,
+            snapshot: () => inventory,
+            canConnectExternal: () => true,
+          } as unknown as Agents
+        }
         communities={
           {
             subscribe,

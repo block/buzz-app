@@ -151,6 +151,15 @@ function ReadyConsent({
 }: ConsentProps & { session: RelaySession; agents: Agents }) {
   const choices = useAgentChoices(session, false, true);
   const inventory = useSyncExternalStore(agents.subscribe, agents.snapshot);
+  const availability = useSyncExternalStore(agents.subscribe, () =>
+    JSON.stringify(
+      agents
+        .snapshot()
+        .agents.filter((agent) => agents.canConnectExternal(agent.key))
+        .map((agent) => agent.key),
+    ),
+  );
+  const available = new Set<string>(JSON.parse(availability));
   const state = useSyncExternalStore(connection.subscribe, connection.snapshot);
   const [selected, setSelected] = useState("");
   const eligible = inventory.agents.filter(
@@ -160,9 +169,10 @@ function ReadyConsent({
       !agent.protection &&
       choices.selectable.some((choice) => choice.pubkey === agent.pubkey),
   );
+  const usable = eligible.filter((agent) => available.has(agent.key));
   const chosen =
-    eligible.find((agent) => agent.key === selected) ??
-    (eligible.length === 1 ? eligible[0] : undefined);
+    usable.find((agent) => agent.key === selected) ??
+    (usable.length === 1 ? usable[0] : undefined);
   return (
     <ConsentDialog
       connection={connection}
@@ -178,7 +188,8 @@ function ReadyConsent({
           <Button
             disabled={!chosen || !state.available}
             onClick={() => {
-              if (chosen) void connection.approve(chosen.key);
+              if (chosen && agents.canConnectExternal(chosen.key))
+                void connection.approve(chosen.key);
             }}
           >
             Authorize
@@ -197,11 +208,21 @@ function ReadyConsent({
             options: eligible.map((agent) => ({
               value: agent.key,
               label: agent.name,
+              disabled: !available.has(agent.key),
+              description: available.has(agent.key)
+                ? undefined
+                : "Unavailable in this copy of Buzz.",
             })),
           },
         ]}
         onValueChange={setSelected}
       />
+      {usable.length < eligible.length && (
+        <p className="m-0 text-body-sm text-secondary">
+          Enable its runtime plugin, or use the Buzz copy that runs this agent.
+          You can deny this request and start setup there.
+        </p>
+      )}
       {!eligible.length && (
         <p className="m-0 text-body-sm text-secondary">
           No eligible agent runs here. Start an agent in this community.

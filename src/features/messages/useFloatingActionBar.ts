@@ -143,9 +143,12 @@ export function useFloatingActionBar(
         y <= content.bottom
       )
         return true;
-      if (y < toolbar.bottom || y > content.bottom) return false;
-      const span = content.bottom - toolbar.bottom;
-      const fraction = span > 0 ? (y - toolbar.bottom) / span : 0;
+      // Browser hit testing can round a fractional toolbar edge inward.
+      // Keep the active path through that edge pixel until the bar takes over.
+      const toolbarBottom = Math.floor(toolbar.bottom);
+      if (y < toolbarBottom || y > content.bottom) return false;
+      const span = content.bottom - toolbarBottom;
+      const fraction = span > 0 ? (y - toolbarBottom) / span : 0;
       const left = Math.min(
         content.left,
         toolbar.left + (content.left - toolbar.left) * fraction,

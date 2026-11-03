@@ -80,36 +80,18 @@ it("matches the grouped invitation wording and keeps pronouns grammatical", () =
     { id: brain, text: "Brain" },
   ]);
   expect(
-    membershipDescription(
-      [row("1", joined(pinky, pinky)), row("2", joined(brain, brain))],
-      profiles,
-      wes,
-    ).text,
-  ).toBe("Pinky joined along with Brain");
-  expect(
-    membershipDescription(
-      [row("1", joined(wes, pinky)), row("2", joined(brain, brain))],
-      profiles,
-      wes,
-    ).text,
-  ).toBe("Pinky arrived along with Brain");
-  expect(
     membershipDescription([row("1", removed(pinky, wes))], profiles, wes).text,
   ).toBe("You were removed by Pinky");
 });
-it("groups departures/removals without attributing a removal to the wrong actor", () => {
-  const rows = [
-    row("1", left(pinky)),
-    row("2", left(brain)),
-    row("3", removed(wes, pinky)),
-    row("4", removed(brain, wes)),
-  ];
-  expect(membershipRows(rows).map((r) => r.id)).toEqual(["2", "3", "4"]);
-  expect(membershipDescription(rows.slice(0, 2), profiles).text).toBe(
-    "Pinky, along with Brain, left the channel",
-  );
+it("groups removals without attributing a removal to the wrong actor", () => {
+  const rows = [row("3", removed(wes, pinky)), row("4", removed(brain, wes))];
+  expect(membershipRows(rows).map((r) => r.id)).toEqual(["4"]);
+  const summary = membershipDescription(rows, profiles);
+  expect(summary.text).toBe("Pinky and 1 other were removed");
+  expect(summary.title).toContain("Pinky was removed by Wes");
+  expect(summary.title).toContain("Wes was removed by Brain");
 });
-it("messages, day boundaries and one-hour gaps break groups; older pages keep existing keys", () => {
+it("only conversation entries break membership groups; long gaps and midnight keep stable keys", () => {
   const a = row("a", joined(wes, pinky), 200),
     b = row("b", joined(wes, brain), 210);
   expect(membershipRows([a, b]).map((r) => r.id)).toEqual(["b"]);
@@ -118,7 +100,7 @@ it("messages, day boundaries and one-hour gaps break groups; older pages keep ex
   expect(membershipRows([a, row("chat"), b])).toHaveLength(3);
   expect(
     membershipRows([a, { ...b, createdAt: a.createdAt + 3601 }]),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   expect(
     membershipRows([a, { ...b, createdAt: a.createdAt + 3600 }]),
   ).toHaveLength(1);
@@ -128,33 +110,61 @@ it("messages, day boundaries and one-hour gaps break groups; older pages keep ex
       { ...a, createdAt: midnight - 1 },
       { ...b, createdAt: midnight },
     ]),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
 });
-it("repeated self-joins followed by departure preserve the complete lifecycle", () => {
-  const rows = [
-    row("1", joined(pinky, pinky)),
-    row("2", joined(pinky, pinky)),
-    row("3", left(pinky)),
-  ];
-  const grouped = membershipRows(rows);
-  expect(grouped).toHaveLength(1);
-  expect(grouped[0]?.membershipRows).toEqual(rows);
-  expect(membershipDescription(rows, profiles).text).toBe(
-    "Pinky joined and left the channel",
-  );
-  // An addition is not a self-join; a departure must remain visible separately.
+it("hides self-joins and voluntary leaves before grouping, preserving messages and visible keys", () => {
+  const hidden = [row("join", joined(pinky, pinky)), row("leave", left(pinky))];
+  expect(membershipRows(hidden)).toEqual([]);
+  expect(membershipDescription(hidden, profiles).text).toBe("");
+  const addition = row("added", joined(wes, pinky));
+  const removal = row("removed", removed(wes, brain));
+  const message = row("message");
+  expect(membershipRows([addition, ...hidden])).toEqual([addition]);
   expect(
-    membershipRows([row("1", joined(wes, pinky)), row("2", left(pinky))]),
-  ).toHaveLength(2);
+    membershipRows([addition, ...hidden, removal])[0]?.membershipRows,
+  ).toEqual([addition, removal]);
+  expect(membershipRows([addition, ...hidden, message, removal])).toEqual([
+    addition,
+    message,
+    removal,
+  ]);
+});
+it("collapses high-volume mixed activity and deduplicates repeat arrivals without swallowing messages", () => {
+  const arrivals = Array.from({ length: 148 }, (_, index) => {
+    const id = `member-${index}`;
+    return row(String(index), joined("adder", id));
+  });
+  const activity = [
+    ...arrivals.slice(0, 25),
+    row("remove", removed(wes, pinky)),
+    ...arrivals.slice(25),
+    ...arrivals,
+  ];
+  const grouped = membershipRows([...activity, row("message")]);
+  expect(grouped).toHaveLength(2);
+  expect(grouped[0]?.membershipRows).toEqual(activity);
+  const summary = membershipDescription(
+    grouped[0]?.membershipRows ?? [],
+    profiles,
+  );
+  expect(summary.text).toBe(
+    "member-0 and 147 others were added · Pinky was removed",
+  );
+  const preview = summary.parts.find((part) => part.preview)?.preview;
+  expect(preview?.members).toHaveLength(148);
+  expect(preview?.members[0]).toEqual({ id: "member-0", name: "member-0" });
+  expect(preview?.members.at(-1)).toEqual({
+    id: "member-147",
+    name: "member-147",
+  });
+  expect(summary.title).toContain("Pinky was removed by Wes");
+  expect(summary.title.match(/member-0 was added by adder/g)).toHaveLength(1);
+  expect(grouped[1]?.id).toBe("message");
 });
 it("every grouped input remains represented for mixed three-event sequences", () => {
   const changes = [
     joined(wes, pinky),
-    joined(pinky, pinky),
-    joined(brain, brain),
     joined(brain, pinky),
-    left(pinky),
-    left(brain),
     removed(wes, pinky),
     removed(brain, pinky),
   ];
@@ -180,13 +190,13 @@ it("every grouped input remains represented for mixed three-event sequences", ()
         }
       }
 });
-it("caps visible names/avatars with an overflow count, retaining all names in the title", () => {
+it("keeps one visible name and a labelled overflow control with capped decorative avatars", () => {
   const rows = [pinky, brain, wes, "d".repeat(64)].map((id, i) =>
-    row(String(i), joined(id, id)),
+    row(String(i), joined("adder", id)),
   );
   const group = membershipRows(rows)[0];
   assert.exists(group);
-  const html = renderToStaticMarkup(
+  const view = render(
     <MembershipRow
       row={group}
       profiles={profiles}
@@ -195,13 +205,21 @@ it("caps visible names/avatars with an overflow count, retaining all names in th
       day={false}
     />,
   );
-  expect(html).toContain("Pinky joined along with Brain, you, and 1 other");
-  expect(html).toContain("+1");
-  expect(html).toContain('aria-hidden="true"');
-  expect(html).not.toContain("button");
-  expect(html).not.toContain("relay");
-  expect(html).toContain("data-membership-row");
-  expect(html).toContain("dddddddddd");
+  expect(view.container.querySelector("p")).toHaveTextContent(
+    "Pinky and 3 others were added",
+  );
+  expect(screen.getByRole("button", { name: "3 others" })).toHaveAttribute(
+    "aria-haspopup",
+    "dialog",
+  );
+  expect(
+    view.container.querySelector('[aria-hidden="true"]'),
+  ).toHaveTextContent("+1");
+  expect(view.container.querySelector("p")).toHaveAttribute(
+    "title",
+    "Pinky was added by adder; Brain was added by adder; You were added by adder; dddddddddd was added by adder",
+  );
+  view.unmount();
 });
 it.each([false, true])(
   "keeps small membership media requests with agent hint %s",
@@ -210,7 +228,7 @@ it.each([false, true])(
     const media = vi.fn((url: string) => url);
     const html = renderToStaticMarkup(
       <MembershipRow
-        row={row("join", joined(pinky, pinky))}
+        row={row("join", joined(wes, pinky))}
         profiles={new Map([[pinky, { name: "Pinky", picture }]])}
         agentPubkeys={new Set(agent ? [pinky] : [])}
         media={media}

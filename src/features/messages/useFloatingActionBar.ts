@@ -249,6 +249,7 @@ export function useFloatingActionBar(
       bar.style.visibility = blocked ? "hidden" : "";
     };
     const hide = () => {
+      row.removeAttribute("data-actions-revealed");
       contentBounds.current = null;
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
       // Closed popovers return to their slot's containing block. Viewport offsets

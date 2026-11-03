@@ -894,8 +894,14 @@ channel is still loading, then holds about a second and fades over about a
 second. A repeat arrival restarts the cue. Reduced motion holds the tint the
 same time and removes it without fading.
 
-The message hover toolbar uses the 12px rounded-container radius
-with a 2px inset. Its independent icon actions retain their shared 10px corners.
+The horizontal message hover toolbar sits above the bubble, with reaction,
+reply, copy-link and overflow icon actions. It uses `popover-surface` with
+a 12px control radius and 2px inset. Its icon actions use `text-subtle` at rest
+and retain the shared hover, focus and disabled states and 10px corners.
+
+Message-author artwork uses Avatar `default` (32px) in channel/DM timelines,
+`small` (24px) in threads, and `tiny` (16px) in nested replies. Profile triggers
+retain a 32px target even when their artwork is smaller.
 
 Secondary actions on rows inside a compact inset container, currently queued
 follow-ups, use Button `subtle-muted` with `size="caption"`: a 32px control

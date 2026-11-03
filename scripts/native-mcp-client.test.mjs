@@ -33,8 +33,8 @@ function listening(server) {
 }
 
 // A fake bridge that reports `state`, or sends it as is when it is a string, and
-// answers other commands with its port.
-async function serveApp(state, from = start) {
+// answers other commands with its port. `hold` delays the state reply.
+async function serveApp(state, from = start, hold) {
   for (let port = from; port < from + 50; port++) {
     const app = new WebSocketServer({ host: "127.0.0.1", port });
     try {
@@ -45,10 +45,14 @@ async function serveApp(state, from = start) {
     }
     app.commands = [];
     app.on("connection", (socket) =>
-      socket.on("message", (raw) => {
+      socket.on("message", async (raw) => {
         const { id, command, args } = JSON.parse(raw);
         const probe = args?.command === "plugin:mcp-bridge|get_backend_state";
         if (!probe) app.commands.push(command);
+        if (probe && hold) {
+          hold.probed();
+          await hold.gate;
+        }
         socket.send(
           probe && typeof state === "string"
             ? state
@@ -139,4 +143,28 @@ it.each([
   await expect(connect(startRelay(identifier, start), headers)).rejects.toThrow(
     "401",
   );
+});
+
+it("drops a command whose client leaves while the app is being found", async () => {
+  const hold = {};
+  hold.gate = new Promise((resolve) => {
+    hold.release = resolve;
+  });
+  const probed = new Promise((resolve) => {
+    hold.probed = resolve;
+  });
+  const { app, port } = await serveApp(instance, start, hold);
+  const appClosed = new Promise((resolve) =>
+    app.once("connection", (socket) => socket.once("close", resolve)),
+  );
+  const client = await connect(startRelay(identifier, port));
+
+  client.send(JSON.stringify({ id: "1", command: "late", args: {} }));
+  await probed;
+  const closed = new Promise((resolve) => client.once("close", resolve));
+  client.close();
+  await closed;
+  hold.release();
+  await appClosed;
+  expect(app.commands).toEqual([]);
 });

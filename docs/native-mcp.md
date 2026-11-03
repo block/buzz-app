@@ -20,7 +20,9 @@ generated test keys and a local test relay. To let an agent test against a live
 community as yourself:
 
 - Writes such as messages, reactions and joins publish as the signed-in key.
-  Tell the agent where it may write, such as a scratch channel.
+  Tell the agent where it may write, such as a scratch channel. A join also adds
+  the community to the account's list, which syncs to your other devices and
+  is not removed by sync ([known communities](communities.md#known-communities)).
 - Do not let an agent sign out. Sign out deletes the shared debug identity for
   every debug build and removes saved organization sign-ins for every profile.
 - A person completes any organization sign-in in the browser. The bridge never
@@ -49,15 +51,19 @@ port derived from the worktree path, and prints both; `--print` prints them
 without launching. Each worktree owns one test instance, and relaunches keep its
 app data. It also sets `BUZZODZ_PROFILE` to `native-mcp-` and the identifier
 suffix unless the environment sets one. Other arguments pass to `just desktop`,
-such as `--port` for Vite. The equivalent manual launch is:
+such as `--port` for Vite. A manual launch looks like this:
 
 ```sh
-BUZZ_DEV_VIEWER= BUZZ_NATIVE_MCP_PORT=19423 bin/just desktop --features native-mcp \
+BUZZ_DEV_VIEWER= BUZZ_NATIVE_MCP_PORT=19423 BUZZODZ_PROFILE=native-mcp-012345abcdef \
+  bin/just desktop --features native-mcp \
   --config src-tauri/tauri.native-mcp.conf.json \
   --config '{"identifier":"dev.local.buzz.foundation.nexus-test-012345abcdef"}'
 ```
 
 Replace the example identifier suffix for each owned test instance. Keep `BUZZ_DEV_VIEWER` explicitly empty to disable any inherited legacy broker pin.
+The repository's `buzz-native` client accepts only the instance the launcher
+derives for this worktree, so it refuses one launched with another identifier
+or port.
 Do not add
 this configuration to ordinary desktop or release recipes. A helper that uses
 `TAURI_CONFIG` must merge the test overlay and its identifier into that JSON

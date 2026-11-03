@@ -92,6 +92,8 @@ export function startRelay(identifier, port) {
                 .on("message", (reply) => client.send(reply.toString()))
                 .on("close", () => client.close());
           }
+          // The client may have gone while the app was being found.
+          if (client.readyState !== WebSocket.OPEN) return;
           if (upstream?.readyState === WebSocket.OPEN)
             return upstream.send(text);
           const { id } = JSON.parse(text);

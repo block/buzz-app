@@ -246,11 +246,13 @@ export function PluginImport({
     return holdReview();
   }, [open, holdReview]);
   const claimRequest = useEffectEvent((next: PluginInstallRequest) => {
+    // The store refuses a confirmed request first: its install, perhaps in a
+    // replaced importer, still reports the outcome.
+    if (onRequestClaimed && !onRequestClaimed(next.id)) return;
     if (open || loading || discarding || preview || pending.current) {
       onRequestSettled?.(next.id, "unavailable");
       return;
     }
-    if (onRequestClaimed && !onRequestClaimed(next.id)) return;
     boundId.current = next.id;
     setBound(next);
     setRepository(next.source.repository);

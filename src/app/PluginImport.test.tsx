@@ -2744,6 +2744,63 @@ it("reports a confirmed install's real outcome after its review unmounts mid-ins
   expect(requests.snapshot()).toBeUndefined();
 });
 
+it("keeps a confirmed install's outcome when a link replaces its importer mid-install", async () => {
+  const { harness, requests, outcome, view, finish } =
+    confirmedThenUnmounted(true);
+  fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() => expect(harness.installImport).toHaveBeenCalledOnce());
+  const request = requests.snapshot();
+  view.rerender(
+    <PluginImport
+      key="link"
+      {...harness.element.props}
+      initialGit={{
+        repository: "https://example.com/other.git",
+        reference: "main",
+      }}
+      request={request}
+      onRequestSettled={requests.settle}
+      onRequestClaimed={requests.claim}
+      onRequestConfirmed={requests.confirm}
+      onRequestEnded={requests.end}
+      holdReview={requests.holdReview}
+    />,
+  );
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(requests.snapshot()?.id).toBe(request?.id);
+  await act(async () => finish());
+  await expect(outcome).resolves.toBe("installed");
+});
+
+it("refuses an unconfirmed request when a link has already opened the importer", async () => {
+  const harness = requestedHarness(requestedPreview(pinned));
+  const requests = createPluginInstallRequests();
+  const props = {
+    ...harness.element.props,
+    initialGit: {
+      repository: "https://example.com/other.git",
+      reference: "main",
+    },
+    onRequestSettled: requests.settle,
+    onRequestClaimed: requests.claim,
+    onRequestConfirmed: requests.confirm,
+    onRequestEnded: requests.end,
+    request: undefined,
+  };
+  const view = render(<PluginImport {...props} />);
+  const outcome = requests.request(
+    { repository: "https://example.com/plugins.git", reference: "v1" },
+    { id: "example.market", name: "Market" },
+  );
+  view.rerender(<PluginImport {...props} request={requests.snapshot()} />);
+  await expect(outcome).resolves.toBe("unavailable");
+});
+
 it("cancels a confirmed request whose install fails after its review unmounts", async () => {
   const { harness, outcome, view, finish } = confirmedThenUnmounted(false);
   fireEvent.click(await screen.findByRole("button", { name: "Find plugins" }));

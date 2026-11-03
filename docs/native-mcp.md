@@ -71,7 +71,7 @@ and `huddle-window`. It is outside the auto-loaded `capabilities/` directory.
 It grants neither the bridge's default permission set nor `execute-command`.
 The existing signed host commands and plugin sandbox still apply.
 
-## Connect and verify the target
+## Connect
 
 The bridge binds only to `127.0.0.1` and takes the first free port of the 100
 from its base port. The repository's `.mcp.json` registers
@@ -80,11 +80,12 @@ from its base port. The repository's `.mcp.json` registers
 such as Claude Code, offer its tools after approval.
 
 Two worktrees can share a port range, and the client connects to whichever app
-answers. So the script points the client at a loopback relay instead. Before
-each command, the relay confirms the app it forwards to reports this worktree's
-identifier, a debug build and a `main` window. If no app in the 100 ports does,
-the command fails and the next one checks again. Start `driver_session` without
-a port: a port passed there bypasses the relay.
+answers, so the script points it at a loopback relay. The relay connects only to
+an app that reports this worktree's identifier, a debug build and a `main`
+window, and checks again on every new connection. Without one, a command fails
+and the next one looks again. When the app quits, the relay disconnects the
+client. Start `driver_session` without a port: a port passed there bypasses the
+relay.
 
 The pinned bridge revision is
 `1d5105e72835b28ca05a75bcd612b9127c12fe94` from

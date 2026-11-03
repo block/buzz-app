@@ -761,6 +761,34 @@ describe("Leave confirmation across access revocation", () => {
   );
 
   it.each(
+    (["archive", "delete"] as const).flatMap((action) =>
+      ["scoped", "global"].map((scope) => ({ action, scope })),
+    ),
+  )(
+    "$scope revocation still aborts published $action",
+    async ({ action, scope }) => {
+      const h = harness();
+      const publish = h.publish.getMockImplementation();
+      assert(publish);
+      h.publish.mockImplementationOnce(async (event) => {
+        await publish(event);
+        h.owner.cancel(scope === "scoped" ? [id] : undefined);
+      });
+      try {
+        await expect(h.owner.capability.run(action, id)).rejects.toBeInstanceOf(
+          ChannelLifecycleUnconfirmed,
+        );
+        expect(h.read).toHaveBeenCalledTimes(2);
+        expect(h.publish).toHaveBeenCalledOnce();
+        expect(h.acceptDiscovery).not.toHaveBeenCalled();
+        expect(h.removed).not.toHaveBeenCalled();
+      } finally {
+        h.owner.dispose();
+      }
+    },
+  );
+
+  it.each(
     ["caller", "clear", "dispose", "deadline"].flatMap((stop) =>
       ["ACK", "readback"].map((phase) => ({ stop, phase })),
     ),

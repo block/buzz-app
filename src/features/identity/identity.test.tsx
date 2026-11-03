@@ -1219,6 +1219,7 @@ it("a landing URL is looked up before sign-in, Sign in with email from the conne
   expect(
     screen.getByRole("heading", { name: "Get started with Buzz" }),
   ).toBeVisible();
+  expect(screen.getByText("Signed in as a@example.com")).toBeVisible();
   expect(invoke).not.toHaveBeenCalledWith("identity_create", {});
   await createMyKey(user);
   // Setup ran (the key exists) and landed on the find page for that URL, not
@@ -4018,15 +4019,17 @@ it("Use an existing key opens Enter your private key, classifies what is pasted,
   expect(
     screen.getByText(/Paste your private key to sign in to Buzz\./),
   ).toBeVisible();
-  // Visible and focused on arrival; nothing to continue with yet.
+  // Masked and focused on arrival; reveal requires an explicit action.
   expect(keyField()).toHaveFocus();
-  expect(keyField()).toHaveAttribute("type", "text");
+  expect(keyField()).toHaveAttribute("type", "password");
   expect(keyField()).toHaveAttribute("autocomplete", "off");
   expect(keyField()).toHaveAttribute("spellcheck", "false");
   expect(continueWithKey()).toBeDisabled();
-  expect(
-    screen.queryByRole("button", { name: "Reveal private key" }),
-  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  expect(keyField()).toHaveAttribute("type", "text");
+  await user.click(screen.getByRole("button", { name: "Hide private key" }));
+  expect(keyField()).toHaveAttribute("type", "password");
+  await user.click(keyField());
   expect(screen.queryByRole("alert")).toBeNull();
   await user.paste("hello");
   expect(screen.getByRole("alert")).toHaveTextContent(invalidKeyCopy);
@@ -4051,7 +4054,7 @@ it("Use an existing key opens Enter your private key, classifies what is pasted,
   );
   expect(screen.queryByText(owned.pubkey)).toBeNull();
   expect(continueWithKey()).toBeEnabled();
-  expect(keyField()).toHaveAttribute("type", "text");
+  expect(keyField()).toHaveAttribute("type", "password");
   expect(keyField()).toHaveValue(ownedNsec);
   // Back discards the typed key and offers every choice again; no key was made.
   await user.click(screen.getByRole("button", { name: "Back" }));
@@ -4280,7 +4283,7 @@ it("a dropped or chosen key file fills the field from its first line, and an ove
     }),
   );
   await waitFor(() => expect(keyField()).toHaveValue(ownedNsec));
-  expect(keyField()).toHaveAttribute("type", "text");
+  expect(keyField()).toHaveAttribute("type", "password");
   expect(keyField()).toHaveAccessibleDescription(
     `Public identity: ${npubEncode(owned.pubkey)}`,
   );

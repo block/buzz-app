@@ -74,6 +74,7 @@ export function ProfileStep({
         <p className="mt-2 text-body text-subtle">
           You need to enter a name to join a community. You can change it later.
         </p>
+        <p className="mt-2 break-all text-body-sm text-subtle">{found.url}</p>
       </div>
       <WireframePanel>
         <ProfileFields

@@ -94,6 +94,7 @@ it("publishes a description-only edit to an existing community profile", async (
   await waitFor(() =>
     expect(screen.getByLabelText("Display name")).toHaveFocus(),
   );
+  expect(screen.getByText("https://relay.example")).toBeVisible();
   await user.clear(description);
   await user.type(description, "After");
   // A stray outside click keeps the dialog and the typed profile.
@@ -219,6 +220,7 @@ it("names exact relay claim refusals and keeps other failures generic", async ()
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await user.type(await screen.findByLabelText("Invite code"), "v2.abc");
+  expect(screen.getByText("https://relay.example")).toBeVisible();
   for (const [code, shown] of [
     [
       "invite_exhausted",

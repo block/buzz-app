@@ -26,7 +26,8 @@ the interface unless an available tool actually supports that action.
   community policy links open separately.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
-  The key-import field displays the entered key as plain text for checking.
+  The key-import field masks your key. Use the eye inside the field to reveal
+  or hide it. Check the signed-in email before creating a key.
   Setup then creates a new key or takes an existing private key, and may link
   it to the signed-in account. **Back it up** explicitly enables online backup;
   **Not now** continues with automatic backup disabled. A name is required to

@@ -618,6 +618,7 @@ export function Welcome({
       case "key-choice":
         return (
           <KeyChoice
+            email={auth.account?.email}
             onCreate={() => {
               backupContinuation.current = finish;
               void setup.start([createKey(identity), link], {

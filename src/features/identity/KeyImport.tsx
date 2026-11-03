@@ -4,6 +4,9 @@ import { npubEncode } from "nostr-tools/nip19";
 import { useFileDrop } from "../messages/use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
+import { EyeIcon, EyeSlashIcon } from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { Input } from "../../shared/design-system/ui/Input";
 import styles from "./IdentitySetup.module.css";
 import { classifyKeyImport, readKeyFile } from "./key-import";
@@ -35,6 +38,7 @@ export function KeyImport({
   onImport: (nsec: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
   const form = useRef<HTMLFormElement>(null);
@@ -138,17 +142,32 @@ export function KeyImport({
                 >
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
-                      <Input
-                        type="text"
-                        autoComplete="off"
-                        autoCorrect="off"
-                        autoCapitalize="off"
-                        spellCheck={false}
-                        placeholder="nsec1…"
-                        value={text}
-                        onValueChange={change}
-                        autoFocus
-                      />
+                      <InputGroup
+                        trailing={
+                          <IconButton
+                            type="button"
+                            aria-label={
+                              revealed
+                                ? "Hide private key"
+                                : "Reveal private key"
+                            }
+                            icon={revealed ? <EyeSlashIcon /> : <EyeIcon />}
+                            onClick={() => setRevealed(!revealed)}
+                          />
+                        }
+                      >
+                        <Input
+                          type={revealed ? "text" : "password"}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          placeholder="nsec1…"
+                          value={text}
+                          onValueChange={change}
+                          autoFocus
+                        />
+                      </InputGroup>
                     </div>
                     <div className="shrink-0">
                       <Button

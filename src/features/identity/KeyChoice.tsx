@@ -4,10 +4,12 @@ import { OnboardingScreen } from "./OnboardingScreen";
 
 /** Create and link a key, or import one, before choosing optional backup. */
 export function KeyChoice({
+  email,
   onCreate,
   onImport,
   onSwitchAccount,
 }: {
+  email?: string | undefined;
   /** Create the key, link it to the account, then offer optional backup. */
   onCreate: () => void;
   /** The user already has a key: open the import page. */
@@ -32,6 +34,11 @@ export function KeyChoice({
             We’ll create a private key that represents you in Buzz. You can also
             use it in other compatible apps.
           </p>
+          {email && (
+            <p className="break-words text-body-sm text-subtle">
+              Signed in as {email}
+            </p>
+          )}
         </div>
       }
     >

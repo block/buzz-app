@@ -91,8 +91,8 @@ backup offer.
 **Not linked** pauses on **Get started with Buzz**. **Create my key** creates
 and links a key; **Use an existing key** opens **Enter your private key**. **Use a different
 account** signs out the first-run session and returns to the welcome screen.
-The browser may retain its portal session. This choice page intentionally omits
-the signed-in email line.
+The browser may retain its portal session. This choice page shows the signed-in
+email so the account can be checked before linking a key.
 
 Creation does not authorize backup. After creating and linking, Buzz asks
 **Back up your key?**, with the disclosure that Block can restore the encrypted
@@ -103,7 +103,8 @@ skipped with automatic backup disabled. First run never reveals a newly created
 key; Settings → Identity can reveal it later.
 
 **Enter your private key** accepts a plain-text `nsec1…` key or a text file up to 1 KiB.
-The public identity preview uses npub. NIP-49 encrypted backups are not supported;
+The input stays masked until **Reveal private key** is selected using the eye
+inside the field; **Hide private key** masks it again. The public identity preview uses npub. NIP-49 encrypted backups are not supported;
 invalid input stays on the form. **I lost my key** sits under the input. **Back**
 discards the draft. A successful account-backed import links the key and offers
 backup unless that key already has a backup. An import without Builderlab

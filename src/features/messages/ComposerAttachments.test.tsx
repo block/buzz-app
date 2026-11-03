@@ -16,6 +16,7 @@ import { apply as installVoiceNotes } from "../../bundled/voice-notes";
 import type { AttachmentRenderer } from "../conversation/contracts";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { ComposerAttachmentViewer } from "./ComposerAttachmentViewer";
+import { UPLOAD_FAILURES } from "../relay/attachments";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
 
@@ -343,21 +344,19 @@ it.each([
       />,
     );
     expect(
-      screen.getByText("Upload failed. Retry or remove it to send.", {
+      screen.getByText("The relay rejected this file.", {
         selector: "p",
       }),
     ).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe(
-      "The relay rejected this file.",
+      `${name}: The relay rejected this file.`,
     );
     const retryButton = screen.getByRole("button", { name: `Retry ${name}` });
     const removeButton = screen.getByRole("button", { name: `Remove ${name}` });
     expect(retryButton.textContent).toBe("Retry");
     expect(removeButton.textContent).toBe("Remove");
     act(() => retryButton.focus());
-    expect((await screen.findByRole("tooltip")).textContent).toBe(
-      "The relay rejected this file. Press Delete to remove.",
-    );
+    expect(retryButton.getAttribute("title")).toBeNull();
     fireEvent.click(retryButton);
     expect(retry).toHaveBeenCalledWith("failed-file");
     expect(document.activeElement).toBe(
@@ -366,13 +365,43 @@ it.each([
     fireEvent.keyDown(retryButton, {
       key: "Delete",
     });
-    expect(remove).toHaveBeenCalledWith("failed-file");
-    remove.mockClear();
+    fireEvent.keyDown(retryButton, { key: "Backspace" });
+    expect(remove).not.toHaveBeenCalled();
     fireEvent.click(removeButton);
     expect(remove).toHaveBeenCalledExactlyOnceWith("failed-file");
     expect(retry).toHaveBeenCalledOnce();
   },
 );
+
+it.each([
+  UPLOAD_FAILURES.duration,
+  UPLOAD_FAILURES.denied,
+  "Upload paused. Retry to continue.",
+])("shows the specific upload guidance: %s", (error) => {
+  render(
+    <ComposerAttachments
+      items={[
+        {
+          id: "clip",
+          file: new File(["video"], "clip.mp4", { type: "video/mp4" }),
+          status: "error",
+          error,
+        },
+      ]}
+      disabled={false}
+      remove={() => {}}
+      retry={() => {}}
+      media={() => undefined}
+    />,
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert.textContent).toBe(`clip.mp4: ${error}`);
+  expect(screen.getByText(error, { selector: "p" })).toBe(alert);
+  expect(alert.classList.contains("sr-only")).toBe(false);
+  expect(
+    screen.queryByText("Upload failed. Retry or remove it to send."),
+  ).toBeNull();
+});
 
 it("explains errors without service details and disables both recovery actions", () => {
   const item: DraftAttachment = {
@@ -384,8 +413,8 @@ it("explains errors without service details and disables both recovery actions",
   const root = render(
     <ComposerAttachments {...props} items={[item]} disabled />,
   );
-  expect(screen.getByRole("alert").textContent).toContain(
-    "Upload failed. Retry or remove it to send.",
+  expect(screen.getByRole("alert").textContent).toBe(
+    "photo.png: Upload failed. Retry or remove it to send.",
   );
   for (const action of ["Retry", "Remove"]) {
     const button = screen.getByRole("button", { name: `${action} photo.png` });

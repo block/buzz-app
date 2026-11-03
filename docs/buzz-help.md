@@ -89,9 +89,10 @@ the interface unless an available tool actually supports that action.
   "no results".
 - **File sharing** is available through **Attach files** in the composer when
   uploads are available. Files and media are shared with the conversation's
-  members. If an upload fails, its attachment shows **Retry** and **Remove**.
-  Retry the upload or remove that attachment to unblock Send; your typed message
-  stays in the composer. Do not promise support for every file type or size.
+  members. If an upload fails, its attachment shows the reason, **Retry**, and
+  **Remove**. Follow the error's guidance before retrying, or remove the attachment
+  to unblock Send; your typed message stays in the composer. Do not promise
+  support for every file type or size.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

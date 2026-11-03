@@ -414,8 +414,9 @@ function AttachmentItem({
         {failed && <span className="sr-only">Preview unavailable</span>}
       </div>
       {uploadFailed && (
-        <p className={styles.error}>
-          Upload failed. Retry or remove it to send.
+        <p className={styles.error} role="alert">
+          <span className="sr-only">{item.file.name}: </span>
+          {item.error || "Upload failed. Retry or remove it to send."}
         </p>
       )}
       <div
@@ -424,23 +425,10 @@ function AttachmentItem({
       >
         {uploadFailed ? (
           <>
-            <span role="alert" className="sr-only">
-              {item.error || "Upload failed. Retry or remove it to send."}
-            </span>
             <Button
               size="sm"
               disabled={disabled}
               aria-label={`Retry ${item.file.name}`}
-              title={`${item.error || "Retry upload"} Press Delete to remove.`}
-              onKeyDown={(event) => {
-                if (
-                  !disabled &&
-                  (event.key === "Delete" || event.key === "Backspace")
-                ) {
-                  event.preventDefault();
-                  remove(item.id);
-                }
-              }}
               onClick={(event) => {
                 // Retry replaces this control. Hand off only focus that it owns.
                 if (document.activeElement === event.currentTarget)

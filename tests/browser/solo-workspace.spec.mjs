@@ -317,7 +317,7 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   const event = (kind) => ({
     kind,
     seq: 1,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(hostNow).toISOString(),
     channelId: id,
     sessionId: "S",
     turnId: "sidebar-solo",
@@ -827,15 +827,13 @@ test.describe("touch sidebar activity", () => {
     await menu.focus();
     await expect(menu).toBeFocused();
     await expect(indicator).toHaveCSS("opacity", "1");
-    const label = row.locator(".navigation-item-label");
-    const labelWidth = await label.evaluate((element) => element.clientWidth);
     const before = await menu.boundingBox();
     app.observer(event("turn_completed"), key);
     await expect(badge).toHaveCount(0);
     await expect(indicator).toBeHidden();
-    await expect
-      .poll(() => label.evaluate((element) => element.clientWidth))
-      .toBeGreaterThan(labelWidth);
+    const age = row.locator("time");
+    await expect(age).toBeVisible();
+    await expectAgeFitsRow(row, age);
     const after = await menu.boundingBox();
     expect(after.x).toBeCloseTo(before.x, 1);
     expect(after.y).toBeCloseTo(before.y, 1);

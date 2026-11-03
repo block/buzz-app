@@ -205,12 +205,19 @@ test.describe("last visible channel", () => {
     await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
       0,
     );
-    expect(
-      await page.evaluate(
-        () =>
-          document.activeElement?.closest('[aria-label="Sidebar"]') !== null,
-      ),
-    ).toBe(true);
+    // Roster revocation can render the empty page before Leave is confirmed.
+    // Its completion hands focus back through the sidebar owner.
+    await expect(
+      page.getByText("Channel left: Lifecycle channel", { exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.activeElement?.closest('[aria-label="Sidebar"]') !== null,
+        ),
+      )
+      .toBe(true);
     await page.reload();
     await expect(
       page.getByText("Select a channel to read it.", { exact: true }),

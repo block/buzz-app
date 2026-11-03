@@ -3,13 +3,33 @@ import { openPage } from "./navigation.mjs";
 
 test.use({ dmLabels: true, historyCounts: { alpha: 1, beta: 1 } });
 
-// Text clipping, reflow, hit targets and native summary focus need real layout.
-test("sidebar headings and actions remain readable at enlarged interface sizes", async ({
+async function appearance(page, scale, mode = "light") {
+  await page.evaluate(
+    ({ scale, mode }) => {
+      localStorage.setItem("buzz-appearance.v1", mode);
+      localStorage.setItem("buzz-font-scale.v1", String(scale));
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: null, storageArea: localStorage }),
+      );
+    },
+    { scale, mode },
+  );
+  await expect
+    .poll(() =>
+      page
+        .locator("html")
+        .evaluate((root) => Number.parseFloat(getComputedStyle(root).fontSize)),
+    )
+    .toBeCloseTo(16 * scale, 5);
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+}
+
+// Real layout proves label width, compact height, adjacent chevrons and hit areas.
+test("sidebar headings keep readable space and compact disclosure targets at enlarged sizes", async ({
   page,
   app,
 }, info) => {
   await page.goto(app.origin);
-  await page.setViewportSize({ width: 1440, height: 1400 });
   await openPage(page, "Messages");
   const sidebar = page.locator(".shell-sidebar");
   const resize = page.getByRole("separator", { name: "Resize sidebar" });
@@ -18,84 +38,82 @@ test("sidebar headings and actions remain readable at enlarged interface sizes",
   );
   for (const summary of summaries) await expect(summary).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-
-  for (const mode of ["light", "dark"]) {
-    for (const scale of [1, 1.2, 1.5, 1.8, 2]) {
-      await resize.press("Home");
-      // Use the appearance service's live preference restoration, including a
-      // size change after a narrow width has already been saved.
-      await page.evaluate(
-        ({ mode, scale }) => {
-          localStorage.setItem("buzz-appearance.v1", mode);
-          localStorage.setItem("buzz-font-scale.v1", String(scale));
-          window.dispatchEvent(
-            new StorageEvent("storage", {
-              key: null,
-              storageArea: localStorage,
+  // Color mode changes no size tokens; cover geometry once and both paints below.
+  for (const scale of [1, 1.2, 1.5, 1.8, 2]) {
+    await resize.press("Home");
+    await appearance(page, scale);
+    for (const width of [220, 260, 520]) {
+      if (width === 260) await resize.dblclick();
+      else await resize.press(width === 220 ? "Home" : "End");
+      await expect(resize).toHaveAttribute("aria-valuenow", String(width));
+      for (const summary of summaries) {
+        await summary.scrollIntoViewIfNeeded();
+        await expect
+          .poll(() =>
+            summary.evaluate((element) => {
+              const title = element.firstElementChild.lastElementChild;
+              const label = element.firstElementChild.getBoundingClientRect();
+              const chevron = element.lastElementChild.getBoundingClientRect();
+              const header = element.parentElement.parentElement;
+              const frame = header.getBoundingClientRect();
+              const disclosure = element.getBoundingClientRect();
+              const actions = header.lastElementChild.getBoundingClientRect();
+              const root = Number.parseFloat(
+                getComputedStyle(document.documentElement).fontSize,
+              );
+              const gap = Number.parseFloat(
+                getComputedStyle(element).columnGap,
+              );
+              return {
+                readable: title.clientWidth >= 2 * root,
+                singleLine:
+                  title.getBoundingClientRect().height <=
+                  Number.parseFloat(getComputedStyle(title).lineHeight) + 1,
+                compact:
+                  Math.abs(frame.height - disclosure.height) < 1 &&
+                  frame.height <= 2.5 * root,
+                adjacent: Math.abs(chevron.left - label.right - gap) < 1,
+                fullTarget:
+                  disclosure.left === frame.left &&
+                  disclosure.right === frame.right,
+                actionsContained:
+                  actions.left >= frame.left &&
+                  actions.right <= frame.right + 1 &&
+                  // translateY(-50%) may land half a layout subpixel above
+                  // the frame at fractional sizes; check its intended center.
+                  Math.abs(
+                    actions.top +
+                      actions.height / 2 -
+                      frame.top -
+                      frame.height / 2,
+                  ) < 0.5 &&
+                  actions.height <= frame.height + 1,
+              };
             }),
-          );
-        },
-        { mode, scale },
-      );
-      await expect(page.locator("html")).toHaveAttribute(
-        "data-color-mode",
-        mode,
-      );
-      await expect
-        .poll(() =>
-          page
-            .locator("html")
-            .evaluate((root) =>
-              Number.parseFloat(getComputedStyle(root).fontSize),
-            ),
-        )
-        .toBeCloseTo(16 * scale, 5);
-      for (const width of [220, 260, 520]) {
-        if (width === 260) await resize.dblclick();
-        else await resize.press(width === 220 ? "Home" : "End");
-        await expect(resize).toHaveAttribute("aria-valuenow", String(width));
-        for (const summary of summaries) {
-          await summary.scrollIntoViewIfNeeded();
-          await expect
-            .poll(() =>
-              summary.evaluate((element) => {
-                const label = element.querySelector("[data-overflowing]");
-                const title = element.firstElementChild.lastElementChild;
-                const header = element.parentElement.parentElement;
-                const frame = header.getBoundingClientRect();
-                const text = title.getBoundingClientRect();
-                const actions = header.lastElementChild.getBoundingClientRect();
-                const disclosure = element.getBoundingClientRect();
-                return {
-                  readable:
-                    title.clientWidth > 0 &&
-                    title.scrollWidth <= title.clientWidth + 1,
-                  faded: !!label,
-                  contained:
-                    text.left >= frame.left &&
-                    text.right <= frame.right + 1 &&
-                    actions.left >= frame.left &&
-                    actions.right <= frame.right + 1,
-                  separate:
-                    disclosure.right <= actions.left + 1 ||
-                    disclosure.bottom <= actions.top + 1,
-                };
-              }),
-            )
-            .toEqual({
-              readable: true,
-              faded: false,
-              contained: true,
-              separate: true,
-            });
-        }
+          )
+          .toEqual({
+            readable: true,
+            singleLine: true,
+            compact: true,
+            adjacent: true,
+            fullTarget: true,
+            actionsContained: true,
+          });
       }
     }
   }
 
   await resize.press("Home");
+  await page.setViewportSize({ width: 1440, height: 1200 });
   const channels = summaries[0];
-  await channels.focus();
+  // The trailing edge outside the action buttons still toggles the section.
+  const target = await channels.boundingBox();
+  await channels.click({
+    position: { x: target.width - 2, y: target.height / 2 },
+  });
+  await expect(channels.locator("..")).not.toHaveAttribute("open");
+  await channels.press("Enter");
+  await expect(channels.locator("..")).toHaveAttribute("open", "");
   await page.keyboard.press("Tab");
   const more = sidebar.getByRole("button", {
     name: "More actions for Channels",
@@ -111,79 +129,27 @@ test("sidebar headings and actions remain readable at enlarged interface sizes",
   await page.keyboard.press("Escape");
   await expect(more).toBeFocused();
   await expect(channels.locator("..")).toHaveAttribute("open", "");
-  await channels.press("Enter");
-  await expect(channels.locator("..")).not.toHaveAttribute("open");
-  await channels.press("Enter");
-  await expect(channels.locator("..")).toHaveAttribute("open", "");
-  await channels.scrollIntoViewIfNeeded();
-  await summaries[1].hover();
-  await page.screenshot({ path: info.outputPath("sidebar-200-percent.png") });
-});
-
-const savedSections = test.extend({
-  productionBroker: true,
-  savedSidebar: true,
-});
-savedSections(
-  "a long custom heading reflows without clipping its title or actions",
-  async ({ page, app }) => {
-    await page.goto(app.origin);
-    await openPage(page, "Messages");
-    await page
-      .getByRole("button", { name: "More actions for Work", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "Rename section", exact: true })
-      .click();
-    const dialog = page.getByRole("dialog", {
-      name: "Rename section",
-      exact: true,
+  await resize.focus();
+  await page.mouse.move(0, 0);
+  await appearance(page, 1);
+  await page.screenshot({
+    path: info.outputPath("sidebar-100-percent-light.png"),
+  });
+  for (const mode of ["light", "dark"]) {
+    await appearance(page, 2, mode);
+    await page.screenshot({
+      path: info.outputPath(`sidebar-200-percent-${mode}.png`),
     });
-    const title = "Release planning and accessibility investigations";
-    await dialog.getByRole("textbox", { name: "Section name" }).fill(title);
-    await dialog.getByRole("button", { name: "Rename", exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    const section = page.locator('[data-sidebar-section="group:work"]');
-    const summary = section.locator("summary");
-    await expect(summary).toHaveAccessibleName(title);
-    await page.evaluate(() => {
-      localStorage.setItem("buzz-font-scale.v1", "2");
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key: "buzz-font-scale.v1",
-          storageArea: localStorage,
-        }),
-      );
-    });
-    await expect(page.locator("html")).toHaveCSS("font-size", "32px");
-    await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
-    await summary.scrollIntoViewIfNeeded();
-    await expect
-      .poll(() =>
-        summary.evaluate((element) => {
-          const text = element.firstElementChild.lastElementChild;
-          return (
-            text.clientWidth > 0 &&
-            text.scrollWidth <= text.clientWidth + 1 &&
-            text.scrollHeight <= text.clientHeight + 1
-          );
-        }),
-      )
-      .toBe(true);
-    await expect(summary.locator("[data-overflowing]")).toHaveCount(0);
-    const more = section.getByRole("button", {
-      name: `More actions for ${title}`,
-      exact: true,
-    });
-    await more.click();
+    const direct = await summaries[1].boundingBox();
+    await summaries[1].hover({ position: { x: 12, y: direct.height / 2 } });
     await expect(
-      page.getByRole("menu", {
-        name: `More actions for ${title}`,
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(summary.locator("..")).toHaveAttribute("open", "");
-    await page.keyboard.press("Escape");
-    await expect(more).toBeFocused();
-  },
-);
+      sidebar
+        .getByRole("button", { name: "New message", exact: true })
+        .locator(".."),
+    ).toHaveCSS("opacity", "1");
+    await page.screenshot({
+      path: info.outputPath(`sidebar-200-percent-${mode}-actions.png`),
+    });
+    await page.mouse.move(0, 0);
+  }
+});

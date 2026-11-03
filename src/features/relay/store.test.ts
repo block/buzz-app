@@ -1041,3 +1041,57 @@ it("settles a metadata retry during quota cooldown without issuing another read"
     clock.mockRestore();
   }
 });
+it("counts relay-signed rosters for display without applying them to discovery", async () => {
+  const { queries, next } = setup();
+  const bob = keypair();
+  const counting = queries.memberCounts?.(["lobby", "hall", "lobby"]);
+  const request = next();
+  // One bounded read, without the viewer filter, so unjoined channels count.
+  expect(request.filters).toEqual([
+    {
+      kinds: [39002],
+      authors: [relay.pubkey],
+      "#d": ["hall", "lobby"],
+      limit: 3,
+    },
+  ]);
+  request.respond([
+    roster(relay, "lobby", [alice.pubkey, bob.pubkey], 1_700_000_000),
+    // The newest roster wins; duplicate and malformed entries do not count.
+    signed(relay, {
+      kind: 39002,
+      content: "",
+      created_at: 1_700_000_001,
+      tags: [
+        ["d", "lobby"],
+        ["p", alice.pubkey],
+        ["p", alice.pubkey],
+        ["p", "not-a-key"],
+        ["p", bob.pubkey],
+        ["p", viewer.pubkey],
+      ],
+    }),
+  ]);
+  await expect(counting).resolves.toEqual(new Map([["lobby", 3]]));
+  // Display only: the viewer in a counted roster is not admitted.
+  expect(queries.get?.("lobby")).toBeUndefined();
+  expect(queries.list().channels).toEqual([]);
+});
+it("ignores member counts from other authors or channels and rejects an oversized answer", async () => {
+  const { queries, next } = setup();
+  for (const answer of [
+    roster(alice, "lobby", [alice.pubkey]),
+    roster(relay, "elsewhere", [alice.pubkey]),
+  ]) {
+    const counting = queries.memberCounts?.(["lobby"]);
+    next().respond([answer]);
+    await expect(counting).resolves.toEqual(new Map());
+  }
+  const oversized = queries.memberCounts?.(["lobby"]);
+  next().respond([
+    roster(relay, "lobby", [alice.pubkey]),
+    roster(relay, "lobby", [viewer.pubkey], 1_700_000_001),
+  ]);
+  await expect(oversized).rejects.toThrow("exceeded their read budget");
+  await expect(queries.memberCounts?.([])).resolves.toEqual(new Map());
+});

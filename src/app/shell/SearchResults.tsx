@@ -54,6 +54,7 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
+import { useChannelMemberCounts } from "../../features/channels/useChannelMemberCounts";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -849,6 +850,7 @@ export function SearchResults({
     ],
     channelRank,
   ).slice(0, 8);
+  const memberCount = useChannelMemberCounts(session, channelResults);
   // A chat found by its agent, not its name, says which agent it has.
   const soloDetail = (channel: ChannelSummary) => {
     const agent = newChatAmong(channel.members);
@@ -884,6 +886,22 @@ export function SearchResults({
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
     };
+  };
+  // Channel rows add how many members they have, when the roster is known.
+  const channelDestination = (channel: ChannelSummary): SearchDestination => {
+    const destination = conversationDestination(channel);
+    const count = memberCount(channel);
+    return count
+      ? {
+          ...destination,
+          detail: [
+            destination.detail,
+            `${count} ${count === 1 ? "member" : "members"}`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        }
+      : destination;
   };
   // Choosing a person opens your DM with them, starting it when needed.
   const [personOpen, setPersonOpen] = useState<{
@@ -1191,7 +1209,7 @@ export function SearchResults({
                   },
                   {
                     label: "Channels",
-                    destinations: channelResults.map(conversationDestination),
+                    destinations: channelResults.map(channelDestination),
                     best: Math.min(...channelResults.map(channelRank)),
                   },
                   {

@@ -134,6 +134,7 @@ it("sets the telescope until the deadline and restores the previous status", asy
     scope: "wss://a:viewer",
     previous: lunch,
     published: at(0),
+    replaced: at(-100),
   });
   focus.end();
   await flush();
@@ -306,10 +307,54 @@ it("restores after a save that failed but still reached the relay", async () => 
   community.connection("connecting");
   community.connection("ready");
   await flush();
-  expect(focus.snapshot().status?.previous).toEqual(lunch);
+  // The retry finds the telescope that landed and does not set it again.
+  expect(community.save).toHaveBeenCalledTimes(1);
+  expect(focus.snapshot().status).toMatchObject({
+    previous: lunch,
+    published: at(0),
+  });
   focus.end();
   await flush();
   expect(community.save).toHaveBeenLastCalledWith(lunch);
+});
+
+it("a retry after a lost answer leaves a status set elsewhere alone", async () => {
+  const community = relay({ text: "Lunch", emoji: "🥪" });
+  const save = community.save.getMockImplementation();
+  community.save.mockImplementationOnce(async (input) => {
+    await save?.(input);
+    throw new Error("timed out");
+  });
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data, () => {});
+  focus.start(at(60));
+  await flush();
+  community.connection("connecting");
+  community.publish({ text: "Travelling", emoji: "✈️" });
+  community.connection("ready");
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(1);
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(1);
+  expect(focus.snapshot().status).toBeUndefined();
+});
+
+it("a retry after a lost answer leaves a status cleared elsewhere alone", async () => {
+  const community = relay({ text: "Lunch", emoji: "🥪" });
+  community.save.mockRejectedValueOnce(new Error("offline"));
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data, () => {});
+  focus.start(at(60));
+  await flush();
+  community.connection("connecting");
+  community.publish({ text: "", emoji: "" });
+  community.connection("ready");
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(1);
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenCalledTimes(1);
 });
 
 it("a new Focus before the earlier restore ran keeps the earlier status", async () => {
@@ -327,6 +372,30 @@ it("a new Focus before the earlier restore ran keeps the earlier status", async 
   await flush();
   expect(focus.snapshot().status).toMatchObject({
     until: at(120),
+    previous: lunch,
+  });
+  focus.end();
+  await flush();
+  expect(community.save).toHaveBeenLastCalledWith(lunch);
+});
+
+it("a new Focus after the earlier telescope expired offline keeps the earlier status", async () => {
+  const lunch = { text: "Lunch", emoji: "🥪" };
+  const community = relay(lunch);
+  const focus = createFocus(undefined);
+  bindFocusStatus(focus, community.data);
+  focus.start(at(60));
+  await flush();
+  // The first Focus reaches its deadline offline; a second starts before the
+  // restore can run, while the expired telescope no longer shows.
+  community.connection("connecting");
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(focus.snapshot().until).toBeUndefined();
+  focus.start(at(180));
+  community.connection("ready");
+  await flush();
+  expect(focus.snapshot().status).toMatchObject({
+    until: at(180),
     previous: lunch,
   });
   focus.end();

@@ -53,7 +53,13 @@ it("rejects a deadline that is not in the future", () => {
 });
 
 it("restores an active Focus after a restart and drops an expired one", () => {
-  const status = { until: at(-1), scope: "wss://a:viewer", previous: null };
+  const status = {
+    until: at(-1),
+    scope: "wss://a:viewer",
+    previous: null,
+    published: at(-61),
+    replaced: at(-200),
+  };
   expect(createFocus(browser({ until: at(60) }).host).snapshot().until).toBe(
     at(60),
   );

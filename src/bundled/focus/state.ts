@@ -14,6 +14,9 @@ export type FocusStatusRecord = Readonly<{
   /** When the telescope status was published (its `created_at`), so ending
    * Focus restores only while that status is still the latest one. */
   published?: number;
+  /** The newest status event's `created_at` before the telescope was set, so
+   * a retry can tell a newer status from a set that never landed. */
+  replaced?: number;
 }>;
 export type FocusSnapshot = Readonly<{
   /** Unix seconds; `undefined` when Focus is off. */
@@ -49,6 +52,9 @@ function parse(raw: string | null, now: number) {
           previous: parseStatus(record.previous),
           ...(Number.isSafeInteger(record.published)
             ? { published: record.published as number }
+            : {}),
+          ...(Number.isSafeInteger(record.replaced)
+            ? { replaced: record.replaced as number }
             : {}),
         }
       : undefined;

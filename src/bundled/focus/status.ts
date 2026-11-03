@@ -12,15 +12,9 @@ export const FOCUS_STATUS = Object.freeze({ text: "Focusing", emoji: "🔭" });
 const isFocusStatus = (status: UserStatus | undefined) =>
   status?.text === FOCUS_STATUS.text && status.emoji === FOCUS_STATUS.emoji;
 
-/** Whether the viewer's newest status event, including a clear or an expired
- * one, is still the telescope Focus published. The Buzz relay keeps expired
- * events. A relay that drops them returns nothing, which counts as Focus's,
- * so there a newer status that also expired cannot be told apart. */
-async function focusOwnsStatus(
-  session: RelaySession,
-  viewer: string,
-  record: FocusStatusRecord,
-) {
+/** The viewer's newest status event, including a clear or an expired one. The
+ * Buzz relay keeps expired events. */
+async function latestStatusEvent(session: RelaySession, viewer: string) {
   const events = await session.readRemote([
     {
       kinds: [USER_STATUS_KIND],
@@ -30,20 +24,27 @@ async function focusOwnsStatus(
     },
   ]);
   // Same replacement order as the status store: newest, then lowest id.
-  const latest = events
+  return events
     .filter(
       (event) =>
         event.pubkey === viewer && !event.tags.some(([key]) => key === "h"),
     )
     .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
-  if (!latest) return true;
-  const emoji = latest.tags.find(([key]) => key === "emoji")?.[1] ?? "";
-  return (
-    latest.content.trim() === FOCUS_STATUS.text &&
-    emoji.trim() === FOCUS_STATUS.emoji &&
-    (record.published === undefined || latest.created_at === record.published)
-  );
 }
+type StatusEvent = Awaited<ReturnType<typeof latestStatusEvent>>;
+
+const isFocusEvent = (event: NonNullable<StatusEvent>) =>
+  event.content.trim() === FOCUS_STATUS.text &&
+  (event.tags.find(([key]) => key === "emoji")?.[1] ?? "").trim() ===
+    FOCUS_STATUS.emoji;
+
+/** Whether the newest status event is still the telescope `record` set. No
+ * event counts as Focus's, so on a relay that drops expired events a newer
+ * status that also expired cannot be told apart. */
+const focusOwnsStatus = (latest: StatusEvent, record: FocusStatusRecord) =>
+  !latest ||
+  (isFocusEvent(latest) &&
+    (record.published === undefined || latest.created_at === record.published));
 
 /** Sets the telescope status in the selected community when Focus starts and
  * puts back what it replaced when Focus ends, if 🔭 is still the latest status.
@@ -83,15 +84,33 @@ export function bindFocusStatus(
         (carried?.until === until && carried.published === undefined))
     ) {
       failedUntil = until;
+      const latest = await latestStatusEvent(session, viewer);
+      if (closed || focus.snapshot().until !== until) return;
       let previous: StatusInput | null;
-      if (carried?.until === until) previous = carried.previous;
-      else {
+      if (carried?.until === until) {
+        // An earlier set for this Focus may have landed without an answer.
+        if (latest && isFocusEvent(latest)) {
+          focus.recordStatus({ ...carried, published: latest.created_at });
+          failedUntil = undefined;
+          savedUntil = until;
+          return;
+        }
+        // A newer status since then, from another device, is left alone.
+        if (latest?.created_at !== carried.replaced) {
+          focus.recordStatus({ ...carried, previous: null });
+          failedUntil = undefined;
+          savedUntil = until;
+          return;
+        }
+        previous = carried.previous;
+      } else if (carried && focusOwnsStatus(latest, carried)) {
+        // An earlier Focus's telescope, expired or not: keep what it replaced.
+        previous = carried.previous;
+      } else {
         const current = await statuses.current(viewer);
         if (closed || focus.snapshot().until !== until) return;
-        // A telescope still showing is an earlier Focus's: keep what it replaced.
-        previous = isFocusStatus(current)
-          ? (carried?.previous ?? null)
-          : current && (current.text || current.emoji)
+        previous =
+          !isFocusStatus(current) && current && (current.text || current.emoji)
             ? {
                 text: current.text,
                 emoji: current.emoji,
@@ -103,7 +122,13 @@ export function bindFocusStatus(
       }
       // Remember first: a crash or a failed save that still reached the
       // relay keeps the old status to restore.
-      focus.recordStatus({ until, scope, previous });
+      // `replaced` tells a retry whether anything newer was published since.
+      focus.recordStatus({
+        until,
+        scope,
+        previous,
+        ...(latest ? { replaced: latest.created_at } : {}),
+      });
       await statuses.save({ ...FOCUS_STATUS, expiresAt: until });
       failedUntil = undefined;
       savedUntil = until;
@@ -113,7 +138,10 @@ export function bindFocusStatus(
       if (published && isFocusStatus(published) && saved?.until === until)
         focus.recordStatus({ ...saved, published: published.updatedAt });
     } else if (until === undefined && record?.scope === scope) {
-      const owned = await focusOwnsStatus(session, viewer, record);
+      const owned = focusOwnsStatus(
+        await latestStatusEvent(session, viewer),
+        record,
+      );
       if (closed || focus.snapshot().until !== undefined) return;
       if (owned) {
         const now = Date.now() / 1000;

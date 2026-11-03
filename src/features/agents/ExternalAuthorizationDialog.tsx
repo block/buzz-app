@@ -97,6 +97,13 @@ function ConsentDialog({
             The requesting app supplies its name. Authorize it only if you
             started setup in that app.
           </p>
+          {state.grant && state.grant.phase !== "ended" && (
+            <p className="m-0 text-body-sm text-secondary">
+              Authorization replaces access for {state.grant.client}. Switching
+              communities ends that access immediately, even if you then select
+              Deny.
+            </p>
+          )}
           <Select
             label="Community"
             variant="field"
@@ -124,11 +131,6 @@ function ConsentDialog({
               .join("; ")}
             . Keys stay in Buzz.
           </p>
-          {state.grant && state.grant.phase !== "ended" && (
-            <p className="m-0 text-body-sm text-secondary">
-              Authorization replaces access for {state.grant.client}.
-            </p>
-          )}
           {children}
           {!state.available && (
             <p role="alert" className="m-0 text-body-sm text-danger">

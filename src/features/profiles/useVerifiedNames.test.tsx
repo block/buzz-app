@@ -76,6 +76,13 @@ function fake(shared = new Map<string, { verified?: VerifiedProfile }>()) {
         for (const listener of listeners) listener();
       });
     },
+    /** The shared cache evicts that head. */
+    evict(pubkey: string) {
+      held.delete(pubkey);
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
     setAuthority(next: typeof authority) {
       authority = next;
       act(() => {
@@ -231,6 +238,34 @@ it("yields to a head the shared directory holds, so a later revocation is not un
   // verified name, and the search's older answer must not bring one back.
   t.hold(key(1));
   expect([...hook.result.current.keys()]).toEqual([key(2)]);
+});
+
+it("retires a searched name a shared head superseded, so evicting the head while unmounted does not bring it back", async () => {
+  const t = fake();
+  const people = [{ pubkey: key(1) }];
+  const first = renderHook(() => useVerifiedNames(t.session, people));
+  await waitFor(() => expect(first.result.current.size).toBe(1));
+  first.unmount();
+  // With no search open, a revoking head arrives and the shared cache evicts it.
+  t.hold(key(1));
+  t.evict(key(1));
+  const second = renderHook(() => useVerifiedNames(t.session, people));
+  // The superseded answer is gone, so the person is asked again.
+  expect(second.result.current.size).toBe(0);
+  await waitFor(() => expect(t.reads).toHaveLength(2));
+  expect(t.reads[1]?.subjects).toEqual([key(1)]);
+});
+
+it("keeps no answer for a person whose shared head arrived during the read", async () => {
+  const t = fake();
+  t.holdReads();
+  const people = [{ pubkey: key(1) }];
+  const hook = renderHook(() => useVerifiedNames(t.session, people));
+  await waitFor(() => expect(t.reads).toHaveLength(1));
+  t.hold(key(1));
+  await act(async () => t.release());
+  t.evict(key(1));
+  expect(hook.result.current.size).toBe(0);
 });
 
 it("drops a searched name when the shared directory's first head for that person is inactive", async () => {

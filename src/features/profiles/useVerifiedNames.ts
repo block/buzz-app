@@ -27,7 +27,7 @@ const none: ReadonlyMap<string, VerifiedProfile> = new Map();
 // starts over.
 const lookups = new WeakMap<
   ProfileQueries,
-  { authority: VerifiedProfileAuthority; found: Found }
+  { authority: VerifiedProfileAuthority; found: Found; stop: () => void }
 >();
 function foundFor(
   profiles: ProfileQueries,
@@ -35,8 +35,19 @@ function foundFor(
 ) {
   const current = lookups.get(profiles);
   if (current?.authority === authority) return current.found;
+  current?.stop();
   const found: Found = new Map();
-  lookups.set(profiles, { authority, found });
+  // A shared head supersedes a search's answer for good, mounted or not, so
+  // the answer cannot return once the shared cache evicts that head.
+  let seen = profiles.verifiedRevision?.();
+  const stop = profiles.subscribe(() => {
+    const next = profiles.verifiedRevision?.();
+    if (next === seen) return;
+    seen = next;
+    for (const pubkey of found.keys())
+      if (profiles.verifiedHeld?.(pubkey)) found.delete(pubkey);
+  });
+  lookups.set(profiles, { authority, found, stop });
   return found;
 }
 
@@ -103,7 +114,9 @@ export function useVerifiedNames(
         const at = Date.now();
         for (const pubkey of wanted) {
           found.delete(pubkey);
-          found.set(pubkey, { profile: result.profiles.get(pubkey), at });
+          // A shared head that arrived during the read answers instead.
+          if (!profiles.verifiedHeld?.(pubkey))
+            found.set(pubkey, { profile: result.profiles.get(pubkey), at });
         }
         for (const pubkey of found.keys()) {
           if (found.size <= PROFILE_CACHE_BASE) break;

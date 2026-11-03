@@ -822,3 +822,25 @@ it("reuses an unchanged head's projection across snapshots", async () => {
     h.directory.dispose();
   }
 });
+
+it("keeps an unchanged head's projection through an equal discovery refresh", async () => {
+  vi.useFakeTimers();
+  const refresh = vi.fn(async () => ({ ...authority }));
+  const h = harness(refresh);
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    sink.event(projection());
+    sink.eose();
+    const checked = h.directory.snapshot().get(alice.pubkey);
+    expect(checked?.status).toBe("checked");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(h.directory.snapshot().get(alice.pubkey)).toBe(checked);
+  } finally {
+    h.directory.dispose();
+    vi.useRealTimers();
+  }
+});

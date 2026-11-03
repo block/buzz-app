@@ -77,7 +77,13 @@ export function createVerifiedProfileDirectory(
           stopBatches();
           heads.clear();
         }
-        authority = next;
+        // An equal refresh keeps the current object, so unchanged heads keep
+        // their projections.
+        if (
+          authority?.pubkey !== next.pubkey ||
+          authority.multipleIssuers !== next.multipleIssuers
+        )
+          authority = next;
         enabled = true;
         schedule();
       }

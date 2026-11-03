@@ -1038,6 +1038,93 @@ it("a failed read-state snapshot is retried at once even when the evidence repai
   }
 });
 
+/** The recovery tick's own reads: unread evidence repairs and marker snapshots. */
+function tickReads(h: ReturnType<typeof setup>) {
+  const count = (match: (filter: ReadFilter) => boolean) =>
+    h.query.mock.calls.filter(([filters]) => filters[0] && match(filters[0]))
+      .length;
+  return {
+    evidence: count(
+      (filter) => !!filter.include_aux && !!filter.kinds?.includes(40002),
+    ),
+    snapshots: count((filter) => !!filter.kinds?.includes(30078)),
+  };
+}
+
+it("an evidence overflow is repaired on the next recovery tick", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+  try {
+    const h = setup();
+    const answer = h.query.getMockImplementation();
+    assert(answer);
+    h.query.mockImplementation(async (filters, signal) =>
+      filters[0]?.kinds?.includes(39002)
+        ? [
+            roster(h.relay, "other", [h.viewer.pubkey], 10),
+            metadata(h.relay, "other", "other", 10),
+          ]
+        : answer(filters, signal),
+    );
+    await h.session.unread.ensure();
+    // The connection's own repair starts the backstop interval.
+    h.reconnect();
+    await vi.waitFor(() =>
+      expect(tickReads(h)).toEqual({ evidence: 2, snapshots: 2 }),
+    );
+    h.receive(
+      Array.from({ length: 19 }, (_, i) =>
+        message(h.peer, "other", "x".repeat(450000), i + 20),
+      ),
+    );
+    expect(h.snapshot()).toMatchObject({
+      error: "Unread observation capacity reached; refresh available",
+    });
+    const before = tickReads(h).evidence;
+    vi.setSystemTime(Date.now() + 60_000);
+    h.recover();
+    await vi.waitFor(() => expect(tickReads(h).evidence).toBe(before + 1));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("a covered reconnect pays the drop's debt: the next recovery tick reads nothing", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+  try {
+    const h = setup();
+    const answer = h.query.getMockImplementation();
+    assert(answer);
+    h.query.mockImplementation(async (filters, signal) =>
+      filters[0]?.kinds?.includes(39002)
+        ? [
+            roster(h.relay, "other", [h.viewer.pubkey], 10),
+            metadata(h.relay, "other", "other", 10),
+          ]
+        : answer(filters, signal),
+    );
+    await h.session.unread.ensure();
+    h.reconnect();
+    await vi.waitFor(() =>
+      expect(tickReads(h)).toEqual({ evidence: 2, snapshots: 2 }),
+    );
+    h.reconnectCovered();
+    // It resumes the markers and repairs the evidence.
+    await vi.waitFor(() =>
+      expect(tickReads(h)).toEqual({ evidence: 3, snapshots: 2 }),
+    );
+    await vi.waitFor(() =>
+      expect(h.session.unread.sync().status).toBe("reconciled"),
+    );
+    const before = tickReads(h);
+    vi.setSystemTime(Date.now() + 60_000);
+    h.recover();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(tickReads(h)).toEqual(before);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("a covered reconnect does not postpone the recovery tick's full unread repair", async () => {
   vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
   try {

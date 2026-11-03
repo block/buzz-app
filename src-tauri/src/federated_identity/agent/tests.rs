@@ -341,6 +341,36 @@ async fn evidence_needed_for_longer_replaces_a_cached_assertion_expiring_sooner(
     assert_eq!(settled(served).await.len(), 3);
 }
 
+#[tokio::test]
+async fn evidence_minted_shorter_than_needed_is_refused() {
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let now = super::now().unwrap() as u64;
+    let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
+    let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64))), (200, short)]).await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+
+    let error = f
+        .tokens
+        .authorize_for(&f.agent, &f.key, Stamp::default(), Duration::from_secs(70))
+        .await
+        .err()
+        .expect("a header that would expire mid-command is refused");
+    assert_eq!(error, super::SHORT_LIVED);
+    // The same assertion still serves a request made now.
+    assert!(f
+        .tokens
+        .authorize(&f.agent, &f.key, Stamp::default())
+        .await
+        .unwrap()
+        .header()
+        .is_some());
+    assert_eq!(settled(served).await.len(), 2);
+}
+
 #[test]
 fn agent_assertions_must_name_this_agent_owner_issuer_and_community() {
     let f = fixture("http://unused".into());

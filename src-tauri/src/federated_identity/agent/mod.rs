@@ -28,6 +28,8 @@ const SIGN_IN: &str = "Sign in to your organization to enroll this agent";
 const STOPPED: &str =
     "Your organization no longer accepts this agent; sign in again to re-enroll it";
 const CHANGED: &str = "Your organization sign-in changed; try again";
+const SHORT_LIVED: &str =
+    "The community's sign-in does not last long enough for Git. Ask its administrator to lengthen it.";
 const DELETED: &str = "This agent was deleted";
 
 /// Lists every agent's owner and pubkey, for retiring all grants at once.
@@ -532,6 +534,9 @@ impl AgentTokens {
             ..cached
         };
         slot.assertion = Some(cached.clone());
+        if cached.expires_at <= tokio::time::Instant::now() + valid_for {
+            return Err(SHORT_LIVED.into());
+        }
         Ok(Some(cached))
     }
 

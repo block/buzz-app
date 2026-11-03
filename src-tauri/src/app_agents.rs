@@ -1145,7 +1145,10 @@ async fn upload(
 /// The URL of repository `repo` of `owner` in the agent's community, and the
 /// headers Git sends there as the agent for the next minute, one per line:
 /// `Authorization`, then the agent's sign-in evidence when the community
-/// requires it. The key stays native; the headers grant only that repository.
+/// requires it. The key stays native. These are the only assertion headers
+/// that leave native code: the NIP-98 proof grants only that repository for 60
+/// seconds; the assertion is scoped to the relay for its issuer's lifetime and
+/// is bound to the agent's key (NIP-FI, Assertion–key binding).
 #[tauri::command]
 pub(crate) async fn app_agent_git_auth(
     state: tauri::State<'_, AppAgentHost>,

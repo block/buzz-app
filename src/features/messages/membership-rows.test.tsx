@@ -8,6 +8,7 @@ import type { ChannelMessage, MembershipChange } from "../relay/contracts";
 import {
   membershipRows,
   membershipDescription,
+  renderedRowIndex,
   withoutStartingAgents,
 } from "./membership-rows";
 import { MembershipRow } from "./MembershipRow";
@@ -129,6 +130,27 @@ it("hides self-joins and voluntary leaves before grouping, preserving messages a
     removal,
   ]);
 });
+it("resolves a saved anchor on a hidden membership event to the nearest rendered row", () => {
+  const first = row("first");
+  const join = row("join", joined(pinky, pinky));
+  const addition = row("added", joined(wes, pinky));
+  const leave = row("leave", left(brain));
+  const removal = row("removed", removed(wes, brain));
+  const events = [first, join, addition, leave, removal];
+  const rows = membershipRows(events);
+  expect(rows.map(({ id }) => id)).toEqual(["first", "removed"]);
+  expect(renderedRowIndex(rows, events, "first")).toBe(0);
+  // A grouped member resolves to its group; a hidden event to the next one.
+  expect(renderedRowIndex(rows, events, "added")).toBe(1);
+  expect(renderedRowIndex(rows, events, "join")).toBe(1);
+  // With nothing rendered after it, a hidden event resolves to the one before.
+  const tail = [first, join];
+  expect(renderedRowIndex(membershipRows(tail), tail, "join")).toBe(0);
+  // An event that is not loaded still waits for its page.
+  expect(renderedRowIndex(rows, events, "missing")).toBe(-1);
+  expect(renderedRowIndex([], [join], "join")).toBe(-1);
+});
+
 it("collapses high-volume mixed activity and deduplicates repeat arrivals without swallowing messages", () => {
   const arrivals = Array.from({ length: 148 }, (_, index) => {
     const id = `member-${index}`;

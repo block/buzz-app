@@ -170,12 +170,10 @@
 /* Long bubbles stop 32px before the opposite avatar's visible inner edge.
    Avatars sit space-1 from their body, including the wider timeline gutter. */
 .message:has(> .messageGutter) > .messageBody {
-  max-width: calc(
-    100% -
-    2 *
-    var(--message-side-space) +
-    var(--space-1) -
-    var(--space-8)
+  /* The rem-based clearance grows with enlarged text; keep a readable floor. */
+  max-width: max(
+    60%,
+    calc(100% - 2 * var(--message-side-space) + var(--space-1) - var(--space-8))
   );
 }
 .message[data-viewer-message] > .messageBody {

@@ -65,6 +65,34 @@ export function membershipRows(
   return result.reverse();
 }
 
+/** The index of the row that renders an event. A hidden membership event, such
+ * as a reading anchor saved before self-joins were hidden, resolves to the
+ * nearest later rendered event, else the nearest earlier one. */
+export function renderedRowIndex(
+  rows: readonly TimelineRow[],
+  events: readonly ChannelMessage[],
+  id: string,
+) {
+  const find = (target: string) =>
+    rows.findIndex(
+      (row) =>
+        row.id === target ||
+        row.membershipRows?.some((member) => member.id === target),
+    );
+  const direct = find(id);
+  const at = direct < 0 ? events.findIndex((event) => event.id === id) : -1;
+  if (at < 0) return direct;
+  for (let index = at + 1; index < events.length; index++) {
+    const found = find(events[index]?.id ?? "");
+    if (found >= 0) return found;
+  }
+  for (let index = at - 1; index >= 0; index--) {
+    const found = find(events[index]?.id ?? "");
+    if (found >= 0) return found;
+  }
+  return -1;
+}
+
 /** A prose segment; `id` marks a member name that may open that profile. */
 export type MembershipPart = {
   text: string;

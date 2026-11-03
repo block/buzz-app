@@ -8,6 +8,7 @@ import {
 } from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
+import { CustomColorSchemeEditor } from "./CustomColorSchemeEditor";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { AppearancePreview } from "./AppearancePreview";
@@ -64,6 +65,9 @@ export function AppearanceSettings({
     accentError,
     contrast,
     contrastError,
+    customScheme,
+    customSchemeEnabled,
+    customSchemeError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
   return (
     <section aria-labelledby="appearance-settings-title">
@@ -226,6 +230,15 @@ export function AppearanceSettings({
         </SettingsGroup>
       </div>
       <div className="mt-section-gap">
+        <InlineHeader title="Custom color scheme" />
+        <CustomColorSchemeEditor
+          scheme={customScheme}
+          enabled={customSchemeEnabled}
+          onSave={(scheme) => appearance.setCustomScheme(scheme)}
+          onDisable={() => appearance.setCustomScheme(null)}
+        />
+      </div>
+      <div className="mt-section-gap">
         <InlineHeader title="Conversations" />
         <SettingsGroup>
           <PreferenceRow
@@ -312,6 +325,23 @@ export function AppearanceSettings({
           >
             <Button size="sm" onClick={() => appearance.setContrast(contrast)}>
               Retry saving vibe level
+            </Button>
+          </ToastNotice>
+        )}
+        {active && customSchemeError && (
+          <ToastNotice
+            title="Custom color scheme wasn’t saved"
+            description={customSchemeError}
+          >
+            <Button
+              size="sm"
+              onClick={() =>
+                appearance.setCustomScheme(
+                  customSchemeEnabled ? customScheme : null,
+                )
+              }
+            >
+              Retry saving custom color scheme
             </Button>
           </ToastNotice>
         )}

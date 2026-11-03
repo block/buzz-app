@@ -24,6 +24,12 @@ System, follows the computer’s color scheme as it changes. The choice is store
 device under `buzz-appearance.v1` in browser-origin localStorage. It does not sync
 through community profiles or relay events, and no theme marketplace is available.
 
+Appearance also supports one device-local custom color scheme under
+`buzz-custom-color-scheme.v1`. A custom scheme overrides the host-owned semantic
+surface, text, border, accent, and message roles from parser startup onward. Invalid
+or missing colors fall back to the built-in scheme, and turning off the custom scheme
+removes only that override while keeping mode, accent, vibe level, and interface size.
+
 The app shell uses a solid neutral background with one continuous dot grid;
 reading panes remain opaque. The shared texture derives its color from the shell
 at the root in each mode. Startup, color-mode thumbnails and runtime browser
@@ -107,14 +113,16 @@ new standard automatically.
 
 ## Future theme contributions
 
-There is no theme contribution API yet. A future theme would have an identity separate
-from its `light | dark` mode and contribute named, versioned semantic values. The host
-would own validation, explicit selection, applying and removing overrides, and fallback
-when a contribution disappears. Do not make feature components branch on
-specific theme names. Do not advertise internal source imports as a versioned SDK.
-Add a supported contribution API only with its first real external consumer and
-unload/rollback tests. Trusted same-process plugins can already execute arbitrary
-code; these authoring conventions are not a sandbox or CSS security boundary.
+There is no theme contribution API yet. Custom color schemes are host-owned user
+preferences, with no plugin registration or marketplace identity. A future plugin
+contribution would have an identity separate from its `light | dark` mode and
+contribute named, versioned semantic values. The host would own validation, explicit
+selection, applying and removing overrides, and fallback when a contribution
+disappears. Do not make feature components branch on specific theme names. Do not
+advertise internal source imports as a versioned SDK. Add a supported contribution API
+only with its first real external consumer and unload/rollback tests. Trusted
+same-process plugins can already execute arbitrary code; these authoring conventions
+are not a sandbox or CSS security boundary.
 
 ## Appearance checks
 

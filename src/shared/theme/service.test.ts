@@ -1,4 +1,5 @@
 import { ACCENTS, ACCENT_KEY, LEGACY_BUBBLE_KEY } from "./accent";
+import { CUSTOM_SCHEME_KEY, DEFAULT_CUSTOM_SCHEME } from "./custom-scheme";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
@@ -22,6 +23,7 @@ function browser(stored: string | null = null, systemDark = false) {
   const storage = {
     getItem: vi.fn((key: string) => values.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    removeItem: vi.fn((key: string) => values.delete(key)),
   };
   let frames: (() => void)[] = [];
   let dark = systemDark;
@@ -114,6 +116,9 @@ it.each([
       accentError: null,
       contrast: "low",
       contrastError: null,
+      customScheme: DEFAULT_CUSTOM_SCHEME,
+      customSchemeEnabled: false,
+      customSchemeError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
@@ -446,4 +451,63 @@ it("keeps contrast active on storage failure, retries, and follows other windows
   app.dispose();
   app.setContrast("high");
   expect(b.root.dataset.colorLevel).toBe("touch");
+});
+
+it("restores, applies, clears, and synchronizes a custom color scheme", () => {
+  const b = browser();
+  const custom = {
+    app: "#001122",
+    panel: "#112233",
+    inset: "#223344",
+    popover: "#334455",
+    text: "#f8f8f8",
+    subtleText: "#ccddee",
+    border: "#445566",
+    accent: "#ffcc00",
+    accentText: "#221100",
+    message: "#1b2b3b",
+    ownMessage: "#3b2b1b",
+  };
+  b.values.set(CUSTOM_SCHEME_KEY, JSON.stringify(custom));
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+    matchMedia: b.host.matchMedia,
+  });
+  expect(b.root.dataset.customColorScheme).toBe("custom");
+  expect(b.root.style.setProperty).toHaveBeenCalledWith(
+    "--custom-scheme-app",
+    "#001122",
+  );
+  const app = createAppearance(b.host);
+  expect(app.snapshot().customSchemeEnabled).toBe(true);
+  expect(app.snapshot().customScheme).toEqual(custom);
+  app.setCustomScheme({ ...custom, accent: "#abc" });
+  expect(b.values.get(CUSTOM_SCHEME_KEY)).toContain("#aabbcc");
+  expect(b.root.style.setProperty).toHaveBeenCalledWith(
+    "--custom-scheme-accent",
+    "#aabbcc",
+  );
+  app.setCustomScheme(null);
+  expect(b.storage.removeItem).toHaveBeenCalledWith(CUSTOM_SCHEME_KEY);
+  expect(b.root.dataset.customColorScheme).toBeUndefined();
+  b.values.set(CUSTOM_SCHEME_KEY, JSON.stringify(custom));
+  b.change(CUSTOM_SCHEME_KEY);
+  expect(app.snapshot().customSchemeEnabled).toBe(true);
+  app.dispose();
+});
+
+it("ignores invalid custom color schemes before and after startup", () => {
+  const b = browser();
+  b.values.set(CUSTOM_SCHEME_KEY, JSON.stringify({ app: "red" }));
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+    matchMedia: b.host.matchMedia,
+  });
+  expect(b.root.dataset.customColorScheme).toBeUndefined();
+  const app = createAppearance(b.host);
+  expect(app.snapshot().customSchemeEnabled).toBe(false);
+  expect(app.snapshot().customScheme).toEqual(DEFAULT_CUSTOM_SCHEME);
+  app.dispose();
 });

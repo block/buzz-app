@@ -429,3 +429,59 @@ it("switches contrast through the shared select and restores it", async () => {
   }
   appearance.dispose();
 });
+
+it("saves, disables, previews, and retries a custom color scheme", async () => {
+  const appearance = createAppearance();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  expect(screen.getByText("Custom preview")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("App background"), {
+    target: { value: "#123" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save custom scheme" }));
+  expect(appearance.snapshot().customSchemeEnabled).toBe(true);
+  expect(document.documentElement.dataset.customColorScheme).toBe("custom");
+  expect(localStorage.getItem("buzz-custom-color-scheme.v1")).toContain(
+    "#112233",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Turn off custom scheme" }),
+  );
+  expect(appearance.snapshot().customSchemeEnabled).toBe(false);
+  expect(document.documentElement.dataset.customColorScheme).toBeUndefined();
+  const save = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementationOnce(() => {
+      throw new Error("denied");
+    });
+  fireEvent.click(screen.getByRole("button", { name: "Save custom scheme" }));
+  expect(appearance.snapshot().customSchemeError).not.toBeNull();
+  save.mockRestore();
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Retry saving custom color scheme",
+    }),
+  );
+  expect(localStorage.getItem("buzz-custom-color-scheme.v1")).not.toBeNull();
+  appearance.dispose();
+});
+
+it("requires hex colors before saving a custom color scheme", () => {
+  const appearance = createAppearance();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  fireEvent.change(screen.getByLabelText("Panel background"), {
+    target: { value: "blue" },
+  });
+  expect(screen.getByText("Use a 3- or 6-digit hex color.")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Save custom scheme" }),
+  ).toBeDisabled();
+  appearance.dispose();
+});

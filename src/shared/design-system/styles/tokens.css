@@ -1550,6 +1550,108 @@
   --rim-shade: #ffffff0f;
 }
 
+:root[data-custom-color-scheme="custom"] {
+  --bg-app: var(--custom-scheme-app);
+  --surface-base: var(--custom-scheme-app);
+  --surface-panel: var(--custom-scheme-panel);
+  --surface-composer: var(--custom-scheme-panel);
+  --surface-popover: var(--custom-scheme-popover);
+  --surface-inset: var(--custom-scheme-inset);
+  --bg-panel: var(--custom-scheme-panel);
+  --bg-float: var(--custom-scheme-popover);
+  --bg-chrome-selected: var(--custom-scheme-panel);
+  --surface-message: var(--custom-scheme-message);
+  --surface-message-own: var(--custom-scheme-own-message);
+  --surface-message-hover: color-mix(
+    in srgb,
+    var(--custom-scheme-message) 92%,
+    var(--custom-scheme-text)
+  );
+  --surface-message-own-hover: color-mix(
+    in srgb,
+    var(--custom-scheme-own-message) 92%,
+    var(--custom-scheme-text)
+  );
+  --bubble-hover: var(--surface-message-hover);
+  --bubble-own-hover: var(--surface-message-own-hover);
+  --text-standard: var(--custom-scheme-text);
+  --text-navigation: var(--custom-scheme-subtle-text);
+  --text-navigation-unread: var(--custom-scheme-text);
+  --text-subtle: var(--custom-scheme-subtle-text);
+  --text-metadata: color-mix(
+    in srgb,
+    var(--custom-scheme-subtle-text) 78%,
+    var(--custom-scheme-panel)
+  );
+  --text-quiet-control: var(--custom-scheme-subtle-text);
+  --text-inverse: var(--custom-scheme-panel);
+  --text-message-own: var(--custom-scheme-text);
+  --text-message-link-own: var(--custom-scheme-text);
+  --border-standard: var(--custom-scheme-border);
+  --border-prominent: color-mix(
+    in srgb,
+    var(--custom-scheme-border) 75%,
+    var(--custom-scheme-text)
+  );
+  --border-focus: var(--custom-scheme-accent);
+  --affordance-prominent: var(--custom-scheme-accent);
+  --affordance-prominent-hover: color-mix(
+    in srgb,
+    var(--custom-scheme-accent) 86%,
+    var(--custom-scheme-text)
+  );
+  --affordance-prominent-pressed: color-mix(
+    in srgb,
+    var(--custom-scheme-accent) 78%,
+    var(--custom-scheme-panel)
+  );
+  --text-on-prominent: var(--custom-scheme-accent-text);
+  --affordance-subtle: var(--custom-scheme-inset);
+  --affordance-subtle-hover: color-mix(
+    in srgb,
+    var(--custom-scheme-inset) 82%,
+    var(--custom-scheme-text)
+  );
+  --affordance-subtle-pressed: color-mix(
+    in srgb,
+    var(--custom-scheme-inset) 70%,
+    var(--custom-scheme-text)
+  );
+  --affordance-row-hover: var(--affordance-subtle-hover);
+  --surface-navigation-selected: var(--custom-scheme-accent);
+  --text-navigation-selected: var(--custom-scheme-accent-text);
+  --text-row-selected: var(--custom-scheme-accent-text);
+  --text-row-selected-subtle: var(--custom-scheme-accent-text);
+  --text-row-selected-metadata: var(--custom-scheme-accent-text);
+  --surface-sidebar-selected: var(--custom-scheme-accent);
+  --text-sidebar-selected: var(--custom-scheme-accent-text);
+  --text-sidebar-hover: var(--custom-scheme-text);
+  --affordance-sidebar-hover: var(--custom-scheme-inset);
+  --affordance-accent-prominent: var(--custom-scheme-accent);
+  --affordance-accent-prominent-hover: color-mix(
+    in srgb,
+    var(--custom-scheme-accent) 86%,
+    var(--custom-scheme-text)
+  );
+  --affordance-accent-prominent-pressed: color-mix(
+    in srgb,
+    var(--custom-scheme-accent) 78%,
+    var(--custom-scheme-panel)
+  );
+  --text-on-accent: var(--custom-scheme-accent-text);
+  --text-message-link: var(--custom-scheme-accent);
+  --surface-message-highlight: color-mix(
+    in srgb,
+    var(--custom-scheme-accent) 28%,
+    var(--custom-scheme-message)
+  );
+  --texture-dots-color: color-mix(
+    in srgb,
+    var(--custom-scheme-app) 84%,
+    var(--custom-scheme-text)
+  );
+}
+
 /* ============================================================
    ACCENT
    One device-local choice picks an accent family; a second picks

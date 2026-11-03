@@ -9,6 +9,14 @@ import {
   parseLegacyBubbleColor,
   type Accent,
 } from "./accent";
+import {
+  CUSTOM_SCHEME_KEY,
+  DEFAULT_CUSTOM_SCHEME,
+  customSchemeStyle,
+  parseCustomScheme,
+  serializeCustomScheme,
+  type CustomScheme,
+} from "./custom-scheme";
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
 export type ColorModePreference = ColorMode | "system";
@@ -42,6 +50,9 @@ export interface AppearanceSnapshot {
   readonly accentError: string | null;
   readonly contrast: Contrast;
   readonly contrastError: string | null;
+  readonly customScheme: CustomScheme;
+  readonly customSchemeEnabled: boolean;
+  readonly customSchemeError: string | null;
   readonly error: string | null;
 }
 
@@ -65,6 +76,9 @@ export function createAppearance(
     accentError: null,
     contrast: "low",
     contrastError: null,
+    customScheme: DEFAULT_CUSTOM_SCHEME,
+    customSchemeEnabled: false,
+    customSchemeError: null,
   };
   let disposed = false;
   let paletteGuard = 0;
@@ -83,6 +97,11 @@ export function createAppearance(
     if (guard) root.dataset.paletteChanging = "";
     root.dataset.colorMode = state.mode;
     root.dataset.accent = state.accent;
+    root.dataset.customColorScheme = state.customSchemeEnabled ? "custom" : "";
+    if (!state.customSchemeEnabled) delete root.dataset.customColorScheme;
+    const customStyle = customSchemeStyle(state.customScheme);
+    for (const [name, value] of Object.entries(customStyle))
+      root.style.setProperty(name, String(value));
     // Preserve the existing soft-bubble selector for Chillin’.
     root.dataset.colorLevel =
       state.contrast === "low" ? "touch" : state.contrast;
@@ -189,12 +208,33 @@ export function createAppearance(
     }
     notify();
   };
+  const restoreCustomScheme = () => {
+    try {
+      const saved = parseCustomScheme(
+        host?.localStorage.getItem(CUSTOM_SCHEME_KEY),
+      );
+      state = {
+        ...state,
+        customScheme: saved ?? DEFAULT_CUSTOM_SCHEME,
+        customSchemeEnabled: Boolean(saved),
+        customSchemeError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        customSchemeError:
+          "Custom color scheme could not be restored. Edit it to try saving it again.",
+      };
+    }
+    notify();
+  };
   const onStorage = (event: StorageEvent) => {
     if (
       event.key !== APPEARANCE_KEY &&
       event.key !== FONT_SCALE_KEY &&
       event.key !== ACCENT_KEY &&
       event.key !== CONTRAST_KEY &&
+      event.key !== CUSTOM_SCHEME_KEY &&
       event.key !== LEGACY_BUBBLE_KEY &&
       event.key !== null
     )
@@ -205,6 +245,8 @@ export function createAppearance(
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
+      if (event.key === null || event.key === CUSTOM_SCHEME_KEY)
+        restoreCustomScheme();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
@@ -215,6 +257,8 @@ export function createAppearance(
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
+      if (event.key === null || event.key === CUSTOM_SCHEME_KEY)
+        restoreCustomScheme();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
@@ -227,6 +271,7 @@ export function createAppearance(
   restoreFont();
   restoreAccent();
   restoreContrast();
+  restoreCustomScheme();
   host?.addEventListener("storage", onStorage);
   systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
@@ -299,6 +344,34 @@ export function createAppearance(
           "This vibe level is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, contrast, contrastError };
+      notify();
+    },
+    setCustomScheme(value: CustomScheme | null) {
+      if (disposed) return;
+      const customScheme = value
+        ? (parseCustomScheme(serializeCustomScheme(value)) ??
+          state.customScheme)
+        : state.customScheme;
+      const customSchemeEnabled = value !== null;
+      let customSchemeError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        if (value)
+          host.localStorage.setItem(
+            CUSTOM_SCHEME_KEY,
+            serializeCustomScheme(customScheme),
+          );
+        else host.localStorage.removeItem(CUSTOM_SCHEME_KEY);
+      } catch {
+        customSchemeError =
+          "This custom color scheme is active, but could not be saved on this device. Try again.";
+      }
+      state = {
+        ...state,
+        customScheme,
+        customSchemeEnabled,
+        customSchemeError,
+      };
       notify();
     },
     dispose() {

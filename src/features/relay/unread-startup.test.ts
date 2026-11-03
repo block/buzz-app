@@ -953,6 +953,91 @@ it("the recovery tick retries a failed unread repair at once, not after the back
   }
 });
 
+it("a live message after a failed unread repair does not cancel its retry", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+  try {
+    const h = setup();
+    let fail = false;
+    h.query.mockImplementation(async (filters) => {
+      if (filters[0]?.kinds?.includes(39002))
+        return [
+          roster(h.relay, "other", [h.viewer.pubkey], 10),
+          metadata(h.relay, "other", "other", 10),
+        ];
+      if (!filters[0]?.kinds?.includes(9)) return [];
+      if (fail) throw new Error("Transient evidence failure");
+      return [h.row];
+    });
+    // The repair's read, not a lookup for one message.
+    const evidence = () =>
+      h.query.mock.calls.filter(
+        ([filters]) =>
+          filters[0]?.include_aux && filters[0]?.kinds?.includes(40002),
+      ).length;
+    await h.session.unread.ensure();
+    fail = true;
+    h.reconnect();
+    await vi.waitFor(() =>
+      expect(h.snapshot()).toMatchObject({
+        freshness: "stale",
+        error: "Transient evidence failure",
+      }),
+    );
+    fail = false;
+    // Live traffic marks the evidence observed, but other channels may still
+    // miss what the failed repair would have read.
+    h.receive([message(h.peer, "other", "live", 12)]);
+    expect(h.snapshot()).toMatchObject({ freshness: "observed" });
+    const before = evidence();
+    vi.setSystemTime(Date.now() + 60_000);
+    h.recover();
+    await vi.waitFor(() => expect(evidence()).toBe(before + 1));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("a failed read-state snapshot is retried at once even when the evidence repair succeeds", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
+  try {
+    const h = setup();
+    let fail = false;
+    h.query.mockImplementation(async (filters) => {
+      if (filters[0]?.kinds?.includes(39002))
+        return [
+          roster(h.relay, "other", [h.viewer.pubkey], 10),
+          metadata(h.relay, "other", "other", 10),
+        ];
+      if (filters[0]?.kinds?.includes(30078) && fail)
+        throw new Error("Transient snapshot failure");
+      return filters[0]?.kinds?.includes(9) ? [h.row] : [];
+    });
+    const snapshots = () =>
+      h.query.mock.calls.filter(([filters]) =>
+        filters[0]?.kinds?.includes(30078),
+      ).length;
+    await h.session.unread.ensure();
+    fail = true;
+    const before = snapshots();
+    // The backstop's snapshot read fails; its evidence read succeeds.
+    vi.setSystemTime(Date.now() + UNREAD_BACKSTOP_INTERVAL);
+    h.recover();
+    await vi.waitFor(() => expect(snapshots()).toBe(before + 1));
+    await vi.waitFor(() =>
+      expect(h.session.unread.sync()).toMatchObject({ status: "error" }),
+    );
+    await vi.waitFor(() =>
+      expect(h.snapshot()).toMatchObject({ freshness: "observed" }),
+    );
+    fail = false;
+    vi.setSystemTime(Date.now() + 60_000);
+    h.recover();
+    await vi.waitFor(() => expect(snapshots()).toBe(before + 2));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("a covered reconnect does not postpone the recovery tick's full unread repair", async () => {
   vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
   try {

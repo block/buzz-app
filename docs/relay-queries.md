@@ -974,16 +974,18 @@ evidence. The roster hint starts a full channel-list read only when the last
 one is still owed or failed, or when no full read has completed for 15 minutes
 (`ROSTER_BACKSTOP_INTERVAL`). Membership notices carry joins and removals live.
 The read also covers changes with no notice: a channel delete, a moderation
-kick or DM, and a dropped frame. The unread hint runs when a repair failed or
-the stream dropped with none completed since, and otherwise at most every 15
-minutes (`UNREAD_BACKSTOP_INTERVAL`), counted from that owner's last full
+kick or DM, and a dropped frame. The unread hint runs while a repair is owed,
+and otherwise at most every 15 minutes (`UNREAD_BACKSTOP_INTERVAL`), counted
+from that owner's last full
 repair, which each connection's first establishment also asks for. A covered
 resume (a continuous membership replay) reads no read-state snapshot, so it does
 not restart that interval. The live stream carries every unread change; this
 backstop only repairs what it lost with no signal (a channel the relay pruned
-from a batch, or a dropped frame). It does not renew
-singleton previews or add
-per-channel background history reads. When the socket
+from a batch, or a dropped frame). A repair is owed when an evidence repair
+failed, the evidence overflowed, a read-state snapshot read or marker failed,
+or the stream dropped, until a later repair or snapshot read succeeds. A live
+message that marks the evidence observed again does not pay it. It does not
+renew singleton previews or add per-channel background history reads. When the socket
 delivered no frame for a whole interval, the timer also sends one empty probe
 REQ; if no frame arrives within the setup timeout, the socket is replaced through
 the ordinary reconnect, with its backoff and replay. An open socket can stop

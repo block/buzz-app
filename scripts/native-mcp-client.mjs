@@ -86,11 +86,11 @@ export function startRelay(identifier, port) {
         .then(async () => {
           if (!upstream) {
             const socket = await connectTestInstance(identifier, port);
-            socket
-              ?.on("message", (reply) => client.send(reply.toString()))
-              .on("close", () => client.close());
             // It may have closed while lower ports were still being probed.
-            if (socket?.readyState === WebSocket.OPEN) upstream = socket;
+            if (socket?.readyState === WebSocket.OPEN)
+              upstream = socket
+                .on("message", (reply) => client.send(reply.toString()))
+                .on("close", () => client.close());
           }
           if (upstream?.readyState === WebSocket.OPEN)
             return upstream.send(text);

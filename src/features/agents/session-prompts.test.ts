@@ -99,6 +99,7 @@ it("titles known sections readably and shows unknown tags as they are", () => {
   expect(sectionTitle("community-repositories")).toBe("Repositories folder");
   expect(sectionTitle("agent-instructions")).toBe("Agent instructions");
   expect(sectionTitle("some-new-tag")).toBe("some-new-tag");
+  expect(sectionTitle("constructor")).toBe("constructor");
 });
 
 it("shows a Codex prompt as Base and the first turn's tagged context", async () => {

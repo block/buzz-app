@@ -99,27 +99,29 @@ const PROMPT_METHODS = new Set([
   "_goose/unstable/session/steer",
 ]);
 
-const TITLES: Record<string, string> = {
-  identity: "Identity",
-  base: "Base",
-  workspace: "Workspace",
-  "community-repositories": "Repositories folder",
-  "agent-instructions": "Agent instructions",
-  instructions: "Agent instructions",
-  team: "Team",
-  "core-memory": "Core memory",
-  "recent-notes": "Recent notes",
-  context: "Context",
-  "buzz-event": "Buzz event",
-  "buzz-events": "Buzz events",
-  "thread-context": "Thread context",
-  "conversation-context": "Conversation context",
-  "turn-context": "Turn context",
-  interest: "Interest",
-  text: "Text",
-};
+const TITLES = new Map(
+  Object.entries({
+    identity: "Identity",
+    base: "Base",
+    workspace: "Workspace",
+    "community-repositories": "Repositories folder",
+    "agent-instructions": "Agent instructions",
+    instructions: "Agent instructions",
+    team: "Team",
+    "core-memory": "Core memory",
+    "recent-notes": "Recent notes",
+    context: "Context",
+    "buzz-event": "Buzz event",
+    "buzz-events": "Buzz events",
+    "thread-context": "Thread context",
+    "conversation-context": "Conversation context",
+    "turn-context": "Turn context",
+    interest: "Interest",
+    text: "Text",
+  }),
+);
 /** A prompt section's readable title; an unknown tag shows as it is. */
-export const sectionTitle = (tag: string) => TITLES[tag] ?? tag;
+export const sectionTitle = (tag: string) => TITLES.get(tag) ?? tag;
 
 /** Split top-level `<tag attrs>` … `</tag>` prompt framing; other text is kept. */
 export function promptSections(text: string): PromptSection[] {

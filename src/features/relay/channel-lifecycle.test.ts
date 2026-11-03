@@ -1090,6 +1090,63 @@ it("retiring a caller during publication keeps the outcome uncertain without rep
   expect(h.removed).not.toHaveBeenCalled();
   h.owner.dispose();
 });
+it.each(
+  (["scoped cancel", "cancel", "clear", "dispose", "caller"] as const).flatMap(
+    (stop) =>
+      (["leave", "delete"] as const).flatMap((action) =>
+        (["publication", "confirmation read"] as const).map(
+          (phase) => [stop, action, phase] as const,
+        ),
+      ),
+  ),
+)("%s during a published %s's %s", async (stop, action, phase) => {
+  const h = harness("owner", "stream", 2);
+  const caller = new AbortController();
+  const started = deferred<void>();
+  const gate = deferred<void>();
+  if (phase === "publication") {
+    const apply = h.publish.getMockImplementation();
+    assert(apply);
+    // The relay applies the command before it acknowledges it.
+    h.publish.mockImplementationOnce(async (event) => {
+      await apply(event);
+      started.resolve();
+      await gate.promise;
+    });
+  } else {
+    const currentRead = h.read.getMockImplementation();
+    assert(currentRead);
+    let held = false;
+    h.read.mockImplementation(async (filters, options) => {
+      if (held || !filters.every((filter) => filter.consistency === "strong"))
+        return currentRead(filters, options);
+      held = true;
+      started.resolve();
+      await gate.promise;
+      // The session retires every shared read when access changes.
+      throw cancelled();
+    });
+  }
+  const run = h.owner.capability.run(action, id, caller.signal);
+  try {
+    await started.promise;
+    if (stop === "caller") caller.abort();
+    else if (stop === "scoped cancel") h.owner.cancel([id]);
+    else h.owner[stop]();
+    gate.resolve();
+    if (stop === "scoped cancel" || stop === "cancel") {
+      // Losing access is what the command does; it still confirms.
+      await run;
+      expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+    } else {
+      await expect(run).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      expect(h.removed).not.toHaveBeenCalled();
+    }
+    expect(h.publish).toHaveBeenCalledOnce();
+  } finally {
+    h.owner.dispose();
+  }
+});
 it("reads exact relay-owned coordinates fresh both before sign and before publish", async () => {
   const h = harness();
   await h.owner.capability.run("delete", id);

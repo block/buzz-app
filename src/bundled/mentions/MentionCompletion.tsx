@@ -20,7 +20,10 @@ import { SelectedMentionContext } from "../../features/messages/selected-mention
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { AgentsContext } from "../../features/agents/react";
 import { avatarMedia } from "../../shared/avatar-source";
-import { PROFILE_CACHE_BASE } from "../../features/relay/budget";
+import {
+  PROFILE_CACHE_BASE,
+  profileRosterRoom,
+} from "../../features/relay/budget";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
@@ -94,7 +97,10 @@ export function MentionCompletion({
     }
     const requested = demand.ids;
     // An open channel reserves room for its whole roster (ConversationChannel).
-    const limit = session.profiles.limit?.() ?? PROFILE_CACHE_BASE;
+    // The base stays free for names outside this roster.
+    const limit = profileRosterRoom(
+      session.profiles.limit?.() ?? PROFILE_CACHE_BASE,
+    );
     // A member a completed read found no profile for stays known unnamed, so
     // reopening the menu does not read it again; Retry does.
     const unnamed = session.profiles.unnamed?.();

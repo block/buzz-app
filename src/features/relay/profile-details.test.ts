@@ -685,12 +685,20 @@ it("publishes a background read's pages once, also when the session accepts each
   vi.useFakeTimers();
   const answers: {
     authors: readonly string[];
+    signal: AbortSignal | undefined;
     resolve: (events: RelayEvent[]) => void;
   }[] = [];
   const read = vi.fn(
-    (filters: readonly { authors?: readonly string[] | undefined }[]) =>
+    (
+      filters: readonly { authors?: readonly string[] | undefined }[],
+      options?: { signal?: AbortSignal },
+    ) =>
       new Promise<RelayEvent[]>((resolve) => {
-        answers.push({ authors: filters[0]?.authors ?? [], resolve });
+        answers.push({
+          authors: filters[0]?.authors ?? [],
+          signal: options?.signal,
+          resolve,
+        });
       }),
   );
   const directory = createProfileDirectory({ read });
@@ -706,12 +714,13 @@ it("publishes a background read's pages once, also when the session accepts each
     );
     const shown = directory.ensure([row[0]?.pubkey as string]);
     expect(answers).toHaveLength(4);
-    // The session accepts every read's events before the read returns them.
+    // The session accepts every read's events, with the read's signal, before
+    // the read returns them.
     const answer = (index: number, events: RelayEvent[]) => {
       const page = events.filter((event) =>
         answers[index]?.authors.includes(event.pubkey),
       );
-      directory.accept(page);
+      directory.accept(page, answers[index]?.signal);
       answers[index]?.resolve(page);
     };
     answer(0, roster);
@@ -745,6 +754,14 @@ it("publishes a background read's pages once, also when the session accepts each
     answer(1, roster);
     await vi.runAllTimersAsync();
     expect(changed).not.toHaveBeenCalled();
+    // Live traffic for a member still being read publishes at once.
+    const live = roster[1400] as RelayEvent;
+    directory.accept([
+      { ...live, id: "f".repeat(64), created_at: live.created_at + 1 },
+    ]);
+    await vi.runAllTimersAsync();
+    expect(changed).toHaveBeenCalledTimes(1);
+    changed.mockClear();
     answer(2, roster);
     await menu;
     await vi.runAllTimersAsync();

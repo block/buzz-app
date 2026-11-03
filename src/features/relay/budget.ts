@@ -4,6 +4,11 @@ export const OUTBOX_INPUT_MAX_BYTES = 32 * 1024;
 export const PROFILE_CACHE_BASE = 1024;
 /** Hard limit while an open channel reserves room for its members. */
 export const PROFILE_CACHE_MAX = 10_240;
+/** The roster profiles a view may load at a cache limit: the room an open
+ * channel reserved, so the base stays free for every other name on screen.
+ * With no reservation a view may still use the base. */
+export const profileRosterRoom = (limit: number) =>
+  limit > PROFILE_CACHE_BASE ? limit - PROFILE_CACHE_BASE : PROFILE_CACHE_BASE;
 /** Byte budget per profile entry; a typical signed kind 0 is 0.5-1 KiB. */
 export const PROFILE_ENTRY_BYTES = 2 * 1024;
 

@@ -1,4 +1,4 @@
-import type { NamingIdentity } from "./policy";
+import { scopeKeys, type NamingIdentity } from "./policy";
 import type { NameProvider, NameSource, NamingPolicy } from "./service";
 import type { LocalAgents } from "../agents/local";
 import { relayOrigin } from "../communities/destination";
@@ -142,22 +142,17 @@ export function createNameProvider(
     // rather than the whole profile cache.
     let rows: Iterable<NamingIdentity> = identities.values();
     if (selection) {
-      const selected = new Set(selection);
-      const picked = new Map<string, NamingIdentity>();
-      for (const key of selected) {
+      const facts = new Map<string, NamingIdentity[]>();
+      for (const fact of displayed)
+        facts.set(fact.pubkey, [...(facts.get(fact.pubkey) ?? []), fact]);
+      const keys = scopeKeys(selection, (key) => {
         const row = identities.get(key);
-        if (row) picked.set(key, row);
-      }
-      const owners = [...picked.values(), ...displayed].flatMap((row) =>
-        row.ownerPubkey && selected.has(row.pubkey)
-          ? [row.ownerPubkey.toLowerCase()]
-          : [],
-      );
-      for (const key of owners) {
+        return [...(row ? [row] : []), ...(facts.get(key) ?? [])];
+      });
+      rows = [...keys].flatMap((key) => {
         const row = identities.get(key);
-        if (row) picked.set(key, row);
-      }
-      rows = picked.values();
+        return row ? [row] : [];
+      });
     }
     return policy.resolve(
       [

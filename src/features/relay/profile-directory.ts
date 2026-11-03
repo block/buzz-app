@@ -77,17 +77,18 @@ export function createProfileDirectory(
   const reservations = new Set<{ members: number }>();
   let shrinking: ReturnType<typeof setTimeout> | undefined;
   const owners = new WeakMap<RelayEvent, string>();
-  const pending = new Map<
-    string,
-    {
-      work: Promise<void>;
-      authors: string[];
-      priority: Priority;
-      reading: boolean;
-      refresh: boolean;
-      cancel: AbortController;
-    }
-  >();
+  type Batch = {
+    work: Promise<void>;
+    authors: string[];
+    priority: Priority;
+    reading: boolean;
+    refresh: boolean;
+    cancel: AbortController;
+  };
+  const pending = new Map<string, Batch>();
+  // The batch each read attempt's signal belongs to, so the session's accept
+  // of that read's answer can be told apart from live traffic.
+  const attempts = new WeakMap<AbortSignal, Batch>();
   // Background reads a shrink cancelled; counted with evictions.
   let cancelled = 0;
   const listeners = new Set<() => void>();
@@ -123,19 +124,17 @@ export function createProfileDirectory(
   // A background read of many pages publishes once, when its pages settle:
   // every publish refolds all profiles and wakes every listener, and an open
   // mention menu re-ranks its whole roster on each one. The session accepts
-  // each page before the read returns it, so a page is recognised by its
-  // pending batch, not by its caller.
+  // each page before the read returns it, with that read's signal. Live
+  // traffic has no read signal and publishes at once.
   let folded = false;
   function flush() {
     if (folded && !closed) publish(true);
   }
-  function accept(incoming: readonly RelayEvent[]) {
+  function accept(incoming: readonly RelayEvent[], read?: AbortSignal) {
+    take(incoming, !!read && attempts.get(read)?.priority === "background");
+  }
+  function take(incoming: readonly RelayEvent[], fold: boolean) {
     if (closed) return;
-    const fold = incoming.every(
-      (event) =>
-        event.kind !== 0 ||
-        pending.get(event.pubkey)?.priority === "background",
-    );
     let changed = false;
     const attested: Promise<boolean>[] = [];
     for (const event of incoming) {
@@ -336,6 +335,7 @@ export function createProfileDirectory(
         async (signal) => {
           // A promotion during backoff applies to the next attempt instead.
           batch.reading = true;
+          attempts.set(signal, batch);
           try {
             const result = await reader.read(
               [{ kinds: [0], authors, limit: PROFILE_PAGE }],
@@ -356,7 +356,7 @@ export function createProfileDirectory(
           const profiles = result.filter((event) =>
             authors.includes(event.pubkey),
           );
-          accept(profiles);
+          take(profiles, fold);
           // A page at the limit may have left out authors who do have one.
           if (result.length < PROFILE_PAGE)
             missed(

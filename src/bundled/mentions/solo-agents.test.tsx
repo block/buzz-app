@@ -49,6 +49,10 @@ import { MENTION_RESOLVE_TIMEOUT_MS } from "../../features/conversation/completi
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
 import {
+  PROFILE_CACHE_BASE,
+  PROFILE_CACHE_MAX,
+} from "../../features/relay/budget";
+import {
   keypair,
   profile,
   unsignedProfiles,
@@ -3977,13 +3981,15 @@ it("Space keeps waiting after a member's profile read fails until a retry settle
 function rosterFixture(
   members: readonly string[],
   second: readonly string[] = [],
+  answer: (authors: readonly string[]) => RelayEvent[] = () => [],
 ) {
   const h = setup();
   const reads: { authors: readonly string[] }[] = [];
   const directory = createProfileDirectory({
     read: async (filters) => {
-      reads.push({ authors: filters[0]?.authors ?? [] });
-      return [];
+      const authors = filters[0]?.authors ?? [];
+      reads.push({ authors });
+      return answer(authors);
     },
   });
   const list = {
@@ -4038,6 +4044,37 @@ it("loads an open channel's whole roster when it reserves room past the base", a
   try {
     const view = h.mount();
     await waitFor(() => expect(h.requested().size).toBe(1100));
+    view.unmount();
+  } finally {
+    release?.();
+    h.dispose();
+  }
+});
+
+it("keeps the base cache for other names when a roster passes the cap", async () => {
+  const roster = unsignedProfiles(11_000, "M");
+  const byKey = new Map(roster.map((event) => [event.pubkey, event]));
+  const h = rosterFixture(
+    roster.map((event) => event.pubkey),
+    [],
+    (authors) => authors.flatMap((id) => byKey.get(id) ?? []),
+  );
+  const others = unsignedProfiles(PROFILE_CACHE_BASE, "O");
+  h.directory.accept(others);
+  const release = h.directory.queries.reserve?.(roster.length);
+  try {
+    expect(h.directory.queries.limit?.()).toBe(PROFILE_CACHE_MAX);
+    const view = h.mount();
+    await waitFor(() =>
+      expect(h.requested().size).toBe(PROFILE_CACHE_MAX - PROFILE_CACHE_BASE),
+    );
+    await waitFor(() =>
+      expect(h.directory.queries.snapshot().size).toBe(PROFILE_CACHE_MAX),
+    );
+    // The roster used only its reserved room: no other name was evicted.
+    expect(
+      others.every((event) => h.directory.queries.snapshot().has(event.pubkey)),
+    ).toBe(true);
     view.unmount();
   } finally {
     release?.();

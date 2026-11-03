@@ -1,6 +1,12 @@
 import { useProfileGeneration } from "../../features/relay/react";
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
-import { useContext, useEffect, useRef, useState } from "react";
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
@@ -14,6 +20,7 @@ import { SelectedMentionContext } from "../../features/messages/selected-mention
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { AgentsContext } from "../../features/agents/react";
 import { avatarMedia } from "../../shared/avatar-source";
+import { PROFILE_CACHE_BASE } from "../../features/relay/budget";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
@@ -64,12 +71,19 @@ export function MentionCompletion({
   const [attempt, retry] = useState(0);
   const [error, setError] = useState(false);
   const profileGeneration = useProfileGeneration(session.profiles);
+  // Evictions also count cancelled reads, so a shrink asks again for this roster.
+  const readEvictions = () => session.profiles.evictions?.() ?? 0;
+  const evictions = useSyncExternalStore(
+    session.profiles.subscribe,
+    readEvictions,
+    readEvictions,
+  );
   useEffect(() => {
     if (draftRoster) return;
     session.channels.ensureList();
-    // An access purge or an eviction drops loaded names, so its reads start a
-    // new budget. Names still loaded cost no read when requested again.
-    const evictions = session.profiles.evictions?.() ?? 0;
+    // An access purge, an eviction or a cancelled read drops names, so its
+    // reads start a new budget. Names still loaded cost no read when requested
+    // again.
     let demand = demands.get(session);
     if (
       demand?.generation !== profileGeneration ||
@@ -80,17 +94,17 @@ export function MentionCompletion({
     }
     const requested = demand.ids;
     // An open channel reserves room for its whole roster (ConversationChannel).
-    const limit = session.profiles.limit?.() ?? 1024;
+    const limit = session.profiles.limit?.() ?? PROFILE_CACHE_BASE;
     // A member a completed read found no profile for stays known unnamed, so
     // reopening the menu does not read it again; Retry does.
     const unnamed = session.profiles.unnamed?.();
-    const ids = memberKey
-      .split(":")
-      .filter(
-        (id) =>
-          id && (attempt > 0 || (!requested.has(id) && !unnamed?.has(id))),
-      )
-      .slice(0, attempt > 0 ? limit : Math.max(0, limit - requested.size));
+    const roster = memberKey.split(":").filter(Boolean);
+    // Only this roster's earlier requests use its allowance: another channel's
+    // members must not stop this one from loading.
+    const asked = roster.filter((id) => requested.has(id)).length;
+    const ids = roster
+      .filter((id) => attempt > 0 || (!requested.has(id) && !unnamed?.has(id)))
+      .slice(0, attempt > 0 ? limit : Math.max(0, limit - asked));
     if (!ids.length) return;
     for (const id of ids) requested.add(id);
     let live = true;
@@ -103,7 +117,7 @@ export function MentionCompletion({
     return () => {
       live = false;
     };
-  }, [session, memberKey, attempt, draftRoster, profileGeneration]);
+  }, [session, memberKey, attempt, draftRoster, profileGeneration, evictions]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const admitted =

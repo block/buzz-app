@@ -1188,7 +1188,10 @@ The port retains the prepared-store implementation and its behavior tests:
   open and active (not a retained background tab), it reserves room for its whole
   roster on top of that base, up to 10,240 entries. Leaving gives the room back
   after the current task, so a remount or a roster count change keeps the loaded
-  profiles. Narrow row profile selectors,
+  profiles; the shrink cancels background profile reads still in flight, and
+  stops the verified-name syncs it emptied. Verified-name syncs (128 people
+  each) have their own pool of 80, enough for the largest cache, apart from the
+  32 artifact syncs. Narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour

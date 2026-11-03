@@ -603,6 +603,60 @@ it("holds an open channel's roster on top of the base and shrinks back when rele
   }
 });
 
+it("cancels background reads still in flight when it shrinks, but not foreground ones", async () => {
+  vi.useFakeTimers();
+  const answers: {
+    authors: readonly string[];
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const read = vi.fn(
+    (
+      filters: readonly { authors?: readonly string[] | undefined }[],
+      options?: { signal?: AbortSignal },
+    ) =>
+      new Promise<RelayEvent[]>((resolve, reject) => {
+        answers.push({ authors: filters[0]?.authors ?? [], resolve });
+        options?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  );
+  const directory = createProfileDirectory({ read });
+  try {
+    const roster = unsignedProfiles(600, "R");
+    const onScreen = unsignedProfiles(1, "S");
+    const release = directory.queries.reserve?.(600);
+    const menu = directory.ensure(
+      roster.map((event) => event.pubkey),
+      "background",
+    );
+    const row = directory.ensure([onScreen[0]?.pubkey as string]);
+    expect(answers).toHaveLength(3);
+    const before = directory.queries.evictions?.() ?? 0;
+    release?.();
+    await vi.runAllTimersAsync();
+    // The menu's two pages were cancelled quietly; its requester asks again.
+    await expect(menu).resolves.toBeUndefined();
+    expect(directory.queries.evictions?.()).toBe(before + 2);
+    for (const answer of answers.slice(0, 2))
+      answer.resolve(
+        roster.filter((event) => answer.authors.includes(event.pubkey)),
+      );
+    answers[2]?.resolve(onScreen);
+    await row;
+    await vi.runAllTimersAsync();
+    expect(
+      directory.queries.snapshot().has(onScreen[0]?.pubkey as string),
+    ).toBe(true);
+    expect(directory.queries.snapshot().has(roster[0]?.pubkey as string)).toBe(
+      false,
+    );
+  } finally {
+    directory.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("returns known-unnamed identities past the base when it shrinks", async () => {
   vi.useFakeTimers();
   const read = vi.fn(async () => []);

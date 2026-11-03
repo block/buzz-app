@@ -3,6 +3,7 @@ import { eventDto } from "./events";
 import { keypair, signed } from "./testing";
 import { createVerifiedProfileDirectory } from "./verified-profile-directory";
 import {
+  VERIFIED_PROFILE_BATCH,
   verifiedProfile,
   verifiedProfileAuthority,
   verifiedProfileDiscovery,
@@ -1067,6 +1068,29 @@ it("shrinks a full head cache by request order, not by arrival order", async () 
       [alice.pubkey, carol.pubkey].sort(),
     );
     expect(h.changed).toHaveBeenCalledTimes(1);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
+it("stops the syncs a shrink emptied without another ensure", async () => {
+  const h = harness();
+  try {
+    h.directory.resize(VERIFIED_PROFILE_BATCH + 1);
+    const old = Array.from({ length: VERIFIED_PROFILE_BATCH }, (_, i) =>
+      (i + 1).toString(16).padStart(64, "0"),
+    );
+    h.directory.ensure(old);
+    await Promise.resolve();
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const [full, recent] = h.subscriptions;
+    assert(full && recent);
+    // Shrinking to one keeps the most recently requested subject only.
+    h.directory.resize(1);
+    await Promise.resolve();
+    expect(full.stopped).toBe(true);
+    expect(recent.stopped).toBe(false);
   } finally {
     h.directory.dispose();
   }

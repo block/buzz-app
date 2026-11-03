@@ -45,8 +45,9 @@ export interface ProfileQueries {
   reserve?(members: number): () => void;
   /** Profiles the cache can hold now; one ensure may ask for at most this many. */
   limit?(): number;
-  /** Moves when the budget drops loaded profiles. A view that requested names
-   * once and skips repeats must request again after it moves. */
+  /** Moves when the budget drops loaded profiles or a shrink cancels pending
+   * background reads. A view that requested names once and skips repeats must
+   * request again after it moves. */
   evictions?(): number;
 }
 
@@ -83,8 +84,12 @@ export function createProfileDirectory(
       authors: string[];
       priority: Priority;
       reading: boolean;
+      refresh: boolean;
+      cancel: AbortController;
     }
   >();
+  // Background reads a shrink cancelled; counted with evictions.
+  let cancelled = 0;
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
@@ -295,24 +300,29 @@ export function createProfileDirectory(
         authors,
         priority,
         reading: false,
+        refresh,
+        cancel: new AbortController(),
         work: Promise.resolve(),
       };
-      batch.work = retryRead(async (signal) => {
-        // A promotion during backoff applies to the next attempt instead.
-        batch.reading = true;
-        try {
-          const result = await reader.read(
-            [{ kinds: [0], authors, limit: PROFILE_PAGE }],
-            { signal, priority: batch.priority },
-          );
-          answered = true;
-          return result;
-        } finally {
-          batch.reading = false;
-        }
-      }, signal)
+      batch.work = retryRead(
+        async (signal) => {
+          // A promotion during backoff applies to the next attempt instead.
+          batch.reading = true;
+          try {
+            const result = await reader.read(
+              [{ kinds: [0], authors, limit: PROFILE_PAGE }],
+              { signal, priority: batch.priority },
+            );
+            answered = true;
+            return result;
+          } finally {
+            batch.reading = false;
+          }
+        },
+        AbortSignal.any([signal, batch.cancel.signal]),
+      )
         .then((result) => {
-          if (signal.aborted) return;
+          if (signal.aborted || batch.cancel.signal.aborted) return;
           const profiles = result.filter((event) =>
             authors.includes(event.pubkey),
           );
@@ -322,6 +332,9 @@ export function createProfileDirectory(
             missed(authors, new Set(profiles.map((event) => event.pubkey)));
         })
         .catch((error: unknown) => {
+          // A shrink cancels a background read quietly; evictions() tells its
+          // requester to ask again.
+          if (batch.cancel.signal.aborted) return;
           // The old directory contract silently discards a retired success.
           if (!signal.aborted || !answered) throw error;
         })
@@ -354,9 +367,22 @@ export function createProfileDirectory(
       reserved = Math.max(reserved, members);
     const next = Math.min(PROFILE_CACHE_MAX, PROFILE_CACHE_BASE + reserved);
     if (next === limit) return;
+    const shrink = next < limit;
     limit = next;
     verified?.resize(limit);
     let dropped = events.resize(limit, limit * PROFILE_ENTRY_BYTES) > 0;
+    // A read still in flight from the larger limit would land as the newest
+    // entries and push out names the next view just loaded. Foreground reads
+    // and reconnect refreshes keep going.
+    if (shrink)
+      for (const batch of new Set(pending.values())) {
+        if (batch.priority !== "background" || batch.refresh) continue;
+        batch.cancel.abort();
+        for (const id of batch.authors)
+          if (pending.get(id) === batch) pending.delete(id);
+        cancelled++;
+        dropped = true;
+      }
     if (unnamed.size > limit) {
       unnamed = new Set([...unnamed].slice(-limit));
       dropped = true;
@@ -390,7 +416,7 @@ export function createProfileDirectory(
     generation: () => generation,
     reserve,
     limit: () => limit,
-    evictions: () => events.evictions,
+    evictions: () => events.evictions + cancelled,
     owner: (pubkey: string) => {
       const event = events.peek(pubkey);
       return event ? owners.get(event) : undefined;

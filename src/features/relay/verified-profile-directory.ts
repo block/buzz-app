@@ -322,6 +322,8 @@ export function createVerifiedProfileDirectory(
         evicted = false;
         changed();
       }
+      // Stop the live syncs a shrink emptied now, not at the next ensure.
+      schedule();
     },
     snapshot(): ReadonlyMap<string, VerifiedProfile> {
       const currentAuthority = authority;

@@ -3974,7 +3974,10 @@ it("Space keeps waiting after a member's profile read fails until a retry settle
   }
 });
 
-function rosterFixture(members: readonly string[]) {
+function rosterFixture(
+  members: readonly string[],
+  second: readonly string[] = [],
+) {
   const h = setup();
   const reads: { authors: readonly string[] }[] = [];
   const directory = createProfileDirectory({
@@ -3985,7 +3988,10 @@ function rosterFixture(members: readonly string[]) {
   });
   const list = {
     status: "ready" as const,
-    channels: [{ id: "parent", channelType: "stream" as const, members }],
+    channels: [
+      { id: "parent", channelType: "stream" as const, members },
+      { id: "second", channelType: "stream" as const, members: second },
+    ],
   };
   const names = bindNames(
     { profiles: directory.queries, agentLibrary: h.library.queries },
@@ -4001,12 +4007,12 @@ function rosterFixture(members: readonly string[]) {
       people: () => new Promise<DirectoryPage>(() => {}),
     },
   } as unknown as RelaySession;
-  const mount = () =>
+  const mount = (channelId = "parent") =>
     render(
       <MentionCompletion
         session={session}
         scope="space-test"
-        channelId="parent"
+        channelId={channelId}
         observation={{ revision: 1, text: "@jo", start: 3, end: 3 }}
         query={{ start: 0, end: 3, query: "jo" }}
         publish={vi.fn()}
@@ -4032,6 +4038,30 @@ it("loads an open channel's whole roster when it reserves room past the base", a
   try {
     const view = h.mount();
     await waitFor(() => expect(h.requested().size).toBe(1100));
+    view.unmount();
+  } finally {
+    release?.();
+    h.dispose();
+  }
+});
+
+it("loads a second large channel's whole roster after the first one's", async () => {
+  const first = unsignedProfiles(1500, "A").map((event) => event.pubkey);
+  const second = unsignedProfiles(1500, "B").map((event) => event.pubkey);
+  const h = rosterFixture(first, second);
+  let release = h.directory.queries.reserve?.(first.length);
+  try {
+    let view = h.mount();
+    await waitFor(() => expect(h.requested().size).toBe(1500));
+    view.unmount();
+    // Navigating swaps one equal reservation for the other: nothing shrinks
+    // or evicts, so only this roster's own requests may use its allowance.
+    release?.();
+    release = h.directory.queries.reserve?.(second.length);
+    view = h.mount("second");
+    await waitFor(() =>
+      expect(second.every((id) => h.requested().has(id))).toBe(true),
+    );
     view.unmount();
   } finally {
     release?.();

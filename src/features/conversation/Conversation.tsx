@@ -2,7 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -151,7 +151,9 @@ export function ConversationChannel(props: ChannelProps) {
   );
   const held = active === false ? 0 : members;
   const { profiles } = session;
-  useEffect(
+  // A layout effect runs before every passive effect in the commit, so a child
+  // such as the mention menu reads the grown limit when the roster arrives.
+  useLayoutEffect(
     () => (held ? profiles.reserve?.(held) : undefined),
     [profiles, held],
   );

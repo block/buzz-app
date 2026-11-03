@@ -184,13 +184,10 @@
   display: block;
   width: 100%;
   height: 100%;
-  background: #231e1e;
+  background: #d7e7f5;
   mask: url("/welcome-bee.svg") center / contain no-repeat;
 }
-.bee:nth-child(3n + 2) > span {
-  background: #d7e7f5;
-}
-.bee:nth-child(3n) > span {
+.bee:nth-child(2n) > span {
   background: #dbfa52;
 }
 /* Builderlab/Auth0 card composition, using the same shared controls and Panel. */

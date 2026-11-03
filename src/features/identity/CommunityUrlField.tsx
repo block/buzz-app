@@ -55,15 +55,17 @@ export function CommunityUrlField({
       <div className="flex flex-col gap-12">
         <div className="min-w-0 w-full">
           <Field
-            label="Community URL"
-            error={invalid ? "Please enter a valid community URL" : undefined}
+            label="Community address or invite link"
+            error={
+              invalid ? "Enter a community address or invite link." : undefined
+            }
             disabled={disabled}
           >
             <Input
               inputMode="url"
               autoComplete="off"
               spellCheck={false}
-              placeholder="relay.example.com"
+              placeholder="community.example"
               value={url}
               disabled={disabled}
               onChange={(event) => {

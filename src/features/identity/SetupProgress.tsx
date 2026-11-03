@@ -1,6 +1,5 @@
 import styles from "./IdentitySetup.module.css";
 
-/** Mobile's centered bee-and-heading treatment, keeping the live step label. */
 export function SetupProgress({ label }: { label: string }) {
   return (
     <div className={styles.progress}>
@@ -10,11 +9,11 @@ export function SetupProgress({ label }: { label: string }) {
         tabIndex={-1}
         className="text-heading text-standard"
       >
-        Setting up Buzz
+        Getting ready
       </h1>
-      <p role="status" className="text-body text-subtle">
+      <span role="status" className="sr-only">
         {label}
-      </p>
+      </span>
     </div>
   );
 }

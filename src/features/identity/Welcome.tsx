@@ -69,6 +69,7 @@ import {
   type Resting,
   restoreCommunities,
   type SetupPause,
+  type SetupStep,
   unlinkKey,
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
@@ -138,9 +139,23 @@ export function Welcome({
   // failed. The account's, not a key's, so it lives as long as `reads`: Start
   // over keeps it and the landing clears it.
   const known = useRef<readonly string[] | undefined>(undefined);
+  // Resume the chosen lane after the independent backup decision.
+  const backupContinuation = useRef<() => SetupStep[]>(() => []);
   // The keys the account holds a backup of; `undefined` until listed, or when
   // backup status is unavailable or failed. Cleared on the landing.
   const [backups, setBackups] = useState<readonly string[]>();
+  const declineBackup = (): SetupStep[] => [
+    {
+      label: "Saving your choice…",
+      run: async () => {
+        const choice = await identity.getBackupChoice();
+        if (choice.available)
+          await identity.setBackupChoice(choice.pubkey, false);
+      },
+    },
+    ...backupContinuation.current(),
+  ];
+
   // The typed address survives a round trip to the find page and back.
   const [entered, setEntered] = useState("");
   const [otherOptions, setOtherOptions] = useState(false);
@@ -354,10 +369,7 @@ export function Welcome({
     handoff.current = chosen.id === typed ? undefined : finding;
     // `joined` adopts a relay profile only into an empty local default, so
     // with no relay profile read the local one is unchanged by the restore.
-    if (
-      !admitted.some((outcome) => outcome.read?.exists) &&
-      !communities.snapshot().profile.name
-    ) {
+    if (!chosen.read.profile.name.trim()) {
       setProfileStep({ found: chosen, read: chosen.read });
       return undefined;
     }
@@ -505,11 +517,8 @@ export function Welcome({
     }
     if (!admission) return;
     const step = { found, read: admission.found, admission };
-    // Neither the relay nor the local default (read before `joined` may adopt
-    // the relay's) holds a profile: the profile step asks for one, and the
-    // membership waits for it.
-    if (!admission.found.exists && !client.profile.name)
-      return setProfileStep(step);
+    // Require a nonempty relay name before completing this join.
+    if (!admission.found.profile.name.trim()) return setProfileStep(step);
     try {
       await finishJoin(step);
     } catch (error) {
@@ -530,7 +539,7 @@ export function Welcome({
   // blocks: nothing links the key later, so letting the user past it would
   // leave the key on this device only, and the page offers the error and Try
   // again until Builderlab answers. A failed backup may be skipped: a later
-  // sign-in runs the backup again.
+  // sign-in may retry only while the user has enabled automatic backup.
   const failedAfterKey =
     progress.status === "failed" && state.status === "ready";
   const blocked = failedAfterKey && progress.skipsLink;
@@ -588,6 +597,7 @@ export function Welcome({
             }
             onImport={async (nsec) => {
               await importKey(identity, nsec);
+              backupContinuation.current = finish;
               if (!current) void setup.start([]);
               else if (!linked)
                 void setup.start([linkKey(identity, current)], {
@@ -608,15 +618,13 @@ export function Welcome({
       case "key-choice":
         return (
           <KeyChoice
-            backups={backups}
-            onCreate={() =>
-              void setup.start([
-                createKey(identity),
-                link,
-                backUpKey,
-                ...finish(),
-              ])
-            }
+            onCreate={() => {
+              backupContinuation.current = finish;
+              void setup.start([createKey(identity), link], {
+                status: "paused",
+                at: "backup-offer",
+              });
+            }}
             onImport={() => pause("key-import")}
             onSwitchAccount={backToLanding}
           />
@@ -700,8 +708,10 @@ export function Welcome({
       case "backup-offer":
         return (
           <BackupOffer
-            onSkip={() => void setup.start(finish())}
-            onBackUp={() => void setup.start([backUpKey, ...finish()])}
+            onSkip={() => void setup.start(declineBackup())}
+            onBackUp={() =>
+              void setup.start([backUpKey, ...backupContinuation.current()])
+            }
           />
         );
       case "key-lost":
@@ -718,13 +728,15 @@ export function Welcome({
             onStartOver={() => {
               setLinked(undefined);
               setOwned(undefined);
-              void setup.start([
-                createKey(identity),
-                unlinkKey(identity, current, linked),
-                link,
-                backUpKey,
-                ...restore(),
-              ]);
+              backupContinuation.current = restore;
+              void setup.start(
+                [
+                  createKey(identity),
+                  unlinkKey(identity, current, linked),
+                  link,
+                ],
+                { status: "paused", at: "backup-offer" },
+              );
             }}
           />
         ) : null;
@@ -885,12 +897,10 @@ export function Welcome({
             read={profileStep.read}
             defaultName={auth.account?.email.split("@")[0] ?? ""}
             onContinue={(next) => finishJoin(profileStep, next)}
-            // A restored community is saved already: Skip only leaves.
-            onSkip={() =>
-              profileStep.admission
-                ? finishJoin(profileStep)
-                : Promise.resolve(leave())
-            }
+            onBack={async () => {
+              setProfileStep(undefined);
+              setFinding(undefined);
+            }}
           />
         ) : joinError ? (
           // Back returns to the find page, which looks the community up again.
@@ -934,7 +944,7 @@ export function Welcome({
             blocked
               ? undefined
               : skipped
-                ? () => void setup.start(finish())
+                ? () => void setup.start(declineBackup())
                 : backToLanding
           }
           onRetry={

@@ -28,7 +28,7 @@ function step(props: Partial<ComponentProps<typeof ProfileStep>> = {}) {
   const onContinue = vi.fn<ComponentProps<typeof ProfileStep>["onContinue"]>(
     () => Promise.resolve(),
   );
-  const onSkip = vi.fn<ComponentProps<typeof ProfileStep>["onSkip"]>(() =>
+  const onBack = vi.fn<ComponentProps<typeof ProfileStep>["onBack"]>(() =>
     Promise.resolve(),
   );
   render(
@@ -37,11 +37,11 @@ function step(props: Partial<ComponentProps<typeof ProfileStep>> = {}) {
       read={none}
       defaultName="ada"
       onContinue={onContinue}
-      onSkip={onSkip}
+      onBack={onBack}
       {...props}
     />,
   );
-  return { onContinue, onSkip, user: userEvent.setup() };
+  return { onContinue, onBack, user: userEvent.setup() };
 }
 afterEach(() => {
   cleanup();
@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 it("suggests and focuses the default name, needs a name to continue, and hands the trimmed profile to Continue", async () => {
-  const { onContinue, onSkip, user } = step();
+  const { onContinue, onBack, user } = step();
   const name = screen.getByRole("textbox", { name: "Display name" });
   expect(name).toHaveValue("ada");
   expect(name).toHaveFocus();
@@ -65,7 +65,7 @@ it("suggests and focuses the default name, needs a name to continue, and hands t
     picture: "",
     about: "",
   });
-  expect(onSkip).not.toHaveBeenCalled();
+  expect(onBack).not.toHaveBeenCalled();
 });
 
 it("prefills a relay profile and hands it to Continue as it is", async () => {
@@ -83,14 +83,14 @@ it("prefills a relay profile and hands it to Continue as it is", async () => {
 
 it("holds both buttons while Continue runs, and a rejection stays on the step with the error inline and the draft kept", async () => {
   const gate = deferred();
-  const { onContinue, onSkip, user } = step();
+  const { onContinue, onBack, user } = step();
   onContinue.mockReturnValueOnce(gate.promise);
   const name = screen.getByRole("textbox", { name: "Display name" });
   await user.clear(name);
   await user.type(name, "Ada{Enter}");
   expect(onContinue).toHaveBeenCalledOnce();
   expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Skip for now" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Go back" })).toBeDisabled();
   expect(name).toBeDisabled();
   gate.reject(
     new Error(
@@ -103,29 +103,29 @@ it("holds both buttons while Continue runs, and a rejection stays on the step wi
   expect(name).toHaveValue("Ada");
   expect(name).toBeEnabled();
   expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
-  expect(onSkip).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Go back" })).toBeEnabled();
+  expect(onBack).not.toHaveBeenCalled();
 });
 
-it("classifies a denied read, and Skip for now hands off without the draft and keeps the step when it fails", async () => {
-  const { onContinue, onSkip, user } = step();
+it("classifies a denied read, and Go back hands off without the draft and keeps the step when it fails", async () => {
+  const { onContinue, onBack, user } = step();
   onContinue.mockRejectedValueOnce(
     Object.assign(new Error("Relay read failed (403)"), {}),
   );
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "relay.example.com no longer admits this key. Skip for now and ask a community administrator.",
+    "relay.example.com no longer admits this key. Go back and ask a community administrator.",
   );
-  onSkip.mockRejectedValueOnce(
+  onBack.mockRejectedValueOnce(
     new Error("Could not save this community on this device. Try again."),
   );
-  await user.click(screen.getByRole("button", { name: "Skip for now" }));
+  await user.click(screen.getByRole("button", { name: "Go back" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not save this community on this device. Try again.",
   );
-  expect(onSkip).toHaveBeenCalledExactlyOnceWith();
-  expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Skip for now" }));
-  expect(onSkip).toHaveBeenCalledTimes(2);
+  expect(onBack).toHaveBeenCalledExactlyOnceWith();
+  expect(screen.getByRole("button", { name: "Go back" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Go back" }));
+  expect(onBack).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole("alert")).toBeNull();
 });

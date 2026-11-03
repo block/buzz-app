@@ -1,7 +1,7 @@
 import { Button } from "../../shared/design-system/ui/Button";
 
 /**
- * Pause after an imported key, on either lane. Importing must never upload
+ * Pause after creating, replacing or importing a key. None may upload
  * silently: the backup is offered, and the key continues either way. The key
  * may be used elsewhere, so the copy discloses that Block can restore it there
  * too; choosing Back it up is the backup consent.
@@ -21,12 +21,15 @@ export function BackupOffer({
           tabIndex={-1}
           className="text-heading text-standard"
         >
-          Back up this key?
+          Back up your key?
         </h1>
         <p className="mt-2 text-body text-subtle">
-          Buzz can keep an encrypted copy in your account so you can skip this
-          step on your next device. Block can use that copy to restore this key,
-          including anywhere else you use it.
+          Save an encrypted copy of your private key online with your Builderlab
+          account. You can use it when setting up Buzz on another device.
+        </p>
+        <p className="mt-2 text-body text-subtle">
+          Block can use that copy to restore this key, including anywhere else
+          you use it.
         </p>
       </div>
       {/* Footer order: secondary first, primary last. */}

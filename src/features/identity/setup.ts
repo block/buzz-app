@@ -65,7 +65,7 @@ function saved(identity: Identity) {
 /** Creates a key on this device, which the account steps then act on. */
 export function createKey(identity: Identity): SetupStep {
   return {
-    label: "Creating keys…",
+    label: "Creating your key…",
     run: async () => {
       await identity.create();
       saved(identity);

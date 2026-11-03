@@ -234,7 +234,9 @@ async function firstRunWithAddress(
     await screen.findByRole("button", { name: "Other options" }),
   );
   await user.type(
-    await screen.findByRole("textbox", { name: "Community URL" }),
+    await screen.findByRole("textbox", {
+      name: "Community address or invite link",
+    }),
     `${address}{Enter}`,
   );
   await user.click(
@@ -243,6 +245,7 @@ async function firstRunWithAddress(
   await user.click(
     await screen.findByRole("button", { name: "Create my key" }),
   );
+  await user.click(await screen.findByRole("button", { name: "Back it up" }));
   const dialog = await screen.findByRole("dialog", {
     name: "Join a community",
   });

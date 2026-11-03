@@ -2,8 +2,6 @@ import { OnboardingBack } from "./OnboardingBack";
 import { useId, useRef, useState } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import { useFileDrop } from "../messages/use-file-drop";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { EyeIcon, EyeSlashIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -37,7 +35,6 @@ export function KeyImport({
   onImport: (nsec: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
-  const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
   const form = useRef<HTMLFormElement>(null);
@@ -121,8 +118,8 @@ export function KeyImport({
                 Enter your private key
               </h1>
               <p className="text-body text-subtle">
-                Paste your private key to sign in to Buzz. You can also drop a
-                text file holding it here, or choose one.
+                Paste your private key to sign in to Buzz. You can also select
+                or drop a text file with your key.
               </p>
               <div className={styles.importForm}>
                 <Field
@@ -142,7 +139,7 @@ export function KeyImport({
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <Input
-                        type={revealed ? "text" : "password"}
+                        type="text"
                         autoComplete="off"
                         autoCorrect="off"
                         autoCapitalize="off"
@@ -153,14 +150,6 @@ export function KeyImport({
                         autoFocus
                       />
                     </div>
-                    <IconButton
-                      aria-label={
-                        revealed ? "Hide private key" : "Reveal private key"
-                      }
-                      icon={revealed ? <EyeSlashIcon /> : <EyeIcon />}
-                      disabled={!text}
-                      onClick={() => setRevealed(!revealed)}
-                    />
                     <div className="shrink-0">
                       <Button
                         type="button"
@@ -179,9 +168,11 @@ export function KeyImport({
                 )}
               </div>
               {onLost && (
-                <Button variant="link" onClick={onLost}>
-                  I lost this key
-                </Button>
+                <div className="flex justify-start">
+                  <Button variant="link" onClick={onLost}>
+                    I lost my key
+                  </Button>
+                </div>
               )}
             </form>
             {/* Outside the form, so the key is its only field and Enter submits. */}

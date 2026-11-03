@@ -68,13 +68,26 @@ function packed(
   };
 }
 
+const promptsKey = (type: string, agent: AgentKey) =>
+  `${PROMPTS_PREFIX}${type}:${agent}`;
+
+/** Removes a membership's saved prompts, of every agent type. */
+export async function removeSessionPrompts(
+  storage: AgentStore,
+  agent: AgentKey,
+) {
+  for (const key of storage.keys())
+    if (key.startsWith(PROMPTS_PREFIX) && key.endsWith(`:${agent}`))
+      await storage.set(key, null);
+}
+
 /** The saved prompts of one agent's sessions of one agent type. */
 export function sessionPrompts(
   storage: AgentStore,
   type: string,
   agent: AgentKey,
 ) {
-  const key = `${PROMPTS_PREFIX}${type}:${agent}`;
+  const key = promptsKey(type, agent);
   const all = () => {
     const { texts, sessions } = read(storage.get(key));
     return sessions.map(

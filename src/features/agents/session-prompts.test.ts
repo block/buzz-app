@@ -1,9 +1,26 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
+import type { TranscriptTurn } from "./activity-transcript";
 import { localStore, type AgentStore } from "./store";
-import { PROMPTS_BUDGET, sessionPrompts } from "./session-prompts";
+import {
+  PROMPTS_BUDGET,
+  removeSessionPrompts,
+  sessionPrompts,
+} from "./session-prompts";
 
 const AGENT = "a".repeat(64);
+const turn = (fields: Partial<TranscriptTurn>): TranscriptTurn => ({
+  turnId: "t",
+  channelId: null,
+  threadRootId: null,
+  triggeringEventIds: [],
+  newSession: false,
+  config: [],
+  startedAt: 0,
+  partial: false,
+  items: [],
+  ...fields,
+});
 const memory = () => {
   const items = new Map<string, string>();
   return localStore({
@@ -43,7 +60,8 @@ it("drops the oldest sessions to stay in budget, never cutting text", async () =
   await prompts.save("huge", [{ label: "", text: "x".repeat(PROMPTS_BUDGET) }]);
   expect(prompts.get("huge")).toBeNull();
   // A dropped session is never filled in again by reading it.
-  expect(prompts.shown([])).toEqual([]);
+  const shown = prompts.shown([turn({ sessionId: "s1", newSession: true })]);
+  expect(shown[0]?.items.some((item) => item.type === "system")).toBe(false);
 });
 
 it("logs a failed save without throwing", async () => {
@@ -59,4 +77,19 @@ it("logs a failed save without throwing", async () => {
   ).resolves.toBeUndefined();
   expect(error).toHaveBeenCalled();
   error.mockRestore();
+});
+
+it("removes an agent's prompts of every type, and only that agent's", async () => {
+  const storage = memory();
+  const other = "b".repeat(64);
+  const part = [{ label: "", text: "t" }];
+  for (const type of ["goose", "pi"]) {
+    await sessionPrompts(storage, type, AGENT).save("s", part);
+    await sessionPrompts(storage, type, other).save("s", part);
+  }
+  await removeSessionPrompts(storage, AGENT);
+  for (const type of ["goose", "pi"]) {
+    expect(sessionPrompts(storage, type, AGENT).get("s")).toBeUndefined();
+    expect(sessionPrompts(storage, type, other).get("s")).toEqual(part);
+  }
 });

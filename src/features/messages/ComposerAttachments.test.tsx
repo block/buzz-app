@@ -122,6 +122,13 @@ it.each([false, true])(
 );
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static createObjectURL = vi.fn(() => "blob:attachment");
+      static revokeObjectURL = vi.fn();
+    },
+  );
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
 });
@@ -310,44 +317,100 @@ it("does not fall back to an untrusted original when canonical media cannot be r
   expect(create).not.toHaveBeenCalled();
 });
 
-it("explains an upload failure on focus and preserves retry and removal", async () => {
-  const retry = vi.fn();
-  const remove = vi.fn();
-  render(
+it.each([
+  ["report.pdf", "application/pdf"],
+  ["photo.png", "image/png"],
+  ["clip.mp4", "video/mp4"],
+])(
+  "explains a failed %s and preserves retry and removal",
+  async (name, type) => {
+    const retry = vi.fn();
+    const remove = vi.fn();
+    render(
+      <ComposerAttachments
+        items={[
+          {
+            id: "failed-file",
+            file: new File(["document"], name, { type }),
+            status: "error",
+            error: "The relay rejected this file.",
+          },
+        ]}
+        disabled={false}
+        retry={retry}
+        remove={remove}
+        media={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Upload failed. Retry or remove it to send.",
+    );
+    const retryButton = screen.getByRole("button", { name: `Retry ${name}` });
+    const removeButton = screen.getByRole("button", { name: `Remove ${name}` });
+    expect(retryButton.textContent).toBe("Retry");
+    expect(removeButton.textContent).toBe("Remove");
+    fireEvent.focus(retryButton);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(
+      "The relay rejected this file. Press Delete to remove.",
+    );
+    fireEvent.click(retryButton);
+    expect(retry).toHaveBeenCalledWith("failed-file");
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: `Preview ${name}` }),
+    );
+    fireEvent.keyDown(retryButton, {
+      key: "Delete",
+    });
+    expect(remove).toHaveBeenCalledWith("failed-file");
+    remove.mockClear();
+    fireEvent.click(removeButton);
+    expect(remove).toHaveBeenCalledExactlyOnceWith("failed-file");
+    expect(retry).toHaveBeenCalledOnce();
+  },
+);
+
+it("explains errors without service details and disables both recovery actions", () => {
+  const item: DraftAttachment = {
+    id: "photo",
+    file: new File(["image"], "photo.png", { type: "image/png" }),
+    status: "error",
+  };
+  const props = { remove: vi.fn(), retry: vi.fn(), media: () => undefined };
+  const root = render(
+    <ComposerAttachments {...props} items={[item]} disabled />,
+  );
+  expect(screen.getByRole("alert").textContent).toContain(
+    "Upload failed. Retry or remove it to send.",
+  );
+  for (const action of ["Retry", "Remove"]) {
+    const button = screen.getByRole("button", { name: `${action} photo.png` });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(button);
+    fireEvent.keyDown(button, { key: "Delete" });
+  }
+  expect(props.retry).not.toHaveBeenCalled();
+  expect(props.remove).not.toHaveBeenCalled();
+  root.rerender(
     <ComposerAttachments
-      items={[
-        {
-          id: "failed-file",
-          file: new File(["document"], "report.pdf", {
-            type: "application/pdf",
-          }),
-          status: "error",
-          error: "The relay rejected this file.",
-        },
-      ]}
+      {...props}
+      items={[{ ...item, status: "uploading" }]}
       disabled={false}
-      retry={retry}
-      remove={remove}
-      media={() => undefined}
     />,
   );
-  expect(screen.getByRole("alert").textContent).toBe(
-    "The relay rejected this file.",
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("progressbar")).toBeTruthy();
+  root.rerender(
+    <ComposerAttachments {...props} items={[item]} disabled={false} />,
   );
-  fireEvent.focus(screen.getByRole("button", { name: "Retry report.pdf" }));
-  expect((await screen.findByRole("tooltip")).textContent).toBe(
-    "The relay rejected this file. Press Delete to remove.",
+  expect(screen.getByRole("alert")).toBeTruthy();
+  root.rerender(
+    <ComposerAttachments
+      {...props}
+      items={[{ ...item, status: "ready" }]}
+      disabled={false}
+    />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Retry report.pdf" }));
-  expect(retry).toHaveBeenCalledWith("failed-file");
-  fireEvent.keyDown(screen.getByRole("button", { name: "Retry report.pdf" }), {
-    key: "Delete",
-  });
-  expect(remove).toHaveBeenCalledWith("failed-file");
-  remove.mockClear();
-  fireEvent.click(screen.getByRole("button", { name: "Remove report.pdf" }));
-  expect(remove).toHaveBeenCalledExactlyOnceWith("failed-file");
-  expect(retry).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("keeps removal available during upload", () => {

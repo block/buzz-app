@@ -12,6 +12,7 @@ function browser(apple = true) {
   const host = {
     navigator: { platform: apple ? "MacIntel" : "Linux x86_64" },
     document: {
+      querySelector: () => (modal ? {} : null),
       querySelectorAll: () =>
         modal ? [{ closest: () => null, matches: () => false }] : [],
     },

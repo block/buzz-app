@@ -34,11 +34,15 @@ declare module "@deepseek-ai/cordis" {
 }
 
 const MODAL = 'dialog[open], [aria-modal="true"]';
-function eligibleIn(shortcut: Shortcut, editable: boolean, modal: boolean) {
+/** No modal, an addressable dialog that is its own navigation visit, or any other modal. */
+type Modal = false | "visit" | true;
+function eligibleIn(shortcut: Shortcut, editable: boolean, modal: Modal) {
   try {
     return (
       (!editable || shortcut.allowInEditable) &&
-      (!modal || shortcut.allowInModal) &&
+      (!modal ||
+        shortcut.allowInModal ||
+        (modal === "visit" && shortcut.allowInVisit)) &&
       (!shortcut.when || shortcut.when())
     );
   } catch (error) {
@@ -89,10 +93,9 @@ export class ShortcutsService extends Service implements Shortcuts {
       const editable = inEditable(event);
       const modal =
         modalOpen() ||
-        ((!host?.document || !activeModal(host.document)) &&
-          event
-            .composedPath()
-            .some((target) => (target as Element).matches?.(MODAL)));
+        event
+          .composedPath()
+          .some((target) => (target as Element).matches?.(MODAL));
       const eligible = (shortcut: Shortcut) =>
         eligibleIn(shortcut, editable, modal);
       // Host chords are reserved even while unavailable (e.g. Settings behind a modal).
@@ -115,11 +118,12 @@ export class ShortcutsService extends Service implements Shortcuts {
       if (event.repeat && !shortcut.repeat) return;
       runShortcut(shortcut);
     };
-    // An addressable dialog is a navigation visit, not a modal interruption:
-    // shortcuts, Back included, work in it as in the view it covers.
-    const modalOpen = () => {
-      const modal = host?.document && activeModal(host.document);
-      return !!modal && !modal.matches("[data-navigation-visit]");
+    const modalOpen = (): Modal => {
+      if (!host?.document.querySelector(MODAL)) return false;
+      // Only the topmost modal can be the current navigation visit.
+      return activeModal(host.document)?.matches("[data-navigation-visit]")
+        ? "visit"
+        : true;
     };
     // A non-keyboard request for a host shortcut, such as macOS mouse
     // back/forward: the chord's own eligibility, outside any editable.

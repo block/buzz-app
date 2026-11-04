@@ -14766,6 +14766,24 @@ it.each([false, true])(
   },
 );
 
+it("keeps an owned agent's chip on the pill while the agent read refreshes", () => {
+  // Bea is the viewer's agent but not yet in the chat.
+  const { h, bea, sendingTo } = mountSoloAgents({ members: [first.pubkey] });
+  act(() => {
+    h.commands().insertMention(bea);
+    h.commands().insertText("hi");
+  });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  // A refresh drops the agents until it completes; the chip is still an
+  // agent, not a reference, and the send keeps its recipient.
+  h.setLibrary([first, second], "loading");
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  h.setLibrary([first, second]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+});
+
 it("does not seed the pill with another person's agent outside the Solo chat", () => {
   setDefaultAgent("scope", first.pubkey);
   const viewer = "f".repeat(64);

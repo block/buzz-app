@@ -20,6 +20,7 @@ import { DraftMentionRoster } from "../../features/messages/draft-mention-roster
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import {
   allowsOutsideMentions,
+  startingChat,
   archivedMention,
 } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
@@ -256,6 +257,8 @@ export function useMentionChoices(
   open = true,
   /** Toolbar audience at opening; toggles must not reorder installed rows. */
   addressed?: ReadonlySet<string>,
+  /** False for choosers that pick agents only, like the Solo agent menu. */
+  offerPeople = true,
 ) {
   const draft = useContext(DraftMentionRoster);
   const roster = draft?.recipients;
@@ -277,9 +280,11 @@ export function useMentionChoices(
   // Previews replace the list on every message; read this channel and the
   // roster's state, not the whole list. A message also replaces this channel's
   // summary with a new preview and activity time, which mentions never read:
-  // keep the previous summary while every other field is unchanged.
+  // keep the previous summary while every other field is unchanged. A New
+  // chat's mentions follow the Solo chat it starts.
   const kept = useRef<ChannelSummary>(undefined);
-  const channel = useListedChannel(session.channels, channelId, (c) => {
+  const channel = useListedChannel(session.channels, channelId, (listed) => {
+    const c = listed ?? startingChat(channelId);
     if (!c || !kept.current || !sameMentionFields(kept.current, c))
       kept.current = c;
     return kept.current;
@@ -302,7 +307,7 @@ export function useMentionChoices(
     session,
     channel,
     query,
-    open && allowsOutsideMentions(channel, roster, invite),
+    open && offerPeople && allowsOutsideMentions(channel, roster, invite),
     lifetime,
   );
   const archives = useMentionArchives(session, open);

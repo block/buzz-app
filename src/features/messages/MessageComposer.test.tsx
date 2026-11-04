@@ -552,9 +552,11 @@ function mount(
     setLibrary(
       identities: AgentLibrarySnapshot["identities"],
       status: AgentLibrarySnapshot["status"] = "ready",
+      error?: string,
     ) {
       act(() => {
-        library = { ...library, identities, status };
+        const { error: _previous, ...rest } = library;
+        library = { ...rest, identities, status, ...(error ? { error } : {}) };
         for (const listener of libraryListeners) listener();
       });
     },
@@ -13392,6 +13394,7 @@ function mountSoloAgents(
       channelWrites: {
         refreshMembership: async () => ({
           id: "channel",
+          channelType: "solo",
           members: options.refreshed ?? members,
         }),
         addAgents: vi.fn(),
@@ -14508,6 +14511,102 @@ it.each([true, false])(
     expect(addAgents).not.toHaveBeenCalled();
   },
 );
+
+it("adds a known agent while one agent source failed, but refuses a name it cannot tell from a reference", async () => {
+  const h = mount();
+  const stranger = { pubkey: "e".repeat(64), name: "Stranger" };
+  const channel = {
+    id: "channel",
+    name: "Work",
+    channelType: "solo" as const,
+    members: ["viewer"],
+  };
+  const list = { status: "ready" as const, channels: [channel] };
+  const addAgents = vi.fn();
+  h.retarget({
+    soloConversation: true,
+    ownSoloConversation: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { list: () => list, subscribeList: () => () => {} },
+      channelWrites: { refreshMembership: async () => channel, addAgents },
+    } as unknown as RelaySession,
+  });
+  // One source failed; the other still lists the viewer's agent.
+  h.setLibrary([first], "ready", "Relay inventory unavailable");
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("hi");
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  expect(addAgents).toHaveBeenCalledOnce();
+  // A key the partial list lacks may be an agent it failed to read.
+  h.fill("");
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(stranger);
+    h.commands().insertText("ask her");
+  });
+  h.submit();
+  expect(
+    await screen.findByText("Could not load your agents. Retry."),
+  ).toBeVisible();
+  expect(h.messages.send).toHaveBeenCalledOnce();
+});
+
+it("a reference tagged alone in an agents-only Solo chat keeps the pill's agents", async () => {
+  const { h, ada, sendingTo } = mountSoloAgents();
+  const carol = { pubkey: "e".repeat(64), name: "Carol" };
+  act(() => {
+    h.commands().insertMention(carol);
+    h.commands().insertText("what did she say?");
+  });
+  // A reference addresses nobody, so it does not replace the pill's agent.
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  expect(h.commands().audience?.named).toBe(false);
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([ada.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.[5]).toEqual([carol.pubkey]);
+});
+
+it("does not seed the pill with another person's agent outside the Solo chat", () => {
+  setDefaultAgent("scope", first.pubkey);
+  const viewer = "f".repeat(64);
+  const theirs = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setLibrary([], "loading");
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "channel", channelType: "solo" as const, members: [first.pubkey] },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => list },
+    } as unknown as RelaySession,
+  });
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [theirs, { name: "Otto", isAgent: true }],
+    ]),
+  );
+  // The viewer last sent to an agent that has since left the chat.
+  h.setRows([editableMessage({ authorId: viewer, mentions: [theirs] })]);
+  h.setLibrary([first]);
+  // The main agent stands in instead.
+  expect(
+    screen.getByRole("status", { name: "Sending to Ada. Change agents" }),
+  ).toBeInTheDocument();
+});
 
 it("recovers an uploaded follow-up instead of queuing it after its chat disappeared", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");

@@ -1012,6 +1012,56 @@ it("cannot send on an unsupported community", async () => {
   expect(test.channelWrites.create).not.toHaveBeenCalled();
 });
 
+it.each([true, false])(
+  "a first message references a person outside the chat, as later ones do (complete inventory=%s)",
+  async (complete) => {
+    const test = setup(),
+      onStarted = vi.fn(),
+      user = userEvent.setup();
+    Object.assign(test.session.agentChoices.snapshot(), { complete });
+    const person = "e".repeat(64);
+    writeView("test", "solo:new-draft", {
+      text: "@Member agent ask @Pat",
+      recipients: [
+        { pubkey: "a".repeat(64), name: "Member agent", start: 0, end: 13 },
+        { pubkey: person, name: "Pat", start: 18, end: 22 },
+      ],
+    });
+    render(
+      <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+    );
+    await user.click(screen.getByRole("textbox"));
+    await user.keyboard("{Enter}");
+    if (!complete) {
+      // A partial agent read cannot tell that key from one of your agents.
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Could not load your agents. Retry.",
+      );
+      expect(test.channelWrites.start).not.toHaveBeenCalled();
+      return;
+    }
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    const id = test.channelWrites.create.mock.calls[0]?.[0];
+    // Only the agent joins and is notified; the person is named, not added.
+    expect(test.channelWrites.start).toHaveBeenCalledWith(
+      id,
+      expect.any(String),
+      ["a".repeat(64)],
+      undefined,
+      false,
+      undefined,
+    );
+    expect(test.messages.send).toHaveBeenCalledWith(
+      id,
+      "@Member agent ask @Pat",
+      ["a".repeat(64)],
+      [],
+      undefined,
+      [person],
+    );
+  },
+);
+
 it("opens the chat and sends its message before the relay confirms the create", async () => {
   const test = setup(),
     onStarted = vi.fn(),
@@ -2011,9 +2061,11 @@ it.each([false, true])(
       undefined,
       true,
     );
+    const agent = { pubkey: viewer.pubkey, name: "Viewer", managed: true };
     const eligible = {
       ...h.session.agentChoices.snapshot(),
-      selectable: [{ pubkey: viewer.pubkey, name: "Viewer", managed: true }],
+      identities: [agent],
+      selectable: [agent],
     };
     const session = {
       ...h.session,

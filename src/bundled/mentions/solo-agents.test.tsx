@@ -47,6 +47,10 @@ import {
 } from "./resolve-space-mention";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../../features/conversation/completion";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import {
+  mentionAdmission,
+  reserveSoloMentions,
+} from "../../features/messages/mention-admission";
 import { createProfileDirectory } from "../../features/relay/profile-directory";
 import type { RelayEvent } from "../../features/relay/events";
 import {
@@ -2416,6 +2420,123 @@ it("keeps a Solo owner's left-out members out of directory results", async () =>
     ) ?? [];
   await waitFor(() => expect(labels()).toContain("Outside"));
   expect(labels()).not.toContain("Outsider bot");
+});
+
+it("keeps the Solo agent menu to agents: it searches no directory", async () => {
+  const t = setup(false);
+  const people = vi.fn(async () => ({
+    people: [{ pubkey: "e".repeat(64), name: "Outside" }],
+    hasMore: false,
+  }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  const toggle = vi.fn();
+  const menu = (
+    <MentionPicker
+      scope="scope"
+      session={session}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      audience={{
+        recipients: [{ pubkey: t.key, name: "Outside agent" }],
+        named: false,
+        only: vi.fn(),
+        toggle,
+      }}
+      select={() => true}
+    />
+  );
+  const view = render(menu);
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Sending to Outside agent. Change agents",
+    }),
+  );
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search members and agents" }),
+    "Out",
+  );
+  // The same chat's inline completion does search the directory. Once its
+  // result arrives, a search the menu had started would have returned too.
+  const publish = vi.fn();
+  view.rerender(
+    <>
+      {menu}
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
+      />
+    </>,
+  );
+  await waitFor(() =>
+    expect(
+      (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
+        (item) => item.label,
+      ),
+    ).toContain("Outside"),
+  );
+  // A reference picked in the menu would go out with a message whose text
+  // never names that person.
+  expect(people).toHaveBeenCalledOnce();
+  await outsideRow(t);
+  expect(screen.queryByRole("button", { name: /^Outside e/ })).toBeNull();
+  expect(toggle).not.toHaveBeenCalled();
+  view.unmount();
+  t.library.dispose();
+});
+
+it("offers directory people as references in a New chat's first message", async () => {
+  // A New chat's id is not listed until it starts.
+  const t = setup(null);
+  const outside = { pubkey: "e".repeat(64), name: "Outside" };
+  const people = vi.fn(async () => ({ people: [outside], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  const release = reserveSoloMentions(session, "parent");
+  const publish = vi.fn();
+  render(
+    <DraftMentionRoster.Provider
+      value={{ recipients: [{ pubkey: t.key, name: "Outside agent" }] }}
+    >
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
+      />
+    </DraftMentionRoster.Provider>,
+  );
+  const items = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items ?? [];
+  await waitFor(() =>
+    expect(items().find((item) => item.label === "Outside")?.detail).toBe(
+      "Not in chat · Will not be notified",
+    ),
+  );
+  expect(items().map((item) => item.label)).toContain("Outside agent");
+  // The pasted or chosen key is admitted only while the reservation holds.
+  expect(mentionAdmission(session, "parent", true, [])(outside.pubkey)).toBe(
+    true,
+  );
+  release();
+  expect(mentionAdmission(session, "parent", true, [])(outside.pubkey)).toBe(
+    false,
+  );
+  t.library.dispose();
 });
 
 it("offers outside directory people in a DM, like a channel", async () => {

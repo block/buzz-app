@@ -84,8 +84,11 @@ offers the Solo chat's own agent list instead of item 3, and also offers item 4
 so people can name anyone. It never adds directory people: an outside key that
 is not one of the viewer's own agents is a reference (section 7). When the
 owner's composer limits members to its own roster, the directory MUST NOT
-bring back a member that the roster leaves out. Other Solo chat composers, such
-as media comments and edits, do not invite agents and offer the members only.
+bring back a member that the roster leaves out. A New chat's composer follows the
+same rule before its chat is listed: its reserved id stands for a Solo chat
+holding only the viewer. The Solo toolbar's agent menu picks agents only and
+MUST NOT search the directory. Other Solo chat composers, such as media
+comments and edits, do not invite agents and offer the members only.
 Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
@@ -372,7 +375,10 @@ chooser row says so before the user picks the person.
 A Solo chat MUST NOT ask either, in any Solo chat composer. A composer that
 invites agents adds the viewer's available agents that the draft names. Every
 other outside key is a reference, as in a DM, and the chooser row says so
-before the user picks the person.
+before the user picks the person. Classifying an unknown key as a reference
+needs complete agent inventory evidence; a partial read still adds the agents
+it lists. A reference addresses nobody, so it does not replace the toolbar's
+agents.
 
 An agent from the viewer's other communities (section 1, item 3) is not a
 member here and cannot be added until it joins this community. Before the

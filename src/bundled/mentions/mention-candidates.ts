@@ -10,6 +10,7 @@ import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
 import {
   allowsOutsideMentions,
+  mentionChannel,
   archivedMention,
   mentionAdmission,
 } from "../../features/messages/mention-admission";
@@ -112,7 +113,7 @@ export function mentionCandidates(
   // test fails when they read one more. The viewer is fixed per session.
   const sources = [
     // Only this channel's row; activity elsewhere replaces the list, not it.
-    session.channels.list().channels.find((c) => c.id === channelId),
+    mentionChannel(session, channelId),
     session.agentChoices.snapshot(),
     session.profiles.snapshot(),
     session.archives?.snapshot(),
@@ -181,9 +182,7 @@ function buildCandidates(
   directory: readonly DirectoryPerson[],
   elsewhere: readonly ElsewhereAgent[],
 ) {
-  const channel = session.channels
-    .list()
-    .channels.find((c) => c.id === channelId);
+  const channel = mentionChannel(session, channelId);
   const members = roster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKeys = new Set(members);
   // A saved chat's roster also offers agents that are not in the chat. Its

@@ -4,6 +4,7 @@ import {
 } from "../../features/messages/composer-session";
 import {
   allowsOutsideMentions,
+  mentionChannel,
   outsideMentionReferences,
 } from "../../features/messages/mention-admission";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
@@ -114,9 +115,7 @@ async function resolve(
       signal,
     );
   }
-  const channel = session.channels
-    .list()
-    .channels.find((c) => c.id === channelId);
+  const channel = mentionChannel(session, channelId);
   const members = roster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   // A member a completed read finds no profile for is known unnamed; a failed
   // read leaves its name missing, which only keeps the local step off.

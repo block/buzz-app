@@ -154,7 +154,9 @@ behavior on the label, so a rename touches copy only.
   and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging. Anyone else from the
   community directory can be mentioned as a reference, as in a DM: they are
-  not added or notified, and the chooser row says so. People join only
+  not added or notified, and the chooser row says so. This includes a new
+  chat's first message. A reference does not replace the toolbar's agents,
+  and the toolbar's agent menu offers agents only. People join only
   through Share. Empty new-chat drafts start tagged with
   the default agent for this account/community. **Agents → right-click or "..." →
   Make my bestie** explicitly saves that agent as the bestie; its card then shows

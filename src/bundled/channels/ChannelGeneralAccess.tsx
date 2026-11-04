@@ -9,13 +9,17 @@ import type { ChannelDetailsCapability } from "../../features/relay/channel-deta
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayRecovery } from "../../features/relay/recovery";
 import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
-import type {
-  ChannelDetails,
-  ChannelDetailsDraft,
+import {
+  changesDefault,
+  type ChannelDetails,
+  type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
+import type { RosterReader } from "../../features/communities/roster";
+import { useCommunityRole } from "../../features/communities/useCommunityRole";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Select } from "../../shared/design-system/ui/Select";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   CircleNotchIcon,
@@ -37,13 +41,16 @@ import {
 } from "../../features/channels/general-access";
 
 /** General access uses the same signed save/readback owner as channel details.
- * Each policy is confirmed once, like the individual member roles. */
+ * Each policy is confirmed once, like the individual member roles. Community
+ * owners/admins also choose whether new community members join it. */
 export function ChannelGeneralAccess({
   capability,
   recovery,
   channelId,
   channel,
   mayHaveGuestMembers = true,
+  roster,
+  viewer,
 }: {
   capability: ChannelDetailsCapability;
   recovery?: RelayRecovery | undefined;
@@ -51,6 +58,9 @@ export function ChannelGeneralAccess({
   channel?: ChannelSummary;
   /** False only when the signed member-role snapshot verifies no Guests. */
   mayHaveGuestMembers?: boolean;
+  /** The community roster offers the default-channel setting to its managers. */
+  roster?: RosterReader | undefined;
+  viewer?: string | undefined;
 }) {
   const place = channel?.channelType === "solo" ? "chat" : "channel";
   const Icon =
@@ -101,6 +111,8 @@ export function ChannelGeneralAccess({
       recovery={recovery}
       channelId={channelId}
       mayHaveGuestMembers={mayHaveGuestMembers}
+      roster={roster}
+      viewer={viewer}
     />
   );
 }
@@ -110,11 +122,15 @@ function ChannelGeneralAccessEditor({
   recovery,
   channelId,
   mayHaveGuestMembers,
+  roster,
+  viewer,
 }: {
   capability: ChannelDetailsCapability;
   recovery: RelayRecovery | undefined;
   channelId: string;
   mayHaveGuestMembers: boolean;
+  roster: RosterReader | undefined;
+  viewer: string | undefined;
 }) {
   const attempt = useSyncExternalStore(capability.subscribe, () =>
     capability.snapshot(channelId),
@@ -165,7 +181,9 @@ function ChannelGeneralAccessEditor({
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
-  const locked = loading || pending || !!attempt || !base?.canEdit;
+  const community = useCommunityRole(roster, viewer);
+  const settling = loading || pending || !!attempt;
+  const locked = settling || !base?.canEdit;
   const solo = soloLabels(base?.labels);
   const place = solo ? "chat" : "channel";
   const access = base ? generalAccessValue(base) : "";
@@ -189,26 +207,36 @@ function ChannelGeneralAccessEditor({
       ...generalAccessPolicy(option.value, base.joinRole),
     });
   }
-  async function apply(check = false) {
+  async function apply(check = false, change = choice) {
     const controller = lifetime.current;
+    // The relay checks the community role a default-channel change needs.
+    const toggled = !!base && !!change && changesDefault(change, base);
     if (
       !controller ||
       busy.current ||
-      (check ? attempt?.status !== "unconfirmed" : !base || !choice || locked)
+      (check
+        ? attempt?.status !== "unconfirmed"
+        : !base || !change || (toggled ? settling : locked))
     )
       return;
-    if (check) section.current?.focus();
+    if (check || toggled) section.current?.focus();
     busy.current = true;
     setPending(true);
-    setStatus(check ? "Checking save status…" : "Saving access…");
+    setStatus(
+      check
+        ? "Checking save status…"
+        : toggled
+          ? "Saving default channel…"
+          : "Saving access…",
+    );
     setError("");
     // The choices lock while saving; keep keyboard focus in the access region.
     origin.current = section.current;
     setChoice(undefined);
     try {
       if (check) await capability.check(channelId, controller.signal);
-      else if (base && choice)
-        await capability.save(base, choice, controller.signal);
+      else if (base && change)
+        await capability.save(base, change, controller.signal);
       if (!controller.signal.aborted) {
         setStatus("Access updated");
         await load(controller.signal);
@@ -317,6 +345,34 @@ function ChannelGeneralAccessEditor({
             />
           </div>
         </div>
+        {base?.autoJoin !== undefined &&
+          !solo &&
+          !community.manager &&
+          community.readError && (
+            <div className={styles.accessFeedback}>
+              <p role="alert" className="text-body-sm text-danger">
+                Couldn’t check your community role, so the default channel
+                setting is unavailable.
+              </p>
+              <Button
+                disabled={community.refreshing}
+                onClick={() => void community.refresh()}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
+        {base?.autoJoin !== undefined && !solo && community.manager && (
+          <SwitchPreferenceRow
+            label="Default channel"
+            description={`New community members join automatically as ${base.joinRole === "guest" ? "guests" : "members"}.`}
+            checked={base.autoJoin}
+            disabled={settling}
+            onCheckedChange={(checked) =>
+              void apply(false, { ...base, autoJoin: checked })
+            }
+          />
+        )}
         {choice && base && (
           <AlertDialog
             title="Change general access?"

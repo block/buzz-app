@@ -22,6 +22,9 @@ export type ChannelDetailsDraft = Readonly<{
   ttlSeconds?: number | undefined;
   /** NIP-CL labels. Absent leaves the relay's set unchanged; empty clears it. */
   labels?: readonly string[] | undefined;
+  /** Default channel: the relay joins new community members. Absent where the
+   * relay would refuse it (not an open, unarchived stream channel). */
+  autoJoin?: boolean | undefined;
 }>;
 export type ChannelDetails = ChannelDetailsDraft &
   Readonly<{
@@ -87,6 +90,10 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
       draft.joinRole !== "guest"
         ? "New participant role could not be verified."
         : undefined,
+    autoJoin:
+      draft?.autoJoin !== undefined && typeof draft.autoJoin !== "boolean"
+        ? "Default channel setting could not be verified."
+        : undefined,
   };
 }
 
@@ -118,7 +125,8 @@ export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
     errors.visibility ??
     errors.lifetime ??
     errors.labels ??
-    errors.joinRole;
+    errors.joinRole ??
+    errors.autoJoin;
   if (error) throw new Error(error);
 }
 
@@ -145,6 +153,7 @@ export function detailsSettings(
   const ttlSeconds = parseDetailsTtl(ttl);
   if (!name || !visibility)
     throw new Error("Current channel details could not be verified.");
+  const archived = exactLifecycleTag(metadata, "archived") === "true";
   const details: ChannelDetails = Object.freeze({
     channelId: id,
     version: metadata.id,
@@ -154,12 +163,27 @@ export function detailsSettings(
     ...(joinRole ? { joinRole } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     labels: channelIdentity(metadata).labels,
+    // The relay publishes a bare tag only while the setting is effective.
+    ...(authority.channelType === "stream" &&
+    visibility === "public" &&
+    !archived
+      ? { autoJoin: metadata.tags.some((tag) => tag[0] === "auto_join") }
+      : {}),
     canEdit:
       authority.channelType !== "dm" &&
-      exactLifecycleTag(metadata, "archived") !== "true" &&
+      !archived &&
       (role === "owner" || role === "admin"),
   });
   return { details, metadata };
+}
+
+/** Only a community owner/admin may set the default, possibly without channel
+ * edit rights, so it is sent alone rather than with the channel's details. */
+export function changesDefault(
+  draft: ChannelDetailsDraft,
+  base: ChannelDetailsDraft,
+) {
+  return draft.autoJoin !== undefined && draft.autoJoin !== base.autoJoin;
 }
 
 export function detailsTemplate(
@@ -168,6 +192,29 @@ export function detailsTemplate(
   base: ChannelDetailsDraft,
 ): EventTemplate {
   validateDetailsDraft(draft);
+  if (changesDefault(draft, base)) {
+    if (base.autoJoin === undefined)
+      throw new Error("This channel cannot be a default channel.");
+    if (
+      draft.name !== base.name ||
+      draft.description !== base.description ||
+      draft.visibility !== base.visibility ||
+      draft.ttlSeconds !== base.ttlSeconds ||
+      (draft.joinRole !== undefined && draft.joinRole !== base.joinRole) ||
+      (draft.labels !== undefined &&
+        !sameLabels(draft.labels, base.labels ?? []))
+    )
+      throw new Error("Change the default channel setting on its own.");
+    return {
+      kind: 9002,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "",
+      tags: [
+        ["h", lifecycleChannelId(id)],
+        ["auto_join", draft.autoJoin ? "true" : "false"],
+      ],
+    };
+  }
   return {
     kind: 9002,
     created_at: Math.floor(Date.now() / 1000),
@@ -249,6 +296,7 @@ function parseDetailsTtl(value: string | undefined): number | undefined {
 
 /** Separate from lifecycle and outbox admission. Admits only explicit open/private visibility. */
 export function validateDetailsTemplate(event: EventTemplate): void {
+  if (defaultTemplate(event)) return;
   if (
     event?.kind !== 9002 ||
     event.content !== "" ||
@@ -298,4 +346,28 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     ...(joinRole ? { joinRole } : {}),
     ...(event.tags.some(([key]) => key === "t") ? { labels } : {}),
   });
+}
+
+/** The exact two-tag default-channel command `[h, auto_join=true|false]`. */
+function defaultTemplate(event: EventTemplate) {
+  if (
+    event?.kind !== 9002 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 2 ||
+    event.tags[1]?.[0] !== "auto_join"
+  )
+    return false;
+  const [channel, setting] = event.tags;
+  if (
+    channel?.length !== 2 ||
+    channel[0] !== "h" ||
+    setting?.length !== 2 ||
+    (setting[1] !== "true" && setting[1] !== "false")
+  )
+    throw new Error("Invalid channel details command.");
+  lifecycleChannelId(channel[1] ?? "");
+  return true;
 }

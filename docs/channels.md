@@ -801,6 +801,23 @@ Uncertain results survive closing the dialog and offer **Check save status**,
 which reads without republishing. Opening or checking never writes. Private
 channels with a Guest default remain intact when changing unrelated details.
 
+Community owners and admins, as the relay-signed community roster names them,
+also see a **Default channel** switch below the policy row on open, unarchived
+stream channels (not Solo chats). When on, the relay joins every new community
+member to the channel with its admission role, which the switch description
+names (`NOSTR.md` § Default channels in block/buzz). Channel edit rights are not
+required: the relay checks the community role. The switch saves immediately,
+without a confirmation, as the exact two-tag `9002` command `[h, auto_join]`
+with `true` or `false`; it never travels with other details, and both hosts'
+channel-details validators admit that shape. The checked state is the bare
+`auto_join` tag of fresh signed metadata, which the relay publishes only while
+the setting is in effect, so it never shows optimistic success. Pending,
+uncertain and rejected saves share the General access live region and recovery
+above. Making a default channel private or archiving it leaves the relay's stored
+setting in place; to clear it, switch it off while the channel is open. Readers'
+previews show no switch, and a community admin must open the channel's members
+dialog to change it.
+
 For private channels, ordinary human additions explicitly request Member (Participate), including when an older saved admission default is
 Guest. Existing roles are not changed; **Add as** still permits an individual
 View only or Admin choice. Public additions keep their admission-default behavior,

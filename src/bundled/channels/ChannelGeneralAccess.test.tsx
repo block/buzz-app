@@ -516,3 +516,134 @@ it.each([true, false])(
     expect(h.save).not.toHaveBeenCalled();
   },
 );
+
+const relay = "e".repeat(64);
+const viewer = "a".repeat(64);
+function roster(role: "owner" | "admin" | "member") {
+  return {
+    relayAuthor: relay,
+    read: vi.fn(async () => [
+      {
+        id: "1".repeat(64),
+        kind: 13534,
+        pubkey: relay,
+        created_at: 1,
+        content: "",
+        sig: "2".repeat(128),
+        tags: [["member", viewer, role]],
+      },
+    ]),
+  };
+}
+
+it("lets a community admin without channel edit rights choose a default channel, only confirming the relay readback", async () => {
+  const h = harness();
+  const current: ChannelDetails = {
+    ...base,
+    joinRole: "member",
+    canEdit: false,
+    autoJoin: false,
+  };
+  h.load.mockResolvedValue(current);
+  let finish = () => {};
+  h.save.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (finish = resolve)),
+  );
+  const user = userEvent.setup();
+  render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      roster={roster("admin")}
+      viewer={viewer}
+    />,
+  );
+  const setting = await screen.findByRole("switch", {
+    name: "Default channel",
+  });
+  expect(
+    screen.getByText("New community members join automatically as members."),
+  ).toBeInTheDocument();
+  expect(setting).not.toBeChecked();
+  // Channel edit rights still gate the access policy itself.
+  expect(
+    screen.getByRole("combobox", { name: "General access" }),
+  ).toBeDisabled();
+  h.load.mockResolvedValue({ ...current, autoJoin: true });
+  setting.focus();
+  await user.keyboard(" ");
+  await waitFor(() => expect(h.save).toHaveBeenCalledOnce());
+  expect(h.save).toHaveBeenCalledWith(
+    current,
+    { ...current, autoJoin: true },
+    expect.any(AbortSignal),
+  );
+  // Pending: no optimistic success, and no second submission.
+  expect(setting).not.toBeChecked();
+  expect(setting).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Saving default channel…",
+  );
+  await user.click(setting);
+  expect(h.save).toHaveBeenCalledOnce();
+  await act(async () => finish());
+  await waitFor(() => expect(setting).toBeChecked());
+  expect(screen.getByRole("status")).toHaveTextContent("Access updated");
+});
+
+it.each([
+  { role: "member", details: { autoJoin: false } },
+  { role: "admin", details: { autoJoin: undefined } },
+  { role: "owner", details: { autoJoin: false, labels: ["buzz.solo"] } },
+] as const)(
+  "omits the default channel setting for a community $role on $details",
+  async ({ role, details }) => {
+    const h = harness();
+    const reader = roster(role);
+    h.load.mockResolvedValue({ ...base, ...details });
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        roster={reader}
+        viewer={viewer}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "General access" }),
+      ).toBeEnabled(),
+    );
+    await waitFor(() => expect(reader.read).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  },
+);
+
+it("explains a failed community role read beside the setting and retries it in place", async () => {
+  const h = harness();
+  const reader = roster("admin");
+  reader.read.mockRejectedValueOnce(new Error("offline"));
+  h.load.mockResolvedValue({ ...base, autoJoin: false });
+  const user = userEvent.setup();
+  render(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      roster={reader}
+      viewer={viewer}
+    />,
+  );
+  expect(
+    await screen.findByText(/Couldn’t check your community role/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    await screen.findByRole("switch", { name: "Default channel" }),
+  ).not.toBeChecked();
+  expect(
+    screen.queryByText(/Couldn’t check your community role/),
+  ).not.toBeInTheDocument();
+  expect(reader.read).toHaveBeenCalledTimes(2);
+});

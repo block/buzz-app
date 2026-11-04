@@ -1157,3 +1157,207 @@ it("keeps a region label when an editor replaces the label set with empty", asyn
   await h.owner.capability.save(base, { ...base, labels: [] });
   expect((await h.owner.capability.load(id)).labels).toEqual([region]);
 });
+
+it("sets and clears a default channel with the exact narrow command, without channel edit rights, and requires the relay readback", async () => {
+  const h = harness("member");
+  const flagged = () =>
+    h.record(39000, [...h.metadata().tags.slice(1), ["auto_join"]]);
+  const base = await h.owner.capability.load(id);
+  expect(base).toMatchObject({ autoJoin: false, canEdit: false });
+  // A relay OK that leaves the setting unchanged must not report success.
+  h.publish.mockImplementationOnce(async () => {});
+  await expect(
+    h.owner.capability.save(base, { ...base, autoJoin: true }),
+  ).rejects.toThrow("may have been saved");
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", id],
+    ["auto_join", "true"],
+  ]);
+  h.set([flagged(), ...h.events().slice(1)]);
+  await h.owner.capability.check(id);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  const current = await h.owner.capability.load(id);
+  expect(current.autoJoin).toBe(true);
+  h.publish.mockImplementationOnce(async () => {
+    h.set([h.metadata(), ...h.events().slice(1)]);
+  });
+  await h.owner.capability.save(current, { ...current, autoJoin: false });
+  expect(h.sign.mock.calls[1]?.[0].tags).toEqual([
+    ["h", id],
+    ["auto_join", "false"],
+  ]);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  // The setting never rides along with other details.
+  const cleared = await h.owner.capability.load(id);
+  await expect(
+    h.owner.capability.save(cleared, {
+      ...cleared,
+      name: "renamed",
+      autoJoin: true,
+    }),
+  ).rejects.toThrow("Change the default channel setting on its own.");
+  expect(h.sign).toHaveBeenCalledTimes(2);
+  expect(h.publish).toHaveBeenCalledTimes(2);
+});
+
+it("keeps a default channel change uncertain while archived metadata cannot show it", async () => {
+  const h = harness("member");
+  const tags = h.metadata().tags.slice(1);
+  const flagged = h.record(39000, [...tags, ["auto_join"]]);
+  const archived = h.record(39000, [...tags, ["archived", "true"]]);
+  h.set([flagged, ...h.events().slice(1)]);
+  const base = await h.owner.capability.load(id);
+  // Archived before the relay applied the change: nothing confirms it.
+  h.publish.mockImplementationOnce(async () => {
+    h.set([archived, ...h.events().slice(1)]);
+  });
+  await expect(
+    h.owner.capability.save(base, { ...base, autoJoin: false }),
+  ).rejects.toThrow("may have been saved");
+  await expect(h.owner.capability.check(id)).rejects.toThrow(
+    "may have been saved",
+  );
+  expect(h.owner.capability.snapshot(id)).toMatchObject({
+    status: "unconfirmed",
+    defaultChange: true,
+  });
+  // Unarchived with the flag still stored: the change did not take.
+  h.set([flagged, ...h.events().slice(1)]);
+  await expect(h.owner.capability.check(id)).rejects.toThrow(
+    "may have been saved",
+  );
+  h.set([h.metadata(), ...h.events().slice(1)]);
+  await h.owner.capability.check(id);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  expect(h.publish).toHaveBeenCalledOnce();
+});
+
+it.each([
+  {
+    case: "private",
+    tags: [
+      ["name", "original"],
+      ["about", ""],
+      ["private"],
+      ["t", "stream"],
+      ["auto_join"],
+    ],
+  },
+  {
+    case: "archived",
+    tags: [
+      ["name", "original"],
+      ["about", ""],
+      ["public"],
+      ["t", "stream"],
+      ["archived", "true"],
+    ],
+  },
+  {
+    case: "forum",
+    tags: [["name", "original"], ["about", ""], ["public"], ["t", "forum"]],
+  },
+])(
+  "offers no default channel setting on a $case channel and refuses to send one",
+  async ({ tags }) => {
+    const h = harness();
+    h.set([h.record(39000, tags), ...h.events().slice(1)]);
+    const base = await h.owner.capability.load(id);
+    expect(base.autoJoin).toBeUndefined();
+    await expect(
+      h.owner.capability.save(base, { ...base, autoJoin: true }),
+    ).rejects.toThrow("permission");
+    expect(h.sign).not.toHaveBeenCalled();
+  },
+);
+
+it("makes a default channel private without sending or confirming the default setting", async () => {
+  const h = harness();
+  h.set([
+    h.record(39000, [...h.metadata().tags.slice(1), ["auto_join"]]),
+    ...h.events().slice(1),
+  ]);
+  const base = await h.owner.capability.load(id);
+  expect(base.autoJoin).toBe(true);
+  // The relay keeps the stored flag but stops advertising it while private.
+  await h.owner.capability.save(base, { ...base, ...draft });
+  const command = h.sign.mock.calls[0]?.[0];
+  expect(command?.tags.some(([key]) => key === "auto_join")).toBe(false);
+  expect(h.owner.capability.snapshot(id)).toBeUndefined();
+  expect((await h.owner.capability.load(id)).autoJoin).toBeUndefined();
+});
+
+it("admits only the exact two-tag default channel command at the host boundary", () => {
+  const command = (tags: string[][]) => ({
+    kind: 9002,
+    created_at: 1,
+    content: "",
+    tags,
+  });
+  for (const value of ["true", "false"])
+    expect(() =>
+      validateDetailsTemplate(
+        command([
+          ["h", id],
+          ["auto_join", value],
+        ]),
+      ),
+    ).not.toThrow();
+  for (const tags of [
+    [["h", id], ["auto_join"]],
+    [
+      ["h", id],
+      ["auto_join", ""],
+    ],
+    [
+      ["h", id],
+      ["auto_join", "yes"],
+    ],
+    [
+      ["h", id],
+      ["auto_join", "true", "extra"],
+    ],
+    [
+      ["auto_join", "true"],
+      ["h", id],
+    ],
+    [
+      ["h", "not-a-channel"],
+      ["auto_join", "true"],
+    ],
+    [
+      ["h", id],
+      ["auto_join", "true"],
+      ["auto_join", "true"],
+    ],
+    [
+      ["h", id],
+      ["name", "Team"],
+      ["about", ""],
+      ["auto_join", "true"],
+    ],
+  ])
+    expect(
+      () => validateDetailsTemplate(command(tags)),
+      JSON.stringify(tags),
+    ).toThrow();
+  expect(() =>
+    validateDetailsTemplate({
+      ...command([
+        ["h", id],
+        ["auto_join", "true"],
+      ]),
+      content: "x",
+    }),
+  ).toThrow();
+  expect(
+    detailsTemplate(
+      id,
+      { name: "a", description: "", visibility: "public", autoJoin: true },
+      { name: "a", description: "", visibility: "public", autoJoin: false },
+    ).tags,
+  ).toEqual([
+    ["h", id],
+    ["auto_join", "true"],
+  ]);
+});

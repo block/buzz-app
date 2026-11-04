@@ -1782,6 +1782,8 @@ export function ChannelMembersDialog({
       recovery={session.recovery}
       channelId={channelId}
       channel={channel}
+      roster={session}
+      viewer={session.viewer}
       mayHaveGuestMembers={
         administration.status !== "ready" ||
         Object.values(administration.authority.roles).includes("guest")

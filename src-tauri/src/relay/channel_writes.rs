@@ -20,6 +20,11 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
+    // The default-channel setting travels alone: `[h, auto_join=true|false]`.
+    if event.kind == 9002 && common(event) && event.tags.len() == 2 {
+        return tag(event, 0, "h").is_some_and(uuid)
+            && matches!(tag(event, 1, "auto_join"), Some("true" | "false"));
+    }
     if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
         return false;
     }
@@ -628,6 +633,62 @@ mod boundary_tests {
             let signed = tauri::async_runtime::block_on(host.sign(template)).unwrap();
             assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_err());
         }
+    }
+
+    #[test]
+    fn details_admit_only_the_exact_default_channel_command() {
+        let host = IdentityHost::fixture();
+        let channel = || vec!["h".to_string(), uuid::Uuid::nil().to_string()];
+        let command = |tags: Vec<Vec<String>>| EventTemplate {
+            kind: 9002,
+            created_at: 1700000010,
+            content: String::new(),
+            tags,
+        };
+        for value in ["true", "false"] {
+            let template = command(vec![channel(), vec!["auto_join".into(), value.into()]]);
+            let event = serde_json::to_value(&template).unwrap();
+            assert!(validate("channel-details", &event, None).is_ok());
+            assert!(validate("channel-lifecycle", &event, None).is_err());
+            let signed = tauri::async_runtime::block_on(host.sign(template)).unwrap();
+            assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_ok());
+            let mut altered = signed;
+            altered["tags"][1][1] =
+                Value::String(if value == "true" { "false" } else { "true" }.into());
+            assert!(validate("channel-details", &altered, altered["pubkey"].as_str()).is_err());
+        }
+        for tags in [
+            vec![channel(), vec!["auto_join".into()]],
+            vec![channel(), vec!["auto_join".into(), "".into()]],
+            vec![channel(), vec!["auto_join".into(), "yes".into()]],
+            vec![
+                channel(),
+                vec!["auto_join".into(), "true".into(), "extra".into()],
+            ],
+            vec![vec!["auto_join".into(), "true".into()], channel()],
+            vec![
+                vec!["h".into(), "not-a-channel".into()],
+                vec!["auto_join".into(), "true".into()],
+            ],
+            vec![
+                channel(),
+                vec!["auto_join".into(), "true".into()],
+                vec!["auto_join".into(), "true".into()],
+            ],
+            vec![channel(), vec!["name".into(), "Team".into()]],
+        ] {
+            assert!(
+                !valid("channel-details", &command(tags.clone())),
+                "{tags:?}"
+            );
+        }
+        // The setting never rides along with other channel details.
+        let mut combined = details_event(vec![vec!["auto_join".into(), "true".into()]]);
+        assert!(!valid("channel-details", &combined));
+        combined.content = "x".into();
+        combined.tags.truncate(1);
+        combined.tags.push(vec!["auto_join".into(), "true".into()]);
+        assert!(!valid("channel-details", &combined));
     }
 
     #[test]

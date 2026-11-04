@@ -158,6 +158,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   Changing this choice does not change existing members' roles. Ordinary
   participants have no role caption; Owner, Admin, and Viewing only mark
   exceptions. Use a person's actions menu to change their role when permitted.
+  Community owners and admins also see **Default channel** on open channels:
+  when it is on, new community members join that channel automatically, with
+  the role the General access choice gives new people.
 - **Message search** treats the last word you type as the start of a word, so
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not

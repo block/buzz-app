@@ -186,6 +186,12 @@ that agent in Buzz; they do not notify the external app through this connection.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Hidden DMs**: **Remove from Team** and **Hide conversation** take a DM out
+  of the sidebar without leaving it. To find one again, start a **New message**
+  to exactly the same people. Its earlier messages appear before you send,
+  without being marked read. Sending a message reopens the DM and brings it
+  back to the sidebar. After **Hide conversation**, the row can take until the
+  channel list next refreshes to return.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have

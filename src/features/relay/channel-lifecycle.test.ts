@@ -1125,12 +1125,13 @@ it.each(
           ["delete", "publication"],
           ["delete", "confirmation read"],
           ["join", "confirmation read"],
+          ["hide", "confirmation read"],
         ] as const
       ).map(([action, phase]) => [stop, action, phase] as const),
   ),
 )("%s during a published %s's %s", async (stop, action, phase) => {
   const join = action === "join" ? preview() : undefined;
-  const h = join ?? harness("owner", "stream", 2);
+  const h = join ?? harness("owner", action === "hide" ? "dm" : "stream", 2);
   const caller = new AbortController();
   const started = deferred<void>();
   const gate = deferred<void>();
@@ -1177,11 +1178,14 @@ it.each(
       await run;
       if (roster)
         expect(h.acceptDiscovery).toHaveBeenCalledExactlyOnceWith([roster]);
+      else if (action === "hide")
+        expect(h.owner.capability.snapshot().hidden).toEqual([id]);
       else expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
     } else {
       await expect(run).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
       expect(h.removed).not.toHaveBeenCalled();
       expect(h.acceptDiscovery).not.toHaveBeenCalled();
+      expect(h.owner.capability.snapshot().hidden).toEqual([]);
     }
     expect(h.publish).toHaveBeenCalledOnce();
   } finally {

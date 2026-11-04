@@ -42,6 +42,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import { clearViewScope, writeView } from "../../shared/view-state";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
@@ -5185,9 +5186,12 @@ it("leads a message hit's conversation name with its type icon and words", async
         const option = screen.getByRole("option", {
           name: new RegExp(`^match in ${id}\\s*${kind}, ${name} · `),
         });
-        expect(option.querySelector(".search-palette-detail-icon")).toHaveClass(
-          `tabler-icon-${icon}`,
-        );
+        // The icon styled as a channel mention's in a message.
+        expect(
+          option.querySelector(
+            `[data-link-kind="channel"] .${referenceStyles.icon}`,
+          ),
+        ).toHaveClass(`tabler-icon-${icon}`);
         expect(within(option).getByText(`${kind},`)).toHaveClass("sr-only");
       }
     });

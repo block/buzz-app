@@ -13,6 +13,7 @@ import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import { PageIcon } from "./PageIcon";
 import "./SearchChoices.css";
 
@@ -24,8 +25,8 @@ export type SearchDestination = {
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
-  /** Leads `detail`, as a channel's type icon leads its name in the channel
-   * header and page tabs. */
+  /** Leads `detail`, as a channel mention's icon leads its name in a
+   * message. */
   detailIcon?: typeof ChatCircleIcon | undefined;
   /** What `detailIcon` shows, read before `detail` but neither shown nor
    * matched. */
@@ -753,22 +754,29 @@ export function SearchChoices({
                                           />
                                         </span>
                                         {detail && (
-                                          <span className="search-palette-detail text-body-sm text-subtle">
+                                          // A channel label, as LinkLabel marks a channel mention in a message,
+                                          // so the reference icon keeps text size and drops its gap.
+                                          <span
+                                            className="block truncate text-body-sm text-subtle"
+                                            data-link-kind={
+                                              DetailIcon && "channel"
+                                            }
+                                          >
                                             {/* Read in place of the icon. jsdom (dom-accessibility-api) trims
                                                 each element's text, so the space sits outside the span;
-                                                browsers don't trim it. Between flex items, the space isn't
-                                                shown. */}
+                                                browsers don't trim it. Shown, the space collapses at the
+                                                line's start. */}
                                             {detailIconLabel && (
                                               <>
                                                 <span className="sr-only">{`${detailIconLabel},`}</span>{" "}
                                               </>
                                             )}
                                             {DetailIcon && (
-                                              <DetailIcon className="search-palette-detail-icon" />
+                                              <DetailIcon
+                                                className={referenceStyles.icon}
+                                              />
                                             )}
-                                            <span className="truncate">
-                                              {detail}
-                                            </span>
+                                            {detail}
                                           </span>
                                         )}
                                       </>

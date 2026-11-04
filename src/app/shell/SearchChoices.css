@@ -84,20 +84,6 @@
     transition: none;
   }
 
-  /* A channel's type icon leads its name as in the channel header's tab and
-     PanelHeaderLabel: 1rem, the row gap, centred on the line. */
-  .search-palette-detail {
-    display: flex;
-    align-items: center;
-    gap: var(--space-row-gap);
-  }
-
-  .search-palette-detail-icon {
-    flex-shrink: 0;
-    width: 1rem;
-    height: 1rem;
-  }
-
   .search-palette-group-empty,
   .search-palette-status {
     padding-inline: var(--space-control-inset);

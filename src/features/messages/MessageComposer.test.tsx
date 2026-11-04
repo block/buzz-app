@@ -14204,6 +14204,7 @@ it("queues an agent follow-up that also references a person outside the Solo cha
     h.commands().insertMention(human);
     h.commands().insertText("Follow up");
   });
+  await choicesLoaded();
   h.submit();
   // A referenced person addresses nobody, so this is still an agent follow-up.
   await screen.findByRole("region", { name: "Queued follow-ups" });
@@ -14272,6 +14273,7 @@ it("sends now a shared Solo chat message whose only tag is a reference, like unt
     h.commands().insertMention(outside);
     h.commands().insertText("what did they say?");
   });
+  await choicesLoaded();
   h.submit();
   // A reference addresses nobody: with a person in the chat this is
   // conversation, which goes out now, not a queued agent follow-up.
@@ -14345,6 +14347,7 @@ it.each(["joined", "left"] as const)(
       h.commands().insertMention(pat);
       h.commands().insertText("Follow up");
     });
+    await choicesLoaded();
     h.submit();
     if (change === "joined") {
       // Pat is in the chat now, so the message addresses a person: it goes
@@ -14702,6 +14705,7 @@ it("adds a known agent while one agent source failed, but refuses a name it cann
     h.commands().insertMention(first);
     h.commands().insertText("hi");
   });
+  await choicesLoaded();
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);

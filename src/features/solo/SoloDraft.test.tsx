@@ -909,6 +909,7 @@ it("a refused start whose text names only a reference gives the pill's chosen ag
     [],
     undefined,
     [person],
+    {},
   );
   first.unmount();
   render(view());
@@ -933,6 +934,7 @@ it("a refused start whose text names only a reference gives the pill's chosen ag
     [],
     undefined,
     [person],
+    {},
   );
 });
 it("a pick after a refused start's agent comes back replaces it across remounts", async () => {
@@ -1121,6 +1123,7 @@ it.each([true, false])(
       [],
       undefined,
       [person],
+      {},
     );
   },
 );

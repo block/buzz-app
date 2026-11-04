@@ -224,6 +224,8 @@ function ImagePixels({
       setRetained(false);
       return;
     }
+    // A row can unmount after decode but before its ready state commits.
+    original.style.visibility = "visible";
     host.current?.append(original);
     onDecoded({ width: original.naturalWidth, height: original.naturalHeight });
     return () => {

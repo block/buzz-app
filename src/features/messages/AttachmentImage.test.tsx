@@ -56,6 +56,12 @@ function decode(view: ReturnType<typeof render>) {
   return {
     release: () => act(async () => resolve()),
     fail: () => act(async () => reject(new Error("decode failed"))),
+    // The component awaited the gate first, so its continuation has run but
+    // React has not committed the resulting update.
+    resolveUncommitted: async () => {
+      resolve();
+      await gate;
+    },
   };
 }
 
@@ -130,6 +136,18 @@ it("re-adopts a decoded original across remount without decoding again", async (
   expect(other.container.querySelector("img")).toHaveStyle({
     visibility: "hidden",
   });
+});
+
+it("shows a re-adopted original whose row unmounted before ready committed", async () => {
+  const owner = session();
+  const first = mount(owner);
+  await decode(first).resolveUncommitted();
+  const original = first.container.querySelector("img");
+  expect(original).toHaveStyle({ visibility: "hidden" });
+  first.unmount();
+  const next = mount(owner);
+  expect(next.container.querySelector("img")).toBe(original);
+  expect(original).toHaveStyle({ visibility: "visible" });
 });
 
 it("retains neither undecoded originals nor those decoded before media disposal", async () => {

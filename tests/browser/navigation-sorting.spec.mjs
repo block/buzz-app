@@ -158,6 +158,92 @@ for (const reducedMotion of ["no-preference", "reduce"]) {
   });
 }
 
+// Real media-query delivery and canceling native playback require a browser.
+test.describe("live reduced-motion preference", () => {
+  test.use({
+    reducedMotion: "no-preference",
+    initialSidebarSort: { channels: "recent" },
+  });
+  test("updates an already-mounted list when reduced motion changes", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const section = page.locator('[data-sidebar-section="channels"]');
+    const rows = section.locator("[data-channel-id]");
+    const cedar = section.locator('[data-channel-id="cedar"]');
+    await expect(rows.first()).toHaveAttribute("data-channel-id", "willow");
+    await cedar.focus();
+    const held = await holdSidebarMotion(page);
+    try {
+      app.activity({ channel: "cedar", kind: 45003, age: 30 });
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "cedar");
+      await held.seek("transform");
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect(section.locator("[data-moving]")).toHaveCount(0);
+      expect(
+        await rows.evaluateAll((elements) =>
+          elements.every((element) => {
+            const row = element.closest(
+              "[data-channel-sidebar-row]",
+            ).parentElement;
+            const transform = new DOMMatrixReadOnly(
+              getComputedStyle(row).transform,
+            );
+            return (
+              transform.m42 === 0 &&
+              row
+                .getAnimations()
+                .every(
+                  (animation) =>
+                    animation.playState !== "running" &&
+                    animation.playState !== "paused",
+                )
+            );
+          }),
+        ),
+      ).toBe(true);
+    } finally {
+      await held.release();
+    }
+    // Record actual native animation creation without pausing or seeking it.
+    const observed = await page.evaluateHandle(() => {
+      const animate = Element.prototype.animate;
+      const slides = [];
+      Element.prototype.animate = function (...args) {
+        const animation = animate.apply(this, args);
+        if (
+          this.closest('[data-sidebar-section="channels"]') &&
+          animation.effect.getKeyframes().some((frame) => "transform" in frame)
+        )
+          slides.push(animation);
+        return animation;
+      };
+      return {
+        slides,
+        restore() {
+          Element.prototype.animate = animate;
+        },
+      };
+    });
+    try {
+      app.activity({ channel: "willow", kind: 45003, age: 29 });
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "willow");
+      expect(await observed.evaluate(({ slides }) => slides.length)).toBe(0);
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      app.activity({ channel: "cedar", kind: 45003, age: 28 });
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "cedar");
+      expect(
+        await observed.evaluate(({ slides }) => slides.length),
+      ).toBeGreaterThan(0);
+      await expect(cedar).toBeFocused();
+    } finally {
+      await observed.evaluate((state) => state.restore());
+    }
+  });
+});
+
 // Hidden layout and rem-based row positions require the actual sidebar/browser.
 test.describe("nearby motion after layout changes", () => {
   test.use({ initialSidebarSort: { channels: "recent" } });

@@ -1,11 +1,6 @@
 import { useDndContext } from "@dnd-kit/core";
 import { animate } from "motion/mini";
-import {
-  AnimatePresence,
-  motion,
-  useIsPresent,
-  useReducedMotion,
-} from "motion/react";
+import { AnimatePresence, motion, useIsPresent } from "motion/react";
 import {
   forwardRef,
   memo,
@@ -15,6 +10,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactElement,
 } from "react";
 import styles from "./ChannelSidebarRows.module.css";
@@ -23,6 +19,15 @@ import styles from "./ChannelSidebarRows.module.css";
 const animationGeneration = {};
 
 type RowPositions = Map<HTMLElement, { index: number; top: number }>;
+
+const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
+function subscribeReducedMotion(change: () => void) {
+  const media = window.matchMedia?.(reducedMotionQuery);
+  media?.addEventListener("change", change);
+  return () => media?.removeEventListener("change", change);
+}
+const prefersReducedMotion = () =>
+  !!window.matchMedia?.(reducedMotionQuery).matches;
 
 function clearSlide(node: HTMLElement) {
   if (node.style.transform && node.style.transform !== "none")
@@ -40,7 +45,10 @@ export function ChannelSidebarRows({
   open: boolean;
 }) {
   const { active } = useDndContext();
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    prefersReducedMotion,
+  );
   const animated = open && !active && !reducedMotion;
   const desired = JSON.stringify(children.map((child) => String(child.key)));
   const [order, setOrder] = useState(desired);

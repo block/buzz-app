@@ -7,6 +7,8 @@ import { ChannelSidebarRows } from "./ChannelSidebarRows";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function rows(ids: string[]) {
@@ -127,4 +129,35 @@ it("bounds batching latency during continuous activity", async () => {
   expect(screen.getAllByRole("button").map((node) => node.textContent)).toEqual(
     targets.at(-1),
   );
+});
+
+it("follows reduced-motion changes while mounted and removes its subscription", async () => {
+  vi.useFakeTimers();
+  const media = Object.assign(new EventTarget(), { matches: false });
+  vi.stubGlobal("matchMedia", () => media);
+  const remove = vi.spyOn(media, "removeEventListener");
+  const view = render(rows(["alpha", "beta", "gamma"]));
+  const order = () =>
+    screen.getAllByRole("button").map((node) => node.textContent);
+  const preference = (matches: boolean) =>
+    act(() => {
+      media.matches = matches;
+      media.dispatchEvent(new Event("change"));
+    });
+
+  view.rerender(rows(["beta", "alpha", "gamma"]));
+  expect(order()).toEqual(["alpha", "beta", "gamma"]);
+  preference(true);
+  expect(order()).toEqual(["beta", "alpha", "gamma"]);
+  view.rerender(rows(["gamma", "beta", "alpha"]));
+  expect(order()).toEqual(["gamma", "beta", "alpha"]);
+
+  preference(false);
+  view.rerender(rows(["alpha", "beta", "gamma"]));
+  await act(() => vi.advanceTimersByTimeAsync(199));
+  expect(order()).toEqual(["gamma", "beta", "alpha"]);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(order()).toEqual(["alpha", "beta", "gamma"]);
+  view.unmount();
+  expect(remove).toHaveBeenCalledWith("change", expect.any(Function));
 });

@@ -265,25 +265,27 @@ function sourced(
   );
 }
 
-/** The files a paste attaches. Office and iWork put a picture of copied text
- * beside it, which WebKit offers as an image file; when the HTML flavor has
- * text, those images render it and the paste is that text. Every text path,
- * raw and code included, can fall back to plain text, so it must have some. */
-export function pastedFiles(data: DataTransfer | null): File[] {
+/** Files a paste attaches. Text copied with a picture, as Excel, Numbers,
+ * Word and Keynote copy, pastes as text; a copied file's own name or a copied
+ * image's URL is not text to keep. */
+export function pastedFiles(data: DataTransfer | null) {
   const files = Array.from(data?.items ?? [])
     .filter((item) => item.kind === "file")
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null);
-  const html =
-    files.length &&
-    files.every((file) => file.type.startsWith("image/")) &&
-    data?.getData("text/plain").trim()
-      ? data.getData("text/html")
-      : "";
-  return html &&
-    new DOMParser().parseFromString(html, "text/html").body.textContent?.trim()
-    ? []
-    : files;
+  const names = new Set(files.map((file) => file.name));
+  const lines = (data?.getData("text/plain") ?? "")
+    .split(/\r\n?|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !names.has(line));
+  if (!lines.length) return files;
+  // A browser's Copy Image adds the URL beside at most an <img> as HTML; an
+  // Excel cell or Word paragraph holding only a link has the link as HTML text.
+  const html = data?.getData("text/html") ?? "";
+  return lines.every((line) => /^https?:\/\/\S+$/.test(line)) &&
+    !new DOMParser().parseFromString(html, "text/html").body.textContent?.trim()
+    ? files
+    : [];
 }
 
 /** External HTML contributes web links, never Buzz identity metadata or styling. */

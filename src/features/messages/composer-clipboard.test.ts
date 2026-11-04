@@ -220,17 +220,90 @@ it("pastes text whose picture rides beside it, and attaches every other file", (
   ).toEqual([picture]);
   // A screenshot, a copied image and copied files stay attachments.
   expect(paste({ plain: "image.png" }, picture)).toEqual([picture]);
+  // Text that is neither a file's name nor a URL pastes as text.
   expect(
     paste(
       { html: '<img src="https://example.com/a.png">', plain: "a" },
       picture,
     ),
-  ).toEqual([picture]);
+  ).toEqual([]);
   expect(paste({ html: "<p>notes.pdf</p>", plain: "notes.pdf" }, pdf)).toEqual([
     pdf,
   ]);
-  expect(paste(cells, picture, pdf)).toEqual([picture, pdf]);
+  expect(paste(cells, picture, pdf)).toEqual([]);
   expect(paste(cells)).toEqual([]);
+});
+
+it.each<
+  [
+    shape: string,
+    expected: string[],
+    names: string[],
+    text: string,
+    html?: string,
+  ]
+>([
+  ["a picture alone", ["image.png"], ["image.png"], ""],
+  ["a picture with blank text", ["image.png"], ["image.png"], " \n\t"],
+  [
+    "a copied file with its own name",
+    ["report.pdf"],
+    ["report.pdf"],
+    "report.pdf",
+  ],
+  [
+    "copied files with their names",
+    ["image.png", "report.pdf"],
+    ["image.png", "report.pdf"],
+    "image.png\r\nreport.pdf\r",
+  ],
+  [
+    "a picture with its URL and no HTML",
+    ["image.png"],
+    ["image.png"],
+    "https://example.com/media/image.png",
+  ],
+  [
+    "a browser's Copy Image",
+    ["image.png"],
+    ["image.png"],
+    "https://example.com/media/image.png",
+    '<meta charset="utf-8"><img src="https://example.com/media/image.png">',
+  ],
+  [
+    "a link-only cell and a picture from Excel",
+    [],
+    ["image.png"],
+    "https://example.com/",
+    '<table><tr><td><a href="https://example.com/">https://example.com/</a></td></tr></table>',
+  ],
+  [
+    "text and a picture from Excel",
+    [],
+    ["image.png"],
+    "Q3 revenue\t$4.2M\nQ3 cost\t$3.1M",
+  ],
+  ["a picture with a different name", [], ["image.png"], "photo.png"],
+  [
+    "a picture with a URL inside text",
+    [],
+    ["image.png"],
+    "See https://example.com/",
+  ],
+  ["text alone", [], [], "notes"],
+])("%s attaches %j", (_shape, expected, names, text, html = "") => {
+  const data = {
+    items: names.map((name) => ({
+      kind: "file",
+      getAsFile: () => new File([name], name),
+    })),
+    getData: (type: string) =>
+      type === "text/plain" ? text : type === "text/html" ? html : "",
+  } as unknown as DataTransfer;
+  expect(pastedFiles(data).map((file) => file.name)).toEqual(expected);
+});
+
+it("attaches nothing without a clipboard", () => {
   expect(pastedFiles(null)).toEqual([]);
 });
 

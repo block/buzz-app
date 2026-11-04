@@ -1203,16 +1203,28 @@ function Composer({
   // A member not yet known to be an agent (say, an unloaded profile) is a
   // person: routing stays off and mentions in the text decide.
   const routing = solo && !withPeople && agentsOnly && !editing.target;
+  // A refresh drops the agents until it completes. Picked names keep the
+  // last complete read's classification meanwhile: admission picked them
+  // from one, and the send reads again before it goes.
+  const completeAgents = useRef<{
+    source: RelaySession["agentChoices"];
+    identities: readonly { pubkey: string }[];
+  }>(undefined);
   /** A Solo chat only references a person outside it: that tag notifies
    * nobody, so it neither replaces the toolbar's agents nor joins them. */
   function referenced(pubkey: string) {
     if (!solo) return false;
     const chat = mentionChannel(session, channelId);
+    const source = session.agentChoices,
+      read = source.snapshot();
+    if (read.complete)
+      completeAgents.current = { source, identities: read.identities };
+    const kept = completeAgents.current;
     return (
       !chat?.members?.includes(pubkey) &&
       outsideMentionReferences(
         chat,
-        session.agentChoices.snapshot().identities,
+        kept?.source === source ? kept.identities : read.identities,
         pubkey,
       )
     );

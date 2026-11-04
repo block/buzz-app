@@ -1,3 +1,4 @@
+import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
 import { createAgentLibrary } from "./library";
@@ -7031,7 +7032,10 @@ describe("a turn closing or reloading the app stopped", () => {
     });
     await settle();
     expect(names(second.service.snapshot().interrupted)).toEqual(["Echo"]);
+    const pause = vi.spyOn(followUpQueue(second.session), "pauseAfter");
     second.service.dismissInterrupted();
+    expect(pause).toHaveBeenCalledWith(bot, { [asked.id]: channel });
+    pause.mockRestore();
     expect(second.service.snapshot().interrupted).toEqual([]);
     expect(readInterrupted(second.storage)).toEqual({});
     second.service.resumeInterrupted();
@@ -7250,6 +7254,106 @@ describe("a turn closing or reloading the app stopped", () => {
       "Echo, do X (resumed)",
       "Echo, do Y instead (resumed)",
     ]);
+  });
+
+  it("returns follow-ups to paused when the resumed request is missing from the relay", async () => {
+    const storage = memoryStorage() as AgentStore;
+    await writeInterrupted(storage, bot, { ["f".repeat(64)]: channel });
+    const app = await setup({ storage, identities: [echo], resumes: true });
+    await settle();
+    const queue = followUpQueue(app.session);
+    const resume = vi.spyOn(queue, "resumeAfter");
+    const pause = vi.spyOn(queue, "pauseAfter");
+    app.service.resumeInterrupted();
+    await vi.waitFor(() =>
+      expect(pause).toHaveBeenCalledWith(bot, { ["f".repeat(64)]: channel }),
+    );
+    expect(resume).toHaveBeenCalledWith(
+      bot,
+      { ["f".repeat(64)]: channel },
+      expect.any(Function),
+    );
+    expect(readInterrupted(storage)).toEqual({});
+    expect(app.run).not.toHaveBeenCalled();
+    resume.mockRestore();
+    pause.mockRestore();
+  });
+
+  it("does not pause fresh follow-ups when a gated resumed reread finds no request", async () => {
+    const storage = memoryStorage() as AgentStore;
+    const request = "f".repeat(64);
+    await writeInterrupted(storage, bot, { [request]: channel });
+    const app = await setup({ storage, identities: [echo], resumes: true });
+    await settle();
+    const queue = followUpQueue(app.session);
+    Object.assign(app.session, {
+      agentActivity: {
+        subscribe: () => () => {},
+        activate: () => () => {},
+        snapshot: () => ({
+          status: "listening",
+          turns: [],
+          local: [],
+          typing: [],
+        }),
+      },
+    });
+    Object.assign(app.session.agentChoices, { subscribe: () => () => {} });
+    const publish = vi.fn(() => "fresh-event");
+    queue.submit({
+      channelId: channel,
+      recipients: [bot],
+      text: "Saved",
+      restored: true,
+      beforeRelease: async () => {},
+      publish: () => "saved-event",
+    });
+    const savedId = queue.snapshot()[0]?.id ?? "missing";
+    const read = vi.mocked(app.session.readRemote);
+    let release!: (events: RelayEvent[]) => void;
+    const gate = new Promise<RelayEvent[]>((resolve) => {
+      release = resolve;
+    });
+    read.mockImplementationOnce(() => gate);
+    const pause = vi.spyOn(queue, "pauseAfter");
+    try {
+      app.service.resumeInterrupted();
+      queue.submit({
+        channelId: channel,
+        recipients: [bot],
+        text: "Fresh",
+        publish,
+      });
+      release([]);
+      await vi.waitFor(() =>
+        expect(pause).toHaveBeenCalledWith(bot, { [request]: channel }),
+      );
+      expect(
+        queue.snapshot().find((row) => row.text === "Fresh")?.restored,
+      ).not.toBe(true);
+      queue.remove(savedId);
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    } finally {
+      release([]);
+      pause.mockRestore();
+    }
+  });
+
+  it("does not arm follow-ups for an interrupted agent whose type cannot resume", async () => {
+    const storage = memoryStorage() as AgentStore;
+    await writeInterrupted(storage, bot, { ["f".repeat(64)]: channel });
+    const app = await setup({ storage, identities: [echo], resumes: false });
+    await settle();
+    const queue = followUpQueue(app.session);
+    const resume = vi.spyOn(queue, "resumeAfter");
+    const pause = vi.spyOn(queue, "pauseAfter");
+    app.service.resumeInterrupted();
+    await vi.waitFor(() => expect(readInterrupted(storage)).toEqual({}));
+    expect(resume).not.toHaveBeenCalled();
+    expect(pause).toHaveBeenCalledWith(bot, { ["f".repeat(64)]: channel });
+    expect(app.run).not.toHaveBeenCalled();
+    resume.mockRestore();
+    pause.mockRestore();
   });
 
   it("is not saved for a type that does not resume", async () => {
@@ -11227,6 +11331,105 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(service.updateRequests()).toEqual([]);
   expect(service.find(sibling)?.name).toBe("Child");
   expect(native.setType).not.toHaveBeenCalled();
+});
+
+it("drafts a proposed picture for the owner to save, and refuses one that is not an HTTPS image", async () => {
+  const { service, native, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent || !handle.createAgent)
+    throw new Error("Missing request handles");
+  const old = "https://relay.example/media/old.png";
+  const url = "https://relay.example/media/new.png";
+  const uploaded = (value: string) => async () => value;
+  await service.save(sibling, { picture: old });
+  native.setPicture.mockClear();
+  for (const value of ["http://relay.example/media/new.png", "new.png"]) {
+    const picture = uploaded(value);
+    await expect(
+      handle.updateAgent({ agent: "Child", picture }),
+    ).rejects.toThrow("HTTPS image URL");
+    await expect(
+      handle.createAgent({ type: "example/echo", name: "Kid", picture }),
+    ).rejects.toThrow("HTTPS image URL");
+  }
+  await expect(
+    handle.updateAgent({ agent: "Child", picture: uploaded(old) }),
+  ).rejects.toThrow("at least one change");
+  const { requestId } = await handle.updateAgent({
+    agent: "Child",
+    picture: uploaded(url),
+  });
+  expect(service.updateRequests()).toMatchObject([
+    { id: requestId, agent: sibling, picture: url },
+  ]);
+  expect(native.setPicture).not.toHaveBeenCalled();
+  await service.approveUpdate(requestId, {
+    name: "Child",
+    type: "example/echo",
+    picture: url,
+  });
+  expect(native.setPicture).toHaveBeenCalledWith(member(sibling), url);
+  expect(service.find(sibling)?.picture).toBe(url);
+  await handle.createAgent({
+    type: "example/echo",
+    name: "Kid",
+    picture: uploaded(url),
+  });
+  expect(service.creationRequests()).toMatchObject([
+    { name: "Kid", picture: url },
+  ]);
+});
+
+it("uploads a proposed picture only once its request is valid", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent || !handle.createAgent)
+    throw new Error("Missing request handles");
+  const picture = vi.fn(async () => "https://relay.example/media/new.png");
+  await expect(
+    handle.updateAgent({ agent: "Nobody", picture }),
+  ).rejects.toThrow("no agent here");
+  await expect(
+    handle.createAgent({ type: "example/missing", name: "Kid", picture }),
+  ).rejects.toThrow("not available");
+  for (let i = 0; i < 16; i++)
+    await handle.updateAgent({ agent: sibling, name: `Kid ${i}` });
+  await expect(handle.updateAgent({ agent: "Child", picture })).rejects.toThrow(
+    "pending agent requests",
+  );
+  await expect(
+    handle.createAgent({ type: "example/echo", name: "Kid", picture }),
+  ).rejects.toThrow("pending agent requests");
+  expect(picture).not.toHaveBeenCalled();
+});
+
+it("keeps a picture proposal's agent when another takes its name during the upload", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  const url = "https://relay.example/media/new.png";
+  let release = () => {};
+  const picture = vi.fn(
+    () => new Promise<string>((resolve) => (release = () => resolve(url))),
+  );
+  const proposal = handle.updateAgent({ agent: "Child", picture });
+  await vi.waitFor(() => expect(picture).toHaveBeenCalledOnce());
+  await service.save(sibling, { name: "Moved" });
+  await service.save(bot, { name: "Child" });
+  release();
+  await proposal;
+  expect(service.updateRequests()).toMatchObject([
+    { agent: sibling, agentName: "Moved", picture: url },
+  ]);
 });
 
 it("releases a deleted agent's pending change requests", async () => {

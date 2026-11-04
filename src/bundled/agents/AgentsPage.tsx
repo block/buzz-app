@@ -169,9 +169,9 @@ export function AgentsPage({
   navigation?: PageNavigation;
   navigator?: Navigation;
 }) {
-  const split = usePanelSplit(448, 320);
   const { snapshot, types } = useAgents(agents);
   const connection = useRelayConnection(relay);
+  const split = usePanelSplit(connection.scope, "agents", 448, 320);
   const channels = useChannelChoices(
     connection.status === "ready" ? connection.session.channels : undefined,
   );
@@ -759,7 +759,12 @@ function DefaultAgentInventory({
   // Keep Morgan's automatic fallback/adoption behavior active even though the
   // Bestie pill names only the explicit account-saved choice.
   useDefaultAgent(session, scope);
-  const bestie = useBestieChoice(session, scope);
+  // A remote agent is asked about before it is made Bestie.
+  const bestie = useBestieChoice(
+    session,
+    scope,
+    (pubkey) => props.agents.find((agent) => agent.pubkey === pubkey)?.place,
+  );
   return (
     <>
       <Inventory

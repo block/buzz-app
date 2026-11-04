@@ -31,6 +31,7 @@ afterEach(cleanup);
 function fixture(initial: AgentProviderSnapshot = { readiness: "ready" }) {
   let state = initial;
   const listeners = new Set<() => void>();
+  const check = vi.fn();
   const type = {
     key: "local/echo",
     pluginId: "local",
@@ -44,7 +45,7 @@ function fixture(initial: AgentProviderSnapshot = { readiness: "ready" }) {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
-      check() {},
+      check,
       DialogBody: () => <p>Echo controls</p>,
     },
   } satisfies RegisteredAgentType;
@@ -58,7 +59,7 @@ function fixture(initial: AgentProviderSnapshot = { readiness: "ready" }) {
       state = next;
       for (const listener of listeners) listener();
     });
-  return { agents, update };
+  return { agents, update, check };
 }
 
 /** The host's history shortcuts, driving a real memory-history controller. */
@@ -129,7 +130,7 @@ it("keeps an unrouted provider a local dialog that Back does not close", async (
 });
 
 it("lets Back hide a routed provider's blocking work and Forward restore it", async () => {
-  const { agents, update } = fixture();
+  const { agents, update, check } = fixture();
   await withHistoryShortcuts(async (navigation) => {
     const agentSetup = {
       version: 1,
@@ -146,12 +147,14 @@ it("lets Back hide a routed provider's blocking work and Forward restore it", as
     update({ readiness: "ready", blocking: true });
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
     expect(dialog).toHaveAttribute("data-navigation-visit");
+    const checks = check.mock.calls.length;
     expect(fireEvent.keyDown(dialog, { key: "[", ctrlKey: true })).toBe(false);
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull(),
     );
     expect(navigation.snapshot().entry.target).toEqual(agentSetup);
-    // The work continued in the provider, so its controls return still guarded.
+    // The work continued in the provider, so its controls return still guarded
+    // and nothing asked the provider to start over.
     expect(fireEvent.keyDown(document.body, { key: "]", ctrlKey: true })).toBe(
       false,
     );
@@ -159,5 +162,6 @@ it("lets Back hide a routed provider's blocking work and Forward restore it", as
       "data-navigation-visit",
     );
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(check).toHaveBeenCalledTimes(checks);
   });
 });

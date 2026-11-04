@@ -229,21 +229,23 @@ fn reachable_client(
     let y = i64::from(client.position.y);
     let right = x + i64::from(client.size.width.saturating_sub(1));
     let bottom = y + i64::from(header_height.saturating_sub(1));
+    let corners = [(x, y), (right, y), (x, bottom), (right, bottom)];
+    let inside = |area: &PhysicalRect<i32, u32>, (x, y): (i64, i64)| {
+        x >= i64::from(area.position.x)
+            && y >= i64::from(area.position.y)
+            && x < i64::from(area.position.x) + i64::from(area.size.width)
+            && y < i64::from(area.position.y) + i64::from(area.size.height)
+    };
     // A header may span adjacent monitors. Both control regions must remain
-    // reachable, but need not belong to the same monitor. A monitor only holds
-    // them if the saved size fits its scale.
-    let reachable = [(x, y), (right, y), (x, bottom), (right, bottom)]
-        .into_iter()
-        .all(|(x, y)| {
-            areas.iter().any(|(area, fits)| {
-                *fits
-                    && x >= i64::from(area.position.x)
-                    && y >= i64::from(area.position.y)
-                    && x < i64::from(area.position.x) + i64::from(area.size.width)
-                    && y < i64::from(area.position.y) + i64::from(area.size.height)
-            })
-        });
-    if reachable {
+    // reachable, but need not belong to the same monitor.
+    let reachable = corners
+        .iter()
+        .all(|&corner| areas.iter().any(|(area, _)| inside(area, corner)));
+    // At least one monitor under the header must have a scale the saved size fits.
+    let fitted = areas
+        .iter()
+        .any(|(area, fits)| *fits && corners.iter().any(|&corner| inside(area, corner)));
+    if reachable && fitted {
         return None;
     }
     client.size = default.unwrap_or(client.size);
@@ -503,6 +505,23 @@ mod tests {
         assert_frame(
             super::reachable_client(spanning, 48, &[(left, true), (below, true)], left, None),
             Some(rect(-1440, 0, 960, 640)),
+        );
+        // A 1x window may span onto a 2x laptop where its size is below the
+        // minimum. The 1x monitor under the header holds it.
+        let laptop = rect(0, 50, 3024, 1840);
+        let saved = decode(&saved_state(-500, 100, 602, 470));
+        let offset = tauri::PhysicalPosition::new(0, 0);
+        assert_eq!(
+            super::restore_request(
+                &saved,
+                offset,
+                48,
+                &[(left, 1.0), (laptop, 2.0)],
+                (laptop, 2.0),
+                &config()
+            )
+            .2,
+            None,
         );
     }
 

@@ -231,24 +231,35 @@ export function ActivityAccessory(props: ActivityProps) {
         entry.state === "error" ||
         !props.representedAgents?.includes(entry.agent)),
   );
-  // Once its live bubble has left, a stopped request stays noted here.
+  // Once its live bubble has left, a stopped request stays noted here, in the
+  // same incoming message frame the bubble used so it keeps the reply column.
   const noted = bubble.length ? [] : stopped.filter(visible);
   const note = noted.length ? (
     <div
-      className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
-      data-activity-stopped=""
-      data-buzz-ui=""
+      className={messageStyles.message}
+      data-layout={props.messageLayout ?? "timeline"}
     >
-      <AvatarStack
-        size="mini"
-        items={noted.map(({ agent }) => ({
-          id: agent,
-          name: named(agent),
-          src: avatarMedia(profiles.get(agent)?.picture, session.media),
-          shape: "squircle",
-        }))}
-      />
-      <span>{noted.map(({ agent }) => named(agent)).join(", ")} · Stopped</span>
+      <span className={messageStyles.messageGutter} />
+      <div className={messageStyles.messageBody}>
+        <div
+          className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
+          data-activity-stopped=""
+          data-buzz-ui=""
+        >
+          <AvatarStack
+            size="mini"
+            items={noted.map(({ agent }) => ({
+              id: agent,
+              name: named(agent),
+              src: avatarMedia(profiles.get(agent)?.picture, session.media),
+              shape: "squircle",
+            }))}
+          />
+          <span>
+            {noted.map(({ agent }) => named(agent)).join(", ")} · Stopped
+          </span>
+        </div>
+      </div>
     </div>
   ) : null;
   if (!bubble.length) return note;

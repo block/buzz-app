@@ -732,7 +732,10 @@ it("notes a stopped request in the response lane", async () => {
     expect(
       screen.queryByRole("button", { name: /View thread/ }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Blossom · Stopped")).toBeInTheDocument();
+    // The note keeps the incoming message column instead of the list's edge.
+    expect(
+      screen.getByText("Blossom · Stopped").closest("[data-layout]"),
+    ).toHaveAttribute("data-layout", "timeline");
   } finally {
     view.unmount();
     f.dispose();

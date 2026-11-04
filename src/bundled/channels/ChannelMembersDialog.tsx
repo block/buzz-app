@@ -1952,6 +1952,33 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
+          {Object.entries(errors).map(([key, error]) => (
+            <p role="alert" key={key} className="text-body-sm text-danger">
+              {label(key)}: {error}{" "}
+              <Button
+                variant="outline"
+                disabled={busy.has(key) || !canAdd}
+                onClick={() => void add(key)}
+              >
+                {busy.has(key) ? "Retrying…" : "Retry"}
+              </Button>
+            </p>
+          ))}
+          {openingMessage && (
+            <p role="status" className="text-body-sm text-subtle">
+              Opening conversation…
+            </p>
+          )}
+          {messageError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {messageError}
+            </p>
+          )}
+          {copyStatus && copyStatus !== "Link copied" && (
+            <p role="alert" className="text-body-sm text-subtle">
+              {copyStatus}
+            </p>
+          )}
           <section
             ref={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
@@ -2324,36 +2351,9 @@ export function ChannelMembersDialog({
                 Archived identities could not be checked.
               </p>
             )}
-            {Object.entries(errors).map(([key, error]) => (
-              <p role="alert" key={key} className="text-body-sm text-danger">
-                {label(key)}: {error}{" "}
-                <Button
-                  variant="outline"
-                  disabled={busy.has(key) || !canAdd}
-                  onClick={() => void add(key)}
-                >
-                  {busy.has(key) ? "Retrying…" : "Retry"}
-                </Button>
-              </p>
-            ))}
-            {openingMessage && (
-              <p role="status" className="text-body-sm text-subtle">
-                Opening conversation…
-              </p>
-            )}
-            {messageError && (
-              <p role="alert" className="text-body-sm text-danger">
-                {messageError}
-              </p>
-            )}
             {notice && (
               <p role="status" className="sr-only">
                 {notice}
-              </p>
-            )}
-            {copyStatus && copyStatus !== "Link copied" && (
-              <p role="alert" className="text-body-sm text-subtle">
-                {copyStatus}
               </p>
             )}
             {solo &&

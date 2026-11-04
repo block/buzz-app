@@ -238,9 +238,11 @@ test("Solo chat Activity opens the agent's profile locally, restores per convers
 // on the close's return visit. A static jsdom visit has neither.
 test.describe("Share access profiles", () => {
   const teammate = generateSecretKey();
+  // An agent Sam manages, so its profile links to Sam's.
+  const scout = generateSecretKey();
   test.use({
     sessionMembers: {
-      [id]: [getPublicKey(teammate)],
+      [id]: [getPublicKey(teammate), getPublicKey(scout)],
       [other]: [getPublicKey(teammate)],
     },
   });
@@ -249,6 +251,7 @@ test.describe("Share access profiles", () => {
     app,
   }) => {
     app.serveProfile(teammate, { name: "Sam Rivera" });
+    app.serveProfile(scout, { name: "Scout", is_agent: true }, teammate);
     await page.goto(app.origin);
     await newChat(page);
     await page
@@ -295,6 +298,26 @@ test.describe("Share access profiles", () => {
     await closeProfile(page).click();
     await expect(tab).toHaveCount(0);
     await expect(actions).toBeFocused();
+    // An agent's profile opens its owner's in its place. Closing the owner's
+    // still returns to Share access.
+    const agent = page.getByRole("tab", { name: "Scout", exact: true });
+    await share.click();
+    await dialog
+      .getByRole("button", { name: /^Open profile for Scout\b/ })
+      .press("Enter");
+    await expect(dialog).toHaveCount(0);
+    await expect(agent).toBeFocused();
+    await agentProfile(page)
+      .getByRole("button", {
+        name: "Open owner profile: Sam Rivera",
+        exact: true,
+      })
+      .click();
+    await expect(tab).toBeFocused();
+    await expect(agent).toHaveCount(0);
+    await tab.press("Escape");
+    await expect(tab).toHaveCount(0);
+    await expect(share).toBeFocused();
   });
   test("a profile restored by Back or Forward returns focus only to its own opener", async ({
     page,
@@ -316,6 +339,8 @@ test.describe("Share access profiles", () => {
       name: "Fixture Reader",
       exact: true,
     });
+    const entry = () =>
+      page.evaluate(() => history.state.buzzNavigationV1.entry.id);
     // Beta: the viewer's profile, opened from a message's author.
     await sidebar.locator(`[data-solo-channel-id="${other}"]`).click();
     await conversation
@@ -346,8 +371,11 @@ test.describe("Share access profiles", () => {
       page.getByRole("region", { name: "Chat Beta", exact: true }),
     ).toBeVisible();
     await expect(profile).toHaveAttribute("aria-selected", "true");
+    const restored = await entry();
     await profile.press("Escape");
     await expect(profile).toHaveCount(0);
+    // The dismissal's return is where a stale opener would take focus.
+    await expect.poll(entry).not.toBe(restored);
     await expect(
       page.getByRole("region", { name: "Chat Beta", exact: true }),
     ).toBeFocused();
@@ -420,6 +448,27 @@ test.describe("Share access profiles", () => {
       .click();
     await expect(tab).toHaveCount(0);
     await expect(actions).toBeFocused();
+    // Gamma's Canvas closes beside the profile and leaves Share access to the
+    // profile's own close.
+    await page
+      .getByRole("button", { name: "Channel actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "View canvas", exact: true })
+      .click();
+    const canvas = page.getByRole("tab", { name: "Canvas", exact: true });
+    await expect(canvas).toHaveAttribute("aria-selected", "true");
+    await beta.click();
+    await share.click();
+    await name.press("Enter");
+    await expect(tab).toBeFocused();
+    await page
+      .getByRole("button", { name: "Close Canvas tab", exact: true })
+      .click();
+    await expect(canvas).toHaveCount(0);
+    await tab.press("Escape");
+    await expect(tab).toHaveCount(0);
+    await expect(share).toBeFocused();
   });
 });
 // Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.

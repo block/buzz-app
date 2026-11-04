@@ -1144,6 +1144,15 @@ function ChannelWorkspace({
         target.detail.rootId === entry.rootId
       )
         return;
+      // A panel opened in place of a Solo opener's panel, such as an agent's
+      // owner from its profile, takes over that opener.
+      const opener = soloOpener.current;
+      if (
+        opener?.channelId === entry.channelId &&
+        target.channelId === entry.channelId &&
+        opener.target === target.detail?.target
+      )
+        soloOpener.current = { ...opener, target: entry.target };
       tabState.leaveVisit();
       void navigator.open({
         version: 1,
@@ -1387,10 +1396,15 @@ function ChannelWorkspace({
       );
     },
     onClosePanel: (entry, remaining) => {
-      // Any close consumes the recorded opener. Only the panel it opened, while
-      // it is still that panel's trigger, returns focus to it.
+      // Only closing the panel it opened consumes the recorded opener; a tab
+      // closed beside that panel leaves it. Only while it is still that
+      // panel's trigger does it take focus back.
       const opener = soloOpener.current;
-      soloOpener.current = undefined;
+      if (
+        opener?.channelId === entry.channelId &&
+        opener.target === entry.target
+      )
+        soloOpener.current = undefined;
       if (!historyPanel(entry)) return;
       const pane = entryPane(tabState.mainEntries, entry);
       const fallback = closeTarget(pane, remaining);

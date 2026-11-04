@@ -338,6 +338,31 @@ export function createIdentityArchives(
         uncertain ?? new Error("The relay did not confirm the change. Retry.")
       );
   }
+  /** The key named as `replaced-by` on the relay's newest archive delta for
+   * `pubkey`. Callers show it only while `state(pubkey)` is "archived": an
+   * unarchive leaves the old delta in place. Presentation only, never access. */
+  async function replacement(
+    pubkey: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    if (closed || !available || !authority || !HEX.test(pubkey))
+      return undefined;
+    const events = await reader.read(
+      [{ kinds: [8002], authors: [authority], "#p": [pubkey], limit: 1 }],
+      { ...(signal && { signal }), priority: "background", fresh: true },
+    );
+    const delta = events
+      .filter((event) => event.kind === 8002 && event.pubkey === authority)
+      .reduce<RelayEvent | undefined>(newer, undefined);
+    const targets = delta?.tags.filter(([name]) => name === "p") ?? [];
+    if (targets.length !== 1 || targets[0]?.[1] !== pubkey) return undefined;
+    const [tag, ...extra] =
+      delta?.tags.filter(([name]) => name === "replaced-by") ?? [];
+    const next = tag?.[1];
+    return !extra.length && next && HEX.test(next) && next !== pubkey
+      ? next
+      : undefined;
+  }
   /** From the latest successful read only, so deletion and confirmation never
    * act on retained evidence. */
   function state(pubkey: string): "unknown" | "archived" | "not-archived" {
@@ -381,6 +406,7 @@ export function createIdentityArchives(
         };
       },
       state,
+      replacement,
       ensure: ({ background = false }: { background?: boolean } = {}) => {
         if (!background) backgroundRead = false;
         if (pending) return pending;

@@ -3956,6 +3956,256 @@ it("leaves focus in the grid when changing agents after keeping a draft over Clo
   expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus();
 });
 
+it("keeps grid focus on the card a prompt leaves selected, after a click, a second click or Escape", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1), agent("Bo", 2)], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  const cell = (name: string) => screen.getByRole("gridcell", { name });
+  const edit = (name: string) =>
+    user
+      .click(within(grid).getByText(name))
+      .then(() =>
+        user.type(screen.getByRole("textbox", { name: "Reply" }), "!"),
+      );
+  const answer = async (name: "Keep editing" | "Discard changes") =>
+    user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name }),
+    );
+  await edit("Ada");
+
+  // Keeping the draft over another card returns focus to the kept one;
+  // discarding it moves focus to the chosen one.
+  await user.click(within(grid).getByText("Bo"));
+  await answer("Keep editing");
+  await waitFor(() => expect(cell("Ada")).toHaveFocus());
+  expect(cell("Ada")).toHaveAttribute("aria-selected", "true");
+  await user.click(within(grid).getByText("Bo"));
+  await answer("Discard changes");
+  expect(cell("Bo")).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+
+  // A second click on the open card closes it, keeping focus there.
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+  await user.click(within(grid).getByText("Bo"));
+  await answer("Discard changes");
+  expect(cell("Bo")).toHaveAttribute("aria-selected", "false");
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+
+  // Bo leaves the tab order once closed, so focus must be put back on it.
+  await edit("Bo");
+  cell("Bo").focus();
+  await user.keyboard("{Escape}");
+  await answer("Discard changes");
+  expect(
+    screen.queryByRole("region", { name: "Agent profile" }),
+  ).not.toBeInTheDocument();
+  await waitFor(() => expect(cell("Bo")).toHaveFocus());
+  // The arrow keys still move from there.
+  await user.keyboard("{Home}");
+  expect(cell("Ada")).toHaveAttribute("aria-selected", "true");
+  expect(cell("Ada")).toHaveFocus();
+});
+
+it("focuses the card a discard chose even when the list reorders behind the prompt", async () => {
+  const user = userEvent.setup();
+  const [ada, bo, cy] = [agent("Ada", 1), agent("Bo", 2), agent("Cy", 3)];
+  const { show } = setup([ada, bo, cy], { dirtySettings: true });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+  screen.getByRole("gridcell", { name: "Ada" }).focus();
+  await user.keyboard("{ArrowRight}");
+  const prompt = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  act(() => show([cy, ada, bo]));
+  await user.click(
+    within(prompt).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus(),
+  );
+});
+
+it("asks before a marketplace listing opens one of your agents over a draft", async () => {
+  const user = userEvent.setup();
+  const helper: Agent = {
+    ...agent("Marketplace helper", 2),
+    type: "test/shared",
+    config: {},
+  };
+  const view = setup([agent("Ada", 1), helper], {
+    dirtySettings: true,
+    more: [
+      {
+        key: "test/shared",
+        id: "shared",
+        title: "Shared",
+        defaults: () => ({ config: {} }),
+        importShared: () => ({}),
+        exportShared: () => ({
+          model: "example-model",
+          runtime: "test/shared",
+        }),
+        carry: () => ({ instructions: "Help with tasks." }),
+      } as unknown as RegisteredAgentType,
+    ],
+  });
+  const owner = createRelaySession(null);
+  const session = {
+    ...owner.session,
+    read: vi.fn().mockResolvedValue([
+      {
+        id: "ab".repeat(32),
+        pubkey: "cd".repeat(32),
+        kind: 30175,
+        created_at: 1,
+        tags: [
+          ["d", "helper"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "Marketplace helper",
+          system_prompt: "Help with tasks.",
+          model: "example-model",
+          runtime: "test/shared",
+        }),
+      },
+    ]),
+  };
+  const snapshot = { status: "ready" as const, generation: 1, session };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+    await user.click(screen.getByRole("gridcell", { name: "Ada" }));
+    await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
+    await user.click(screen.getByRole("tab", { name: "Marketplace" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Marketplace helper" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    const open = within(
+      screen.getByRole("dialog", { name: "Marketplace helper" }),
+    ).getByRole("button", { name: "Open Marketplace helper" });
+
+    await user.click(open);
+    const prompt = await screen.findByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    expect(prompt).toHaveTextContent(
+      "Your unsaved changes to Ada will be lost.",
+    );
+    await user.click(
+      within(prompt).getByRole("button", { name: "Keep editing" }),
+    );
+    // Nothing moves: the listing's dialog stays open over Marketplace.
+    await waitFor(() => expect(open).toHaveFocus());
+    expect(
+      screen.getByRole("tab", { name: "Marketplace", hidden: true }),
+    ).toHaveAttribute("aria-selected", "true");
+
+    await user.click(open);
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+      ).getByRole("button", { name: "Discard changes" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Your agents" })).toHaveFocus(),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Shared agent profile" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("gridcell", { name: "Marketplace helper" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(view.agents.save).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("leaves an agent a link opened while an unfinished agent's Delete was finishing", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const sky: Agent = {
+    ...agent("Sky", 4),
+    place: "hosted",
+    unfinished: true,
+    attention: {},
+  };
+  const { agents, relay, rerender, show } = setup([ada, sky]);
+  await user.click(
+    within(screen.getByRole("grid", { name: "Agents" })).getByText("Sky"),
+  );
+  let finish!: () => void;
+  agents.remove.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          show([ada]);
+          resolve();
+        };
+      }),
+  );
+  await user.click(screen.getByRole("button", { name: "Delete agent" }));
+  await user.click(
+    within(
+      await screen.findByRole("dialog", { name: "Delete Sky?" }),
+    ).getByRole("button", { name: "Delete" }),
+  );
+  expect(agents.remove).toHaveBeenCalledWith(sky.key);
+
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { agent: ada.pubkey } },
+  } as const;
+  const navigator = {
+    snapshot: () => ({ entry: { id: "ada", target } }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "ada",
+    target,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  rerender(
+    <AgentsPage
+      agents={agents}
+      relay={relay}
+      navigator={navigator}
+      navigation={navigation}
+    />,
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Ada" }),
+  ).toBeInTheDocument();
+  await act(async () => finish());
+  expect(screen.queryByRole("gridcell", { name: "Sky" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 it("keeps a draft open behind Import without asking, and deleting the open agent closes it without asking", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);

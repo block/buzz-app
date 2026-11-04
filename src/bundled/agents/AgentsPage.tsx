@@ -346,6 +346,15 @@ export function AgentsPage({
     changeTab(next);
   };
   const returnToAgents = returnTo("yours");
+  // The listing and its trigger go with it, so focus follows to the tab now
+  // shown.
+  const leaveListing = () => {
+    flushSync(() => {
+      setSharedSelection(undefined);
+      returnToAgents();
+    });
+    document.getElementById("agents-yours-tab")?.focus();
+  };
 
   const toolbarAction =
     (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
@@ -685,22 +694,9 @@ export function AgentsPage({
                         selection={shared}
                         agents={agents}
                         types={runnable}
-                        // The panel and its trigger go with it, so focus
-                        // follows to the tab now shown.
-                        onImported={() => {
-                          flushSync(() => {
-                            setSharedSelection(undefined);
-                            returnToAgents();
-                          });
-                          document.getElementById("agents-yours-tab")?.focus();
-                        }}
+                        onImported={leaveListing}
                         // Stays on the listing if an unsaved draft is kept.
-                        onOpen={(agent) =>
-                          browse(agent.pubkey, () => {
-                            setSharedSelection(undefined);
-                            returnToAgents();
-                          })
-                        }
+                        onOpen={(agent) => browse(agent.pubkey, leaveListing)}
                       />
                     ),
                   },
@@ -927,6 +923,11 @@ function Inventory({
 }: InventoryProps) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
+  // By key: the list can change while a discard prompt is open.
+  const focusCard = (pubkey: string | undefined) =>
+    grid.current
+      ?.querySelector<HTMLElement>(`[role="gridcell"][data-agent="${pubkey}"]`)
+      ?.focus();
   const columns = () =>
     grid.current
       ? getComputedStyle(grid.current).gridTemplateColumns.split(" ").length
@@ -959,17 +960,14 @@ function Inventory({
       return;
     } else if (event.key === "Escape" && selected) {
       event.preventDefault();
-      onSelect();
+      onSelect(undefined, () => focusCard(selected));
       return;
     }
     if (next === undefined) return;
     event.preventDefault();
     // Focus follows the selection, including after a discard is confirmed.
-    onSelect(agents[next]?.pubkey, () =>
-      grid.current
-        ?.querySelectorAll<HTMLElement>('[role="gridcell"]')
-        [next]?.focus(),
-    );
+    const target = agents[next]?.pubkey;
+    onSelect(target, () => focusCard(target));
   };
   return (
     <div ref={grid} className={cardStyles.grid}>
@@ -1009,6 +1007,7 @@ function Inventory({
                   onBuild={() => onBuild(agent.pubkey)}
                   onRemoved={() => onRemoved(agent.pubkey)}
                   role="gridcell"
+                  data-agent={agent.pubkey}
                   aria-label={isBestie ? `${agent.name}, Bestie` : agent.name}
                   data-selected={active}
                   aria-selected={active}
@@ -1020,8 +1019,14 @@ function Inventory({
                       !(event.target as Element).closest(
                         "[data-card-control], button, input",
                       )
-                    )
-                      onSelect(active ? undefined : agent.pubkey);
+                    ) {
+                      // A kept agent keeps focus, as the arrow keys leave it.
+                      const chose = onSelect(
+                        active ? undefined : agent.pubkey,
+                        () => focusCard(agent.pubkey),
+                      );
+                      if (!chose) focusCard(selected);
+                    }
                   }}
                   onDoubleClick={(event) => {
                     if (

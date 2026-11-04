@@ -131,14 +131,31 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
-    { type: str, name: str },
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; picture is an HTTPS image URL; model, provider and effort are in that type's own terms.",
+    {
+      type: str,
+      name: str,
+      instructions: str,
+      picture: str,
+      model: str,
+      provider: str,
+      effort: str,
+    },
     ["type", "name"],
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
-    { agent: str, name: str, type: str, instructions: str },
+    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is an HTTPS image URL; model, provider and effort are in its type's own terms, and an empty one proposes that type's default. Nothing changes until they save it.",
+    {
+      agent: str,
+      name: str,
+      type: str,
+      instructions: str,
+      picture: str,
+      model: str,
+      provider: str,
+      effort: str,
+    },
     ["agent"],
   ),
   tool(
@@ -454,7 +471,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type)?.trim();
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
-    return JSON.stringify(await client.createAgent({ type, name }));
+    const { instructions } = args;
+    const picture = text(args.picture);
+    return JSON.stringify(
+      await client.createAgent({
+        type,
+        name,
+        ...(typeof instructions === "string" &&
+          instructions.trim() && { instructions }),
+        ...(picture && { picture }),
+        ...settingsOf(args, text),
+      }),
+    );
   },
   async self_handoff(tools, args) {
     const { client, context } = tools;
@@ -501,6 +529,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!agent) throw new Error("agent is required");
     const name = text(args.name);
     const type = text(args.type);
+    const picture = text(args.picture);
     // Empty instructions propose clearing them.
     const { instructions } = args;
     return JSON.stringify(
@@ -509,6 +538,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+        ...(picture && { picture }),
+        // Empty settings propose the type's defaults.
+        ...settingsOf(args, (value) =>
+          typeof value === "string" ? value.trim() : undefined,
+        ),
       }),
     );
   },
@@ -2533,6 +2567,19 @@ function checkDetails(name?: string, about?: string, ttl?: number) {
 }
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** The draft's model settings, as `read` takes each, if it proposes any. */
+const settingsOf = (
+  args: Args,
+  read: (value: unknown) => string | undefined,
+) => {
+  const settings = Object.fromEntries(
+    (["model", "provider", "effort"] as const).flatMap((key) => {
+      const value = read(args[key]);
+      return value === undefined ? [] : [[key, value]];
+    }),
+  );
+  return Object.keys(settings).length ? { settings } : {};
+};
 const list = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")

@@ -64,6 +64,34 @@ it("registers only where the desktop app can run codex and base64", () => {
   expect(applied()).toBeUndefined();
 });
 
+it("takes a proposed model and effort, refusing a provider", () => {
+  const type = applied();
+  const saved = {
+    ...(type?.defaults().config as object),
+    model: "gpt-5",
+    effort: "high",
+  };
+  // A new model's effort goes back to its default unless proposed.
+  expect(type?.propose?.({ model: "o3" }, saved)).toEqual({
+    ...saved,
+    model: "o3",
+    effort: "",
+  });
+  expect(type?.propose?.({ model: "o3", effort: "low" }, saved)).toEqual({
+    ...saved,
+    model: "o3",
+    effort: "low",
+  });
+  // An empty provider proposes none.
+  expect(type?.propose?.({ provider: "", effort: "low" }, saved)).toEqual({
+    ...saved,
+    effort: "low",
+  });
+  expect(() => type?.propose?.({ provider: "openai" }, saved)).toThrow(
+    "Codex agents have no provider to set",
+  );
+});
+
 it("adopts and carries an agent's instructions and workspace, nothing else", () => {
   const type = applied();
   const saved = type?.defaults().config;

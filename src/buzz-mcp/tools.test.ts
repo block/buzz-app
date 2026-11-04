@@ -3773,6 +3773,49 @@ it("validates creation inputs and reports hosts without agent creation", async (
   expect(client.createAgent).not.toHaveBeenCalled();
 });
 
+it("passes a creation draft's instructions and picture, leaving out empty ones", async () => {
+  const { client } = fake([]);
+  client.createAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  await callTool(client, {}, "agent_create", {
+    type: "codex/codex",
+    name: "Child",
+    instructions: "Review PRs.",
+    picture: " https://relay.example/media/a.png ",
+  });
+  await callTool(client, {}, "agent_create", {
+    type: "codex/codex",
+    name: "Child",
+    instructions: " ",
+    picture: "",
+  });
+  expect(vi.mocked(client.createAgent).mock.calls).toEqual([
+    [
+      {
+        type: "codex/codex",
+        name: "Child",
+        instructions: "Review PRs.",
+        picture: "https://relay.example/media/a.png",
+      },
+    ],
+    [{ type: "codex/codex", name: "Child" }],
+  ]);
+  await callTool(client, {}, "agent_create", {
+    type: "goose/goose",
+    name: "Child",
+    model: " flash ",
+    provider: "",
+    effort: 2,
+  });
+  expect(client.createAgent).toHaveBeenLastCalledWith({
+    type: "goose/goose",
+    name: "Child",
+    settings: { model: "flash" },
+  });
+});
+
 it("hands off to the agent in another of its conversations it can see", async () => {
   const solo = event({
     kind: 39000,
@@ -3885,6 +3928,24 @@ it("validates change drafts and passes only the proposed fields", async () => {
   expect(client.updateAgent).toHaveBeenLastCalledWith({
     agent: "Child",
     instructions: "",
+  });
+  await callTool(client, {}, "agent_update", {
+    agent: "Child",
+    picture: " https://relay.example/media/a.png ",
+  });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Child",
+    picture: "https://relay.example/media/a.png",
+  });
+  // An empty setting proposes the type's default.
+  await callTool(client, {}, "agent_update", {
+    agent: "Child",
+    model: " flash ",
+    effort: "",
+  });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Child",
+    settings: { model: "flash", effort: "" },
   });
 });
 

@@ -3,6 +3,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { withProposedSettings } from "../../features/agents/proposal";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
@@ -143,6 +144,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
           ? carry.workspace
           : saved.workspace,
     }),
+    propose: (settings, saved) => {
+      if (settings.provider)
+        throw new Error("Codex agents have no provider to set");
+      const { provider: _, ...rest } = settings;
+      return withProposedSettings(rest, saved);
+    },
     carry: (saved) => {
       const { instructions, workspace } = config(saved);
       return {

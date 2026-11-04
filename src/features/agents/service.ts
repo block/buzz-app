@@ -418,7 +418,7 @@ export type AgentHandle = Readonly<{
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: AgentCreateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Owner-reviewed changes to one of the owner's agents here. */
   updateAgent?(
@@ -738,6 +738,9 @@ export type AgentType<Config = unknown> = {
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
+  /** `config` with the settings an agent proposes for one of these agents,
+   * throwing for any it has no place for. Without it, drafts cannot set them. */
+  propose?(settings: ProposedSettings, config: Config): Config;
   /** Describes harness settings for a type-change preview. Rendered labels
    * never determine migration behavior. */
   describeMigration?(config: Config): readonly AgentMigrationSetting[];
@@ -898,20 +901,36 @@ export type RetypePreview = Readonly<{
   }>[];
 }>;
 /** An unsaved creation request. Only the owner-facing review may approve it. */
-export type AgentCreationRequest = Readonly<{
-  id: string;
-  requester: string;
-  requesterName: string;
-  owner: string;
-  community: string;
+export type AgentCreationRequest = AgentCreateInput &
+  Readonly<{
+    id: string;
+    requester: string;
+    requesterName: string;
+    owner: string;
+    community: string;
+  }>;
+/** Model settings in a type's own terms; empty ones use its default. */
+export type ProposedSettings = Readonly<{
+  model?: string;
+  provider?: string;
+  effort?: string;
+}>;
+/** A proposed agent; `picture` is an HTTPS image URL. */
+export type AgentCreateInput = Readonly<{
   type: string;
   name: string;
+  instructions?: string;
+  picture?: string;
+  settings?: ProposedSettings;
 }>;
-/** Proposed changes; absent fields stay as they are. */
+/** Proposed changes; absent fields stay as they are. `picture` is an HTTPS
+ * image URL. */
 export type AgentUpdate = Readonly<{
   name?: string;
   type?: string;
   instructions?: string;
+  picture?: string;
+  settings?: ProposedSettings;
 }>;
 /** `agent` is a pubkey or the exact name of one of the owner's agents here. */
 export type AgentUpdateInput = AgentUpdate & Readonly<{ agent: string }>;
@@ -1436,6 +1455,27 @@ const originOf = (value: string) => {
     return undefined;
   }
 };
+/** Refuses a proposed profile picture that saving it would, as
+ * `avatarPictureError` does. */
+const proposedPicture = (picture: string | undefined) => {
+  if (
+    picture !== undefined &&
+    !(picture.length <= 2048 && avatarSource(picture)?.startsWith("https://"))
+  )
+    throw new Error(
+      "picture must be an HTTPS image URL without credentials, up to 2,048 characters",
+    );
+};
+/** Refuses model settings `kind` has no place for. */
+const checkSettings = (
+  kind: RegisteredAgentType,
+  settings: ProposedSettings | undefined,
+) => {
+  if (!settings) return;
+  if (!kind.propose)
+    throw new Error(`${kind.title} agents take no proposed model settings`);
+  kind.propose(settings, kind.defaults().config);
+};
 /** One of the viewer's kind 30177 agent records. Ones without a `runtime`
  * are earlier agent systems', not shown; replacing one keeps its settings. */
 type Listing = Readonly<{
@@ -1819,6 +1859,10 @@ export class AgentsService extends Service implements Agents {
         if (!kind) throw new Error("That agent type is not available");
         if (kind.remote)
           throw new Error("A hosted agent's key stays with its provider");
+        if (input.instructions !== undefined && !kind.adopt)
+          throw new Error(`${kind.title} agents have no instructions to set`);
+        proposedPicture(input.picture);
+        checkSettings(kind, input.settings);
         if (this.requests.length + this.updates.length >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
@@ -1832,6 +1876,11 @@ export class AgentsService extends Service implements Agents {
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
+            ...(input.instructions !== undefined && {
+              instructions: input.instructions,
+            }),
+            ...(input.picture !== undefined && { picture: input.picture }),
+            ...(input.settings && { settings: input.settings }),
           },
         ];
         this.notify();
@@ -1862,6 +1911,11 @@ export class AgentsService extends Service implements Agents {
           ...(proposed.instructions !== undefined && {
             instructions: proposed.instructions,
           }),
+          ...(proposed.picture !== undefined &&
+            proposed.picture !== identity.picture && {
+              picture: proposed.picture,
+            }),
+          ...(proposed.settings && { settings: proposed.settings }),
         };
         if (Object.keys(change).length === 0)
           throw new Error("Propose at least one change");
@@ -2810,6 +2864,8 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A hosted provider cannot take over a local agent key");
     if (change.instructions !== undefined && !kind.adopt)
       throw new Error(`${kind.title} agents have no instructions to change`);
+    proposedPicture(change.picture);
+    checkSettings(kind, change.settings);
     return kind;
   }
   /** Whether watch classifiers can run on this device: the selected

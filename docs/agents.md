@@ -35,7 +35,9 @@ and reported as migration errors.
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
-`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name,
+optionally with instructions and an HTTPS picture URL that start the form. A type
+without instructions refuses them; the review shows the picture as any avatar loads.
 It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
 the usual Create agent form, may edit the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,
@@ -47,12 +49,24 @@ the available operations and arguments. Agent tools do not expose draft approval
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
-key from `agent_types`, or new instructions. Absent fields stay as they are. The
+key from `agent_types`, new instructions or an HTTPS picture URL. Absent fields stay as they are. The
 owner reviews them in the New agent form, titled Edit and filled in with the
 agent's settings and the proposed changes, with the usual type-change preview;
 saving applies what the owner reviewed, and closing the review discards the
 request. A type change carries what the new type adopts, as a manual one does. Change
 requests share the creation requests' local bound and lifetime.
+
+Both drafts may also propose `model`, `provider` and `effort` in the type's own
+terms; values are not checked against a model list, so the owner reviews them in
+the form. A type takes them only through its optional `propose(settings, config)`,
+which throws for a setting it has no place for (Claude and Codex refuse a
+provider); without `propose`, a draft cannot set them. Like the settings screens,
+a new provider resets the model, and a new provider or model resets the effort,
+unless the draft names them too. The review applies them to the proposed type
+only, so they don't follow the owner to another harness, and `carry` and type
+changes are unaffected. An empty value in a change draft proposes the type's
+default.
+
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 

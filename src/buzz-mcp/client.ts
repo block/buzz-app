@@ -3,7 +3,11 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
-import type { AgentAttention } from "../features/agents/service";
+import type {
+  AgentAttention,
+  AgentCreateInput,
+  AgentUpdateInput,
+} from "../features/agents/service";
 
 export type BuzzEvent = Readonly<{
   id: string;
@@ -86,15 +90,10 @@ export interface BuzzClient {
   /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
   agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: AgentCreateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   updateAgent?(
-    input: Readonly<{
-      agent: string;
-      name?: string;
-      type?: string;
-      instructions?: string;
-    }>,
+    input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Wakes the agent in another of its conversations here, `from` this one. */
   handoff?(

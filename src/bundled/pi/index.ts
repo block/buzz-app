@@ -6,6 +6,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { repositoriesContext } from "../../features/communities/repositories";
+import { withProposedSettings } from "../../features/agents/proposal";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -110,6 +111,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       instructions: carry.instructions ?? saved.instructions,
       workspace: carry.workspace ?? saved.workspace,
     }),
+    propose: withProposedSettings,
     carry: (saved) => {
       const { instructions, workspace } = config(saved);
       return {

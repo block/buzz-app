@@ -420,10 +420,9 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
         .get_mut(&label)
         .ok_or("This pop-out window has closed")?;
     match action {
-        Action::Guard => {
-            session.guarded = text.as_deref() == Some("1");
-            return Ok(());
-        }
+        // Native keeps the close guard; main also hears it, so a voluntary
+        // community exit can name the window's unsent work before discarding it.
+        Action::Guard => session.guarded = text.as_deref() == Some("1"),
         Action::Close => {
             drop(map);
             if let Some(companion) = app.get_webview_window(&label) {

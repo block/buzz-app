@@ -330,6 +330,7 @@ export function IdentitySettings({
   servers = signInServers,
   builderlabIdentity,
   lastActive,
+  exitHolds,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
@@ -345,6 +346,8 @@ export function IdentitySettings({
   builderlabIdentity?: FederatedIdentity | undefined;
   /** When `pubkey` was last active in a channel on the current community's relay. */
   lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
+  /** Work that signing out would discard, named in its confirmation. */
+  exitHolds?: readonly string[] | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
@@ -446,6 +449,7 @@ export function IdentitySettings({
                 <SignOutDialog
                   identity={identity}
                   onClose={() => setSigningOut(false)}
+                  holds={exitHolds}
                 />
               )}
               {!signingOut && (

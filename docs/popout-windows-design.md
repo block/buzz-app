@@ -491,17 +491,21 @@ unverified (jaw's grouped "yes" is not treated as tested evidence); S1 keeps
   thread header is not rendered in the tab workspace, and a tab-menu item would
   couple the Channels plugin to the pop-out owner through `PanelWorkspace`'s
   `tabMenu` contract. Follow-up if the menu path proves insufficient.
-- Voluntary community switch / sign-out guard (checkpoint items 6–7) is
-  **pending jaw's FOUNDATION authorization**: the smallest hook is
-  `communities.guardSelection` in `src/features/communities/service.ts` plus a
-  shell dialog in `src/app/App.tsx` (both FOUNDATION), composed with the
-  existing unsaved-Settings departure guard, guarding navigation-driven
-  departures before the route commits and sequencing picker follow-on
-  navigation after selection succeeds. Until then pop-outs retire with a
-  notice (reviewer: does not satisfy the approved contract).
-- Tab-menu **Open in new window** needs `conversation.registerTabAction` in
-  `src/features/conversation/{service.tsx,contracts.ts}` (FOUNDATION); also
-  pending authorization.
+- Voluntary exits (authorized FOUNDATION edit, jaw 2026-11-04): the
+  communities service owns **exit holds** (`holdExit(describe, subscribe?)`,
+  `exitHolds()`); `select(id, { force?, after? })` returns false and records a
+  `pendingSelection` while holds exist; `confirmSelection`/`cancelSelection`
+  settle it and `after` runs only once selected. The shell (`App.tsx`) shows
+  one "Switch community?" dialog for a pending selection and, through the
+  existing single-slot departure guard (composed with unsaved Settings),
+  for a navigation that would change community — before its route commits;
+  Keep working preserves route and community. Navigation-driven selection
+  (`navigation.ts`) passes `force` because the guard already asked. The
+  sign-out confirmation lists the same holds. The pop-out plugin registers
+  its held windows via `ctx.communityReader.holdExit`. Access revocation
+  still retires immediately.
+- Tab-menu **Open in new window** via `conversation.registerTabAction`
+  (authorized FOUNDATION edit): shown after "Open in channel" for thread tabs.
 - Reading bridge is a request/response BroadcastChannel (`reading-bridge.ts`)
   with durability-complete acknowledgments and an event-time revision fence
   on acquisition (`readingRevision` in the view).

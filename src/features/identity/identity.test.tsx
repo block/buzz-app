@@ -7600,6 +7600,7 @@ it.each(["unavailable", "not_offered"] as const)(
     identity.dispose();
   },
 );
+<<<<<<< HEAD
 
 /** A compiled list whose only server hosts none of the landing's communities. */
 const acmeServers = async (): Promise<SessionSnapshot[]> =>
@@ -8264,3 +8265,26 @@ it("a Builderlab sign-in writes the setup-route note, and a key imported without
   expect(localStorage.getItem(ROUTE_NOTE)).toBeNull();
   identity.dispose();
 });
+||||||| parent of 164fcc4 (feat(communities): cancellable exits while features hold unsaved work; pop-out windows register theirs)
+=======
+
+it("names work elsewhere that signing out discards", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(
+    <SignOutDialog
+      identity={identity}
+      onClose={() => {}}
+      holds={["The pop-out window for “Design” has an unsent reply."]}
+    />,
+  );
+  const note = screen.getByRole("note");
+  expect(note).toHaveTextContent("Signing out also discards:");
+  expect(within(note).getByRole("listitem")).toHaveTextContent(
+    "The pop-out window for “Design” has an unsent reply.",
+  );
+  identity.dispose();
+});
+>>>>>>> 164fcc4 (feat(communities): cancellable exits while features hold unsaved work; pop-out windows register theirs)

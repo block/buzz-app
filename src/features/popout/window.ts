@@ -64,6 +64,9 @@ type Entry = {
   thread: ReturnType<typeof createPopoutThread>;
   composer: ReturnType<typeof createHuddleComposerOwner>;
   reading: ReturnType<typeof createReadingOwner>;
+  /** The companion holds work view state does not (files, a conflicted or
+   * unsaved reply); a voluntary community exit names it before discarding. */
+  held: boolean;
   retired: boolean;
 };
 
@@ -97,6 +100,7 @@ export function createPopoutWindows(
     notices = [...notices, { id: ++noticeId, text }].slice(-8);
     for (const listener of noticeListeners) listener();
   };
+  const holdListeners = new Set<() => void>();
   const dark = () => document.documentElement.classList.contains("dark");
   const same = (a: PopoutTarget, b: PopoutTarget) =>
     a.channelId === b.channelId && a.threadRootId === b.threadRootId;
@@ -118,6 +122,7 @@ export function createPopoutWindows(
     if (entry.retired) return;
     entry.retired = true;
     entries.delete(entry);
+    if (entry.held) for (const listener of holdListeners) listener();
     entry.reading.dispose();
     entry.composer.dispose();
     entry.thread.dispose();
@@ -164,6 +169,14 @@ export function createPopoutWindows(
         if (text)
           entry.thread.recover(text, control.action === "discardMessage");
         return;
+      case "guard": {
+        const held = text === "1";
+        if (entry.held !== held) {
+          entry.held = held;
+          for (const listener of holdListeners) listener();
+        }
+        return;
+      }
       default:
         return;
     }
@@ -221,6 +234,7 @@ export function createPopoutWindows(
       ),
       composer: undefined as unknown as Entry["composer"],
       reading: undefined as unknown as Entry["reading"],
+      held: false,
     };
     entry.composer = createHuddleComposerOwner(
       session,
@@ -315,6 +329,20 @@ export function createPopoutWindows(
     },
     isOpen: (target: PopoutTarget) =>
       [...entries].some((entry) => same(entry.target, target)),
+    /** Windows whose unsent work a community exit would discard, named. */
+    held: () =>
+      [...entries]
+        .filter((entry) => entry.held && !entry.retired)
+        .map(
+          (entry) =>
+            `The pop-out window for “${entry.thread.snapshot().title}” has an unsent reply.`,
+        ),
+    subscribeHeld(listener: () => void) {
+      holdListeners.add(listener);
+      return () => {
+        holdListeners.delete(listener);
+      };
+    },
     async dispose() {
       disposed = true;
       stopRelay();

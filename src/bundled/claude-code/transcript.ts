@@ -299,11 +299,15 @@ export async function workspaceProject(
 
 /** MiB per page of a session too large to read whole, under its 50 MB. */
 const PAGE_MIB = 32;
+/** Pages read of one session at most, so a few huge turns or a record with
+ * no end cannot hold more than this in memory; older lines are left. */
+const PAGE_BUDGET = 2;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
 /** A session file in `~/.claude/projects`. One too large to read whole is
  * read a page at a time from its end, until `enough` of its latest lines are
- * read or its start is; `cut` says older ones were left. Its `start` says
+ * read, its start is or `PAGE_BUDGET` pages are; `cut` says older ones were
+ * left. Its `start` says
  * whose conversation it is. */
 async function readSession(
   spawn: Spawn,
@@ -345,7 +349,7 @@ async function readSession(
   let text = "";
   // A page starts partway through a line, which ends the page before it.
   let rest = new Uint8Array();
-  for (; page >= 0; page--) {
+  for (let pages = 1; page >= 0; page--, pages++) {
     const chunk = await read(
       "read-page",
       String(page * PAGE_MIB),
@@ -357,7 +361,7 @@ async function readSession(
     const line = page ? bytes.indexOf(10) + 1 || bytes.length : 0;
     rest = bytes.subarray(0, line);
     text = decode(bytes.subarray(line)) + text;
-    if (enough(text)) break;
+    if (pages >= PAGE_BUDGET || enough(text)) break;
   }
   const cut = page > 0;
   return {

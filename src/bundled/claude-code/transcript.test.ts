@@ -383,6 +383,37 @@ it("stops reading a large session once it has its latest turns", async () => {
   ]);
 });
 
+it("reads no more than two pages of a large session with few turns", async () => {
+  const third = "x".repeat(30 * 1024 * 1024);
+  const { spawn } = host(
+    large(
+      ...[1, 2, 3].map(() => line("assistant", [{ type: "text", text: third }])),
+      line("user", prompt("latest")),
+    ),
+  );
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.more).toBe(true);
+  expect(read?.turns.at(-1)?.items[0]).toEqual(
+    expect.objectContaining({ text: "latest" }),
+  );
+  // Its last two pages and its start; the first page's turns are left.
+  expect(
+    spawn.mock.calls
+      .filter(([id]) => id === "read-page")
+      .map(([, options]) => options?.args?.slice(1)),
+  ).toEqual([
+    ["64", "32"],
+    ["32", "32"],
+    ["0", "4"],
+  ]);
+});
+
 it("merges the agent's other sessions for the thread, oldest turn first", async () => {
   const session = (start: number, context: string, content: string) => {
     clock = start;

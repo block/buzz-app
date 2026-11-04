@@ -94,6 +94,8 @@
 
   .search-palette-detail-icon {
     flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
   }
 
   .search-palette-group-empty,

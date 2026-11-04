@@ -3,6 +3,7 @@
 // session pays for them in context. Each tool answers in plain text.
 import { decode, npubEncode } from "nostr-tools/nip19";
 import buzzHelp from "../../docs/buzz-help.md?raw";
+import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -398,8 +399,6 @@ const MESSAGES = [9, 40002, 40008, 45001, 45003];
 const THREAD = [9, 40002, 40008, 45003];
 const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
-/** Canvas revisions per history page, as the app shows them. */
-const CANVAS_PAGE = 25;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
 /** A repository name the community accepts. */
@@ -1294,7 +1293,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       {
         kinds: [40100],
         "#h": [channel],
-        limit: CANVAS_PAGE,
+        limit: CANVAS_HISTORY_PAGE,
         ...(before === undefined
           ? { consistency: "strong" as const }
           : { until: before }),
@@ -1312,7 +1311,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       return `${row.id} ${time(row.created_at)} ${row.pubkey} ${bytes}B ${first.slice(0, 80)}`;
     });
     const last = rows.at(-1);
-    if (last && rows.length >= CANVAS_PAGE)
+    if (last && rows.length >= CANVAS_HISTORY_PAGE)
       lines.push(
         `Older revisions may remain; continue with ${JSON.stringify({ channel, before: last.created_at, before_id: last.id })}`,
       );

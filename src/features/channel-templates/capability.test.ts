@@ -1,10 +1,14 @@
 import { CanvasConflictError } from "./canvas-conflict";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { CANVAS_HISTORY_PAGE, createChannelKit } from "./capability";
-import { CANVAS_MAX_EVENT_BYTES } from "./canvas-limits";
+import { createChannelKit } from "./capability";
+import {
+  CANVAS_HISTORY_PAGE,
+  CANVAS_MAX_EVENT_BYTES,
+  CANVAS_READ_BYTES,
+} from "./canvas-limits";
 import { byteSize } from "../relay/budget";
-import { createRelayReader } from "../relay/reader";
+import { createRelayReader, RELAY_READ_BYTES } from "../relay/reader";
 import {
   coordinate,
   KIT_TAG,
@@ -811,6 +815,7 @@ it("reads a full History page of the largest escaped Canvas events within the re
   );
   expect(byteSize(page[0])).toBeGreaterThan(CANVAS_MAX_EVENT_BYTES - 2);
   expect(byteSize(page[0])).toBeLessThanOrEqual(CANVAS_MAX_EVENT_BYTES);
+  expect(CANVAS_READ_BYTES).toBe(RELAY_READ_BYTES);
   const relay = createRelayReader({
     viewer: viewer.pubkey,
     relayAuthor: keypair().pubkey,

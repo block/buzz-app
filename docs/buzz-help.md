@@ -38,10 +38,10 @@ the interface unless an available tool actually supports that action.
   without Builderlab sign-in do not upload a backup during setup. Later, while
   signed in to Builderlab on a build with backup, a key with no backup choice is
   backed up automatically if you belong to a Builderlab-hosted community;
-  otherwise Buzz asks **Back up your identity?**, again on the next launch or
-  sign-in if the dialog is closed. **Settings → Buzz → Identity → Identity
-  backup** shows the backup status and, while backup is off, offers **Back up
-  identity**. After signing in to the
+  otherwise Buzz asks **Sync your identity with Builderlab?**, again on the
+  next launch or sign-in if the dialog is closed. **Settings → Buzz → Identity
+  → Identity sync** shows the sync status and, while backup is off, offers
+  **Sync with Builderlab**. After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,

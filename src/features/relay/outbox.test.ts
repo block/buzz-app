@@ -9,6 +9,7 @@ import {
 } from "./outbox";
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
+import { byteSize } from "./budget";
 import { LIVE_CANVAS_BYTES } from "../channel-templates/canvas-limits.ts";
 import {
   bounds,
@@ -1118,6 +1119,39 @@ it("does not replay a guarded addition through generic retry or after hydration"
   expect(restored.publish).not.toHaveBeenCalled();
   restored.outbox.retry(id, () => true); // Explicit renewed admission may reuse the exact event.
   await vi.waitFor(() => expect(restored.sign).toHaveBeenCalledOnce());
+});
+it("keeps unsent Canvas saves from using up ordinary message capacity", async () => {
+  const storage = memoryStorage();
+  const content = "a".repeat(LIVE_CANVAS_BYTES);
+  // Four channels, each with an unresolved signed full-size Canvas: over 2 MiB.
+  await storage.save(
+    ["c1", "c2", "c3", "c4"].map((channel, i) => {
+      const event = signed(viewer, {
+        kind: 40100,
+        content,
+        tags: [["h", channel]],
+        created_at: 1700000000 + i,
+      });
+      return { event, signed: event, delivery: "unknown" as const };
+    }),
+  );
+  expect(byteSize(await storage.load())).toBeGreaterThan(2 * 1024 * 1024);
+  const h = setup(storage);
+  await vi.waitFor(() => expect(h.outbox.snapshot()).toHaveLength(4));
+  const id = h.send("still deliverable");
+  await h.signNext();
+  await vi.waitFor(async () =>
+    expect(
+      (await storage.load()).find((item) => item.event.id === id)?.signed,
+    ).toBeDefined(),
+  );
+  expect(
+    h.outbox.snapshot().find((item) => item.event.id === id)?.error,
+  ).toBeUndefined();
+  // The saved journal, canvases and message together, restores.
+  h.dispose();
+  const restored = setup(storage);
+  await vi.waitFor(() => expect(restored.outbox.snapshot()).toHaveLength(5));
 });
 it("admits a live Canvas up to its own limits, persists it, and retries the same signed event", async () => {
   const storage = memoryStorage();

@@ -128,6 +128,13 @@ export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
 const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
+/** Unresolved Canvas saves have their own allowance, so a few large canvases
+ * never use up the room that ordinary messages need. */
+const PENDING_MESSAGE_BYTES = 2 * 1024 * 1024;
+const PENDING_CANVAS_BYTES = 4 * 1024 * 1024;
+/** Confirmed retention plus both pending allowances. */
+const SAVED_BYTES =
+  8 * 1024 * 1024 + PENDING_MESSAGE_BYTES + PENDING_CANVAS_BYTES;
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
 export function createOutbox(
@@ -182,7 +189,20 @@ export function createOutbox(
   let finalVisible: readonly OutgoingEvent[] | undefined;
   const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, 8 * 1024 * 1024);
   const sizes = new WeakMap<OutgoingEvent, number>();
-  let pendingBytes = 0;
+  /** Serialized pending bytes, split by allowance. */
+  const pendingSize = (items: readonly OutgoingEvent[]) => {
+    const total = { messages: 2, canvases: 2 };
+    for (const item of items) {
+      let size = sizes.get(item);
+      if (size === undefined) {
+        size = byteSize(item);
+        sizes.set(item, size);
+      }
+      total[item.event.kind === 40100 ? "canvases" : "messages"] += size + 1;
+    }
+    return total;
+  };
+  let pendingBytes = pendingSize([]);
   const listeners = new Set<() => void>();
   const localListeners = new Set<() => void>();
   const dismissListeners = new Set<(item: OutgoingEvent) => void>();
@@ -264,17 +284,7 @@ export function createOutbox(
   let hydrated = false;
   let durable = Promise.resolve();
   const notify = () => {
-    pendingBytes = snapshot.reduce(
-      (sum, item) => {
-        let size = sizes.get(item);
-        if (size === undefined) {
-          size = byteSize(item);
-          sizes.set(item, size);
-        }
-        return sum + size;
-      },
-      2 + Math.max(0, snapshot.length - 1),
-    );
+    pendingBytes = pendingSize(snapshot);
     visible = Object.freeze([
       ...completed.entries().map(([, item]) => item),
       ...snapshot,
@@ -317,10 +327,15 @@ export function createOutbox(
         ];
         const bytes =
           action === "dismiss"
-            ? byteSize(snapshot.filter((item) => item.event.id !== id))
-            : pendingBytes + (addition ? byteSize(addition) : 0);
+            ? pendingSize(snapshot.filter((item) => item.event.id !== id))
+            : addition
+              ? pendingSize([...snapshot, addition])
+              : pendingBytes;
         return profiling.measureAsync("outbox.persist", id, async () => {
-          if (bytes > 2 * 1024 * 1024)
+          if (
+            bytes.messages > PENDING_MESSAGE_BYTES ||
+            bytes.canvases > PENDING_CANVAS_BYTES
+          )
             throw new Error("Outbox storage is full");
           if (action === "recover") await storage.save(records, { force: id });
           else await storage.save(records);
@@ -387,7 +402,7 @@ export function createOutbox(
     if (
       !Array.isArray(loaded) ||
       loaded.length > MAX_PENDING + MAX_CONFIRMED ||
-      byteSize(loaded) > 10 * 1024 * 1024
+      byteSize(loaded) > SAVED_BYTES
     )
       throw new Error("Saved outbox exceeds its budget");
   }

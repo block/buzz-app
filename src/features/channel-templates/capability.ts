@@ -1,4 +1,4 @@
-import type { RelayReader } from "../relay/reader";
+import { RELAY_READ_BYTES, type RelayReader } from "../relay/reader";
 import { isTransientFailure } from "../relay/errors";
 import type { RelayEvent, ReadFilter } from "../relay/events";
 import type { Outbox, LocalEvents } from "../relay/outbox";
@@ -19,7 +19,14 @@ import {
   type KitRecord,
   type KitValue,
 } from "./model";
+import { CANVAS_MAX_EVENT_BYTES } from "./canvas-limits";
 import { TEAM_MANIFEST_TAG } from "./team-payload";
+
+/** Revisions per History read: a page of the largest signed Canvas events,
+ * each with its separating comma inside the `[…]` array, fits one read. */
+export const CANVAS_HISTORY_PAGE = Math.floor(
+  (RELAY_READ_BYTES - 2) / (CANVAS_MAX_EVENT_BYTES + 1),
+);
 
 export type CanvasHistoryCursor = { until: number; before_id: string };
 export type CanvasHistoryPage = {
@@ -367,7 +374,7 @@ export function createChannelKit({
         {
           kinds: [40100],
           "#h": [channel],
-          limit: 25,
+          limit: CANVAS_HISTORY_PAGE,
           ...(cursor ?? { consistency: "strong" as const }),
         },
       ]);
@@ -394,7 +401,7 @@ export function createChannelKit({
       return {
         revisions,
         next:
-          rows.length >= 25 && last
+          rows.length >= CANVAS_HISTORY_PAGE && last
             ? { until: last.created_at, before_id: last.id }
             : undefined,
       };

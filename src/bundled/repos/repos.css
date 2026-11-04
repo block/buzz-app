@@ -78,6 +78,12 @@
 .repo-markdown pre {
   overflow: auto;
 }
+/* Breaking anywhere shrinks auto-sized columns to one character. */
+.repo-markdown table {
+  display: block;
+  overflow-x: auto;
+  overflow-wrap: normal;
+}
 .repo-markdown img {
   max-width: 100%;
 }

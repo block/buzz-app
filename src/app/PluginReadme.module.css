@@ -88,13 +88,10 @@
   box-decoration-break: clone;
 }
 
+/* Breaking anywhere shrinks auto-sized table columns to one character. */
 .readme :is(pre, table) {
   display: block;
   overflow-x: auto;
-}
-
-/* Breaking anywhere shrinks auto-sized columns to one character. */
-.readme table {
   overflow-wrap: normal;
 }
 

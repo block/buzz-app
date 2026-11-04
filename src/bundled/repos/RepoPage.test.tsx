@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
 import {
@@ -634,4 +635,11 @@ it("reads a repository refused while signed out again once the organization sign
     ).not.toBeInTheDocument(),
   );
   expect(t.readGit).toHaveBeenCalledTimes(2);
+});
+
+it("sizes table columns to whole words, not single characters", () => {
+  // No DOM emulator lays out tables, so this reads the stylesheet.
+  expect(readFileSync("src/bundled/repos/repos.css", "utf8")).toMatch(
+    /\.repo-markdown table \{[^}]*overflow-wrap: normal;/,
+  );
 });

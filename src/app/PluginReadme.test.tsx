@@ -96,6 +96,6 @@ it("reveals clipped links when they receive keyboard focus and resets on plugin 
 it("sizes table columns to whole words, not single characters", () => {
   // No DOM emulator lays out tables, so this reads the stylesheet.
   expect(readFileSync("src/app/PluginReadme.module.css", "utf8")).toMatch(
-    /\.readme table \{[^}]*overflow-wrap: normal;/,
+    /\.readme :is\(pre, table\) \{[^}]*overflow-wrap: normal;/,
   );
 });

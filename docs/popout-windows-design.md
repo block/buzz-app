@@ -1,6 +1,7 @@
 # Pop-out conversation windows — design proposal
 
-Status: **proposal, not implemented.** Worktree `design/popout-window` at
+Status: **S1 in progress** on `design/popout-window` (first runnable slice:
+native host + bundled plugin + message-menu entry point; see §10). Base
 `origin/main` 92d4c36. Authored by Jaw-fable51-pi for jaw. Revision 2 after
 jaw-gpt56sol's adversarial review (findings 1–5 in §5 and §9 accepted; review at
 `~/.buzz/RESEARCH/BUZZ_POPOUT_ADVERSARIAL_REVIEW_2026_11_03.md`).

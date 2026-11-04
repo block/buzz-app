@@ -25,8 +25,6 @@ const focusDurations: readonly (readonly [Duration, string])[] = [
   ["custom", "Custom"],
 ];
 type Duration = FocusLength | "custom";
-const HELP =
-  "Only Solo chats are shown in the sidebar and alert you. Search and links still open anything else.";
 /** Start Focus for a preset; the shortcut and the dialog share it. */
 export function startFocus(focus: Focus, length: FocusLength) {
   focus.start(statusDeadline(length, Math.floor(Date.now() / 1000)));
@@ -111,8 +109,8 @@ export function FocusDialog({
       closeLabel="Close Focus"
       description={
         on
-          ? `Focusing until ${focusUntilLabel(state.until as number)}. ${HELP}`
-          : `${HELP} Unread messages wait for you.`
+          ? `Focusing until ${focusUntilLabel(state.until as number)}`
+          : "Only Solo chats show and alert you until Focus ends."
       }
       actions={
         on ? (

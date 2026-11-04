@@ -73,7 +73,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     allowInEditable: true,
     run: () => {
       if (focus.snapshot().until !== undefined) focus.end();
-      else startFocus(focus, preferences.snapshot().shortcutLength);
+      else startFocus(focus, preferences.snapshot().length);
     },
   });
   ctx.accountActions.register({

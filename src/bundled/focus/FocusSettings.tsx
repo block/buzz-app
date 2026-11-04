@@ -63,24 +63,14 @@ export function FocusSettings({
   };
   return (
     <section aria-label="Focus settings">
-      <Header
-        title="Focus"
-        subtitle="How long Focus lasts. You can still pick another length each time you start it from the profile menu."
-      />
+      <Header title="Focus" />
       <SettingsGroup>
         <Choice<FocusLength>
-          title="Length"
-          subtitle="Selected when you open Focus from the profile menu."
+          title="Default length"
+          subtitle="Used by the Focus shortcut, ⌥F by default, and selected when you open Focus from the profile menu."
           value={current.length}
           options={focusLengths}
           onChange={(length) => set({ length })}
-        />
-        <Choice<FocusLength>
-          title="Shortcut length"
-          subtitle="How long the Focus shortcut, ⌥F by default, focuses for. Change the keys in Shortcuts."
-          value={current.shortcutLength}
-          options={focusLengths}
-          onChange={(shortcutLength) => set({ shortcutLength })}
         />
       </SettingsGroup>
       {error && (

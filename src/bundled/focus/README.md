@@ -28,6 +28,6 @@ Work with your agents without the rest of Buzz competing for attention.
   Those conversations keep their unread state.
 - Turning the plugin off mid-Focus shows everything again at once, and 🔭
   stays until it expires. Quitting Buzz keeps Focus on for next time.
-- **Settings → Plugins → Focus** sets the length the dialog starts with, and
-  how long the shortcut focuses for. Change the shortcut's keys in
+- **Settings → Plugins → Focus** sets the default length: the one the dialog
+  starts with and ⌥F uses. Change the shortcut's keys in
   **Settings → Shortcuts**.

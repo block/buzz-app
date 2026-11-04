@@ -8,15 +8,12 @@ export const focusLengths: readonly (readonly [FocusLength, string])[] = [
 ];
 
 export type FocusPreferences = Readonly<{
-  /** The length the dialog starts with. */
+  /** The length the dialog starts with and the shortcut focuses for. */
   length: FocusLength;
-  /** How long the shortcut focuses for. */
-  shortcutLength: FocusLength;
 }>;
 export const FOCUS_PREFERENCES_KEY = "buzz-focus-preferences.v1";
 export const DEFAULT_PREFERENCES: FocusPreferences = Object.freeze({
   length: "3600",
-  shortcutLength: "3600",
 });
 
 const isLength = (value: unknown): value is FocusLength =>
@@ -25,12 +22,9 @@ function parse(raw: string | null): FocusPreferences {
   if (!raw) return DEFAULT_PREFERENCES;
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== "object") return DEFAULT_PREFERENCES;
-  const { length, shortcutLength } = value as Record<string, unknown>;
+  const { length } = value as Record<string, unknown>;
   return Object.freeze({
     length: isLength(length) ? length : DEFAULT_PREFERENCES.length,
-    shortcutLength: isLength(shortcutLength)
-      ? shortcutLength
-      : DEFAULT_PREFERENCES.shortcutLength,
   });
 }
 

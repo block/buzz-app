@@ -27,24 +27,21 @@ function browser(stored?: string, failing = false) {
   return { host, values, localStorage, listeners };
 }
 
-it("defaults to Solo only for an hour, and keeps changes", () => {
+it("defaults to an hour, and keeps changes", () => {
   const { host, values } = browser();
   const preferences = createPreferences(host);
   expect(preferences.snapshot()).toEqual(DEFAULT_PREFERENCES);
-  preferences.set({ shortcutLength: "today" });
-  expect(createPreferences(host).snapshot()).toEqual({
-    ...DEFAULT_PREFERENCES,
-    shortcutLength: "today",
-  });
+  preferences.set({ length: "today" });
+  expect(createPreferences(host).snapshot()).toEqual({ length: "today" });
   expect(values.has(FOCUS_PREFERENCES_KEY)).toBe(true);
 });
 
-it("falls back per field on unreadable settings", () => {
+it("falls back on unreadable settings", () => {
   expect(
     createPreferences(
-      browser(JSON.stringify({ length: "99", shortcutLength: "7200" })).host,
+      browser(JSON.stringify({ length: "99" })).host,
     ).snapshot(),
-  ).toEqual({ ...DEFAULT_PREFERENCES, shortcutLength: "7200" });
+  ).toEqual(DEFAULT_PREFERENCES);
   expect(createPreferences(browser("{").host).snapshot()).toEqual(
     DEFAULT_PREFERENCES,
   );
@@ -53,7 +50,7 @@ it("falls back per field on unreadable settings", () => {
 it("follows another window and reports a failed save", () => {
   const { host, values, localStorage, listeners } = browser(undefined, true);
   const preferences = createPreferences(host);
-  preferences.set({ shortcutLength: "7200" });
+  preferences.set({ length: "7200" });
   expect(preferences.error()).toMatch("could not be saved");
   values.set(FOCUS_PREFERENCES_KEY, JSON.stringify({ length: "1800" }));
   for (const listener of listeners)

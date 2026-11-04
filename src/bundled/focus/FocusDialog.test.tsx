@@ -38,8 +38,9 @@ it("starts Focus for the chosen duration and offers End while it is on", async (
   expect(onOpenChange).toHaveBeenLastCalledWith(false);
   view.rerender(dialog);
   expect(screen.getByText(/^Focusing until/)).toHaveTextContent(
-    "Search and links still open",
+    /^Focusing until \S+/,
   );
+  expect(screen.queryByText(/Only Solo chats show/)).toBeNull();
   await user.click(screen.getByRole("button", { name: "End focus" }));
   expect(focus.snapshot().until).toBeUndefined();
   focus.dispose();

@@ -335,8 +335,8 @@ available rather than silently discarding it.
   communities, the earlier status comes back when you return to that community,
   unless you start Focus elsewhere first. Focus is saved per device and ends at
   its end time or with **End**, and ⌥F (Alt+F) starts it for an hour or ends
-  it. **Settings → Plugins → Focus** sets the dialog's length and the
-  shortcut's length. Turning the plugin off mid-Focus shows everything again
+  it. **Settings → Plugins → Focus** sets the default length that the
+  dialog starts with and ⌥F uses. Turning the plugin off mid-Focus shows everything again
   at once; 🔭 stays until it expires.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching

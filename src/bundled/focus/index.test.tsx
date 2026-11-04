@@ -186,7 +186,7 @@ it("⌥F starts Focus for the shortcut length set in Settings", async () => {
   if (!Card) throw new Error("No settings card");
   render(<Card active={() => true} />);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: /Shortcut length/ }));
+  await user.click(screen.getByRole("combobox", { name: /Default length/ }));
   await user.click(await screen.findByRole("option", { name: "2 hours" }));
   act(() => shortcut?.run());
   expect(focusUntil() - before).toBeGreaterThanOrEqual(7199);

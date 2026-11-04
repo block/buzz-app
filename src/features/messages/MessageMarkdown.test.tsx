@@ -826,11 +826,16 @@ describe("Markdown inline extensions", () => {
       "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",
     ],
     ["<https://example.com/a。>", "https://example.com/a%E3%80%82"],
-  ])("ends a bare link at fullwidth punctuation: %s", (content, href) => {
+    [
+      "https://a.com，https://zh.wikipedia.org/wiki/中文",
+      "https://a.com/",
+      "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",
+    ],
+  ])("ends a bare link at fullwidth punctuation: %s", (content, ...hrefs) => {
     const html = render(content);
-    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
-      href,
-    ]);
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual(
+      hrefs,
+    );
     expect(html.replace(/<[^>]*>/g, "")).toBe(
       content.replace(/^<(.*)>$/, "$1"),
     );

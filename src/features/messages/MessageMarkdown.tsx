@@ -358,12 +358,12 @@ function remarkBareLinkEnd(content: string) {
         visit(child);
         return [child];
       }
-      const url = messageLinkParts(text).find((part) => part.url)?.url;
-      if (!url || url === text || !text.startsWith(url)) return [child];
-      return [
-        { ...child, url, children: [{ type: "text", value: url }] },
-        { type: "text", value: text.slice(url.length) },
-      ];
+      const parts = messageLinkParts(text).filter((part) => part.text);
+      if (parts.length < 2) return [child];
+      return parts.map(({ text: value, url }) => {
+        const node = { type: "text", value };
+        return url ? { type: "link", url, children: [node] } : node;
+      });
     });
   };
 }

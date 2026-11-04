@@ -48,6 +48,8 @@ import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
+import pinsManifest from "./pins/manifest.json";
+import * as pins from "./pins";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
 import workflowsManifest from "./workflows/manifest.json";
@@ -169,6 +171,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...pinsManifest, apiVersion: 1 },
+    module: pins,
     enabledByDefault: false,
   },
   {

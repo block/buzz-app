@@ -107,6 +107,10 @@ that agent in Buzz; they do not notify the external app through this connection.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
   copy its link, or open More. **Copy message** is in More. Keyboard focus also
   reveals these actions; touch layouts keep actions inline.
+- With **Pins** enabled, choose **Pin to channel** in a message's More menu.
+  Pinned messages show a pin beside their time, and the pin button in the
+  channel header lists the channel's pins; choose one to jump to it. You can
+  unpin your own pins; channel owners and admins can unpin anyone's.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -320,7 +324,7 @@ available rather than silently discarding it.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
-- **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
+- **Reminders**, **Workflows** and **Pins** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.
 - Some plugins let the person's other agents on this computer, such as Claude

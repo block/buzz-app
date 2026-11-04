@@ -390,6 +390,14 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         if !valid_member_command(event) {
             return Err("Invalid member change".into());
         }
+    } else if event.kind == 40004 {
+        if !valid_pin(event) {
+            return Err("Invalid pin".into());
+        }
+    } else if event.kind == 9005 {
+        if !valid_pin_removal(event) {
+            return Err("Invalid unpin".into());
+        }
     } else if !matches!(
         event.kind,
         0 | 7 | 9 | 1984 | 9000 | 9001 | 20001 | 30030 | 30177 | 30315 | 40003 | 42000 | 45010
@@ -511,7 +519,39 @@ fn valid_message_deletion(event: &EventTemplate) -> bool {
         && (1..=3).contains(&kinds.len())
         && kinds
             .iter()
-            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002"))
+            .all(|tag| matches!(tag[1].as_str(), "7" | "9" | "40002" | "40004"))
+}
+
+/// One channel and one lowercase-hex `e` (plus `k` where `extra` names it),
+/// at most one client id, empty content and nothing else. Mirrors
+/// `browser-host/relay-broker.mjs` and `pin-signing-contract.json`.
+fn pin_shaped(event: &EventTemplate, extra: Option<(&str, &str)>) -> bool {
+    let count = |name: &str| event.tags.iter().filter(|tag| tag[0] == name).count();
+    event.content.is_empty()
+        && event.tags.iter().all(|tag| {
+            tag.len() == 2
+                && match tag[0].as_str() {
+                    "h" => !tag[1].is_empty() && tag[1].encode_utf16().count() <= 256,
+                    "e" => hex_key(&tag[1]),
+                    "client-id" => !tag[1].is_empty() && tag[1].encode_utf16().count() <= 128,
+                    name => extra.is_some_and(|(k, v)| name == k && tag[1] == v),
+                }
+        })
+        && count("h") == 1
+        && count("e") == 1
+        && count("client-id") <= 1
+        && extra.is_none_or(|(name, _)| count(name) == 1)
+}
+
+/// Kind 40004: pin one message of the channel; the relay checks the target.
+fn valid_pin(event: &EventTemplate) -> bool {
+    event.kind == 40004 && pin_shaped(event, None)
+}
+
+/// Kind 9005 is only signed to remove another member's pin; the relay
+/// requires channel owner or admin. Message moderation stays elsewhere.
+fn valid_pin_removal(event: &EventTemplate) -> bool {
+    event.kind == 9005 && pin_shaped(event, Some(("k", "40004")))
 }
 
 fn validate_workflow_template(event: &EventTemplate) -> Result<()> {

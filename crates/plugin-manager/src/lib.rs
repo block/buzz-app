@@ -450,6 +450,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
             .expect("reminders manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/pins/manifest.json"))
+            .expect("pins manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/usage/manifest.json"))

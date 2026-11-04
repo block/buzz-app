@@ -3397,6 +3397,31 @@ fn canvas_signing_shape_matches_shared_contract() {
 }
 
 #[test]
+fn pin_signing_shape_matches_shared_contract() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../src/features/pins/pin-signing-contract.json"
+    ))
+    .unwrap();
+    let cases = cases.as_array().unwrap();
+    assert!(!cases.is_empty(), "shared pin signing corpus is empty");
+    for case in cases {
+        let event = serde_json::from_value::<EventTemplate>(serde_json::json!({
+            "kind": case["kind"],
+            "created_at": 100,
+            "content": case["content"].as_str().unwrap_or(""),
+            "tags": case["tags"],
+        }))
+        .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
+        assert_eq!(
+            validate_event("https://relay.test", &event).is_ok(),
+            case["accepted"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+}
+
+#[test]
 fn canvas_content_is_bounded_in_utf8_bytes() {
     let mut event = EventTemplate {
         kind: 40100,

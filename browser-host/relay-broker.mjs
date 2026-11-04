@@ -66,6 +66,7 @@ import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
 } from "../src/features/workflows/protocol.ts";
+import { PIN_KINDS } from "../src/features/pins/protocol.ts";
 import {
   workflowRunsPath,
   workflowReadText,
@@ -576,8 +577,51 @@ export function validMessageDeletion(event) {
     new Set(targets.map(([, id]) => id)).size === targets.length &&
     kinds.length > 0 &&
     kinds.length <= 3 &&
-    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+    kinds.every(([, kind]) => ["7", "9", "40002", "40004"].includes(kind))
   );
+}
+
+/** One channel and one lowercase-hex `e` (plus `extra` when named), at most one
+ * client id, empty content and nothing else. Mirrors `src-tauri/src/relay.rs`
+ * and `pin-signing-contract.json`; the relay checks the target and authority. */
+function pinShaped(event, extra) {
+  if (
+    event?.content !== "" ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        (tag[0] === "h"
+          ? tag[1].length > 0 && tag[1].length <= 256
+          : tag[0] === "e"
+            ? /^[0-9a-f]{64}$/.test(tag[1])
+            : tag[0] === "client-id"
+              ? tag[1].length > 0 && tag[1].length <= 128
+              : extra !== undefined &&
+                tag[0] === extra[0] &&
+                tag[1] === extra[1]),
+    )
+  )
+    return false;
+  const count = (name) => event.tags.filter(([tag]) => tag === name).length;
+  return (
+    count("h") === 1 &&
+    count("e") === 1 &&
+    count("client-id") <= 1 &&
+    (extra === undefined || count(extra[0]) === 1)
+  );
+}
+
+/** Kind 40004: pin one message of the channel. */
+export function validPin(event) {
+  return event?.kind === 40004 && pinShaped(event);
+}
+
+/** Kind 9005, signed only to remove another member's pin as channel admin. */
+export function validPinRemoval(event) {
+  return event?.kind === 9005 && pinShaped(event, ["k", "40004"]);
 }
 
 /** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
@@ -1576,6 +1620,7 @@ export function relayBrokerPlugin({
                 40100,
                 1984,
                 45010,
+                ...PIN_KINDS,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
@@ -2935,6 +2980,12 @@ export function relayBrokerPlugin({
                   error: "Invalid typing indicator",
                   sent: false,
                 });
+            } else if (filters?.kind === 40004) {
+              if (!validPin(filters))
+                return json(res, 400, { error: "Invalid pin", sent: false });
+            } else if (filters?.kind === 9005) {
+              if (!validPinRemoval(filters))
+                return json(res, 400, { error: "Invalid unpin", sent: false });
             } else if (
               ![7, 9, 40003].includes(filters?.kind) &&
               !validMessageDeletion(filters) &&

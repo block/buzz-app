@@ -449,6 +449,15 @@ export const PencilSimpleIcon = defineIcon("tabler", TablerPencilSimpleIcon);
 import TablerListChecksIcon from "@tabler/icons-react/dist/esm/icons/IconListCheck.mjs";
 export const ListChecksIcon = defineIcon("tabler", TablerListChecksIcon);
 
+import TablerPinIcon from "@tabler/icons-react/dist/esm/icons/IconPin.mjs";
+export const PinIcon = defineIcon("tabler", TablerPinIcon);
+
+import TablerPinFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPinFilled.mjs";
+export const PinFilledIcon = defineIcon("tabler", TablerPinFilledIcon);
+
+import TablerPinnedOffIcon from "@tabler/icons-react/dist/esm/icons/IconPinnedOff.mjs";
+export const PinnedOffIcon = defineIcon("tabler", TablerPinnedOffIcon);
+
 import TablerArchiveIcon from "@tabler/icons-react/dist/esm/icons/IconArchive.mjs";
 export const ArchiveIcon = defineIcon("tabler", TablerArchiveIcon);
 

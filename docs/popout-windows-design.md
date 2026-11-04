@@ -436,9 +436,13 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
 ## 10. S1 scope checkpoint (per `AGENTS.md` "Engineering standard")
 
 Approved by jaw 2026-11-04 (design, parity, approach B, slicing, core-only,
-platform-natural main-close). Implementation owner: jaw (accountable human
-author); Jaw-fable51-pi implements and commits as jaw's git identity with a
-`Co-authored-by` trailer. Reviewers per CODEOWNERS: `@block/buzz-oss-team`.
+platform-natural main-close). Roles: **jaw** — accountable contributor and
+implementation owner (commits author as jaw); **Jaw-fable51-pi** —
+implementation agent (`Co-authored-by` trailer); **jaw-gpt56sol** — independent
+reviewer of the first working slice; maintainer review/merge per CODEOWNERS
+(`@block/buzz-oss-team`). Slack dedup/link-routing/restore behavior remains
+unverified (jaw's grouped "yes" is not treated as tested evidence); S1 keeps
+"no restart restoration" as an approved non-goal regardless.
 
 ### Required behavior (S1 — thread pop-out, desktop only)
 
@@ -468,12 +472,12 @@ author); Jaw-fable51-pi implements and commits as jaw's git identity with a
    with a main toast. macOS main close hides main; pop-outs keep working. Main
    renderer reload: companion goes read-only, composer disabled, retire on main
    startup with "Reopen from Buzz".
-8. Reading (S1b, same PR unless it must split): companion sends `observe(ids)`
-   with focus/visibility generation under `docs/unread.md` rules; main validates
-   against the window's projection and feeds its reading owner; delayed or
-   pre-blur observations are dropped; opening marks nothing. If split, S1a ships
-   with "pop-out does not clear unread" stated in `buzz-help.md` as an interim
-   product state (accepted by jaw 2026-11-04).
+8. Reading is **in S1** (reviewer recommendation; jaw delegated slicing):
+   companion sends `observe(ids)` with focus/visibility generation under
+   `docs/unread.md` rules; main validates against the window's projection and
+   feeds its reading owner; delayed or pre-blur observations are dropped;
+   opening marks nothing. Intermediate draft commits may land the window before
+   the reading bridge, but the PR is not ready for review without it.
 9. Links: Buzz links → `openLink` action, handled in main (focus main);
    `http(s)` → OS browser via `opener`.
 10. Light/dark follow main; keyboard focus order and enlarged text checked.
@@ -501,6 +505,10 @@ after first native tryout, per jaw).
   (`ThreadPanel.tsx:81-152`), `useMessageOpening` verified-root rules.
 - Reading: `src/features/messages/use-reading.ts` (`useReading`,
   `readingPositioned`) and `docs/unread.md` contract.
+- Sharing rule: extract from Huddle only where the contract is identical
+  (composer bridge, native window open/update/watch/action, validation);
+  Huddle call/audio lifecycle and ordinary thread reading stay with their
+  owners; no general window framework.
 - Window bridge and companion entry: `src/features/huddle/window.ts`,
   `src/bundled/huddles/window-entry.tsx`, `HuddleDiscussionView.tsx`,
   `HuddleComposer.tsx`, `huddle.html` + Vite input as the template for
@@ -531,8 +539,8 @@ Modified: `src-tauri/src/lib.rs` (register commands, close handling),
 | Composer projection generalization (`reply`, thread draft key, binding) | 150–250 |
 | Companion UI (entry, view, header, guards) | 250–300 |
 | Entry points (3 menus/actions) | ~100 |
-| Reading bridge (S1b) | 150–250 |
-| **Total** | **1,450–2,050** (≈1,300–1,800 without S1b) |
+| Reading bridge | 150–250 |
+| **Total** | **1,450–2,050** |
 
 Stop-and-show rule: if production diff exceeds the upper bound or a new shared
 contract beyond the ones listed becomes necessary, stop and post the smallest

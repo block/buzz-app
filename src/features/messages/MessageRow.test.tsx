@@ -2370,9 +2370,10 @@ it("presents automation, links the owner and explains the message without keys",
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(trigger).toHaveFocus();
-    await user.click(trigger);
+    // fireEvent moves no pointer, so no hover rest timer can open the card.
+    fireEvent.click(trigger);
     expect(
-      await screen.findByRole("dialog", { name: "Workflow message" }),
+      screen.getByRole("dialog", { name: "Workflow message" }),
     ).toBeInTheDocument();
   } finally {
     cleanup();
@@ -2383,15 +2384,16 @@ it("opens workflow message details once the pointer rests, without a competing h
   vi.useFakeTimers();
   try {
     const { trigger } = renderWorkflowMessage();
+    const focused = document.activeElement;
     fireEvent.mouseEnter(trigger);
     fireEvent.mouseMove(trigger);
     await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
     expect(screen.queryByRole("dialog")).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(1));
-    const card = screen.getByRole("dialog", { name: "Workflow message" });
+    screen.getByRole("dialog", { name: "Workflow message" });
     expect(screen.queryByRole("tooltip")).toBeNull();
     // A hover heads-up leaves focus where the reader had it.
-    expect(card).not.toContainElement(document.activeElement as HTMLElement);
+    expect(document.activeElement).toBe(focused);
     // Clicking the trigger that just opened it keeps it open.
     fireEvent.click(trigger);
     await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
@@ -2401,6 +2403,17 @@ it("opens workflow message details once the pointer rests, without a competing h
     fireEvent.keyDown(document.activeElement ?? document.body, {
       key: "Escape",
     });
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Past Base UI's 500 ms patient-click window, a click toggles a
+    // hover-opened card closed, as with every openOnHover="preview" popover.
+    fireEvent.mouseLeave(trigger);
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    screen.getByRole("dialog", { name: "Workflow message" });
+    await act(() => vi.advanceTimersByTimeAsync(500));
+    fireEvent.click(trigger);
     await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
     expect(screen.queryByRole("dialog")).toBeNull();
   } finally {

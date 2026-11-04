@@ -480,7 +480,8 @@ const elementOf = (node: Node) =>
   node instanceof Element ? node : node.parentElement;
 
 /** Message rows only; editors own their selections. */
-function messageSelection(range: Range): boolean {
+/** A range of rendered message content, never an editor's text. */
+export function messageSelection(range: Range): boolean {
   const scope = elementOf(range.commonAncestorContainer);
   if (
     !scope ||

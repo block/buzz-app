@@ -7201,6 +7201,8 @@ it("selects the newest message on Up when the scope has a message list, instead 
     canMarkUnread: () => false,
     markUnread: () => {},
     composer: () => null,
+    canQuote: () => false,
+    quote: () => false,
   });
   try {
     render(

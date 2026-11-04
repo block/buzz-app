@@ -102,6 +102,11 @@ that agent in Buzz; they do not notify the external app through this connection.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
   copy its link, or open More. **Copy message** is in More. Keyboard focus also
   reveals these actions; touch layouts keep actions inline.
+- Select text in a message, such as by double-clicking a word, and choose
+  **Quote** (or press Q) to add it to the end of that conversation's draft as a
+  quote, ready for your reply below it. A selection in a thread quotes into the
+  thread's reply box. Quoting keeps formatting and links but does not notify
+  anyone mentioned in the quoted text.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -168,6 +173,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   you change most of them and also shows the fixed message-formatting keys. In
   an empty composer, Up selects a message. Then E edits it, R reacts, T or →
   replies in thread, U marks it unread, and Delete deletes your own message.
+  With message text selected, Q quotes it into the draft.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires.

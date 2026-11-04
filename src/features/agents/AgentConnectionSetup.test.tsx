@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -121,7 +121,10 @@ it.each(["dm", "stream", "forum"] as const)(
       ],
     };
     const view = { status: "ready", events: [profile] };
-    const choices = { identities: [] };
+    let choices: {
+      complete: boolean;
+      identities: { pubkey: string; managed: boolean; messageable: boolean }[];
+    } = { complete: false, identities: [] };
     const profiles = new Map([
       [candidate.pubkey, { name: candidate.name, isAgent: true }],
     ]);
@@ -144,7 +147,15 @@ it.each(["dm", "stream", "forum"] as const)(
         snapshot: () => profiles,
         event: () => profile,
       },
-      agentChoices: { subscribe: noop, snapshot: () => choices },
+      agentChoices: {
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+        snapshot: () => choices,
+      },
       presence: {
         status: () => presence,
         subscribe: (_key: string, listener: () => void) => {
@@ -163,7 +174,10 @@ it.each(["dm", "stream", "forum"] as const)(
       here: [],
     }));
     const agents = {
-      port: vi.fn(async () => ({ notes: [] })),
+      port: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Import interrupted"))
+        .mockResolvedValue({ notes: [] }),
       types: () => types,
       snapshot: () => snapshot,
       subscribe: noop,
@@ -203,6 +217,22 @@ it.each(["dm", "stream", "forum"] as const)(
         />
       </AgentsContext.Provider>,
     );
+    await waitFor(() => expect(portable).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    act(() => {
+      choices = {
+        complete: true,
+        identities: [
+          { pubkey: candidate.pubkey, managed: false, messageable: true },
+        ],
+      };
+      for (const listener of [...listeners]) listener();
+    });
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    act(() => {
+      choices = { complete: true, identities: [] };
+      for (const listener of [...listeners]) listener();
+    });
     expect(
       await screen.findByRole("heading", { name: /^Connect / }),
     ).toBeVisible();
@@ -210,6 +240,11 @@ it.each(["dm", "stream", "forum"] as const)(
     expect(observe).toHaveBeenCalledExactlyOnceWith([
       { kinds: [0], authors: [candidate.pubkey], limit: 1 },
     ]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Import interrupted",
+    );
     act(() => {
       presence = "online";
       for (const listener of [...listeners]) listener();
@@ -220,7 +255,6 @@ it.each(["dm", "stream", "forum"] as const)(
         presence = "offline";
         for (const listener of [...listeners]) listener();
       });
-      const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: "Connect" }));
       await screen.findByRole("button", { name: "Send again" });
       expect(reply).not.toHaveBeenCalled();

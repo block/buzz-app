@@ -168,7 +168,7 @@ function Candidate({
     () => session.presence.status(peer),
   );
   const [candidate, setCandidate] = useState<PortableAgent>();
-  const [started, setStarted] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "pending" | "done">("idle");
   useEffect(() => {
     if (owned.status !== "ready" || owned.owner !== session.viewer || existing)
       return;
@@ -191,11 +191,13 @@ function Candidate({
       active = false;
     };
   }, [agents, peer, owned.status, owned.owner, session.viewer, existing]);
-  // Keep the result visible while import republishes the profile and inventory.
+  // Retain in-flight UI and successful results through inventory changes.
+  // A failed attempt returns to live eligibility checks before offering retry.
   if (
     !candidate ||
-    (!started &&
-      (existing ||
+    (phase === "idle" &&
+      (!choices.complete ||
+        existing ||
         owned.status !== "ready" ||
         owned.owner !== session.viewer ||
         presence === "online" ||
@@ -211,7 +213,8 @@ function Candidate({
       agents={agents}
       candidate={candidate}
       scope={session.scope}
-      onStart={() => setStarted(true)}
+      onStart={() => setPhase("pending")}
+      onFinish={(success) => setPhase(success ? "done" : "idle")}
       onSendAgain={
         message
           ? async () => {
@@ -237,6 +240,7 @@ export function AgentConnectionForm({
   candidate,
   scope,
   onStart,
+  onFinish,
   preview = false,
   onSendAgain,
 }: {
@@ -244,6 +248,7 @@ export function AgentConnectionForm({
   candidate: PortableAgent;
   scope: string;
   onStart?: () => void;
+  onFinish?: (success: boolean) => void;
   preview?: boolean;
   onSendAgain?: (() => Promise<void>) | undefined;
 }) {
@@ -282,7 +287,9 @@ export function AgentConnectionForm({
       });
       if (result.notes.length) setError(result.notes.join(" "));
       setDone(true);
+      onFinish?.(true);
     } catch (reason) {
+      onFinish?.(false);
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setPending(false);

@@ -8,6 +8,8 @@ export type ComposerSnapshot = {
   viewer: string | undefined;
   scope: string;
   room: string;
+  /** Thread root when the composer replies into a thread (pop-out windows). */
+  thread?: string | undefined;
   writable: boolean;
   uploads: boolean;
   canAdd: boolean;
@@ -35,6 +37,18 @@ export type ComposerOperations = {
     args: {
       text: string;
       draft: string;
+      picks?: import("../relay/messages").MentionPicks;
+      mentions: readonly string[];
+      references: readonly string[];
+      attachments: readonly UploadedAttachment[];
+    };
+    result: string;
+  };
+  reply: {
+    args: {
+      text: string;
+      draft: string;
+      parent?: string | undefined;
       picks?: import("../relay/messages").MentionPicks;
       mentions: readonly string[];
       references: readonly string[];

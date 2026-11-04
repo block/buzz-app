@@ -311,6 +311,10 @@ export type MessageComposerProps = {
     | undefined;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
+  /** Told when this editor holds work that view state does not: an
+   * unresolved draft conflict, a draft whose save failed, or a send in
+   * flight. A window hosting the editor asks before closing while true. */
+  onHeld?: ((held: boolean) => void) | undefined;
   /** Before a focused form detaches, its host can hand focus to retained content. */
   onFocusedRemoval?: (() => void) | undefined;
   /** Threads supply their own retained rows; channels use the shared window. */
@@ -506,6 +510,7 @@ function Composer({
   onSend,
   onCommand,
   onDraftSaved,
+  onHeld,
   onFocusedRemoval,
   editMessages,
   onOpenLink,
@@ -628,6 +633,10 @@ function Composer({
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
+  const held = conflict || storageFailed || sending;
+  useEffect(() => {
+    onHeld?.(held);
+  }, [onHeld, held]);
   // A composer with nothing saved starts with the agents the viewer's latest
   // message in its conversation notified, in memory only: a draft is saved
   // once the user types, removes a mention or sends here, and relay history,

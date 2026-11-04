@@ -1,0 +1,105 @@
+import type { Attachment, ChannelMessage } from "../relay/contracts";
+import type { Delivery } from "../relay/outbox";
+import type { RelaySession } from "../relay/session";
+import { formatPublicKey } from "../../shared/identity/public-key";
+import { avatarMedia, avatarSource } from "../../shared/avatar-source";
+
+/** One message as a companion window presents it: bounded strings, resolved
+ * media sources, no session references. Shared by the Huddle discussion and
+ * pop-out windows; the native DTO (`DiscussionRow`) validates the same caps. */
+export type CompanionRow = {
+  id: string;
+  author: string;
+  authorId: string;
+  channelId: string;
+  attachments: (Attachment & {
+    source: string | null;
+    previewSource: string | null;
+  })[];
+  picture: string | null;
+  /** Original profile URL; picture remains its authorized media source. */
+  pictureUrl?: string | null;
+  text: string;
+  mentions?: readonly string[];
+  mentionNames?: Record<string, string>;
+  edited?: boolean;
+  attachmentSeams?: readonly number[];
+  mentionReferences?: readonly string[];
+  time: number;
+  delivery: Delivery;
+};
+
+const bytes = (value: string) => new TextEncoder().encode(value).length;
+// Keep one malformed metadata value from rejecting the entire native view.
+// URLs are omitted, never truncated into a different resource.
+const bounded = (value: string | undefined, limit: number) =>
+  value !== undefined && bytes(value) <= limit ? value : undefined;
+
+export function projectCompanionRow(
+  session: Pick<RelaySession, "media" | "viewer">,
+  profiles: ReturnType<RelaySession["profiles"]["snapshot"]>,
+  r: ChannelMessage,
+  channelId: string,
+): CompanionRow {
+  const profile = profiles.get(r.authorId);
+  const pictureUrl = avatarSource(profile?.picture);
+  const picture = avatarMedia(pictureUrl, session.media);
+  return {
+    id: r.id,
+    authorId: r.authorId,
+    channelId,
+    attachments: r.attachments.flatMap((attachment) => {
+      const url = bounded(attachment.url, 8192);
+      if (!url) return [];
+      const mime = bounded(attachment.mime, 256);
+      const name = bounded(attachment.name, 4096);
+      const blurhash = bounded(attachment.blurhash, 256);
+      const previewUrl = bounded(attachment.previewUrl, 8192);
+      return [
+        {
+          url,
+          kind: attachment.kind,
+          ...(mime !== undefined ? { mime } : {}),
+          ...(name !== undefined ? { name } : {}),
+          ...(blurhash !== undefined ? { blurhash } : {}),
+          ...(previewUrl !== undefined ? { previewUrl } : {}),
+          ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+          ...(attachment.duration !== undefined
+            ? { duration: attachment.duration }
+            : {}),
+          ...(attachment.dimensions
+            ? { dimensions: attachment.dimensions }
+            : {}),
+          ...(attachment.voiceNote ? { voiceNote: attachment.voiceNote } : {}),
+          ...(attachment.waveform ? { waveform: attachment.waveform } : {}),
+          source: bounded(session.media(url), 8192) ?? null,
+          previewSource: previewUrl
+            ? (bounded(session.media(previewUrl), 8192) ?? null)
+            : null,
+        },
+      ];
+    }),
+    author: (
+      profile?.name ||
+      formatPublicKey(r.authorId) ||
+      "Participant"
+    ).slice(0, 1000),
+    picture: picture && bytes(picture) <= 8192 ? picture : null,
+    pictureUrl: pictureUrl && bytes(pictureUrl) <= 8192 ? pictureUrl : null,
+    text: r.content.slice(0, 16000),
+    mentions: r.mentions,
+    edited: r.edited === true,
+    attachmentSeams: r.attachmentSeams ?? [],
+    mentionNames: Object.fromEntries(
+      [...new Set([...r.mentions, ...(r.mentionReferences ?? [])])].flatMap(
+        (key) => {
+          const name = profiles.get(key)?.name;
+          return name && name.length <= 1000 ? [[key, name]] : [];
+        },
+      ),
+    ),
+    mentionReferences: r.mentionReferences ?? [],
+    time: r.createdAt,
+    delivery: r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
+  };
+}

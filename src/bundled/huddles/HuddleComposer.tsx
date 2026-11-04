@@ -1,10 +1,30 @@
 import { MentionModelsContext } from "../../features/agents/react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createHuddleComposerClient } from "../../features/huddle/composer-client";
+import {
+  attachmentDraftCount,
+  subscribeAttachmentDraftCounts,
+} from "../../features/messages/attachment-draft";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { huddleComposerExtensions } from "./composer-extensions";
 
-export function useHuddleComposer(token: string | undefined) {
+/** How the hosting window presents the editor; the Huddle defaults apply. */
+export type CompanionComposerPresentation = {
+  channelName?: string;
+  label?: string;
+  placeholder?: string;
+  onHeld?: ((held: boolean) => void) | undefined;
+};
+export function useHuddleComposer(
+  token: string | undefined,
+  presentation?: CompanionComposerPresentation,
+) {
   const [client, setClient] =
     useState<ReturnType<typeof createHuddleComposerClient>>();
   useEffect(() => {
@@ -16,12 +36,16 @@ export function useHuddleComposer(token: string | undefined) {
     setClient(next);
     return () => next.dispose();
   }, [token]);
-  return client ? <ConnectedComposer client={client} /> : null;
+  return client ? (
+    <ConnectedComposer client={client} presentation={presentation} />
+  ) : null;
 }
 function ConnectedComposer({
   client,
+  presentation,
 }: {
   client: ReturnType<typeof createHuddleComposerClient>;
+  presentation?: CompanionComposerPresentation | undefined;
 }) {
   useSyncExternalStore(client.subscribe, client.revision);
   const { session, data, error } = client.snapshot();
@@ -39,6 +63,24 @@ function ConnectedComposer({
       gifRequests: client.gifs,
     });
   }, [keys, client]);
+  // Held work is the editor's unsaved state or files kept only in this window.
+  const [editorHeld, setEditorHeld] = useState(false);
+  const draftKey = data
+    ? `${data.scope}:${data.thread ? `draft:${data.room}:thread:${data.thread}` : `draft:${data.room}`}`
+    : "";
+  const files = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) =>
+        session ? subscribeAttachmentDraftCounts(session, listener) : () => {},
+      [session],
+    ),
+    () => (session ? attachmentDraftCount(session, draftKey) : 0),
+  );
+  const onHeld = presentation?.onHeld;
+  const held = editorHeld || files > 0;
+  useEffect(() => {
+    onHeld?.(held);
+  }, [onHeld, held]);
   if (error) return <p role="alert">{error}</p>;
   return session && data ? (
     <MentionModelsContext.Provider value={models}>
@@ -47,9 +89,11 @@ function ConnectedComposer({
         extensions={extensions}
         scope={data.scope}
         channelId={data.room}
-        channelName="Huddle"
-        label="Message this Huddle"
-        placeholder="Message this Huddle"
+        channelName={presentation?.channelName ?? "Huddle"}
+        label={presentation?.label ?? "Message this Huddle"}
+        placeholder={presentation?.placeholder ?? "Message this Huddle"}
+        {...(data.thread ? { threadRootId: data.thread } : {})}
+        onHeld={onHeld ? setEditorHeld : undefined}
         disabled={!data.writable}
         editMessages={[]}
       />

@@ -59,6 +59,8 @@ pub(crate) struct View {
     can_load_more: bool,
     limited: bool,
     loading_older: bool,
+    /// Main publishes reading intent for this window when true.
+    reading: bool,
     #[serde(default)]
     composer: Option<String>,
     version: u64,
@@ -535,6 +537,7 @@ mod tests {
             can_load_more: false,
             limited: false,
             loading_older: false,
+            reading: true,
             composer: None,
             version: 1,
             close_requested: 0,

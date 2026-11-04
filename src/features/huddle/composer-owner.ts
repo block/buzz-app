@@ -27,7 +27,10 @@ export function createHuddleComposerOwner(
   current: () => boolean,
   verified?: () => boolean,
   agents?: import("../agents/service").Agents,
+  /** Reply into this thread of `room` instead of posting to the room. */
+  thread?: string,
 ) {
+  const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
   async function modelChoices(pubkeys: readonly string[]) {
     const revision = modelRevision;
     if (
@@ -127,6 +130,7 @@ export function createHuddleComposerOwner(
     const roomMetadata = metadata();
     return {
       room,
+      thread,
       modelRevision,
       viewer: session.viewer,
       scope: session.scope,
@@ -195,8 +199,11 @@ export function createHuddleComposerOwner(
       }
       case "models":
         return modelChoices(request.args);
-      case "send": {
+      case "send":
+      case "reply": {
         check(true);
+        if ((request.op === "reply") !== !!thread)
+          throw new Error("This composer targets a different conversation.");
         const { text, draft, mentions, references, attachments } = request.args;
         if (
           typeof draft !== "string" ||
@@ -266,25 +273,39 @@ export function createHuddleComposerOwner(
           )
             throw new Error("Agent model choices changed. Choose again.");
         }
+        const parent = request.op === "reply" ? request.args.parent : undefined;
+        if (parent !== undefined && !/^[0-9a-f]{64}$/.test(parent))
+          throw new Error("Invalid reply target.");
         check(true);
         signal.throwIfAborted();
-        const id = session.messages.send(
-          room,
-          text,
-          mentions,
-          files,
-          undefined,
-          references,
-          picks,
-        );
+        const id =
+          request.op === "reply" && thread
+            ? session.messages.reply(
+                room,
+                thread,
+                text,
+                mentions,
+                files,
+                parent ?? thread,
+                references,
+                picks,
+              )
+            : session.messages.send(
+                room,
+                text,
+                mentions,
+                files,
+                undefined,
+                references,
+                picks,
+              );
         // Admission owns the persisted draft too: closing the child before its
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it
         // keeps the remembered agents in memory (see seedMentions).
         const scope = session.scope;
-        const key = `draft:${room}`;
-        if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(scope, key, mentionDraft(""));
+        if (JSON.stringify(readView(scope, draftKey, null)) === draft)
+          writeView(scope, draftKey, mentionDraft(""));
         for (const file of files) release(file);
         return id;
       }

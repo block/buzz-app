@@ -243,7 +243,34 @@ export function createHuddleComposerClient(token: string) {
             ),
           });
         },
-        reply: unavailable,
+        reply: (
+          room,
+          root,
+          text,
+          mentions = [],
+          attachments = [],
+          parent,
+          references = [],
+          picks = {},
+        ) => {
+          if (room !== initial.room || root !== initial.thread)
+            return Promise.reject(new Error("Thread destination changed."));
+          return request("reply", {
+            text,
+            parent,
+            picks,
+            mentions,
+            attachments,
+            references,
+            draft: JSON.stringify(
+              readView(
+                initial.scope,
+                `draft:${initial.room}:thread:${root}`,
+                null,
+              ),
+            ),
+          });
+        },
         edit: unavailable,
       },
       repositories: {

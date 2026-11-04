@@ -189,9 +189,11 @@ fn restore_request(
         ),
         size: PhysicalSize::new(saved.width, saved.height),
     };
-    // A size below the minimum at the fallback's scale (in pixels, rounded as
-    // tao rounds it) was saved at a lower scale and would reopen clamped.
-    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale).round() as u32;
+    // A size more than 8% below the minimum at the fallback's scale was saved at a
+    // lower scale (scale steps are at least 11% apart) and would reopen clamped.
+    // A Windows client at the minimum is a few percent below it: tao applies the
+    // minimum to the frame, and the undecorated shadow insets come off the client.
+    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale * 0.92) as u32;
     let default = (saved.width < px(config.min_width) || saved.height < px(config.min_height))
         .then(|| LogicalSize::new(config.width, config.height).to_physical(scale));
     let relocated = reachable_client(client, header_height, areas, fallback, default);
@@ -336,8 +338,8 @@ mod tests {
         };
         // Saved on a 1x monitor that is gone: 301x235 points on a 2x laptop.
         assert_frame(fallback(602, 470, laptop), Some(rect(312, 50, 2400, 1600)));
-        // One axis below the minimum is enough.
-        assert_frame(fallback(960, 799, laptop), Some(rect(312, 50, 2400, 1600)));
+        // One axis clearly below the minimum is enough.
+        assert_frame(fallback(960, 700, laptop), Some(rect(312, 50, 2400, 1600)));
         // At or above the minimum at the fallback's scale, the saved size stays.
         assert_frame(fallback(960, 800, laptop), Some(rect(1032, 50, 960, 800)));
         // The default still fits inside a small fallback work area.
@@ -346,19 +348,27 @@ mod tests {
     }
 
     #[test]
-    fn minimum_size_is_compared_with_the_rounding_tao_applies() {
-        // At 110 DPI the 480x400 minimum is 550x458.33, and tao enforces 550x458.
-        let scale = 110.0 / 96.0;
-        let area = rect(0, 0, 2200, 1200);
+    fn windows_client_at_the_minimum_is_kept_but_a_lower_scale_size_is_replaced() {
+        let area = rect(0, 0, 3840, 2160);
         let offset = tauri::PhysicalPosition::new(0, 0);
-        let relocated = |width, height| {
+        let relocated = |scale, width, height| {
             let saved = decode(&saved_state(100, 100, width, height));
-            super::restore_request(&saved, offset, 55, &[area], (area, scale), &config())
+            super::restore_request(&saved, offset, 96, &[area], (area, scale), &config())
                 .2
                 .is_some()
         };
-        assert!(!relocated(550, 458));
-        assert!(relocated(550, 457));
+        // tao applies the 480x400 minimum to an undecorated Windows frame. The
+        // shadow insets (size frame plus padded border on the sides and bottom,
+        // one scaled pixel on top on Windows 11) come off the saved client.
+        assert!(!relocated(1.0, 464, 391));
+        assert!(!relocated(1.25, 580, 489));
+        assert!(!relocated(2.0, 928, 782));
+        // A client saved at the minimum one scale step lower is still replaced,
+        // including across the smallest step, 225% to 250%.
+        assert!(relocated(1.25, 464, 391));
+        assert!(relocated(2.5, 1044, 880));
+        // Without insets (macOS, GTK) the step is just as clear.
+        assert!(relocated(2.5, 1080, 900));
     }
 
     #[test]

@@ -70,12 +70,10 @@ function matches(index: ArchiveIndex, item: InboxItem) {
 }
 
 // The shared Inbox projection groups DMs under a channel read target,
-// including top-level messages and replies. Solo flat rows use the same
-// channel coordinate but keep individual message read targets.
+// including top-level messages and replies, and a Solo chat's top-level
+// messages into one timeline row.
 const ordinaryActivity = (item: InboxItem) =>
-  item.thread ||
-  item.target.kind === "channel" ||
-  item.id === `${item.channelId}:${item.channelId}`;
+  item.thread || item.target.kind === "channel" || !!item.timeline;
 
 function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
   const observed = new Set(archive.messageIds);
@@ -92,7 +90,7 @@ function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
 const partial = (entries: readonly Archive[], item: InboxItem) => {
   const observed = new Set(entries.flatMap((archive) => archive.messageIds));
   return (
-    item.id === `${item.channelId}:${item.channelId}` &&
+    !!item.timeline &&
     entries.some((archive) => archive.id !== item.id) &&
     !item.messageIds.every((id) => observed.has(id))
   );

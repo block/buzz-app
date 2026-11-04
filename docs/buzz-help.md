@@ -54,10 +54,11 @@ the interface unless an available tool actually supports that action.
   screen, and the offer returns after signing out. Use the options actually
   shown; do not invent a setup sequence.
 - The **public key** identifies someone and is safe to share. Pasting
-  someone's `npub` (with or without `nostr:`) or hex key into New message,
-  search or **Add people** finds them. The **private key**, shown as an `nsec`,
-  lets someone act as that identity. Never ask anyone to paste a private key
-  into a conversation or send it to you.
+  someone's `npub` (with or without `nostr:`) or hex key finds them in New
+  message, in ⌘K search's People results (Ctrl+K on Windows and Linux) and in
+  **Add people**. The **private key**, shown as an `nsec`, lets someone act as
+  that identity. Never ask anyone to paste a private key into a conversation
+  or send it to you.
 - In native desktop builds, **Settings → Buzz → Identity → Authorize external identity** creates an
   ownership proof for an application such as Nexus that holds its own agent key.
   Enter that application's public key in hex, select **Authorize identity**,

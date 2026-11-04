@@ -176,6 +176,8 @@ describe("harnessKit.conversation", () => {
       await kit.conversation(delivery({ type: "mention", event }), "thread"),
     ).toBeUndefined();
     const workflow = message("3", "@Ampy go", {
+      // Workflow-shaped messages must not inherit the fixture's owner signer.
+      pubkey: mallory,
       tags: [
         ["h", channel],
         ["buzz:workflow", "w"],

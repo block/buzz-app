@@ -120,7 +120,10 @@ it("reopens a protected runtime with the same security check and a live process"
   const rpc = new AppServer();
   await rpc.open(spawn, "/work", true);
   await expect(rpc.reopen()).rejects.toThrow("mandatory security hooks");
-  expect(spawn).toHaveBeenLastCalledWith("app-server", expect.objectContaining({ cwd: "/work" }));
+  expect(spawn).toHaveBeenLastCalledWith(
+    "app-server",
+    expect.objectContaining({ cwd: "/work" }),
+  );
   agents.push("fixture buzz-protection-v2");
   await expect(rpc.reopen()).resolves.toBe(rpc);
   expect(rpc.exited).toBe(false);

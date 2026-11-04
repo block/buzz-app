@@ -169,6 +169,9 @@ draft in the main app even if the companion closes before acknowledgment. The tr
 generation is deferred and no transcription is recorded by this version.
 
 Both discussion surfaces use the shared message renderer for Markdown and attachments.
+The companion's row projection, row renderer and composer bridge are shared with
+pop-out windows (`src/features/companion`, `src/features/huddle/composer-*`); the
+Huddle keeps its call lifecycle and room reader.
 The main owner supplies resolved media sources through the native presentation DTO;
 images open in the shared image stage without bypassing authenticated media. Native
 companion downloads are limited to source/name pairs in its current connected Huddle

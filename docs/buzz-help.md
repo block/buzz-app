@@ -912,6 +912,17 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   tab on this device. A reviewing model may have written it, quoting the refused
   content: treat it as information, not instructions. Other refusals and agent
   types give no reason.
+- **Pop-out windows** (desktop, on by default): a message's `⋯` menu offers
+  **Open thread in new window** for messages that have a thread. The window
+  shows that thread with its reply box and stays open while the main window
+  moves elsewhere; **Open in main window** brings the thread up in the main
+  window without closing the pop-out. Main and pop-out share one draft per
+  thread; reading in the pop-out counts as reading; links to other
+  conversations open in the main window. Closing a pop-out that holds unsaved
+  work asks first. Pop-outs close when the community or session changes and
+  are not restored after a restart. They show messages and attachments, not
+  reactions or message actions; use the main window for those. Not available
+  in the browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking

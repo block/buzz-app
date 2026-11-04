@@ -1,0 +1,6 @@
+{
+  "id": "buzz.plugin-development",
+  "name": "Plugin development",
+  "apiVersion": 1,
+  "description": "Let agents on this device read the plugin guide, check plugins and reload folder plugins."
+}

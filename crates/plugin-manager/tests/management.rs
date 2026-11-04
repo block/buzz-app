@@ -1056,7 +1056,7 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         .unwrap();
         assert!(manager.install(&source).is_err());
     }
-    for id in ["buzz.emoji", "buzz.mentions"] {
+    for id in ["buzz.emoji", "buzz.mentions", "buzz.plugin-development"] {
         fs::write(
             source.join("manifest.json"),
             serde_json::to_vec(&serde_json::json!({

@@ -439,6 +439,23 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+The built-in **Plugin development** feature (`src/features/plugin-development`,
+always on) gives local agents three tools. `plugin_authoring_guide` returns
+[the authoring guide](plugin-authoring-guide.md), bundled with the app.
+`plugin_status` lists plugins with their activation state, and for one plugin
+its error, revision, folder, host access and what it registered.
+`plugin_reload` reloads an installed folder plugin the way Settings does: it
+disables the plugin, reloads it (refused when host access changed), enables it,
+waits for activation and rolls back to the revision that was running when the
+new one fails to start. It returns `application` (`applied`, `saved` or
+`failed`) with a `nextStep`. It never installs a new plugin or widens host
+access; those stay with the owner in Settings. The tools hold the plugin manager
+in a closure, not a service, so other plugins cannot reach it.
+Every local agent gets these tools, so an agent that can write into an installed
+plugin's folder can replace that plugin's code, though not its host access,
+without a new review. Plugin code is trusted and unsandboxed, so only load folders
+that the agents you run may change.
+
 `ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
 message. `root` is the thread's root event id (64 hex); leave it out for a Solo

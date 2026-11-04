@@ -314,6 +314,12 @@ available rather than silently discarding it.
   no setup or token. Without such a plugin there are no tools to
   offer; do not promise them.
 - Some desktop plugins can upload images you provide to services they declare.
+- Agents running on this computer can write plugins. Buzz
+  gives them `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The
+  person installs a new plugin first: **Manage plugins → Add → Browse** under
+  Add from folder. After that the agent can reload it from that folder. A reload that fails to start restores the
+  previous version. Changed host access still needs the person's review through
+  the plugin's **Update**.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching
   and whether Attention is on for this device. A mention can still wake an agent

@@ -2,7 +2,15 @@
 import { assert, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { profileTarget } from "../profiles/target";
 import type { ChannelMessage, MembershipChange } from "../relay/contracts";
 import {
@@ -372,6 +380,61 @@ it("member names open the subject's and the actor's profiles when the host can",
   fireEvent.click(screen.getByRole("button", { name: "View Brain profile" }));
   expect(open).toHaveBeenLastCalledWith(profileTarget(brain));
   expect(document.querySelector("[data-profile-target]")).toBeNull();
+});
+
+it("listed members open profiles and return focus to the overflow control", async () => {
+  const unnamed = "d".repeat(64);
+  const group = membershipRows(
+    [pinky, brain, wes, unnamed].map((id, i) =>
+      row(String(i), joined("adder", id)),
+    ),
+  )[0];
+  assert.exists(group);
+  // The host returns focus to whatever held it when the profile opened.
+  const origins: (Element | null)[] = [];
+  const open = vi.fn((_target: string) => {
+    origins.push(document.activeElement);
+    return true;
+  });
+  render(
+    <MembershipRow
+      row={group}
+      profiles={profiles}
+      agentPubkeys={new Set([brain])}
+      media={() => undefined}
+      viewer={wes}
+      day={false}
+      onOpenLink={open}
+      canOpenLink={(target) => target !== profileTarget(unnamed)}
+    />,
+  );
+  const user = userEvent.setup();
+  const others = screen.getByRole("button", { name: "3 others" });
+  const list = async () => {
+    await user.click(others);
+    return within(
+      await screen.findByRole("region", { name: "People who were added" }),
+    );
+  };
+  let people = await list();
+  expect(
+    people
+      .getAllByRole("button")
+      .map((entry) => entry.getAttribute("aria-label")),
+  ).toEqual(["View Pinky profile", "View Brain profile", "View your profile"]);
+  // A member the host cannot open stays plain text.
+  expect(people.getByText("dddddddddd").closest("button")).toBeNull();
+  await user.click(people.getByRole("button", { name: "View Brain profile" }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(brain, { agent: true }));
+  expect(origins.at(-1)).toBe(others);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  people = await list();
+  people.getByRole("button", { name: "View Pinky profile" }).focus();
+  await user.keyboard("{Enter}");
+  expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
+  expect(origins.at(-1)).toBe(others);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(open).toHaveBeenCalledTimes(2);
 });
 
 it("omits only the owner's starting agents once history reaches the start", () => {

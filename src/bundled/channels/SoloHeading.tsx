@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -61,7 +62,10 @@ type SoloToolbarProps = {
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
   /** Reports a move started here; see `useSoloMoveRecovery`. */
   onMove(move: Promise<unknown>): void;
-};
+} & Pick<
+  ComponentProps<typeof ChannelMembersDialog>,
+  "canOpenLink" | "onOpenLink" | "onOpenConversation"
+>;
 
 /** The header of a conversation shown with the Solo treatment. */
 export function SoloHeading(props: SoloToolbarProps) {
@@ -81,6 +85,9 @@ export function SoloHeading(props: SoloToolbarProps) {
             owner={owner}
             navigator={props.navigator}
             signal={props.signal}
+            canOpenLink={props.canOpenLink}
+            onOpenLink={props.onOpenLink}
+            onOpenConversation={props.onOpenConversation}
           />
         }
         actions={<SoloToolbar {...props} membershipInHeader />}
@@ -103,6 +110,9 @@ export function SoloToolbar({
   onConvert,
   onLifecycle,
   onMove,
+  canOpenLink,
+  onOpenLink,
+  onOpenConversation,
   membershipInHeader = false,
 }: SoloToolbarProps & { membershipInHeader?: boolean }) {
   const menus = useSyncExternalStore(
@@ -152,6 +162,9 @@ export function SoloToolbar({
               owner={owner}
               navigator={navigator}
               signal={signal}
+              canOpenLink={canOpenLink}
+              onOpenLink={onOpenLink}
+              onOpenConversation={onOpenConversation}
             />
           )}
           {children}
@@ -229,6 +242,9 @@ export function SoloToolbar({
           signal={sharing.visit}
           trigger={actionsTrigger}
           close={() => setSharing(undefined)}
+          canOpenLink={canOpenLink}
+          onOpenLink={onOpenLink}
+          onOpenConversation={onOpenConversation}
         />
       )}
       {creatingWorkspace && (

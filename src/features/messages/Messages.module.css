@@ -1833,15 +1833,18 @@ button.mediaPreview {
 }
 /* A quiet log line: member names keep the caption color at rest, carry
    medium weight as their only resting cue, and take the inline-reference
-   color while hovered or keyboard-focused. The shared chip fill and ring stay. */
-.membership .membershipName {
+   color while hovered or keyboard-focused. The shared chip fill and ring stay.
+   The "N others" list renders in a portal, outside the row, so it is named too. */
+:is(.membership, .membershipPeople) .membershipName {
   --link-text: var(--text-subtle);
   /* Restated over the channel host's button reset. */
   color: var(--link-text);
   font-weight: var(--type-weight-medium);
 }
-.membership .membershipName:hover,
-html[data-keyboard-navigation] .membership .membershipName:focus-visible {
+:is(.membership, .membershipPeople) .membershipName:hover,
+html[data-keyboard-navigation]
+  :is(.membership, .membershipPeople)
+  .membershipName:focus-visible {
   --link-text: var(--text-link);
 }
 .membershipPeople {

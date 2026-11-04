@@ -339,8 +339,14 @@ burstTest(
       exact: true,
     });
     await expect(people.getByRole("listitem")).toHaveCount(602);
-    await expect(people.getByRole("listitem").first()).toHaveText("Pinky");
-    await expect(people.getByRole("listitem").nth(1)).toHaveText("Brain");
+    // Each listed member opens their profile, like the row's lead name.
+    await expect(people.getByRole("button")).toHaveCount(602);
+    await expect(people.getByRole("button").first()).toHaveAccessibleName(
+      "View Pinky profile",
+    );
+    await expect(people.getByRole("button").nth(1)).toHaveAccessibleName(
+      "View Brain profile",
+    );
     await people.hover();
     await page.screenshot({
       path: testInfo.outputPath("membership-people.png"),
@@ -384,6 +390,22 @@ burstTest(
     });
     await page.keyboard.press("Escape");
     await expect(popup).toHaveCount(0);
+    // Choosing a member closes the list; their profile returns focus to it.
+    await page.mouse.move(0, 0);
+    await others.hover();
+    await expect(popup).toBeVisible();
+    await people.getByRole("button", { name: "View Pinky profile" }).click();
+    await expect(popup).toHaveCount(0);
+    const profile = page.getByRole("complementary", {
+      name: "Profile",
+      exact: true,
+    });
+    await expect(profile).toContainText("Pinky");
+    await page
+      .getByRole("button", { name: "Close Pinky tab", exact: true })
+      .click();
+    await expect(profile).toHaveCount(0);
+    await expect(others).toBeFocused();
 
     await page.screenshot({ path: testInfo.outputPath("join-burst.png") });
     await testInfo.attach("join-burst", {

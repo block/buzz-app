@@ -859,8 +859,13 @@ export function createUnread({
   // Folds read profiles only through agent owners. Keep the answers they got:
   // a profile change that leaves them all alone cannot change a projection.
   const ownersRead = new Map<string, string | undefined>();
+  // A lookup that changed a recorded answer leaves earlier projections behind,
+  // even once every recorded answer matches the directory again.
+  let ownersMixed = false;
   const agentOwner = (pubkey: string) => {
     const owner = profiles?.owner?.(pubkey);
+    if (ownersRead.has(pubkey) && ownersRead.get(pubkey) !== owner)
+      ownersMixed = true;
     ownersRead.set(pubkey, owner);
     return owner;
   };
@@ -1242,8 +1247,13 @@ export function createUnread({
     // already hold a newer answer than another channel's cached fold.
     foldedRows.clear();
     const owner = profiles.owner;
-    if (!owner || [...ownersRead].every(([key, value]) => owner(key) === value))
+    if (
+      !owner ||
+      (!ownersMixed &&
+        [...ownersRead].every(([key, value]) => owner(key) === value))
+    )
       return;
+    ownersMixed = false;
     ownersRead.clear();
     publish();
   });

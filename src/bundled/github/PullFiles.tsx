@@ -43,7 +43,7 @@ export function PullFiles({
           onBack={() => setOpen(false)}
         >
           <FilesChanged
-            key={pull.head}
+            key={`${pull.base}...${pull.head}`}
             url={url}
             pull={pull}
             diff={diff}

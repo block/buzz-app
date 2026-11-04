@@ -179,6 +179,16 @@ it("gives GitHub's reason a diff was refused, and stops gh past the size the pan
   await expect(
     refused?.({ repository: "block/buzz", base: "main", head: "abc123" }),
   ).rejects.toThrow(new GitHubError("Not Found (HTTP 404)"));
+  const escaped = gitHubDiff(
+    diffSpawn(
+      [],
+      1,
+      "the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway",
+    ),
+  );
+  await expect(
+    escaped?.({ repository: "block/buzz", base: "main", head: "abc123" }),
+  ).rejects.toThrow(GitHubError);
   const signedOut = gitHubDiff(diffSpawn([], 4, "gh auth login"));
   await expect(
     signedOut?.({ repository: "block/buzz", base: "main", head: "abc123" }),

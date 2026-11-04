@@ -145,6 +145,12 @@ export function gitHubDiff(host: Pick<Host, "spawn">): GitHubDiff | undefined {
     });
     if (code === 0) return stdout;
     const reason = stderr.trim().replace(/^gh: /, "");
+    // gh refuses to print a response with a raw ESC byte. Its flag to allow
+    // one is too new to rely on every installed gh having.
+    if (/escape sequences/.test(reason))
+      throw new GitHubError(
+        "This diff contains terminal control characters, so it can’t be shown here.",
+      );
     if (!stdout.trim()) throw new GhUnavailable(reason || "gh did not answer");
     throw new GitHubError(reason || "GitHub did not answer");
   };

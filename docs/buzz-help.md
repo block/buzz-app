@@ -451,8 +451,9 @@ and are asked to sign in again in Buzz.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator. In a Solo chat, including its first
   message, **@** can name anyone in the community. A tagged agent of yours joins
-  the chat; anyone else is only named: not added and not notified, and the
-  picker row says so. The toolbar's agent menu lists agents only.
+  the chat; anyone else outside the chat is only named: not added and not
+  notified, and the picker row says so. People already in the chat are notified
+  as usual. The toolbar's agent menu lists agents only.
   New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
   which archives the chat after a set time without activity. To start every new
   chat temporary, open the community's **Settings → Local settings** and choose

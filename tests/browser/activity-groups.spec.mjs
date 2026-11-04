@@ -3,9 +3,19 @@ import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
 import { virtuaIdle } from "./timeline.mjs";
 
-function observeScrollWrites(element) {
-  const offsets = [element.scrollTop];
-  const record = () => offsets.push(element.scrollTop);
+function observeScrollWrites(element, afterFocus) {
+  const offsets = afterFocus ? [] : [element.scrollTop];
+  let recording = !afterFocus;
+  const record = () => {
+    if (recording) offsets.push(element.scrollTop);
+  };
+  const start = (event) => {
+    if (event.target.dataset.messageId !== afterFocus) return;
+    recording = true;
+    record();
+    element.removeEventListener("focusin", start);
+  };
+  if (afterFocus) element.addEventListener("focusin", start);
   // Scroll events coalesce; record every scrollTop and scrollTo write,
   // including two owners undoing each other's movement within the same frame.
   // Virtua's scrollBy size compensation and scrollIntoView are not recorded.
@@ -34,6 +44,7 @@ function observeScrollWrites(element) {
       record();
     },
     stop() {
+      element.removeEventListener("focusin", start);
       delete element.scrollTop;
       delete element.scrollTo;
       return offsets;
@@ -165,7 +176,12 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       history.getByRole("button", { name: /^Show activity history:/ }),
     ).toBeFocused();
     await virtuaIdle(page, history);
-    const revealScroll = await history.evaluateHandle(observeScrollWrites);
+    // The initial mount may scroll either way. Start at exact placement,
+    // synchronously with focus, before late measurements can move the row.
+    const revealScroll = await history.evaluateHandle(
+      observeScrollWrites,
+      "activity-0",
+    );
     await page.getByRole("button", { name: "Visit first update" }).click();
     await expect(first).toBeVisible();
     await expect(first).toBeFocused();
@@ -183,6 +199,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     await virtuaIdle(page, history);
     const offsets = await revealScroll.evaluate((observer) => observer.stop());
     await revealScroll.dispose();
+    expect(offsets.length).toBeGreaterThan(0);
     // Expanding above the target can advance its offset. A retained centered
     // virtualizer scroll must not pull it back against the exact reveal hold.
     expect(
@@ -410,39 +427,59 @@ test("activity details keep readable text through both handoffs and survive new 
       await page.setViewportSize({ width, height: 1000 });
       for (const open of [true, false]) {
         const painted = await step.evaluate(async (element) => {
-          const button = element.querySelector("button");
-          button.click();
-          const samples = [];
-          const start = performance.now();
-          await new Promise((resolve) => {
-            function sample() {
-              const preview = element.querySelector(
-                '[class*="audiencePreview"]',
-              );
-              const panel = element.querySelector('[class*="audienceBody"]');
-              const paragraph = panel?.querySelector("p");
-              let readable = !!preview?.getClientRects().length;
-              if (paragraph?.firstChild) {
-                const range = document.createRange();
-                range.setStart(paragraph.firstChild, 0);
-                range.setEnd(paragraph.firstChild, 1);
-                const glyph = range.getBoundingClientRect();
-                const clip = panel.firstElementChild.getBoundingClientRect();
-                readable ||=
-                  glyph.height > 0 &&
-                  glyph.top >= clip.top - 0.1 &&
-                  glyph.bottom <= clip.bottom + 0.1;
-              }
-              samples.push(readable);
-              if (performance.now() - start < 350)
-                requestAnimationFrame(sample);
-              else resolve();
-            }
-            requestAnimationFrame(sample);
+          const readable = () => {
+            const preview = element.querySelector('[class*="audiencePreview"]');
+            const panel = element.querySelector('[class*="audienceBody"]');
+            const paragraph = panel?.querySelector("p");
+            if (preview?.getClientRects().length) return true;
+            if (!paragraph?.firstChild) return false;
+            const range = document.createRange();
+            range.setStart(paragraph.firstChild, 0);
+            range.setEnd(paragraph.firstChild, 1);
+            const glyph = range.getBoundingClientRect();
+            const clip = panel.firstElementChild.getBoundingClientRect();
+            return (
+              glyph.height > 0 &&
+              glyph.top >= clip.top - 0.1 &&
+              glyph.bottom <= clip.bottom + 0.1
+            );
+          };
+          const samples = [readable()];
+          // Capture the real CSS transition before it advances. Sampling its
+          // progress explicitly keeps loaded runners from skipping the handoff.
+          const transition = new Promise((resolve) => {
+            const capture = (event) => {
+              if (
+                event.propertyName !== "height" ||
+                !event.target.className.includes("audienceBody")
+              )
+                return;
+              const animation = event.target
+                .getAnimations()
+                .find((candidate) => candidate.transitionProperty === "height");
+              if (!animation) return;
+              animation.pause();
+              element.removeEventListener("transitionrun", capture);
+              resolve(animation);
+            };
+            element.addEventListener("transitionrun", capture);
           });
+          element.querySelector("button").click();
+          const animation = await transition;
+          try {
+            const duration = Number(animation.effect.getTiming().duration);
+            for (const fraction of [0, 0.25, 0.5, 0.75, 1]) {
+              animation.currentTime = duration * fraction;
+              await new Promise(requestAnimationFrame);
+              samples.push(readable());
+            }
+          } finally {
+            animation.play();
+          }
+          await animation.finished;
           return samples;
         });
-        expect(painted.length).toBeGreaterThan(2);
+        expect(painted).toHaveLength(6);
         expect(painted.every(Boolean)).toBe(true);
         await expect(
           step.getByRole("button", { name: /Activity update 11/ }),

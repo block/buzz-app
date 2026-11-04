@@ -24,6 +24,12 @@ const workingNow = (page) =>
   page.getByRole("dialog", { name: "Working now", exact: true });
 // Hover is the pointer path; keyboard opening is exercised explicitly below.
 const openWorkingNow = async (page, scope) => {
+  // Leave the sidebar preview before crossing into the conversation. Its
+  // open surface can cover the conversation trigger after channel navigation.
+  await page.mouse.move(0, 0);
+  await expect(
+    page.locator('[role="dialog"][data-channel-activity]'),
+  ).toHaveCount(0);
   await activityTrigger(scope).hover();
   const popup = workingNow(page);
   await expect(popup).toBeVisible();
@@ -541,18 +547,14 @@ test.describe("thread activity", () => {
     await expect(channelTrigger).toHaveCount(0);
     const unrecognized = generateSecretKey();
     const otherThread = "b".repeat(64);
-    sendTyping(root.id, unrecognized);
     sendTyping(otherThread);
+    sendTyping(root.id, unrecognized);
     // An unrecognized signer is ordinary typing, never an agent avatar.
     await expect(threadStatus).toHaveText(/^\S+ is typing$/);
-    // Another thread's agent work lights the channel control with that thread's
-    // scope; arriving after the first event, it is also the barrier for it.
-    await openWorkingNow(page, composer);
-    await expect(agentRow(popup, agent)).toContainText(
-      `Thread · ${otherThread.slice(0, 8)}`,
-    );
+    // The later human typing event is the relay barrier. Another thread's
+    // agent activity belongs to that thread, not this channel or open thread.
+    await expect(channelTrigger).toHaveCount(0);
     await expect(threadTrigger).toHaveCount(0);
-    await closePopup();
     // A completed message ends public typing in both scopes.
     sendEvent(9, root.id, unrecognized, "Unrecognized participant finished");
     sendEvent(9, otherThread, key, "Other thread finished");
@@ -602,9 +604,7 @@ test.describe("thread activity", () => {
     await expect(agentRow(popup, agent)).toContainText(
       "Work with unconfirmed thread",
     );
-    await expect(agentRow(popup, agent)).toContainText(
-      `Thread · ${root.content.replace(/\s+/g, " ").trim().slice(0, 60)}`,
-    );
+    await expect(agentRow(popup, agent)).not.toContainText("Thread ·");
     await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
     await page.screenshot({
       path: testInfo.outputPath("thread-activity-above-composer.png"),
@@ -661,7 +661,8 @@ test.describe("thread activity", () => {
         '.buzz-tabs-item:not(:has([data-tab-value^="thread:"])) > button:not([role="tab"])',
       )
       .click();
-    // The channel row opens the agent's one known thread.
+    // The reply summary opens the thread; channel activity never guesses
+    // that an unscoped observer turn belongs to a known thread.
     await openThread();
     await page
       .locator(
@@ -672,10 +673,11 @@ test.describe("thread activity", () => {
     sendTyping(root.id);
     await openWorkingNow(page, composer);
     await expect(agentRow(popup, agent)).toHaveAccessibleName(
-      /^Open thread for /,
+      /^View .+ activity$/,
     );
-    await agentRow(popup, agent).click();
-    await expect(popup).toHaveCount(0);
+    await expect(agentRow(popup, agent)).not.toContainText("Thread ·");
+    await closePopup();
+    await openThread();
     await expect(
       thread.getByRole("region", { name: "Thread messages", exact: true }),
     ).toContainText(root.content);

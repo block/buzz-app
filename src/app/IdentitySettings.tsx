@@ -527,9 +527,16 @@ function OrganizationSignIns({
   holds: readonly string[];
 }) {
   // Signing out ends sessions; held work elsewhere (a pop-out's unsent
-  // reply) asks first, naming it.
-  const [confirmingSignOut, setConfirmingSignOut] =
-    useState<FederatedIdentity>();
+  // reply) asks first, naming it. A pending decision belongs to the session
+  // state it was asked about; a replacement or change needs a fresh one.
+  const [confirmingSignOut, setConfirmingSignOut] = useState<{
+    session: FederatedIdentity;
+    revision: string;
+  }>();
+  const revisionOf = (session: FederatedIdentity) => {
+    const state = session.snapshot();
+    return `${state.status}:${state.revision}`;
+  };
   const [ids, setIds] = useState<readonly string[]>([]);
   useEffect(() => {
     let active = true;
@@ -548,6 +555,15 @@ function OrganizationSignIns({
     [identity, ids],
   );
   const states = useSessions(sessions);
+  const confirming =
+    confirmingSignOut &&
+    sessions.includes(confirmingSignOut.session) &&
+    revisionOf(confirmingSignOut.session) === confirmingSignOut.revision
+      ? confirmingSignOut
+      : undefined;
+  useEffect(() => {
+    if (confirmingSignOut && !confirming) setConfirmingSignOut(undefined);
+  }, [confirmingSignOut, confirming]);
   // Kept here, not in a row: a sign-out that fails still leaves signed-in,
   // so its row goes, and the failure must outlive it.
   const [failures, setFailures] = useState<
@@ -564,7 +580,7 @@ function OrganizationSignIns({
     const authority = session.snapshot().authority;
     if (!authority) return;
     if (holds.length && !confirmed) {
-      setConfirmingSignOut(session);
+      setConfirmingSignOut({ session, revision: revisionOf(session) });
       return;
     }
     report(session);
@@ -638,7 +654,7 @@ function OrganizationSignIns({
         ))}
         {problems}
       </SettingsGroup>
-      {confirmingSignOut && (
+      {confirming && (
         <AlertDialog
           title="Sign out of organization?"
           description={
@@ -660,9 +676,12 @@ function OrganizationSignIns({
               <Button
                 variant="destructive"
                 onClick={() => {
-                  const session = confirmingSignOut;
+                  const decided = confirming;
                   setConfirmingSignOut(undefined);
-                  signOut(session, true);
+                  // The decision was made about this session state, not a
+                  // later one.
+                  if (revisionOf(decided.session) === decided.revision)
+                    signOut(decided.session, true);
                 }}
               >
                 Sign out anyway

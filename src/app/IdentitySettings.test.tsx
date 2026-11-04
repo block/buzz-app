@@ -948,3 +948,52 @@ it("asks before an organization sign-out discards held work, and signs out of th
   expect(pub.service.signOut).toHaveBeenCalledTimes(1);
   expect(block.service.signOut).not.toHaveBeenCalled();
 });
+
+it("drops a pending organization sign-out decision when that server's session is replaced", async () => {
+  const { block, pub, root, servers } = twoServers();
+  block.publish({ status: "signed-in", email: "will@acme.example" });
+  pub.publish({
+    status: "signed-in",
+    revision: "account:1",
+    email: "will@example.com",
+  });
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      memberships={memberships}
+      servers={servers}
+      exitHolds={["The pop-out window for “Design” has an unsent reply."]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const signOut = async () =>
+    userEvent.click(
+      await screen.findByRole("button", {
+        name: "Sign out of app.builderlab.xyz",
+      }),
+    );
+  await signOut();
+  expect(screen.getByRole("alertdialog")).toBeVisible();
+  act(() =>
+    pub.publish({ status: "signed-out", revision: "account:2", email: null }),
+  );
+  act(() =>
+    pub.publish({
+      status: "signed-in",
+      revision: "account:3",
+      email: "other@example.com",
+    }),
+  );
+  // The question was about account 1; the replacement session gets a fresh one.
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
+  await signOut();
+  await userEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Sign out anyway",
+    }),
+  );
+  expect(pub.service.signOut).toHaveBeenCalledTimes(1);
+  expect(block.service.signOut).not.toHaveBeenCalled();
+});

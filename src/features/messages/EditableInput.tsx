@@ -160,6 +160,22 @@ export type EditorDecoration = {
 /** Pastes from this length paint as text before their chips render. */
 const deferredPasteLength = 1000;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/** RTF and RTFD attachments leave U+FFFC OBJECT REPLACEMENT CHARACTER in a
+ * paste's plain text where each picture was. A line of nothing else goes with
+ * its line break; elsewhere the character alone goes. */
+function withoutAttachmentPlaceholders(text: string) {
+  if (!text.includes("\uFFFC")) return text;
+  const parts = text.split(/(\r\n?|\n)/);
+  const kept: string[] = [];
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] ?? "";
+    if (!/^\s*\uFFFC[\s\uFFFC]*$/.test(line))
+      kept.push(line.replaceAll("\uFFFC", ""), parts[index + 1] ?? "");
+    // The last line's break is the one before it.
+    else if (index === parts.length - 1) kept.pop();
+  }
+  return kept.join("");
+}
 /** The visual direction each arrow key moves the caret. */
 const arrowDirections: Partial<
   Record<string, "left" | "right" | "up" | "down">
@@ -2737,7 +2753,9 @@ export function EditableInput({
             plainPaste = false;
             // File paste belongs to the host attachment capture; never replace text.
             if (pastedFiles(event.clipboardData).length) return true;
-            const plain = event.clipboardData?.getData("text/plain") ?? "";
+            const plain = withoutAttachmentPlaceholders(
+              event.clipboardData?.getData("text/plain") ?? "",
+            );
             // Raw text replaces the selection with the caret's marks: no copied
             // structure, links, selection linking, URL spacing or recipients.
             if (raw) {

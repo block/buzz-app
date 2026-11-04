@@ -500,10 +500,14 @@ unverified (jaw's grouped "yes" is not treated as tested evidence); S1 keeps
   existing single-slot departure guard (composed with unsaved Settings),
   for a navigation that would change community — before its route commits;
   Keep working preserves route and community. Navigation-driven selection
-  (`navigation.ts`) passes `force` because the guard already asked. The
-  sign-out confirmation lists the same holds. The pop-out plugin registers
-  its held windows via `ctx.communityReader.holdExit`. Access revocation
-  still retires immediately.
+  (`navigation.ts`) passes `force` because the guard already asked. Both the Buzz sign-out
+  confirmation and the organization sign-out (a confirmation while holds
+  exist) list the same holds; `communities.joined` keeps the admitted
+  membership but leaves selection pending while holds exist; a
+  cross-community navigation with both unsaved Settings and held work shows
+  the one community prompt naming both. The pop-out plugin registers its
+  held windows via `ctx.communityReader.holdExit`. Access revocation still
+  retires immediately.
 - Tab-menu **Open in new window** via `conversation.registerTabAction`
   (authorized FOUNDATION edit): shown after "Open in channel" for thread tabs.
 - Reading bridge is a request/response BroadcastChannel (`reading-bridge.ts`)

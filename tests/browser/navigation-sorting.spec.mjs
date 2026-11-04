@@ -158,6 +158,77 @@ for (const reducedMotion of ["no-preference", "reduce"]) {
   });
 }
 
+// Hidden layout and rem-based row positions require the actual sidebar/browser.
+test.describe("nearby motion after layout changes", () => {
+  test.use({ initialSidebarSort: { channels: "recent" } });
+  for (const change of ["Solo to Team", "interface text size"]) {
+    test(`starts a nearby reorder at the live positions after ${change}`, async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const section = page.locator('[data-sidebar-section="channels"]');
+      const rows = section.locator("[data-channel-id]");
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "willow");
+      let promoted = "cedar";
+      if (change === "Solo to Team") {
+        await page.getByRole("tab", { name: "Solo", exact: true }).click();
+        await expect(section).toBeHidden();
+        app.activity({ channel: "cedar", kind: 45003, age: 30 });
+        await expect(rows.first()).toHaveAttribute("data-channel-id", "cedar");
+        await page.getByRole("tab", { name: "Team", exact: true }).click();
+        await expect(section).toBeVisible();
+        promoted = "willow";
+      } else {
+        const modifier = await page.evaluate(() =>
+          /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
+        );
+        for (let step = 0; step < 3; step++)
+          await page.keyboard.press(`${modifier}+=`);
+        await expect(page.locator("html")).toHaveCSS(
+          "--buzz-text-scale",
+          "1.3",
+        );
+      }
+      const target = section.locator(`[data-channel-id="${promoted}"]`);
+      await target.focus();
+      const before = await rows.evaluateAll((elements) =>
+        elements.map((element) => ({
+          id: element.dataset.channelId,
+          y: element.getBoundingClientRect().y,
+        })),
+      );
+      const motion = await holdSidebarMotion(page);
+      try {
+        app.activity({ channel: promoted, kind: 45003, age: 29 });
+        await expect(rows.first()).toHaveAttribute("data-channel-id", promoted);
+        await motion.seek("transform");
+        const start = await rows.evaluateAll((elements) => {
+          for (const element of elements) {
+            const row = element.closest(
+              "[data-channel-sidebar-row]",
+            ).parentElement;
+            for (const animation of row.getAnimations())
+              animation.currentTime = 0;
+          }
+          return elements.map((element) => ({
+            id: element.dataset.channelId,
+            y: element.getBoundingClientRect().y,
+          }));
+        });
+        for (const row of before)
+          expect(
+            Math.abs(start.find((item) => item.id === row.id).y - row.y),
+          ).toBeLessThan(0.5);
+      } finally {
+        await motion.release();
+      }
+      await expect(section.locator("[data-moving]")).toHaveCount(0);
+      await expect(target).toBeFocused();
+    });
+  }
+});
+
 // Cedar and Willow exchange indices between A–Z and Recent; Maple keeps its
 // index. Real browser frames prove the anchor never dims or shifts.
 test("keeps a stationary selected row visible while its neighbors exchange places", async ({

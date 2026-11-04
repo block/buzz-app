@@ -22,6 +22,8 @@ import styles from "./ChannelSidebarRows.module.css";
 // Fast Refresh preserves refs; a replaced module must restart the prepared batch.
 const animationGeneration = {};
 
+type RowPositions = Map<HTMLElement, { index: number; top: number }>;
+
 function clearSlide(node: HTMLElement) {
   if (node.style.transform && node.style.transform !== "none")
     node.style.transform = "none";
@@ -42,6 +44,16 @@ export function ChannelSidebarRows({
   const animated = open && !active && !reducedMotion;
   const desired = JSON.stringify(children.map((child) => String(child.key)));
   const [order, setOrder] = useState(desired);
+  const positions = useRef<RowPositions>(new Map()).current;
+  const updateOrder = useCallback(
+    (next: string) => {
+      // Visibility and text scaling can change geometry without changing indices.
+      // Read the live old slots together, immediately before React reorders them.
+      for (const [node, position] of positions) position.top = node.offsetTop;
+      setOrder(next);
+    },
+    [positions],
+  );
   const [fading, setFading] = useState<ReadonlySet<string>>(() => new Set());
   const target = useRef(desired);
   const pending = useRef(new Set<string>());
@@ -61,7 +73,7 @@ export function ChannelSidebarRows({
       target.current = desired;
       pending.current.clear();
       batchStart.current = null;
-      if (order !== desired) setOrder(desired);
+      if (order !== desired) updateOrder(desired);
       setFading((previous) => (previous.size ? new Set() : previous));
       return;
     }
@@ -83,18 +95,21 @@ export function ChannelSidebarRows({
         );
         pending.current = new Set(distant);
         if (distant.size) setFading(distant);
-        else setOrder(desired);
+        else updateOrder(desired);
       },
       Math.min(200, Math.max(0, 600 - (now - batchStart.current))),
     );
     return () => clearTimeout(timer);
-  }, [animated, desired, fading.size, order, sameMembers]);
+  }, [animated, desired, fading.size, order, sameMembers, updateOrder]);
   // Finish the prepared batch; subsequent activity gets its own quiet period.
-  const applyOrder = useCallback((id: string) => {
-    if (!pending.current.delete(id) || pending.current.size) return;
-    setOrder(target.current);
-    setFading((previous) => (previous.size ? new Set() : previous));
-  }, []);
+  const applyOrder = useCallback(
+    (id: string) => {
+      if (!pending.current.delete(id) || pending.current.size) return;
+      updateOrder(target.current);
+      setFading((previous) => (previous.size ? new Set() : previous));
+    },
+    [updateOrder],
+  );
   const rows = sameMembers
     ? ids.flatMap((id) => {
         const child = byId.get(id);
@@ -113,6 +128,7 @@ export function ChannelSidebarRows({
             key={child.key}
             animated={animated}
             index={index}
+            positions={positions}
             hiding={animated && sameMembers && fading.has(String(child.key))}
             onHidden={applyOrder}
           >
@@ -131,15 +147,15 @@ const ChannelRow = memo(
       children: ReactElement;
       animated: boolean;
       index: number;
+      positions: RowPositions;
       hiding: boolean;
       onHidden: (id: string) => void;
     }
   >(function ChannelRow(
-    { children, animated, index, hiding, onHidden },
+    { children, animated, index, positions, hiding, onHidden },
     forwardedRef,
   ) {
     const ref = useRef<HTMLDivElement>(null);
-    const position = useRef<{ index: number; top: number } | null>(null);
     const playback = useRef<ReturnType<typeof animate> | null>(null);
     const present = useIsPresent();
     useImperativeHandle(forwardedRef, () => ref.current as HTMLDivElement);
@@ -147,16 +163,16 @@ const ChannelRow = memo(
       const node = ref.current;
       return () => {
         playback.current?.stop();
-        position.current = null;
+        if (node) positions.delete(node);
         if (node) clearSlide(node);
       };
-    }, []);
+    }, [positions]);
     useLayoutEffect(() => {
       const node = ref.current;
       if (!node) return;
-      const previous = position.current;
+      const previous = positions.get(node);
       const top = node.offsetTop;
-      position.current = { index, top };
+      positions.set(node, { index, top });
       if (!present || !animated) {
         playback.current?.stop();
         clearSlide(node);
@@ -192,7 +208,7 @@ const ChannelRow = memo(
         delete node.dataset.moving;
         node.style.zIndex = "";
       });
-    }, [animated, index, present]);
+    }, [animated, index, present, positions]);
     return (
       <motion.div
         ref={ref}

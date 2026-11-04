@@ -10,6 +10,7 @@ import {
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
+import { parseRecommended } from "./src/features/agents/recommended.ts";
 
 function sharedBuilderlabUrl() {
   const key = "BUZZ_BUILDERLAB_URL";
@@ -103,6 +104,9 @@ export default defineConfig(async ({ command, mode }) => {
         "BUZZ_DATABRICKS_HOST must be an https:// URL without credentials.",
       );
   }
+  // Packagers may recommend agent settings: candidates in priority order.
+  const recommended = env.BUZZ_RECOMMENDED_AGENT?.trim() ?? "";
+  parseRecommended(recommended);
   // Opt-in seed: replaces first run's Builderlab account requests, key backup
   // and recovery, so the first-run screens can be walked against a real account
   // whose binding must not change. Builds never see it. The full list is in
@@ -165,6 +169,8 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
       "import.meta.env.VITE_BUZZ_DATABRICKS_HOST":
         JSON.stringify(databricksHost),
+      "import.meta.env.VITE_BUZZ_RECOMMENDED_AGENT":
+        JSON.stringify(recommended),
       "import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT":
         JSON.stringify(firstRunAccount),
     },

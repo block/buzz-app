@@ -13,6 +13,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
+| `BUZZ_RECOMMENDED_AGENT` | Frontend build and dev server: JSON array of candidates for a recommended agent setup, best first. Unset in OSS builds. See [Recommended agent](#recommended-agent). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native build: federated identity authority, adapter prefix and community hosts. See below. |
@@ -81,6 +82,26 @@ plugin starts receives it as `DATABRICKS_HOST`, so goose reports Databricks as
 configured and ignores a host saved in goose's config. Only the host is set:
 the model, thinking level and sign-in stay goose's own. Leave it unset for OSS
 builds.
+
+## Recommended agent
+
+Packagers can list the harness, model and thinking level Buzz recommends for
+agents. `BUZZ_RECOMMENDED_AGENT`
+is a JSON array of candidates, best first; a harness may have several. Each
+one has `harness` (`codex` or `goose`), `model`, `effort`, `label` (the model's
+display name) and, for goose only, `provider`. For example, with placeholder
+values:
+
+```sh
+BUZZ_RECOMMENDED_AGENT='[{"harness":"codex","model":"model-a","effort":"high","label":"Model A"},{"harness":"goose","provider":"example","model":"model-b","effort":"high","label":"Model B"}]' bin/pnpm tauri build
+```
+
+The frontend reads it from repository-root `.env.local` or the process
+environment (process wins) and compiles it in; invalid values fail the build,
+naming the candidate and field at fault, such as
+`BUZZ_RECOMMENDED_AGENT[1].model`, without echoing values.
+Leave it unset for OSS builds. The list is only validated and compiled in so
+far; the agent features that use it read it from there.
 
 ## Builderlab URL build input
 

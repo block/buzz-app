@@ -2561,7 +2561,6 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
   expect(refusals()).toHaveLength(1);
   const retry = screen.getByRole("button", { name: "Retry adding Ada and Cy" });
   expect(retry).toHaveTextContent("Retry");
-  const attempts = t.publish.mock.calls.length;
   t.fail("");
   await t.user.click(retry);
   expect(screen.getByRole("searchbox")).toHaveFocus();
@@ -2569,12 +2568,10 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
   // One combined notice, instead of each retry announcing its own.
   await screen.findByText("Ada and Cy are in the channel.");
   const added = t.publish.mock.calls
-    .slice(attempts)
-    .flatMap(([event]) =>
-      event.tags.flatMap(([tag, value]) => (tag === "p" ? [value] : [])),
-    )
+    .filter(([event]) => event.tags.filter(([tag]) => tag === "p").length === 1)
+    .map(([event]) => event.tags.find((tag) => tag[0] === "p")?.[1])
     .sort();
-  expect(added).toEqual([t.ada, t.cy].sort());
+  expect(added).toEqual([t.ada, t.ada, t.cy, t.cy].sort());
 });
 it("keeps only the still-refused member in the alert after a partial retry", async () => {
   const t = await teamSetup();
@@ -2624,7 +2621,8 @@ it("shows a team's refusals with different reasons as separate alerts", async ()
   const base = t.publish.getMockImplementation();
   if (!base) throw new Error("Missing publish fixture");
   t.publish.mockImplementation(async (event) => {
-    if (event.tags.some(([tag, value]) => tag === "p" && value === t.ada))
+    const recipients = event.tags.filter(([tag]) => tag === "p");
+    if (recipients.length === 1 && recipients[0]?.[1] === t.ada)
       throw new PublishRejected("Agent is archived");
     return base(event);
   });
@@ -2636,12 +2634,10 @@ it("shows a team's refusals with different reasons as separate alerts", async ()
       .map((item) => item.textContent ?? "")
       .filter((content) => /^(Ada|Cy): /.test(content));
   await vi.waitFor(() => expect(refusals()).toHaveLength(2));
-  expect(refusals()).toEqual(
-    expect.arrayContaining([
-      expect.stringMatching(/^Ada: Agent is archived/),
-      expect.stringMatching(/^Cy: Invitation denied/),
-    ]),
-  );
+  expect(refusals().sort()).toEqual([
+    expect.stringMatching(/^Ada: Agent is archived/),
+    expect.stringMatching(/^Cy: Invitation denied/),
+  ]);
   expect(
     screen.getAllByRole("button", { name: /^Retry adding (Ada|Cy)$/ }),
   ).toHaveLength(2);

@@ -1,3 +1,7 @@
+import {
+  messageSendKeyPreference,
+  setMessageSendKeyPreference,
+} from "../features/messages/send-key-preference";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -43,6 +47,7 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
+  setMessageSendKeyPreference("enter");
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -521,3 +526,61 @@ it.each([
     ).toBe(shown);
   },
 );
+
+it.each([
+  ["MacIntel", "Cmd+Enter"],
+  ["Win32", "Ctrl+Enter"],
+])(
+  "saves the %s send-key choice and observes other windows",
+  async (platform, label) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    const user = userEvent.setup();
+    render(preferencesPage());
+    expect(
+      screen.getByRole("combobox", { name: "Send messages with" }),
+    ).toHaveTextContent("Enter");
+    await user.click(
+      screen.getByRole("combobox", { name: "Send messages with" }),
+    );
+    // Base UI mounts/exposes the popup asynchronously after opening it.
+    await user.click(await screen.findByRole("option", { name: label }));
+    expect(messageSendKeyPreference()).toBe("mod-enter");
+    expect(localStorage.getItem("buzz-message-send-key.v1")).toBe("mod-enter");
+    act(() => {
+      localStorage.setItem("buzz-message-send-key.v1", "enter");
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "buzz-message-send-key.v1" }),
+      );
+    });
+    expect(
+      screen.getByRole("combobox", { name: "Send messages with" }),
+    ).toHaveTextContent("Enter");
+    expect(messageSendKeyPreference()).toBe("enter");
+  },
+);
+
+it("keeps an unsaved send-key choice across remounts and retries saving", async () => {
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("denied");
+    });
+  setMessageSendKeyPreference("mod-enter");
+  const view = render(preferencesPage(), { wrapper: ToastProvider });
+  expect(messageSendKeyPreference()).toBe("mod-enter");
+  expect(
+    await screen.findByRole("button", { name: "Retry saving send key" }),
+  ).toBeInTheDocument();
+  view.unmount();
+  render(preferencesPage(), { wrapper: ToastProvider });
+  write.mockRestore();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Retry saving send key" }),
+  );
+  expect(localStorage.getItem("buzz-message-send-key.v1")).toBe("mod-enter");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Retry saving send key" }),
+    ).not.toBeInTheDocument(),
+  );
+});

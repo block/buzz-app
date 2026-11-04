@@ -1,3 +1,8 @@
+import {
+  setMessageSendKeyPreference,
+  useMessageSendKeyPreference,
+} from "../features/messages/send-key-preference";
+import { isApplePlatform } from "../features/shortcuts/format";
 import { Select } from "../shared/design-system/ui/Select";
 import { ACCENTS, accentButtonStyle } from "../shared/theme/accent";
 
@@ -46,6 +51,10 @@ export function AppearanceSettings({
   /** Only Mac WebKit applies the composer's autocorrect attribute. */
   autocorrectAvailable?: boolean;
 }) {
+  const sendKey = useMessageSendKeyPreference();
+  const sendChord = isApplePlatform(navigator.platform)
+    ? "Cmd+Enter"
+    : "Ctrl+Enter";
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const { placement, unsaved } = useThreadPlacementPreference();
@@ -239,6 +248,30 @@ export function AppearanceSettings({
         <InlineHeader title="Conversations" />
         <SettingsGroup>
           <PreferenceRow
+            title="Send messages with"
+            subtitle="Choose Enter to send, or use Enter for a new line. Shift+Enter always adds a new line."
+            trailing={
+              <Select
+                variant="compact"
+                label="Send messages with"
+                value={sendKey.behavior}
+                groups={[
+                  {
+                    label: "Send key",
+                    options: [
+                      { value: "enter", label: "Enter" },
+                      { value: "mod-enter", label: sendChord },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "enter" || value === "mod-enter")
+                    setMessageSendKeyPreference(value);
+                }}
+              />
+            }
+          />
+          <PreferenceRow
             title="Follow-up behavior"
             subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
             trailing={
@@ -296,6 +329,19 @@ export function AppearanceSettings({
             />
           )}
         </SettingsGroup>
+        {active && sendKey.unsaved && (
+          <ToastNotice
+            title="Send-key preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device."
+          >
+            <Button
+              size="sm"
+              onClick={() => setMessageSendKeyPreference(sendKey.behavior)}
+            >
+              Retry saving send key
+            </Button>
+          </ToastNotice>
+        )}
         {active && followUp.unsaved && (
           <ToastNotice
             title="Follow-up preference wasn’t saved"

@@ -399,8 +399,9 @@ export function BrowserHostView({
   function navigate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     editing.current = false;
+    const target = addressInputUrl(draft);
     void run((sessionId) =>
-      platform.navigate(sessionId, addressInputUrl(draft)),
+      platform.navigate(sessionId, target.url, target.fallbackToHttp),
     );
   }
 

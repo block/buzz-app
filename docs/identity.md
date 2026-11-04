@@ -1267,11 +1267,12 @@ outcome releases it only if that storage write succeeds.
 An issuer still answering 429 when retries or the deadline run out is reported
 to the owner as a limit rather than an unreachable service; it stays transient.
 
-The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes and
-`Nostr-Agent-Proof` header are this configured adapter's wire contract, not
-standard endpoints defined by NIP-FI/NIP-FA. NIP-FI defines the
-`nip-fi-agent+jwt` assertion class and owner checks; that does not establish
-interoperability with another adapter's enrollment endpoints.
+The `/v1/nip-fi/agent-grant` and `/v1/nip-fi/agent-assertion` routes follow
+NIP-FA's agent-route contract, including its neutral token types and
+`Nostr-Authorization` proof header. The native client depends on the compatible
+kgoose changes in [cash-server#146003](https://github.com/squareup/cash-server/pull/146003)
+being deployed before this client change is merged. NIP-FI defines the
+`nip-fi-agent+jwt` assertion class and owner checks.
 
 ### Local credential service
 

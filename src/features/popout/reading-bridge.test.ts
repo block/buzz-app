@@ -77,6 +77,8 @@ function setup() {
     session: owner.session,
     row,
     unread: () => owner.session.unread.attention("room", row.id).unread,
+    /** The durable frontier for the message, undefined until read. */
+    frontier: () => journal?.state.frontiers[`msg:${row.id}`],
     holdSave() {
       let release = () => {};
       let started = () => {};
@@ -102,7 +104,11 @@ function bridge(
     known,
     () => true,
   );
-  const proxy = createReadingProxy(owner.token, () => true);
+  const proxy = createReadingProxy(
+    owner.token,
+    () => true,
+    () => h.session.unread.revision(),
+  );
   bridges.push(owner, proxy);
   return proxy.unread;
 }
@@ -170,11 +176,55 @@ it("rejects a delayed observation once the lease was disposed in main", async ()
   wire.onmessage = ({ data }) => {
     if (data.kind === "result") results.push(data);
   };
-  wire.postMessage({ kind: "acquire", lease: "L1" });
+  wire.postMessage({
+    kind: "acquire",
+    lease: "L1",
+    revision: h.session.unread.revision(),
+  });
   wire.postMessage({ kind: "dispose", lease: "L1" });
   wire.postMessage({ kind: "observe", id: 7, lease: "L1", ids: [h.row.id] });
   await vi.waitFor(() => expect(results).toHaveLength(1));
   expect(results[0]).toMatchObject({ id: 7, error: "Reading lease ended." });
   expect(h.unread()).toBe(true);
+  wire.close();
+});
+
+it("intent formed before a manual unread in main acquires nothing, however late it arrives", async () => {
+  const h = setup();
+  await flush();
+  const owner = createReadingOwner(
+    h.session.unread,
+    "room",
+    h.row.id,
+    () => new Set([h.row.id]),
+    () => true,
+  );
+  bridges.push(owner);
+  const unread = h.session.unread;
+  // The companion's event saw this revision; its acquire is delayed on the
+  // wire while main marks the channel unread.
+  const seen = unread.revision();
+  await unread.markUnreadLocal({ kind: "channel", channelId: "room" });
+  expect(h.frontier()).toBeUndefined();
+  const wire = new BroadcastChannel(`buzz.popout.reading.${owner.token}`);
+  const results: { id: number; error?: string }[] = [];
+  wire.onmessage = ({ data }) => {
+    if (data.kind === "result") results.push(data);
+  };
+  wire.postMessage({ kind: "acquire", lease: "L2", revision: seen });
+  wire.postMessage({ kind: "observe", id: 9, lease: "L2", ids: [h.row.id] });
+  await vi.waitFor(() => expect(results).toHaveLength(1));
+  expect(results[0]).toMatchObject({ id: 9, error: "Reading lease ended." });
+  expect(h.frontier()).toBeUndefined();
+  // A fresh event, with the revision the companion now sees, reads normally.
+  wire.postMessage({
+    kind: "acquire",
+    lease: "L3",
+    revision: unread.revision(),
+  });
+  wire.postMessage({ kind: "observe", id: 10, lease: "L3", ids: [h.row.id] });
+  await vi.waitFor(() => expect(results).toHaveLength(2));
+  expect(results[1]).toEqual({ kind: "result", id: 10 });
+  expect(h.frontier()).toBeDefined();
   wire.close();
 });

@@ -64,6 +64,8 @@ export function PopoutWindowView({
     (editor ?? log.current)?.focus({ preventScroll: true });
   };
   const readingToken = view.detached ? undefined : view.reading;
+  const readingRevision = useRef(view.readingRevision);
+  readingRevision.current = view.readingRevision;
   const [readingSession, setReadingSession] =
     useState<ReturnType<typeof createReadingProxy>>();
   useEffect(() => {
@@ -71,7 +73,11 @@ export function PopoutWindowView({
       setReadingSession(undefined);
       return;
     }
-    const proxy = createReadingProxy(readingToken, () => true);
+    const proxy = createReadingProxy(
+      readingToken,
+      () => true,
+      () => readingRevision.current,
+    );
     setReadingSession(proxy);
     return () => proxy.dispose();
   }, [readingToken]);

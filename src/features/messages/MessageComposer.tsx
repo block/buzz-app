@@ -38,6 +38,7 @@ import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
   outsideMentionReferences,
+  pickedAgents,
   mentionAdmission,
   mentionChannel,
   pastedMentionRecipient,
@@ -1203,32 +1204,14 @@ function Composer({
   // A member not yet known to be an agent (say, an unloaded profile) is a
   // person: routing stays off and mentions in the text decide.
   const routing = solo && !withPeople && agentsOnly && !editing.target;
-  // A refresh or a failed source drops agents until a read completes. Until
-  // then, an agent the current read lists or the last complete read listed
-  // stays an agent: admission picked it from one, and the send reads again.
-  const completeAgents = useRef<{
-    source: RelaySession["agentChoices"];
-    identities: readonly { pubkey: string }[];
-  }>(undefined);
   /** A Solo chat only references a person outside it: that tag notifies
    * nobody, so it neither replaces the toolbar's agents nor joins them. */
   function referenced(pubkey: string) {
     if (!solo) return false;
     const chat = mentionChannel(session, channelId);
-    const source = session.agentChoices,
-      read = source.snapshot();
-    if (read.complete)
-      completeAgents.current = { source, identities: read.identities };
-    const kept = completeAgents.current;
     return (
       !chat?.members?.includes(pubkey) &&
-      outsideMentionReferences(
-        chat,
-        !read.complete && kept?.source === source
-          ? [...read.identities, ...kept.identities]
-          : read.identities,
-        pubkey,
-      )
+      outsideMentionReferences(chat, pickedAgents(session.agentChoices), pubkey)
     );
   }
   const named = routing

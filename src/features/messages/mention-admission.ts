@@ -47,6 +47,29 @@ export function outsideMentionReferences(
   return false;
 }
 
+type AgentRead = {
+  complete: boolean;
+  identities: readonly { pubkey: string }[];
+};
+/** Each session's last complete agent read, kept across composer lifetimes. */
+const completeReads = new WeakMap<object, AgentRead["identities"]>();
+
+/**
+ * The agents that classify names already picked. A refresh or a failed source
+ * drops agents until a read completes. Until then, an agent the current read
+ * lists or the session's last complete read listed stays an agent: admission
+ * picked it from a complete read, and the send reads again before it goes.
+ */
+export function pickedAgents(choices: { snapshot(): AgentRead }) {
+  const read = choices.snapshot();
+  if (read.complete) {
+    completeReads.set(choices, read.identities);
+    return read.identities;
+  }
+  const kept = completeReads.get(choices);
+  return kept ? [...read.identities, ...kept] : read.identities;
+}
+
 /** Solo chats a New chat is about to start, by their reserved ids. */
 const startingChats = new Map<string, ChannelSummary>();
 

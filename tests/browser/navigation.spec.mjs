@@ -107,11 +107,19 @@ providerTest(
       exact: true,
     });
     await expect(dialog).toBeVisible();
+    const visit = await entry(page);
     await page.goBack();
     await expect(dialog).toHaveCount(0);
     expect(await entry(page)).toEqual(agents);
     await page.goForward();
     await expect(dialog).toBeVisible();
+    // The history shortcuts traverse the same provider visit.
+    await page.keyboard.press("ControlOrMeta+BracketLeft");
+    await expect(dialog).toHaveCount(0);
+    expect(await entry(page)).toEqual(agents);
+    await page.keyboard.press("ControlOrMeta+BracketRight");
+    await expect(dialog).toBeVisible();
+    expect(await entry(page)).toEqual(visit);
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     expect(await entry(page)).toEqual(agents);

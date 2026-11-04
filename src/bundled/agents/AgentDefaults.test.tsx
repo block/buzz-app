@@ -7,7 +7,9 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
+import { useSyncExternalStore } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { registerNavigationShortcuts } from "../../app/shortcuts";
 import type {
@@ -15,7 +17,10 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
-import { createNavigationController } from "../../features/navigation/controller";
+import {
+  createNavigationController,
+  type Navigation,
+} from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
 import { ShortcutsService } from "../../features/shortcuts/service";
@@ -53,15 +58,13 @@ function fixture(initial: AgentProviderSnapshot = { readiness: "ready" }) {
       state = next;
       for (const listener of listeners) listener();
     });
-  return { type, agents, update };
+  return { agents, update };
 }
 
-it("keeps an unrouted provider a local dialog that Back does not close", async () => {
-  const { agents } = fixture();
-  render(<AgentDefaults agents={agents} />);
-  fireEvent.click(screen.getByRole("button", { name: "Echo, ready" }));
-  const dialog = await screen.findByRole("dialog", { name: "Echo" });
-  expect(dialog).not.toHaveAttribute("data-navigation-visit");
+/** The host's history shortcuts, driving a real memory-history controller. */
+async function withHistoryShortcuts(
+  run: (navigation: Navigation) => Promise<void>,
+) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
     isActive: () => true,
@@ -71,49 +74,90 @@ it("keeps an unrouted provider a local dialog that Back does not close", async (
   const controller = createNavigationController(createMemoryHistory());
   const remove = registerNavigationShortcuts(shortcuts, controller.navigation);
   try {
-    const behind = { version: 1, kind: "settings" } as const;
-    void controller.navigation.open({ version: 1, kind: "home" });
-    void controller.navigation.open(behind);
-    await vi.waitFor(() =>
-      expect(controller.navigation.snapshot().canGoBack).toBe(true),
-    );
-    // Not prevented: the reserved chord stays inert over a plain modal.
-    expect(fireEvent.keyDown(dialog, { key: "[", ctrlKey: true })).toBe(true);
-    await act(async () => {});
-    expect(controller.navigation.snapshot().attempt.entry.target).toEqual(
-      behind,
-    );
+    await run(controller.navigation);
   } finally {
     remove();
     controller.dispose();
     await ctx.fiber.dispose();
   }
-  expect(screen.getByRole("dialog", { name: "Echo" })).toBeVisible();
+}
+
+/** Agent setup as Settings routes it: each provider opens as a nested visit. */
+function RoutedDefaults({
+  agents,
+  navigation,
+}: {
+  agents: Agents;
+  navigation: Navigation;
+}) {
+  const { target } = useSyncExternalStore(
+    navigation.subscribe,
+    navigation.snapshot,
+  ).entry;
+  const page = {
+    target,
+    signal: new AbortController().signal,
+  } as unknown as PageNavigation;
+  return (
+    <AgentDefaults
+      agents={agents}
+      navigation={page}
+      onProvider={(provider) => {
+        if (target.kind === "settings" && provider)
+          void navigation.open({ ...target, provider });
+      }}
+    />
+  );
+}
+
+it("keeps an unrouted provider a local dialog that Back does not close", async () => {
+  const { agents } = fixture();
+  render(<AgentDefaults agents={agents} />);
+  fireEvent.click(screen.getByRole("button", { name: "Echo, ready" }));
+  const dialog = await screen.findByRole("dialog", { name: "Echo" });
+  expect(dialog).not.toHaveAttribute("data-navigation-visit");
+  await withHistoryShortcuts(async (navigation) => {
+    const behind = { version: 1, kind: "settings" } as const;
+    void navigation.open({ version: 1, kind: "home" });
+    void navigation.open(behind);
+    await vi.waitFor(() => expect(navigation.snapshot().canGoBack).toBe(true));
+    // Not prevented: the reserved chord stays inert over a plain modal.
+    expect(fireEvent.keyDown(dialog, { key: "[", ctrlKey: true })).toBe(true);
+    await act(async () => {});
+    expect(navigation.snapshot().attempt.entry.target).toEqual(behind);
+  });
 });
 
-it("withholds a routed provider's visit while its work must be cancelled first", async () => {
-  const { type, agents, update } = fixture({
-    readiness: "attention",
-    blocking: true,
-  });
-  const navigation = {
-    target: {
+it("lets Back hide a routed provider's blocking work and Forward restore it", async () => {
+  const { agents, update } = fixture();
+  await withHistoryShortcuts(async (navigation) => {
+    const agentSetup = {
       version: 1,
       kind: "settings",
       section: "agents",
-      provider: type.key,
-    },
-    signal: new AbortController().signal,
-  } as unknown as PageNavigation;
-  render(
-    <AgentDefaults
-      agents={agents}
-      navigation={navigation}
-      onProvider={() => {}}
-    />,
-  );
-  const dialog = await screen.findByRole("dialog", { name: "Echo" });
-  expect(dialog).not.toHaveAttribute("data-navigation-visit");
-  update({ readiness: "ready" });
-  expect(dialog).toHaveAttribute("data-navigation-visit");
+    } as const;
+    void navigation.open({ version: 1, kind: "home" });
+    void navigation.open(agentSetup);
+    await vi.waitFor(() => expect(navigation.snapshot().canGoBack).toBe(true));
+    render(<RoutedDefaults agents={agents} navigation={navigation} />);
+    fireEvent.click(screen.getByRole("button", { name: "Echo, ready" }));
+    const dialog = await screen.findByRole("dialog", { name: "Echo" });
+    // Install or sign-in starts from the open controls.
+    update({ readiness: "ready", blocking: true });
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(dialog).toHaveAttribute("data-navigation-visit");
+    expect(fireEvent.keyDown(dialog, { key: "[", ctrlKey: true })).toBe(false);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Echo" })).toBeNull(),
+    );
+    expect(navigation.snapshot().entry.target).toEqual(agentSetup);
+    // The work continued in the provider, so its controls return still guarded.
+    expect(fireEvent.keyDown(document.body, { key: "]", ctrlKey: true })).toBe(
+      false,
+    );
+    expect(await screen.findByRole("dialog", { name: "Echo" })).toHaveAttribute(
+      "data-navigation-visit",
+    );
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  });
 });

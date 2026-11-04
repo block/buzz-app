@@ -85,8 +85,7 @@ function ManagedProviderDialog({
       height="stable"
       headerGap="compact"
       dismissOnOutsideClick
-      // Pending work must be cancelled first, so Back cannot close it either.
-      visit={visit && !state.blocking}
+      visit={visit}
       preventClose={!!state.blocking}
       finalFocus={() => finalFocus.current}
     >

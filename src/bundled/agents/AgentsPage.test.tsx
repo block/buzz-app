@@ -18,6 +18,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Context } from "@deepseek-ai/cordis";
 import { useState, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
@@ -42,6 +43,8 @@ import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
+import { registerNavigationShortcuts } from "../../app/shortcuts";
+import { ShortcutsService } from "../../features/shortcuts/service";
 import { AgentsPage } from "./AgentsPage";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 
@@ -732,6 +735,58 @@ it("restores provider links and retires only that provider's visits after close 
   const { scope: _scope, ...unscoped } = routed;
   expect(matches(unscoped)).toBe(false);
   expect(open).not.toHaveBeenCalled();
+});
+
+it("lets the Back shortcut leave a routed provider visit, even while its work is blocking", async () => {
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.agents",
+    pageId: "agents",
+    scope: null,
+    route: { version: 1, params: { provider: "test/echo" } },
+  } as const;
+  const back = vi.fn();
+  const navigator = {
+    snapshot: () => ({ entry: { id: "provider", target }, canGoBack: true }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+    back,
+    forward: vi.fn(),
+  } as unknown as Navigation;
+  const navigation: PageNavigation = {
+    entryId: "provider",
+    target,
+    signal: new AbortController().signal,
+    focus: "content",
+    position: () => undefined,
+    savePosition() {},
+    forSession: () => navigation,
+    resolve: () => true,
+    complete: () => true,
+  };
+  const { echoProvider } = setup([agent("Ada", 1)], {
+    page: { navigator, navigation },
+  });
+  const dialog = await screen.findByRole("dialog", { name: "Echo" });
+  act(() => echoProvider.set({ readiness: "ready", blocking: true }));
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+  expect(dialog).toHaveAttribute("data-navigation-visit");
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const remove = registerNavigationShortcuts(
+    new ShortcutsService(ctx, window),
+    navigator,
+  );
+  try {
+    expect(fireEvent.keyDown(dialog, { key: "[", ctrlKey: true })).toBe(false);
+    expect(back).toHaveBeenCalledOnce();
+  } finally {
+    remove();
+    await ctx.fiber.dispose();
+  }
 });
 
 it("opens the agent a link names, on Your agents", async () => {

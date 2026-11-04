@@ -6,7 +6,11 @@ import { localCommunityNameKey } from "./names";
 import * as destinations from "./destination";
 import { flush } from "../relay/testing";
 import type { ReadTransport } from "../relay/transport";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeViewScopePurge,
+  writeView,
+} from "../../shared/view-state";
 
 const viewer = "a".repeat(64);
 const roots: Context[] = [];
@@ -649,6 +653,32 @@ it("leave still forgets the community when a store will not clear, and logs and 
     `Couldn't clear channel setups for ${origin} on this device`,
     denied,
   );
+});
+
+it("signals device purge only when leave requests it", async () => {
+  const client = setup();
+  await flush();
+  client.joined(
+    { id: "primary", name: "Primary" },
+    { name: "Local", picture: "" },
+  );
+  await flush();
+  const scope = `${communityDestination("primary").url}:${viewer}`;
+  const purged = vi.fn();
+  const subscription = subscribeViewScopePurge(scope, purged);
+  try {
+    await client.leave("primary", { purge: false });
+    expect(purged).not.toHaveBeenCalled();
+    client.joined(
+      { id: "primary", name: "Primary" },
+      { name: "Local", picture: "" },
+    );
+    await flush();
+    await client.leave("primary");
+    expect(purged).toHaveBeenCalledOnce();
+  } finally {
+    subscription.stop();
+  }
 });
 
 it("leave without a purge forgets the community and disposes its session but keeps its device state", async () => {

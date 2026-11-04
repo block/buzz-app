@@ -1,8 +1,4 @@
-import {
-  subscribeView,
-  viewRevision,
-  writeView,
-} from "../../shared/view-state";
+import { subscribeViewScopePurge } from "../../shared/view-state";
 import type { Stage } from "./model";
 
 export type Draft = {
@@ -13,8 +9,6 @@ export type Draft = {
   stage: Stage;
 };
 
-const marker = "decision-inbox:unsaved-draft";
-const marked = JSON.stringify(true);
 const entries = new Map<string, { scope: string; draft: Draft }>();
 const subscriptions = new Map<string, () => void>();
 const purgeListeners = new Map<string, Set<() => void>>();
@@ -72,17 +66,17 @@ export function onDraftPurge(scope: string, listener: () => void) {
   };
 }
 
-/** The scope marker is removed by the existing view-state community purge. */
+/** Keep drafts only when an explicit purge can reach this window from peers. */
 export function keepDraft(scope: string, key: string, draft: Draft) {
+  if (!subscriptions.has(scope)) {
+    const purge = subscribeViewScopePurge(scope, () => clearDrafts(scope));
+    if (!purge.crossWindow) {
+      purge.stop();
+      return false;
+    }
+    subscriptions.set(scope, purge.stop);
+  }
   entries.set(key, { scope, draft });
   updateWarning();
-  if (!subscriptions.has(scope)) {
-    const stop = subscribeView(scope, () => {
-      if (viewRevision(scope, marker) === null) clearDrafts(scope);
-    });
-    subscriptions.set(scope, stop);
-  }
-  return (
-    viewRevision(scope, marker) === marked || writeView(scope, marker, true)
-  );
+  return true;
 }

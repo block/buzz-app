@@ -11,6 +11,10 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type {
+  ClientSnapshot,
+  CommunityReader,
+} from "../../features/communities/service";
 import type { MessageAction } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
 import type { ChannelMessage } from "../../features/relay/contracts";
@@ -40,6 +44,20 @@ function fixture() {
   const session = { viewer, scope } as RelaySession;
   let state = { status: "ready", viewer, scope, session } as RelaySnapshot;
   const listeners = new Set<() => void>();
+  let membershipIds = ["https://one.test"];
+  const communityListeners = new Set<() => void>();
+  const communityReader = {
+    snapshot: () =>
+      ({
+        status: "ready",
+        viewer,
+        memberships: membershipIds.map((id) => ({ id, name: id })),
+      }) as ClientSnapshot,
+    subscribe(listener: () => void) {
+      communityListeners.add(listener);
+      return () => void communityListeners.delete(listener);
+    },
+  } satisfies CommunityReader;
   const relay = {
     snapshot: () => state,
     subscribe(listener: () => void) {
@@ -58,6 +76,7 @@ function fixture() {
   const actions: MessageAction[] = [];
   apply({
     relay,
+    communityReader,
     navigation: navigator,
     pages: { register: vi.fn() },
     conversation: {
@@ -71,6 +90,10 @@ function fixture() {
     navigator,
     session,
     action,
+    leaveCommunity() {
+      membershipIds = [];
+      for (const listener of communityListeners) listener();
+    },
     cached() {
       state = { ...state, status: "error", cached: true } as RelaySnapshot;
       for (const listener of listeners) listener();
@@ -88,6 +111,13 @@ function fixture() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "BroadcastChannel",
+    class {
+      onmessage = null;
+      postMessage() {}
+    },
+  );
   clearDrafts(scope);
   clearDrafts(second);
   localStorage.clear();
@@ -98,6 +128,7 @@ afterEach(() => {
   clearDrafts(scope);
   clearDrafts(second);
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator, "locks");
 });
 
@@ -417,7 +448,7 @@ it("closes a mounted editor when its community is removed", () => {
   expect(draftFor(draftKey)).toBeUndefined();
 });
 
-it("keeps a draft when its purge marker is temporarily unreadable", () => {
+it("keeps a draft when device view reads are temporarily unavailable", () => {
   const h = fixture();
   const Action = h.action.component;
   const view = render(
@@ -436,14 +467,9 @@ it("keeps a draft when its purge marker is temporarily unreadable", () => {
     },
   );
   view.unmount();
-  const original = Storage.prototype.getItem;
-  const read = vi
-    .spyOn(Storage.prototype, "getItem")
-    .mockImplementation(function (this: Storage, key) {
-      if (key.includes("decision-inbox:unsaved-draft"))
-        throw new Error("storage unavailable");
-      return original.call(this, key);
-    });
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("storage unavailable");
+  });
   act(() => {
     writeView(scope, "another-view", true);
   });
@@ -453,7 +479,8 @@ it("keeps a draft when its purge marker is temporarily unreadable", () => {
   ).toBe("Keep while storage fails");
 });
 
-it("clears an unsaved draft on community purge after its marker write fails", () => {
+it("warns and drops an unsafe draft if cross-window purge is unavailable", () => {
+  vi.stubGlobal("BroadcastChannel", undefined);
   const h = fixture();
   const Action = h.action.component;
   const view = render(
@@ -465,30 +492,45 @@ it("clears an unsaved draft on community purge after its marker write fails", ()
       open={() => false}
     />,
   );
-  const original = Storage.prototype.setItem;
-  const write = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(function (this: Storage, key, value) {
-      if (key.includes("decision-inbox:unsaved-draft"))
-        throw new Error("quota");
-      return original.call(this, key, value);
-    });
   fireEvent.change(
     screen.getByRole("textbox", { name: "Question or decision needed" }),
     { target: { value: "Unsaved decision" } },
   );
   const draftKey = JSON.stringify([scope, "capture", "room", message.id]);
-  expect(draftFor(draftKey)?.question).toBe("Unsaved decision");
+  expect(draftFor(draftKey)).toBeUndefined();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Copy them before leaving",
   );
   view.unmount();
-  write.mockRestore();
-  act(() => clearViewScope(scope));
   expect(draftFor(draftKey)).toBeUndefined();
   const pendingUnload = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(pendingUnload);
   expect(pendingUnload.defaultPrevented).toBe(false);
+});
+
+it("keeps a retained draft after plugin UI unmount and a leave without purge", () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const view = render(
+    <Action
+      message={message}
+      session={h.session}
+      close={() => {}}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "Keep when banned" } },
+  );
+  view.unmount();
+  const draftKey = JSON.stringify([scope, "capture", "room", message.id]);
+  act(() => h.leaveCommunity());
+  act(() => writeView(scope, "other-view", true));
+  expect(draftFor(draftKey)?.question).toBe("Keep when banned");
+  act(() => clearViewScope(scope));
+  expect(draftFor(draftKey)).toBeUndefined();
 });
 
 it("evicts a draft whose changes were undone before closing", async () => {

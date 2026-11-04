@@ -1,5 +1,70 @@
 // View intent is durable and explicitly partitioned; connection generations are not storage keys.
 const viewListeners = new Map<string, Set<() => void>>();
+const purgeListeners = new Map<string, Set<() => void>>();
+const purgeChannelName = "buzz-view-scope-purge.v1";
+let purgeChannel: BroadcastChannel | undefined;
+
+function notifyPurged(scope: string) {
+  for (const listener of purgeListeners.get(scope) ?? []) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn("Could not notify a view scope purge listener", error);
+    }
+  }
+}
+
+function channelForPurge() {
+  if (typeof window === "undefined" || !window.BroadcastChannel)
+    return undefined;
+  if (purgeChannel) return purgeChannel;
+  try {
+    const channel = new window.BroadcastChannel(purgeChannelName);
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      const data = event.data;
+      if (
+        data &&
+        typeof data === "object" &&
+        "scope" in data &&
+        typeof data.scope === "string"
+      )
+        notifyPurged(data.scope);
+    };
+    purgeChannel = channel;
+    return channel;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Only an explicit clearViewScope call announces a purge. Other view writes,
+ * membership changes and plugin lifecycle events never do. Cross-window
+ * delivery requires BroadcastChannel; callers can fail closed when absent. */
+export function subscribeViewScopePurge(scope: string, listener: () => void) {
+  let listeners = purgeListeners.get(scope);
+  if (!listeners) {
+    listeners = new Set();
+    purgeListeners.set(scope, listeners);
+  }
+  listeners.add(listener);
+  const crossWindow = !!channelForPurge();
+  return {
+    crossWindow,
+    stop: () => {
+      listeners?.delete(listener);
+      if (!listeners?.size) purgeListeners.delete(scope);
+    },
+  };
+}
+
+function announcePurge(scope: string) {
+  notifyPurged(scope);
+  try {
+    channelForPurge()?.postMessage({ scope });
+  } catch (error) {
+    console.warn("Could not notify other windows of a view scope purge", error);
+  }
+}
 const composerDraftKey =
   /^draft:([a-zA-Z0-9][a-zA-Z0-9._-]{0,255})(?::thread:([0-9a-f]{64}))?$/;
 export function draftCoordinates(key: string) {
@@ -160,14 +225,19 @@ export function listDraftViews(
 
 /** Forgets every key saved under one scope, for a community the viewer has left. */
 export function clearViewScope(scope: string) {
-  const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
-  const stale: string[] = [];
-  for (let index = 0; index < localStorage.length; index++) {
-    const key = localStorage.key(index);
-    if (key?.startsWith(prefix)) stale.push(key);
+  try {
+    const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
+    const stale: string[] = [];
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(prefix)) stale.push(key);
+    }
+    for (const key of stale) localStorage.removeItem(key);
+    changed(scope);
+  } finally {
+    // The community intended to purge this scope even if device storage failed.
+    announcePurge(scope);
   }
-  for (const key of stale) localStorage.removeItem(key);
-  changed(scope);
 }
 
 /** Forgets one key in every scope where it holds `value`, as when the thing it

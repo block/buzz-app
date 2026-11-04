@@ -9,6 +9,7 @@ import {
   replaceView,
   viewRevision,
   subscribeView,
+  subscribeViewScopePurge,
   writeView,
 } from "./view-state";
 
@@ -146,6 +147,36 @@ it("community scope cleanup removes only that scope and notifies its same-window
   } finally {
     stop();
   }
+});
+
+it("signals only an explicit scoped purge, even when storage cleanup fails", () => {
+  const purged = vi.fn();
+  const other = vi.fn();
+  const first = subscribeViewScopePurge("scope", purged);
+  const second = subscribeViewScopePurge("other", other);
+  try {
+    writeView("scope", "draft:room", "keep");
+    expect(purged).not.toHaveBeenCalled();
+    clearViewScope("scope");
+    expect(purged).toHaveBeenCalledOnce();
+    expect(other).not.toHaveBeenCalled();
+
+    writeView("scope", "draft:room", "keep again");
+    const remove = vi
+      .spyOn(Storage.prototype, "removeItem")
+      .mockImplementation(() => {
+        throw new Error("storage unavailable");
+      });
+    expect(() => clearViewScope("scope")).toThrow("storage unavailable");
+    expect(purged).toHaveBeenCalledTimes(2);
+    expect(other).not.toHaveBeenCalled();
+    remove.mockRestore();
+  } finally {
+    first.stop();
+    second.stop();
+  }
+  clearViewScope("scope");
+  expect(purged).toHaveBeenCalledTimes(2);
 });
 
 it("reports write failures and compares the exact current revision before replacing", () => {

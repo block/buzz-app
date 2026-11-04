@@ -396,6 +396,9 @@ it("listed members open profiles and return focus to the overflow control", asyn
     origins.push(document.activeElement);
     return true;
   });
+  const canOpenLink = vi.fn(
+    (target: string) => target !== profileTarget(unnamed),
+  );
   render(
     <MembershipRow
       row={group}
@@ -405,9 +408,11 @@ it("listed members open profiles and return focus to the overflow control", asyn
       viewer={wes}
       day={false}
       onOpenLink={open}
-      canOpenLink={(target) => target !== profileTarget(unnamed)}
+      canOpenLink={canOpenLink}
     />,
   );
+  // A closed list asks the host about its lead name only, not every member.
+  expect(canOpenLink.mock.calls).toEqual([[profileTarget(pinky)]]);
   const user = userEvent.setup();
   const others = screen.getByRole("button", { name: "3 others" });
   const list = async () => {

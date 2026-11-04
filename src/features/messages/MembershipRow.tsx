@@ -93,19 +93,35 @@ function MembershipPreview({
           // biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded member list needs keyboard focus for native scrolling.
           tabIndex={0}
         >
-          <ul>
-            {members.map((member) => {
-              const name = profileName(links, member.id, member.name, trigger);
-              return (
-                <li key={member.id}>
-                  {name ? <PopoverClose render={name} /> : member.name}
-                </li>
-              );
-            })}
-          </ul>
+          <MembershipPeople members={members} links={links} trigger={trigger} />
         </section>
       </PopoverPopup>
     </PopoverRoot>
+  );
+}
+
+/** The listed names. The portal mounts this only while the list is open, so a
+ * large burst resolves each member's profile target only when someone looks. */
+function MembershipPeople({
+  members,
+  links,
+  trigger,
+}: {
+  members: readonly { id: string; name: string }[];
+  links: ProfileLinks;
+  trigger: RefObject<HTMLButtonElement | null>;
+}) {
+  return (
+    <ul>
+      {members.map((member) => {
+        const name = profileName(links, member.id, member.name, trigger);
+        return (
+          <li key={member.id}>
+            {name ? <PopoverClose render={name} /> : member.name}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

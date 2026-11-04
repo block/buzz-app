@@ -398,7 +398,9 @@ export function CanvasEditor({
               profiles={profiles}
               head={head}
               busy={busy}
-              loaded={loaded}
+              // A failed refresh leaves `head` possibly stale, so History
+              // treats it as unread until a read lands.
+              loaded={loaded && !readError}
               dirty={dirty}
               readOnly={readOnly}
               refreshHead={() => load()}

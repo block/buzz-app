@@ -51,6 +51,7 @@ export function CanvasHistory({
   profiles: ProfileQueries;
   head: RelayEvent | undefined;
   busy: boolean;
+  /** `head` is loaded and the latest read of it succeeded. */
   loaded: boolean;
   dirty: boolean;
   readOnly?: boolean;

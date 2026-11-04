@@ -1,13 +1,9 @@
 import { memo, type Ref } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { MessageLink } from "../../features/conversation/MessageLink";
-import { labelText } from "../../features/messages/label-text";
-import { parseBuzzLink } from "../../features/navigation/buzz-links";
-import {
-  safeLinkUrl,
-  scanMarkdown,
-} from "../../features/relay/message-content";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmTable } from "micromark-extension-gfm-table";
+import { SafeMarkdown } from "../../features/messages/SafeMarkdown";
+import { scanMarkdown } from "../../features/relay/message-content";
 import { Button } from "../../shared/design-system/ui/Button";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import styles from "./Canvas.module.css";
@@ -18,9 +14,36 @@ import styles from "./Canvas.module.css";
  */
 export const CANVAS_RENDER_CHARS = 128 * 1024;
 
+/**
+ * GFM pads every table row to its header's width, so a small sparse table can
+ * still expand to many cells.
+ */
+export const CANVAS_RENDER_CELLS = 10_000;
+
+type Node = { type: string; children?: Node[] };
+
+function tableCells(content: string) {
+  const pending: Node[] = [
+    fromMarkdown(content, {
+      extensions: [gfmTable()],
+      mdastExtensions: [gfmTableFromMarkdown()],
+    }),
+  ];
+  let cells = 0;
+  for (let node = pending.pop(); node; node = pending.pop())
+    if (node.type === "table")
+      cells +=
+        (node.children?.[0]?.children?.length ?? 0) *
+        (node.children?.length ?? 0);
+    else for (const child of node.children ?? []) pending.push(child);
+  return cells;
+}
+
 export function renderable(content: string) {
   return (
-    content.length <= CANVAS_RENDER_CHARS && !scanMarkdown(content).tooDeep
+    content.length <= CANVAS_RENDER_CHARS &&
+    !scanMarkdown(content).tooDeep &&
+    tableCells(content) <= CANVAS_RENDER_CELLS
   );
 }
 
@@ -36,41 +59,13 @@ export const CanvasMarkdown = memo(function CanvasMarkdown({
     return (
       <>
         <p role="status" className="text-secondary">
-          This Canvas is too large or too deeply nested to render, so it is
-          shown as Markdown source.
+          This Canvas is too large or too complex to render, so it is shown as
+          Markdown source.
         </p>
         <pre>{content}</pre>
       </>
     );
-  return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      urlTransform={(url) =>
-        parseBuzzLink(url) ? url : (safeLinkUrl(url) ?? null)
-      }
-      components={{
-        img: ({ alt }) => alt ?? null,
-        a: ({ children, href }) => {
-          if (!href) return children;
-          // A raw autolink shows its destination's name, as in messages.
-          const label = labelText(children);
-          const raw = label === href;
-          return (
-            <MessageLink
-              url={href}
-              label={raw ? undefined : label}
-              registry={undefined}
-              onOpenLink={openLink}
-            >
-              {raw ? undefined : children}
-            </MessageLink>
-          );
-        },
-      }}
-    >
-      {content}
-    </Markdown>
-  );
+  return <SafeMarkdown content={content} openLink={openLink} />;
 });
 
 export function CanvasView({

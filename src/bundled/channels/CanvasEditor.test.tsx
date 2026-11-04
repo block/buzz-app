@@ -1399,3 +1399,52 @@ it.each(["diff", "absent", "moved"] as const)(
     else expect(document.activeElement).toContainElement(changes);
   },
 );
+
+it("stops comparing with a loaded head whose refresh fails, keeping the draft", async () => {
+  const user = userEvent.setup();
+  const newer = {
+    ...head,
+    id: "e".repeat(64),
+    content: "Published elsewhere",
+    created_at: head.created_at + 5,
+  };
+  const { canvas } = historyFixture();
+  const editor = screen.getByRole("textbox", { name: "Canvas Markdown" });
+  await waitFor(() => expect(editor).toHaveValue(head.content));
+  fireEvent.change(editor, { target: { value: "Local edits" } });
+  await openHistory(user);
+  expect(
+    screen.getByRole("region", { name: "Changes from current version" }),
+  ).toBeInTheDocument();
+
+  // Another client publishes; History finds it but the head read fails.
+  canvas.history.mockResolvedValue({
+    revisions: [newer, head, old],
+    next: undefined,
+  });
+  canvas.read.mockRejectedValueOnce(new Error("Offline"));
+  await user.click(screen.getByRole("button", { name: "Refresh history" }));
+  await waitFor(() => expect(canvas.history).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getAllByRole("radio")).toHaveLength(3));
+  await user.click(screen.getAllByRole("radio")[0] as HTMLElement);
+  expect(
+    await screen.findByText(/current Canvas could not be read/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("Same as current version."),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: "Changes from current version" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Restore this version" }),
+  ).toBeDisabled();
+
+  canvas.read.mockResolvedValue(newer);
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    await screen.findByText("Same as current version."),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Edit" }));
+  expect(editor).toHaveValue("Local edits");
+});

@@ -17,7 +17,11 @@ import { clearView, readView } from "../../shared/view-state";
 import { MAX_MARKDOWN_DEPTH } from "../../features/relay/message-content";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import { CanvasEditor } from "./CanvasEditor";
-import { CANVAS_RENDER_CHARS, CanvasMarkdown } from "./CanvasView";
+import {
+  CANVAS_RENDER_CELLS,
+  CANVAS_RENDER_CHARS,
+  CanvasMarkdown,
+} from "./CanvasView";
 
 // Counts Markdown renders while passing them through unchanged.
 const markdownRenders = vi.hoisted(() => ({ count: 0 }));
@@ -315,6 +319,29 @@ it("falls back to labelled source past the render budget or nesting limit", () =
     expect(container.querySelector("h1")).toBeNull();
     unmount();
   }
+});
+
+it("falls back to labelled source for a sparse wide table past the cell budget", () => {
+  // 500 header cells pad 500 one-cell rows to 250,000 cells from 3 KB.
+  const wide = (n: number) =>
+    `|${"a|".repeat(n)}\n|${"-|".repeat(n)}\n${"x\n".repeat(n)}`;
+  const sparse = wide(500);
+  expect(sparse.length).toBeLessThan(4_000);
+  const { container, unmount } = render(
+    <CanvasMarkdown content={sparse} openLink={() => false} />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "shown as Markdown source",
+  );
+  expect(container.querySelector("pre")?.textContent).toBe(sparse);
+  expect(container.querySelector("table")).toBeNull();
+  unmount();
+  // A table at the budget still renders.
+  const side = Math.floor(Math.sqrt(CANVAS_RENDER_CELLS)) - 1;
+  const { container: within } = render(
+    <CanvasMarkdown content={wide(side)} openLink={() => false} />,
+  );
+  expect(within.querySelectorAll("td")).toHaveLength(side * side);
 });
 
 it("renders a Canvas larger than the shared-notes cutoff", async () => {

@@ -250,8 +250,8 @@ promoted to `self`, and no new trusted storage is introduced. Signer-based searc
 and Inbox sender filters and relay-reported participant
 summaries are unchanged by workflow presentation. Channel/thread rows retain the
 effective-author attribution and owner edit/delete behavior added separately in
-#661; when that author differs from the signer, the row carries a separate signing
-key so the disclosure still identifies the actual relay. Thread and media views
+#661; when that author differs from the signer, the row keeps the signing key
+for row identity only and does not display it. Thread and media views
 request workflow-owner profiles through the existing background profile directory.
 The workflow proof controls the automation label; it does not grant request
 authority or control main's effective message-author policy. With explicit

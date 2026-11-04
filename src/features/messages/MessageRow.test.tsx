@@ -2381,6 +2381,9 @@ it("presents automation, links the owner and explains the message without keys",
 });
 
 it("opens workflow message details once the pointer rests, without a competing hint", async () => {
+  // Base UI's PATIENT_CLICK_THRESHOLD: a click this soon after a hover open
+  // keeps the popover open.
+  const BASE_UI_PATIENT_CLICK_MS = 500;
   vi.useFakeTimers();
   try {
     const { trigger } = renderWorkflowMessage();
@@ -2405,14 +2408,14 @@ it("opens workflow message details once the pointer rests, without a competing h
     });
     await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
     expect(screen.queryByRole("dialog")).toBeNull();
-    // Past Base UI's 500 ms patient-click window, a click toggles a
-    // hover-opened card closed, as with every openOnHover="preview" popover.
+    // Past Base UI's patient-click window, a click toggles a hover-opened
+    // card closed, as with every openOnHover="preview" popover.
     fireEvent.mouseLeave(trigger);
     fireEvent.mouseEnter(trigger);
     fireEvent.mouseMove(trigger);
     await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
     screen.getByRole("dialog", { name: "Workflow message" });
-    await act(() => vi.advanceTimersByTimeAsync(500));
+    await act(() => vi.advanceTimersByTimeAsync(BASE_UI_PATIENT_CLICK_MS));
     fireEvent.click(trigger);
     await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
     expect(screen.queryByRole("dialog")).toBeNull();

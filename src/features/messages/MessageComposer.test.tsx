@@ -483,6 +483,11 @@ function mount(
       presented = active;
       view.rerender(tree());
     },
+    /** A fresh composer for the same chat, as after navigating away and back. */
+    remount() {
+      view.rerender(<></>);
+      view.rerender(tree());
+    },
     setRows(next: readonly ChannelMessage[]) {
       act(() => {
         rows = next;
@@ -14782,6 +14787,24 @@ it("keeps an owned agent's chip on the pill while the agent read refreshes", () 
   // A refresh drops the agents until it completes; the chip is still an
   // agent, not a reference, and the send keeps its recipient.
   h.setLibrary([first, second], "loading");
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  h.setLibrary([first, second]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+});
+
+it("keeps an owned agent's chip on the pill when its composer remounts during a refresh", () => {
+  const { h, bea, sendingTo } = mountSoloAgents({ members: [first.pubkey] });
+  act(() => {
+    h.commands().insertMention(bea);
+    h.commands().insertText("hi");
+  });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  h.setLibrary([first, second], "loading");
+  // Away and back before the read completes: the restored draft's chip is
+  // still classified by the last complete read, not lost with the composer.
+  h.remount();
+  expect(h.input()).toHaveTextContent("@Bea hi");
   expect(sendingTo("Bea")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   h.setLibrary([first, second]);

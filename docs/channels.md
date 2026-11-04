@@ -1091,6 +1091,17 @@ another non-owner member:
 | Bot | Admin / Guest, after explicit confirmation; Participating is already selected | Yes |
 | Owner, self, unknown or inconsistent | No | No |
 
+The selected relay-signed roster may carry two-field `agent` tags for active
+members with a recorded community agent owner. These are positive identity evidence,
+not ownership attribution or permission grants. Members combines them with locally
+known agents and profile hints. Channel roles alone do not establish agent identity.
+Absent evidence uses neutral **Members**/**Others** groups rather than asserting
+human identity. Supporting relays refresh existing rosters when ownership is first
+recorded. Older or failed-to-refresh snapshots lack traits until republished;
+Refresh reads the latest published roster. Trusted
+classification changes move affected keys between retained groups; optional name
+and profile-hint enrichment preserves the current large-roster page and focus.
+
 Agent identity is independent of channel role. Explicitly promoting a Bot to Admin grants authority to that agent’s own public key and preserves its verified agent identity; the human owner’s roles do not confer authority.
 
 The menu offers **Viewing only** through a deliberate **Set to viewing only**

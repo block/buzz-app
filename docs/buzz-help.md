@@ -141,7 +141,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   lets them read; **Private** limits access to people added to the channel.
   Changing this choice does not change existing members' roles. Ordinary
   participants have no role caption; Owner, Admin, and Viewing only mark
-  exceptions. Use a person's actions menu to change their role when permitted.
+  exceptions. Use a member's actions menu to change their role when permitted.
+  **Agents** includes identities known to be agents, independently of channel
+  role. **Members** and **Others** do not certify that an identity is human.
+  Editing a profile cannot hide the relay's recorded agent classification.
 - **Message search** treats the last word you type as the start of a word, so
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
@@ -183,7 +186,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   **Public (existing)**. This is not protocol enforcement. View-only visitors
   cannot post; existing members keep their roles. Returning to Private warns
   about retained viewers unless verified roles show no Guests, including while
-  roles load or fail to load; remove them in People to end their access. Public
+  roles load or fail to load; remove them in Members to end their access. Public
   (existing) → Private also warns that joined members retain their access.
   Public (existing) → View only confirms that existing
   members keep their access. Agents the owner adds through
@@ -191,17 +194,17 @@ that agent in Buzz; they do not notify the external app through this connection.
   including with a Guest admission default. Conversion to a channel offers
   Private, View only and Public, starts from the chat's current access, and saves
   the selected policy. Choosing Private during conversion also warns that people
-  who joined keep their access until removed in People. Opening a private chat to the community warns that its full
+  who joined keep their access until removed in Members. Opening a private chat to the community warns that its full
   history and Canvas, including workspace folders and agent instructions, become
   readable. View only retains Guest admission. Copying its link alone does not grant access. Check the intended people
   and destination before changing access. If an older saved invitation granted
-  view-only access, remove that person in People and invite them again for
+  view-only access, remove that person in Members and invite them again for
   participation. For an older unresolved invitation, use **Retry** in Outbox
   or add the person again if the receipt is already Seen. After its 15-minute
   delivery window, Buzz verifies the original command and current membership
   before allowing a fresh participation invitation; failed checks keep the original.
   If the original invitation was applied and the person was later removed, Retry
-  clears the old row without re-adding them. Use **Add** in People to invite them again.
+  clears the old row without re-adding them. Use **Add** to invite them again.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose

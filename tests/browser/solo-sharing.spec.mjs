@@ -202,9 +202,9 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   await expect(
     agents.getByText("Carol Fixture", { exact: true }),
   ).toBeVisible();
-  // People holds the owner, the 14 legacy humans and Alice.
-  const people = dialog.getByRole("region", { name: "People", exact: true });
-  await expect(people.getByRole("heading")).toHaveText("People · 16");
+  // Members holds the owner, the 14 legacy humans and Alice.
+  const people = dialog.getByRole("region", { name: "Members", exact: true });
+  await expect(people.getByRole("heading")).toHaveText("Members · 16");
   await expect(
     people.getByText("Existing person 14", { exact: true }),
   ).toBeAttached();

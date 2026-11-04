@@ -423,7 +423,7 @@ it.each([
       const row = screen.getByRole("button", {
         name: new RegExp(`^Open profile for ${name}`),
       });
-      expect(row.closest("section")).toHaveAttribute("aria-label", "People");
+      expect(row.closest("section")).toHaveAttribute("aria-label", "Members");
       const labels = within(required(row.closest("li")));
       if (role === "owner" || role === "admin")
         expect(
@@ -444,7 +444,7 @@ it.each([
   [true, "owner", "Agents"],
   [true, "admin", "Agents"],
   [true, "member", "Agents"],
-  [false, "bot", "People"],
+  [false, "bot", "Members"],
 ] as const)(
   "groups by identity regardless of role (agent: %s, role: %s)",
   async (agent, role, expected) => {
@@ -721,7 +721,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   await expectProfileOnly(t.user, "Carl");
   await expectProfileOnly(t.user, "Owner");
   const row = required(screen.getByText("Morgan").closest("li"));
-  expect(row.closest("section")).toHaveAttribute("aria-label", "People");
+  expect(row.closest("section")).toHaveAttribute("aria-label", "Members");
   let dialog = await t.choose("Set as admin");
   await vi.waitFor(() =>
     expect(
@@ -753,7 +753,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "People");
+  ).toHaveAttribute("aria-label", "Members");
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each(["cancel", "close", "escape", "outside"])(
@@ -920,7 +920,7 @@ it("changes an existing Guest to Member only after explicit confirmation", async
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "People");
+  ).toHaveAttribute("aria-label", "Members");
   expect(t.publish).toHaveBeenCalledOnce();
 });
 it.each([false, true])(
@@ -942,7 +942,7 @@ it.each([false, true])(
       expect(
         within(required(row.closest("li"))).queryByText("Agent"),
       ).not.toBeInTheDocument();
-      expect(row.closest("section")).toHaveAttribute("aria-label", "People");
+      expect(row.closest("section")).toHaveAttribute("aria-label", "Members");
       expect(row).toHaveAccessibleName(/, bot/);
     }
     expect(
@@ -1064,7 +1064,7 @@ it("keeps unconfirmed roles and session recovery across close/reopen without rep
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "People");
+  ).toHaveAttribute("aria-label", "Members");
   await expectProfileOnly(t.user, "Morgan");
   await t.user.click(screen.getByRole("button", { name: "Close" }));
   await vi.waitFor(() =>
@@ -1220,7 +1220,7 @@ it.each([true, false])(
   "applies live roster and role reads without writes (writer: %s)",
   async (supported) => {
     const t = await setup("owner", "member", supported);
-    const section = screen.getByRole("region", { name: "People" });
+    const section = screen.getByRole("region", { name: "Members" });
     expect(
       screen.queryByRole("button", { name: "Refresh member data" }),
     ).toBeNull();
@@ -1358,7 +1358,7 @@ it.each([false, true])(
     }
     expect(targetRow().closest("section")).toHaveAttribute(
       "aria-label",
-      "People",
+      "Members",
     );
     expect(t.publish).not.toHaveBeenCalled();
   },
@@ -1452,7 +1452,7 @@ it("holds duplicate refreshes, retains the roster on read failure, and recovers 
     screen
       .getByRole("button", { name: /Open profile for Morgan/ })
       .closest("section"),
-  ).toHaveAttribute("aria-label", "People");
+  ).toHaveAttribute("aria-label", "Members");
   const recovery = deferred();
   t.query.mockImplementation(async (filters) => {
     await recovery.promise;
@@ -1848,7 +1848,7 @@ it("filters by present groups and resets to All on any search input", async () =
   await screen.findByRole("menuitemradio", { name: /^All/ });
   expect(
     screen.getAllByRole("menuitemradio").map((item) => item.textContent),
-  ).toEqual(["All · 3", "People · 2", "Agents · 1"]);
+  ).toEqual(["All · 3", "Members · 2", "Agents · 1"]);
   expect(
     screen.getByRole("menuitemradio", { name: "All · 3" }),
   ).toHaveAttribute("aria-checked", "true");
@@ -1893,7 +1893,7 @@ it("hides the identity filter when everyone is a person, including owners", asyn
   expect(
     screen.queryByRole("button", { name: /^Filter people and agents:/ }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "People · 3" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Members · 3" })).toBeVisible();
 });
 
 it("keeps agent owners in the Agents filter", async () => {

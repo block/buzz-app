@@ -62,7 +62,7 @@ async function showSharedMark(page, app, row) {
   });
   await expect(
     dialog
-      .getByRole("region", { name: "People", exact: true })
+      .getByRole("region", { name: "Members", exact: true })
       .getByText("Shared teammate", { exact: true }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Done", exact: true }).click();

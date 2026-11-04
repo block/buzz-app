@@ -20,6 +20,8 @@ export type MemberChange = Readonly<{
 }>;
 export type MemberAuthority = Readonly<{
   roles: Readonly<Record<string, MemberRole>>;
+  /** Positive relay evidence; absence does not establish a human identity. */
+  agentPubkeys?: readonly string[];
   canManage: boolean;
   canRemove: boolean;
   canRemoveOwnedAgent: boolean;
@@ -98,6 +100,19 @@ export function memberAuthority(
   const solo = !!soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),
+    agentPubkeys: Object.freeze([
+      ...new Set(
+        roster.tags.flatMap(([tag, key, ...rest]) =>
+          tag === "agent" &&
+          key &&
+          PUBKEY.test(key) &&
+          key in roles &&
+          !rest.length
+            ? [key]
+            : [],
+        ),
+      ),
+    ]),
     canManage: activeChannel && !solo && elevated.has(viewer),
     canRemove: activeChannel && elevated.has(viewer),
     canRemoveOwnedAgent:

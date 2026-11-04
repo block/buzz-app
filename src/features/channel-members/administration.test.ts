@@ -16,6 +16,7 @@ import {
 } from "./administration";
 import {
   authorizeMemberChange,
+  canRemoveMember,
   memberAuthority,
   validateMemberAdministrationTemplate,
   type MemberChange,
@@ -506,6 +507,92 @@ it("does not fabricate Member for missing or unknown role hints", () => {
     "unknown",
   );
 });
+it.each(["member", "bot", "admin", "owner", "guest"])(
+  "reads positive agent evidence independently of the %s role",
+  (role) => {
+    const h = harness("member", role);
+    const before = memberAuthority(h.events(), id, viewer, author);
+    const events = h
+      .events()
+      .map((event) =>
+        event.kind === 39002
+          ? h.record(39002, [...event.tags, ["agent", target]])
+          : event,
+      );
+    const authority = memberAuthority(events, id, viewer, author);
+    expect(authority.agentPubkeys).toEqual([target]);
+    expect({ ...authority, agentPubkeys: before.agentPubkeys }).toEqual(before);
+    expect(canRemoveMember(authority, viewer, target)).toBe(false);
+  },
+);
+
+it("accepts agent traits only for members of the selected relay roster", () => {
+  const h = harness();
+  const roster = required(h.events()[2]);
+  const invalid = [
+    ["agent"],
+    ["agent", target, "extra"],
+    ["agent", target.toUpperCase()],
+    ["agent", "bad-key"],
+    ["agent", author], // Not a member.
+  ];
+  const events = [
+    ...h.events().slice(0, 2),
+    h.record(39002, [...roster.tags, ...invalid]),
+  ];
+  for (const foreign of [
+    h.record(39002, [
+      ["d", otherId],
+      ["p", target],
+      ["agent", target],
+    ]),
+    finalizeEvent(
+      { ...roster, tags: [...roster.tags, ["agent", target]] },
+      key,
+    ),
+  ])
+    expect(() =>
+      memberAuthority([...events, foreign], id, viewer, author),
+    ).toThrow();
+  expect(
+    memberAuthority(events, id, viewer, author).agentPubkeys ?? [],
+  ).toEqual([]);
+  events.push(
+    h.record(39002, [...roster.tags, ["agent", target], ["agent", target]]),
+  );
+  expect(memberAuthority(events, id, viewer, author).agentPubkeys).toEqual([
+    target,
+  ]);
+  events.push(h.record(39002, roster.tags));
+  expect(
+    memberAuthority(events, id, viewer, author).agentPubkeys ?? [],
+  ).toEqual([]);
+});
+
+it("does not restore agent evidence after authority is cleared and refresh fails", async () => {
+  const h = harness();
+  h.setEvents(
+    h
+      .events()
+      .map((event) =>
+        event.kind === 39002
+          ? h.record(39002, [...event.tags, ["agent", target]])
+          : event,
+      ),
+  );
+  await h.owner.capability.refresh(id);
+  expect(h.owner.capability.snapshot(id).authority.agentPubkeys).toEqual([
+    target,
+  ]);
+  h.owner.clear();
+  h.read.mockRejectedValueOnce(new Error("Offline"));
+  await h.owner.capability.refresh(id);
+  expect(h.owner.capability.snapshot(id).status).toBe("error");
+  expect(h.owner.capability.snapshot(id).authority.agentPubkeys ?? []).toEqual(
+    [],
+  );
+});
+
 it.each(["actor", "target", "removed", "access"])(
   "rechecks %s after signing, before publishing",
   async (what) => {

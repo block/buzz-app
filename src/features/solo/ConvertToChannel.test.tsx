@@ -263,8 +263,8 @@ it.each(policies.flatMap((from) => policies.map((to) => ({ from, to }))))(
     if (from.visibility === "public" && to.visibility === "private") {
       expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
         from.joinRole === "guest"
-          ? "People who joined while it was View only are members and keep reading until you remove them in People."
-          : "People who already joined remain members and keep their access until you remove them in People.",
+          ? "People who joined while it was View only are members and keep reading until you remove them in Members."
+          : "People who already joined remain members and keep their access until you remove them in Members.",
       );
     }
     expect(h.publish).not.toHaveBeenCalled();

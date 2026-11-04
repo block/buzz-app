@@ -32,14 +32,14 @@ test("large channel members stays usable while browsing and searching the roster
   await expect(dialog.getByText("Loading members…")).toHaveCount(0);
   await expect(list.getByRole("listitem").first()).toBeVisible();
   await expect(
-    list.getByRole("heading", { name: "People · 2526" }),
+    list.getByRole("heading", { name: "Members · 2526" }),
   ).toBeVisible();
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
-  const pages = list.getByRole("navigation", { name: "People member pages" });
+  const pages = list.getByRole("navigation", { name: "Members member pages" });
   await pages.getByRole("button", { name: "Next" }).click();
   await expect(pages.getByText("2 of 51")).toBeVisible();
   await expect(
-    list.getByRole("heading", { name: "People · 2526" }),
+    list.getByRole("heading", { name: "Members · 2526" }),
   ).toBeFocused();
   await expect(list.getByRole("listitem").first()).toBeInViewport();
   await pages.getByRole("button", { name: "Previous" }).click();

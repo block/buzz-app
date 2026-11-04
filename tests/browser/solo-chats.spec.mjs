@@ -824,7 +824,7 @@ test("View-only Solo conversion preserves access and restores focus after its ch
     await access.click();
     await page.getByRole("option", { name: "Private", exact: true }).click();
     const retainedWarning =
-      "People who joined while it was View only are members and keep reading until you remove them in People.";
+      "People who joined while it was View only are members and keep reading until you remove them in Members.";
     await expect(dialog).toHaveAccessibleDescription(retainedWarning);
     await access.scrollIntoViewIfNeeded();
     await access.click({ trial: true });

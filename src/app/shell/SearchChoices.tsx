@@ -24,6 +24,8 @@ export type SearchDestination = {
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
+  /** Leads `detail`, as a channel's type icon leads its name. */
+  detailIcon?: typeof ChatCircleIcon | undefined;
   /** Code points of `label` that match the typed text. */
   matches?: readonly number[];
   icon: typeof ChatCircleIcon;
@@ -577,6 +579,7 @@ export function SearchChoices({
                             key,
                             label,
                             detail,
+                            detailIcon: DetailIcon,
                             trailing,
                             matches,
                             icon,
@@ -741,6 +744,9 @@ export function SearchChoices({
                                         </span>
                                         {detail && (
                                           <span className="block truncate text-body-sm text-subtle">
+                                            {DetailIcon && (
+                                              <DetailIcon className="search-palette-detail-icon" />
+                                            )}
                                             {detail}
                                           </span>
                                         )}

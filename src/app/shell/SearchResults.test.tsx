@@ -5099,6 +5099,81 @@ it.each([true, false])(
   },
 );
 
+it("leads a message hit's conversation name with its sidebar icon", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    peer = keypair();
+  const ids = ["crew", "plans", "board", "notes", "dm"];
+  const discovery = [
+    metadata(relay, "crew", "crew", 1700000000, [["t", "stream"]]),
+    metadata(relay, "plans", "plans", 1700000000, [
+      ["t", "stream"],
+      ["private"],
+    ]),
+    metadata(relay, "board", "board", 1700000000, [["t", "forum"]]),
+    metadata(relay, "notes", "Notes", 1700000000, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    ...ids.map((id) =>
+      roster(
+        relay,
+        id,
+        id === "dm" ? [viewer.pubkey, peer.pubkey] : [viewer.pubkey],
+      ),
+    ),
+    profile(peer, { name: "Pinky" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return filters.some((filter) => filter.kinds?.includes(0))
+          ? []
+          : ids.map((id) => message(viewer, id, `match in ${id}`, 1700000001));
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // The detail's icon class, then the conversation name it leads.
+  const subtitle = (id: string) => {
+    const icon = screen
+      .getByRole("option", { name: new RegExp(`match in ${id}`) })
+      .querySelector(".search-palette-detail-icon");
+    return `${icon?.getAttribute("class")?.match(/tabler-icon-[\w-]+/)?.[0]} ${icon?.parentElement?.textContent?.split(" · ")[0]}`;
+  };
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="match"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(ids.map(subtitle)).toEqual([
+        "tabler-icon-hash crew",
+        "tabler-icon-lock plans",
+        "tabler-icon-hash board",
+        "tabler-icon-message-circle Notes",
+        "tabler-icon-message-circle Pinky",
+      ]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 function peopleSession(
   session: ReturnType<typeof createRelaySession>["session"],
   directory: {

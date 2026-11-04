@@ -84,6 +84,13 @@
     transition: none;
   }
 
+  /* Inline with the detail's text, as a channel reference's icon sits in prose. */
+  .search-palette-detail-icon {
+    display: inline-block;
+    vertical-align: -0.125em;
+    margin-inline-end: var(--space-half);
+  }
+
   .search-palette-group-empty,
   .search-palette-status {
     padding-inline: var(--space-control-inset);

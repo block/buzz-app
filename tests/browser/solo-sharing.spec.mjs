@@ -317,9 +317,11 @@ test.describe("View only channel share", () => {
     await reachable(share);
     await share.press("Enter");
     const confirmation = page.getByRole("alertdialog", {
-      name: "Share chat in #Alpha?",
+      name: "Share this chat?",
     });
-    await expect(confirmation).toContainText("full history and Canvas");
+    await expect(confirmation).toContainText(
+      "full history, Canvas, workspace folders, and agent instructions",
+    );
     await confirmation
       .getByRole("button", { name: "Cancel", exact: true })
       .click();
@@ -547,7 +549,7 @@ test.describe("View only channel share", () => {
       exact: true,
     });
     const confirmation = page.getByRole("alertdialog", {
-      name: "Change general access?",
+      name: "Share this chat?",
     });
     const primary = confirmation.getByRole("button", {
       name: "Share",
@@ -572,7 +574,9 @@ test.describe("View only channel share", () => {
       );
       await expect(input).toBeVisible();
       await send.click();
-      await expect(confirmation).toContainText("full history and Canvas");
+      await expect(confirmation).toContainText(
+        "full history, Canvas, workspace folders, and agent instructions",
+      );
       await expect(
         confirmation.getByRole("button", { name: "Cancel", exact: true }),
       ).toBeFocused();
@@ -619,7 +623,7 @@ test.describe("View only channel share", () => {
     await pasteLink();
     await send.click();
     const viewOnlyConfirmation = page.getByRole("alertdialog", {
-      name: "Share chat link?",
+      name: "Share this chat?",
     });
     await expect(viewOnlyConfirmation).toContainText(
       "This chat is already View only.",
@@ -965,7 +969,7 @@ test.describe("Messages Share navigation", () => {
       .getByRole("button", { name: "Share #Gamma", exact: true })
       .click();
     const confirmation = page.getByRole("alertdialog", {
-      name: "Share chat in #Gamma?",
+      name: "Share this chat?",
     });
     await expect(confirmation).toBeVisible();
     await openChat(page, app, secondChat);

@@ -51,7 +51,7 @@ import {
   canAddMembers,
   canShareSoloChat,
 } from "../../features/channel-members/members";
-import { ownSolo, SOLO_ACCESS_DISCLOSURE } from "../../features/solo/labels";
+import { ownSolo, soloShareDisclosure } from "../../features/solo/labels";
 import { soloChatLink } from "../../features/solo/share";
 import {
   formatPublicKey,
@@ -2279,13 +2279,13 @@ export function ChannelMembersDialog({
       )}
       {share.confirmation && chosen && (
         <AlertDialog
-          title={`Share chat in ${channelText(chosen)}?`}
+          title="Share this chat?"
           description={
             <>
               {share.confirmation.visibility === "public"
                 ? `This chat is already View only. Its link will be posted in ${channelText(chosen)}. `
-                : `This will change the chat from Private to View only and post its link in ${channelText(chosen)}. `}
-              <span className="mt-3 block">{SOLO_ACCESS_DISCLOSURE}</span>
+                : `This changes the chat from Private to View only and posts its link in ${channelText(chosen)}. `}
+              <span className="mt-3 block">{soloShareDisclosure()}</span>
             </>
           }
           pending={share.busy}

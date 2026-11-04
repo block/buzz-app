@@ -5,7 +5,7 @@ import type {
   ChannelDetailsDraft,
 } from "../relay/channel-details-protocol";
 import { chatShareDestination, shareSoloChatAccess } from "../solo/share";
-import { ownSolo, SOLO_ACCESS_DISCLOSURE } from "../solo/labels";
+import { ownSolo, soloShareDisclosure } from "../solo/labels";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 
@@ -175,19 +175,15 @@ export function useChatLinkSharing(
       <AlertDialog
         key={pending.sources.map((base) => base.version).join(":")}
         title={
-          privateCount
-            ? "Change general access?"
-            : pending.sources.length > 1
-              ? "Share chat links?"
-              : "Share chat link?"
+          pending.sources.length > 1 ? "Share these chats?" : "Share this chat?"
         }
         description={
           <>
             {privateCount === pending.sources.length
-              ? `This will change ${pending.sources.length > 1 ? "these chats" : "the chat"} from Private to View only and send your message and chat ${pending.sources.length > 1 ? "links" : "link"} to ${pending.destination}. `
+              ? `This changes ${pending.sources.length > 1 ? "these chats" : "the chat"} from Private to View only and sends your message and chat ${pending.sources.length > 1 ? "links" : "link"} to ${pending.destination}. `
               : `${privateCount ? "Private chats will change to View only; the other chats will stay View only." : pending.sources.length > 1 ? "These chats are already View only." : "This chat is already View only."} Your message and chat ${pending.sources.length > 1 ? "links" : "link"} will be sent to ${pending.destination}. `}
             <span className="mt-3 block">
-              {SOLO_ACCESS_DISCLOSURE}
+              {soloShareDisclosure(pending.sources.length > 1)}
               {pending.sources.length > 1
                 ? ` This applies to: ${pending.sources.map((base) => base.name).join(", ")}.`
                 : ""}

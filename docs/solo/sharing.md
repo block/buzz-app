@@ -61,9 +61,9 @@ picks, so a choice in either surface can improve its order in the other.
 
 While searching, eligible stream/forum channels appear in a **Channels** group.
 Each result has a **Share** action. It checks current access and opens a
-confirmation that first states the chat will change from Private to View only
-and its link will be posted in that channel, then discloses community reading of
-the full history and Canvas. **Share** saves that
+confirmation titled **Share this chat?**. It first states the chat changes from
+Private to View only and its link will be posted in that channel, then discloses
+community reading of the full history and Canvas. **Share** saves that
 access and posts the link in one step. A chat already set to View only gets a
 similar confirmation explaining link delivery; Share posts the link without an
 access write. Public (existing) chats keep their access and post directly.

@@ -409,10 +409,10 @@ test("Share opens View only and posts a link without promoting or moving the Sol
     .toBe(true);
   await page.keyboard.press("Enter");
   const confirmation = page.getByRole("alertdialog", {
-    name: "Share chat in #Team?",
+    name: "Share this chat?",
   });
   await expect(confirmation).toContainText(
-    "This will change the chat from Private to View only and post its link in #Team.",
+    "This changes the chat from Private to View only and posts its link in #Team.",
   );
   await expect(confirmation).toContainText("Everyone in this community");
   await expect(

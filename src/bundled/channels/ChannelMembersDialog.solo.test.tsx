@@ -770,11 +770,13 @@ it.each(["member", "guest"] as const)(
     });
     await user.click(share);
     let confirmation = await screen.findByRole("alertdialog");
-    expect(confirmation).toHaveAccessibleName("Share chat in Planning?");
+    expect(confirmation).toHaveAccessibleName("Share this chat?");
     expect(confirmation).toHaveAccessibleDescription(
-      /^This will change the chat from Private to View only and post its link in Planning\./,
+      /^This changes the chat from Private to View only and posts its link in Planning\./,
     );
-    expect(confirmation).toHaveTextContent("full history and Canvas");
+    expect(confirmation).toHaveTextContent(
+      "Everyone in this community can read its full history, Canvas, workspace folders, and agent instructions.",
+    );
     expect(t.published).toHaveLength(0);
     await user.click(
       within(confirmation).getByRole("button", { name: "Cancel" }),
@@ -825,8 +827,9 @@ it("shares to the current result after cancelling a different destination", asyn
   const dialog = screen.getByRole("dialog", { name: "Share access" });
   await user.click(await findDestination(user, dialog));
   const first = await screen.findByRole("alertdialog", {
-    name: "Share chat in Planning?",
+    name: "Share this chat?",
   });
+  expect(first).toHaveTextContent("posts its link in Planning");
   await user.click(within(first).getByRole("button", { name: "Cancel" }));
   const search = within(dialog).getByRole("searchbox", {
     name: "Search people and channels",
@@ -837,9 +840,9 @@ it("shares to the current result after cancelling a different destination", asyn
     await within(dialog).findByRole("button", { name: "Share Review" }),
   );
   const confirmation = await screen.findByRole("alertdialog", {
-    name: "Share chat in Review?",
+    name: "Share this chat?",
   });
-  expect(confirmation).toHaveTextContent("post its link in Review");
+  expect(confirmation).toHaveTextContent("posts its link in Review");
   await user.click(within(confirmation).getByRole("button", { name: "Share" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   await waitFor(() =>

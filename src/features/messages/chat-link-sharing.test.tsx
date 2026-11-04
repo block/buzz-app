@@ -262,12 +262,14 @@ it.each([false, true])(
     );
     await send();
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Change general access?",
+      name: "Share this chat?",
     });
     expect(dialog).toHaveAccessibleDescription(
-      /^This will change the chat from Private to View only and send your message and chat link to #Team\./,
+      /^This changes the chat from Private to View only and sends your message and chat link to #Team\./,
     );
-    expect(dialog).toHaveTextContent("full history and Canvas");
+    expect(dialog).toHaveTextContent(
+      "full history, Canvas, workspace folders, and agent instructions",
+    );
     expect(dialog).toHaveTextContent("#Team");
     expect(screen.queryByRole("button", { name: "Send link only" })).toBeNull();
     expect(f.publish).not.toHaveBeenCalled();
@@ -312,7 +314,7 @@ it.each(["member", "guest"] as const)(
     await send();
     if (joinRole === "guest") {
       const dialog = await screen.findByRole("alertdialog", {
-        name: "Share chat link?",
+        name: "Share this chat?",
       });
       expect(dialog).toHaveAccessibleDescription(
         /^This chat is already View only\. Your message and chat link will be sent to #Team\./,
@@ -488,8 +490,12 @@ it("confirms mixed Private and View only links without rewriting the View only c
   const f = await fixture(false, { multiple: true, viewOnlySecond: true });
   await send();
   const dialog = await screen.findByRole("alertdialog");
+  expect(dialog).toHaveAccessibleName("Share these chats?");
   expect(dialog).toHaveTextContent(
     "Private chats will change to View only; the other chats will stay View only.",
+  );
+  expect(dialog).toHaveTextContent(
+    "Everyone in this community can read each chat’s full history, Canvas, workspace folders, and agent instructions.",
   );
   expect(dialog).toHaveTextContent("Work, Other work");
   expect(f.publish).not.toHaveBeenCalled();
@@ -517,11 +523,12 @@ it("a chat that becomes Public during consent keeps Public and only sends the me
 it("asks for fresh Private consent when a pasted View only chat narrows before Share", async () => {
   const f = await fixture(false, { visibility: "public", joinRole: "guest" });
   await send();
-  await screen.findByRole("alertdialog", { name: "Share chat link?" });
+  await screen.findByRole("alertdialog", { name: "Share this chat?" });
   f.changeDetails();
   await confirm();
   const renewed = await screen.findByRole("alertdialog", {
-    name: "Change general access?",
+    name: "Share this chat?",
+    description: /from Private to View only/,
   });
   await waitFor(() =>
     expect(

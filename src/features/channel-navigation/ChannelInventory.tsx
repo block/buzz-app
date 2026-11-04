@@ -73,6 +73,7 @@ import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferen
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
 import { useHideMutedChannelsPreference } from "../../bundled/channels/hide-muted-preference";
+import type { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import {
   sidebarSections,
   contributedSidebarSectionKey,
@@ -517,7 +518,7 @@ export function ChannelInventory({
       ),
     ),
     list.activityStatus === "ready",
-    hideMuted && !preferences.cached ? preferences.data?.muted : undefined,
+    hideMuted ? hiddenMutes(preferences.data?.muted, mute?.intents) : undefined,
   );
   const firstChannelSection = filteredSections.find(({ key }) =>
     isChannelSectionKey(key),
@@ -1754,4 +1755,18 @@ export function ChannelInventory({
       </>
     ),
   });
+}
+
+/** Pending mute intents apply at once, so the row's menu can return focus to its section. */
+function hiddenMutes(
+  confirmed: readonly string[] | undefined,
+  intents: ReturnType<typeof useOptimisticMute>["intents"] | undefined,
+) {
+  const ids = new Set(confirmed);
+  for (const intent of intents?.values() ?? []) {
+    if (!intent.pending) continue;
+    if (intent.muted) ids.add(intent.channelId);
+    else ids.delete(intent.channelId);
+  }
+  return [...ids];
 }

@@ -483,9 +483,10 @@ it.each(["Retry", "Dismiss"] as const)(
   },
 );
 
-it("hides confirmed mutes on this device's opt-in and lists them under Muted", async () => {
+it("hides mutes on this device's opt-in, returns focus to the section and lists them under Muted", async () => {
   const user = userEvent.setup();
   let muted = ["beta"];
+  let settle: (error?: Error) => void = () => {};
   const preferences = createSidebarPreferencesStore({
     read: async () => ({
       sections: [],
@@ -494,12 +495,16 @@ it("hides confirmed mutes on this device's opt-in and lists them under Muted", a
       muted,
     }),
     available: true,
-    writeMute: async ({ channelId, muted: next }) => {
-      muted = next
-        ? [...muted, channelId]
-        : muted.filter((id) => id !== channelId);
-      return muted;
-    },
+    writeMute: ({ channelId, muted: next }) =>
+      new Promise<readonly string[]>((resolve, reject) => {
+        settle = (error) => {
+          if (error) return reject(error);
+          muted = next
+            ? [...muted, channelId]
+            : muted.filter((id) => id !== channelId);
+          resolve(muted);
+        };
+      }),
   });
   try {
     const h = fixture(preferences.queries);
@@ -507,13 +512,31 @@ it("hides confirmed mutes on this device's opt-in and lists them under Muted", a
     expect(await screen.findByRole("button", { name: /^beta/ })).toBeVisible();
     act(() => setHideMutedChannelsPreference(true));
     expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
-    fireEvent.keyDown(screen.getByRole("button", { name: /^gamma/ }), {
-      key: "ContextMenu",
-    });
-    await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+    const summary = screen.getByLabelText("Channels", { selector: "summary" });
+    const mute = async () => {
+      fireEvent.keyDown(screen.getByRole("button", { name: /^gamma/ }), {
+        key: "ContextMenu",
+      });
+      await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+    };
+    await mute();
+    expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
+    await waitFor(() => expect(summary).toHaveFocus());
+    await act(async () => settle(new Error("offline")));
+    expect(
+      await screen.findByRole("dialog", { name: "Couldn’t mute gamma" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await mute();
+    await act(async () => settle());
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull(),
+      expect(preferences.queries.snapshot().data?.muted).toEqual([
+        "beta",
+        "gamma",
+      ]),
     );
+    expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull();
     expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
     await user.click(
       screen.getByRole("button", { name: "More actions for Channels" }),
@@ -541,6 +564,7 @@ it("hides confirmed mutes on this device's opt-in and lists them under Muted", a
       expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible(),
     );
   } finally {
+    settle();
     act(() => setHideMutedChannelsPreference(false));
     preferences.dispose();
   }

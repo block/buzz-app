@@ -2,7 +2,6 @@ import { RenameSidebarSection } from "./RenameSidebarSection";
 import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
 import {
-  Fragment,
   useId,
   useRef,
   useState,
@@ -152,6 +151,42 @@ export function SidebarSection({
   const [menuOpen, setMenuOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [activeOpen, setActiveOpen] = useState(false);
+  const hiddenGroup = (label: string, rows: readonly ChannelSummary[]) =>
+    channels &&
+    rows.length > 0 && (
+      <>
+        <MenuSeparator />
+        <MenuGroup>
+          <MenuGroupLabel emphasis="quiet">{label}</MenuGroupLabel>
+          {rows.map((channel) => {
+            const select = () => {
+              onToggle(true);
+              channels.select(channel.id);
+              setMenuOpen(false);
+            };
+            return session ? (
+              <ChannelSidebarMenuItem
+                key={channel.id}
+                channel={channel}
+                session={session}
+                selected={channels.selected === channel.id}
+                onSelect={select}
+              />
+            ) : (
+              <MenuItem
+                key={channel.id}
+                aria-current={
+                  channels.selected === channel.id ? "page" : undefined
+                }
+                onClick={select}
+              >
+                {channel.name}
+              </MenuItem>
+            );
+          })}
+        </MenuGroup>
+      </>
+    );
   const [renameOpen, setRenameOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState("");
@@ -318,59 +353,14 @@ export function SidebarSection({
                       </MenuRadioItem>
                     </MenuRadioGroup>
                     {channels &&
-                      [
-                        filter.value !== "all" && {
-                          label:
-                            filter.value === "unreads"
-                              ? "No unread messages"
-                              : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`,
-                          rows: channels.rows,
-                        },
-                        { label: "Muted", rows: channels.muted ?? [] },
-                      ].map(
-                        (group) =>
-                          group &&
-                          group.rows.length > 0 && (
-                            <Fragment key={group.label}>
-                              <MenuSeparator />
-                              <MenuGroup>
-                                <MenuGroupLabel emphasis="quiet">
-                                  {group.label}
-                                </MenuGroupLabel>
-                                {group.rows.map((channel) => {
-                                  const select = () => {
-                                    onToggle(true);
-                                    channels.select(channel.id);
-                                    setMenuOpen(false);
-                                  };
-                                  return session ? (
-                                    <ChannelSidebarMenuItem
-                                      key={channel.id}
-                                      channel={channel}
-                                      session={session}
-                                      selected={
-                                        channels.selected === channel.id
-                                      }
-                                      onSelect={select}
-                                    />
-                                  ) : (
-                                    <MenuItem
-                                      key={channel.id}
-                                      aria-current={
-                                        channels.selected === channel.id
-                                          ? "page"
-                                          : undefined
-                                      }
-                                      onClick={select}
-                                    >
-                                      {channel.name}
-                                    </MenuItem>
-                                  );
-                                })}
-                              </MenuGroup>
-                            </Fragment>
-                          ),
+                      filter.value !== "all" &&
+                      hiddenGroup(
+                        filter.value === "unreads"
+                          ? "No unread messages"
+                          : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`,
+                        channels.rows,
                       )}
+                    {channels?.muted && hiddenGroup("Muted", channels.muted)}
                   </MenuSubmenuPopup>
                 </MenuSubmenu>
               )}

@@ -282,6 +282,8 @@ build` runs it through `beforeBuildCommand`; `just desktop` runs it with `--dev`
 or the host, installs under `target/buzz-cli/<rev>/<target>/<profile>`, which
 lets Cargo skip an install that is already current, and replaces the staged file
 atomically. A first release build takes about two minutes.
+Distribution builds without network access can set `BUZZ_CLI_BINARY` to a
+`buzz` they built themselves; the script then stages that file instead.
 
 The macOS release signing service signs the executable with the Developer ID
 certificate and the hardened runtime, as it does `goose-acp` and

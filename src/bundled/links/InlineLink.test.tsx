@@ -71,15 +71,18 @@ it("renders private channel links with the design-system lock icon", () => {
     ),
   );
   expect(textOf(markup)).toBe("private");
-  expect(
-    renderToStaticMarkup(
-      <InlineLink href="buzz://channel/public">#public</InlineLink>,
-    ),
-  ).toContain(
+});
+
+it("renders public channel links with the hash flush against the name", () => {
+  const markup = renderToStaticMarkup(
+    <InlineLink href="buzz://channel/public">#public</InlineLink>,
+  );
+  expect(markup).toContain(
     renderToStaticMarkup(
       <HashIcon className={`${styles.icon} ${styles.flush}`} />,
     ),
   );
+  expect(textOf(markup)).toBe("public");
 });
 
 it("shows a supplied icon in place of the service's, with the label intact", () => {

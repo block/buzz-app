@@ -6,17 +6,14 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import {
-  HashIcon,
-  type ChatCircleIcon,
-} from "../../shared/design-system/icons/index";
+import type { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
-import referenceStyles from "../../shared/InlineReference.module.css";
+import { channelIconClass } from "../../shared/inline-reference";
 import { PageIcon } from "./PageIcon";
 import "./SearchChoices.css";
 
@@ -770,7 +767,9 @@ export function SearchChoices({
                                             {/* Text-sized and spaced as LinkLabel shows a channel mention's icon. */}
                                             {DetailIcon && (
                                               <DetailIcon
-                                                className={`${referenceStyles.icon} ${DetailIcon === HashIcon ? referenceStyles.flush : referenceStyles.snug}`}
+                                                className={channelIconClass(
+                                                  DetailIcon,
+                                                )}
                                               />
                                             )}
                                             {detail}

@@ -434,6 +434,8 @@ Cargo trusts an earlier build of a git checkout even after the revision changes,
 so a shared build directory would stage the old CLI after a bump. Linked
 worktrees use the main checkout's `target/`, so they share one build of each
 revision. A first release build takes about two minutes.
+Distribution builds without network access can set `BUZZ_CLI_BINARY` to a
+`buzz` they built themselves; the script then stages that file instead.
 
 The macOS release signing service signs the executable with the Developer ID
 certificate and the hardened runtime, as it does `goose-acp` and

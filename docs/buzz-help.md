@@ -296,9 +296,15 @@ available rather than silently discarding it.
   `claude setup-token` in Terminal and paste its token under **Sign in for
   reviews** in Claude's **Edit configuration**. Until it is saved, Claude
   reviews fail closed. It needs a Claude subscription and lasts a year.
+  Codex security reviews for protected agents need a ChatGPT sign-in made
+  there, and fail until there is one, or while Codex's sign-in is for another
+  workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
+  and keyring sign-ins can't run them.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
-  opens that conversation. Working indicators describe current work,
+  opens that conversation. Choosing an agent in the activity under a message,
+  or a Working now agent whose conversation is known, opens that
+  conversation's transcript. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary

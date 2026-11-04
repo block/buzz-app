@@ -24,13 +24,19 @@ export function profileMentionParts(
   for (const id of new Set(identities)) {
     const target = profileTarget(id);
     if (!target) continue;
+    const profile = profiles?.get(id);
+    // Every verified alias binds, so prose written under either name
+    // preference stays a mention when the reader prefers the other one.
     const labels = [
-      profiles?.get(id)?.name,
+      profile?.name,
+      profile?.verified?.displayName,
+      profile?.verified?.fullName,
+      profile?.username,
       ...agents
         .filter((agent) => agent.pubkey === id)
         .map((agent) => agent.name),
     ];
-    for (const name of labels) {
+    for (const name of new Set(labels)) {
       if (!name || /[\r\n]/.test(name)) continue;
       const keys = names.get(name) ?? new Set<string>();
       keys.add(target);

@@ -3,6 +3,7 @@ import {
   namePreference,
   subscribeNamePreference,
   verifiedLabel,
+  type NamePreference,
 } from "../profiles/name-preference";
 import type {
   VerifiedProfileAuthority,
@@ -216,6 +217,9 @@ export function createProfileDirectory(
         if (!closed && settled.some(Boolean)) publish(true);
       });
   }
+  // Read when first needed and on change, so publishing an empty or closing
+  // directory never reads storage.
+  let preference: NamePreference | undefined;
   let publishedAuthority: VerifiedProfileAuthority | undefined;
   let publishedRevision = 0;
   /** Notifies on display changes, on winning-event changes for `event()`
@@ -234,8 +238,9 @@ export function createProfileDirectory(
         .map((item) => item.event) ?? []),
     ]);
     loaded = new Set(next.keys());
-    const preference = namePreference();
-    for (const [id, value] of verified?.snapshot() ?? []) {
+    const verifiedProfiles = verified?.snapshot() ?? new Map();
+    if (verifiedProfiles.size) preference ??= namePreference();
+    for (const [id, value] of verifiedProfiles) {
       const { nameIsFallback: _fallback, ...base } = next.get(id) ?? {};
       next.set(
         id,
@@ -556,7 +561,9 @@ export function createProfileDirectory(
   });
   // Each reader's own choice of name for verified people refolds every label.
   const unsubscribePreference = subscribeNamePreference(() => {
-    if (!closed) publish(true);
+    if (closed) return;
+    preference = undefined;
+    publish(true);
   });
   publish();
   return {

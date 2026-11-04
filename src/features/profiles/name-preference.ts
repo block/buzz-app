@@ -33,7 +33,11 @@ export function subscribeNamePreference(listener: () => void) {
   };
 }
 export function useNamePreference() {
-  return useSyncExternalStore(subscribeNamePreference, namePreference);
+  return useSyncExternalStore(
+    subscribeNamePreference,
+    namePreference,
+    () => "username" as const,
+  );
 }
 export function setNamePreference(value: NamePreference): void {
   unsavedPreference = value;

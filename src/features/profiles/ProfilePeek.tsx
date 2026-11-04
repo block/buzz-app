@@ -28,8 +28,6 @@ import {
   verifiedLabel,
 } from "./name-preference";
 
-const noSubscription = () => () => {};
-
 type ProfilePeekProps = {
   trigger: ReactElement;
   name: string;
@@ -43,6 +41,28 @@ type ProfilePeekProps = {
   onOpen(target: string): boolean;
   onFocusChange?(focused: boolean): void;
 };
+
+/** The verified name this reader does not go by. Mounted only in an open
+ * preview, so closed rows never subscribe to the directory. */
+function OtherName({
+  session,
+  pubkey,
+}: {
+  session: RelaySession;
+  pubkey: string;
+}) {
+  const verified = useSyncExternalStore(
+    session.profiles.subscribe,
+    () => session.profiles.snapshot().get(pubkey)?.verified,
+  );
+  const preference = useNamePreference();
+  const otherName =
+    verified &&
+    otherVerifiedName(verifiedLabel(verified, preference), verified);
+  return otherName ? (
+    <div className="text-caption text-secondary">{otherName}</div>
+  ) : null;
+}
 
 /** A lightweight look at the same identity the avatar opens in the profile panel. */
 export function ProfilePeek({
@@ -59,14 +79,6 @@ export function ProfilePeek({
   onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
-  const verified = useSyncExternalStore(
-    session?.profiles.subscribe ?? noSubscription,
-    () => session?.profiles.snapshot().get(pubkey)?.verified,
-  );
-  const preference = useNamePreference();
-  const otherName =
-    verified &&
-    otherVerifiedName(verifiedLabel(verified, preference), verified);
   const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const profileButton = useRef<HTMLButtonElement>(null);
   const returningFromProfile = useRef<"pending" | "returned" | null>(null);
@@ -229,9 +241,7 @@ export function ProfilePeek({
               {agent && <RobotIcon aria-label="Agent" size={14} />}
               {name}
             </div>
-            {otherName && (
-              <div className="text-caption text-secondary">{otherName}</div>
-            )}
+            {session && <OtherName session={session} pubkey={pubkey} />}
             {session && (
               <UserStatusDisplay
                 session={session}

@@ -21,11 +21,15 @@ export function useMessageSelection(
     const element = list.current;
     if (!element) return;
     if (editScope) editScope.list.current = element;
-    // This scope's own editable composer: a thread without a reply box must
-    // not quote into the channel's, as focusTarget() would fall back to.
+    // This scope's own editable draft: a thread without a reply box must not
+    // quote into the channel's, as focusTarget() would fall back to, and a
+    // quote never rewrites a sent message that is being edited.
     const quoteTarget = () => {
       const input = editScope?.input.current as ComposerInputElement | null;
-      return input?.isConnected && !input.disabled && !input.readOnly
+      return input?.isConnected &&
+        !input.disabled &&
+        !input.readOnly &&
+        !input.closest("[data-editing]")
         ? input
         : null;
     };

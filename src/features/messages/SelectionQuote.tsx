@@ -7,6 +7,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { QuotesIcon } from "../../shared/design-system/icons";
+import {
+  activeModal,
+  observeOverlays,
+} from "../../shared/design-system/overlayLayer";
 import { Button } from "../../shared/design-system/ui/Button";
 import { quotableSelection, quoteSelection } from "./selection-quote";
 import styles from "./SelectionQuote.module.css";
@@ -16,15 +20,25 @@ type Place = Readonly<{ top: number; left: number }>;
 
 const GAP = 6;
 
-/** The selection's first top and last line end, where the pointer finished. */
-function edges(ranges: readonly Range[]): Edges | null {
+/** The selection's first top and last line end, where the pointer finished;
+ * null once the list has scrolled that end out of view. */
+function edges(ranges: readonly Range[], list: HTMLElement): Edges | null {
   const rects = ranges.flatMap((range) => [...range.getClientRects()]);
   const first = rects[0];
   const last = rects.at(-1);
-  return first && last
+  const view = list.getBoundingClientRect();
+  return first && last && last.bottom > view.top && last.top < view.bottom
     ? { top: first.top, bottom: last.bottom, right: last.right }
     : null;
 }
+
+const same = (a: Edges | null, b: Edges | null) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.top === b.top &&
+    a.bottom === b.bottom &&
+    a.right === b.right);
 
 /** Below the selection's end, or above its start when the viewport ends first. */
 function place(at: Edges, width: number, height: number): Place {
@@ -56,16 +70,28 @@ export function SelectionQuote({
     let pressed = false;
     const read = () => {
       frame = 0;
-      const target = pressed ? undefined : quotableSelection();
-      setAt(
-        target && target.element === list.current ? edges(target.ranges) : null,
-      );
+      const element = list.current;
+      // A modal owns the page: the shortcut is blocked there, so is this.
+      const target =
+        pressed || !element || activeModal(document)
+          ? undefined
+          : quotableSelection();
+      const next =
+        target && element && target.element === element
+          ? edges(target.ranges, element)
+          : null;
+      setAt((current) => (same(current, next) ? current : next));
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(read);
     };
     const press = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+      // Pressing Quote itself must keep it mounted until the click lands.
+      if (
+        event.button !== 0 ||
+        surface.current?.contains(event.target as Node | null)
+      )
+        return;
       pressed = true;
       schedule();
     };
@@ -73,17 +99,21 @@ export function SelectionQuote({
       pressed = false;
       schedule();
     };
+    const stopObserving = observeOverlays(schedule);
     document.addEventListener("selectionchange", schedule);
     document.addEventListener("pointerdown", press, true);
     document.addEventListener("pointerup", release, true);
+    document.addEventListener("pointercancel", release, true);
     // Scrolling moves the selection without changing it.
     document.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     return () => {
       cancelAnimationFrame(frame);
+      stopObserving();
       document.removeEventListener("selectionchange", schedule);
       document.removeEventListener("pointerdown", press, true);
       document.removeEventListener("pointerup", release, true);
+      document.removeEventListener("pointercancel", release, true);
       document.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
     };

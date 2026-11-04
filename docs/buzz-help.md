@@ -125,6 +125,9 @@ if that desktop app is up and running.
   Typed Markdown formats as you type; **Settings → Appearance → Disable formatting
   while typing** leaves it as plain characters until you send, and hides the
   formatting toolbar.
+- **Editing a message** keeps unsaved changes across channel switches, thread
+  closes and restarts. Choose **Edit message** to resume if it does not reopen.
+  Save or Cancel ends it; unsaved edits are not listed in Drafts.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my

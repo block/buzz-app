@@ -57,13 +57,14 @@ struct Discussion {
     has_more: bool,
     rows: Vec<DiscussionRow>,
 }
+/// One projected message. Shared with pop-out windows, which present the same rows.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DiscussionRow {
+pub(crate) struct DiscussionRow {
     id: String,
     author_id: String,
     channel_id: String,
-    attachments: Vec<DiscussionAttachment>,
+    pub(crate) attachments: Vec<DiscussionAttachment>,
     author: String,
     picture: Option<String>,
     #[serde(default)]
@@ -84,19 +85,19 @@ struct DiscussionRow {
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DiscussionAttachment {
+pub(crate) struct DiscussionAttachment {
     url: String,
     kind: String,
     mime: Option<String>,
     size: Option<u64>,
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     duration: Option<f64>,
     voice_note: Option<bool>,
     waveform: Option<Vec<u8>>,
     dimensions: Option<AttachmentDimensions>,
     blurhash: Option<String>,
     preview_url: Option<String>,
-    source: Option<String>,
+    pub(crate) source: Option<String>,
     preview_source: Option<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -104,6 +105,22 @@ struct DiscussionAttachment {
 struct AttachmentDimensions {
     width: u32,
     height: u32,
+}
+impl DiscussionRow {
+    pub(crate) fn valid(&self) -> bool {
+        self.id.len() <= 128
+            && self.author_id.len() <= 128
+            && self.channel_id.len() <= 128
+            && self.attachments.iter().all(|a| a.valid())
+            && matches!(
+                self.delivery.as_str(),
+                "sending" | "accepted" | "unknown" | "failed" | "seen"
+            )
+            && self.author.len() <= 4096
+            && self.text.len() <= 65536
+            && self.picture.as_ref().is_none_or(|p| p.len() <= 8192)
+            && self.picture_url.as_ref().is_none_or(|p| p.len() <= 8192)
+    }
 }
 impl DiscussionAttachment {
     fn valid(&self) -> bool {
@@ -224,20 +241,7 @@ fn validate(view: &View) -> Result<()> {
                 || !matches!(d.status.as_str(), "loading" | "ready" | "error")
                 || d.error.as_ref().is_some_and(|e| e.len() > 8192)
                 || d.rows.len() > 200
-                || d.rows.iter().any(|r| {
-                    r.id.len() > 128
-                        || r.author_id.len() > 128
-                        || r.channel_id.len() > 128
-                        || r.attachments.iter().any(|a| !a.valid())
-                        || !matches!(
-                            r.delivery.as_str(),
-                            "sending" | "accepted" | "unknown" | "failed" | "seen"
-                        )
-                        || r.author.len() > 4096
-                        || r.text.len() > 65536
-                        || r.picture.as_ref().is_some_and(|p| p.len() > 8192)
-                        || r.picture_url.as_ref().is_some_and(|p| p.len() > 8192)
-                })
+                || d.rows.iter().any(|r| !r.valid())
         })
         || view.participants.iter().any(|p| {
             !p.level.is_finite()

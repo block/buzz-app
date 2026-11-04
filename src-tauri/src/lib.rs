@@ -22,9 +22,14 @@ mod decisions;
 mod deep_links;
 mod dock;
 mod huddle_window;
+mod popout_window;
 use huddle_window::{
     huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
     huddle_window_watch, HuddleWindow,
+};
+use popout_window::{
+    popout_window_action, popout_window_detached, popout_window_open, popout_window_update,
+    popout_window_watch, Popouts,
 };
 #[cfg(test)]
 #[path = "enterprise_adapter_url.rs"]
@@ -661,6 +666,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         huddle_window_update,
         huddle_window_watch,
         huddle_window_action,
+        popout_window_open,
+        popout_window_update,
+        popout_window_detached,
+        popout_window_watch,
+        popout_window_action,
         huddle_open,
         huddle_close,
         huddle_pcm,
@@ -1126,6 +1136,7 @@ pub fn run() {
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
         .manage(HuddleWindow::default())
+        .manage(Popouts::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -1186,10 +1197,15 @@ pub fn run() {
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
                 webview.state::<app_agents::AppAgentHost>().page_load();
+                popout_window::detach_all(webview.app_handle());
             }
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if popout_window::close_requested(window, api) { return; }
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed) { popout_window::destroyed(window); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
             #[cfg(target_os = "macos")]

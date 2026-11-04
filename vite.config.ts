@@ -232,6 +232,7 @@ export default defineConfig(async ({ command, mode }) => {
           compute: fileURLToPath(
             new URL("compute-widget.html", import.meta.url),
           ),
+          popout: fileURLToPath(new URL("popout.html", import.meta.url)),
         },
       },
     },

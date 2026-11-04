@@ -2013,6 +2013,9 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         "huddle" => app
             .try_state::<crate::huddle_window::HuddleWindow>()
             .is_some_and(|host| host.permits_download(&source, &name)),
+        label if crate::popout_window::is_popout(label) => app
+            .try_state::<crate::popout_window::Popouts>()
+            .is_some_and(|host| host.permits_download(label, &source, &name)),
         _ => false,
     };
     if !allowed {

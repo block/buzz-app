@@ -11163,6 +11163,53 @@ it("refuses agent creation through a stale handle or an unavailable type", async
   expect(native.create).toHaveBeenCalledTimes(1);
 });
 
+it("carries a creation draft's instructions and picture, refusing ones it cannot apply", async () => {
+  const { service, plugin, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ model: string }>({
+      id: "plain",
+      title: "Plain",
+      defaults: () => ({ config: { model: "small" } }),
+      run: vi.fn(),
+    });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent) throw new Error("Missing creation handle");
+  const picture = "https://relay.example.test/media/child.png";
+  const { requestId } = await handle.createAgent({
+    type: "example/echo",
+    name: "Child",
+    instructions: "Review PRs.",
+    picture,
+  });
+  expect(service.creationRequests()).toEqual([
+    expect.objectContaining({
+      id: requestId,
+      instructions: "Review PRs.",
+      picture,
+    }),
+  ]);
+  for (const bad of [
+    "http://example.test/a.png",
+    "data:image/png;base64,AA",
+    "https://user:secret@example.test/a.png",
+    `https://example.test/${"a".repeat(2048)}.png`,
+  ])
+    await expect(
+      handle.createAgent({ type: "example/echo", name: "Kid", picture: bad }),
+    ).rejects.toThrow("HTTPS image URL");
+  await expect(
+    handle.createAgent({
+      type: "other/plain",
+      name: "Kid",
+      instructions: "Review PRs.",
+    }),
+  ).rejects.toThrow("Plain agents have no instructions");
+  expect(service.creationRequests()).toHaveLength(1);
+});
+
 it("keeps a failed review for retry and rejects concurrent approvals", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });
@@ -11313,6 +11360,12 @@ it("changes instructions in place and discards a dismissed change draft", async 
     config: { reply: "Triage." },
   });
   expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
+  const picture = "https://relay.example.test/media/child.png";
+  const proposed = await handle.updateAgent({ agent: "Child", picture });
+  expect(service.updateRequests()).toEqual([
+    expect.objectContaining({ id: proposed.requestId, picture }),
+  ]);
+  service.dismissUpdate(proposed.requestId);
   const draft = await handle.updateAgent({ agent: "Child", name: "Kid" });
   service.dismissUpdate(draft.requestId);
   expect(service.updateRequests()).toEqual([]);
@@ -11358,6 +11411,12 @@ it("refuses change drafts it cannot apply", async () => {
   await expect(
     handle.updateAgent({ agent: "Child", type: "missing" }),
   ).rejects.toThrow("not available");
+  await expect(
+    handle.updateAgent({
+      agent: "Child",
+      picture: "http://example.test/a.png",
+    }),
+  ).rejects.toThrow("HTTPS image URL");
   await service.save(bot, { name: "Child" });
   await expect(
     handle.updateAgent({ agent: "Child", name: "Kid" }),

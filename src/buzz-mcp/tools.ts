@@ -131,14 +131,14 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
-    { type: str, name: str },
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; picture is an HTTPS image URL.",
+    { type: str, name: str, instructions: str, picture: str },
     ["type", "name"],
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
-    { agent: str, name: str, type: str, instructions: str },
+    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is an HTTPS image URL. Nothing changes until they save it.",
+    { agent: str, name: str, type: str, instructions: str, picture: str },
     ["agent"],
   ),
   tool(
@@ -454,7 +454,17 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type)?.trim();
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
-    return JSON.stringify(await client.createAgent({ type, name }));
+    const { instructions } = args;
+    const picture = text(args.picture);
+    return JSON.stringify(
+      await client.createAgent({
+        type,
+        name,
+        ...(typeof instructions === "string" &&
+          instructions.trim() && { instructions }),
+        ...(picture && { picture }),
+      }),
+    );
   },
   async self_handoff(tools, args) {
     const { client, context } = tools;
@@ -501,6 +511,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!agent) throw new Error("agent is required");
     const name = text(args.name);
     const type = text(args.type);
+    const picture = text(args.picture);
     // Empty instructions propose clearing them.
     const { instructions } = args;
     return JSON.stringify(
@@ -509,6 +520,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+        ...(picture && { picture }),
       }),
     );
   },

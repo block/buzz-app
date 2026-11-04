@@ -86,11 +86,14 @@ export function AgentCreateDialog({
   const [name, setName] = useState(
     update ? (update.request.name ?? update.agent.name) : (request?.name ?? ""),
   );
-  const [avatar, setAvatar] = useState<AvatarSelection>(() =>
-    update
-      ? { kind: "image", picture: update.agent.picture ?? "" }
-      : { kind: "gloopie", picture: randomAgentAvatar().url },
-  );
+  const [avatar, setAvatar] = useState<AvatarSelection>(() => {
+    const picture = update
+      ? (update.request.picture ?? update.agent.picture ?? "")
+      : request?.picture;
+    return picture !== undefined
+      ? { kind: "image", picture }
+      : { kind: "gloopie", picture: randomAgentAvatar().url };
+  });
   const [typeKey, setTypeKey] = useState(
     (update ? (update.request.type ?? update.agent.type) : request?.type) ??
       types[0]?.key ??
@@ -105,19 +108,23 @@ export function AgentCreateDialog({
       return undefined;
     }
   };
-  /** The agent's settings in `item`, with the requested instructions. */
-  const seed = (item: RegisteredAgentType | undefined) => {
-    if (!update) return startingConfig(item);
-    const { agent, request } = update;
-    const config =
-      item?.key === agent.type
-        ? agent.config
+  /** The agent's settings in `item`, with `instructions`. */
+  const seed = (
+    item: RegisteredAgentType | undefined,
+    instructions: string | undefined,
+  ) => {
+    const config = !update
+      ? startingConfig(item)
+      : item?.key === update.agent.type
+        ? update.agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    return request.instructions !== undefined && item?.adopt
-      ? item.adopt({ instructions: request.instructions }, config)
+    return instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions }, config)
       : config;
   };
-  const [config, setConfig] = useState(() => seed(type));
+  const [config, setConfig] = useState(() =>
+    seed(type, (update?.request ?? request)?.instructions),
+  );
   const preview = migration(type);
   const [dirty, setDirty] = useState(Boolean(update));
   const [pending, setPending] = useState(false);
@@ -141,14 +148,15 @@ export function AgentCreateDialog({
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
-    const next = seed(item);
     // Typed instructions follow a new agent to its new harness.
-    const instructions = update
-      ? undefined
-      : type?.carry?.(config).instructions;
     chooseModel(
       item,
-      instructions && item.adopt ? item.adopt({ instructions }, next) : next,
+      seed(
+        item,
+        update
+          ? update.request.instructions
+          : type?.carry?.(config).instructions,
+      ),
     );
   };
   const create = async () => {

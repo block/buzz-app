@@ -882,6 +882,34 @@ async fn saving_consent_after_login_wakes_the_existing_uploader_and_disable_fenc
     assert_eq!(service.state.lock().unwrap().uploads.len(), 1);
 }
 
+#[tokio::test]
+async fn a_managed_build_enables_backup_during_a_running_pass() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let host = service.host(directory.path());
+    service.enable(&host).await;
+    service.pause_upload.store(true, Ordering::SeqCst);
+    let started = service.upload_started.notified();
+    host.state.lock().unwrap().sessions.push(service.session());
+    host.trigger(IdentityHost::fixture());
+    started.await;
+    let (identity, path, key) = (
+        IdentityHost::fixture(),
+        directory.path().join("choice.json"),
+        pubkey([1; 32]),
+    );
+    let config = host.config.as_ref().as_ref().unwrap();
+    let set =
+        |managed| crate::nsec_backup_choice::set(&identity, &path, config, &key, true, managed);
+    let unmanaged = set(false).await.map(|choice| choice.automatic);
+    let managed = set(true).await.map(|choice| choice.automatic);
+    service.release_upload.add_permits(1);
+    finish_background(&host).await;
+    assert_eq!(unmanaged, Err(crate::nsec_backup_choice::BUSY.into()));
+    assert_eq!(managed, Ok(Some(true)));
+    assert_eq!(service.state.lock().unwrap().uploads.len(), 1);
+}
+
 #[test]
 fn source_generations_and_teardown_fence_retired_work_without_another_sources_logout() {
     // No filesystem or worker is configured; exercise purpose-specific credential ownership.

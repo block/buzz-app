@@ -294,6 +294,12 @@ impl Default for NsecBackupHost {
         }
     }
 }
+/// Whether this build was compiled with `BUZZ_NSEC_BACKUP_CONSENT=managed`.
+/// build.rs rejects managed consent without configured backup.
+fn managed_build() -> bool {
+    crate::nsec_backup_config::managed(option_env!("BUZZ_NSEC_BACKUP_CONSENT"), true) == Ok(true)
+}
+
 impl NsecBackupHost {
     pub(crate) fn with_federated_identity(mut self, federated: FederatedIdentity) -> Self {
         self.federated = Some(federated);
@@ -307,8 +313,10 @@ impl NsecBackupHost {
     ) -> Result<crate::nsec_backup_choice::BackupChoice> {
         let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
         let path = self.root.as_ref().ok_or(UNAVAILABLE)?.join("choice.json");
+        let managed = managed_build();
         let choice =
-            crate::nsec_backup_choice::set(&identity, &path, config, pubkey, automatic).await?;
+            crate::nsec_backup_choice::set(&identity, &path, config, pubkey, automatic, managed)
+                .await?;
         if automatic {
             self.trigger(identity);
         }
@@ -607,10 +615,7 @@ impl NsecBackupHost {
             config,
             &pubkey,
         )?;
-        let managed =
-            crate::nsec_backup_config::managed(option_env!("BUZZ_NSEC_BACKUP_CONSENT"), true)
-                == Ok(true);
-        if !managed && consent.automatic != Some(true) {
+        if !managed_build() && consent.automatic != Some(true) {
             return Ok(Outcome::Waiting(Waiting::NoConsent));
         }
         // Hold consent's shared lease until this pass ends, including persisted retries.

@@ -28,7 +28,8 @@ the interface unless an available tool actually supports that action.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
   The key-import field masks your key. Use the eye inside the field to reveal
-  or hide it. Check the signed-in email before creating a key.
+  or hide it. Check the signed-in email before choosing **Set me up**, which
+  creates a key.
   Setup then creates a new key or takes an existing private key, and may link
   it to the signed-in account. Builderlab setup backs the key up automatically;
   if backup fails temporarily, retry to complete setup. If backup is not supported
@@ -140,6 +141,12 @@ that agent in Buzz; they do not notify the external app through this connection.
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
   dots; muting does not mark messages or threads as read.
+- **Message link previews** appear when you hover or focus a Buzz message link.
+  When the message can't be shown, the card says why: the channel is private,
+  gone or in another community; the message isn't available, and may have
+  been deleted; or the preview couldn't load. Links don't record their
+  community, so one from another community looks like a private or missing
+  channel. The card still opens the link.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.
@@ -175,6 +182,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires.
+- **Spelling**: in the Mac app or Safari, the message box underlines
+  misspellings but does not correct them unless you turn on **Settings →
+  Appearance → Allow automatic spelling correction**. Correct Spelling
+  Automatically in the message box's right-click Spelling and Grammar menu then
+  turns correction on or off.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe
@@ -269,6 +281,12 @@ available rather than silently discarding it.
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
   opens that conversation. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
+  Expand grouped work updates to read each message; the collapsed excerpt names
+  its speaker. Thread work appears inside its thread; the channel’s reply summary
+  still shows when an agent is working there. Expand recorded work to
+  open its transcript or **Stop** the running request; before any work updates
+  arrive, those controls appear on the live indicator. Stop availability depends
+  on the agent type.
 - When a request to an agent running on this device fails, the activity under
   the message offers **Retry**, which asks the agent again, and **Dismiss**,
   which hides the failure.

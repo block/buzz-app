@@ -57,7 +57,11 @@ export function useMessageActionBarReady(
       document.documentElement.hasAttribute("data-keyboard-navigation"),
   );
   useEffect(() => {
-    const row = rowRef?.current;
+    // Response activity is a sibling of the painted message. Interaction with
+    // either belongs to the same message and must prepare its focus destination.
+    const row =
+      rowRef?.current?.closest<HTMLElement>("[data-message-id]") ??
+      rowRef?.current;
     if (ready || !row) return;
     const activate = () => setReady(true);
     const query = floating();
@@ -103,6 +107,8 @@ export function useFloatingActionBar(
   const contentBounds = useRef<{
     content: DOMRect;
     toolbar: DOMRect;
+    /** Byline band from the content to a bar moved off the author's name. */
+    clearance: DOMRect | null;
   } | null>(null);
 
   useEffect(() => {
@@ -133,7 +139,7 @@ export function useFloatingActionBar(
         !row.contains(target)
       )
         return false;
-      const { content, toolbar } = bounds;
+      const { content, toolbar, clearance } = bounds;
       const { clientX: x, clientY: y } = event;
       if (
         target.closest("[data-message-payload]") &&
@@ -141,6 +147,17 @@ export function useFloatingActionBar(
         x <= content.right &&
         y >= content.top &&
         y <= content.bottom
+      )
+        return true;
+      // A bar moved off the author's name no longer meets the content's top
+      // edge: the byline band from the content to the bar keeps the hover on
+      // the way to either end.
+      if (
+        clearance &&
+        x >= clearance.left &&
+        x <= clearance.right &&
+        y >= clearance.top &&
+        y <= clearance.bottom
       )
         return true;
       // Browser hit testing can round a fractional toolbar edge inward.
@@ -175,11 +192,25 @@ export function useFloatingActionBar(
       (row.matches(":has(:focus-visible)") ||
         (document.documentElement.hasAttribute("data-keyboard-navigation") &&
           row.contains(document.activeElement)));
+    // A preview card joins the top layer after a toolbar that is already
+    // shown. Hiding that toolbar while the card is open would show it again
+    // above the card on the next hover, so this row's open preview keeps it.
+    // The card's close releases it. The selector finds a preview trigger with
+    // any popup open, not only its card: MessageLink's context menu shares
+    // the link, so that menu holds the toolbar too, hidden behind the menu.
+    let shown = false;
     const update = (focused = keyboardFocus()) => {
       const ownsPopup = !!bar.querySelector(
         '[aria-haspopup][aria-expanded="true"]',
       );
-      const next = hovered || focused || open || ownsPopup;
+      const next =
+        hovered ||
+        focused ||
+        open ||
+        ownsPopup ||
+        (shown &&
+          !!row.querySelector("[data-preview-card-trigger][data-popup-open]"));
+      shown = next;
       if (!next) row.removeAttribute("data-actions-revealed");
       setRevealed(next);
     };
@@ -219,7 +250,7 @@ export function useFloatingActionBar(
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["aria-expanded"],
+      attributeFilter: ["aria-expanded", "data-popup-open"],
     });
     update();
     return () => {
@@ -322,6 +353,10 @@ export function useFloatingActionBar(
           Math.max(whole.bottom, rect.bottom) - top,
         );
       }
+      // The author's name opens a profile; the bar must not cover it.
+      const author = row
+        .querySelector("[data-message-author]")
+        ?.getBoundingClientRect();
       if (covered(anchor)) {
         hide();
         return;
@@ -376,10 +411,33 @@ export function useFloatingActionBar(
       bar.style.clipPath =
         hidden > 0 ? `inset(${hidden}px -100vmax -100vmax)` : "";
       const left = rtl ? whole.left - overlap : whole.right - width + overlap;
-      const placedLeft = Math.max(start, Math.min(left, end - width));
+      // Over a short message the bar would cover the name, so it clears the
+      // name on the side with room. A mirrored row keeps its place: its bar
+      // already ends at the avatar.
+      const cleared =
+        author?.width &&
+        author.bottom > paintedTop &&
+        author.top < top &&
+        !row.hasAttribute("data-viewer-message")
+          ? rtl
+            ? Math.min(left, author.left - gap - width)
+            : Math.max(left, author.right + gap)
+          : left;
+      const placedLeft = Math.max(start, Math.min(cleared, end - width));
+      const toolbar = new DOMRect(placedLeft, paintedTop, width, height);
+      const clearanceLeft = Math.min(whole.left, toolbar.left);
       contentBounds.current = {
         content: whole,
-        toolbar: new DOMRect(placedLeft, paintedTop, width, height),
+        toolbar,
+        clearance:
+          cleared === left
+            ? null
+            : new DOMRect(
+                clearanceLeft,
+                paintedTop,
+                Math.max(whole.right, toolbar.right) - clearanceLeft,
+                height,
+              ),
       };
       bar.style.top = `${top}px`;
       bar.style.left = `${placedLeft}px`;
@@ -487,6 +545,9 @@ export function useFloatingActionBar(
       siblings.disconnect();
       unobserveOverlays();
       hide();
+      // An overlay or positioning update can restore this attribute between a
+      // hover update removing it and React committing the hidden bar.
+      row.removeAttribute("data-actions-revealed");
     };
   }, [floating, revealed, rowRef, barRef, slotRef]);
 

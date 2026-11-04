@@ -176,6 +176,8 @@ describe("harnessKit.conversation", () => {
       await kit.conversation(delivery({ type: "mention", event }), "thread"),
     ).toBeUndefined();
     const workflow = message("3", "@Ampy go", {
+      // Workflow events are signed by the relay, not by the owner.
+      pubkey: "d".repeat(64),
       tags: [
         ["h", channel],
         ["buzz:workflow", "w"],

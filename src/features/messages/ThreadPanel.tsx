@@ -1049,6 +1049,18 @@ function ThreadMessages({
     [snapshot.root, snapshot.replies, activitySnapshot, agentPubkeys, rootId],
   );
   const rootActivity = rootId ? rootPresentation.byRow.get(rootId) : undefined;
+  // A stopped note may follow only a reply that is always shown: collapsed
+  // branches do not mount their rows.
+  const rootReplies = useMemo(
+    () =>
+      activityPresentation(
+        tree.children.get(undefined) ?? [],
+        activitySnapshot,
+        agentPubkeys,
+        rootId,
+      ),
+    [tree, activitySnapshot, agentPubkeys, rootId],
+  );
   const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
@@ -1520,7 +1532,7 @@ function ThreadMessages({
               presentation.representedAgents.get(row.id),
             )}
             stoppedRequest={
-              rootId && rootPresentation.replyRequests.get(row.id) === rootId
+              rootId && rootReplies.replyRequests.get(row.id) === rootId
                 ? snapshot.root
                 : undefined
             }
@@ -1857,7 +1869,7 @@ function ThreadMessages({
               )}
               repliedAgents={stableActivity.agents(
                 `replied:${snapshot.root.id}`,
-                rootPresentation.repliedAgents.get(snapshot.root.id),
+                rootReplies.repliedAgents.get(snapshot.root.id),
               )}
               recordedActivity={stableActivity.activity(
                 snapshot.root.id,

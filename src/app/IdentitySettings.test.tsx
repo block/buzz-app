@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { npubEncode } from "nostr-tools/nip19";
@@ -13,7 +20,8 @@ import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
-import { IdentitySettings } from "./IdentitySettings";
+import { CHANNEL_ACTIVITY_KINDS } from "../features/relay/channel-activity";
+import { IdentitySettings, keyActivity } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
@@ -356,3 +364,140 @@ it("follows the status store as it publishes a higher seq", async () => {
   expect(within(row).queryByRole("button")).toBeNull();
   expect(within(row).queryByRole("switch")).toBeNull();
 });
+
+it("lists the account's backed-up keys with their last activity and switches through sign-out", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const other = "cd".repeat(32);
+  const host = backupHost(at(1, { status: "complete" }));
+  const identity = {
+    ...host.identity,
+    wipeRefusal: vi.fn(async () => null),
+  } as Identity;
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  const answer = (body: object) => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(body),
+  });
+  fi.request.mockImplementation(async ({ path }) =>
+    path.endsWith("/nostr-identities/current")
+      ? answer({ identity: { pubkey_hex: viewer } })
+      : answer({
+          current_nostr_pubkey: viewer,
+          backup_nostr_pubkeys: [viewer, other],
+        }),
+  );
+  const lastActive = vi.fn(async (pubkey: string) => {
+    if (pubkey === other) return { at: Date.now() / 1000 - 7200, sent: 3 };
+    throw new Error("relay refused");
+  });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      identity={identity}
+      builderlabIdentity={fi.service}
+      lastActive={lastActive}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const list = await screen.findByRole("radiogroup", {
+    name: "Backed-up keys",
+  });
+  const radios = within(list).getAllByRole("radio");
+  expect(radios).toHaveLength(2);
+  expect(radios[0]).toHaveAccessibleName("This device, Linked");
+  expect(radios[0]).toHaveAttribute("aria-disabled", "true");
+  expect(
+    await within(list).findByText(
+      /Last active 2 hours ago · 3 messages in 7 days/,
+    ),
+  ).toBeVisible();
+  expect(within(list).getByText(/Couldn’t check activity/)).toBeVisible();
+  expect(within(list).getByText(npubEncode(other))).toBeVisible();
+  const swap = screen.getByRole("button", { name: "Switch to this key" });
+  expect(swap).toBeDisabled();
+  await userEvent.click(
+    within(list).getByRole("radio", { checked: false, name: "Backed-up key" }),
+  );
+  await userEvent.click(swap);
+  expect(
+    screen.getByRole("alertdialog", { name: "Sign out of Buzz?" }),
+  ).toBeVisible();
+  expect(localStorage.getItem("buzz.restore-choice")).toBe(other);
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(localStorage.getItem("buzz.restore-choice")).toBeNull();
+});
+
+it.each([
+  ["only this device's key is backed up", viewer, [viewer]],
+  // First run's Welcome back would offer no restore for these.
+  ["no key is linked", null, ["cd".repeat(32)]],
+  [
+    "the linked key has no backup and only one other does",
+    viewer,
+    ["cd".repeat(32)],
+  ],
+])("hides backed-up keys when %s", async (_label, linked, backups) => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "complete" }));
+  const fi = federatedFixture();
+  fi.publish({ status: "signed-in", email: "a@example.com" });
+  fi.request.mockImplementation(async ({ path }) => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(
+      path.endsWith("/nostr-identities/current")
+        ? { identity: linked && { pubkey_hex: linked } }
+        : { current_nostr_pubkey: linked, backup_nostr_pubkeys: backups },
+    ),
+  }));
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      identity={host.identity}
+      builderlabIdentity={fi.service}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(screen.queryByText("Backed-up keys")).toBeNull();
+  expect(screen.queryByText("Checking your backups…")).toBeNull();
+});
+
+it.each([
+  ["no events", [], undefined],
+  [
+    "events",
+    [
+      // Read by both filters: counted once.
+      { id: "a", kind: 9, created_at: 900 },
+      { id: "a", kind: 9, created_at: 900 },
+      { id: "b", kind: 9, created_at: 800 },
+      // Older than 7 days, or not a chat message: not counted.
+      { id: "c", kind: 9, created_at: 100 },
+      { id: "d", kind: 40002, created_at: 950 },
+    ],
+    { at: 950, sent: 2 },
+  ],
+] as const)(
+  "reads a key's newest activity and 7-day message count from a relay with %s",
+  async (_label, events, activity) => {
+    const since = 200;
+    vi.spyOn(Date, "now").mockReturnValue((since + 7 * 24 * 60 * 60) * 1000);
+    const read = vi.fn(async () => events);
+    const relay = {
+      snapshot: () => ({ status: "ready", session: { read } }),
+    } as unknown as Parameters<typeof keyActivity>[0];
+    await expect(keyActivity(relay, viewer)).resolves.toEqual(activity);
+    expect(read).toHaveBeenCalledWith(
+      [
+        { kinds: [...CHANNEL_ACTIVITY_KINDS], authors: [viewer], limit: 1 },
+        { kinds: [9], authors: [viewer], since, limit: 500 },
+      ],
+      { priority: "background" },
+    );
+  },
+);

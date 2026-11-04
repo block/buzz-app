@@ -12,6 +12,8 @@ afterEach(cleanup);
 
 const linked = "a".repeat(64);
 const other = "b".repeat(64);
+/** The signed-in first-run account. */
+const subject = "account-a";
 function recovery(state: RecoveryState, canceled = true) {
   return {
     subscribe: () => () => {},
@@ -27,6 +29,7 @@ function mount(state: RecoveryState, canceled?: boolean) {
     <KeyRestore
       recovery={stub}
       expectedPubkey={linked}
+      subject={subject}
       onBack={() => {}}
       onImport={() => {}}
       onInstalled={() => {}}
@@ -83,24 +86,98 @@ it("starts no new attempt when the live one could not be canceled", async () => 
   expect(stub.beginRecovery).not.toHaveBeenCalled();
 });
 
-it("restores the already selected linked identity without a second choice", async () => {
-  const stub = mount({
+it("with several backups of this account, preselects the linked identity and installs the one picked", async () => {
+  const onInstalled = vi.fn();
+  const stub = recovery({
     status: "choosing",
     candidates: [
       { handle: "other", pubkey: other },
       { handle: "linked", pubkey: linked },
     ],
-    currentPubkey: other,
+    currentPubkey: linked,
     failedCount: 0,
+    subject,
   });
-  await waitFor(() =>
-    expect(stub.installRecovery).toHaveBeenCalledExactlyOnceWith("linked"),
+  render(
+    <KeyRestore
+      recovery={stub}
+      expectedPubkey={linked}
+      subject={subject}
+      onBack={() => {}}
+      onImport={() => {}}
+      onInstalled={onInstalled}
+    />,
   );
+  // Nothing installs until the user confirms a choice.
+  expect(stub.installRecovery).not.toHaveBeenCalled();
+  const radios = screen.getAllByRole("radio");
+  expect(radios).toHaveLength(2);
   expect(
-    screen.queryByRole("button", { name: "Restore this identity" }),
-  ).toBeNull();
-  expect(screen.queryByRole("radiogroup")).toBeNull();
+    screen.getByRole("radio", { checked: true }),
+  ).toHaveAccessibleDescription(expect.stringContaining("Linked identity"));
+  await userEvent.click(screen.getByRole("radio", { checked: false }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(stub.installRecovery).toHaveBeenCalledExactlyOnceWith("other");
+  await waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(1));
 });
+
+it("a partial recovery still offers its surviving other key, with Try again and Enter my private key beside the choice", async () => {
+  const stub = mount({
+    status: "choosing",
+    candidates: [{ handle: "b", pubkey: other }],
+    currentPubkey: linked,
+    failedCount: 1,
+    subject,
+  });
+  // The linked key's backup may be the one that failed: nothing is preselected.
+  expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/Some backups couldn’t be recovered/)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Enter my private key" }),
+  ).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(stub.beginRecovery).toHaveBeenCalledTimes(1));
+  expect(stub.installRecovery).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["another account", "account-b"],
+  ["an unknown account", undefined],
+])(
+  "backups recovered from %s offer only the linked key and never another",
+  async (_label, recovered) => {
+    const choosing = (candidates: { handle: string; pubkey: string }[]) =>
+      ({
+        status: "choosing",
+        candidates,
+        currentPubkey: other,
+        failedCount: 0,
+        subject: recovered,
+      }) satisfies RecoveryState;
+    const stub = mount(
+      choosing([
+        { handle: "other", pubkey: other },
+        { handle: "linked", pubkey: linked },
+      ]),
+    );
+    await waitFor(() =>
+      expect(stub.installRecovery).toHaveBeenCalledExactlyOnceWith("linked"),
+    );
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    cleanup();
+    const none = mount(choosing([{ handle: "other", pubkey: other }]));
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "none contains the key linked to your account",
+    );
+    expect(none.installRecovery).not.toHaveBeenCalled();
+  },
+);
 
 it("retries installation when a new attempt returns the same handle", async () => {
   const candidate: RecoveryState = {
@@ -145,4 +222,30 @@ it("retries installation when a new attempt returns the same handle", async () =
   await userEvent.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(stub.installRecovery).toHaveBeenCalledTimes(2));
   expect(stub.cancelRecovery).toHaveBeenCalledTimes(1);
+});
+
+it("preselects the key Settings chose to switch to over the linked one", () => {
+  render(
+    <KeyRestore
+      recovery={recovery({
+        status: "choosing",
+        candidates: [
+          { handle: "linked", pubkey: linked },
+          { handle: "other", pubkey: other },
+        ],
+        currentPubkey: linked,
+        failedCount: 0,
+        subject,
+      })}
+      expectedPubkey={linked}
+      subject={subject}
+      preferredPubkey={other}
+      onBack={() => {}}
+      onImport={() => {}}
+      onInstalled={() => {}}
+    />,
+  );
+  expect(
+    screen.getByRole("radio", { checked: true }),
+  ).toHaveAccessibleDescription(expect.stringContaining("Other identity"));
 });

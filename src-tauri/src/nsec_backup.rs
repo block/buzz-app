@@ -77,6 +77,8 @@ pub(crate) struct RestoreResult {
     candidates: Vec<PublicCandidate>,
     current_pubkey: Option<String>,
     failed_count: usize,
+    /// The account recovery signed into, so a caller can require its own account.
+    subject: String,
 }
 #[derive(Serialize)]
 pub(crate) struct RestoreStarted {
@@ -854,6 +856,7 @@ impl NsecBackupHost {
                 .collect(),
             current_pubkey: current.clone(),
             failed_count,
+            subject: account.subject.clone(),
         };
         let mut state = self.state.lock().map_err(|_| CANCELED)?;
         if state.closed || state.restore_epoch != epoch {

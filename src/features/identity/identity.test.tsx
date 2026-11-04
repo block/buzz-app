@@ -2124,12 +2124,12 @@ it("Use a different account on Get started with Buzz signs the session out, retu
 
 it.each([
   // Backups outlive an unlink, so an unlinked account may still list some.
-  ["lists a backup", () => Promise.resolve(["ef".repeat(32)])],
-  ["is unavailable", () => Promise.resolve("unavailable" as const)],
-  ["fails", () => Promise.reject(new BackupError("unreachable"))],
-])(
-  "the key choice says no backed-up key was found only when the lookup listed none, not when it %s",
-  async (_label, backupStatus) => {
+  ["lists a backup", () => Promise.resolve(["ef".repeat(32)]), true],
+  ["is unavailable", () => Promise.resolve("unavailable" as const), false],
+  ["fails", () => Promise.reject(new BackupError("unreachable")), false],
+] as const)(
+  "the key choice offers Restore a backed-up key exactly when the backup lookup lists one: it %s",
+  async (_label, backupStatus, offered) => {
     vi.mocked(invoke).mockImplementation((command) => {
       if (command === "nsec_backup_choice")
         return Promise.resolve({
@@ -2159,12 +2159,14 @@ it.each([
     expect(
       await screen.findByRole("heading", { name: "Get started with Buzz" }),
     ).toBeVisible();
-    expect(screen.queryByText(/backed-up key/)).toBeNull();
+    // A listed backup can be restored and linked: no key is linked to unlink.
+    expect(
+      !!screen.queryByRole("button", { name: "Restore a backed-up key" }),
+    ).toBe(offered);
     // Consent is requested only after the key is created.
     expect(
       screen.queryByText(/Block can use it to restore the key/),
     ).toBeNull();
-    // No key is linked, so there is nothing to restore on this lane.
     expect(
       screen.queryByRole("button", { name: "Restore from backup" }),
     ).toBeNull();
@@ -4895,6 +4897,7 @@ it("Automatic backup with the real account waits on the native uploader's pass f
 it.each([
   ["lists the linked key", [owned.pubkey], true],
   ["lists only another key", [stranger.pubkey], false],
+  ["lists several other keys", [stranger.pubkey, viewer], false],
   ["lists nothing", [], false],
   ["is unavailable", "unavailable", false],
 ] as const)(
@@ -4936,6 +4939,34 @@ it.each([
     identity.dispose();
   },
 );
+
+it("Welcome back offers a restore when several other keys are backed up, though the linked one is not", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "nsec_backup_choice")
+      return { available: false, pubkey: viewer, automatic: null };
+    if (command === "identity_restore") return null;
+    if (command === "identity_legacy_available") return false;
+    if (command === "nsec_restore_begin") return { attempt: "attempt-1" };
+    if (command === "nsec_restore_wait") return new Promise(() => {});
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    linkedTo(owned.pubkey, [], {
+      backupStatus: () => Promise.resolve([stranger.pubkey, viewer]),
+      recovery: recoveryFor(identity),
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: /^Saved key,/ }));
+  expect(
+    await screen.findByRole("heading", { name: "Restore your key" }),
+  ).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_begin");
+  identity.dispose();
+});
 
 it("a backup status lookup that fails hides Restore from backup, and Enter your private key still backs up the key", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
@@ -5080,11 +5111,11 @@ const recoveryCalls = () =>
     .mock.calls.map(([command]) => command)
     .filter((command) => !/^nsec_backup_(watch|state)$/.test(command));
 
-it("Restore from backup recovers through its own browser sign-in, offers only the linked key, and lands on Connect to a community without a backup offer", async () => {
+it("Restore from backup recovers through its own browser sign-in, installs the linked key's only backup, and lands on Connect to a community without a backup offer", async () => {
   const begun = deferred<{ attempt: string }>();
   const account = backedUpAccount({
     nsec_restore_begin: () => begun.promise,
-    nsec_restore_wait: () => backupsOf(stranger.pubkey, owned.pubkey),
+    nsec_restore_wait: () => backupsOf(owned.pubkey),
     nsec_restore_install: () => owned.pubkey,
   });
   const identity = createIdentity();
@@ -5107,7 +5138,7 @@ it("Restore from backup recovers through its own browser sign-in, offers only th
   expect(screen.queryByText("Signed in")).toBeNull();
   expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
     attempt: "attempt-1",
-    handle: "backup-1",
+    handle: "backup-0",
   });
   // A restored key is already backed up: no offer, no uploader handoff.
   expect(recoveryCalls()).toEqual([
@@ -5117,6 +5148,219 @@ it("Restore from backup recovers through its own browser sign-in, offers only th
     "nsec_restore_wait",
     "nsec_restore_install",
   ]);
+  identity.dispose();
+});
+
+/**
+ * Native recovery holding backups of the linked key and `stranger`, signed
+ * into `subject`, installing `installed`.
+ */
+function recoveringAs(subject: string, installed: string) {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "nsec_backup_choice")
+      return { available: false, pubkey: viewer, automatic: null };
+    if (command === "identity_restore") return null;
+    if (command === "identity_legacy_available") return false;
+    if (command === "nsec_restore_begin") return { attempt: "attempt-1" };
+    if (command === "nsec_restore_wait")
+      return { ...backupsOf(owned.pubkey, stranger.pubkey), subject };
+    if (command === "nsec_restore_install") return installed;
+    throw new Error(`Unexpected command ${command}`);
+  });
+}
+
+it("with several backups of the signed-in account, restoring another key than the linked one unlinks the linked key, links the restored one, backs up nothing and offers none of the old key's communities", async () => {
+  recoveringAs(credential.account.subject, stranger.pubkey);
+  const ownedCommunities = vi.fn(() =>
+    Promise.resolve([
+      { host: "old.example.com", url: "https://old.example.com" },
+    ]),
+  );
+  const calls: string[] = [];
+  const record = (name: string) => (pubkey: string) => {
+    calls.push(`${name} ${pubkey}`);
+    return Promise.resolve();
+  };
+  const unbind = vi.fn((old: string, replacement: string) => {
+    calls.push(`unbind ${old} for ${replacement}`);
+    return Promise.resolve();
+  });
+  const backUp = vi.fn(record("backUp"));
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, record("bind"), ownedCommunities, {
+      backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
+      backUp,
+      recovery: recoveryFor(identity),
+    }),
+  );
+  // Several backups: the linked one is preselected, and nothing installs yet.
+  await user.click(await screen.findByRole("radio", { checked: false }));
+  expect(invoke).not.toHaveBeenCalledWith(
+    "nsec_restore_install",
+    expect.anything(),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: stranger.pubkey,
+  });
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt-1",
+    handle: "backup-1",
+  });
+  expect(calls).toEqual([
+    `unbind ${owned.pubkey} for ${stranger.pubkey}`,
+    `bind ${stranger.pubkey}`,
+  ]);
+  expect(backUp).not.toHaveBeenCalled();
+  // As after Start over, the old key's communities are not offered.
+  expect(ownedCommunities).not.toHaveBeenCalled();
+  expect(screen.queryByRole("list")).toBeNull();
+  identity.dispose();
+});
+
+it("a link failure after restoring another key keeps the restored key, and Try again re-runs only the link", async () => {
+  recoveringAs(credential.account.subject, stranger.pubkey);
+  const calls: string[] = [];
+  const unbind = vi.fn((old: string) => {
+    calls.push(`unbind ${old}`);
+    return Promise.resolve();
+  });
+  let binds = 0;
+  const bind = vi.fn((pubkey: string) => {
+    calls.push(`bind ${pubkey}`);
+    return binds++
+      ? Promise.resolve()
+      : Promise.reject(
+          transientError("Builderlab account link failed (HTTP 503)."),
+        );
+  });
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  await welcomeBackPage(
+    user,
+    identity,
+    replacedBy(unbind, bind, undefined, {
+      backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
+      recovery: recoveryFor(identity),
+    }),
+  );
+  await user.click(await screen.findByRole("radio", { checked: false }));
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: stranger.pubkey,
+  });
+  expect(screen.queryByText("Signed in")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(calls).toEqual([
+    `unbind ${owned.pubkey}`,
+    `bind ${stranger.pubkey}`,
+    `bind ${stranger.pubkey}`,
+  ]);
+  identity.dispose();
+});
+
+it("an account with backups but no linked key offers Restore a backed-up key from the choice, which restores the picked key and only links it", async () => {
+  recoveringAs(credential.account.subject, owned.pubkey);
+  const bind = vi.fn((_pubkey: string) => Promise.resolve());
+  const backUp = vi.fn(() => Promise.resolve());
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      connect={vi.fn().mockResolvedValue(credential)}
+      account={unlinkedWith(bind, {
+        backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
+        backUp,
+        recovery: recoveryFor(identity),
+      })}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await user.click(
+    await screen.findByRole("button", { name: "Restore a backed-up key" }),
+  );
+  // No key is linked: nothing is preselected, and nothing installs yet.
+  expect(
+    await screen.findByRole("radiogroup", { name: "Identity to restore" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+  await user.click(
+    screen.getByRole("radio", { description: new RegExp(linkedNpub) }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Restore this identity" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(bind).toHaveBeenCalledExactlyOnceWith(owned.pubkey);
+  expect(backUp).not.toHaveBeenCalled();
+  identity.dispose();
+});
+
+it("backups recovered from another account than the signed-in one offer no choice and change no binding", async () => {
+  recoveringAs("another-account", owned.pubkey);
+  const changed = (name: string) => () =>
+    Promise.reject(new Error(`Welcome called ${name}`));
+  const identity = createIdentity();
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={identity}
+      communities={noJoin}
+      invites={invites}
+      connect={vi.fn().mockResolvedValue(credential)}
+      account={replacedBy(changed("unbind"), changed("bind"), undefined, {
+        backupStatus: () => Promise.resolve([owned.pubkey, stranger.pubkey]),
+        backUp: changed("backUp"),
+        recovery: recoveryFor(identity),
+      })}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  // Only the linked key installs, as with a single backup.
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(identity.snapshot()).toEqual({
+    status: "ready",
+    viewer: owned.pubkey,
+  });
+  expect(invoke).toHaveBeenCalledWith("nsec_restore_install", {
+    attempt: "attempt-1",
+    handle: "backup-0",
+  });
   identity.dispose();
 });
 

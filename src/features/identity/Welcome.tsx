@@ -74,6 +74,7 @@ import {
 } from "./setup";
 import { SetupProgress } from "./SetupProgress";
 import { WelcomeBack } from "./WelcomeBack";
+import { restoreChoice } from "./restore-choice";
 import { WireframeScreen } from "./Wireframe";
 
 /**
@@ -284,6 +285,7 @@ export function Welcome({
   // The linked key is backed up: Welcome back offers a restore, and an
   // import of it skips another backup.
   const backedUp = !!linked && !!backups?.includes(linked);
+  const restorable = canRestore(linked, backups);
   /**
    * Sign-in leads to the account check, which picks the lane: a linked key
    * pauses on Welcome back, otherwise the key choice. The backed-up-key
@@ -668,6 +670,14 @@ export function Welcome({
               ]);
             }}
             onImport={() => pause("key-import")}
+            onRestore={
+              backups?.length
+                ? () => {
+                    void current.recovery.beginRecovery();
+                    pause("key-restore");
+                  }
+                : undefined
+            }
             onSwitchAccount={backToLanding}
           />
         );
@@ -680,7 +690,7 @@ export function Welcome({
               onRestore={
                 viewer === linked
                   ? () => void setup.start(finish())
-                  : backedUp
+                  : restorable
                     ? () => {
                         void current.recovery.beginRecovery();
                         pause("key-restore");
@@ -702,27 +712,46 @@ export function Welcome({
         ) : null;
       case "key-restore":
         // A restored key is already backed up, so no backup step follows.
-        return linked ? (
+        // Another key of this account's backups replaces the linked one as
+        // Start over's new key does: unlinked, then linked, and the old key's
+        // communities are not offered to it. With no linked key (the key
+        // choice's restore), the restored key is only linked.
+        return (
           <KeyRestore
             recovery={current.recovery}
             email={auth.account?.email}
+            subject={auth.account?.subject}
+            preferredPubkey={restoreChoice.get()}
             expectedPubkey={linked}
-            onBack={() => back("welcome-back", "restore")}
+            onBack={() =>
+              back(linked ? "welcome-back" : "key-choice", "restore")
+            }
             onImport={() => pause("key-import")}
-            onLost={() =>
-              void setup.start([findCommunities(current, setOwned)], {
-                status: "paused",
-                at: "key-lost",
-              })
+            onLost={
+              linked
+                ? () =>
+                    void setup.start([findCommunities(current, setOwned)], {
+                      status: "paused",
+                      at: "key-lost",
+                    })
+                : undefined
             }
             onInstalled={() => {
               const restored = identity.snapshot();
-              if (restored.status !== "ready" || restored.viewer !== linked)
-                return;
-              void setup.start(finish());
+              if (restored.status !== "ready") return;
+              restoreChoice.set(undefined);
+              if (restored.viewer === linked) return void setup.start(finish());
+              if (!linked) return void setup.start([link, ...restore()]);
+              setLinked(undefined);
+              setOwned(undefined);
+              void setup.start([
+                unlinkKey(identity, current, linked),
+                link,
+                ...restore(),
+              ]);
             }}
           />
-        ) : null;
+        );
       case "key-lost":
         // Starting over creates a new key, as Set me up does, and the old
         // key's communities are not offered to it (so the lane ends with the
@@ -733,7 +762,9 @@ export function Welcome({
         return linked ? (
           <KeyLost
             owned={owned}
-            onBack={() => back("welcome-back", backedUp ? "restore" : "import")}
+            onBack={() =>
+              back("welcome-back", restorable ? "restore" : "import")
+            }
             onStartOver={() => {
               setLinked(undefined);
               setOwned(undefined);
@@ -1004,6 +1035,19 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Welcome back offers a restore of the linked key's backup, or a choice among
+ * several backups, which may relink the account to another backed-up key.
+ */
+export function canRestore(
+  linked: string | undefined,
+  backups: readonly string[] | undefined,
+) {
+  return (
+    !!linked && !!backups && (backups.includes(linked) || backups.length > 1)
+  );
 }
 
 /**

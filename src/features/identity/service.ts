@@ -22,6 +22,8 @@ export type RecoveryResult = {
   candidates: { handle: string; pubkey: string }[];
   currentPubkey: string | null;
   failedCount: number;
+  /** The account native recovery signed into. */
+  subject?: string | undefined;
 };
 export type RecoveryState =
   | { status: "waiting" }

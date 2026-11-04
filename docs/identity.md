@@ -94,12 +94,15 @@ where the backup step can run (see
 [automatic backup](#automatic-backup-and-optional-recovery)); kgoose answers
 `404` wherever backups are not configured. Not sent, a `404` or any failure
 leaves the lookup unavailable rather than empty, and never fails setup: it only
-decides whether Welcome back offers a restore and whether an import needs
+decides whether Welcome back or Get started offers a restore and whether an import needs
 automatic backup.
 
 **Not linked** pauses on **Get started with Buzz**, which says the account will
 manage the Buzz identity. **Set me up** creates and links a key; **Use an
-existing key** opens **Enter your private key**. **Use a different account**
+existing key** opens **Enter your private key**. When the lookup lists a
+backup (backups outlive an unlink), **Restore a backed-up key** opens
+**Restore your key**, which lists the account's backups with none preselected
+and links the one restored; there is no key to unlink. **Use a different account**
 signs out the first-run session and returns to the welcome screen.
 The browser may retain its portal session. This choice page shows the signed-in
 email so the account can be checked before linking a key.
@@ -124,9 +127,10 @@ sign-in skips linking and backup. Importing without a Builderlab account never u
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
 line under the body. A linked key does not mean a
-backed-up one, so only when the lookup lists the linked key does the page also
-offer **Restore from backup** (primary), with **Enter your private key** as a
-smaller choice; otherwise **Enter your private key** is primary. It opens the
+backed-up one, so only when the lookup lists the linked key, or more than one
+key, does the page also offer **Restore from backup** (primary), with **Enter
+your private key** as a smaller choice; otherwise **Enter your private key** is
+primary. It opens the
 same import page, which here accepts only the linked key: any other valid nsec
 is refused under the field with *That isn’t the key linked to this account. It
 expects npub1…*, and **Back** returns to Welcome back. **Recover from another
@@ -139,8 +143,15 @@ lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.
 
 **Restore your key** opens native recovery in a separate browser sign-in.
-Only the account’s linked key can be installed. While waiting, **Cancel** cancels
-the attempt; during installation, navigation is disabled. A successful install
+Only the account’s linked key installs automatically. When recovery signed into
+the same Builderlab account (matching `/v1/auth/me` subject) and returned
+another key, the page lists them instead, the linked key preselected when it
+came back, and **Restore this identity** installs the chosen one; another key
+than the linked one then unlinks the old key and links the restored one, as
+Start over does, with no backup step and no old-key communities offered.
+Backups recovered from a different account only ever yield the linked key. **Enter my private key**, **I lost my key** and, after a partial
+recovery, **Try again** stay offered beside the list. While waiting, **Cancel**
+cancels the attempt; during installation, navigation is disabled. A successful install
 continues directly to community restoration and the next required step, without
 another Welcome back confirmation. One status screen shows **Restoring your key…**
 throughout recovery, with a browser sign-in hint while waiting. Failure shows **Couldn’t restore your key**,
@@ -603,6 +614,16 @@ a plugin key service is an API ownership choice, not a sandbox. The main-webview
 command permission is not proof of a human gesture.
 
 ## Sign out of Buzz
+
+Settings → Buzz → Identity → **Backed-up keys**, wherever the Key backup row
+shows and the organization is signed in, reads (through the Builderlab plugin's bundled session, as first run does) the account's linked key and
+`nsec-backups/status` as first run does. It appears once a backed-up key is not
+this device's and Welcome back would offer a restore (the linked key is backed up,
+or several keys are), and lists each npub, tagged *This device* and *Linked*, with its
+newest event time on the current community relay (*No activity here* without
+one, *Couldn’t check activity* when the read fails). **Switch to this key** remembers the choice in WebView storage and opens
+Sign out; after the restart, first run's Restore list preselects it (a wipe
+clears it). Closing the dialog forgets it, and an installed restore clears it.
 
 Settings → Buzz → Identity → **Sign out of Buzz** removes the private key from this
 device only; the npub and its history stay on relays. The dialog presents two

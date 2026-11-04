@@ -7,6 +7,7 @@ export function KeyChoice({
   email,
   onCreate,
   onImport,
+  onRestore,
   onSwitchAccount,
 }: {
   email?: string | undefined;
@@ -14,6 +15,8 @@ export function KeyChoice({
   onCreate: () => void;
   /** The user already has a key: open the import page. */
   onImport: () => void;
+  /** The account has backups but no linked key: restore one and link it. */
+  onRestore?: (() => void) | undefined;
   /** Wrong account: sign the session out and return to the landing. */
   onSwitchAccount: () => void;
 }) {
@@ -53,6 +56,16 @@ export function KeyChoice({
       >
         Use an existing key
       </Button>
+      {onRestore && (
+        <Button
+          variant="subtle"
+          size="lg"
+          data-return-focus="restore"
+          onClick={onRestore}
+        >
+          Restore a backed-up key
+        </Button>
+      )}
       <Button variant="ghost" size="lg" onClick={onSwitchAccount}>
         Use a different account
       </Button>

@@ -642,6 +642,7 @@ async fn native_recovery_preserves_empty_partial_all_failed_unavailable_and_refu
             assert_eq!(result.candidates.len(), keys.len());
             assert_eq!(result.failed_count, failed);
             assert_eq!(result.current_pubkey, Some(pubkey([1; 32])));
+            assert_eq!(result.subject, "synthetic-account");
         }
         host.cancel("synthetic-attempt");
         host.cancel("synthetic-attempt");

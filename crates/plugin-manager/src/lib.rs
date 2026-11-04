@@ -144,9 +144,11 @@ fn valid_sha256(hash: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
+/// An artifact is absolute, or under the user's home written `~/…`, which the
+/// host expands when it starts the process.
 fn valid_artifact(artifact: &ProcessArtifact) -> bool {
     let path = Path::new(&artifact.path);
-    if !path.is_absolute()
+    if !(path.is_absolute() || artifact.path.starts_with("~/"))
         || artifact.path.len() > 4096
         || artifact.path.contains('\0')
         || !valid_sha256(&artifact.sha256)
@@ -352,6 +354,7 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
     "v1/buzz/nostr-identities/delete",
     "v1/buzz/nostr-identities/challenge",
     "v1/buzz/nostr-identities/verify",
+    "v1/buzz/nsec-backups/status",
     "v1/buzz/communities/list",
     "v1/buzz/communities/availability",
     "v1/buzz/communities",
@@ -485,6 +488,12 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("relay notes manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/typesafe/manifest.json"))
             .expect("typesafe manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/plugin-development/manifest.json"
+        ))
+        .expect("plugin development manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
+            .expect("focus manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -506,17 +515,16 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
-            | "buzz.reminders"
             | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
             | "buzz.goose"
-            | "buzz.workflows"
             | "block.builderlab"
             | "buzz.moderation"
             | "buzz.relay-staff"
             | "buzz.typesafe"
+            | "buzz.plugin-development"
     )
 }
 /// Bundled ids that older profiles may still hold as installed plugins.
@@ -601,6 +609,22 @@ impl Default for Registry {
             installed: BTreeMap::new(),
         }
     }
+}
+// Freeze known defaults so later releases cannot silently withdraw a feature.
+fn pin_bundled_defaults(registry: &mut Registry, existing_profile: bool) -> bool {
+    let mut changed = false;
+    for manifest in bundled_manifests() {
+        registry
+            .bundled_overrides
+            .entry(manifest.id.clone())
+            .or_insert_with(|| {
+                changed = true;
+                enabled_by_default(&manifest.id)
+                    || (existing_profile
+                        && matches!(manifest.id.as_str(), "buzz.reminders" | "buzz.workflows"))
+            });
+    }
+    changed
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -797,6 +821,7 @@ pub struct Manager {
     root: PathBuf,
     profile: String,
     safe_mode: bool,
+    existing_profile: bool,
 }
 impl Manager {
     /// Host control-plane location that protected workers must not modify.
@@ -813,11 +838,15 @@ impl Manager {
         if !home.is_absolute() {
             return Err("Plugin home must be an absolute path".into());
         }
+        let root = home.join("profiles").join(profile);
+        // Catalog reads created this folder even when no preferences were saved.
+        let existing_profile = root.try_exists().map_err(err)?;
         Ok(Self {
-            root: home.join("profiles").join(profile),
+            root,
             home,
             profile: profile.into(),
             safe_mode,
+            existing_profile,
         })
     }
     /// Opens the environment's plugin home, else `home`: the desktop passes its own app data folder.
@@ -849,15 +878,11 @@ impl Manager {
     }
     fn read(&self) -> Result<Registry> {
         let path = self.root.join("registry.json");
-        let file = match File::open(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Registry::default())
-            }
+        let mut r: Registry = match File::open(&path) {
+            Ok(file) => serde_json::from_str(&read_file_limited(file)?).map_err(err)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Registry::default(),
             Err(error) => return Err(err(error)),
         };
-        let text = read_file_limited(file)?;
-        let mut r: Registry = serde_json::from_str(&text).map_err(err)?;
         if r.version != 1 && r.version != 2 {
             return Err(
                 "Unsupported settings version; use a compatible Buzz or recover settings".into(),
@@ -882,8 +907,14 @@ impl Manager {
                 valid_hash(h)?;
             }
         }
-        if migrate_agent_flag::migrate(&mut r) {
+        let renamed = migrate_agent_flag::migrate(&mut r);
+        let pinned = pin_bundled_defaults(&mut r, self.existing_profile);
+        if renamed {
             self.save(&r)?;
+        } else if pinned {
+            // Readable settings must remain usable when the default snapshot
+            // cannot be written. Later reads retry; explicit edits still fail.
+            let _ = self.save(&r);
         }
         Ok(r)
     }
@@ -1313,7 +1344,9 @@ impl Manager {
                 backup.as_file().sync_all().map_err(err)?;
                 backup.keep().map_err(err)?;
             }
-            self.save(&Registry::default())?;
+            let mut defaults = Registry::default();
+            pin_bundled_defaults(&mut defaults, false);
+            self.save(&defaults)?;
         }
         self.catalog()
     }
@@ -1625,6 +1658,33 @@ mod tests {
             })
             .collect();
         assert_eq!(native, expected);
+
+        let storage = fs::read_to_string(format!("{root}/../plugins/storage.ts")).unwrap();
+        let mut browser_legacy_on: Vec<_> = storage
+            .split("(existing && (")
+            .nth(1)
+            .expect("browser legacy-On condition")
+            .split("))")
+            .next()
+            .unwrap()
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .collect();
+        browser_legacy_on.sort_unstable();
+        let mut upgraded = super::Registry::default();
+        super::pin_bundled_defaults(&mut upgraded, true);
+        let native_legacy_on: Vec<_> = upgraded
+            .bundled_overrides
+            .iter()
+            .filter_map(|(id, enabled)| {
+                (*enabled && !enabled_by_default(id)).then_some(id.as_str())
+            })
+            .collect();
+        assert_eq!(
+            native_legacy_on, browser_legacy_on,
+            "legacy-On migration set"
+        );
 
         let features =
             fs::read_to_string(format!("{root}/../app/conversation-features.ts")).unwrap();
@@ -2105,8 +2165,12 @@ mod tests {
             "siblings": [{"name": "runtime.js", "sha256": "b".repeat(64)}]
         });
         assert!(artifact_from_text(&artifact.to_string(), "export const x = 1".into()).is_ok());
+        let mut home = artifact.clone();
+        home["host"]["processes"][0]["artifact"]["path"] = serde_json::json!("~/agent/cli");
+        assert!(artifact_from_text(&home.to_string(), "export const x = 1".into()).is_ok());
         for (field, value) in [
             ("path", serde_json::json!("relative/agent")),
+            ("path", serde_json::json!("~agent/cli")),
             ("sha256", serde_json::json!("A".repeat(64))),
             ("sha256", serde_json::json!("a".repeat(63))),
             (
@@ -2302,6 +2366,7 @@ mod tests {
                 .collect();
             assert!(operations.contains(&format!("GET {base}v1/auth/me")));
             assert!(operations.contains(&format!("POST {base}v3/beekeeper/register-agent")));
+            assert!(operations.contains(&format!("POST {base}v1/buzz/nsec-backups/status")));
             assert_eq!(operations.len(), super::BUILDERLAB_FI_ROUTES.len());
         }
         assert!(grants.commands.is_empty());
@@ -2474,11 +2539,8 @@ mod tests {
             &fs::read(manager.storage_root().join("registry.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            saved["bundledOverrides"],
-            serde_json::json!({ "buzz.agents": true }),
-            "the switch now uses the current plugin id"
-        );
+        assert_eq!(saved["bundledOverrides"]["buzz.agents"], true);
+        assert!(saved["bundledOverrides"].get("buzz.agents2").is_none());
     }
 
     #[test]

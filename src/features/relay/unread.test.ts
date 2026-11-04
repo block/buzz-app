@@ -9,7 +9,6 @@ import {
 } from "./read-state-storage";
 import { eventDto, type RelayEvent } from "./events";
 import type { ThreadActivitySnapshot } from "./unread";
-import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
@@ -38,7 +37,7 @@ afterEach(() => {
 const clock = (seconds: number) =>
   vi.spyOn(Date, "now").mockReturnValue(seconds * 1000);
 function setup(
-  options: ChannelStoreOptions = {},
+  options: Parameters<typeof createRelaySession>[1] = {},
   signer = true,
   preloaded?: (journal: ReadJournal) => ReadJournal,
   workflowAuthority = false,
@@ -111,6 +110,7 @@ function setup(
       },
     },
     {
+      readStateFloor: () => 0,
       ...options,
       readStateStorage: storage,
       readPublisherLock: async (_signal, work) => work(),
@@ -223,6 +223,16 @@ it("production live evidence feeds stable snapshots; selection/prefetch do not r
   await flush();
   expect(h.journal()?.state.frontiers).toEqual({});
   expect(h.host.sign).not.toHaveBeenCalled();
+});
+
+it("messages at or before the retention floor count as read", () => {
+  const h = setup({ readStateFloor: () => 11 });
+  h.grant("room");
+  h.emit([
+    message(h.alice, "room", "expired", 11),
+    message(h.alice, "room", "fresh", 12),
+  ]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 1 });
 });
 
 it("unread repair observes history without seeding the channel window or consuming its cursor", async () => {
@@ -3770,6 +3780,7 @@ function sharedWindows(preloaded: (journal: ReadJournal) => ReadJournal) {
         },
       },
       {
+        readStateFloor: () => 0,
         readStateStorage: storage,
         readPublisherLock: async (_signal, work) => work(),
       },
@@ -3978,7 +3989,7 @@ it("agent-audience messages never count, earn attention, list in Inbox or activi
   expect(unread.inbox().items).toHaveLength(1);
 });
 
-it("catch-up and explicit unread intent still apply to agent-audience rows", async () => {
+it("catch-up applies to agent-audience rows, and unread intent cannot make them unread", async () => {
   const h = setup();
   h.grant("room");
   const unread = h.session.unread;
@@ -3998,17 +4009,29 @@ it("catch-up and explicit unread intent still apply to agent-audience rows", asy
   await lease.catchUp(progress.id, root.id);
   expect(h.journal()?.state.frontiers[`thread-activity:${root.id}`]).toBe(12);
   lease.dispose();
-  // Mark unread is honored, as for any reply outside the viewer's conversations.
-  await unread.markMessageUnread("room", progress.id);
-  expect(unread.attention("room", progress.id)).toMatchObject({
-    status: "ineligible",
-    unread: true,
-    forced: true,
-  });
-  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  // Unread intent cannot be saved for coordination between agents.
+  await expect(unread.markMessageUnread("room", progress.id)).rejects.toThrow(
+    "Messages between agents cannot be marked unread",
+  );
+  await expect(
+    unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: bottom.id,
+    }),
+  ).rejects.toThrow("Messages between agents cannot be marked unread");
+  expect(h.journal()?.localUnread).toEqual({});
+  expect(h.snapshot().manual).toBe("none");
+  for (const id of [progress.id, bottom.id])
+    expect(unread.attention("room", id)).toMatchObject({
+      status: "ineligible",
+      unread: false,
+      forced: false,
+    });
+  expect(h.snapshot()).toMatchObject({ observedCount: 0, attentionCount: 0 });
   expect(
     unread.snapshot({ kind: "thread", channelId: "room", rootId: root.id }),
-  ).toMatchObject({ observedCount: 1, attentionCount: 0 });
-  await unread.markMessageRead("room", progress.id);
-  expect(h.snapshot()).toMatchObject({ observedCount: 0 });
+  ).toMatchObject({ observedCount: 0, attentionCount: 0 });
+  expect(unread.activity("room").items).toHaveLength(0);
+  expect(unread.inbox().items).toHaveLength(0);
 });

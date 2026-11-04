@@ -2,9 +2,11 @@
 // storage through the host and shown in the host's turn-transcript model. Pi
 // owns the entries; nothing here writes or keeps them.
 import { isMessageTool } from "../../buzz-mcp/session-tools";
+import { readEventBody } from "../../features/agent-harness/turn-records";
 import {
   promptMessage,
   promptSections,
+  STEER,
   type ToolItem,
   type Transcript,
   type TranscriptItem,
@@ -15,7 +17,6 @@ import type { Pi } from "./pi";
 /** The latest turns shown; Pi's storage keeps the rest. */
 export const TURN_LIMIT = 50;
 const PREFIX = "buzz_";
-const STEER = "new-message-arrived-while-you-were-working";
 const KINDS: Record<string, string> = {
   read: "read",
   write: "edit",
@@ -59,6 +60,10 @@ type Conversation = Readonly<{
   channelId: string;
   root?: string;
 }>;
+/** Where the read entries sit in the conversation: the session the oldest
+ * is in, as the host reads it, and whether they reach its start. A session
+ * is the id of the reset that began it, or 0 before any reset. */
+type Span = Readonly<{ session?: number | undefined; start: boolean }>;
 type PiTranscript = Transcript & { more: boolean };
 
 const text = (content: Message["content"]) =>
@@ -75,12 +80,21 @@ const text = (content: Message["content"]) =>
         .filter(Boolean)
         .join("\n");
 const str = (value: unknown) => (typeof value === "string" ? value : "");
-/** A Buzz prompt, or a steer wrapping one, as the turn's opening item. */
-function prompt(id: string, at: number, raw: string): TranscriptItem {
+/** A person's display name, if known. */
+type Names = (pubkey: string) => string | undefined;
+/** A Buzz prompt, or a steer, as the turn's opening item. */
+function prompt(
+  id: string,
+  at: number,
+  raw: string,
+  name?: Names,
+): TranscriptItem {
   let sections = promptSections(raw);
   const steer = sections.find((section) => section.tag === STEER);
-  if (steer) sections = promptSections(steer.body);
-  const { text, author } = promptMessage(sections);
+  // An older steer wraps a whole turn.
+  if (steer && !readEventBody(steer.body))
+    sections = promptSections(steer.body);
+  const { text, author } = promptMessage(sections, name);
   return {
     id,
     at,
@@ -103,7 +117,11 @@ export function piTurns(
   entries: readonly PiEntry[],
   conversation: Conversation,
   working: boolean,
+  span: Span = { start: false },
+  name?: Names,
 ): TranscriptTurn[] {
+  let session = span.session;
+  let starts = span.start;
   const turns: TranscriptTurn[] = [];
   const tools = new Map<string, ToolItem>();
   /** Messages sent with send, until their result says whether they were posted. */
@@ -122,23 +140,33 @@ export function piTurns(
       channelId: conversation.channelId,
       threadRootId: conversation.root ?? null,
       triggeringEventIds: [],
-      sessionId: String(conversation.conversation),
-      newSession: false,
+      sessionId:
+        session === undefined
+          ? String(conversation.conversation)
+          : `${conversation.conversation}:${session}`,
+      newSession: starts && !partial,
       config: [],
       startedAt: at,
       partial,
       items: [],
     };
     turns.push(next);
+    starts = false;
     return next;
   };
-  for (const entry of entries)
+  for (const entry of entries) {
+    if (entry.kind === "pi.reset") {
+      // Each reset starts a session of its own.
+      if (session !== undefined) session = entry.id;
+      starts = true;
+      continue;
+    }
     (entry.model ?? []).forEach((message, position) => {
       const id = `${entry.id}:${position}`;
       const at = message.timestamp ?? last;
       if (entry.kind === "pi.user" && message.role === "user") {
         aborted = undefined;
-        const item = prompt(id, at, text(message.content));
+        const item = prompt(id, at, text(message.content), name);
         const current =
           item.type === "prompt" && item.steer ? turns.at(-1) : undefined;
         (current ?? turn(id, at, false)).items.push(item);
@@ -256,6 +284,7 @@ export function piTurns(
         }
       });
     });
+  }
   const current = turns.at(-1);
   if (current && !working) current.endedAt = Math.max(last, current.startedAt);
   return turns;
@@ -269,26 +298,37 @@ export async function readTranscript(
   conversation: Conversation,
   working: boolean,
   signal: AbortSignal,
+  name?: Names,
 ): Promise<PiTranscript> {
   const entries: PiEntry[] = [];
   let turns = 0;
   let cursor: unknown;
+  let session: number | undefined;
   do {
-    const page = await pi.request<{ entries: PiEntry[]; next?: unknown }>(
-      "entries",
-      {
-        agent,
-        conversation: conversation.conversation,
-        ...(cursor ? { cursor } : {}),
-      },
-    );
+    const page = await pi.request<{
+      entries: PiEntry[];
+      next?: unknown;
+      session?: number;
+    }>("entries", {
+      agent,
+      conversation: conversation.conversation,
+      ...(cursor ? { cursor } : {}),
+    });
     signal.throwIfAborted();
     entries.push(...page.entries);
+    // The oldest page read says where the shown entries begin.
+    session = page.session ?? session;
     turns += page.entries.filter(opens).length;
     cursor = page.next;
     // One more than shown, so the oldest shown turn starts with its prompt.
   } while (cursor && turns <= TURN_LIMIT);
-  const all = piTurns(entries.reverse(), conversation, working);
+  const all = piTurns(
+    entries.reverse(),
+    conversation,
+    working,
+    { session, start: !cursor },
+    name,
+  );
   return {
     turns: all.slice(-TURN_LIMIT),
     more: all.length > TURN_LIMIT,

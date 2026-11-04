@@ -6,11 +6,14 @@ export type { Context } from "@deepseek-ai/cordis";
 export type {
   Host,
   HostRequest,
+  HostByteUpload,
   HostRequestOnceOptions,
   HostResponse,
   HostByteRequest,
   HostByteResponse,
   HostSavedBytes,
+  HostMcpServer,
+  McpHandler,
 } from "../features/host/service";
 export type {
   IdentityNames,
@@ -25,6 +28,15 @@ export type {
   SidebarSectionRow,
   SidebarSections,
 } from "../features/channel-navigation/sidebar-sections-service";
+export type {
+  PluginInstallOutcome,
+  PluginInstallSource,
+  PluginInstaller,
+} from "./installer";
+export type {
+  SidebarRestriction,
+  SidebarScope,
+} from "../features/channel-navigation/sidebar-scope-service";
 export type {
   Panel,
   Panels,
@@ -114,6 +126,7 @@ export type {
   Notifications,
   NotificationInput,
   NotificationCategoryDescriptor,
+  NotificationGate,
 } from "../features/notifications/service";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
@@ -121,10 +134,20 @@ export type { VoiceRecording } from "../features/relay/voice-media";
 export type {
   Agents,
   AgentAddedTab,
+  AgentHandle,
   AgentType,
   AgentSession,
   AgentSessions,
+  Delivery,
+  StandaloneTurn,
+  TurnResult,
 } from "../features/agents/service";
+export type {
+  HarnessConversation,
+  HarnessKit,
+  HarnessPrompt,
+  HarnessScope,
+} from "../features/agent-harness/kit";
 
 export type { ArtifactStorage } from "../features/artifact-storage/service";
 export type {
@@ -161,3 +184,11 @@ export type {
   SessionSnapshot,
   AuthenticatedRequest,
 } from "../features/federated-identity/service";
+
+export type { AddedTool } from "../buzz-mcp/session-tools";
+export type {
+  BuzzClient,
+  Media,
+  Context as AddedToolContext,
+} from "../buzz-mcp/client";
+export type { Reply as AddedToolReply } from "../buzz-mcp/tools";

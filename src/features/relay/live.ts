@@ -1,4 +1,5 @@
 import {
+  VERIFIED_PROFILE_MAX_SYNCS,
   verifiedProfileFilter,
   type VerifiedProfileFilter,
   type VerifiedProfileSink,
@@ -34,6 +35,11 @@ import {
 export const LIVE_CHANNEL_CAPACITY = 1022;
 export const LIVE_BATCH_SIZE = 2048; // Relay limit for explicit channel IDs per REQ.
 const REPLAY_BATCH_SIZE = 10; // Relay limit for filters per REQ.
+/** Channels one combined replay filter names. A combined replay that reaches
+ * `LIVE_REPLAY_LIMIT` delivered everything after its oldest event, so the next
+ * page asks for the rest from there, without the channels that already have
+ * `LIVE_REPLAY_LIMIT` events: each channel still replays its newest ones. */
+const COMBINED_REPLAY_CHANNELS = 256;
 export const LIVE_REPLAY_LIMIT = 500;
 export const LIVE_RECOVERY_INTERVAL = 60_000;
 /** A live batch is re-sent after this long even with no grant, in case a
@@ -301,11 +307,22 @@ export function liveJoined(
   return joined;
 }
 
+type ReplayPage = {
+  /** Events each channel received on earlier pages of this replay. */
+  counts: ReadonlyMap<string, number>;
+  /** Only events at or before this time; absent on the first page. */
+  until?: number;
+  /** This page's oldest event and its newer-than-`until` events per channel. */
+  oldest: number;
+  got: Map<string, number>;
+};
 type Route = {
   id: string;
   channelId?: string;
   channelIds?: readonly string[];
   history?: boolean;
+  /** A history route that replays its channels through one filter. */
+  page?: ReplayPage;
   status: LiveRoute["status"];
   replay: LiveRoute["replay"];
   error?: string;
@@ -455,14 +472,20 @@ export function subscribeRelayTraffic(
     wire?: string;
   };
   const syncs = new Set<SyncWire>();
+  // Artifact and verified-profile syncs share the wire budget but are admitted
+  // from separate pools, so a large roster cannot refuse an artifact view.
+  const profileSyncs = new Set<SyncWire>();
   const syncWires = new Map<string, SyncWire>();
   function endSync(sync: SyncWire, reason: string) {
+    profileSyncs.delete(sync);
     if (!syncs.delete(sync)) return;
     if (sync.wire) syncWires.delete(sync.wire);
     sync.sink.closed(reason);
     syncInterests();
   }
   const replayQueue = new Map<string, number>();
+  // Channels whose combined replay reached the limit; they replay one filter each.
+  const splitReplay = new Set<string>();
   let routeSnapshots = new Map<string, LiveRoute>();
   let replayStopped = false;
   const setupState = () => {
@@ -687,7 +710,10 @@ export function subscribeRelayTraffic(
     const interested = new Set(interests);
     const members = new Set(joined);
     for (const id of replayQueue.keys())
-      if (!interested.has(id) || !members.has(id)) replayQueue.delete(id);
+      if (!interested.has(id) || !members.has(id)) {
+        replayQueue.delete(id);
+        splitReplay.delete(id);
+      }
     const ranked = [
       ...new Set([
         ...priority.filter((id) => interested.has(id)),
@@ -1019,7 +1045,6 @@ export function subscribeRelayTraffic(
           route.status === "pending" && (!route.history || !route.wire),
       )
     ) {
-      const iterator = replayQueue.entries();
       for (
         let slot = active;
         slot < setupConcurrency &&
@@ -1028,11 +1053,17 @@ export function subscribeRelayTraffic(
       ) {
         const ids: string[] = [];
         let since = Infinity;
-        for (let i = 0; i < REPLAY_BATCH_SIZE; i++) {
-          const entry = iterator.next();
-          if (entry.done) break;
-          const [id, time] = entry.value;
+        let split: boolean | undefined;
+        for (const [id, time] of replayQueue) {
+          const single = splitReplay.has(id);
+          split ??= single;
+          if (single !== split) continue;
+          if (
+            ids.length >= (split ? REPLAY_BATCH_SIZE : COMBINED_REPLAY_CHANNELS)
+          )
+            break;
           replayQueue.delete(id);
+          splitReplay.delete(id);
           ids.push(id);
           since = Math.min(since, time);
         }
@@ -1042,6 +1073,11 @@ export function subscribeRelayTraffic(
           id,
           channelIds: ids,
           history: true,
+          ...(split
+            ? {}
+            : {
+                page: { counts: new Map(), oldest: Infinity, got: new Map() },
+              }),
           status: "pending",
           replay: "limited",
           count: 0,
@@ -1084,6 +1120,10 @@ export function subscribeRelayTraffic(
       route.wire = wire;
       delete route.regranted; // This REQ is sent after every earlier grant.
       route.sentAt = Date.now();
+      if (route.page) {
+        route.page.oldest = Infinity;
+        route.page.got = new Map();
+      }
       wires.set(wire, route);
       route.deadline = setTimeout(() => {
         if (wires.get(wire) === route)
@@ -1096,7 +1136,7 @@ export function subscribeRelayTraffic(
       active++;
       if (route.id === "observer") route.since = Math.floor(Date.now() / 1000);
       const filters = scope(route).length
-        ? (route.liveOnly
+        ? (route.liveOnly || route.page
             ? [scope(route)]
             : scope(route).map((id) => [id])
           ).map((ids) => ({ kinds: CHANNEL_KINDS, "#h": ids }))
@@ -1119,6 +1159,9 @@ export function subscribeRelayTraffic(
           ...filter,
           // Survivor filters stay live-only so replay cannot suppress a fresh alert.
           since: route.since,
+          ...(route.page?.until !== undefined
+            ? { until: route.page.until }
+            : {}),
           ...(route.id === "observer"
             ? {}
             : {
@@ -1205,6 +1248,7 @@ export function subscribeRelayTraffic(
     clearTimeout(deadline);
     for (const route of routes.values()) clearTimeout(route.deadline);
     replayQueue.clear();
+    splitReplay.clear();
     replayStopped = false;
     wires.clear();
     requests.clear();
@@ -1532,8 +1576,9 @@ export function subscribeRelayTraffic(
           sync.sink.event(checked);
         } else if (data[0] === "EOSE") sync.sink.eose();
         else if (data[0] === "CLOSED") {
+          // `disconnected:` is reserved for local socket loss.
           const reason =
-            typeof data[2] === "string"
+            typeof data[2] === "string" && !data[2].startsWith("disconnected:")
               ? data[2].slice(0, 512)
               : "error: relay closed the sync";
           // The quota is shared: the view's restart and every other queued
@@ -1563,6 +1608,9 @@ export function subscribeRelayTraffic(
         if (!checked) {
           // One undecodable event must not take the route (or its batch) down.
           log.warn(`${peer} dropped an undecodable live event`);
+          // It still took a slot in the relay's limit, so a full replay must
+          // not look complete.
+          if (route.status === "pending" && !route.liveOnly) route.count++;
           return;
         }
         const incoming = checked;
@@ -1606,6 +1654,16 @@ export function subscribeRelayTraffic(
             !channelId ||
             route.replayChannels.includes(channelId));
         if (replaying) route.count++;
+        if (replaying && route.page) {
+          const { page } = route;
+          page.oldest = Math.min(page.oldest, incoming.created_at);
+          // An event at `until` may repeat the last page; never count it twice.
+          if (
+            channelId &&
+            (page.until === undefined || incoming.created_at < page.until)
+          )
+            page.got.set(channelId, (page.got.get(channelId) ?? 0) + 1);
+        }
         if (route.id === "presence") {
           if (
             incoming.kind === 20001 &&
@@ -1641,6 +1699,48 @@ export function subscribeRelayTraffic(
         }
       } else if (data[0] === "EOSE" && route.status === "pending") {
         if (route.history) {
+          const { page } = route;
+          if (page && route.count >= LIVE_REPLAY_LIMIT) {
+            const counts = new Map(page.counts);
+            for (const [id, n] of page.got)
+              counts.set(id, (counts.get(id) ?? 0) + n);
+            const rest = scope(route).filter(
+              (id) =>
+                route.count > LIVE_REPLAY_LIMIT ||
+                (counts.get(id) ?? 0) < LIVE_REPLAY_LIMIT,
+            );
+            // Extra frames may be live fan-out (including duplicates or
+            // backdated events), so neither counts nor cutoff prove a prefix.
+            // A full page within one second, or without a decodable event,
+            // also cannot move the cutoff.
+            if (
+              route.count > LIVE_REPLAY_LIMIT ||
+              !(page.oldest < (page.until ?? Infinity))
+            )
+              for (const id of rest) {
+                replayQueue.set(id, route.since);
+                splitReplay.add(id);
+              }
+            else if (rest.length) {
+              const id = `replay:${++serial}`;
+              routes.set(id, {
+                id,
+                channelIds: rest,
+                history: true,
+                page: {
+                  counts,
+                  until: page.oldest,
+                  oldest: Infinity,
+                  got: new Map(),
+                },
+                status: "pending",
+                replay: "limited",
+                count: 0,
+                quotaRetries: 0,
+                since: route.since,
+              });
+            }
+          }
           const failed = route.error !== undefined;
           remove(route);
           if (failed) notify();
@@ -1734,7 +1834,7 @@ export function subscribeRelayTraffic(
         );
         return () => {};
       }
-      if (syncs.size >= ARTIFACT_SYNC_MAX_VIEWS) {
+      if (syncs.size - profileSyncs.size >= ARTIFACT_SYNC_MAX_VIEWS) {
         queueMicrotask(() =>
           sink.closed("error: artifact sync capacity reached"),
         );
@@ -1760,15 +1860,17 @@ export function subscribeRelayTraffic(
         );
         return () => {};
       }
-      if (syncs.size >= ARTIFACT_SYNC_MAX_VIEWS) {
+      if (profileSyncs.size >= VERIFIED_PROFILE_MAX_SYNCS) {
         queueMicrotask(() =>
           sink.closed("error: profile sync capacity reached"),
         );
         return () => {};
       }
       syncs.add(sync);
+      profileSyncs.add(sync);
       syncInterests();
       return () => {
+        profileSyncs.delete(sync);
         if (!syncs.delete(sync)) return;
         if (sync.wire) {
           syncWires.delete(sync.wire);
@@ -1924,6 +2026,7 @@ export function subscribeRelayTraffic(
       clearTimeout(retryTimer);
       const ending = [...syncs];
       syncs.clear();
+      profileSyncs.clear();
       clearSocket();
       routes.clear();
       routeSnapshots.clear();

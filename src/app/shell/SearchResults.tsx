@@ -31,7 +31,6 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -43,6 +42,7 @@ import type {
   SearchDestination,
   SearchGroup,
   SearchInputProps,
+  SearchViews,
 } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
@@ -53,6 +53,7 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
+import { useMemberCounts } from "../../features/channels/useChannelDirectory";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -76,6 +77,7 @@ import {
   parseSearchOperators,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useVerifiedNames } from "../../features/profiles/useVerifiedNames";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 function conversationName(
@@ -107,6 +109,41 @@ const noMembers: readonly string[] = [];
 const isSearchAction = (key: string) =>
   key.startsWith("scope:") || key === "more-messages";
 
+function useDelayedSearch(pending: boolean) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!pending) return;
+    const timer = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [pending]);
+  return pending && slow;
+}
+
+function useSearchAnnouncement(
+  channels: boolean,
+  people: boolean,
+  messages: boolean,
+) {
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const sources = [
+      channels && "channels",
+      people && "people",
+      messages && "messages",
+    ].filter(Boolean);
+    setAnnouncement((previous) => {
+      if (!sources.length) return "";
+      const names =
+        sources.length === 3
+          ? `${sources.slice(0, 2).join(", ")}, and ${sources[2]}`
+          : sources.join(" and ");
+      return previous || `Searching ${names}…`;
+    });
+  }, [channels, people, messages]);
+  return announcement;
+}
+
 export function SearchResults({
   session,
   inlineSettings,
@@ -122,8 +159,11 @@ export function SearchResults({
   openAgentSession,
   usageScope,
   sidebarScope,
+  views,
 }: {
   session: RelaySession;
+  /** Tabs that switch this search to other views of it. */
+  views?: SearchViews | undefined;
   pages: readonly SearchDestination[];
   scopedChannelId?: string | undefined;
   currentChannelId?: string | undefined;
@@ -257,11 +297,16 @@ export function SearchResults({
           };
         })
       : [];
-  const names = new Map(
-    channels.map((channel) => [
-      channel.id,
-      conversationName(channel, profiles, resolveName),
-    ]),
+  // Every keystroke renders; DM names only change with their inputs.
+  const names = useMemo(
+    () =>
+      new Map(
+        channels.map((channel) => [
+          channel.id,
+          conversationName(channel, profiles, resolveName),
+        ]),
+      ),
+    [channels, profiles, resolveName],
   );
   const operatorChannel = parsed.in ? normalizeInChannel(parsed.in) : "";
   const localChannel = operatorChannel
@@ -343,6 +388,11 @@ export function SearchResults({
     peopleNeedle,
     peopleActive,
   );
+  // Typing cancels the page's read; the next settled page reads again.
+  const directoryVerified = useVerifiedNames(session, personDirectory.people, {
+    key: peopleNeedle,
+    settled: !personDirectory.loading,
+  });
   useMentionArchives(session, showAuthorPicker || peopleActive);
   // People labels come from one names scope built each render.
   useNamesRevision(session.names, peopleActive);
@@ -511,6 +561,9 @@ export function SearchResults({
     scopedChannelId ? "" : parsed.text,
     list.status === "ready",
   );
+  // Scoped search passes no text, so the lookup is idle there.
+  const slowChannels = useDelayedSearch(publicChannels.loading);
+  const slowPeople = useDelayedSearch(peopleActive && personDirectory.loading);
 
   const profileKey = [
     ...new Set([
@@ -574,15 +627,36 @@ export function SearchResults({
     >();
     // Ties keep this order, as in New message: the directory's rows first, in
     // the relay's order, then cached profiles, then agents. A cached profile
-    // still supplies a directory row's facts.
+    // still supplies a directory row's facts. Where the shared profiles have
+    // not verified a row, a name verified for this page names it as they would.
     const cached = (pubkey: string) => {
       const profile = profiles.get(pubkey);
       return profile && (!profile.nameIsFallback || profile.username)
         ? profile
         : undefined;
     };
-    for (const person of personDirectory.people)
-      sources.set(person.pubkey, cached(person.pubkey) ?? person);
+    const pageVerified = (pubkey: string) =>
+      profiles.get(pubkey)?.verified
+        ? undefined
+        : directoryVerified.get(pubkey);
+    const verifiedOf = (pubkey: string) =>
+      profiles.get(pubkey)?.verified ?? pageVerified(pubkey);
+    const searched = new Map<string, readonly string[]>();
+    for (const person of personDirectory.people) {
+      const source = cached(person.pubkey) ?? person;
+      const found = pageVerified(person.pubkey);
+      // The relay matched these names; a verified name must not lose the row.
+      searched.set(
+        person.pubkey,
+        [person.name, person.username].filter((name) => name !== undefined),
+      );
+      sources.set(
+        person.pubkey,
+        found
+          ? { ...source, name: found.displayName, username: found.username }
+          : source,
+      );
+    }
     for (const [pubkey, profile] of profiles)
       if (!sources.has(pubkey) && cached(pubkey)) sources.set(pubkey, profile);
     for (const agent of [
@@ -609,27 +683,45 @@ export function SearchResults({
         ? []
         : [{ pubkey, source, agent }];
     });
-    // Namesakes are told apart within these destinations. Directory rows are
-    // not in the shared profile cache, so they supply their own names.
+    // Namesakes are told apart within these destinations. Directory rows that
+    // the shared profile cache does not name supply their own names.
     const candidates = eligible.map(({ pubkey }) => pubkey);
-    const displayFacts = personDirectory.people
-      .filter((person) => sources.get(person.pubkey) === person)
-      .map((person) => ({
-        pubkey: person.pubkey,
-        name: person.name,
-        ...(person.isAgent ? { isAgent: true } : {}),
-        ...(person.ownerPubkey ? { ownerPubkey: person.ownerPubkey } : {}),
-      }));
+    const displayFacts = personDirectory.people.flatMap((person) => {
+      const source = sources.get(person.pubkey);
+      return source && source !== profiles.get(person.pubkey)
+        ? [
+            {
+              pubkey: person.pubkey,
+              name: source.name,
+              ...(person.isAgent ? { isAgent: true } : {}),
+              ...(person.ownerPubkey
+                ? { ownerPubkey: person.ownerPubkey }
+                : {}),
+            },
+          ]
+        : [];
+    });
     const named = session.names?.scope(candidates, displayFacts);
     for (const { pubkey, source, agent } of eligible) {
       const dm = relationships.dm(pubkey);
       const agentName =
         messageableAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
+      // Without a naming policy the scope falls back to the public profile,
+      // which must not outrank a name verified for this page.
+      const found = named?.(pubkey);
+      const label =
+        (found?.source === "public-profile" && pageVerified(pubkey)
+          ? undefined
+          : found?.name) ?? source.name;
+      const fullName = verifiedOf(pubkey)?.fullName;
       people.push({
         pubkey,
-        label: named?.(pubkey)?.name ?? source.name,
-        username: source.username,
+        label,
+        // A verified username or full name is often the label itself.
+        username: source.username !== source.name ? source.username : undefined,
+        fullName: fullName !== label ? fullName : undefined,
         agentName: agentName !== source.name ? agentName : undefined,
+        profileNames: searched.get(pubkey),
         agent,
         relationship: relationships.rank(pubkey),
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
@@ -795,6 +887,10 @@ export function SearchResults({
     ],
     channelRank,
   ).slice(0, 8);
+  // Display only; joined rows count the roster they carry.
+  const memberCounts = useMemberCounts(session.channels);
+  const memberCount = (channel: ChannelSummary) =>
+    channel.members?.length || memberCounts.counts.get(channel.id);
   // A chat found by its agent, not its name, says which agent it has.
   const soloDetail = (channel: ChannelSummary) => {
     const agent = newChatAmong(channel.members);
@@ -817,7 +913,11 @@ export function SearchResults({
           ? "Archived chat"
           : "Archived channel"
         : channel.readOnly && !channel.cached && channel.viewerRole !== "guest"
-          ? "Public channel · not joined"
+          ? channel.channelType === "solo"
+            ? channel.joinRole === "guest"
+              ? "View-only chat"
+              : "Public chat · not joined"
+            : "Public channel · not joined"
           : channel.channelType === "dm"
             ? "Direct message"
             : channel.channelType === "solo"
@@ -826,6 +926,22 @@ export function SearchResults({
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
     };
+  };
+  // Channel rows add how many members they have, when the roster is known.
+  const channelDestination = (channel: ChannelSummary): SearchDestination => {
+    const destination = conversationDestination(channel);
+    const count = memberCount(channel);
+    return count
+      ? {
+          ...destination,
+          detail: [
+            destination.detail,
+            `${count} ${count === 1 ? "member" : "members"}`,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        }
+      : destination;
   };
   // Choosing a person opens your DM with them, starting it when needed.
   const [personOpen, setPersonOpen] = useState<{
@@ -928,6 +1044,7 @@ export function SearchResults({
       label: person.label,
       ...(matches?.length ? { matches } : {}),
       detail: [
+        person.fullName,
         person.username && `@${person.username}`,
         newSession
           ? "New chat"
@@ -1035,9 +1152,19 @@ export function SearchResults({
     ? operatorPublicChannels.error
     : undefined;
   const directoryPending = publicChannels.loading || personDirectory.loading;
+  const messagesPending = operatorLookupPending || search.loading;
+  const slowMessages = useDelayedSearch(messagesPending);
+  // An author or date picker replaces the result groups, so it announces
+  // none of their lookups.
+  const resultsShown = !showAuthorPicker && !showDateChoices;
+  const searchAnnouncement = useSearchAnnouncement(
+    resultsShown && slowChannels,
+    slowPeople,
+    resultsShown && slowMessages,
+  );
   const messageEmpty =
     operatorLookupPending || search.loading
-      ? "Searching messages…"
+      ? undefined
       : operatorLookupError || search.error
         ? "Message search is unavailable."
         : query.trim()
@@ -1088,6 +1215,7 @@ export function SearchResults({
                 label: messageOrder,
                 rank: Infinity,
                 destinations: messageRows,
+                headingStatus: slowMessages ? "Searching…" : undefined,
                 empty: messageEmpty,
               },
             ]
@@ -1132,12 +1260,14 @@ export function SearchResults({
                   },
                   {
                     label: "Channels",
-                    destinations: channelResults.map(conversationDestination),
+                    destinations: channelResults.map(channelDestination),
                     best: Math.min(...channelResults.map(channelRank)),
+                    headingStatus: slowChannels ? "Searching…" : undefined,
                   },
                   {
                     label: "People",
                     destinations: personResults,
+                    headingStatus: slowPeople ? "Searching…" : undefined,
                     best: Math.min(...personResults.map(({ score }) => score)),
                   },
                   {
@@ -1192,6 +1322,7 @@ export function SearchResults({
                   label: messageOrder,
                   rank: Infinity,
                   destinations: messageRows,
+                  headingStatus: slowMessages ? "Searching…" : undefined,
                   empty:
                     directMessageResults.length ||
                     chatResults.length ||
@@ -1204,9 +1335,23 @@ export function SearchResults({
               ];
   return (
     <SearchChoices
+      onRowsShown={(keys) => {
+        // Only channel results without a roster read a count.
+        const unknown = new Set(
+          channelResults.flatMap((channel) =>
+            channel.members?.length ? [] : [`channel:${channel.id}`],
+          ),
+        );
+        memberCounts.show(
+          keys.flatMap((key) =>
+            unknown.has(key) ? [key.slice("channel:".length)] : [],
+          ),
+        );
+      }}
       inlineSettings={inlineSettings}
       query={query}
       onQueryChange={onQueryChange}
+      views={views}
       authorChip={
         showAuthorChip && selectedAuthor
           ? {
@@ -1378,16 +1523,9 @@ export function SearchResults({
           </div>
         )}
       </div>
-      {/* A warm directory answers within the typing pause, so this feedback
-          waits a second; the rows and errors above are immediate. */}
-      {query.trim() && !scopedChannelId && (
-        <LoadingRegion
-          pending={publicChannels.loading}
-          label="Searching open channels…"
-        >
-          {null}
-        </LoadingRegion>
-      )}
+      <p className="sr-only" role={searchAnnouncement ? "status" : undefined}>
+        {searchAnnouncement}
+      </p>
     </SearchChoices>
   );
 }

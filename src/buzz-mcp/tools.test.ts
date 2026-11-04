@@ -1,3 +1,9 @@
+import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
+import {
+  CANVAS_HISTORY_PAGE,
+  CANVAS_MAX_EVENT_BYTES,
+  CANVAS_READ_BYTES,
+} from "../features/channel-templates/canvas-limits";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -138,9 +144,10 @@ it.each([false, true])(
     const protect = vi.fn<NonNullable<BuzzClient["protect"]>>(async () => {});
     const client = new Proxy({} as BuzzClient, {
       get(_target, property) {
-        // The shared session gate checks this optional hook before dispatch.
+        // The shared session gate checks these optional hooks before dispatch.
         if (property === "protect")
           return protectedSession ? protect : undefined;
+        if (property === "nativeToolGate") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -329,6 +336,28 @@ it.each(["send", "reply_in_subthread"])(
     );
     expect(client.upload).not.toHaveBeenCalled();
     expect(published).toEqual([]);
+  },
+);
+
+it.each(["agent_create", "agent_update"])(
+  "refuses protected %s pictures before reads or uploads",
+  async (tool) => {
+    const { client } = fake([]);
+    client.protect = vi.fn(async () => {});
+    client.createAgent = vi.fn();
+    client.updateAgent = vi.fn();
+    await expect(
+      callSessionTool(client, {}, tool, {
+        agent: "Child",
+        type: "codex/codex",
+        name: "Kid",
+        picture: "me.png",
+      }),
+    ).rejects.toThrow("Protected picture uploads are not supported");
+    expect(client.read).not.toHaveBeenCalled();
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(client.createAgent).not.toHaveBeenCalled();
+    expect(client.updateAgent).not.toHaveBeenCalled();
   },
 );
 
@@ -618,6 +647,11 @@ it.each([
   ["search", { q: "hello" }],
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
+  ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
+  [
+    "message search",
+    { message_url: `buzz://message?channel=chan&id=${nested}`, q: "hello" },
+  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -2032,7 +2066,7 @@ it("publishes the first canvas only after finding visible channel metadata", asy
 });
 
 it("lists canvas revisions newest first, a page at a time", async () => {
-  const rows = Array.from({ length: 26 }, (_, i) =>
+  const rows = Array.from({ length: CANVAS_HISTORY_PAGE + 1 }, (_, i) =>
     event({
       kind: 40100,
       id: `${i}`.padStart(64, "0"),
@@ -2048,12 +2082,12 @@ it("lists canvas revisions newest first, a page at a time", async () => {
     {},
   );
   const lines = (page as string).split("\n");
-  expect(lines).toHaveLength(28);
-  expect(lines[0]).toBe(`version: ${rows[25]?.id}`);
+  expect(lines).toHaveLength(CANVAS_HISTORY_PAGE + 3);
+  expect(lines[0]).toBe(`version: ${rows[CANVAS_HISTORY_PAGE]?.id}`);
   expect(lines[2]).toBe(
-    `${rows[25]?.id} 1970-01-01T00:02Z ${alice} 14B # Plan 25`,
+    `${rows[CANVAS_HISTORY_PAGE]?.id} 1970-01-01T00:01Z ${alice} 14B # Plan ${CANVAS_HISTORY_PAGE}`,
   );
-  expect(lines[27]).toBe(
+  expect(lines[CANVAS_HISTORY_PAGE + 2]).toBe(
     `Older revisions may remain; continue with ${JSON.stringify({ channel: "chan", before: 101, before_id: rows[1]?.id })}`,
   );
   await expect(
@@ -2079,7 +2113,7 @@ it("lists canvas revisions newest first, a page at a time", async () => {
   expect(filters[0]).toEqual({
     kinds: [40100],
     "#h": ["chan"],
-    limit: 25,
+    limit: CANVAS_HISTORY_PAGE,
     consistency: "strong",
   });
   expect(filters[1]).not.toHaveProperty("consistency");
@@ -2105,10 +2139,61 @@ it("pages canvas revisions that share a timestamp without gaps", async () => {
     "canvas_history",
     cursor,
   )) as string;
-  const ids = [...first.split("\n").slice(2, 27), ...second.split("\n")].map(
-    (line) => line.split(" ")[0],
-  );
+  const ids = [
+    ...first.split("\n").slice(2, 2 + CANVAS_HISTORY_PAGE),
+    ...second.split("\n"),
+  ].map((line) => line.split(" ")[0]);
   expect(ids).toEqual(rows.map((row) => row.id));
+});
+
+it("reads a full canvas_history page of the largest escaped revisions within the agent read cap", async () => {
+  const size = (row: BuzzEvent) =>
+    new TextEncoder().encode(JSON.stringify(row)).length;
+  const largest = (i: number) => {
+    const base = event({
+      kind: 40100,
+      id: `${i}`.padStart(64, "0"),
+      pubkey: alice,
+      created_at: 1700000000 - i,
+      sig: "e".repeat(128),
+    });
+    // Each quote serializes as two bytes.
+    const quotes = Math.floor((CANVAS_MAX_EVENT_BYTES - size(base)) / 2);
+    return { ...base, content: '"'.repeat(quotes) };
+  };
+  const rows = Array.from({ length: CANVAS_HISTORY_PAGE + 1 }, (_, i) =>
+    largest(i),
+  );
+  const [biggest] = rows;
+  if (!biggest) throw new Error("no rows");
+  expect(size(biggest)).toBeGreaterThan(CANVAS_MAX_EVENT_BYTES - 2);
+  expect(size(biggest)).toBeLessThanOrEqual(CANVAS_MAX_EVENT_BYTES);
+  const { client } = fake(rows);
+  const query = client.query;
+  client.query = vi.fn(async (filters: Filter[]) => {
+    const page = await query(filters);
+    // The bare event array app_agents.rs bounds.
+    expect(
+      new TextEncoder().encode(JSON.stringify(page)).length,
+    ).toBeLessThanOrEqual(CANVAS_READ_BYTES);
+    return page;
+  });
+  const first = (await callTool(client, {}, "canvas_history", {
+    channel: "chan",
+  })) as string;
+  const page = rows.slice(0, CANVAS_HISTORY_PAGE);
+  expect(
+    first
+      .split("\n")
+      .slice(2, -1)
+      .map((line) => line.split(" ")[0]),
+  ).toEqual(page.map((row) => row.id));
+  const last = page.at(-1);
+  expect(JSON.parse(first.split("continue with ")[1] ?? "")).toEqual({
+    channel: "chan",
+    before: last?.created_at,
+    before_id: last?.id,
+  });
 });
 
 it("restores a canvas revision guarded by the head it read", async () => {
@@ -2194,8 +2279,8 @@ it("restores only revisions within the canvas size limit", async () => {
     const head = event({ kind: 40100, id: nested, created_at: 200 });
     for (const [content, ok] of [
       ["", true],
-      ["x".repeat(24 * 1024), true],
-      ["x".repeat(24 * 1024 + 1), false],
+      ["x".repeat(LIVE_CANVAS_BYTES), true],
+      ["x".repeat(LIVE_CANVAS_BYTES + 1), false],
     ] as const) {
       const old = event({ kind: 40100, id: root, content });
       const { client, published } = fake([old, head], { keep: true });
@@ -3484,10 +3569,10 @@ const repo = (
     id: d.padEnd(64, "0"),
     tags: [["d", d], ...channels.map((c) => ["buzz-channel", c]), ...extra],
   });
-const git = (client: BuzzClient) => {
+const git = (client: BuzzClient, header = "Authorization: Nostr abc") => {
   const gitAuth = vi.fn(async (owner: string, name: string) => ({
     url: `https://relay/git/${owner}/${name}.git`,
-    header: "Authorization: Nostr abc",
+    header,
   }));
   client.gitAuth = gitAuth;
   return gitAuth;
@@ -3526,9 +3611,22 @@ it("gives the channel's repository and a Git header signed for it", async () => 
   expect(answer).toBe(
     [
       `hive: ${url}`,
-      "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
+      "For the next 60 seconds, pass these headers to each git command (call again for a new one; never save it):",
       `git -c http.${url}.extraHeader='Authorization: Nostr abc' clone ${url}`,
     ].join("\n"),
+  );
+});
+
+it("passes each Git header line, sign-in evidence included", async () => {
+  const { client } = fake([
+    hive({ [bob]: "admin" }),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  git(client, "Authorization: Nostr abc\nNostr-Federated-Identity: Bearer xyz");
+  const answer = await callTool(client, { channel: "chan" }, "repo", {});
+  const url = `https://relay/git/${bob}/hive.git`;
+  expect(answer).toContain(
+    `git -c http.${url}.extraHeader='Authorization: Nostr abc' -c http.${url}.extraHeader='Nostr-Federated-Identity: Bearer xyz' clone ${url}`,
   );
 });
 
@@ -3870,6 +3968,68 @@ it("validates change drafts and passes only the proposed fields", async () => {
   });
 });
 
+it("uploads a proposed picture as the agent once its draft is valid", async () => {
+  const { client } = fake([]);
+  const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 0]);
+  const read = client.read;
+  client.read = vi.fn(async (path: string) =>
+    path === "/tmp/me.png" || path === "kid.png" ? image : read(path),
+  );
+  const pictures: string[] = [];
+  const saved = async (input: { picture?: () => Promise<string> }) => {
+    if (input.picture) pictures.push(await input.picture());
+    return { requestId: "draft", saved: false as const };
+  };
+  client.updateAgent = vi.fn(saved);
+  client.createAgent = vi.fn(saved);
+  await expect(
+    callTool(client, {}, "agent_update", { agent: "Child", picture: "me.png" }),
+  ).rejects.toThrow("Picture proposals are unavailable");
+  expect(client.updateAgent).not.toHaveBeenCalled();
+  client.uploadPicture = vi.fn(async (_data: Uint8Array, type: string) => ({
+    url: "https://relay/media/x.png",
+    sha256: "ab",
+    size: 7,
+    type,
+  }));
+  // A text file, and a PNG signature cut short that the preparer would
+  // pass through unchanged.
+  for (const picture of ["notes.md", "short.png"])
+    for (const [name, args] of [
+      ["agent_update", { agent: "Child" }],
+      ["agent_create", { type: "codex/codex", name: "Child" }],
+    ] as const)
+      await expect(
+        callTool(client, {}, name, { ...args, picture }),
+      ).rejects.toThrow("PNG, JPEG, GIF or WebP");
+  expect(client.uploadPicture).not.toHaveBeenCalled();
+  expect(pictures).toEqual([]);
+  await callTool(client, {}, "agent_update", {
+    agent: "Child",
+    picture: "/tmp/me.png",
+  });
+  await callTool(client, {}, "agent_create", {
+    type: "codex/codex",
+    name: "Kid",
+    picture: "kid.png",
+  });
+  expect(client.uploadPicture).toHaveBeenCalledWith(image, "image/png");
+  expect(client.upload).not.toHaveBeenCalled();
+  expect(pictures).toEqual([
+    "https://relay/media/x.png",
+    "https://relay/media/x.png",
+  ]);
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Child",
+    picture: expect.any(Function),
+  });
+  expect(client.createAgent).toHaveBeenLastCalledWith({
+    type: "codex/codex",
+    name: "Kid",
+    picture: expect.any(Function),
+  });
+});
+
 it("nests a reply under a message inside a thread, naming the root and the parent", async () => {
   const { client, published } = fake([
     ...community,
@@ -4122,4 +4282,21 @@ it("refuses to delete another author's message", async () => {
     callTool(client, { channel: "chan" }, "delete", { id: root }),
   ).rejects.toThrow("Only your own messages can be deleted.");
   expect(published).toEqual([]);
+});
+
+it("saves a canvas of exactly the live limit in UTF-8 bytes, and refuses one byte over", async () => {
+  const { client, published } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+  ]);
+  const exact = "é".repeat(LIVE_CANVAS_BYTES / 2);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", { content: exact }),
+  ).resolves.toBe("saved");
+  expect(published).toHaveLength(1);
+  await expect(
+    callTool(client, { channel: "chan" }, "canvas_set", {
+      content: `${exact.slice(1)}xyz`,
+    }),
+  ).rejects.toThrow(`over its limit of ${LIVE_CANVAS_BYTES} bytes`);
+  expect(published).toHaveLength(1);
 });

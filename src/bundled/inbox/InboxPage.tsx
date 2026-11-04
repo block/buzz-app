@@ -24,6 +24,8 @@ import type {
 } from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
+import type { PageNavigation } from "../../features/navigation/service";
+import { routeOf } from "./route";
 import {
   useChannelList,
   useProfileGeneration,
@@ -107,6 +109,21 @@ type Filters = {
   attention: AttentionFilter;
 };
 const filtersKey = "inbox:filters";
+
+/** Whether focus is in the page or in a popup it opened, which portals outside it. */
+function holdsFocus(page: HTMLElement | null) {
+  const active = document.activeElement;
+  if (!page || !active) return false;
+  if (page.contains(active)) return true;
+  const popup = active.closest('[role="menu"]')?.id;
+  return (
+    !!popup &&
+    [...page.querySelectorAll("[aria-controls]")].some(
+      (trigger) => trigger.getAttribute("aria-controls") === popup,
+    )
+  );
+}
+
 /** Saved choices are per device/viewer/community; unknown or missing fields use defaults. */
 function readFilters(scope: string): Filters {
   const saved = readView<unknown>(scope, filtersKey, undefined);
@@ -178,6 +195,11 @@ type InboxPageTabs = (props: PageTabsProps) => ReactNode;
 /** The open conversation's Archive/Restore, published for the Inbox shortcut. */
 export type ArchiveShortcut = { current?: (() => void) | undefined };
 
+// Each presentation of a visit (a new open, even of the same address) is a fresh
+// navigation object, so a route is applied once per object and never re-applied
+// by a remount or re-render of the same one.
+const appliedRoutes = new WeakSet<object>();
+
 export function InboxPage({
   relay,
   navigator,
@@ -185,9 +207,11 @@ export function InboxPage({
   tabs,
   host,
   archive,
+  navigation,
 }: {
   relay: RelayData;
   navigator: Navigation;
+  navigation?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
   /** The host tab workspace, `conversation.ui.Tabs`, while a plugin provides it. */
   tabs?: InboxPageTabs | undefined;
@@ -214,6 +238,7 @@ export function InboxPage({
             tabs={tabs}
             host={host}
             archive={archive}
+            navigation={navigation}
           />
         ) : (
           <div data-buzz-ui="" className={styles.page}>
@@ -251,6 +276,7 @@ type InboxViewProps = {
   tabs?: InboxPageTabs | undefined;
   host: ConversationHostServices;
   archive?: ArchiveShortcut | undefined;
+  navigation?: PageNavigation | undefined;
 };
 
 const never = () => false;
@@ -286,6 +312,7 @@ function InboxList({
   extensions,
   host,
   archive: archiveShortcut,
+  navigation,
   open: openTab,
   close: closeTab,
   isOpen,
@@ -294,7 +321,7 @@ function InboxList({
   close(target: PageTabTarget): boolean;
   isOpen(target: PageTabTarget): boolean;
 }) {
-  const split = usePanelSplit(undefined, 316, {
+  const split = usePanelSplit(session.scope, "inbox", undefined, 316, {
     defaultWidth: 420,
     maxRatio: 0.5,
   });
@@ -330,6 +357,36 @@ function InboxList({
     writeView(archiveScope, filtersKey, next);
   }
   const [drafts, setDrafts] = useState(false);
+  // A shortcut's open carries filters; a plain open carries none and changes nothing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new presentation applies its route; later filter edits are the user's.
+  useEffect(() => {
+    const route = routeOf(navigation?.target);
+    // Back/Forward returns to the view as the user left it, not the opening filters.
+    if (
+      !navigation ||
+      !route ||
+      navigation.traversal ||
+      appliedRoutes.has(navigation)
+    )
+      return;
+    appliedRoutes.add(navigation);
+    // Like the menu, entering or leaving Drafts retires the Inbox action and
+    // restores focus the swapped surface dropped. Only focus in this page or
+    // its popups can drop; a fresh open leaves focus where navigation put it.
+    if (drafts !== "drafts" in route) {
+      cancelRetry();
+      viewFocus.current = holdsFocus(split.ref.current);
+    }
+    setDrafts("drafts" in route);
+    if ("drafts" in route) return;
+    const next = route.show ?? "inbox";
+    // Like the menu's Inbox/Archived choice, a new list ends the selection.
+    if (next !== show) {
+      cancelRetry();
+      setSelectedTarget(undefined);
+    }
+    setFilter({ ...route, show: next });
+  }, [navigation]);
   const subscribeArchives = useCallback(
     (listener: () => void) => subscribeView(archiveScope, listener),
     [archiveScope],

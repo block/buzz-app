@@ -57,7 +57,21 @@ const registry = <T,>(
   subscribe: () => () => {},
 });
 const inline = registry<InlineRenderer>([]);
-const tools = registry<ComposerTool>([]);
+const tools = registry<ComposerTool>([
+  {
+    key: "picker",
+    pluginId: "picker",
+    revision: "one",
+    id: "picker",
+    title: "Picker",
+    component: () => null,
+    reactionComponent: ({ select, disabled }: ReactionToolProps) => (
+      <button type="button" disabled={disabled} onClick={() => select("👍")}>
+        Choose reaction
+      </button>
+    ),
+  },
+]);
 const root = message(other, "c", "Message", 1);
 const react = (key = viewer, time = 2) =>
   signed(key, {
@@ -120,14 +134,16 @@ function harness(
     return (
       row && (
         <>
-          <MessageReactionControls
-            row={audience ? { ...row, audience } : row}
-            session={owner.session}
-            scope="test"
-            disabled={disabled}
-            tools={pickerTools}
-            inline={inline}
-          />
+          <div data-testid="reaction-controls">
+            <MessageReactionControls
+              row={audience ? { ...row, audience } : row}
+              session={owner.session}
+              scope="test"
+              disabled={disabled}
+              tools={pickerTools}
+              inline={inline}
+            />
+          </div>
           <MessageReactions
             {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
             row={audience ? { ...row, audience } : row}
@@ -150,8 +166,8 @@ it("shows one bubble per emoji, counts unique people, and removes all my duplica
   const h = harness([mine, duplicate, theirs]);
   render(<h.Controls />);
   expect(
-    screen.getAllByRole("button", { name: /React with|Remove/ }),
-  ).toHaveLength(3);
+    screen.queryAllByRole("button", { name: /React with|Remove/ }),
+  ).toHaveLength(0);
   expect(
     screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]"),
   ).toHaveLength(1);
@@ -203,11 +219,9 @@ it("keeps one bubble and focus when the count crosses the former grouping thresh
   act(() => group.focus());
   const preview = await screen.findByRole("tooltip");
   expect(preview.textContent).toContain("You");
-  for (const person of others.slice(0, 2))
+  for (const person of others)
     expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
-  expect(preview.textContent).toContain("and 6 others");
-  for (const person of others.slice(2))
-    expect(preview.textContent).not.toContain(person.pubkey.slice(0, 10));
+  expect(preview.textContent).not.toContain("others");
   fireEvent.click(group);
   expect(pills()).toHaveLength(1);
   expect(document.activeElement).toBe(group);
@@ -219,24 +233,100 @@ it("keeps one bubble and focus when the count crosses the former grouping thresh
   });
 });
 
-it.each([
-  [3, null],
-  [4, "and 1 other"],
-  [5, "and 2 others"],
-] as const)(
-  "pluralizes the preview remainder for %i reactors",
-  async (count, remainder) => {
-    const people = Array.from({ length: count }, () => keypair());
-    const h = harness(people.map((person) => react(person)));
-    render(<h.Controls />);
-    act(() =>
-      screen.getByRole("button", { name: `👍: ${count} people` }).focus(),
-    );
-    const preview = await screen.findByRole("tooltip");
-    if (remainder) expect(within(preview).getByText(remainder)).toBeTruthy();
-    else expect(within(preview).queryByText(/^and /)).toBeNull();
-  },
-);
+it.each([3, 4, 5])("shows all %i reactors in the preview", async (count) => {
+  const people = Array.from({ length: count }, () => keypair());
+  const h = harness(people.map((person) => react(person)));
+  render(<h.Controls />);
+  act(() =>
+    screen.getByRole("button", { name: `👍: ${count} people` }).focus(),
+  );
+  const preview = await screen.findByRole("tooltip");
+  for (const person of people)
+    expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
+  expect(
+    within(preview).getByRole("region", { name: "Everyone who reacted" })
+      .tabIndex,
+  ).toBe(-1);
+});
+
+it("opening a large preview preserves unrelated cached profiles", async () => {
+  const h = harness([react(other)]);
+  const unrelated = profile(other, { name: "Existing colleague" });
+  act(() =>
+    h.live.receive([
+      unrelated,
+      ...Array.from({ length: 63 }, (_, index) =>
+        profile(keypair(), { name: `Cached colleague ${index}` }),
+      ),
+    ]),
+  );
+  const people = Array.from({ length: 1025 }, () => keypair());
+  const events = new Map(
+    people.map((person, index) => [
+      person.pubkey,
+      profile(person, { name: `Reactor ${index}` }),
+    ]),
+  );
+  const row = h.session.channels.window("c").rows[0];
+  const first = people[0],
+    last = people.at(-1);
+  if (!row || !first || !last) throw new Error("Missing fixture data");
+  const completed = new Set();
+  const settleReads = async () => {
+    await flush();
+    let pending = h.wire.pending.find((entry) => !completed.has(entry));
+    while (pending) {
+      completed.add(pending);
+      pending.respond(
+        pending.filters.flatMap((filter) =>
+          filter.kinds?.includes(0)
+            ? (filter.authors ?? []).flatMap((id) =>
+                events.get(id) ? [events.get(id) as RelayEvent] : [],
+              )
+            : [],
+        ),
+      );
+      await flush();
+      pending = h.wire.pending.find((entry) => !completed.has(entry));
+    }
+  };
+  await act(settleReads);
+  render(
+    <MessageReactions
+      row={{
+        ...row,
+        reactions: [
+          {
+            content: "👍",
+            events: people.map((person, index) => ({
+              id: String(index),
+              authorId: person.pubkey,
+            })),
+          },
+        ],
+      }}
+      session={h.session}
+      scope="test"
+      disabled={false}
+      tools={tools}
+      inline={inline}
+    />,
+  );
+  const pill = screen.getByRole("button", { name: "👍: 1025 people" });
+  fireEvent.mouseEnter(pill);
+  // Pointer transit must not start profile enrichment before opening.
+  expect(h.session.profiles.snapshot().get(first.pubkey)).toBeUndefined();
+  act(() => pill.focus());
+  const preview = await screen.findByRole("tooltip");
+  await act(settleReads);
+  expect(preview.textContent).toContain("Reactor 0");
+  expect(h.session.profiles.snapshot().get(other.pubkey)?.name).toBe(
+    "Existing colleague",
+  );
+  // Names outside the first visible page remain readable as identity fallbacks.
+  expect(preview.textContent).toContain(last.pubkey.slice(0, 10));
+  expect(h.session.profiles.snapshot().has(last.pubkey)).toBe(false);
+});
 
 it("keeps custom emoji URLs separate and updates a grouped count when I join", async () => {
   const people = Array.from({ length: 9 }, () => keypair());
@@ -339,7 +429,11 @@ it("keeps failed first-reaction delivery visible and retries the same event", as
   });
   const h = harness([], publish);
   render(<h.Controls />);
-  fireEvent.click(screen.getByRole("button", { name: "React with ❤️" }));
+  fireEvent.click(
+    within(screen.getByTestId("reaction-controls")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
   await act(async () => {
     await flush();
     await flush();
@@ -357,10 +451,17 @@ it("keeps failed first-reaction delivery visible and retries the same event", as
 it("prevents duplicate submissions and unavailable-message actions", async () => {
   const h = harness();
   const view = render(<h.Controls disabled />);
-  fireEvent.click(screen.getByRole("button", { name: "React with 👍" }));
+  fireEvent.click(
+    within(screen.getByTestId("reaction-controls")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
   expect(h.session.outbox?.snapshot()).toHaveLength(0);
   view.rerender(<h.Controls />);
-  const button = screen.getByRole("button", { name: "React with 👍" });
+  const button = within(screen.getByTestId("reaction-controls")).getByRole(
+    "button",
+    { name: "Choose reaction" },
+  );
   fireEvent.click(button);
   fireEvent.click(button);
   expect(h.session.outbox?.snapshot()).toHaveLength(1);
@@ -502,31 +603,53 @@ it("uses the original animated emoji in reaction emojis and previews", async () 
 });
 
 it("loads names for people who only reacted after a preview opens", async () => {
-  const h = harness([react(other)]);
+  const people = Array.from({ length: 5 }, () => keypair());
+  const h = harness(people.map((person) => react(person)));
   render(<h.Controls />);
+  // Complete startup reads so the scheduler can admit background reactor names.
+  await act(async () => {
+    const completed = new Set();
+    await flush();
+    let pending = h.wire.pending.find((entry) => !completed.has(entry));
+    while (pending) {
+      completed.add(pending);
+      pending.respond([]);
+      await flush();
+      pending = h.wire.pending.find((entry) => !completed.has(entry));
+    }
+  });
   const pill = screen.getByRole("button", {
-    name: `👍: ${other.pubkey.slice(0, 10)}`,
+    name: "👍: 5 people",
   });
   fireEvent.mouseEnter(pill);
   fireEvent.mouseMove(pill);
-  await screen.findByText(other.pubkey.slice(0, 10), {}, { timeout: 2500 });
-  await waitFor(() =>
-    expect(
-      h.wire.pending.some((entry) => entry.filters[0]?.kinds?.includes(0)),
-    ).toBe(true),
-  );
-  const pending = h.wire.pending.find((entry) =>
-    entry.filters[0]?.kinds?.includes(0),
-  );
-  expect(pending?.filters).toEqual([
-    { kinds: [0], authors: [other.pubkey], limit: 500 },
-  ]);
+  const preview = await screen.findByRole("tooltip");
+  const profileReads = () =>
+    h.wire.pending.filter((entry) =>
+      entry.filters.some((filter) => filter.kinds?.includes(0)),
+    );
+  await waitFor(() => {
+    const requested = profileReads().flatMap((entry) =>
+      entry.filters.flatMap((filter) => filter.authors ?? []),
+    );
+    for (const person of people) expect(requested).toContain(person.pubkey);
+  });
   await act(async () => {
-    pending?.respond([profile(other, { name: "Fresh Reactor" })]);
+    for (const entry of profileReads()) {
+      const requested = entry.filters.flatMap((filter) => filter.authors ?? []);
+      entry.respond(
+        people.flatMap((person, index) =>
+          requested.includes(person.pubkey)
+            ? [profile(person, { name: `Fresh Reactor ${index + 1}` })]
+            : [],
+        ),
+      );
+    }
     await flush();
   });
-  await waitFor(() => expect(screen.getByText("Fresh Reactor")).toBeTruthy(), {
-    timeout: 2500,
+  await waitFor(() => {
+    for (let index = 1; index <= people.length; index++)
+      expect(preview.textContent).toContain(`Fresh Reactor ${index}`);
   });
 });
 
@@ -556,8 +679,8 @@ it("shows custom shortcodes in emojis and previews when media is refused or fail
   fireEvent.mouseMove(denied);
   const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
   expect(preview.textContent).toContain(":denied:");
-  fireEvent.mouseLeave(denied);
-  fireEvent.mouseEnter(broken);
+  fireEvent.mouseLeave(denied, { relatedTarget: broken });
+  fireEvent.mouseEnter(broken, { relatedTarget: denied });
   fireEvent.mouseMove(broken);
   await waitFor(
     () =>

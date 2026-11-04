@@ -2,7 +2,7 @@ import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
-import type { ChannelQueries } from "./contracts";
+import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
   effectiveFrontier,
@@ -234,6 +234,10 @@ export function createUnread({
   let requested = false;
   let repairAgain = false;
   let freshness: UnreadSnapshot["freshness"] = "unknown";
+  /** A repair failed, the evidence overflowed or the stream dropped, and no
+   * repair has completed since. Live traffic marks evidence observed again
+   * but does not pay this. */
+  let owing = false;
   let error: string | undefined;
   let refresh: Promise<void> | undefined;
   const lifetime = new AbortController();
@@ -296,14 +300,24 @@ export function createUnread({
   }
 
   let bytes = 0;
+  // Per member list: a large channel would otherwise be scanned for the
+  // viewer on every event.
+  const viewerIn = new WeakMap<readonly string[], boolean>();
+  const member = (members: readonly string[] | undefined) => {
+    if (!members) return false;
+    let found = viewerIn.get(members);
+    if (found === undefined) {
+      found = members.includes(viewer);
+      if (Object.isFrozen(members)) viewerIn.set(members, found);
+    }
+    return found;
+  };
   const allowed = (id: string) =>
     channels
       .list()
       .channels.some(
         (channel) =>
-          channel.id === id &&
-          !channel.cached &&
-          channel.members?.includes(viewer),
+          channel.id === id && !channel.cached && member(channel.members),
       );
   const keyFor = (target: ReadTarget) =>
     `${target.channelId}:${targetKey(target)}`;
@@ -338,6 +352,20 @@ export function createUnread({
     quiet: boolean;
   };
   let indexed = false;
+  // Rows folded from the indexed events, so read marks reuse them.
+  const foldedRows = new Map<string, readonly ChannelMessage[]>();
+  function folded(channelId: string) {
+    let rows = foldedRows.get(channelId);
+    if (!rows) {
+      rows = foldMessages(channelId, "", [...events.values()], {
+        includeReplies: true,
+        signingAuthority,
+        agentOwner: profiles?.owner && agentOwner,
+      });
+      foldedRows.set(channelId, rows);
+    }
+    return rows;
+  }
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
@@ -431,6 +459,7 @@ export function createUnread({
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
+    foldedRows.clear();
     byChannel.clear();
     byId.clear();
     tombstones.clear();
@@ -540,7 +569,7 @@ export function createUnread({
   };
   /** Top-level posts always count. A reply counts only in the viewer's own
    * conversations, or when it is a DM, mentions the viewer, or is broadcast.
-   * Quiet agent messages never count; explicit unread intent still can. */
+   * Quiet agent messages never count. */
   const relevant = (entry: Evidence, dm: boolean) =>
     !entry.quiet &&
     (!entry.parentId ||
@@ -557,7 +586,9 @@ export function createUnread({
     !lookups.get(conversationKey(entry.channelId, entry.parentId))?.done;
   function isUnread(entry: Evidence, state: ReadState, dm: boolean) {
     const { event, channelId } = entry;
-    if (event.pubkey === viewer) return false;
+    // Coordination between agents is never unread for people, whatever
+    // read state or unread intent says.
+    if (event.pubkey === viewer || entry.quiet) return false;
     // Explicit per-message unread intent wins; otherwise replies outside the
     // viewer's conversations are not unread.
     if (
@@ -596,7 +627,13 @@ export function createUnread({
     const thread = rootId
       ? state.frontiers[`thread-activity:${rootId}`]
       : undefined;
-    const caughtUp = Math.max(frontier ?? -1, ordinary ?? -1, thread ?? -1);
+    // Past the retention window everything is read; overrides still force.
+    const caughtUp = Math.max(
+      frontier ?? -1,
+      ordinary ?? -1,
+      thread ?? -1,
+      reads.floor(),
+    );
     return event.created_at > caughtUp || !!forced;
   }
   /** An ordinary top-level message: the channel catch-up mark reads it. Its
@@ -702,11 +739,13 @@ export function createUnread({
     const entry = byChannel
       .get(channelId)
       ?.find((row) => row.event.id === messageId);
-    if (!entry || event.pubkey === viewer)
+    if (!entry || event.pubkey === viewer || entry.quiet)
       return Object.freeze({
         status: "ineligible",
         unread: false,
-        forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
+        forced:
+          !entry?.quiet &&
+          (forcedMessages.get(channelId)?.has(messageId) ?? false),
         viewing: false,
       });
     const dm = isDm(channelId);
@@ -824,8 +863,13 @@ export function createUnread({
   // Folds read profiles only through agent owners. Keep the answers they got:
   // a profile change that leaves them all alone cannot change a projection.
   const ownersRead = new Map<string, string | undefined>();
+  // A lookup that changed a recorded answer leaves earlier projections behind,
+  // even once every recorded answer matches the directory again.
+  let ownersMixed = false;
   const agentOwner = (pubkey: string) => {
     const owner = profiles?.owner?.(pubkey);
+    if (ownersRead.has(pubkey) && ownersRead.get(pubkey) !== owner)
+      ownersMixed = true;
     ownersRead.set(pubkey, owner);
     return owner;
   };
@@ -854,11 +898,7 @@ export function createUnread({
         continue;
       const current = grouped.get(rootId);
       presented ??= new Map(
-        foldMessages(channelId, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner && agentOwner,
-        }).map((message) => [message.id, message.content]),
+        folded(channelId).map((message) => [message.id, message.content]),
       );
       const preview = presented.get(event.id) ?? event.content;
       if (!current) {
@@ -998,11 +1038,7 @@ export function createUnread({
           groups.set(id, group);
         }
         if (!groups.size) continue;
-        const rows = foldMessages(channel.id, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner && agentOwner,
-        });
+        const rows = folded(channel.id);
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
         // else to everyone, even one that is not Inbox evidence, unless that
@@ -1211,9 +1247,17 @@ export function createUnread({
   }
   const stopRead = reads.subscribe(publish);
   const stopProfiles = profiles?.subscribe(() => {
+    // Owners resolve one at a time, so a fold since the last notification can
+    // already hold a newer answer than another channel's cached fold.
+    foldedRows.clear();
     const owner = profiles.owner;
-    if (!owner || [...ownersRead].every(([key, value]) => owner(key) === value))
+    if (
+      !owner ||
+      (!ownersMixed &&
+        [...ownersRead].every(([key, value]) => owner(key) === value))
+    )
       return;
+    ownersMixed = false;
     ownersRead.clear();
     publish();
   });
@@ -1646,6 +1690,7 @@ export function createUnread({
         .sort();
       if (!ids.length) {
         freshness = "observed";
+        owing = false;
         error = undefined;
         return;
       }
@@ -1699,12 +1744,14 @@ export function createUnread({
             repaired.set(key, Math.max(mark ?? 0, Math.min(newest, asked)));
         }
         freshness = "observed";
+        owing = false;
         error = undefined;
         publish();
         void findHomes(generation);
       } catch (cause) {
         if (!current()) return;
         freshness = "stale";
+        owing = true;
         error =
           cause instanceof Error ? cause.message : "Unread observation failed";
         publish();
@@ -1850,6 +1897,7 @@ export function createUnread({
         bytes = 0;
         error = "Unread observation capacity reached; refresh available";
         freshness = "stale";
+        owing = true;
         publish();
         return false;
       }
@@ -1911,6 +1959,13 @@ export function createUnread({
     )
       throw new Error("A thread reply cannot advance the channel frontier");
     return event;
+  }
+  /** Coordination between agents has no unread state, so no unread intent
+   * may be saved for it. */
+  function refuseAgentCoordination(messageId: string) {
+    const event = events.get(messageId);
+    if (event && agentAudience(event))
+      throw new Error("Messages between agents cannot be marked unread");
   }
   function messageSubtree(channelId: string, messageId: string) {
     const selected = requireMessage(
@@ -2321,6 +2376,7 @@ export function createUnread({
     async markMessageUnread(channelId, messageId) {
       const visit = visits.get(channelId) ?? 0;
       const rows = messageSubtree(channelId, messageId);
+      refuseAgentCoordination(messageId);
       const generation = epoch;
       return serialize(channelId, async () => {
         const valid = () =>
@@ -2481,6 +2537,7 @@ export function createUnread({
         return true;
       };
       if (!valid()) throw new Error("Unread target unavailable");
+      if (target.kind === "message") refuseAgentCoordination(target.messageId);
       return serialize(target.channelId, () =>
         reads.markLocalUnread(key, valid),
       );
@@ -2555,6 +2612,8 @@ export function createUnread({
     purge,
     /** `covered`: the membership route's replay was continuous, so read state
      * resumes from it instead of reading its snapshot again. */
+    /** A repair is still owed: evidence (see `owing`) or read-state markers. */
+    owed: () => requested && (owing || reads.owed()),
     reconnect(covered = false) {
       if (requested)
         void (covered ? reads.resume() : reads.refresh()).then(() =>
@@ -2565,6 +2624,7 @@ export function createUnread({
       epoch++;
       channelReadGenerations.clear();
       freshness = "stale";
+      owing = true;
       reads.stale();
       publish();
     },

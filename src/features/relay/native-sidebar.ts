@@ -144,13 +144,19 @@ export function nativeSidebar(transport: ReadTransport) {
     ) => {
       next: Record<string, unknown>;
       result: T;
+      /** Write a record even where none exists and `next` matches the empty
+       * value, as saving none does. */
+      record?: boolean;
     },
     confirms: (current: Record<string, unknown>) => boolean,
     conflict: string,
   ): Promise<T> {
     const current = await head(coordinate, signal);
     const draft = prepare(current.payload, current.createdAt);
-    if (same(current.payload, draft.next)) return draft.result;
+    const unchanged =
+      same(current.payload, draft.next) &&
+      (current.createdAt > 0 || !draft.record);
+    if (unchanged) return draft.result;
     // Reject unsupported/over-budget writes at the existing projection boundary.
     if (coordinate === "main-agent") mainAgent(draft.next);
     else project(coordinate, draft.next);
@@ -180,7 +186,10 @@ export function nativeSidebar(transport: ReadTransport) {
     decodeSidebarPreferences: decode,
     async readMainAgent(signal: AbortSignal) {
       const current = await head("main-agent", signal);
-      return current.createdAt ? mainAgent(current.payload) : undefined;
+      // A record of none reads as null, apart from no record at all.
+      return current.createdAt
+        ? (mainAgent(current.payload) ?? null)
+        : undefined;
     },
     async writeMainAgent(agent: string | null, signal: AbortSignal) {
       if (agent !== null && !agentKey.test(agent))
@@ -188,7 +197,13 @@ export function nativeSidebar(transport: ReadTransport) {
       await mutate(
         "main-agent",
         signal,
-        () => ({ next: { version: 1, agent }, result: undefined }),
+        // A saved none matches the empty value but is still a record, unlike
+        // none at all, so it is written even then.
+        () => ({
+          next: { version: 1, agent },
+          result: undefined,
+          record: true,
+        }),
         (value) => value.agent === agent,
         "The main agent changed on another device; reload and try again",
       );

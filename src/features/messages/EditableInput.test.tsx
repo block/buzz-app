@@ -35,6 +35,7 @@ import {
   type MentionDraft,
 } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
+import { setMessageAutocorrectPreference } from "./autocorrect-preference";
 import { profileMentionParts } from "./profile-mentions";
 import {
   serializeNode,
@@ -90,6 +91,7 @@ function mount(
   initial: string | MentionDraft = "",
   options: {
     maxLength?: number;
+    onPasteTooLong?: () => void;
     links?: boolean;
     acceptRecipient?: EditableInputProps["acceptRecipient"];
   } = {},
@@ -108,6 +110,9 @@ function mount(
         disabled={false}
         placeholder="Draft"
         maxLength={options.maxLength ?? 16000}
+        {...(options.onPasteTooLong
+          ? { onPasteTooLong: options.onPasteTooLong }
+          : {})}
         // Explicit recipients render as mention tokens, as in RichComposerInput.
         decorationsFor={(current) =>
           [
@@ -187,6 +192,25 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
   act(() => h.input.undo(false));
   expect(h.input).toHaveValue(":x");
+});
+
+it("keeps native autocorrection off until this device opts in, then follows the choice live", async () => {
+  try {
+    const h = mount("teh");
+    expect(h.input).toHaveAttribute("spellcheck", "true");
+    expect(h.input).toHaveAttribute("autocorrect", "off");
+    act(() => setMessageAutocorrectPreference(true));
+    expect(h.input).toHaveAttribute("autocorrect", "on");
+    expect(h.input).toHaveAttribute("spellcheck", "true");
+    expect(h.input.selectionStart).toBe(3);
+    await h.user.keyboard("!");
+    expect(h.markdown()).toBe("teh!");
+    act(() => setMessageAutocorrectPreference(false));
+    expect(h.input).toHaveAttribute("autocorrect", "off");
+  } finally {
+    act(() => setMessageAutocorrectPreference(false));
+    localStorage.removeItem("buzz-message-autocorrect.v1");
+  }
 });
 
 it("reads value and selection from one projection per document", async () => {
@@ -2981,6 +3005,100 @@ it("moves the caret for a Right Arrow reported as U+001D instead of typing it", 
   expect(snapshot(h)).toEqual(before);
 });
 
+/** Presses a key chord on the editor, returning the selection and whether the
+ * editor handled the key itself. */
+function chord(input: ComposerInputElement, init: KeyboardEventInit) {
+  let prevented = false;
+  act(() => {
+    prevented = !fireEvent.keyDown(input, init);
+  });
+  return [input.selectionStart, input.selectionEnd, prevented] as const;
+}
+const controlKey = (key: "a" | "e" | "k", shiftKey = false) => ({
+  key: shiftKey ? key.toUpperCase() : key,
+  code: `Key${key.toUpperCase()}`,
+  ctrlKey: true,
+  shiftKey,
+});
+const optionKey = (key: "ArrowUp" | "ArrowDown") => ({
+  key,
+  code: key,
+  altKey: true,
+});
+const linked = `first\nbefore https://github.com/block/buzz/pull/117/changes after\nlast`;
+const linkedLine = linked.indexOf("before");
+const linkedEnd = linked.indexOf("\nlast");
+
+/** A collapsed caret at `offset` after a key the editor handled itself. */
+const handledAt = (offset: number) => [offset, offset, true] as const;
+
+it("moves Control-A and Control-E to the paragraph edges across a link chip on Apple platforms", () => {
+  setPlatform("MacIntel");
+  const h = mount(linked, { links: true });
+  expect(h.input.querySelectorAll("[data-link]")).toHaveLength(1);
+  const before = snapshot(h);
+  act(() => h.input.setSelectionRange(linkedEnd, linkedEnd));
+  // The paragraph starts after the newline, not at the document start, and a
+  // caret already at an edge stays there.
+  expect(chord(h.input, controlKey("a"))).toEqual(handledAt(linkedLine));
+  expect(chord(h.input, controlKey("a"))).toEqual(handledAt(linkedLine));
+  expect(chord(h.input, controlKey("e"))).toEqual(handledAt(linkedEnd));
+  chord(h.input, controlKey("a", true));
+  expect(selection(h.input)).toEqual([linkedLine, linkedEnd, "backward"]);
+  // Without Shift, a selection collapses to the edge beyond its far end.
+  expect(chord(h.input, controlKey("e"))).toEqual(handledAt(linkedEnd));
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("moves Option-Up and Option-Down across a link chip, then on to the neighbouring paragraph", () => {
+  setPlatform("MacIntel");
+  const h = mount(linked, { links: true });
+  const before = snapshot(h);
+  act(() => h.input.setSelectionRange(linkedEnd, linkedEnd));
+  expect(chord(h.input, optionKey("ArrowUp"))).toEqual(handledAt(linkedLine));
+  // The same key reported as a control character takes the same path.
+  expect(chord(h.input, mangled("ArrowUp", { altKey: true }))).toEqual(
+    handledAt(0),
+  );
+  expect(chord(h.input, optionKey("ArrowUp"))).toEqual(handledAt(0));
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual(handledAt(5));
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual(handledAt(linkedEnd));
+  expect(chord(h.input, optionKey("ArrowDown"))).toEqual(
+    handledAt(linked.length),
+  );
+  expect(snapshot(h)).toEqual(before);
+});
+
+it("deletes through a link chip for Control-K, leaving plain text to the browser", () => {
+  setPlatform("MacIntel");
+  const h = mount(linked, { links: true });
+  // Plain text to the paragraph's end stays native, for the native kill ring.
+  const plain = linkedEnd - 3;
+  act(() => h.input.setSelectionRange(plain, plain));
+  expect(chord(h.input, controlKey("k"))).toEqual([plain, plain, false]);
+  expect(h.input).toHaveValue(linked);
+  act(() => h.input.setSelectionRange(linkedLine, linkedLine));
+  expect(chord(h.input, controlKey("k"))).toEqual(handledAt(linkedLine));
+  expect(h.input).toHaveValue("first\n\nlast");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue(linked);
+  expect(h.input.querySelectorAll("[data-link]")).toHaveLength(1);
+});
+
+it("leaves Control-A to select all off Apple platforms", () => {
+  setPlatform("Linux x86_64");
+  const h = mount("before https://github.com/block/buzz/pull/117 after", {
+    links: true,
+  });
+  act(() => {
+    fireEvent.keyDown(h.input, { key: "a", code: "KeyA", ctrlKey: true });
+  });
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([
+    0,
+    h.input.value.length,
+  ]);
+});
+
 it("steps over a mention chip for an arrow reported as a control character, as the named key does", () => {
   const h = mount("abc");
   const modify = stubSelectionModify();
@@ -3091,11 +3209,12 @@ it.each([
     ["extend", "left", "lineboundary"],
   ],
   ["MacIntel", "ArrowUp", {}, ["move", "backward", "line"]],
+  // Plain Option-Up is a paragraph command the editor runs itself.
   [
     "MacIntel",
     "ArrowUp",
-    { altKey: true },
-    ["move", "backward", "paragraphboundary"],
+    { altKey: true, shiftKey: true },
+    ["extend", "backward", "paragraphboundary"],
   ],
   [
     "MacIntel",
@@ -4630,4 +4749,82 @@ it("rejects adding a recipient when retained duplicate mentions fill the limit",
     ).toBe(false),
   );
   expect(h.input).toHaveValue(text);
+});
+
+it("toggles inline code, quote and code block with Slack's chords as well as Buzz's", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  try {
+    const h = mount();
+    await h.user.keyboard("{Meta>}{Shift>}c{/Shift}{/Meta}");
+    expect(h.formats()).toContain("code");
+    await h.user.keyboard("{Meta>}{Shift>}c{/Shift}{/Meta}");
+    expect(h.formats()).not.toContain("code");
+    fireEvent.keyDown(h.input, {
+      key: "(",
+      code: "Digit9",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(h.formats()).toContain("blockquote");
+    fireEvent.keyDown(h.input, {
+      key: "Ç",
+      code: "KeyC",
+      metaKey: true,
+      altKey: true,
+      shiftKey: true,
+    });
+    expect(h.formats()).toContain("code_block");
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+
+describe("oversized paste feedback", () => {
+  it.each([16000, 16001])("checks the %i-character boundary", (length) => {
+    const onPasteTooLong = vi.fn();
+    const h = mount("", { onPasteTooLong });
+    paste(h.input, "x".repeat(length));
+    expect(h.markdown()).toBe(length === 16000 ? "x".repeat(length) : "");
+    expect(onPasteTooLong).toHaveBeenCalledTimes(length === 16000 ? 0 : 1);
+  });
+
+  it("preserves the draft and selection, then accepts a replacement that fits", () => {
+    const onPasteTooLong = vi.fn();
+    const h = mount("keep replace", { maxLength: 12, onPasteTooLong });
+    act(() => h.input.setSelectionRange(5, 12));
+    paste(h.input, "abcdefgh");
+    expect(onPasteTooLong).toHaveBeenCalledOnce();
+    expect(h.markdown()).toBe("keep replace");
+    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([5, 12]);
+    paste(h.input, "abcdefg");
+    expect(h.markdown()).toBe("keep abcdefg");
+    expect(onPasteTooLong).toHaveBeenCalledOnce();
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("keep replace");
+  });
+
+  it("reports plain-text shortcut pastes without reporting other rejected edits", () => {
+    const onPasteTooLong = vi.fn();
+    const h = mount("keep", { maxLength: 5, onPasteTooLong });
+    act(() => h.input.insertText("too long"));
+    expect(onPasteTooLong).not.toHaveBeenCalled();
+    pasteRaw(h.input, "xx", "<p>x</p>");
+    expect(onPasteTooLong).toHaveBeenCalledOnce();
+    expect(h.markdown()).toBe("keep");
+  });
+
+  it("uses serialized length for copied blocks and external links", () => {
+    const onPasteTooLong = vi.fn();
+    const h = mount("", { maxLength: 10, onPasteTooLong });
+    paste(
+      h.input,
+      "abcdefg",
+      copyHtml("<blockquote><p>abcdefghi</p></blockquote>"),
+    );
+    expect(h.markdown()).toBe("");
+    expect(onPasteTooLong).toHaveBeenCalledOnce();
+    paste(h.input, "Docs", '<a href="https://example.com/docs">Docs</a>');
+    expect(h.markdown()).toBe("");
+    expect(onPasteTooLong).toHaveBeenCalledTimes(2);
+  });
 });

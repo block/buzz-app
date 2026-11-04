@@ -255,7 +255,9 @@ test.describe("public search destination", () => {
       )
       .locator("[data-search-result]")
       .filter({ hasText: /^open/ });
-    await expect(result).toContainText("Public channel · not joined");
+    await expect(result).toContainText(
+      "Public channel · not joined · 3 members",
+    );
     await result.click();
     const composer = page.getByRole("textbox", {
       name: "Message #open",
@@ -451,12 +453,17 @@ test.describe("public search destination", () => {
       "Joining this channel is not allowed",
     );
     expect(await height()).toBeGreaterThan(before);
+    // The notice grows before ResizeObserver updates the spacer and end-follow.
+    await expect
+      .poll(async () => {
+        const [row, overlay] = await Promise.all([
+          last.boundingBox(),
+          notice.boundingBox(),
+        ]);
+        return row.y + row.height - (overlay.y - 20);
+      })
+      .toBeLessThanOrEqual(0);
     await expect.poll(fromEnd).toBeLessThan(1);
-    const [row, overlay] = await Promise.all([
-      last.boundingBox(),
-      notice.boundingBox(),
-    ]);
-    expect(row.y + row.height).toBeLessThanOrEqual(overlay.y - 20);
   });
 });
 

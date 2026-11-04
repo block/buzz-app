@@ -34,10 +34,35 @@ export function outsideMentionDetail(
   if (elsewhere) return `In ${elsewhere}`;
   return channel?.channelType === "dm"
     ? "Not in DM · Will not be notified"
-    : "Not in channel · Choose whether to add when you send";
+    : "Not in channel";
 }
 
-type DirectoryPerson = MentionRecipient & { isAgent?: true };
+/**
+ * "Managed by" for an agent whose owner is attested (NIP-OA,
+ * `profiles.owner`), once that owner has a real name. Never the viewer.
+ */
+export function managedByDetail(
+  owner: string | undefined,
+  viewer: string | undefined,
+  profiles: ReadonlyMap<
+    string,
+    { name?: string | undefined; nameIsFallback?: true | undefined }
+  >,
+) {
+  const profile = owner && owner !== viewer ? profiles.get(owner) : undefined;
+  const name = profile && !profile.nameIsFallback && profile.name?.trim();
+  return name ? `Managed by ${name}` : undefined;
+}
+
+type DirectoryPerson = MentionRecipient & {
+  isAgent?: true;
+  /** A community-verified full name (useVerifiedNames). */
+  fullName?: string | undefined;
+  /** The profile name and handle a verified person was found by. */
+  profileNames?: readonly string[] | undefined;
+  /** Self-declared, for naming only; never shown as a manager. */
+  ownerPubkey?: string;
+};
 type ElsewhereAgent = Pick<Agent, "pubkey" | "name" | "relay">;
 const none: readonly never[] = [];
 // Rows change only with their sources, not with each keystroke. Snapshots are
@@ -204,9 +229,12 @@ function buildCandidates(
   // Keyed lookups keep one pass over members linear in a large channel.
   const listed = new Map<string, string>();
   const directoryAgents = new Set<string>();
+  const verified = new Map<string, DirectoryPerson>();
   for (const person of directory) {
     if (!listed.has(person.pubkey)) listed.set(person.pubkey, person.name);
     if (person.isAgent) directoryAgents.add(person.pubkey);
+    if (person.fullName || person.profileNames)
+      verified.set(person.pubkey, person);
   }
   const rostered = new Map<string, string>();
   for (const person of roster ?? [])
@@ -222,31 +250,40 @@ function buildCandidates(
   }
   return [...choices.values()]
     .filter((p) => admits(p.pubkey))
-    .map((recipient) => ({
-      recipient,
-      member: memberKeys.has(recipient.pubkey),
-      /** The host of the owner's other community this agent is in. */
-      ...(hosts.has(recipient.pubkey)
-        ? { elsewhere: hosts.get(recipient.pubkey) }
-        : {}),
-      agent:
-        hosts.has(recipient.pubkey) ||
-        known.has(recipient.pubkey) ||
-        directoryAgents.has(recipient.pubkey),
-      owned:
-        !!session.viewer &&
-        profiles.get(recipient.pubkey)?.ownerPubkey === session.viewer,
-      managed: managed.has(recipient.pubkey),
-      aliases: [
-        ...new Set(
-          [
-            profiles.get(recipient.pubkey)?.name ||
-              listed.get(recipient.pubkey) ||
-              rostered.get(recipient.pubkey),
-            ...(agentNames.get(recipient.pubkey) ?? []),
-            hosts.has(recipient.pubkey) ? recipient.name : undefined,
-          ].filter((name): name is string => !!name),
-        ),
-      ],
-    }));
+    .map((recipient) => {
+      const fullName =
+        profiles.get(recipient.pubkey)?.verified?.fullName ??
+        verified.get(recipient.pubkey)?.fullName;
+      return {
+        recipient,
+        /** A community-verified full name, shown beside the row's detail. */
+        ...(fullName ? { fullName } : {}),
+        member: memberKeys.has(recipient.pubkey),
+        /** The host of the owner's other community this agent is in. */
+        ...(hosts.has(recipient.pubkey)
+          ? { elsewhere: hosts.get(recipient.pubkey) }
+          : {}),
+        agent:
+          hosts.has(recipient.pubkey) ||
+          known.has(recipient.pubkey) ||
+          directoryAgents.has(recipient.pubkey),
+        owned:
+          !!session.viewer &&
+          profiles.get(recipient.pubkey)?.ownerPubkey === session.viewer,
+        managed: managed.has(recipient.pubkey),
+        aliases: [
+          ...new Set(
+            [
+              profiles.get(recipient.pubkey)?.name ||
+                listed.get(recipient.pubkey) ||
+                rostered.get(recipient.pubkey),
+              ...(agentNames.get(recipient.pubkey) ?? []),
+              hosts.has(recipient.pubkey) ? recipient.name : undefined,
+              fullName,
+              ...(verified.get(recipient.pubkey)?.profileNames ?? []),
+            ].filter((name): name is string => !!name),
+          ),
+        ],
+      };
+    });
 }

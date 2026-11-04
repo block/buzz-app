@@ -143,6 +143,8 @@ export function SoloInventory({
       trigger: document.querySelector<HTMLElement>(
         `[data-solo-channel-id="${CSS.escape(channelId)}"]`,
       ),
+      // A Solo chat is one conversation, so its transcript is known.
+      transcript: {},
     };
     handoff.activityAgent.current = intent;
     void open(channelId).then(() => {

@@ -167,9 +167,21 @@ impl AppAgentHost {
         pubkey: String,
         relay: String,
     ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
+        self.signer_for(pubkey, relay, Duration::ZERO).await
+    }
+    /// As [`Self::signer`], with evidence valid for at least `valid_for`.
+    async fn signer_for(
+        &self,
+        pubkey: String,
+        relay: String,
+        valid_for: Duration,
+    ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
         let incarnation = self.tokens.stamp(&pubkey, &relay)?;
         let (agent, key) = self.key(self.agent(pubkey, relay).await?).await?;
-        let evidence = self.tokens.authorize(&agent, &key, incarnation).await?;
+        let evidence = self
+            .tokens
+            .authorize_for(&agent, &key, incarnation, valid_for)
+            .await?;
         Ok((agent, key, evidence))
     }
     /// Saves an imported identity with its key, opening the agent's next
@@ -995,7 +1007,7 @@ async fn signed_read(
         .await
         .map_err(|_| "Agent read failed")?;
     let status = response.status();
-    Ok((status, bounded(response, 8 * 1024 * 1024).await?))
+    Ok((status, bounded(response, READ_LIMIT).await?))
 }
 
 /// Searches the agent's community for profiles whose `name` or `display_name`
@@ -1131,8 +1143,12 @@ async fn upload(
 }
 
 /// The URL of repository `repo` of `owner` in the agent's community, and the
-/// `Authorization` header Git sends there as the agent for the next minute.
-/// The key stays native; the header grants only that repository.
+/// headers Git sends there as the agent for the next minute, one per line:
+/// `Authorization`, then the agent's sign-in evidence when the community
+/// requires it. The key stays native. These are the only assertion headers
+/// that leave native code: the NIP-98 proof grants only that repository for 60
+/// seconds; the assertion is scoped to the relay for its issuer's lifetime and
+/// is bound to the agent's key (NIP-FI, Assertion–key binding).
 #[tauri::command]
 pub(crate) async fn app_agent_git_auth(
     state: tauri::State<'_, AppAgentHost>,
@@ -1141,17 +1157,28 @@ pub(crate) async fn app_agent_git_auth(
     owner: String,
     repo: String,
 ) -> Result<Value, String> {
-    use base64::Engine;
-    let (agent, key) = state.key(state.agent(pubkey, relay).await?).await?;
+    let (agent, key, evidence) = state.signer_for(pubkey, relay, GIT_EVIDENCE).await?;
     let (url, auth) = agent.git_auth(&key, &owner, &repo)?;
     let auth = serde_json::to_vec(&auth).map_err(|_| "Could not authorize Git")?;
-    Ok(serde_json::json!({
-        "url": url,
-        "header": format!(
-            "Authorization: Nostr {}",
-            base64::engine::general_purpose::STANDARD.encode(auth)
-        ),
-    }))
+    evidence.dispatch()?;
+    Ok(serde_json::json!({ "url": url, "header": git_headers(&auth, evidence.header()) }))
+}
+
+/// How long the Git headers must stay valid: the minute the `repo` tool
+/// promises, and a margin for a command that starts at its end.
+const GIT_EVIDENCE: Duration = Duration::from_secs(70);
+
+/// Git's header lines for a signed `auth` and the agent's sign-in `evidence`.
+fn git_headers(auth: &[u8], evidence: Option<&str>) -> String {
+    use base64::Engine;
+    let auth = format!(
+        "Authorization: Nostr {}",
+        base64::engine::general_purpose::STANDARD.encode(auth)
+    );
+    match evidence {
+        Some(evidence) => format!("{auth}\n{}: {evidence}", assertion::HEADER),
+        None => auth,
+    }
 }
 
 /// The largest image an agent is shown. Claude takes 5 MiB of base64 on its
@@ -1344,6 +1371,10 @@ fn client() -> Result<&'static reqwest::Client, String> {
         .map_err(|_| "Agent client unavailable".into())
 }
 
+/// The most an agent read returns. Mirrors `CANVAS_READ_BYTES` in
+/// `canvas-limits.ts`, which sizes Canvas history pages to fit it.
+const READ_LIMIT: usize = 8 * 1024 * 1024;
+
 async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| "Agent request failed")? {
@@ -1417,6 +1448,15 @@ async fn post(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn git_headers_add_sign_in_evidence_only_when_present() {
+        assert_eq!(git_headers(b"{}", None), "Authorization: Nostr e30=");
+        assert_eq!(
+            git_headers(b"{}", Some("Bearer token")),
+            "Authorization: Nostr e30=\nNostr-Federated-Identity: Bearer token"
+        );
+    }
 
     #[test]
     fn declining_storage_upgrade_leaves_files_unchanged() {
@@ -2504,5 +2544,33 @@ mod tests {
         let (result, ()) = tokio::join!(query, retire);
         assert!(result.is_err(), "a retired query returned its parsed body");
         assert!(server.await.unwrap().contains("nostr-federated-identity:"));
+    }
+    #[test]
+    fn read_limit_mirrors_the_canvas_read_budget() {
+        let policy = include_str!("../../src/features/channel-templates/canvas-limits.ts");
+        assert_eq!(READ_LIMIT, 8 * 1024 * 1024);
+        assert!(policy.contains("export const CANVAS_READ_BYTES = 8 * 1024 * 1024;"));
+    }
+    #[tokio::test]
+    async fn bounded_admits_the_limit_and_refuses_one_byte_over() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for (size, admitted) in [(READ_LIMIT, true), (READ_LIMIT + 1, false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(socket.read_u8().await.unwrap());
+                }
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n");
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&vec![b'x'; size]).await;
+            });
+            let response = reqwest::get(&url).await.unwrap();
+            let body = bounded(response, READ_LIMIT).await;
+            assert_eq!(body.map(|b| b.len()).ok(), admitted.then_some(size));
+            server.abort();
+        }
     }
 }

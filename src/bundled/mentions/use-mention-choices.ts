@@ -3,6 +3,7 @@ import { useMentionArchives } from "../../features/messages/use-mention-archives
 import {
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -18,16 +19,27 @@ import { DraftMentionRoster } from "../../features/messages/draft-mention-roster
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { archivedMention } from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
-import { directoryChanges, mentionCandidates } from "./mention-candidates";
+import {
+  directoryChanges,
+  managedByDetail,
+  mentionCandidates,
+} from "./mention-candidates";
 import { useListedChannel } from "../../features/relay/listed-channel";
 import { useNamesRevision } from "../../features/identity-names/react";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+  type VerifiedPerson,
+} from "../../features/profiles/useVerifiedNames";
 import {
   exactMention,
   matchingMentions,
   rankMentions,
   type MentionChoice,
 } from "./mention-ranking";
-type Person = ReturnType<typeof useMentionDirectory>["people"][number];
+type Person = VerifiedPerson<
+  ReturnType<typeof useMentionDirectory>["people"][number]
+>;
 const activityFields = new Set(["preview", "lastActivityAt"]);
 /** Equal but for the preview and activity time a new message changes. */
 function sameMentionFields(a: ChannelSummary, b: ChannelSummary) {
@@ -71,7 +83,14 @@ function page(session: ComposerSession, people: readonly Person[]) {
   const key = JSON.stringify(
     [...people]
       .sort((a, b) => (a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0))
-      .map(({ pubkey, name, isAgent }) => [pubkey, name, !!isAgent]),
+      .map(({ pubkey, name, isAgent, fullName, profileNames, ownerPubkey }) => [
+        pubkey,
+        name,
+        !!isAgent,
+        fullName ?? "",
+        profileNames ?? [],
+        ownerPubkey,
+      ]),
   );
   const seen = pages.get(session) ?? new Map<string, readonly Person[]>();
   pages.set(session, seen);
@@ -129,21 +148,42 @@ export function namedCandidates(
     ]),
   ];
   // Directory pages are menu-local, not cached profiles. Name them only when no
-  // other source knows the key, so namesakes in this choice set are qualified.
+  // other source knows the key, so namesakes in this choice set are qualified,
+  // or when a verified name replaced the one the shared profiles show: the
+  // label must be the name the mention inserts.
+  const shared = session.profiles.snapshot();
+  const pageVerified = new Set(
+    outside
+      .filter(
+        (person) =>
+          !!person.profileNames && !shared.get(person.pubkey)?.verified,
+      )
+      .map((person) => person.pubkey),
+  );
   const facts = [
     ...outside
-      .filter((person) => !known?.(person.pubkey))
-      .map(({ pubkey, name, isAgent }) => ({
+      .filter(
+        (person) => !known?.(person.pubkey) || pageVerified.has(person.pubkey),
+      )
+      .map(({ pubkey, name, isAgent, ownerPubkey }) => ({
         pubkey,
         name,
         ...(isAgent ? { isAgent } : {}),
+        ...(ownerPubkey ? { ownerPubkey } : {}),
       })),
     ...selected,
   ];
   // One naming scope per choice set, not one normalization per row.
   const name = session.names?.scope(keys, facts);
   const choices: readonly MentionChoice[] = candidates.map((choice) => {
-    const named = name?.(choice.recipient.pubkey);
+    const key = choice.recipient.pubkey;
+    // Without a naming policy the scope falls back to the public profile,
+    // which must not outrank the verified name the mention inserts.
+    const found = name?.(key);
+    const named =
+      found?.source === "public-profile" && pageVerified.has(key)
+        ? undefined
+        : found;
     return {
       ...choice,
       label: named?.name ?? choice.recipient.name,
@@ -256,14 +296,23 @@ export function useMentionChoices(
   const key = JSON.stringify([channelId, invite, query, open, !!roster]);
   const same = installed?.session === session && installed.key === key;
   const carried = same ? installed.people : none;
+  // Searched people the community verified carry their verified names.
+  const verified = useVerifiedNames(session, directory.people, {
+    key: query,
+    settled: !directory.loading,
+  });
+  const searched = useMemo(
+    () => withVerifiedNames(directory.people, verified, profiles),
+    [directory.people, verified, profiles],
+  );
   const people = useMemo(() => {
-    if (!carried.length) return directory.people;
-    const known = new Set(directory.people.map((person) => person.pubkey));
+    if (!carried.length) return searched;
+    const known = new Set(searched.map((person) => person.pubkey));
     return [
-      ...directory.people,
+      ...searched,
       ...carried.filter((person) => !known.has(person.pubkey)),
     ];
-  }, [directory.people, carried]);
+  }, [searched, carried]);
   const current = useCallback(
     () =>
       namedCandidates(
@@ -333,6 +382,48 @@ export function useMentionChoices(
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
   // Only choices the query can match; ranking reads no others.
+  // "Managed by" names only an attested owner. Attestation settles after the
+  // profile lands and notifies without a new snapshot, so read it here, not
+  // in the cached candidates.
+  const agentKeys = candidates.flatMap((c) =>
+    c.agent ? [c.recipient.pubkey] : [],
+  );
+  const attested = useSyncExternalStore(session.profiles.subscribe, () =>
+    agentKeys
+      .flatMap((key) => {
+        const owner = session.profiles.owner?.(key);
+        return owner && owner !== session.viewer ? [`${key}=${owner}`] : [];
+      })
+      .join(","),
+  );
+  const owners = useMemo(
+    () =>
+      new Map(
+        attested
+          ? attested
+              .split(",")
+              .map((pair) => pair.split("=") as [string, string])
+          : [],
+      ),
+    [attested],
+  );
+  const ownerKeys = [...new Set(owners.values())].sort().join(":");
+  useEffect(() => {
+    if (ownerKeys)
+      void session.profiles
+        .ensure(ownerKeys.split(":"), "background")
+        .catch(() => {});
+  }, [session, ownerKeys]);
+  const managedBy = useMemo(
+    () =>
+      new Map(
+        [...owners].flatMap(([key, owner]) => {
+          const label = managedByDetail(owner, session.viewer, profiles);
+          return label ? [[key, label] as const] : [];
+        }),
+      ),
+    [owners, profiles, session.viewer],
+  );
   const matches = matchingMentions(candidates, query);
   const rank = (choices: readonly MentionChoice[]) =>
     rankMentions(
@@ -418,6 +509,7 @@ export function useMentionChoices(
       choices,
       directory: { ...directory, people },
       profiles,
+      managedBy,
       list,
       agents,
       channel,
@@ -439,8 +531,6 @@ export function useMentionChoices(
             spaceMention(fresh, localKeys(), query, evidence) === pubkey)
         );
       },
-      truncated:
-        rankMentions(matchingMentions(candidates, query), query).length > 50,
     };
   }, [
     session,
@@ -453,6 +543,7 @@ export function useMentionChoices(
     missingNames,
     archives,
     profiles,
+    managedBy,
     list,
     agents,
     channel,

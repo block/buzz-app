@@ -27,9 +27,15 @@ import {
 } from "../../features/channel-navigation/routes";
 import { linkedDraftKey } from "../../features/solo/linked-chat";
 import { readView, writeView } from "../../shared/view-state";
-import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
+import { splitPartition } from "../../features/relay/partition";
+import {
+  ChannelsPage,
+  type ArchiveShortcut,
+  type ReadShortcut,
+} from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
+import type { ReadTarget } from "../../features/relay/read-state-model";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -56,7 +62,18 @@ function fixture({
   archived = false,
   viewerNamed = false,
   others = [],
+  unread,
+  capability = "frontier-sync",
+  viewOnly = false,
+  preview,
 }: {
+  /** Observed unread messages in this chat; fakes the read state when given. */
+  unread?: number;
+  /** What the read state can do on this connection. */
+  capability?: "unsupported" | "read-only" | "frontier-sync";
+  viewOnly?: boolean;
+  /** An unjoined reader of an open chat, including legacy admission defaults. */
+  preview?: { joinRole?: "member" | "guest" };
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
   /** The viewer's own profile has loaded too. */
@@ -108,9 +125,15 @@ function fixture({
     id,
     name: "Planning",
     channelType: type,
-    private: true as const,
+    ...(!preview && { private: true as const }),
     creator: ownedBy ?? (placed ? viewer.pubkey : agent),
     members: [viewer.pubkey, agent, ...people],
+    ...(viewOnly && { readOnly: true as const, viewerRole: "guest" as const }),
+    ...(preview && {
+      members: [agent, ...people],
+      readOnly: true,
+      ...preview,
+    }),
     ...(archived && { archived }),
   };
   const neighbors = others.map((other, index) => ({
@@ -174,6 +197,25 @@ function fixture({
       : people.map((key) => [key, { name: "Teammate" }] as const)),
     ...(viewerNamed ? [[viewer.pubkey, { name: "Viewer" }] as const] : []),
   ]);
+  const markRead = vi.fn(async (_channelId: string) => ({}) as never);
+  // useSyncExternalStore needs stable snapshots.
+  const unreadState = {
+    observedCount: unread ?? 0,
+    attentionCount: 0,
+    coverage: "observed" as const,
+    freshness: "observed" as const,
+    manual: "none" as const,
+  };
+  const unreadStates = new Map<
+    string,
+    typeof unreadState & { target: ReadTarget }
+  >();
+  const noActivity = {
+    channelId: id,
+    items: [],
+    coverage: "observed" as const,
+    freshness: "observed" as const,
+  };
   const session = {
     ...owner.session,
     profiles: {
@@ -195,10 +237,10 @@ function fixture({
       load: vi.fn(async () => ({
         channelId: id,
         channelType: "stream" as const,
-        canArchive: true,
+        canArchive: !viewOnly,
         canUnarchive: false,
-        canDelete: true,
-        canLeave: false,
+        canDelete: !viewOnly,
+        canLeave: viewOnly,
         canHide: false,
       })),
       run,
@@ -240,6 +282,30 @@ function fixture({
       },
     },
     messages: { ...owner.session.messages, send },
+    unread:
+      unread === undefined
+        ? owner.session.unread
+        : {
+            ...owner.session.unread,
+            sync: () => ({
+              capability,
+              status: "reconciled" as const,
+              completeness: "snapshot" as const,
+            }),
+            snapshot: (
+              target: Parameters<typeof owner.session.unread.snapshot>[0],
+            ) => {
+              const key = JSON.stringify(target);
+              let state = unreadStates.get(key);
+              if (!state) {
+                state = { ...unreadState, target };
+                unreadStates.set(key, state);
+              }
+              return state;
+            },
+            activity: () => noActivity,
+            markChannelRead: markRead,
+          },
     channelWrites: {
       ...owner.session.channelWrites,
       available: true,
@@ -306,6 +372,7 @@ function fixture({
     }),
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
+  const read: ReadShortcut = {};
   const page = (sidebar = false) => (
     <ChannelNavigationProvider relay={relay}>
       {sidebar && (
@@ -333,6 +400,7 @@ function fixture({
         navigation={navigation}
         navigator={navigator}
         archive={archive}
+        read={read}
       />
     </ChannelNavigationProvider>
   );
@@ -342,6 +410,8 @@ function fixture({
     mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
     abort,
     archive,
+    read,
+    markRead,
     open,
     run,
     send,
@@ -956,6 +1026,54 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   expect(screen.queryByRole("textbox")).toBeNull();
 });
 
+it.each([
+  { preview: { joinRole: "guest" as const }, joinable: true },
+  { preview: { joinRole: "member" as const }, joinable: false },
+  { preview: {}, joinable: false },
+])(
+  "offers Solo preview Join only for Guest admission ($preview)",
+  async ({ preview, joinable }) => {
+    fixture({ placed: false, preview }).mount();
+    expect(
+      await screen.findByRole("region", {
+        name:
+          "joinRole" in preview && preview.joinRole === "guest"
+            ? "Read-only chat"
+            : "Chat preview",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
+  },
+);
+
+it("lets a joined Solo viewer cancel Leave and restores focus to Chat actions", async () => {
+  const f = fixture({ placed: false, viewOnly: true });
+  f.mountWithSidebar();
+  const row = await screen.findByRole("button", { name: /^Planning/ });
+  expect(row).toBeVisible();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
+  const user = userEvent.setup();
+  const actions = screen.getByRole("button", { name: "Chat actions" });
+  await user.click(actions);
+  const leave = await screen.findByRole("menuitem", { name: "Leave chat" });
+  expect(screen.queryByRole("menuitem", { name: "Archive chat" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Delete chat" })).toBeNull();
+  await user.click(leave);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Leave chat: Planning",
+  });
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(actions).toHaveFocus());
+  expect(f.run).not.toHaveBeenCalled();
+});
+
 it.each(["solo", "stream"] as const)(
   "replaces an archived %s composer with a notice and restores its draft on unarchive",
   async (type) => {
@@ -1023,4 +1141,67 @@ it("finishes a linked chat across roster updates without appending source prose"
   expect(f.send.mock.calls[0]?.[1]).not.toContain("Source:");
   expect(f.session.channelWrites.start).toHaveBeenCalledOnce();
   expect(f.send.mock.calls[0]?.[1]).toContain(source.link);
+});
+
+it("marks the open conversation read from Escape while it shows unread", async () => {
+  const f = fixture({ unread: 3 });
+  f.mount();
+  await waitFor(() => expect(f.read.current?.available()).toBe(true));
+  await act(async () => f.read.current?.run());
+  expect(f.markRead).toHaveBeenCalledExactlyOnceWith(id);
+});
+
+it("offers no Escape mark-read for a read chat, without read sync, or after the visit", async () => {
+  const read = fixture();
+  read.mount();
+  await waitFor(() => expect(read.read.current).toBeDefined());
+  expect(read.read.current?.available()).toBe(false);
+  cleanup();
+  const unsynced = fixture({ unread: 2, capability: "read-only" });
+  unsynced.mount();
+  await waitFor(() => expect(unsynced.read.current).toBeDefined());
+  expect(unsynced.read.current?.available()).toBe(false);
+  cleanup();
+  const visit = fixture({ unread: 2 });
+  visit.mount();
+  await waitFor(() => expect(visit.read.current?.available()).toBe(true));
+  visit.abort.abort();
+  expect(visit.read.current?.available()).toBe(false);
+});
+
+it("offers no Escape mark-read for a read-only preview or the new message page", async () => {
+  const f = fixture({
+    unread: 2,
+    target: (scope) => ({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope: splitPartition(scope) as never,
+      route: { version: 1, params: "new-message" },
+    }),
+  });
+  f.mount();
+  await screen.findByRole("textbox", { name: /message/i }).catch(() => {});
+  expect(f.read.current).toBeUndefined();
+});
+
+it("reports a failed Escape mark-read in a toast and keeps the chat open", async () => {
+  const f = fixture({ unread: 1 });
+  f.markRead.mockRejectedValueOnce(new Error("offline"));
+  f.mountWithToasts();
+  await waitFor(() => expect(f.read.current?.available()).toBe(true));
+  await act(async () => f.read.current?.run());
+  expect(await screen.findByText("Couldn’t mark as read.")).toBeInTheDocument();
+});
+
+it("leaves Escape to a text field outside the composer", async () => {
+  const f = fixture({ unread: 1 });
+  f.mount();
+  await waitFor(() => expect(f.read.current?.available()).toBe(true));
+  const field = document.createElement("input");
+  document.body.append(field);
+  field.focus();
+  expect(f.read.current?.available()).toBe(false);
+  field.remove();
 });

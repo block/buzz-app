@@ -1,7 +1,14 @@
+import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
+import { removeSessionPrompts } from "./session-prompts";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
+import { respondExternal } from "../../buzz-mcp/external";
+import type { ExternalScope } from "./external-connection";
+import { externalMcpEnabled } from "./external-connection";
 import { connectMcp } from "../../buzz-mcp/connection";
+import { type HarnessKit, harnessKit } from "../agent-harness/kit";
+import { repositoriesContext } from "../communities/repositories";
 import type {
   HostMcpServer,
   HostProcess,
@@ -53,6 +60,7 @@ import {
   dispatchAgentHooks,
   type AgentHook,
   type AgentHookContext,
+  type AgentHookDispatchOptions,
 } from "./hooks";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
@@ -413,7 +421,7 @@ export type AgentHandle = Readonly<{
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: AgentCreationInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Owner-reviewed changes to one of the owner's agents here. */
   updateAgent?(
@@ -892,24 +900,35 @@ export type RetypePreview = Readonly<{
     outcome: "reset" | "dropped";
   }>[];
 }>;
-/** An unsaved creation request. Only the owner-facing review may approve it. */
-export type AgentCreationRequest = Readonly<{
-  id: string;
-  requester: string;
-  requesterName: string;
-  owner: string;
-  community: string;
-  type: string;
-  name: string;
-}>;
-/** Proposed changes; absent fields stay as they are. */
+/** A proposal's picture: uploads it once the proposal is valid, giving its
+ * HTTPS image URL. */
+export type ProposedPicture = () => Promise<string>;
+type AgentCreation = Readonly<{ type: string; name: string }>;
+/** A requested agent. */
+export type AgentCreationInput = AgentCreation &
+  Readonly<{ picture?: ProposedPicture }>;
+/** An unsaved creation request; `picture` is an HTTPS image URL. Only the
+ * owner-facing review may approve it. */
+export type AgentCreationRequest = AgentCreation &
+  Readonly<{
+    picture?: string;
+    id: string;
+    requester: string;
+    requesterName: string;
+    owner: string;
+    community: string;
+  }>;
+/** Proposed changes; absent fields stay as they are. `picture` is an HTTPS
+ * image URL. */
 export type AgentUpdate = Readonly<{
   name?: string;
   type?: string;
   instructions?: string;
+  picture?: string;
 }>;
 /** `agent` is a pubkey or the exact name of one of the owner's agents here. */
-export type AgentUpdateInput = AgentUpdate & Readonly<{ agent: string }>;
+export type AgentUpdateInput = Omit<AgentUpdate, "picture"> &
+  Readonly<{ agent: string; picture?: ProposedPicture }>;
 /** An unsaved change request. Only the owner-facing review may approve it. */
 export type AgentUpdateRequest = AgentUpdate &
   Readonly<{
@@ -1019,7 +1038,7 @@ export type Agents = {
     event: string,
     input: unknown,
     context: AgentHookContext,
-    options: { accepts(output: unknown): boolean; milliseconds: number },
+    options: AgentHookDispatchOptions,
   ): Promise<unknown>;
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
@@ -1059,6 +1078,10 @@ export type Agents = {
   addTool(tool: AddedTool): void;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** The Buzz side of a turn for an agent type a plugin brings: where a
+   * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
+   * an MCP handler, and its replies. */
+  readonly harness: HarnessKit;
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
    * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
@@ -1080,6 +1103,14 @@ export type Agents = {
    * it; like any type whose agents run here, it has `run`. A kept handle
    * throws once this no longer holds, so ask again when acting. */
   handle(agent: AgentKey): AgentHandle | undefined;
+  canConnectExternal(agent: AgentKey): boolean;
+  /** Creates a separate owner-approved external grant in the selected community. */
+  connectExternal(
+    agent: AgentKey,
+    signal: AbortSignal,
+    connected: () => void,
+    scopes?: readonly ExternalScope[],
+  ): Promise<HostMcpServer>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(agent: AgentKey): RelayData | undefined;
@@ -1473,6 +1504,13 @@ const recordPicture = (value: unknown) => {
   const source = avatarSource(value);
   return source?.startsWith("https:") ? source : undefined;
 };
+/** A proposed picture as a record carries it; refuses any other. */
+const proposedPicture = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  const picture = recordPicture(value);
+  if (!picture) throw new Error("Propose an HTTPS image URL as the picture");
+  return picture;
+};
 /** The `wss://` URL of a community, as agents and their providers know it. */
 const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
@@ -1494,7 +1532,7 @@ export class AgentsService extends Service implements Agents {
     event: string,
     input: unknown,
     context: AgentHookContext,
-    options: { accepts(output: unknown): boolean; milliseconds: number },
+    options: AgentHookDispatchOptions,
   ) {
     const owner = this.ctx.pluginOwner;
     if (!owner || !harness.startsWith(`${owner.id}/`))
@@ -1507,6 +1545,7 @@ export class AgentsService extends Service implements Agents {
       context,
       options.accepts,
       options.milliseconds,
+      options.compose,
     );
   }
   private readonly contributions;
@@ -1713,6 +1752,29 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
+      resumeFollowUps: (agent, turns) => {
+        const session = this.bindingOf(agent)?.session;
+        if (session)
+          followUpQueue(session).resumeAfter(agent.pubkey, turns, (entry) => {
+            if (
+              this.state.running.some(
+                (recipient) =>
+                  entry.recipients.includes(recipient.pubkey) &&
+                  this.bindingOf(recipient)?.session === session &&
+                  this.sessionState(recipient.key, {
+                    channelId: entry.channelId,
+                  }) === "compacting",
+              )
+            )
+              throw new Error(
+                "Wait for compaction to finish, or interrupt it.",
+              );
+          });
+      },
+      abandonFollowUps: (agent, turns) => {
+        const session = this.bindingOf(agent)?.session;
+        if (session) followUpQueue(session).pauseAfter(agent.pubkey, turns);
+      },
       records: () => Object.values(this.records),
       checkpoints: {
         read: () => (savedProgress = readCheckpoints(this.storage)),
@@ -1774,69 +1836,82 @@ export class AgentsService extends Service implements Agents {
         this.types()
           .filter((type) => !type.remote)
           .map(({ key, title }) => ({ key, title })),
-      createAgent: async (agent, input) => {
-        const binding = this.bindingOf(agent);
-        if (!binding || !this.liveMember(agent.key))
-          throw new Error("The requesting agent is no longer available");
-        if (!input.name.trim()) throw new Error("Name the agent");
-        const kind = this.types().find((entry) => entry.key === input.type);
-        if (!kind) throw new Error("That agent type is not available");
-        if (kind.remote)
-          throw new Error("A hosted agent's key stays with its provider");
-        if (this.requests.length + this.updates.length >= 16)
-          throw new Error("Review the pending agent requests first");
-        const id = crypto.randomUUID();
-        this.requests = [
-          ...this.requests,
-          {
-            id,
+      createAgent: async (agent, { picture: upload, ...input }) => {
+        const request = (picture?: string): AgentCreationRequest => {
+          const binding = this.bindingOf(agent);
+          if (!binding || !this.liveMember(agent.key))
+            throw new Error("The requesting agent is no longer available");
+          if (!input.name.trim()) throw new Error("Name the agent");
+          const kind = this.types().find((entry) => entry.key === input.type);
+          if (!kind) throw new Error("That agent type is not available");
+          if (kind.remote)
+            throw new Error("A hosted agent's key stays with its provider");
+          if (this.requests.length + this.updates.length >= 16)
+            throw new Error("Review the pending agent requests first");
+          return {
+            id: crypto.randomUUID(),
             requester: agent.pubkey,
             requesterName: agent.name,
             owner: agent.owner,
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
-          },
-        ];
-        this.notify();
-        return { requestId: id, saved: false };
-      },
-      updateAgent: async (agent, { agent: target, ...proposed }) => {
-        const binding = this.bindingOf(agent);
-        if (!binding || !this.liveMember(agent.key))
-          throw new Error("The requesting agent is no longer available");
-        const matches = this.identities.filter(
-          (identity) =>
-            !identity.deleted &&
-            !identity.deleting &&
-            identity.owner === agent.owner &&
-            originOf(identity.relay) === binding.origin &&
-            (identity.pubkey === target || identity.name === target),
-        );
-        const [identity] = matches;
-        if (!identity)
-          throw new Error("Your owner has no agent here by that name or key");
-        if (matches.length > 1)
-          throw new Error("Several agents have that name; use its pubkey");
-        const name = proposed.name?.trim();
-        const change: AgentUpdate = {
-          ...(name !== undefined && name !== identity.name && { name }),
-          ...(proposed.type !== undefined &&
-            proposed.type !== identity.type && { type: proposed.type }),
-          ...(proposed.instructions !== undefined && {
-            instructions: proposed.instructions,
-          }),
+            ...(picture && { picture }),
+          };
         };
-        if (Object.keys(change).length === 0)
-          throw new Error("Propose at least one change");
-        this.updateKind(identity, change);
-        if (this.requests.length + this.updates.length >= 16)
-          throw new Error("Review the pending agent requests first");
-        const id = crypto.randomUUID();
-        this.updates = [
-          ...this.updates,
-          {
-            id,
+        // Its picture uploads only for a valid request, which is then
+        // checked again.
+        request();
+        const next = request(proposedPicture(await upload?.()));
+        this.requests = [...this.requests, next];
+        this.notify();
+        return { requestId: next.id, saved: false };
+      },
+      updateAgent: async (
+        agent,
+        { agent: target, picture: upload, ...proposed },
+      ) => {
+        /** `wanted`: the target; `pending`: a picture still to upload, a
+         * change until its URL is known. */
+        const request = (
+          wanted: (identity: AgentIdentity) => boolean,
+          picture?: string,
+          pending = false,
+        ): AgentUpdateRequest => {
+          const binding = this.bindingOf(agent);
+          if (!binding || !this.liveMember(agent.key))
+            throw new Error("The requesting agent is no longer available");
+          const matches = this.identities.filter(
+            (identity) =>
+              !identity.deleted &&
+              !identity.deleting &&
+              identity.owner === agent.owner &&
+              originOf(identity.relay) === binding.origin &&
+              wanted(identity),
+          );
+          const [identity] = matches;
+          if (!identity)
+            throw new Error("Your owner has no agent here by that name or key");
+          if (matches.length > 1)
+            throw new Error("Several agents have that name; use its pubkey");
+          const name = proposed.name?.trim();
+          const change: AgentUpdate = {
+            ...(name !== undefined && name !== identity.name && { name }),
+            ...(proposed.type !== undefined &&
+              proposed.type !== identity.type && { type: proposed.type }),
+            ...(proposed.instructions !== undefined && {
+              instructions: proposed.instructions,
+            }),
+            ...(picture !== undefined &&
+              picture !== identity.picture && { picture }),
+          };
+          if (Object.keys(change).length === 0 && !pending)
+            throw new Error("Propose at least one change");
+          this.updateKind(identity, change);
+          if (this.requests.length + this.updates.length >= 16)
+            throw new Error("Review the pending agent requests first");
+          return {
+            id: crypto.randomUUID(),
             requester: agent.pubkey,
             requesterName: agent.name,
             owner: agent.owner,
@@ -1845,10 +1920,22 @@ export class AgentsService extends Service implements Agents {
             agentName: identity.name,
             agentType: identity.type,
             ...change,
-          },
-        ];
+          };
+        };
+        // Its picture uploads only for a valid request, which is then
+        // checked again for the same agent, even if renamed meanwhile.
+        const { agent: key } = request(
+          (identity) => identity.pubkey === target || identity.name === target,
+          undefined,
+          upload !== undefined,
+        );
+        const next = request(
+          (identity) => identity.pubkey === key,
+          proposedPicture(await upload?.()),
+        );
+        this.updates = [...this.updates, next];
         this.notify();
-        return { requestId: id, saved: false };
+        return { requestId: next.id, saved: false };
       },
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
@@ -2224,6 +2311,7 @@ export class AgentsService extends Service implements Agents {
     };
     const spawn = async (
       key: AgentKey,
+      watch: string,
       process: string,
       options: Omit<HostProcessOptions, "mcp"> & {
         signal: AbortSignal;
@@ -2241,13 +2329,27 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           "Protected agents cannot run external Attention commands until that execution path supports complete protection",
         );
-      const source = ownerReads(this.relay(key), pubkeyOf(key));
-      if (!source) throw new Error("The agent's community is not connected");
+      const connectionSource = ownerReads(this.relay(key), pubkeyOf(key));
+      if (!connectionSource)
+        throw new Error("The agent's community is not connected");
       const spawn = host.spawn.bind(host);
       return spawnAgentCommand(
         {
           connect: (signal) => connect(key, { ...options, signal }),
-          spawn: (settings) => spawn(process, settings),
+          spawn: (settings) =>
+            spawn(process, {
+              ...settings,
+              env: {
+                ...settings.env,
+                BUZZ_ATTENTION_COMMAND: JSON.stringify([
+                  key,
+                  plugin,
+                  source.id,
+                  watch,
+                  process,
+                ]),
+              },
+            }),
           subscribe: (changed) => {
             const agent = this.subscribe(changed);
             const community = this.relay(key)?.subscribe(changed);
@@ -2261,7 +2363,7 @@ export class AgentsService extends Service implements Agents {
               throw new Error("Attention is off");
             if (
               ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
-              source.connection
+              connectionSource.connection
             )
               throw new Error("The agent's community connection changed");
           },
@@ -2282,7 +2384,7 @@ export class AgentsService extends Service implements Agents {
           await source.run({
             ...input,
             spawn: (process, options) =>
-              spawn(agent, process, {
+              spawn(agent, input.id, process, {
                 ...options,
                 signal,
                 channel,
@@ -2410,6 +2512,12 @@ export class AgentsService extends Service implements Agents {
     };
   }
   tools = () => this.addedTools.snapshot();
+  readonly harness = harnessKit({
+    relay: (key) => this.relay(key),
+    core: (key) => this.core(key),
+    added: () => this.tools(),
+    repositories: repositoriesContext,
+  });
   wake(key: AgentKey, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");
@@ -2460,6 +2568,114 @@ export class AgentsService extends Service implements Agents {
   handle(key: AgentKey) {
     const owner = this.ctx.pluginOwner;
     return owner && this.runners.handle(key, owner.id);
+  }
+  canConnectExternal(key: AgentKey) {
+    const handle = this.runners.handle(key);
+    return (
+      externalMcpEnabled(this.communities.snapshot().selected) &&
+      !!handle &&
+      !handle.protection
+    );
+  }
+  async connectExternal(
+    key: AgentKey,
+    signal: AbortSignal,
+    connected: () => void,
+    scopes: readonly ExternalScope[] = ["read", "post"],
+  ) {
+    if (this.ctx.pluginOwner?.id !== "buzz.agents")
+      throw new Error("Authorize external apps in Buzz.");
+    const host = this.ctx.host;
+    if (!host?.serveMcp)
+      throw new Error("External connections require Buzz desktop.");
+    const handle = this.runners.handle(key);
+    if (!handle)
+      throw new Error("This agent is not running in this copy of Buzz.");
+    if (handle.protection)
+      throw new Error("Protected agents cannot use external connections.");
+    const relay = this.relay(key);
+    const session = relay?.snapshot().session;
+    const agent = this.agent(key);
+    const source = ownerReads(relay, handle.pubkey);
+    const selected = this.communities.snapshot();
+    if (!externalMcpEnabled(selected.selected))
+      throw new Error("External apps are not enabled for this community.");
+    if (
+      !source ||
+      !relay ||
+      !session ||
+      !agent ||
+      !selected.selected ||
+      selected.viewer !== handle.owner ||
+      relayOrigin(selected.selected) !== relayOrigin(agent.relay)
+    )
+      throw new Error("Select this agent's connected community first.");
+    const controller = new AbortController();
+    const lifetime = AbortSignal.any([signal, controller.signal]);
+    const check = () => {
+      lifetime.throwIfAborted();
+      handle.attention.enabled();
+      const current = this.communities.snapshot();
+      if (
+        current.viewer !== selected.viewer ||
+        current.selected !== selected.selected ||
+        !externalMcpEnabled(current.selected) ||
+        ownerReads(this.relay(key), handle.pubkey)?.connection !==
+          source.connection ||
+        !session.agentChoices
+          .snapshot()
+          .selectable.some((agent) => agent.pubkey === handle.pubkey)
+      )
+        throw new Error(
+          "The external connection has ended. Authorize the external app again in Buzz.",
+        );
+    };
+    const changed = () => {
+      try {
+        check();
+      } catch {
+        controller.abort();
+      }
+    };
+    const stops = [
+      this.subscribe(changed),
+      this.communities.subscribe(changed),
+      relay.subscribe(changed),
+      session.agentChoices.subscribe(changed),
+    ];
+    const release = () => {
+      for (const stop of stops) stop();
+    };
+    try {
+      check();
+      const server = await connectMcp(
+        host.serveMcp.bind(host),
+        (signal) => {
+          const client = appClient(handle, {
+            signal,
+            check,
+            relayAuthor: source.relayAuthor?.(),
+            signingAuthority: source.workflowAuthority(),
+            read: async () => {
+              throw new Error("External connections cannot read files.");
+            },
+            memories: async () => {
+              throw new Error("External connections cannot read memory.");
+            },
+          });
+          return (message) => {
+            check();
+            return respondExternal(client, message, connected, scopes);
+          };
+        },
+        lifetime,
+      );
+      void server.closed.then(release);
+      return server;
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
   note(key: AgentKey, channelId: string, text: string, root?: string) {
     return this.runners.note(key, channelId, text, root);
@@ -4535,8 +4751,11 @@ export class AgentsService extends Service implements Agents {
     if (given === base) return;
     const next = given && key !== pubkeyOf(key) ? ownRecord(key, given) : given;
     if (next) await writeRecord(this.storage, next);
-    else if (this.storage.get(recordKey(key)) !== null)
-      await removeRecord(this.storage, key);
+    else {
+      if (this.storage.get(recordKey(key)) !== null)
+        await removeRecord(this.storage, key);
+      await removeSessionPrompts(this.storage, key);
+    }
     const { [key]: _, ...others } = this.records;
     this.records = next ? { ...others, [key]: next } : others;
   }

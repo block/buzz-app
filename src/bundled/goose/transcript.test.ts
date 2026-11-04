@@ -28,9 +28,8 @@ const ask = (pubkey = agent, mention = root) =>
     scope: "thread",
     context: [],
     total: 1,
-    label: "@mention",
-    name: (key) => (key === alice ? "Alice" : undefined),
   });
+const name = (key: string) => (key === alice ? "Alice" : undefined);
 
 let created = 1_800_000_000;
 const user = (content: Record<string, unknown>[], metadata = {}) => ({
@@ -86,6 +85,7 @@ describe("gooseTurns", () => {
       conversation(),
       { sessionId: "s1", channelId: CHANNEL, root: root.id },
       false,
+      name,
     );
     expect(rest).toEqual([]);
     expect(turn).toMatchObject({

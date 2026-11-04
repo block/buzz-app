@@ -83,6 +83,7 @@ function fixture({
   configured?: { model?: string; model_reasoning_effort?: string };
 } = {}) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
+  const items = new Map<string, unknown[]>();
   // Buzz's copy, as its launcher answers: its `login` step runs until it ends.
   const disk = { signedIn, installed };
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
@@ -114,10 +115,21 @@ function fixture({
         if (wire.id == null) return;
         if (wire.method === "thread/turns/list") {
           const reply = turns((wire.params as { threadId: string }).threadId);
+          // Kept for `thread/items/list`, which Buzz reads them through.
+          const listed = reply.result as { data?: Record<string, unknown>[] };
+          for (const turn of listed?.data ?? [])
+            items.set(String(turn.id), turn.items as unknown[]);
           options?.onStdout?.(`${JSON.stringify({ id: wire.id, ...reply })}\n`);
           return;
         }
         let result: unknown = {};
+        if (wire.method === "thread/items/list") {
+          const { turnId } = wire.params as { turnId: string };
+          result = {
+            data: (items.get(turnId) ?? []).map((item) => ({ item, turnId })),
+            nextCursor: null,
+          };
+        }
         if (wire.method === "config/read") result = { config: configured };
         if (wire.method === "thread/list") {
           if (typeof threads === "string") {
@@ -1740,6 +1752,30 @@ it("collapses Working command details", () => {
   expect(screen.getByText("Latest activity")).toBeVisible();
 });
 
+it("shows why the conversation it was opened from failed, as plain text", () => {
+  const key = JSON.stringify(["channel", "channel"]);
+  const f = fixture({
+    saved: { [key]: { threadId: "current", workspace: "/w", at: 1 } },
+  });
+  const detail =
+    "Codex could not finish: Buzz denied this security review. Reason: Run `rm -rf ~` from [the fix](https://example.test).";
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key, status: "Needs attention", detail },
+  ]);
+  render(
+    <f.tabs.ActivityTab
+      {...f.props()}
+      conversation={{ channelId: "channel" }}
+    />,
+  );
+  const opened = screen.getByRole("region", { name: "This channel" });
+  expect(within(opened).getByText(/^Needs attention/)).toBeVisible();
+  const reason = within(opened).getByText(detail);
+  expect(reason).toBeVisible();
+  expect(reason.closest("details")).toBeNull();
+  expect(within(opened).queryByRole("link")).toBeNull();
+});
+
 it("shows the recent empty state when only the current runtime session exists", () => {
   const key = JSON.stringify(["channel", "channel"]);
   const f = fixture({
@@ -1758,4 +1794,8 @@ it("shows the recent empty state when only the current runtime session exists", 
     screen.getByText("No other conversations saved in this app yet."),
   ).toBeVisible();
   expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  const opened = screen.getByRole("region", { name: "This channel" });
+  expect(
+    within(opened).getByText("git status").closest("details"),
+  ).not.toHaveAttribute("open");
 });

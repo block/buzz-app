@@ -1383,8 +1383,11 @@ function Composer({
         });
       return;
     }
-    // A draft in use is not replaced by a kept edit until Edit is chosen.
+    // A draft in use is not replaced by a kept edit until Edit is chosen,
+    // in this mount or a later one. An edit open elsewhere still reopens.
     setResuming(undefined);
+    if (![...openEdits.values()].some((edit) => edit.view === openView))
+      resumeKept(false);
     if (submission) {
       // Submission recovery checks the durable prompt before restoring a
       // rejected send. It must see newer edits made in another window.
@@ -2187,13 +2190,28 @@ function Composer({
     caret.current = undefined;
   });
   const requestDeletion = useMessageDeletion();
-  const keptEdit = () => {
-    const kept = editKey
+  const openView = `${scope}\n${editKey}`;
+  const keptRecord = () =>
+    editKey
       ? readView<Record<string, unknown> | null>(scope, editKey, null)
       : null;
+  const keptEdit = () => {
+    const kept = keptRecord();
     return typeof kept?.id === "string" && typeof kept.base === "string"
-      ? { id: kept.id, base: kept.base, draft: mentionDraft(kept.draft) }
+      ? {
+          id: kept.id,
+          base: kept.base,
+          draft: mentionDraft(kept.draft),
+          resume: kept.resume !== false,
+        }
       : undefined;
+  };
+  /** Whether the kept edit reopens unasked. A new-message draft written while
+   * it is closed stops that until Edit is chosen. */
+  const resumeKept = (resume: boolean) => {
+    const kept = keptRecord();
+    if (editKey && kept && (kept.resume !== false) !== resume)
+      writeView(scope, editKey, { ...kept, resume });
   };
   // Another composer took this edit over: return to the draft without moving
   // focus here.
@@ -2237,12 +2255,14 @@ function Composer({
     other?.handOver();
     const kept = keptEdit();
     const resumed = kept?.id === current.id ? kept : undefined;
+    // Chosen again, it reopens on return as an edit left open does.
+    if (resumed) resumeKept(true);
     completion.invalidate();
     beforeEdit.current = {
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    openEdits.set(beforeEdit, { view: open, id: current.id, handOver });
+    openEdits.set(beforeEdit, { view: openView, id: current.id, handOver });
     const body = editing.start(
       current,
       (body) => composerMarkdown(mentionDraft(body)),
@@ -2304,14 +2324,16 @@ function Composer({
     }
   };
   // An edit kept from an earlier mount reopens once its message loads, unless
-  // another composer in this window has it open. Rows that load without it, a
-  // change to the new-message draft, or an error the composer reports for it,
-  // as for a recovered send, end the wait.
+  // another composer in this window has it open. Refreshed rows that load
+  // without it, a change to the new-message draft, or an error the composer
+  // reports for it, as for a recovered send, end the wait. A draft change also
+  // keeps a later mount from waiting (see resumeKept).
   // It starts in a later commit than the mount: StrictMode's replayed mount
   // effects rebuild the editor from the draft and would drop its reset.
   const [resuming, setResuming] = useState<string>();
   const resume = useEffectEvent(() => {
-    if (resumeEdit) setResuming(keptEdit()?.id);
+    const kept = keptEdit();
+    if (resumeEdit && kept?.resume) setResuming(kept.id);
   });
   useEffect(() => resume(), []);
   useEffect(() => () => void openEdits.delete(beforeEdit), []);
@@ -2327,11 +2349,15 @@ function Composer({
   const resumeRow = useSyncExternalStore(subscribeResume, () => {
     if (!resuming) return;
     const row = editableRows().find((item) => item.id === resuming);
-    // A thread has loaded once it supplies the viewer's latest message there.
-    const loaded = threadRootId
-      ? !!threadSeed
-      : session.channels.window?.(channelId).status === "ready";
-    return row ?? (loaded ? "missing" : undefined);
+    if (row) return row;
+    // A thread has loaded once it supplies the viewer's latest message there,
+    // a channel once its history is revalidated: a cached head, as restored
+    // after a reload, can predate the message.
+    if (threadRootId) return threadSeed ? "missing" : undefined;
+    const history = session.channels.window?.(channelId);
+    return history?.status === "ready" && history.freshness !== "cached"
+      ? "missing"
+      : undefined;
   });
   useEffect(() => {
     if (!resumeRow) return;

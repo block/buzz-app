@@ -420,9 +420,7 @@ it("leaves other sessions' turns from before a large session's kept ones", async
   const third = "x".repeat(30 * 1024 * 1024);
   const files = large(
     line("user", prompt("newer")),
-    ...[1, 2, 3].map(() =>
-      line("assistant", [{ type: "text", text: third }]),
-    ),
+    ...[1, 2, 3].map(() => line("assistant", [{ type: "text", text: third }])),
     line("user", prompt("latest")),
   );
   clock = -10;

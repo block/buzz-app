@@ -433,6 +433,19 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
   voluntary switch/close is cancellable, revocation is immediate (§5.2, §5.5,
   §5.8); delayed-IPC reading observations must not revive cancelled intent
   (§5.6); S1a framed as an explicit product tradeoff (§8 Q2/Q4).
+- 2026-11-04 implementation reviews (`~/.buzz/RESEARCH/BUZZ_POPOUT_S1_CODE_REVIEW_2026_11_04.md`):
+  `c7e840a` → R1 reading durability, R2 verified-root gating, R3 creation/scope
+  race, R5 external links, R6 image copy fixed at `2c1d407`; R1 delayed-acquire
+  ordering and a `main_closing` partial-cancellation regression fixed at
+  `2467aed`. go 2 (`01d040c`) and go 1 (`164fcc4`) reviewed; three exit
+  bypasses (Settings + cross-community navigation, `joined`, organization
+  sign-out) fixed at `9b4e1e9`; stale-session sign-out confirmation fixed at
+  `75ce01e`. Reviewer: all reported findings closed at source/mounted-test
+  level; S1 awaits native/human acceptance. Full vitest suite at `75ce01e`:
+  897 files / 15,998 tests green. Production diff vs checkpoint ≈ +2,830/−310
+  (≈260 moved from Huddle), above the 2,050 upper bound; the overage is the
+  authorized exit-guard and tab-action host work (~550 lines) the checkpoint
+  listed as owners to reuse rather than build.
 
 ## 10. S1 scope checkpoint (per `AGENTS.md` "Engineering standard")
 

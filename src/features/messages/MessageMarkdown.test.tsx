@@ -1047,6 +1047,14 @@ describe("text spoilers", () => {
     );
   });
 
+  it("keeps the CSS dust when WebGL2 is unavailable", () => {
+    const view = renderDom(<MessageMarkdown {...props("||secret||")} />);
+    const dust = view.container.querySelector("[data-spoiler] canvas");
+    expect(dust).toHaveAttribute("data-active", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal spoiler" }));
+    expect(dust).toHaveAttribute("data-active", "false");
+  });
+
   it("keeps angle-bracket text inline inside a spoiler through reveal and hide", () => {
     expect(render("Before ||<harness>|| after").match(/<p[\s>]/g)).toHaveLength(
       1,

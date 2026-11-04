@@ -2450,8 +2450,8 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   color: var(--text-standard);
   cursor: pointer;
 }
-/* Two small repeating dot fields supply the old dust-like twinkle without a
-   canvas, per-particle nodes, observers, timers or a requestAnimationFrame loop. */
+/* Two small repeating dot fields twinkle until WebGL dust paints, and stay
+   whenever it cannot: no WebGL2, a lost context, reduced motion or forced colours. */
 .spoilerMask::before,
 .spoilerMask::after {
   content: "";
@@ -2477,6 +2477,21 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   animation-delay: -1.1s;
   animation-duration: 0.9s;
   animation-direction: alternate-reverse;
+}
+.spoilerDust {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  visibility: hidden;
+}
+.spoilerDust[data-active="true"] {
+  visibility: visible;
+}
+.spoilerMask:has(> .spoilerDust[data-active="true"])::before,
+.spoilerMask:has(> .spoilerDust[data-active="true"])::after {
+  display: none;
 }
 .spoilerMask:hover,
 .spoilerMask:focus-visible,

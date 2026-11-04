@@ -4,7 +4,9 @@ import {
   isValidElement,
   memo,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
@@ -40,6 +42,7 @@ import Markdown, {
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
+import { attachSpoilerDust, type SpoilerDustHandle } from "./spoiler-dust";
 import type {
   CodeBlockRenderer,
   ContributionReader,
@@ -890,9 +893,13 @@ function MessageSpoiler({
             event.stopPropagation();
             setRevealed(!revealed);
           }}
-        />
+        >
+          <SpoilerDust revealed={revealed} />
+        </button>
       ) : (
-        <span className={styles.spoilerMask} aria-hidden="true" />
+        <span className={styles.spoilerMask} aria-hidden="true">
+          <SpoilerDust revealed={false} />
+        </span>
       )}
       <span
         className={styles.spoilerContent}
@@ -902,6 +909,32 @@ function MessageSpoiler({
         {children}
       </span>
     </span>
+  );
+}
+
+/** WebGL dust over a spoiler that dissolves on reveal; the mask's CSS dust
+ * stays whenever the renderer is unavailable. */
+function SpoilerDust({ revealed }: { revealed: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dustRef = useRef<SpoilerDustHandle>(undefined);
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dust = attachSpoilerDust(canvas, setActive);
+    dustRef.current = dust;
+    return () => {
+      dust?.detach();
+      dustRef.current = undefined;
+    };
+  }, []);
+  useEffect(() => dustRef.current?.setRevealed(revealed), [revealed]);
+  return (
+    <canvas
+      ref={canvasRef}
+      className={styles.spoilerDust}
+      data-active={active}
+    />
   );
 }
 

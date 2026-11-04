@@ -248,8 +248,13 @@ function fixture(
       scope: "https://community.test",
       media: () => undefined,
       query: async (filters) => {
-        if (filters.some((filter) => filter.consistency === "strong"))
-          await holdRoles;
+        if (filters.some((filter) => filter.consistency === "strong")) {
+          // Hold this explicit administration refresh, not independent signed
+          // access reads started while its member-role UI is still loading.
+          const held = holdRoles;
+          holdRoles = undefined;
+          await held;
+        }
         if (
           filters.some(
             (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 39002,
@@ -629,7 +634,9 @@ it.each(["guest", "member"] as const)(
       ).toBe(role);
       await user.click(audience);
       await user.click(await screen.findByRole("option", { name: "Private" }));
-      expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
+      expect(
+        await screen.findByRole("alertdialog"),
+      ).toHaveAccessibleDescription(
         "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People.",
       );
       await act(async () => {
@@ -639,7 +646,9 @@ it.each(["guest", "member"] as const)(
       expect(t.session.memberAdministration.snapshot(source).status).toBe(
         "error",
       );
-      expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
+      expect(
+        await screen.findByRole("alertdialog"),
+      ).toHaveAccessibleDescription(
         "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People.",
       );
       await user.keyboard("{Escape}");

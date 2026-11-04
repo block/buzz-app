@@ -1097,6 +1097,53 @@ it.each([
   },
 );
 
+it.each([
+  ["a member who never set a name", false, undefined],
+  [
+    "a names read that failed",
+    true,
+    "Could not load some names. Retry to refresh.",
+  ],
+])("reports %s only when it failed", async (_case, fails, status) => {
+  const test = setup();
+  const nameless = "c".repeat(64);
+  const channel = test.session.channels.list().channels[0];
+  if (channel) Object.assign(channel, { members: [test.member, nameless] });
+  const ensure = vi.fn(async () => {
+    if (fails) throw new Error("relay unavailable");
+  });
+  const session = {
+    ...test.session,
+    profiles: { ...test.session.profiles, ensure },
+  } as RelaySession;
+  let result: CompletionResult | undefined;
+  const view = render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Mem", start: 4, end: 4 }}
+      query={{ start: 0, end: 4, query: "Mem" }}
+      publish={(next: CompletionResult) => {
+        result = next;
+        return () => {};
+      }}
+    />,
+  );
+  try {
+    await waitFor(() => expect(ensure).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(result?.items).toHaveLength(1);
+      expect(result?.status).toBe(status);
+    });
+    if (fails) expect(result?.retry).toEqual(expect.any(Function));
+    else expect(result?.retry).toBeUndefined();
+  } finally {
+    view.unmount();
+    test.library.dispose();
+  }
+});
+
 // Exercise selection, wire text/p tags, and sent rendering, not an already-bound @name.
 it.each(["picker", "completion"] as const)(
   "%s keeps local display labels out of serialized mentions",
@@ -2264,7 +2311,14 @@ it("closes prose after an unknown name without status or recovery, and skips sea
   const session = {
     ...t.session,
     directMessages: { ...t.session.directMessages, people },
-    profiles: { ...t.session.profiles, snapshot: () => uncached },
+    // A failed names read offers recovery for prose to retire.
+    profiles: {
+      ...t.session.profiles,
+      snapshot: () => uncached,
+      ensure: async () => {
+        throw new Error("relay unavailable");
+      },
+    },
   };
   const publish = vi.fn();
   const last = () => publish.mock.lastCall?.[0] as CompletionResult | undefined;

@@ -141,7 +141,6 @@ export function MentionCompletion({
     const membershipMissing =
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
-    const missing = !draftRoster && members.some((key) => !profiles.has(key));
     // A multi-word query that continues no known name is prose, not a search.
     if (
       !admitted &&
@@ -300,10 +299,12 @@ export function MentionCompletion({
                   ? { status: "Channel membership unavailable." }
                   : admitted && membershipError
                     ? { status: "Could not refresh channel membership." }
-                    : error || missing
+                    : // Only a failed read: a member who never set a name is
+                      // a complete answer, not an error.
+                      error
                       ? {
                           status:
-                            "Some names unavailable. Exact public keys still identify recipients.",
+                            "Could not load some names. Retry to refresh.",
                         }
                       : model.directory.loading
                         ? { status: "Searching community…" }
@@ -318,8 +319,7 @@ export function MentionCompletion({
           agents.error ||
           membershipMissing ||
           membershipError ||
-          error ||
-          missing))
+          error))
         ? {
             retry: () => {
               teams.retry();

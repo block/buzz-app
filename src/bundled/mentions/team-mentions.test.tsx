@@ -727,11 +727,15 @@ it("a mention keystroke checks longer names only on choices the query matches", 
   }
 });
 
-it("Retry rereads members whose names a background read found missing", async () => {
+it("Retry after a failed names read rereads members, known absences included", async () => {
   const h = fixture({ count: 3 });
   const nameless = h.people[2]?.pubkey ?? "";
   (h.session.profiles.snapshot() as Map<string, unknown>).delete(nameless);
-  const ensure = vi.fn(async () => {});
+  // A member who never set a name is a complete answer; only the failed read
+  // offers Retry.
+  const ensure = vi.fn(async (_ids: readonly string[], priority?: string) => {
+    if (priority === "background") throw new Error("relay unavailable");
+  });
   Object.assign(h.session.profiles, { ensure });
   const menu = inline(h.session);
   try {

@@ -223,15 +223,15 @@ export function AgentConnectionForm({
           <div className="w-full max-w-xl">
             <div className={messages.messageBubble}>
               <div className="flex flex-col gap-4 py-2">
+                <Avatar
+                  src={candidate.picture}
+                  fallback={candidate.name}
+                  alt=""
+                  shape="squircle"
+                  size="small"
+                />
                 <div className="flex flex-col gap-1">
-                  <h3 className="m-0 flex items-center gap-2 text-label">
-                    <Avatar
-                      src={candidate.picture}
-                      fallback={candidate.name}
-                      alt=""
-                      shape="squircle"
-                      size="small"
-                    />
+                  <h3 className="m-0 text-label">
                     {done
                       ? `${candidate.name} connected`
                       : `Connect ${candidate.name}`}

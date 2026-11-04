@@ -79,11 +79,9 @@
   overflow: auto;
 }
 /* Breaking anywhere shrinks auto-sized columns to one character. */
-.repo-markdown table {
-  overflow-wrap: normal;
-}
 .repo-table-scroll {
   overflow-x: auto;
+  overflow-wrap: normal;
 }
 .repo-markdown img {
   max-width: 100%;

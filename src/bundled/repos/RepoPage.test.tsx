@@ -648,10 +648,9 @@ it("sizes table columns to whole words and scrolls a wrapper, not the table", as
   const table = within(
     screen.getByRole("region", { name: "Overview" }),
   ).getByRole("table");
-  // Older WebKit drops a block-displayed table's semantics, so a wrapper scrolls.
   expect(table.parentElement).toHaveClass("repo-table-scroll");
   // No DOM emulator lays out tables, so this reads the stylesheet.
   const css = readFileSync("src/bundled/repos/repos.css", "utf8");
-  expect(css).toMatch(/\.repo-markdown table \{[^}]*overflow-wrap: normal;/);
+  expect(css).toMatch(/\.repo-table-scroll \{[^}]*overflow-wrap: normal;/);
   expect(css).not.toMatch(/\.repo-markdown table \{[^}]*display:/);
 });

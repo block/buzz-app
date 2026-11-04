@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { PageProps } from "../../features/pages/service";
@@ -612,6 +612,15 @@ function CopyLink({ route }: { route: EntityRoute }) {
     </div>
   );
 }
+// Scroll a wrapper: older WebKit drops a block-displayed table's semantics.
+// Module scope keeps its identity, so a parent render keeps the table mounted.
+function ScrollTable({ children }: { children?: ReactNode }) {
+  return (
+    <div className="repo-table-scroll">
+      <table>{children}</table>
+    </div>
+  );
+}
 function Body({
   text,
   open,
@@ -651,12 +660,7 @@ function Body({
               {children}
             </a>
           ),
-          // Scroll a wrapper: older WebKit drops a block-displayed table's semantics.
-          table: ({ children }) => (
-            <div className="repo-table-scroll">
-              <table>{children}</table>
-            </div>
-          ),
+          table: ScrollTable,
         }}
       >
         {text}

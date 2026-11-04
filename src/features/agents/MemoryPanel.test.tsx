@@ -413,13 +413,12 @@ it("sizes table columns to whole words and scrolls a wrapper, not the table", as
   const core = await screen.findByRole("region", { name: "Core memories" });
   await user.click(within(core).getByRole("button", { name: "core" }));
   const table = within(core).getByRole("table");
-  // Older WebKit drops a block-displayed table's semantics, so a wrapper scrolls.
   expect(table.parentElement?.className).toBe(styles.tableScroll);
   // No DOM emulator lays out tables, so this reads the stylesheet.
   const css = readFileSync(
     "src/features/agents/MemoryPanel.module.css",
     "utf8",
   );
-  expect(css).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
+  expect(css).toMatch(/\.tableScroll \{[^}]*overflow-wrap: normal;/);
   expect(css).not.toMatch(/\.markdown table \{[^}]*display:/);
 });

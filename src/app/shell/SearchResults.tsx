@@ -6,7 +6,6 @@ import {
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -238,13 +237,6 @@ export function SearchResults({
   const displayQuery = chips.length
     ? query.slice(chipPrefix.length)
     : undefined;
-  const caret = useRef<number>(undefined);
-  useLayoutEffect(() => {
-    if (caret.current === undefined) return;
-    if (input.current instanceof HTMLInputElement)
-      input.current.setSelectionRange(caret.current, caret.current);
-    caret.current = undefined;
-  });
   const setChipQuery = (next: readonly SearchChip[], visible: string) => {
     const nextQuery = `${next.map(({ operand }) => `${operand} `).join("")}${visible}`;
     setChipState(next.length ? { query: nextQuery, chips: next } : undefined);
@@ -261,19 +253,21 @@ export function SearchResults({
     );
     input.current?.focus();
   };
-  /** Backspace before the text turns the last chip back into its text. */
+  /**
+   * Backspace before the text turns the last chip back into its text. It ends
+   * the query, where its picker opens again to choose an exact value.
+   */
   const editLastChip = () => {
     const last = chips.at(-1);
     if (!last) return;
-    caret.current = last.edit.length;
-    setChipQuery(
-      chips.slice(0, -1),
-      displayQuery ? `${last.edit} ${displayQuery}` : last.edit,
-    );
+    const text = displayQuery?.trimEnd();
+    setChipQuery(chips.slice(0, -1), text ? `${text} ${last.edit}` : last.edit);
   };
   /**
    * Replace the operator token at `tokenStart` with a chip. A chip for the
-   * same operator is replaced; other operators are independent filters.
+   * same operator is replaced; other operators are independent filters. The
+   * parser keeps the last `from:` or `in:`, so a typed one ahead of the chip
+   * would win: it goes too, outside quotes. Date bounds intersect instead.
    */
   const selectChip = (
     tokenStart: number,
@@ -282,14 +276,19 @@ export function SearchResults({
   ) => {
     const operator = (operand: string) =>
       operand.slice(0, operand.indexOf(":")).toLowerCase();
+    const visible = `${query.slice(chipPrefix.length, tokenStart)}${query.slice(tokenEnd).trimStart()}`;
+    const kind = operator(chip.operand);
     setChipQuery(
-      [
-        ...chips.filter(
-          (other) => operator(other.operand) !== operator(chip.operand),
-        ),
-        chip,
-      ],
-      `${query.slice(chipPrefix.length, tokenStart)}${query.slice(tokenEnd).trimStart()}`,
+      [...chips.filter((other) => operator(other.operand) !== kind), chip],
+      kind === "from" || kind === "in"
+        ? visible
+            .replace(
+              new RegExp(`"[^"]*"?|(^|\\s)${kind}:\\S*`, "gi"),
+              (token, lead?: string) =>
+                token.startsWith('"') ? token : (lead ?? ""),
+            )
+            .trimStart()
+        : visible,
     );
     input.current?.focus();
   };

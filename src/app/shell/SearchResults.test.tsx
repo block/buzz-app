@@ -4357,16 +4357,79 @@ it("turns date and channel picks into chips that Backspace edits", async () => {
     ).toBeVisible();
     (input as HTMLInputElement).setSelectionRange(0, 0);
     fireEvent.keyDown(input, { key: "Backspace" });
-    expect(input).toHaveValue("on:2026-10-14 deploy ");
-    expect((input as HTMLInputElement).selectionStart).toBe(
-      "on:2026-10-14".length,
-    );
-    expect(changes.at(-1)).toBe("in:crew on:2026-10-14 deploy ");
+    // The edited token ends the query, where its picker can see it.
+    expect(input).toHaveValue("deploy on:2026-10-14");
+    expect(changes.at(-1)).toBe("in:crew deploy on:2026-10-14");
     // Backspace inside the text edits text, not a chip.
     fireEvent.keyDown(input, { key: "Backspace" });
     expect(
       screen.getByRole("button", { name: "Remove channel crew" }),
     ).toBeVisible();
+    fireEvent.change(input, { target: { value: "deploy " } });
+    (input as HTMLInputElement).setSelectionRange(0, 0);
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(input).toHaveValue("deploy in:#crew");
+    fireEvent.click(
+      await within(
+        await screen.findByRole("group", { name: "Channels" }),
+      ).findByRole("option", { name: /crew/ }),
+    );
+    expect(changes.at(-1)).toBe("in:crew deploy ");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("lets a picked person or channel replace a typed filter of its kind", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    bob = keypair();
+  const first = "00000000-0000-4000-8000-00000000000a";
+  const crew = "00000000-0000-4000-8000-00000000000b";
+  const { owner, reads } = operatorSession(viewer, relay, [
+    metadata(relay, first, "builds"),
+    roster(relay, first, [viewer.pubkey]),
+    metadata(relay, crew, "crew"),
+    roster(relay, crew, [viewer.pubkey]),
+  ]);
+  const session = {
+    ...owner.session,
+    searchProfiles: async () => [
+      eventDto(profile(bob, { display_name: "Bob" })),
+    ],
+  };
+  const change = vi.fn();
+  const props = { ...operatorProps, session, onQueryChange: change };
+  try {
+    const view = render(
+      <SearchResults {...props} query={'from:me "from:me" deploy from:@bo'} />,
+    );
+    fireEvent.click(
+      await within(
+        await screen.findByRole("group", { name: "People" }),
+      ).findByRole("option", { name: /Bob/ }),
+    );
+    const author = `from:${bob.pubkey} "from:me" deploy `;
+    expect(change).toHaveBeenLastCalledWith(author);
+    view.rerender(<SearchResults {...props} query={author} />);
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).toMatchObject({ authors: [bob.pubkey] }),
+    );
+    view.rerender(
+      <SearchResults {...props} query={`in:${first} deploy in:#cr`} />,
+    );
+    fireEvent.click(
+      await within(
+        await screen.findByRole("group", { name: "Channels" }),
+      ).findByRole("option", { name: /crew/ }),
+    );
+    const channel = `in:${crew} deploy `;
+    expect(change).toHaveBeenLastCalledWith(channel);
+    view.rerender(<SearchResults {...props} query={channel} />);
+    await waitFor(() =>
+      expect(reads.at(-1)?.[0]).toMatchObject({ "#h": [crew] }),
+    );
   } finally {
     cleanup();
     owner.dispose();

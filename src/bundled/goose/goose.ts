@@ -4,6 +4,7 @@
 import {
   AcpProcess,
   REQUEST_TIMEOUT_MS,
+  STOP_TIMEOUT_MS,
 } from "../../features/agent-harness/acp/process";
 import type {
   AcpSession,
@@ -202,8 +203,8 @@ export const GooseProcess = {
       launch.signal?.throwIfAborted();
       return goose;
     } catch (error) {
-      await goose.kill();
-      await goose.exited;
+      // Rejects once it has exited or `STOP_TIMEOUT_MS` has passed.
+      await goose.stop(STOP_TIMEOUT_MS);
       throw error;
     } finally {
       launch.signal?.removeEventListener("abort", cancel);

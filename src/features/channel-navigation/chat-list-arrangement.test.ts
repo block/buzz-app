@@ -2,9 +2,9 @@ import { expect, it } from "vitest";
 import { arrangeChatList } from "./chat-list-arrangement";
 
 const chats = [
-  { id: "a", title: "A", lastMessageAt: 300, pinned: false },
-  { id: "b", title: "B", lastMessageAt: 200, pinned: true },
-  { id: "c", title: "C", pinned: false },
+  { id: "a", title: "A", lastMessageAt: 300, pinned: false, unread: false },
+  { id: "b", title: "B", lastMessageAt: 200, pinned: true, unread: false },
+  { id: "c", title: "C", pinned: false, unread: true },
 ];
 
 it("keeps the host's order without an arrangement", () => {

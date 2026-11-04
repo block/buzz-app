@@ -61,8 +61,9 @@ export type ChatListEntry = Readonly<{
   title: string;
   /** Unix seconds of the latest message, once the relay has reported it. */
   lastMessageAt?: number;
-  /** Open, working or unread: always listed and never folded. */
+  /** Open or working: always listed and never folded. */
   pinned: boolean;
+  unread: boolean;
 }>;
 export type ChatListLayout = Readonly<{
   /** Listed order; chats it leaves out follow in the host's order. */

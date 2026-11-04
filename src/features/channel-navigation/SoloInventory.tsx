@@ -1,6 +1,7 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
+  useEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -125,6 +126,11 @@ export function SoloInventory({
     chatLists?.subscribe ?? noSubscription,
     () => chatLists?.snapshot()[0],
   );
+  const arranges = !!chatList?.arrange;
+  useEffect(
+    () => (arranges ? session.channels.retainActivity?.() : undefined),
+    [session, arranges],
+  );
   const workingChannels = new Set<string>(JSON.parse(workingIds));
   const open = (channelId: string) =>
     navigator.open(conversationTarget(scope, channelId));
@@ -184,10 +190,8 @@ export function SoloInventory({
       ...(item.lastActivityAt !== undefined
         ? { lastMessageAt: item.lastActivityAt }
         : {}),
-      pinned:
-        selected === item.id ||
-        workingChannels.has(item.id) ||
-        unreadChats.has(item.id),
+      pinned: selected === item.id || workingChannels.has(item.id),
+      unread: unreadChats.has(item.id),
     })),
   );
   const RowAction = chatList?.rowAction;
@@ -312,10 +316,10 @@ export function SoloInventory({
               ?.focus({ preventScroll: true });
           });
         }}
-        chats={arranged.chats.map(({ id, title, pinned }) => ({
+        chats={arranged.chats.map(({ id, title, pinned, unread }) => ({
           id,
           title,
-          pinned,
+          pinned: pinned || unread,
         }))}
         folded={arranged.folded}
         renderRowAction={

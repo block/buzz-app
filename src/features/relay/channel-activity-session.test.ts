@@ -579,3 +579,29 @@ it("projects authoritative empty activity through later loading and failed refre
     h.owner.dispose();
   }
 });
+it("reads activity while a retained demand is held and cancels after the last release", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    expect(h.activity).not.toHaveBeenCalled();
+    const release = h.channels.retainActivity();
+    const second = h.channels.retainActivity();
+    expect(h.activity).toHaveBeenCalledOnce();
+    const reading = take(h.pending);
+    expect(reading.ids).toEqual(["alpha", "beta"]);
+    release();
+    release();
+    expect(reading.signal.aborted).toBe(false);
+    reading.resolve([message(h.peer, "alpha", "history", 60)]);
+    await flush();
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(60);
+    second();
+    expect(h.channels.list().activityStatus).not.toBe("loading");
+    h.channels.retainActivity();
+    expect(h.activity).toHaveBeenCalledTimes(2);
+  } finally {
+    h.owner.dispose();
+  }
+});

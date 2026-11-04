@@ -410,6 +410,7 @@ export function IdentitySettings({
                   servers={servers}
                   accountRows={accountRows}
                   memberships={memberships}
+                  holds={exitHolds ?? []}
                 />
               </div>
             )}
@@ -497,11 +498,14 @@ function OrganizationSignIns({
   servers,
   accountRows,
   memberships,
+  holds,
 }: {
   identity: FederatedIdentity;
   servers: () => Promise<readonly SessionSnapshot[]>;
   accountRows?: ReactNode;
   memberships: readonly Membership[];
+  /** Work that signing out would discard; while any exists, signing out asks. */
+  holds: readonly string[];
 }) {
   const [ids, setIds] = useState<readonly string[]>([]);
   useEffect(() => {
@@ -615,6 +619,7 @@ function OrganizationSignIns({
               <OrganizationSignIn
                 identity={session}
                 listed
+                holds={holds}
                 onSignOut={() => signOut(session)}
               />
             </AccountCard>
@@ -808,12 +813,16 @@ function OrganizationSignIn({
   listed = false,
   memberships = [],
   onSignOut,
+  holds = [],
 }: {
   identity: FederatedIdentity;
   accountRows?: ReactNode;
   listed?: boolean;
   memberships?: readonly Membership[];
   onSignOut?: () => void;
+  /** Work that signing out would discard (a pop-out's unsent reply), named
+   * in the confirmation so the choice is informed. */
+  holds?: readonly string[];
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
@@ -961,7 +970,22 @@ function OrganizationSignIn({
       {signedIn && confirmRevision === state.revision && (
         <AlertDialog
           title={`Sign out of ${organization}?`}
-          description={`Your Buzz identity stays on this device. You and your agents can’t reconnect to communities that require your ${organization} login until you sign back in.`}
+          description={
+            holds.length ? (
+              <>
+                Your Buzz identity stays on this device. You and your agents
+                can’t reconnect to communities that require your {organization}{" "}
+                login until you sign back in. Signing out also discards:
+                <ul className="mt-2 list-disc pl-5">
+                  {holds.map((hold) => (
+                    <li key={hold}>{hold}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              `Your Buzz identity stays on this device. You and your agents can’t reconnect to communities that require your ${organization} login until you sign back in.`
+            )
+          }
           finalFocus={trigger}
           onClose={() => setConfirmRevision(null)}
           actions={
@@ -982,7 +1006,7 @@ function OrganizationSignIn({
                   });
                 }}
               >
-                Sign out
+                {holds.length ? "Sign out anyway" : "Sign out"}
               </Button>
             </>
           }

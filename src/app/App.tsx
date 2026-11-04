@@ -182,31 +182,33 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         return false;
       }
       const current = services.navigation.snapshot().entry.target;
-      if (settingsUnsaved) {
-        // Settings sections share the mounted Profile editor. A different scope
-        // or leaving the dialog would unmount it.
-        if (
-          !(
-            next.kind === "settings" &&
-            current.kind === "settings" &&
-            JSON.stringify(next.scope) === JSON.stringify(current.scope)
-          )
-        ) {
-          settingsTraversal.current = decide;
-          setConfirmSettingsDiscard(true);
-          return true;
-        }
-      }
+      // Settings sections share the mounted Profile editor. A different scope
+      // or leaving the dialog would unmount it.
+      const leavingEditor =
+        settingsUnsaved &&
+        !(
+          next.kind === "settings" &&
+          current.kind === "settings" &&
+          JSON.stringify(next.scope) === JSON.stringify(current.scope)
+        );
       const holds = services.communities.exitHolds();
-      if (!holds.length) return false;
       const selected = services.communities.snapshot().selected;
       const origin = selected ? communityDestination(selected).url : null;
       const nextOrigin =
         "scope" in next ? (next.scope?.communityOrigin ?? null) : origin;
-      if (nextOrigin === origin) return false;
-      exitTraversal.current = { holds, decide };
-      setConfirmExit(true);
-      return true;
+      const leavingCommunity = holds.length > 0 && nextOrigin !== origin;
+      // One decision covers both: the community prompt also names the editor.
+      if (leavingCommunity) {
+        exitTraversal.current = { holds, decide };
+        setConfirmExit(true);
+        return true;
+      }
+      if (leavingEditor) {
+        settingsTraversal.current = decide;
+        setConfirmSettingsDiscard(true);
+        return true;
+      }
+      return false;
     });
   }, [services, settingsUnsaved, holdingExit]);
   const keepCommunity = () => {

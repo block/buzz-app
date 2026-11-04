@@ -1181,3 +1181,41 @@ it.each([
     }
   },
 );
+
+it("names held work in the organization sign-out confirmation, and signs out of that server once on confirmation", async () => {
+  const { block, pub, root, servers } = twoServers();
+  block.publish({ status: "signed-in", email: "will@acme.example" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      memberships={memberships}
+      servers={servers}
+      exitHolds={["The pop-out window for “Design” has an unsent reply."]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const signOut = async () =>
+    userEvent.click(
+      await screen.findByRole("button", {
+        name: "Sign out of app.builderlab.xyz",
+      }),
+    );
+  await signOut();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
+  const dialog = screen.getByRole("alertdialog");
+  expect(dialog).toHaveTextContent("Signing out also discards:");
+  expect(dialog).toHaveTextContent("has an unsent reply");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
+  await signOut();
+  await userEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Sign out anyway",
+    }),
+  );
+  expect(pub.service.signOut).toHaveBeenCalledTimes(1);
+  expect(block.service.signOut).not.toHaveBeenCalled();
+});

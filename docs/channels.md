@@ -559,6 +559,12 @@ the returned command, and confirms relay-owned state before removing a row. Arch
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
 development-broker routes or the packaged native `relay_channel_sign` and
 `relay_channel_publish` commands, never the message outbox or automatic replay.
+A published lifecycle command keeps its bounded, fresh, strong confirmation
+when access loss retires access-dependent work. Retired confirmation reads
+are reread; caller cancellation, session clear/disposal and the original deadline
+still abort its signal. A rejected publication or definitive confirmation-read
+failure still fails the command; an aborted read alone never confirms it. These signals
+do not forcibly interrupt an in-flight native publication IPC.
 Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive)
 or `archived=false` (Unarchive); other values, extra tags, cross-route commands and
 altered or foreign signatures are rejected. Hosts without this capability display
@@ -1183,7 +1189,19 @@ The port retains the prepared-store implementation and its behavior tests:
   retained-window live catch-up. Optional profile enrichment stays background.
   Selecting an already-queued catch-up promotes that existing read without adding
   a request or resetting its deadline.
-- 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
+- 1,024 profile entries and an aggregate signed-record byte budget of the entry
+  limit × 2 KiB, evicting the least recently requested profile. While a channel is
+  open and active (not a retained background tab), it reserves room for its whole
+  roster on top of that base, up to 10,240 entries. Leaving gives the room back
+  after the current task, so a remount or a roster count change keeps the loaded
+  profiles; the shrink cancels background profile reads still in flight, and
+  stops the verified-name syncs it emptied. Verified-name syncs (128 people
+  each) have their own pool of 80, enough for the largest cache, apart from the
+  32 artifact syncs. A background profile read of many pages publishes once,
+  when its pages settle (a foreground read that joins it publishes at once), so
+  an open mention menu re-ranks a large roster once instead of per page. The
+  channel avatar preview reads at most the first 1,024 members; only the mention
+  menu reads a whole large roster. Narrow row profile selectors,
   and request-warmed avatars (fetched and decoded, nothing retained; disabled
   under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
@@ -1290,14 +1308,21 @@ channel-scoped payloads from the connected relay become activity rows; malformed
 unknown and other authors' summaries are not rendered as JSON. These events do not
 grant/revoke access: the existing signed roster remains authoritative.
 
-The timeline groups adjacent arrivals/departures into compact avatar-and-text rows.
-Messages, local-day changes and gaps over an hour break groups; removals by different
-actors stay separate. Same-adder additions use “added by you” for the viewer;
-mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
-IDs and cursors remain per event, and live activity counts against the row budget.
-Profiles reuse the
-shared background directory/cache, and reading anchors can resolve a member of a
-group. Activity has no message actions, thread, unread evidence or chat preview.
+The timeline shows only explicit additions by another actor and removals; self-joins
+and voluntary leaves are hidden before grouping. Each uninterrupted run of visible
+membership activity becomes one centered avatar-and-text row. Messages and huddles
+break runs; local-day changes, elapsed time and different removal actors do not.
+Each person appears only under their latest visible action in the run, including
+in the hover detail: removal followed by re-addition is described as an addition.
+The group keeps its newest event's identity and its oldest event's date.
+
+Small same-adder additions use “added by you” for the viewer; mixed additions do not
+invent an adder. Large or mixed summaries keep one name per action and a count;
+hovering, clicking or keyboard-opening the count shows the full scrollable people
+list for that action. Grouping is presentation-only: all signed events remain in
+the group, IDs and cursors remain per event, and reading anchors can resolve any
+member event. Profiles reuse the shared background directory/cache. Activity has no
+message actions, thread, unread evidence or chat preview.
 A Solo chat omits its owner's additions and removals of agents before its first
 message once history reaches its start; later changes, people and agents added by others still
 show. Membership, access and pagination are unchanged.

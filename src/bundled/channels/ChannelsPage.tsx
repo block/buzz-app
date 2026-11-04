@@ -1868,9 +1868,6 @@ function ChannelWorkspace({
             key={current.id}
             cached={cached}
             // The composer below mounts TypingIndicator for members of a live channel.
-            activityLane={
-              !current.archived && !current.readOnly && !current.cached
-            }
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
@@ -1987,6 +1984,8 @@ function ChannelWorkspace({
           session={queries}
           channelId={current.id}
           communities={communities}
+          // Routed Members is a navigation visit; without a navigator it is local.
+          visit={!!navigator}
           close={() => setMembersOpen(false)}
           trigger={
             membersTrigger.current?.isConnected

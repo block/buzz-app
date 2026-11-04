@@ -110,10 +110,20 @@ test("large reaction previews keep the remainder count visible without scrolling
 test("reaction emojis and hit areas grow together without clipping", async ({
   page,
 }) => {
+  // Keep failed-image retries from changing the hovered message's layout.
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="purple"/></svg>',
+    }),
+  );
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap");
   const message = page
     .locator("[data-message-id]")
     .filter({ hasText: "Historic" });
+  await expect(
+    message.locator('button[data-reaction=":party:"] img'),
+  ).toHaveJSProperty("naturalWidth", 16);
   const pill = message.locator('button[data-reaction="👍"]');
   const glyph = pill.locator("[data-reaction-glyph] > span");
   await expect(glyph).toBeVisible();
@@ -551,6 +561,13 @@ test.describe("reaction control rendering", () => {
   test("add-reaction icon stays still while neighboring emojis animate", async ({
     page,
   }) => {
+    // Failed-image retries reflow the message and interrupt a resting hover.
+    await page.route("**/emoji-media/**", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7" fill="purple"/></svg>',
+      }),
+    );
     await page.goto("/tests/fixtures/emoji.html?reactions&wrap");
     const message = page
       .locator("[data-message-id]")
@@ -559,6 +576,9 @@ test.describe("reaction control rendering", () => {
     const row = message.getByTestId("reaction-row");
     const plus = row.getByRole("button", { name: "Add reaction" });
     const emoji = row.locator('button[data-reaction="👍"]');
+    await expect(
+      row.locator('button[data-reaction=":party:"] img'),
+    ).toHaveJSProperty("naturalWidth", 16);
     await expect(plus).toBeVisible();
     // Fractional placement exposes repaint shifts that integer-aligned rows hide.
     await row.evaluate((el) => {

@@ -111,6 +111,10 @@ export type ChannelStoreOptions = {
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+/** Channels one creator-proof filter names. Each has one creation, so a limit
+ * of twice this, the relay's maximum, leaves room for strays; a filter that
+ * reaches it proves only the channels whose creation arrived. */
+const CREATION_READ_CHANNELS = 250;
 // Public channel metadata for name search, read a page at a time up to a
 // bound; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
@@ -1192,7 +1196,7 @@ export function createChannelStore(
   ) {
     if (!transport || !discovery || options.cachedOnly) return;
     const pending = new Map<string, CreationRead>();
-    const filters = events.flatMap((event) => {
+    const wanted = events.flatMap((event) => {
       const id = tag(event, "d");
       const identity = channelIdentity(event);
       if (
@@ -1210,19 +1214,27 @@ export function createChannelStore(
       const read = { version: event.id, complete: false };
       creationReads.set(id, read);
       pending.set(id, read);
-      return [
-        {
-          kinds: [9007],
-          ...(settings?.consistency
-            ? { consistency: settings.consistency }
-            : {}),
-          authors: [identity.creator],
-          "#h": [id],
-          limit: 1,
-        },
-      ];
+      return [{ id, creator: identity.creator }];
     });
-    if (!filters.length) return;
+    if (!wanted.length) return;
+    const creators = new Map(wanted.map(({ id, creator }) => [id, creator]));
+    // One filter names many channels and their creators. Discovery accepts a
+    // creation only from its own channel's creator, so a cross match is ignored.
+    const filters = [];
+    for (
+      let offset = 0;
+      offset < wanted.length;
+      offset += CREATION_READ_CHANNELS
+    ) {
+      const chunk = wanted.slice(offset, offset + CREATION_READ_CHANNELS);
+      filters.push({
+        kinds: [9007],
+        ...(settings?.consistency ? { consistency: settings.consistency } : {}),
+        authors: [...new Set(chunk.map(({ creator }) => creator))],
+        "#h": chunk.map(({ id }) => id),
+        limit: 2 * chunk.length,
+      });
+    }
     const generation = epoch;
     const controller = new AbortController();
     controllers.add(controller);
@@ -1242,13 +1254,38 @@ export function createChannelStore(
         settings?.signal?.throwIfAborted();
         if (disposed || generation !== epoch || controller.signal.aborted)
           throw new DOMException("Stale creation resolution", "AbortError");
+        const creations = receipts.filter((event) => event.kind === 9007);
+        const proved = new Set(
+          creations.flatMap((event) => {
+            const coordinates = event.tags.filter(([name]) => name === "h");
+            const id =
+              coordinates.length === 1 && coordinates[0]?.length === 2
+                ? coordinates[0][1]
+                : undefined;
+            return id && event.pubkey === creators.get(id) ? [id] : [];
+          }),
+        );
         for (const filter of filters.slice(offset, offset + 4)) {
-          const id = filter["#h"][0];
-          const read = id && pending.get(id);
-          if (id && read && creationReads.get(id) === read)
-            read.complete = true;
+          // A filter cut at its limit may have left a channel's creation out.
+          const cut =
+            creations.filter((event) =>
+              event.tags.some(
+                ([name, id]) => name === "h" && filter["#h"].includes(id ?? ""),
+              ),
+            ).length >= filter.limit;
+          for (const id of filter["#h"]) {
+            const read = pending.get(id);
+            if (
+              read &&
+              creationReads.get(id) === read &&
+              (!cut || proved.has(id))
+            )
+              read.complete = true;
+            else if (read && creationReads.get(id) === read)
+              creationReads.delete(id);
+          }
         }
-        applyDiscovery(receipts.filter((event) => event.kind === 9007));
+        applyDiscovery(creations);
       }
     })()
       .catch((error) => {
@@ -2622,8 +2659,10 @@ export function createChannelStore(
       warming = false;
     }
   }
-  /** Channel-link lookups. `withheld` answers are kept for a while (and
-   * shown while rechecked); failures back off. Both reset with the epoch.
+  /** Channel-link lookups. `withheld` keeps a lookup that admitted nothing (a
+   * withheld answer, or a left channel still unreadable) for a while, and its
+   * answer is shown while rechecked; failures back off. Both reset with the
+   * epoch.
    * `demand` counts mounted links per channel; a timer rechecks them when
    * their answer expires or their backoff ends. */
   const references = {
@@ -2677,8 +2716,11 @@ export function createChannelStore(
         ...(channel.members?.length ? { members: channel.members.length } : {}),
       };
     }
+    const state = currentReferences();
+    const looking = state.queue.has(id) || state.pending.has(id);
     // A public channel the viewer has left: its signed open metadata stays
-    // public even while discovery denies reading it as a member.
+    // public even while discovery denies reading it as a member, until a
+    // lookup confirms it is still open.
     const event = discovery?.metadataVersion(id);
     const name = event && openMetadata(event) && metadataName(event);
     if (event && name) {
@@ -2693,11 +2735,15 @@ export function createChannelStore(
         hidden: false,
         archived: hasTag(event, "archived", "true"),
         joined: false,
+        readable: false,
+        ...(looking ? { looking: true as const } : {}),
       };
     }
-    return currentReferences().withheld.has(id)
+    return state.withheld.has(id)
       ? { state: "withheld" }
-      : { state: "unknown" };
+      : looking
+        ? { state: "looking" }
+        : { state: "unknown" };
   }
   /** When a demanded reference may be looked up again: its withheld answer
    * expires, or its backoff ends. */
@@ -2732,8 +2778,9 @@ export function createChannelStore(
   }
   function lookUpReference(id: string) {
     if (disposed || !transport || !discovery || options.cachedOnly) return;
-    if (list.status !== "ready" || describeReference(id).state === "found")
-      return;
+    // Discovery's admission, not a found name, decides: a left channel's
+    // messages need a fresh lookup.
+    if (list.status !== "ready" || discovery.get(id)) return;
     const state = currentReferences();
     if (
       state.queue.has(id) ||
@@ -2761,8 +2808,7 @@ export function createChannelStore(
             for (const id of batch) {
               state.pending.delete(id);
               state.retryAt.delete(id);
-              if (describeReference(id).state === "found")
-                state.withheld.delete(id);
+              if (discovery?.get(id)) state.withheld.delete(id);
               else state.withheld.set(id, now());
             }
             setList(list, true);
@@ -2778,10 +2824,16 @@ export function createChannelStore(
               state.pending.delete(id);
               state.retryAt.set(id, now() + wait);
             }
+            // Arm the retry first, so a throwing listener can't skip it.
             wakeReferences();
+            // Its links stop waiting through the backoff.
+            notify(listListeners);
           },
         );
       }
+      // Their links now wait for these answers, once per batch and after the
+      // reads start. A withheld answer stays on screen while it is rechecked.
+      if (ids.some((id) => !state.withheld.has(id))) notify(listListeners);
     });
   }
   function referChannel(id: string) {
@@ -2845,7 +2897,8 @@ export function createChannelStore(
         ? (publicDirectory.open ?? noOpenDirectory)
         : noOpenDirectory,
     describe: describeReference,
-    refer: referChannel,
+    // A cached-only store never looks a reference up, so it offers no lookup.
+    ...(options.cachedOnly ? {} : { refer: referChannel }),
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>

@@ -49,13 +49,11 @@ const threadOpeners = vi.hoisted(
 );
 vi.mock("./ChannelBody", () => ({
   ChannelBody: ({
-    activityLane,
     holding,
     inlineTarget,
     marksRead,
     onOpenThread,
   }: {
-    activityLane?: boolean;
     holding?: boolean;
     inlineTarget?: { messageId: string };
     marksRead?: boolean;
@@ -64,7 +62,6 @@ vi.mock("./ChannelBody", () => ({
     threadOpeners.push(onOpenThread);
     return (
       <div
-        data-activity-lane={activityLane}
         data-holding={holding}
         data-target={inlineTarget?.messageId}
         data-marks-read={marksRead}
@@ -205,6 +202,7 @@ it.each(["thread", "conversation"] as const)(
     const session = {
       viewer: "viewer",
       channels: { list: () => snapshot, subscribeList: () => () => {} },
+      profiles: {},
       unread: { enterChannel, leaveChannel },
     } as unknown as RelaySession;
     const props = {
@@ -256,6 +254,7 @@ it.each(["thread", "conversation"] as const)(
     const session = {
       viewer: "viewer",
       channels: { list: () => snapshot, subscribeList: () => () => {} },
+      profiles: {},
       unread: { enterChannel, leaveChannel: vi.fn() },
     } as unknown as RelaySession;
     render(
@@ -467,39 +466,6 @@ it.each(["pointerDown", "keyDown"] as const)(
       <ConversationTab {...props} tab={{ ...tab, focusRequest: 2 }} />,
     );
     expect(thread).toHaveAttribute("data-focus-request", "2");
-  },
-);
-
-it.each([false, true])(
-  "conversation tabs reserve the jump button's activity lane only for a live channel (cached=%s)",
-  (cached) => {
-    const channel = {
-      id: "beta",
-      name: "Beta",
-      ...(cached ? { cached: true as const } : {}),
-    };
-    const snapshot = { status: "ready", channels: [channel] };
-    const session = {
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
-    } as unknown as RelaySession;
-    render(
-      <ConversationTab
-        tab={{ id: "beta-tab", kind: "conversation", channelId: "beta" }}
-        channel={channel}
-        session={session}
-        scope="lane-test"
-        active
-        openLink={() => false}
-        canOpenLink={() => false}
-        openThread={() => {}}
-        close={() => {}}
-      />,
-    );
-    // The composer below the body mounts TypingIndicator only when live.
-    expect(screen.getByText("Conversation content")).toHaveAttribute(
-      "data-activity-lane",
-      String(!cached),
-    );
   },
 );
 

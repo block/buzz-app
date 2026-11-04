@@ -3466,7 +3466,7 @@ it.each([
       expect(await people.findAllByRole("option")).toHaveLength(2);
       fireEvent.click(people.getAllByRole("option")[1] as HTMLElement);
       expect(change).toHaveBeenCalledWith(
-        query.replace(/from:@?baxen/i, `from:${second.pubkey}`),
+        `from:${second.pubkey} ${query.replace(/from:@?baxen\s*/i, "")}`,
       );
     } finally {
       cleanup();
@@ -3882,9 +3882,12 @@ it("renders from:<author chip> without exposing the signed operand in the input"
       }),
     );
     expect(chip).toBeVisible();
-    expect((input as HTMLInputElement).value).toMatch(
-      /^before:\d{4}-\d{2}-\d{2} ?$/,
-    );
+    expect(
+      screen.getByRole("button", {
+        name: /^Remove date before:\d{4}-\d{2}-\d{2}$/,
+      }),
+    ).toBeVisible();
+    expect(input).toHaveValue("");
     expect((input as HTMLInputElement).value).not.toContain(human.pubkey);
     await waitFor(() =>
       expect(reads.at(-1)?.[0]).toMatchObject({ authors: [human.pubkey] }),
@@ -4121,13 +4124,13 @@ it("offers during: periods and an on: calendar that insert local dates", async (
     ]);
     fireEvent.click(dates.getByRole("option", { name: /This week/ }));
     // There is no week period, so the week starts after its Monday.
-    expect(change).toHaveBeenLastCalledWith("deploy after:2026-10-05 ");
+    expect(change).toHaveBeenLastCalledWith("after:2026-10-05 deploy ");
     fireEvent.click(dates.getByRole("option", { name: /This year/ }));
-    expect(change).toHaveBeenLastCalledWith("deploy during:2026 ");
+    expect(change).toHaveBeenLastCalledWith("during:2026 deploy ");
     view.rerender(<SearchResults {...props} query="deploy on:" />);
     expect(screen.queryByRole("group", { name: "Dates" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /October 14th, 2026/ }));
-    expect(change).toHaveBeenLastCalledWith("deploy on:2026-10-14 ");
+    expect(change).toHaveBeenLastCalledWith("on:2026-10-14 deploy ");
   } finally {
     cleanup();
     owner.dispose();
@@ -4172,7 +4175,7 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
       ).toEqual(["builds" + "Channel", "buzz-bugs" + "Channel"]),
     );
     fireEvent.click(channels.getByRole("option", { name: /buzz-bugs/ }));
-    expect(change).toHaveBeenLastCalledWith("deploy in:bugs ");
+    expect(change).toHaveBeenLastCalledWith("in:bugs deploy ");
     view.rerender(<SearchResults {...props} query="in:#" />);
     expect(
       await within(
@@ -4182,7 +4185,7 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
     view.rerender(<SearchResults {...props} query="deploy in:@bax" />);
     const people = within(await screen.findByRole("group", { name: "People" }));
     fireEvent.click(await people.findByRole("option", { name: /Baxen/ }));
-    expect(change).toHaveBeenLastCalledWith(`deploy in:@${baxen.pubkey} `);
+    expect(change).toHaveBeenLastCalledWith(`in:@${baxen.pubkey} deploy `);
   } finally {
     cleanup();
     owner.dispose();
@@ -4218,8 +4221,8 @@ it("keeps a picked channel's identity past an open live namesake", async () => {
       await screen.findByRole("group", { name: "Channels" }),
     );
     fireEvent.click(await channels.findByRole("option", { name: /crew/ }));
-    expect(change).toHaveBeenLastCalledWith(`deploy in:${joined} `);
-    view.rerender(<SearchResults {...props} query={`deploy in:${joined} `} />);
+    expect(change).toHaveBeenLastCalledWith(`in:${joined} deploy `);
+    view.rerender(<SearchResults {...props} query={`in:${joined} deploy `} />);
     expect(
       screen.getByRole("button", { name: "Remove channel crew" }),
     ).toBeVisible();
@@ -4238,7 +4241,7 @@ it.each([
   ["from:@ali", "Alice", "in:@bo", "Bob"],
   ["IN:@bo", "Bob", "from:@ali", "Alice"],
 ])(
-  "keeps %s when a person is then picked for the other operator",
+  "keeps %s as a chip when a person is then picked for the other operator",
   async (first, firstName, second, secondName) => {
     const relay = keypair(),
       viewer = keypair(),
@@ -4256,25 +4259,51 @@ it.each([
       /^in:/i.test(typed)
         ? `in:@${(name === "Bob" ? bob : alice).pubkey}`
         : `from:${(name === "Bob" ? bob : alice).pubkey}`;
-    const change = vi.fn();
-    const props = { ...operatorProps, session, onQueryChange: change };
+    const changes: string[] = [];
+    function Search() {
+      const [query, setQuery] = useState(first);
+      return (
+        <SearchResults
+          {...operatorProps}
+          session={session}
+          query={query}
+          onQueryChange={(next) => {
+            changes.push(next);
+            setQuery(next);
+          }}
+        />
+      );
+    }
+    const pick = async (name: string) =>
+      fireEvent.click(
+        await within(
+          await screen.findByRole("group", { name: "People" }),
+        ).findByRole("option", { name: new RegExp(name) }),
+      );
     try {
-      const view = render(<SearchResults {...props} query={first} />);
-      fireEvent.click(
-        await within(
-          await screen.findByRole("group", { name: "People" }),
-        ).findByRole("option", { name: new RegExp(firstName) }),
+      render(<Search />);
+      await pick(firstName);
+      const input = screen.getByRole("combobox", { name: "Search Buzz" });
+      fireEvent.change(input, { target: { value: second } });
+      await pick(secondName);
+      expect(changes.at(-1)).toBe(
+        `${operand(firstName, first)} ${operand(secondName, second)} `,
       );
-      const picked = `${operand(firstName, first)} `;
-      expect(change).toHaveBeenLastCalledWith(picked);
-      view.rerender(<SearchResults {...props} query={`${picked}${second}`} />);
-      fireEvent.click(
-        await within(
-          await screen.findByRole("group", { name: "People" }),
-        ).findByRole("option", { name: new RegExp(secondName) }),
-      );
-      expect(change).toHaveBeenLastCalledWith(
-        `${picked}${operand(secondName, second)} `,
+      expect(input).toHaveValue("");
+      const chips = screen
+        .getAllByRole("button", { name: /^Remove (author|conversation)/ })
+        .map((chip) => chip.textContent);
+      expect(chips).toEqual([
+        `× ${/^in:/i.test(first) ? "in" : "from"}:@${firstName}`,
+        `× ${/^in:/i.test(second) ? "in" : "from"}:@${secondName}`,
+      ]);
+      // Backspace before the text turns the last chip back into its text.
+      fireEvent.keyDown(input, { key: "Backspace" });
+      const restored = `${/^in:/i.test(second) ? "in" : "from"}:@${secondName}`;
+      expect(input).toHaveValue(restored);
+      expect(changes.at(-1)).toBe(`${operand(firstName, first)} ${restored}`);
+      expect(screen.getAllByRole("button", { name: /^Remove/ })).toHaveLength(
+        1,
       );
     } finally {
       cleanup();
@@ -4282,6 +4311,67 @@ it.each([
     }
   },
 );
+
+it("turns date and channel picks into chips that Backspace edits", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const { owner } = operatorSession(viewer, relay, [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+  ]);
+  const changes: string[] = [];
+  function Search() {
+    const [query, setQuery] = useState("deploy in:#cr");
+    return (
+      <SearchResults
+        {...operatorProps}
+        session={owner.session}
+        query={query}
+        onQueryChange={(next) => {
+          changes.push(next);
+          setQuery(next);
+        }}
+      />
+    );
+  }
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 9, 7, 12));
+  try {
+    render(<Search />);
+    fireEvent.click(
+      await within(
+        await screen.findByRole("group", { name: "Channels" }),
+      ).findByRole("option", { name: /crew/ }),
+    );
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(input).toHaveValue("deploy ");
+    fireEvent.change(input, { target: { value: "deploy on:" } });
+    fireEvent.click(screen.getByRole("button", { name: /October 14th, 2026/ }));
+    expect(changes.at(-1)).toBe("in:crew on:2026-10-14 deploy ");
+    expect(input).toHaveValue("deploy ");
+    expect(
+      screen.getByRole("button", { name: "Remove channel crew" }),
+    ).toHaveTextContent("in:#crew");
+    expect(
+      screen.getByRole("button", { name: "Remove date on:2026-10-14" }),
+    ).toBeVisible();
+    (input as HTMLInputElement).setSelectionRange(0, 0);
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(input).toHaveValue("on:2026-10-14 deploy ");
+    expect((input as HTMLInputElement).selectionStart).toBe(
+      "on:2026-10-14".length,
+    );
+    expect(changes.at(-1)).toBe("in:crew on:2026-10-14 deploy ");
+    // Backspace inside the text edits text, not a chip.
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(
+      screen.getByRole("button", { name: "Remove channel crew" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it("shows only messages once text sits beside an operator", async () => {
   const relay = keypair(),

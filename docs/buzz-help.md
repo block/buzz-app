@@ -206,7 +206,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   Other words with a colon, such as `has:link`, are searched as text. An
   unfinished `from:` or `in:@` lists people, `in:` or `in:#` your channels,
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
-  one to complete it. With a filter, search shows only messages.
+  one to make it a chip. Click a chip to remove it, or press Backspace at the
+  start of the text to edit the last one. With a filter, search shows only
+  messages.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.

@@ -6,6 +6,7 @@ import {
 import { npubEncode } from "nostr-tools/nip19";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -45,7 +46,7 @@ import type {
   SearchInputProps,
   SearchViews,
 } from "./SearchChoices";
-import { SearchChoices } from "./SearchChoices";
+import { type SearchChip, SearchChoices } from "./SearchChoices";
 import { MatchRank, matchName, matchRank } from "../../features/search/match";
 import {
   noSearchUsage,
@@ -226,87 +227,71 @@ export function SearchResults({
   const sidebarHidden = (channel: ChannelSummary) =>
     channel.channelType === "dm" &&
     (savedHidden.has(channel.id) || dmVisibility.hidden.includes(channel.id));
-  const [selectedAuthor, setSelectedAuthor] = useState<{
+  // Chosen filters render as chips ahead of the typed text: the query holds
+  // their exact operands first, then whatever the input shows.
+  const [chipState, setChipState] = useState<{
     query: string;
-    /** `from:<key>`, `in:@<key>` or `in:<channel id>`, as the query holds it. */
-    operand: string;
-    title: string;
-    name: string;
-    index: number;
+    chips: readonly SearchChip[];
   }>();
-  const authorOperand = selectedAuthor?.operand ?? "";
-  const selectedIndex = selectedAuthor?.index ?? -1;
-  const showAuthorChip =
-    !!selectedAuthor &&
-    query === selectedAuthor.query &&
-    query.slice(selectedIndex, selectedIndex + authorOperand.length) ===
-      authorOperand;
-  const displayQuery = showAuthorChip
-    ? `${query.slice(0, selectedIndex)}${query.slice(selectedIndex + authorOperand.length).replace(/^\s/, "")}`
+  const chips = chipState?.query === query ? chipState.chips : [];
+  const chipPrefix = chips.map(({ operand }) => `${operand} `).join("");
+  const displayQuery = chips.length
+    ? query.slice(chipPrefix.length)
     : undefined;
-  const updateDisplayQuery = (value: string) => {
-    const nextQuery = showAuthorChip
-      ? `${authorOperand} ${value.trimStart()}`
-      : value;
-    setSelectedAuthor(
-      showAuthorChip && selectedAuthor
-        ? { ...selectedAuthor, query: nextQuery, index: 0 }
-        : undefined,
-    );
+  const caret = useRef<number>(undefined);
+  useLayoutEffect(() => {
+    if (caret.current === undefined) return;
+    if (input.current instanceof HTMLInputElement)
+      input.current.setSelectionRange(caret.current, caret.current);
+    caret.current = undefined;
+  });
+  const setChipQuery = (next: readonly SearchChip[], visible: string) => {
+    const nextQuery = `${next.map(({ operand }) => `${operand} `).join("")}${visible}`;
+    setChipState(next.length ? { query: nextQuery, chips: next } : undefined);
     onQueryChange(nextQuery);
   };
-  const removeSelectedAuthor = () => {
-    if (!selectedAuthor || !showAuthorChip) return;
-    onQueryChange(displayQuery ?? "");
-    setSelectedAuthor(undefined);
+  const updateDisplayQuery = (value: string) =>
+    chips.length
+      ? setChipQuery(chips, value.trimStart())
+      : onQueryChange(value);
+  const removeChip = (chip: SearchChip) => {
+    setChipQuery(
+      chips.filter((other) => other !== chip),
+      displayQuery ?? "",
+    );
     input.current?.focus();
+  };
+  /** Backspace before the text turns the last chip back into its text. */
+  const editLastChip = () => {
+    const last = chips.at(-1);
+    if (!last) return;
+    caret.current = last.edit.length;
+    setChipQuery(
+      chips.slice(0, -1),
+      displayQuery ? `${last.edit} ${displayQuery}` : last.edit,
+    );
   };
   /**
-   * Put a chosen operand in place of its unfinished token and on the chip.
-   * Replacing the chip's own operator drops the old operand; another
-   * operator is an independent filter, so the query keeps it.
+   * Replace the operator token at `tokenStart` with a chip. A chip for the
+   * same operator is replaced; other operators are independent filters.
    */
-  const selectOperand = (
+  const selectChip = (
     tokenStart: number,
     tokenEnd: number,
-    operand: string,
-    name: string,
-    title: string,
+    chip: SearchChip,
   ) => {
-    const replacing =
-      showAuthorChip &&
-      operand.slice(0, operand.indexOf(":")) ===
-        authorOperand.slice(0, authorOperand.indexOf(":"));
-    // The prompt's leading separator may be the one removed with the old
-    // chip. Map the token itself through that removal, rather than
-    // subtracting the separator from its start twice.
-    const oldEnd = selectedIndex + authorOperand.length;
-    const shift =
-      replacing && selectedIndex < tokenStart
-        ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
-        : 0;
-    const visible = replacing ? (displayQuery ?? query) : query;
-    const prefix = visible.slice(0, tokenStart - shift);
-    const nextQuery = `${prefix}${operand}${visible.slice(tokenEnd - shift) || " "}`;
-    setSelectedAuthor({
-      query: nextQuery,
-      operand,
-      title,
-      name,
-      index: prefix.length,
-    });
-    onQueryChange(nextQuery);
+    const operator = (operand: string) =>
+      operand.slice(0, operand.indexOf(":")).toLowerCase();
+    setChipQuery(
+      [
+        ...chips.filter(
+          (other) => operator(other.operand) !== operator(chip.operand),
+        ),
+        chip,
+      ],
+      `${query.slice(chipPrefix.length, tokenStart)}${query.slice(tokenEnd).trimStart()}`,
+    );
     input.current?.focus();
-  };
-  /** Replace the query, keeping the author chip on its operand. */
-  const replaceQuery = (nextQuery: string) => {
-    if (showAuthorChip && selectedAuthor) {
-      const index = nextQuery.indexOf(authorOperand);
-      setSelectedAuthor(
-        index < 0 ? undefined : { ...selectedAuthor, query: nextQuery, index },
-      );
-    }
-    onQueryChange(nextQuery);
   };
   const [authorSuggestions, setAuthorSuggestions] = useState<{
     query: string;
@@ -323,8 +308,16 @@ export function SearchResults({
   const dateOperator = showDateChoices ? datePrompt?.[1]?.toLowerCase() : "";
   /** Replace the unfinished date token with a completed `operator:value`. */
   const completeDate = (operand: string) =>
-    replaceQuery(
-      `${query.slice(0, datePrompt?.index ?? query.length)} ${operand} `.trimStart(),
+    selectChip(
+      (datePrompt?.index ?? query.length) +
+        (datePrompt?.[0].match(/^\s*/)?.[0].length ?? 0),
+      query.length,
+      {
+        operand,
+        text: operand,
+        edit: operand,
+        label: `Remove date ${operand}`,
+      },
     );
   const localDate = (day: Date) =>
     `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
@@ -495,18 +488,19 @@ export function SearchResults({
             icon: ChatCircleIcon,
             // The id keeps the choice exact past any namesake; the chip shows
             // its name.
-            run: () => {
-              const start =
+            run: () =>
+              selectChip(
                 channelPrompt.index +
-                (channelPrompt[0].match(/^\s*/)?.[0].length ?? 0);
-              selectOperand(
-                start,
-                start + channelPrompt[0].trimStart().length,
-                `in:${channel.id}`,
-                channel.name,
-                channel.id,
-              );
-            },
+                  (channelPrompt[0].match(/^\s*/)?.[0].length ?? 0),
+                query.length,
+                {
+                  operand: `in:${channel.id}`,
+                  text: `in:#${channel.name}`,
+                  edit: `in:#${channel.name}`,
+                  label: `Remove channel ${channel.name}`,
+                  title: channel.id,
+                },
+              ),
           }))
       : [];
   // The author picker also matches a selectable agent by its own name, so a
@@ -706,17 +700,20 @@ export function SearchResults({
               },
               isAgent,
               run: () => {
-                const tokenStart =
-                  authorToken.index +
-                  (authorToken[0].match(/^\s*/)?.[0].length ?? 0);
-                selectOperand(
-                  tokenStart,
-                  tokenStart + authorToken[0].trimStart().length,
-                  /^in:/i.test(authorToken[0].trimStart())
-                    ? `in:@${pubkey}`
-                    : `from:${pubkey}`,
-                  profile.name,
-                  npubEncode(pubkey),
+                const conversation = /^in:/i.test(authorToken[0].trimStart());
+                const operator = conversation ? "in" : "from";
+                const tokenEnd = authorToken.index + authorToken[0].length;
+                selectChip(
+                  tokenEnd - authorToken[0].trimStart().length,
+                  tokenEnd,
+                  {
+                    operand: conversation ? `in:@${pubkey}` : `from:${pubkey}`,
+                    text: `${operator}:@${profile.name}`,
+                    // Its first word reopens the picker on this person.
+                    edit: `${operator}:@${profile.name.split(/\s/)[0]}`,
+                    label: `Remove ${conversation ? "conversation with" : "author"} ${profile.name}`,
+                    title: npubEncode(pubkey),
+                  },
                 );
               },
             };
@@ -1536,20 +1533,9 @@ export function SearchResults({
       query={query}
       onQueryChange={onQueryChange}
       views={views}
-      authorChip={
-        showAuthorChip && selectedAuthor
-          ? {
-              operator: selectedAuthor.operand.startsWith("in:@")
-                ? ("in" as const)
-                : selectedAuthor.operand.startsWith("in:")
-                  ? ("channel" as const)
-                  : ("from" as const),
-              label: selectedAuthor.name,
-              title: selectedAuthor.title,
-              onRemove: removeSelectedAuthor,
-            }
-          : undefined
-      }
+      chips={chips}
+      onRemoveChip={removeChip}
+      onEditLastChip={editLastChip}
       displayQuery={displayQuery}
       onDisplayQueryChange={updateDisplayQuery}
       input={input}

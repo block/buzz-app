@@ -483,6 +483,22 @@ unverified (jaw's grouped "yes" is not treated as tested evidence); S1 keeps
    `http(s)` → OS browser via `opener`.
 10. Light/dark follow main; keyboard focus order and enlarged text checked.
 
+### Deviations recorded during implementation
+
+- Entry points shipped: message `⋯` → **Open thread in new window** (works on
+  the channel timeline and inside the thread pane, on the root and replies).
+  The thread-pane header icon and tab-strip menu item are **deferred**: the
+  thread header is not rendered in the tab workspace, and a tab-menu item would
+  couple the Channels plugin to the pop-out owner through `PanelWorkspace`'s
+  `tabMenu` contract. Follow-up if the menu path proves insufficient.
+- Voluntary community switch / sign-out are **not cancellable** in S1: main
+  has no pre-switch guard hook; pop-outs retire with a notice. Follow-up.
+- Notices surface through a null-rendering composer accessory that claims each
+  notice once (host toasts need the `ToastProvider` context). Smallest hook
+  found; replace if a host notice API appears.
+- Pop-out is a bundled plugin (`buzz.popout`, default on) mirroring Huddles,
+  so Settings → Plugins can disable it.
+
 ### Non-goals (S1)
 
 Channels/DMs/Solo pop-outs and Cmd/Ctrl-click (S2); reactions, edit/delete,

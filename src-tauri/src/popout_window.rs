@@ -432,7 +432,8 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
             }
             return Ok(());
         }
-        Action::OpenInMain => {
+        // Both continue in the main window, which may be hidden on macOS.
+        Action::OpenInMain | Action::OpenLink => {
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
                 let _ = main.unminimize();

@@ -754,9 +754,10 @@ export function SearchChoices({
                                         </span>
                                         {detail && (
                                           <span className="block truncate text-body-sm text-subtle">
-                                            {/* Read in place of the icon. Accessible names trim the span's
-                                                edges, so the space sits outside it; shown, it collapses at
-                                                the line's start. */}
+                                            {/* Read in place of the icon. jsdom (dom-accessibility-api) trims
+                                                each element's text, so the space sits outside the span;
+                                                browsers don't trim it. Shown, the space collapses at the
+                                                line's start. */}
                                             {detailIconLabel && (
                                               <>
                                                 <span className="sr-only">{`${detailIconLabel},`}</span>{" "}

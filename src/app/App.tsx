@@ -26,6 +26,7 @@ import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
 import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
+import { TeamReview } from "../bundled/agents/TeamReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
@@ -669,6 +670,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             <MediaMenuDownloadNotice />
             <CreationReview agents={services.agents} />
             <UpdateReview agents={services.agents} />
+            <TeamReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&

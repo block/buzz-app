@@ -51,6 +51,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageCard, useMessageRenderer } from "../conversation/MessageBody";
@@ -324,13 +325,19 @@ function MessageRowContent({
     session,
     agentAuthor && !stackPrevious ? row.authorId : undefined,
   );
-  // The viewer's own agents carry only the agent mark.
-  const ownerLabel =
+  // The viewer's own agents carry only the mark.
+  const ownerName =
     owner &&
     owner.id !== viewer &&
     owner.profile &&
     !owner.profile.nameIsFallback
-      ? `${resolveName(owner.id, owner.profile.name)}’s agent`
+      ? resolveName(owner.id, owner.profile.name)
+      : undefined;
+  const ownerLabel = ownerName ? `${ownerName}’s agent` : undefined;
+  const ownerTarget = owner && ownerName ? profileTarget(owner.id) : undefined;
+  const ownerLink =
+    ownerName && ownerTarget && canOpenLink?.(ownerTarget)
+      ? { name: ownerName, target: ownerTarget }
       : undefined;
   const presenceId = useId();
   const shown = shownRow ?? row;
@@ -1010,7 +1017,29 @@ function MessageRowContent({
                 {ownerLabel && (
                   <span className={styles.authorOwner}>
                     <span aria-hidden="true">· </span>
-                    {ownerLabel}
+                    {ownerLink ? (
+                      // The owner's name opens their profile like a prose
+                      // mention; "’s agent" stays quiet text beside it.
+                      <>
+                        <button
+                          type="button"
+                          className={referenceStyles.link}
+                          aria-label={`View ${ownerLink.name} profile`}
+                          onClick={(event) => {
+                            // WebKit skips focusing buttons on pointer click,
+                            // so the profile tab's close has an origin to
+                            // return to.
+                            event.currentTarget.focus();
+                            openLink(ownerLink.target);
+                          }}
+                        >
+                          {ownerLink.name}
+                        </button>
+                        {"’s agent"}
+                      </>
+                    ) : (
+                      ownerLabel
+                    )}
                   </span>
                 )}
                 {!stackPrevious && (

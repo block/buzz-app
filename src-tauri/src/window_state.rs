@@ -218,27 +218,33 @@ fn reachable_client(
     let y = i64::from(client.position.y);
     let right = x + i64::from(client.size.width.saturating_sub(1));
     let bottom = y + i64::from(header_height.saturating_sub(1));
-    // A size below the minimum at a monitor's scale was saved at a lower scale
-    // and would open clamped there, then re-save that smaller size.
-    let fits = |scale: f64| {
-        let size = client.size.to_logical::<f64>(scale);
-        size.width >= config.min_width.unwrap_or(0.0)
-            && size.height >= config.min_height.unwrap_or(0.0)
+    let corners = [(x, y), (right, y), (x, bottom), (right, bottom)];
+    let inside = |area: &PhysicalRect<i32, u32>, (x, y): (i64, i64)| {
+        x >= i64::from(area.position.x)
+            && y >= i64::from(area.position.y)
+            && x < i64::from(area.position.x) + i64::from(area.size.width)
+            && y < i64::from(area.position.y) + i64::from(area.size.height)
     };
     // A header may span adjacent monitors. Both control regions must remain
     // reachable, but need not belong to the same monitor.
-    let reachable = [(x, y), (right, y), (x, bottom), (right, bottom)]
-        .into_iter()
-        .all(|(x, y)| {
-            areas.iter().any(|(area, scale)| {
-                fits(*scale)
-                    && x >= i64::from(area.position.x)
-                    && y >= i64::from(area.position.y)
-                    && x < i64::from(area.position.x) + i64::from(area.size.width)
-                    && y < i64::from(area.position.y) + i64::from(area.size.height)
-            })
-        });
-    if reachable {
+    let reachable = corners
+        .iter()
+        .all(|&corner| areas.iter().any(|(area, _)| inside(area, corner)));
+    // A size below the minimum (rounded as tao rounds it) at the scale of every
+    // monitor under the header was saved at a lower scale. It would open
+    // clamped and re-save that smaller size.
+    let min = LogicalSize::new(
+        config.min_width.unwrap_or(0.0),
+        config.min_height.unwrap_or(0.0),
+    );
+    let fits = |scale: f64| {
+        let min = min.to_physical::<u32>(scale);
+        client.size.width >= min.width && client.size.height >= min.height
+    };
+    let fitted = areas
+        .iter()
+        .any(|(area, scale)| fits(*scale) && corners.iter().any(|&corner| inside(area, corner)));
+    if reachable && fitted {
         return None;
     }
     // Unlike any-corner intersection, this keeps the drag strip and both sets
@@ -494,6 +500,31 @@ mod tests {
             ),
             Some(rect(-1440, 0, 960, 640)),
         );
+        // A 1x window may span onto a 2x laptop where its size is below the
+        // minimum. The 1x monitor under the header holds it.
+        let laptop = rect(0, 50, 3024, 1840);
+        assert_frame(
+            super::reachable_client(
+                rect(-500, 100, 602, 470),
+                48,
+                &[(left, 1.0), (laptop, 2.0)],
+                (laptop, 2.0),
+                &config(),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn minimum_size_is_compared_with_the_rounding_tao_applies() {
+        // At 110 DPI the 480x400 minimum is 550x458.33, and tao enforces 550x458.
+        let scale = 110.0 / 96.0;
+        let area = rect(0, 0, 2200, 1200);
+        let keep = |size: tauri::PhysicalRect<i32, u32>| {
+            super::reachable_client(size, 55, &[(area, scale)], (area, scale), &config())
+        };
+        assert_frame(keep(rect(100, 100, 550, 458)), None);
+        assert!(keep(rect(100, 100, 550, 457)).is_some());
     }
 
     fn saved_state(x: i32, y: i32, width: u32, height: u32) -> Value {

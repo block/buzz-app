@@ -21,7 +21,13 @@ import {
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
-import { gitHubCli, GitHubError, type GitHubCli } from "./gh";
+import {
+  gitHubCli,
+  gitHubDiff,
+  GitHubError,
+  type GitHubCli,
+  type GitHubDiff,
+} from "./gh";
 import { loadGitHubObject, readable, type GitHubObject } from "./object";
 import { PublicChecklist, PullChecklist } from "./PullChecklist";
 import styles from "./GitHub.module.css";
@@ -50,6 +56,7 @@ import {
 import { watchPulls } from "./watcher";
 import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
+import { PullFiles } from "./PullFiles";
 import { AuthorSettings } from "./AuthorSettings";
 
 /** How often an open pull request panel reads GitHub again. */
@@ -58,6 +65,7 @@ export const REFRESH_MS = PANEL_REFRESH_MS;
 export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
+  const diff = gitHubDiff(ctx.host);
   // A pull request's state is nobody's community's: one store serves every
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
@@ -85,6 +93,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         <GitHubPanel
           {...props}
           gh={gh}
+          diff={diff}
           states={states}
           {...(channelId && {
             resolveActions: (
@@ -307,6 +316,7 @@ const icons = {
 export function GitHubPanel({
   target,
   gh,
+  diff,
   states: shared,
   chatLink,
   resolveActions,
@@ -320,6 +330,7 @@ export function GitHubPanel({
     | undefined;
   /** The person's `gh`, where the app can run it. */
   gh?: GitHubCli | undefined;
+  diff?: GitHubDiff | undefined;
   /** The plugin's pull request store; a panel alone keeps its own. */
   states?: PullStates | undefined;
   /** Links a pull request to the chat the panel was opened from. */
@@ -337,6 +348,7 @@ export function GitHubPanel({
       key={`${reference.url}:${attempt}`}
       reference={reference}
       gh={gh}
+      diff={diff}
       states={states}
       chatLink={chatLink}
       resolveActions={resolveActions}
@@ -350,6 +362,7 @@ export function GitHubPanel({
 function ObjectPanel({
   reference,
   gh,
+  diff,
   states,
   chatLink,
   resolveActions,
@@ -357,6 +370,7 @@ function ObjectPanel({
 }: {
   reference: GitHubReference;
   gh: GitHubCli | undefined;
+  diff: GitHubDiff | undefined;
   states: PullStates;
   chatLink: ((url: string) => ReactNode) | undefined;
   resolveActions:
@@ -370,6 +384,12 @@ function ObjectPanel({
 }) {
   const isPull = reference.kind === "pull";
   const pull = usePullPanel(states, reference.url, isPull);
+  const [viewed, setViewed] = useState<ReadonlySet<string>>(() => new Set());
+  const markViewed = useCallback(
+    (head: string) =>
+      setViewed((seen) => (seen.has(head) ? seen : new Set(seen).add(head))),
+    [],
+  );
   const other = useGitHubObject(reference, gh, !isPull);
   const loaded = isPull ? pull.loaded : other.loaded;
   const load = isPull ? pull.load : other.load;
@@ -438,13 +458,32 @@ function ObjectPanel({
             </>
           )}
         </div>
-        {/* Pull requests someone else opened take reviews. */}
         {gh &&
           typeof loaded === "object" &&
           loaded.checklist &&
-          !loaded.checklist.authored && (
+          (diff || !loaded.checklist.authored) && (
             <span className={styles.identityAction}>
-              <SubmitReview pull={loaded.checklist} gh={gh} refresh={load} />
+              {diff && (
+                <PullFiles
+                  url={reference.url}
+                  pull={{
+                    repository: reference.repository,
+                    base: loaded.checklist.base,
+                    head: loaded.checklist.head,
+                  }}
+                  diff={diff}
+                  onViewed={markViewed}
+                />
+              )}
+              {/* Pull requests someone else opened take reviews. */}
+              {!loaded.checklist.authored && (
+                <SubmitReview
+                  pull={loaded.checklist}
+                  gh={gh}
+                  refresh={load}
+                  viewed={viewed}
+                />
+              )}
             </span>
           )}
       </div>

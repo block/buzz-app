@@ -491,8 +491,20 @@ unverified (jaw's grouped "yes" is not treated as tested evidence); S1 keeps
   thread header is not rendered in the tab workspace, and a tab-menu item would
   couple the Channels plugin to the pop-out owner through `PanelWorkspace`'s
   `tabMenu` contract. Follow-up if the menu path proves insufficient.
-- Voluntary community switch / sign-out are **not cancellable** in S1: main
-  has no pre-switch guard hook; pop-outs retire with a notice. Follow-up.
+- Voluntary community switch / sign-out guard (checkpoint items 6–7) is
+  **pending jaw's FOUNDATION authorization**: the smallest hook is
+  `communities.guardSelection` in `src/features/communities/service.ts` plus a
+  shell dialog in `src/app/App.tsx` (both FOUNDATION), composed with the
+  existing unsaved-Settings departure guard, guarding navigation-driven
+  departures before the route commits and sequencing picker follow-on
+  navigation after selection succeeds. Until then pop-outs retire with a
+  notice (reviewer: does not satisfy the approved contract).
+- Tab-menu **Open in new window** needs `conversation.registerTabAction` in
+  `src/features/conversation/{service.tsx,contracts.ts}` (FOUNDATION); also
+  pending authorization.
+- Reading bridge is a request/response BroadcastChannel (`reading-bridge.ts`)
+  with durability-complete acknowledgments and an event-time revision fence
+  on acquisition (`readingRevision` in the view).
 - Notices surface through a null-rendering composer accessory that claims each
   notice once (host toasts need the `ToastProvider` context). Smallest hook
   found; replace if a host notice API appears.

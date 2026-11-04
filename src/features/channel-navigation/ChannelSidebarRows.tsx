@@ -118,6 +118,8 @@ export function ChannelSidebarRows({
     },
     [updateOrder],
   );
+  // Membership changes render immediately, before their old slots can be read.
+  // Preserve presence fades, but do not slide from an unverified baseline.
   const rows = sameMembers
     ? ids.flatMap((id) => {
         const child = byId.get(id);
@@ -135,6 +137,7 @@ export function ChannelSidebarRows({
           <ChannelRow
             key={child.key}
             animated={animated}
+            slide={animated && sameMembers}
             index={index}
             positions={positions}
             hiding={animated && sameMembers && fading.has(String(child.key))}
@@ -154,13 +157,14 @@ const ChannelRow = memo(
     {
       children: ReactElement;
       animated: boolean;
+      slide: boolean;
       index: number;
       positions: RowPositions;
       hiding: boolean;
       onHidden: (id: string) => void;
     }
   >(function ChannelRow(
-    { children, animated, index, positions, hiding, onHidden },
+    { children, animated, slide, index, positions, hiding, onHidden },
     forwardedRef,
   ) {
     const ref = useRef<HTMLDivElement>(null);
@@ -181,7 +185,7 @@ const ChannelRow = memo(
       const previous = positions.get(node);
       const top = node.offsetTop;
       positions.set(node, { index, top });
-      if (!present || !animated) {
+      if (!present || !slide) {
         playback.current?.stop();
         clearSlide(node);
         return;
@@ -216,7 +220,7 @@ const ChannelRow = memo(
         delete node.dataset.moving;
         node.style.zIndex = "";
       });
-    }, [animated, index, present, positions]);
+    }, [slide, index, present, positions]);
     return (
       <motion.div
         ref={ref}

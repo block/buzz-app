@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({ productionBroker: true, savedSidebar: true, sortingSidebar: true });
 
@@ -311,6 +312,129 @@ test.describe("nearby motion after layout changes", () => {
       }
       await expect(section.locator("[data-moving]")).toHaveCount(0);
       await expect(target).toBeFocused();
+    });
+  }
+});
+
+// Membership updates bypass prepared ordering; real layout and presence fades
+// must remain correct after hidden layout or rem-based geometry changes.
+test.describe("membership changes after layout changes", () => {
+  test.use({ initialSidebarSort: { channels: "recent" } });
+  for (const change of ["Solo to Team", "interface text size"]) {
+    test(`keeps retained rows still and fades additions/removals after ${change}`, async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const section = page.locator('[data-sidebar-section="channels"]');
+      const rows = section.locator("button[data-channel-id]:not([inert] *)");
+      await expect(rows.first()).toHaveAttribute("data-channel-id", "willow");
+      await openChannelDetails(page);
+      await page.getByText("Diagnostics", { exact: true }).click();
+      const refresh = page.getByRole("button", {
+        name: "Refresh groups and stars",
+        exact: true,
+      });
+      let starred = ["alpha"];
+      // Model only the host's decoded preferences; its real store drives the rows.
+      await page.route("**/sidebar-preferences", (route) =>
+        route.fulfill({
+          json: {
+            sections: [{ id: "work", name: "Work", order: 0 }],
+            assignments: { beta: "work" },
+            starred,
+            muted: [],
+            sort: { channels: "recent" },
+          },
+        }),
+      );
+      for (const insertion of [false, true]) {
+        if (change === "Solo to Team") {
+          const channel = insertion
+            ? await rows.last().getAttribute("data-channel-id")
+            : "cedar";
+          await page.getByRole("tab", { name: "Solo", exact: true }).click();
+          await expect(section).toBeHidden();
+          app.activity({ channel, kind: 45003, age: insertion ? 29 : 30 });
+          await expect(rows.first()).toHaveAttribute(
+            "data-channel-id",
+            channel,
+          );
+          await page.getByRole("tab", { name: "Team", exact: true }).click();
+          await expect(section).toBeVisible();
+        } else {
+          const modifier = await page.evaluate(() =>
+            /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
+          );
+          for (let step = 0; step < 3; step++)
+            await page.keyboard.press(`${modifier}+=`);
+          await expect(page.locator("html")).toHaveCSS(
+            "--buzz-text-scale",
+            insertion ? "1.6" : "1.3",
+          );
+        }
+        if (!insertion)
+          starred.push(await rows.first().getAttribute("data-channel-id"));
+        const id = starred[1];
+        const leaving = !insertion
+          ? await rows.first().elementHandle()
+          : undefined;
+        const motion = await holdSidebarMotion(page);
+        try {
+          if (insertion) starred = ["alpha"];
+          await refresh.click();
+          await expect(rows).toHaveCount(insertion ? 3 : 2);
+          await motion.seek("opacity");
+          expect(
+            await rows.evaluateAll(
+              (elements, id) =>
+                elements
+                  .filter((element) => element.dataset.channelId !== id)
+                  .every((element) => {
+                    const row = element.closest(
+                      "[data-channel-sidebar-row]",
+                    ).parentElement;
+                    return (
+                      !row.hasAttribute("data-moving") &&
+                      row
+                        .getAnimations()
+                        .every(
+                          (animation) =>
+                            !animation.effect
+                              .getKeyframes()
+                              .some((frame) => "transform" in frame),
+                        )
+                    );
+                  }),
+              id,
+            ),
+          ).toBe(true);
+          const fading = insertion
+            ? await section
+                .locator(`button[data-channel-id="${id}"]:not([inert] *)`)
+                .elementHandle()
+            : leaving;
+          const opacity = await fading.evaluate((element) =>
+            Number(
+              getComputedStyle(
+                element.closest("[data-channel-sidebar-row]").parentElement,
+              ).opacity,
+            ),
+          );
+          expect(opacity).toBeGreaterThan(0);
+          expect(opacity).toBeLessThan(1);
+          if (!insertion)
+            expect(
+              await leaving.evaluate((element) => !!element.closest("[inert]")),
+            ).toBe(true);
+        } finally {
+          await motion.release();
+        }
+        await expect(section.locator("[inert] [data-channel-id]")).toHaveCount(
+          0,
+        );
+        await expect(refresh).toBeEnabled();
+      }
     });
   }
 });

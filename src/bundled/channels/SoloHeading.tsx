@@ -178,6 +178,7 @@ export function SoloToolbar({
               <IconButton
                 hint="familiar"
                 ref={actionsTrigger}
+                data-solo-opener="actions"
                 size="toolbar"
                 aria-label="Chat actions"
                 title="Chat actions"

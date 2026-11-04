@@ -1278,6 +1278,14 @@ function ChannelWorkspace({
   useEffect(() => {
     if (mediaReview && !showingMediaReview) setMediaReview(undefined);
   }, [mediaReview, showingMediaReview]);
+  // The main Solo header remounts for each visit, ending that visit's dialogs
+  // and menus, so a panel opened from it outlives its opener. The same control
+  // in the header of the dismissal's return takes focus back instead.
+  const soloOpenerReturn = useRef<{
+    from: string;
+    target: string;
+    control: string;
+  }>(undefined);
   // Member lists open profiles and DMs through this page. Side-tab Solo
   // toolbars render inside useConversationTabs, before canOpenLink and
   // openLink are declared, so these read them only when called.
@@ -1374,13 +1382,17 @@ function ChannelWorkspace({
       if (!historyPanel(entry)) return;
       const pane = entryPane(tabState.mainEntries, entry);
       const fallback = closeTarget(pane, remaining);
-      if (fallback)
-        dismissContent(
-          tabState.detailVisits(entry.channelId, entry.target),
-          fallback,
-          pane,
-          remaining,
-        );
+      if (!fallback || !navigator) return;
+      const visits = tabState.detailVisits(entry.channelId, entry.target);
+      const from = navigator.snapshot().entry.id;
+      const control = panelTrigger.current?.isConnected
+        ? undefined
+        : panelTrigger.current?.dataset.soloOpener;
+      soloOpenerReturn.current =
+        control && visits.includes(from)
+          ? { from, target: targetKey(fallback), control }
+          : undefined;
+      dismissContent(visits, fallback, pane, remaining);
     },
     onCloseThread: (tab, active, last) => {
       // X is explicit dismissal; Back/Forward never comes through this path.
@@ -1598,6 +1610,22 @@ function ChannelWorkspace({
           }
           focusKept.current = kept.id;
         }
+      }
+      const opener = soloOpenerReturn.current;
+      if (opener && navigation.entryId !== opener.from) {
+        soloOpenerReturn.current = undefined;
+        // Only while focus waits on the chat, where the emptied pane left it.
+        // The main header precedes any side tab's toolbar.
+        if (
+          targetKey(navigation.target) === opener.target &&
+          document.activeElement === historyContainer.current
+        )
+          historyContainer.current
+            ?.closest("[data-solo-focus-pane]")
+            ?.querySelector<HTMLElement>(
+              `[data-solo-opener="${opener.control}"]`,
+            )
+            ?.focus({ preventScroll: true });
       }
       if (navigation.focus === "preserve") setPreservedVisit(navigation);
     }

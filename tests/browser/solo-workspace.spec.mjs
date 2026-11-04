@@ -233,6 +233,64 @@ test("Solo chat Activity opens the agent's profile locally, restores per convers
   await closeSettings(page);
   await expect(trigger).toHaveCount(0);
 });
+// Browser-only: opening and closing the profile are real navigation visits,
+// and the Solo header remounts for each one. A static jsdom visit does not.
+test.describe("Share access profiles", () => {
+  const teammate = generateSecretKey();
+  test.use({ sessionMembers: { [id]: [getPublicKey(teammate)] } });
+  test("closing a profile opened from Share access returns focus to its opener", async ({
+    page,
+    app,
+  }) => {
+    app.serveProfile(teammate, { name: "Sam Rivera" });
+    await page.goto(app.origin);
+    await newChat(page);
+    await page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .locator(`[data-solo-channel-id="${id}"]`)
+      .click();
+    const conversation = page.getByRole("article", { name: "Conversation" });
+    const share = conversation.getByRole("button", {
+      name: "Share access",
+      exact: true,
+    });
+    const actions = conversation.getByRole("button", {
+      name: "Chat actions",
+      exact: true,
+    });
+    const dialog = page.getByRole("dialog", {
+      name: "Share access",
+      exact: true,
+    });
+    const name = dialog.getByRole("button", {
+      name: /^Open profile for Sam Rivera/,
+    });
+    const tab = page.getByRole("tab", { name: "Sam Rivera", exact: true });
+    const entry = () =>
+      page.evaluate(() => history.state.buzzNavigationV1.entry.id);
+    // The header button, a name chosen by keyboard and Escape on the tab.
+    await share.click();
+    const visit = await entry();
+    await name.press("Enter");
+    await expect(dialog).toHaveCount(0);
+    await expect(tab).toBeFocused();
+    expect(await entry()).not.toBe(visit);
+    await tab.press("Escape");
+    await expect(tab).toHaveCount(0);
+    await expect(share).toBeFocused();
+    // Chat actions, a name chosen by pointer and the tab's Close button.
+    await actions.click();
+    await page
+      .getByRole("menuitem", { name: "Share access", exact: true })
+      .click();
+    await name.click();
+    await expect(dialog).toHaveCount(0);
+    await expect(tab).toBeFocused();
+    await closeProfile(page).click();
+    await expect(tab).toHaveCount(0);
+    await expect(actions).toBeFocused();
+  });
+});
 // Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.
 test("Solo sidebar shares working activity, keyboard preview and local panel navigation", async ({
   page,

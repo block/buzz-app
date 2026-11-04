@@ -324,7 +324,8 @@ it("makes the compact avatar and tool preview one action, retaining the popup wh
     const popup = within(
       screen.getByRole("dialog", { name: "Agent activity" }),
     );
-    expect(popup.getAllByRole("button")).toHaveLength(2);
+    // The agent's row is the popup's one action; no separate Activity heading.
+    expect(popup.getAllByRole("button")).toHaveLength(1);
     for (const text of [
       "Agent activity",
       "Latest reported activity for this message.",
@@ -338,7 +339,7 @@ it("makes the compact avatar and tool preview one action, retaining the popup wh
     });
     expect(row).toHaveTextContent("Read file · Running");
     expect(row.querySelector(".buzz-avatar")).not.toBeNull();
-    fireEvent.click(popup.getByRole("button", { name: "View full activity" }));
+    fireEvent.click(row);
     expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
     expect(asked).toBeDefined();
     // The failed opening leaves no request behind for a later Activity.

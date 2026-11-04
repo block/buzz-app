@@ -26,7 +26,6 @@ import {
   OctagonIcon,
   WarningCircleIcon,
   XIcon,
-  ArrowUpRightIcon,
 } from "../../shared/design-system/icons";
 import {
   NavigationCard,
@@ -528,28 +527,6 @@ function ActivityBubble({
       >
         {expanded && (
           <div className={styles.previews}>
-            <NavigationItem
-              variant="option"
-              label="Activity"
-              aria-label="View full activity"
-              trailing={<ArrowUpRightIcon aria-hidden="true" />}
-              disabled={
-                !entries[0] ||
-                !props.canOpen(
-                  profileActivityViewTarget(entries[0].agent) ?? "",
-                )
-              }
-              onClick={() => {
-                const target =
-                  entries[0] && profileActivityViewTarget(entries[0].agent);
-                if (
-                  target &&
-                  props.canOpen(target) &&
-                  openProfileTranscript(target, props.open)
-                )
-                  setExpanded(false);
-              }}
-            />
             {entries.map((entry) => {
               // Opens the agent's Activity on this message's transcript.
               const target = profileActivityViewTarget(entry.agent);

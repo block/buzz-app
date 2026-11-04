@@ -1,6 +1,11 @@
 import { pauseClock } from "./clock.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
-import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  verifyEvent,
+} from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import {
   closeSettings,
@@ -318,12 +323,38 @@ test.describe("Share access profiles", () => {
     await tab.press("Escape");
     await expect(tab).toHaveCount(0);
     await expect(share).toBeFocused();
+    // The agent's visit stays in history. Back restores it, and closing it
+    // also returns to Share access.
+    await page.goBack();
+    await expect(agent).toHaveAttribute("aria-selected", "true");
+    await agent.press("Escape");
+    await expect(agent).toHaveCount(0);
+    await expect(share).toBeFocused();
+    // So does Back to it from the owner's visit, which stays in history.
+    await share.click();
+    await dialog
+      .getByRole("button", { name: /^Open profile for Scout\b/ })
+      .press("Enter");
+    await expect(agent).toBeFocused();
+    await agentProfile(page)
+      .getByRole("button", {
+        name: "Open owner profile: Sam Rivera",
+        exact: true,
+      })
+      .click();
+    await expect(tab).toBeFocused();
+    await page.goBack();
+    await expect(agent).toHaveAttribute("aria-selected", "true");
+    await agent.press("Escape");
+    await expect(agent).toHaveCount(0);
+    await expect(share).toBeFocused();
   });
   test("a profile restored by Back or Forward returns focus only to its own opener", async ({
     page,
     app,
   }) => {
     app.serveProfile(teammate, { name: "Sam Rivera" });
+    app.serveProfile(scout, { name: "Scout", is_agent: true }, teammate);
     await page.goto(app.origin);
     await newChat(page);
     const sidebar = page.getByRole("navigation", {
@@ -379,6 +410,74 @@ test.describe("Share access profiles", () => {
     await expect(
       page.getByRole("region", { name: "Chat Beta", exact: true }),
     ).toBeFocused();
+    // Alpha: Sam's profile, opened from his message's author. Share access
+    // later opens Sam's profile again, directly or through Scout's owner, but
+    // never the visit Back restores.
+    await sidebar.locator(`[data-solo-channel-id="${id}"]`).click();
+    const chat = page.getByRole("region", { name: "Chat Alpha", exact: true });
+    await expect(chat).toBeVisible();
+    const message = finalizeEvent(
+      {
+        kind: 9,
+        created_at: Math.floor(Date.now() / 1000),
+        content: "Sam's message",
+        tags: [["h", id]],
+      },
+      teammate,
+    );
+    await expect(() => app.relay.publish("primary", message)).toPass();
+    const author = conversation.getByRole("button", {
+      name: "View Sam Rivera profile",
+      exact: true,
+    });
+    const dialog = page.getByRole("dialog", {
+      name: "Share access",
+      exact: true,
+    });
+    const closeRestored = async () => {
+      await expect(sam).toHaveAttribute("aria-selected", "true");
+      const restored = await entry();
+      await sam.press("Escape");
+      await expect(sam).toHaveCount(0);
+      await expect.poll(entry).not.toBe(restored);
+      await expect(chat).toBeFocused();
+    };
+    await author.click();
+    await expect(sam).toBeFocused();
+    await conversation
+      .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+      .first()
+      .click();
+    await expect(profile).toBeFocused();
+    await share.click();
+    await dialog
+      .getByRole("button", { name: /^Open profile for Sam Rivera/ })
+      .press("Enter");
+    await expect(sam).toBeFocused();
+    await page.goBack();
+    await expect(profile).toHaveAttribute("aria-selected", "true");
+    await page.goBack();
+    await closeRestored();
+    // Scout's owner link opens Sam in Scout's place, on Share access's behalf.
+    const scoutTab = page.getByRole("tab", { name: "Scout", exact: true });
+    await author.click();
+    await expect(sam).toBeFocused();
+    await share.click();
+    await dialog
+      .getByRole("button", { name: /^Open profile for Scout\b/ })
+      .press("Enter");
+    await expect(scoutTab).toBeFocused();
+    await agentProfile(page)
+      .getByRole("button", {
+        name: "Open owner profile: Sam Rivera",
+        exact: true,
+      })
+      .click();
+    await expect(sam).toBeFocused();
+    await page.goBack();
+    await expect(scoutTab).toHaveAttribute("aria-selected", "true");
+    await page.goBack();
+    await closeRestored();
   });
   test("closing a profile opened from a Solo side tab returns focus to its opener", async ({
     page,

@@ -1144,15 +1144,7 @@ function ChannelWorkspace({
         target.detail.rootId === entry.rootId
       )
         return;
-      // A panel opened in place of a Solo opener's panel, such as an agent's
-      // owner from its profile, takes over that opener.
-      const opener = soloOpener.current;
-      if (
-        opener?.channelId === entry.channelId &&
-        target.channelId === entry.channelId &&
-        opener.target === target.detail?.target
-      )
-        soloOpener.current = { ...opener, target: entry.target };
+      const from = navigator.snapshot().entry.id;
       tabState.leaveVisit();
       void navigator.open({
         version: 1,
@@ -1164,6 +1156,11 @@ function ChannelWorkspace({
           ...(entry.rootId ? { rootId: entry.rootId } : {}),
         },
       });
+      // A panel opened in place of a Solo opener's panel, such as an agent's
+      // owner from its profile, is that opener's visit too.
+      const opener = soloOpener.current;
+      if (target.channelId === entry.channelId && opener?.visits.includes(from))
+        opener.visits.push(navigator.snapshot().entry.id);
     },
     [navigator, tabState.leaveVisit],
   );
@@ -1290,12 +1287,12 @@ function ChannelWorkspace({
   // The main Solo header remounts for each visit, ending that visit's dialogs
   // and menus, and a side tab's toolbar unmounts while a panel covers its
   // chat. A panel opened from either outlives its opener, so the same control
-  // in that chat's header takes focus back on the dismissal's return.
+  // in that chat's header takes focus back on the dismissal's return. Only a
+  // visit it opened does: Back can restore the same panel from another opener.
   const soloOpener = useRef<{
     trigger: HTMLElement;
-    channelId: string;
-    target: string;
     tab: string | undefined;
+    visits: string[];
   }>(undefined);
   const soloOpenerReturn = useRef<{
     from: string;
@@ -1396,32 +1393,30 @@ function ChannelWorkspace({
       );
     },
     onClosePanel: (entry, remaining) => {
-      // Only closing the panel it opened consumes the recorded opener; a tab
-      // closed beside that panel leaves it. Only while it is still that
-      // panel's trigger does it take focus back.
-      const opener = soloOpener.current;
-      if (
-        opener?.channelId === entry.channelId &&
-        opener.target === entry.target
-      )
-        soloOpener.current = undefined;
       if (!historyPanel(entry)) return;
       const pane = entryPane(tabState.mainEntries, entry);
       const fallback = closeTarget(pane, remaining);
       if (!fallback || !navigator) return;
       const visits = tabState.detailVisits(entry.channelId, entry.target);
       const from = navigator.snapshot().entry.id;
+      // The recorded opener takes focus back only from a visit it opened, and
+      // only while it is still that panel's trigger. The dismissal retires
+      // this panel's visits; once none of its own remain, it is forgotten.
+      const opener = soloOpener.current;
       const control =
-        opener?.channelId === entry.channelId &&
-        opener.target === entry.target &&
+        opener?.visits.includes(from) &&
+        visits.includes(from) &&
         opener.trigger === panelTrigger.current &&
         !opener.trigger.isConnected
           ? opener.trigger.dataset.soloOpener
           : undefined;
-      soloOpenerReturn.current =
-        control && visits.includes(from)
-          ? { from, target: targetKey(fallback), control, tab: opener?.tab }
-          : undefined;
+      if (opener) {
+        opener.visits = opener.visits.filter((id) => !visits.includes(id));
+        if (!opener.visits.length) soloOpener.current = undefined;
+      }
+      soloOpenerReturn.current = control
+        ? { from, target: targetKey(fallback), control, tab: opener?.tab }
+        : undefined;
       dismissContent(visits, fallback, pane, remaining);
     },
     onCloseThread: (tab, active, last) => {
@@ -1959,25 +1954,22 @@ function ChannelWorkspace({
             ? document.activeElement
             : null);
         panelTrigger.current = trigger;
-        // Record a Solo header's opener while it is connected to its header.
+        // Find a Solo header's opener while it is connected to its header.
         const header = trigger?.dataset.soloOpener
           ? trigger.closest("[data-solo-focus-pane], [data-panel-workspace]")
           : null;
-        soloOpener.current =
-          trigger && header
-            ? {
-                trigger,
-                channelId: next.channelId,
-                target: next.target,
-                tab: header.hasAttribute("data-panel-workspace")
-                  ? tabState.getSelected()
-                  : undefined,
-              }
-            : undefined;
+        const tab = header?.hasAttribute("data-panel-workspace")
+          ? tabState.getSelected()
+          : undefined;
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread && !historyPanel(next))
           select(channelId);
         open(next, fromThread);
+        // The opener owns the visit now showing its panel, pushed or current.
+        soloOpener.current =
+          trigger && header && navigator && historyPanel(next)
+            ? { trigger, tab, visits: [navigator.snapshot().entry.id] }
+            : undefined;
         return true;
       }
       return false;

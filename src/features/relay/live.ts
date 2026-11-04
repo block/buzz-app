@@ -1608,6 +1608,9 @@ export function subscribeRelayTraffic(
         if (!checked) {
           // One undecodable event must not take the route (or its batch) down.
           log.warn(`${peer} dropped an undecodable live event`);
+          // It still took a slot in the relay's limit, so a full replay must
+          // not look complete.
+          if (route.status === "pending" && !route.liveOnly) route.count++;
           return;
         }
         const incoming = checked;
@@ -1708,8 +1711,12 @@ export function subscribeRelayTraffic(
             );
             // Extra frames may be live fan-out (including duplicates or
             // backdated events), so neither counts nor cutoff prove a prefix.
-            // A full page within one second also cannot move the cutoff.
-            if (route.count > LIVE_REPLAY_LIMIT || page.oldest === page.until)
+            // A full page within one second, or without a decodable event,
+            // also cannot move the cutoff.
+            if (
+              route.count > LIVE_REPLAY_LIMIT ||
+              !(page.oldest < (page.until ?? Infinity))
+            )
               for (const id of rest) {
                 replayQueue.set(id, route.since);
                 splitReplay.add(id);

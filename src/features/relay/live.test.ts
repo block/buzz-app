@@ -4620,7 +4620,35 @@ describe("combined replay paging", () => {
     }
   }, 60_000);
 
-  it.each(["tied cutoff", "duplicate live event", "backdated live event"])(
+  it("keeps paging when an undecodable frame fills the page", async () => {
+    vi.useFakeTimers({ now: 1_700_000_600_000 });
+    const { h, first } = await start();
+    const log = captureLog();
+    try {
+      await h.first.receive(["EVENT", first[1], {}]);
+      await page(h, first, run("c000", 1_700_000_600, 499));
+      expect(log.lines).toEqual([
+        "warn relay.test dropped an undecodable live event",
+      ]);
+      const second = pagesAfter(h, first)[0];
+      assert.exists(second);
+      // c000 counted only 499, so it stays in the next page.
+      expect(second[2]).toMatchObject({
+        "#h": ids.slice(0, 256),
+        until: 1_700_000_476,
+      });
+    } finally {
+      log.restore();
+      h.owner.dispose();
+    }
+  }, 60_000);
+
+  it.each([
+    "tied cutoff",
+    "duplicate live event",
+    "backdated live event",
+    "page of undecodable frames",
+  ])(
     "falls back to per-channel replay after a %s",
     async (scenario) => {
       vi.useFakeTimers({ now: 1_700_000_600_000 });
@@ -4643,6 +4671,16 @@ describe("combined replay paging", () => {
           });
           await page(h, second, tie(500));
           last = second;
+        } else if (scenario === "page of undecodable frames") {
+          // No decodable event gives a cutoff to page below.
+          const log = captureLog();
+          try {
+            for (let i = 0; i < 500; i++)
+              await h.first.receive(["EVENT", first[1], {}]);
+            await h.first.receive(["EOSE", first[1]]);
+          } finally {
+            log.restore();
+          }
         } else {
           // Fan-out is registered before historical delivery. A duplicate must
           // not count as A's 500th row; a backdated arrival must not skip a tail.

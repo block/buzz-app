@@ -895,8 +895,9 @@ Joined versus preview classification travels with the interest snapshot.
 The 100,000-channel scale case uses 49 persistent channel wires. Replay uses a
 separate queue, combining up to 256 channels in each 500-event filter. Full pages
 continue at their inclusive oldest timestamp, without channels that have received
-500 events; boundary-second events do not count twice. A tied cutoff or extra
-live frames makes that prefix uncertain, so replay falls back to at most 10
+500 events; boundary-second events do not count twice. An undecodable frame still
+fills its page slot. A cutoff that cannot move below the last one, or extra live
+frames, makes that prefix uncertain, so replay falls back to at most 10
 singleton filters per request with the original resume point. At most four setup
 requests run at once. A busy channel cannot consume another channel's replay allowance. A failed replay is visible to
 recovery and Retry. A local failure does not stop other queued channels. Shared

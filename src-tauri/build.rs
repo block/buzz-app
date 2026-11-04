@@ -72,6 +72,7 @@ fn main() {
             "identity_legacy_available",
             "identity_import_legacy",
             "identity_create",
+            "onboarding_preserve_window",
             "identity_export",
             "nsec_backup_available",
             "nsec_backup_session",
@@ -158,12 +159,15 @@ fn main() {
             "plugin_host_call_context",
             "plugin_host_request",
             "plugin_host_request_bytes",
+            "plugin_host_upload_bytes_once",
             "plugin_host_save_bytes",
+            "plugin_host_delete_managed_file",
             "plugin_host_upload",
             "plugin_host_process_spawn",
             "plugin_host_process_write",
             "plugin_host_process_kill",
             "plugin_host_mcp_serve",
+            "plugin_host_mcp_authorize",
             "plugin_host_mcp_reply",
             "plugin_host_mcp_close",
             "plugin_host_read_file",
@@ -236,13 +240,17 @@ fn main() {
 fn configure_nsec_backup() {
     const SERVICE: &str = "BUZZ_NSEC_BACKUP_SERVICE_URL";
     const NAMESPACE: &str = "BUZZ_NSEC_BACKUP_NAMESPACE";
+    const CONSENT: &str = "BUZZ_NSEC_BACKUP_CONSENT";
     println!("cargo:rerun-if-env-changed={SERVICE}");
     println!("cargo:rerun-if-env-changed={NAMESPACE}");
+    println!("cargo:rerun-if-env-changed={CONSENT}");
     let service = std::env::var(SERVICE).ok();
     let namespace = std::env::var(NAMESPACE).ok();
-    if let Some(config) = nsec_backup_config::configured(service.as_deref(), namespace.as_deref())
-        .unwrap_or_else(|error| panic!("{error}"))
-    {
+    let config = nsec_backup_config::configured(service.as_deref(), namespace.as_deref())
+        .unwrap_or_else(|error| panic!("{error}"));
+    nsec_backup_config::managed(std::env::var(CONSENT).ok().as_deref(), config.is_some())
+        .unwrap_or_else(|error| panic!("{error}"));
+    if let Some(config) = config {
         println!("cargo:rustc-env={SERVICE}={}", config.service_url);
         println!("cargo:rustc-env={NAMESPACE}={}", config.namespace);
     }

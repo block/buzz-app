@@ -94,7 +94,7 @@ import {
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
-import { PanelFrame } from "../../features/panels/PanelFrame";
+import { COMPANION_SPLIT, PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
@@ -111,12 +111,19 @@ import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
+import { channelHasUnread } from "./useSidebarFilters";
+import { inFieldOutsideComposer } from "./conversation-rows";
 import styles from "./Channels.module.css";
 import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
 export type ArchiveShortcut = {
+  current?: { available(): boolean; run(): Promise<void> } | undefined;
+};
+
+/** The open conversation's Mark as read, published for the Escape shortcut while its visit is live. */
+export type ReadShortcut = {
   current?: { available(): boolean; run(): Promise<void> } | undefined;
 };
 
@@ -131,6 +138,7 @@ export function ChannelsPage({
   agents,
   communities,
   archive,
+  read,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
@@ -143,6 +151,8 @@ export function ChannelsPage({
   panels: Panels;
   /** The open Solo conversation's Archive, for the Archive chat shortcut. */
   archive?: ArchiveShortcut | undefined;
+  /** The open conversation's Mark as read, for the Escape shortcut. */
+  read?: ReadShortcut | undefined;
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
@@ -202,7 +212,7 @@ export function ChannelsPage({
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" && !session.cached ? (
-        <PanelFrame companion={companion}>
+        <PanelFrame scope={session.scope} companion={companion}>
           {session.status === "disconnected" ? (
             <div className={styles.connect}>
               <div className={styles.connectIcon}>
@@ -286,6 +296,7 @@ export function ChannelsPage({
           viewer={session.viewer}
           panels={panels}
           archive={archive}
+          read={read}
           companion={companion}
           agents={agents}
           communities={communities}
@@ -318,6 +329,7 @@ function ChannelWorkspace({
   agents,
   communities,
   archive,
+  read,
 }: {
   extensions?: ConversationExtensions | undefined;
   chatMenus?: Conversation["chatMenus"] | undefined;
@@ -333,6 +345,7 @@ function ChannelWorkspace({
   relay: RelayData;
   panels: Panels;
   archive?: ArchiveShortcut | undefined;
+  read?: ReadShortcut | undefined;
 }) {
   const composingMessage =
     navigation?.target.kind === "page" &&
@@ -826,6 +839,38 @@ function ChannelWorkspace({
       if (archive.current === shortcut) archive.current = undefined;
     };
   }, [archive, archivableId, lifecycle, navigation]);
+  // Escape marks the open conversation read, as its menu's Mark as read does:
+  // the same read-sync gate and call, and a toast only for a failure.
+  const notifyLatest = useRef(notify);
+  useLayoutEffect(() => {
+    notifyLatest.current = notify;
+  });
+  const readableId =
+    !composingMessage && current && !current.readOnly && !current.cached
+      ? current.id
+      : undefined;
+  useLayoutEffect(() => {
+    if (!read || !readableId) return;
+    const signal = navigation?.signal;
+    const shortcut = {
+      available: () =>
+        !signal?.aborted &&
+        queries.unread.sync().capability === "frontier-sync" &&
+        channelHasUnread(queries.unread, readableId) &&
+        !inFieldOutsideComposer(),
+      run: async () => {
+        try {
+          await queries.unread.markChannelRead(readableId);
+        } catch {
+          notifyLatest.current("Couldn’t mark as read.", "error");
+        }
+      },
+    };
+    read.current = shortcut;
+    return () => {
+      if (read.current === shortcut) read.current = undefined;
+    };
+  }, [read, readableId, queries, navigation]);
   const onComposerSend = useComposerSent(currentId, setSent);
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
@@ -1653,7 +1698,14 @@ function ChannelWorkspace({
         tab.id === selectedTab &&
         tab.channelId === currentId,
     );
-  const split = usePanelSplit();
+  // While the companion is in the dock it keeps its width and bounds from
+  // other pages; threads alone keep their own split.
+  const split = usePanelSplit(
+    scope,
+    companion ? COMPANION_SPLIT.name : "channels",
+    companion ? COMPANION_SPLIT.defaultWidth : undefined,
+    companion ? COMPANION_SPLIT.min : undefined,
+  );
   // A routed thread can mount behind a collapsed pane, where it cannot take
   // focus, or already be selected, so its pane does not move focus. Once its
   // tab shows, hand it focus nothing else took.
@@ -1805,9 +1857,6 @@ function ChannelWorkspace({
             key={current.id}
             cached={cached}
             // The composer below mounts TypingIndicator for members of a live channel.
-            activityLane={
-              !current.archived && !current.readOnly && !current.cached
-            }
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
@@ -1841,7 +1890,9 @@ function ChannelWorkspace({
             joinable={
               !current.archived &&
               (current.channelType === "stream" ||
-                current.channelType === "forum")
+                current.channelType === "forum" ||
+                (current.channelType === "solo" &&
+                  current.joinRole === "guest"))
             }
             onJoin={() => setJoiningChannel(current.id)}
             onHeightChange={setJoinNoticeHeight}
@@ -1914,6 +1965,7 @@ function ChannelWorkspace({
     <div
       data-channel-workspace={currentId ?? ""}
       data-reading-thread={readingThread ? "" : undefined}
+      data-companion={companion ? "" : undefined}
       ref={split.ref}
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}
@@ -1924,6 +1976,8 @@ function ChannelWorkspace({
           session={queries}
           channelId={current.id}
           communities={communities}
+          // Routed Members is a navigation visit; without a navigator it is local.
+          visit={!!navigator}
           close={() => setMembersOpen(false)}
           trigger={
             membersTrigger.current?.isConnected

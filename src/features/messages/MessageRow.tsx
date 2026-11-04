@@ -1,3 +1,7 @@
+import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useActivityIndicator } from "./use-activity-indicator";
+import type { ActivityRowPresentation } from "./activity-presentation";
+import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
@@ -8,11 +12,7 @@ import {
 } from "../conversation/typing-presentation";
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import {
-  ArrowRightIcon,
-  LightningIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons";
+import { LightningIcon, RobotIcon } from "../../shared/design-system/icons";
 import { useProfileOwner } from "../profiles/useProfileOwner";
 import { messagePreviewText } from "../conversation/message-preview-text";
 import { profileMentionParts } from "./profile-mentions";
@@ -100,6 +100,9 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
+  recordedActivity?: ActivityRowPresentation | undefined;
+  representedAgents?: readonly string[] | undefined;
+  staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   /** Resolves names, channels and mentions where the row is shown without
@@ -196,6 +199,7 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
+  representedAgents,
   alignViewer = true,
 
   mediaMode = "inline",
@@ -540,16 +544,30 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
+  const avatarSize = compactAvatar
+    ? "tiny"
+    : layout === "timeline"
+      ? "default"
+      : "small";
+  const authorName = (
+    <>
+      {/* Inside the name, so the byline keeps the text baseline. */}
+      {agentAuthor && !stackPrevious && (
+        <RobotIcon aria-hidden="true" className={styles.authorAgentIcon} />
+      )}
+      {name}
+    </>
+  );
   const avatar = row.workflowOwnerId ? (
-    <Avatar
-      alt="Workflow"
-      fallback="Workflow"
-      fallbackContent={<LightningIcon size={20} />}
-      shape="squircle"
-      size={
-        compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-      }
-    />
+    <span className={styles.nestedAvatar}>
+      <Avatar
+        alt="Workflow"
+        fallback="Workflow"
+        fallbackContent={<LightningIcon size={16} />}
+        shape="squircle"
+        size={avatarSize}
+      />
+    </span>
   ) : clickable ? (
     <ProfilePeek
       key={`${scope}:${viewer}:${row.authorId}`}
@@ -565,7 +583,7 @@ function MessageRowContent({
       onFocusChange={setAvatarFocused}
       trigger={
         <IconButton
-          size={layout === "timeline" ? "default" : "sm"}
+          size="sm"
           shape="round"
           aria-label={`View ${name} profile`}
           aria-describedby={presence !== "unknown" ? presenceId : undefined}
@@ -575,7 +593,7 @@ function MessageRowContent({
                 src={picture}
                 alt=""
                 fallback={name}
-                size={compactAvatar ? "small" : "fill"}
+                size={avatarSize}
                 shape={avatarShape}
                 statusBadge={presence === "unknown" ? undefined : presence}
               />
@@ -590,7 +608,7 @@ function MessageRowContent({
       }
     />
   ) : (
-    <span className={compactAvatar ? styles.nestedAvatar : "contents"}>
+    <span className={styles.nestedAvatar}>
       <Avatar
         src={picture}
         alt={
@@ -601,9 +619,7 @@ function MessageRowContent({
               : `${name} avatar`
         }
         fallback={name}
-        size={
-          compactAvatar ? "small" : layout === "timeline" ? "large" : "default"
-        }
+        size={avatarSize}
         shape={avatarShape}
         statusBadge={presence === "unknown" ? undefined : presence}
       />
@@ -741,7 +757,6 @@ function MessageRowContent({
     const remainingWorkingLabel = remainingThreadAgents.length
       ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
       : undefined;
-    const activityOnly = !!activity && row.replyCount === 0;
     return (
       ((row.replyCount > 0 ||
         (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
@@ -749,11 +764,13 @@ function MessageRowContent({
         onOpenThread && (
           <Button
             ref={activity?.ref}
-            variant={activityOnly ? "subtle" : "ghost"}
-            size={activityOnly ? "xs" : "sm"}
+            variant="ghost"
+            size="sm"
             data-thread-summary=""
-            data-activity-summary={activityOnly ? "" : undefined}
-            data-reply-connector={row.replyCount > 0 || undefined}
+            data-activity-summary={activity ? "" : undefined}
+            data-reply-connector={
+              (!activity && row.replyCount > 0) || undefined
+            }
             data-first-participant-shape={
               agentPubkeys?.has(row.participants[0] ?? "")
                 ? "squircle"
@@ -771,8 +788,8 @@ function MessageRowContent({
             }}
           >
             <ReplySummary
-              hideEmptyLabel={activityOnly}
-              count={row.replyCount}
+              hideEmptyLabel={!!activity}
+              count={activity ? 0 : row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}
               agentPubkeys={agentPubkeys}
@@ -937,21 +954,48 @@ function MessageRowContent({
                   <WorkflowByline
                     ownerId={row.workflowOwnerId}
                     ownerName={workflowOwnerName}
-                    signer={row.signerId ?? row.authorId}
                     canOpenLink={canOpenLink}
                     onOpenLink={openLink}
                   />
                 ) : (
                   <span className={styles.authorWithStatus}>
                     <strong className={styles.author}>
-                      {/* Inside the name, so the byline keeps the text baseline. */}
-                      {agentAuthor && !stackPrevious && (
-                        <RobotIcon
-                          aria-hidden="true"
-                          className={styles.authorAgentIcon}
-                        />
+                      {clickable && !stackPrevious ? (
+                        // The avatar is the group's keyboard stop and preview;
+                        // the name only answers a click. Text, not a button, so
+                        // a selection can start on it and a copy keeps it as
+                        // plain prose (no profile target).
+                        // biome-ignore lint/a11y/useSemanticElements: a <button> would block starting a text selection on the name
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          data-message-author=""
+                          className={styles.authorLink}
+                          onClick={(event) => {
+                            // A click arriving with text selected (the end of
+                            // a drag, or the second click of a double-click)
+                            // is a selection, not a request. A double-click's
+                            // first click opens the profile like any click.
+                            const selection =
+                              event.currentTarget.ownerDocument.getSelection();
+                            if (selection && !selection.isCollapsed) return;
+                            // WebKit skips focusing on pointer click, so the
+                            // profile tab's close would have no origin.
+                            event.currentTarget.focus();
+                            openLink(target);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ")
+                              return;
+                            event.preventDefault();
+                            openLink(target);
+                          }}
+                        >
+                          {authorName}
+                        </span>
+                      ) : (
+                        authorName
                       )}
-                      {name}
                     </strong>
                     {session && !stackPrevious && (
                       <UserStatusDisplay
@@ -1319,6 +1363,32 @@ function MessageRowContent({
             renderMessageSummary()}
         </div>
       </div>
+      {active && session && scope && extensions?.accessories && (
+        <ComposerAccessories
+          registry={extensions.accessories}
+          placement="response"
+          representedAgents={representedAgents}
+          messageLayout={layout}
+          session={session}
+          scope={scope}
+          channelId={row.channelId}
+          threadRootId={row.threadRootId}
+          message={row}
+          onFocusedRemoval={() =>
+            menuTrigger.current?.focus({ preventScroll: true })
+          }
+          openThread={
+            summaryThread
+              ? () => {
+                  summaryThread(row.id, row.threadRootId ?? row.id);
+                  return true;
+                }
+              : undefined
+          }
+          canOpen={canOpenLink ?? (() => false)}
+          open={onOpenLink}
+        />
+      )}
     </div>
   );
   return renderMessage ? (
@@ -1358,6 +1428,17 @@ function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const references = props.references ?? session;
   const [open, setOpen] = useState(false);
+  const activity = props.recordedActivity;
+  const bubble =
+    activity?.container === "bubble" || activity?.container === "standalone";
+  const live = useActivityIndicator(
+    session,
+    row,
+    activity?.ownsLive ?? false,
+    undefined,
+    activity?.requestId,
+  );
+  const active = live || (activity?.active ?? false);
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
@@ -1389,9 +1470,22 @@ function AgentsMessageRow(props: MessageRowProps) {
   const to = recipients.map((pubkey) =>
     person(pubkey, directory.profiles.get(pubkey)),
   );
-  const preview = messagePreviewText(body.content);
+  const excerpt = Array.from(
+    messagePreviewText(body.content).replace(/\s+/g, " "),
+  );
+  const preview =
+    excerpt.length > 280
+      ? `${excerpt.slice(0, 279).join("")}…`
+      : excerpt.join("");
+  const addressedPreview = Array.from(
+    `${to.length ? `${to.map((who) => `@${who.name}`).join(", ")} ` : ""}${preview}`,
+  );
+  const visiblePreview =
+    addressedPreview.length > 280
+      ? `${addressedPreview.slice(0, 279).join("")}…`
+      : addressedPreview.join("");
   const avatar = (who: typeof author) => (
-    <span key={who.pubkey} className={styles.audienceAvatar} title={who.name}>
+    <span className={styles.audienceAvatar} title={who.name}>
       <AgentAvatar
         session={session}
         agentPubkey={who.pubkey}
@@ -1404,10 +1498,10 @@ function AgentsMessageRow(props: MessageRowProps) {
       />
     </span>
   );
-  return (
+  const content = (
     <FullMessageRow
       {...props}
-      shownRow={body}
+      shownRow={row}
       alignViewer={false}
       day={false}
       layout="continuation"
@@ -1417,6 +1511,10 @@ function AgentsMessageRow(props: MessageRowProps) {
         <div
           className={styles.audienceRow}
           data-audience="agents"
+          data-coordination={to.length > 0 || undefined}
+          data-layout={props.layout ?? "timeline"}
+          data-stack-previous={props.stackPrevious || undefined}
+          data-stack-next={props.stackNext || undefined}
           data-viewer-message={
             (props.alignViewer ?? true) &&
             !row.workflowOwnerId &&
@@ -1426,9 +1524,8 @@ function AgentsMessageRow(props: MessageRowProps) {
           }
           data-open={open || undefined}
         >
-          {props.day && <DayDivider createdAt={row.createdAt} />}
-          {/* Keep the address column and trailing time stable while the
-              details open and close. */}
+          {props.day && !bubble && <DayDivider createdAt={row.createdAt} />}
+          {/* Keep the address column stable while details open and close. */}
           <Collapsible.Root
             open={open}
             onOpenChange={setOpen}
@@ -1459,24 +1556,17 @@ function AgentsMessageRow(props: MessageRowProps) {
               className={styles.audienceLine}
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
             >
-              {avatar(author)}
-              {to.length > 0 && (
-                <>
-                  <ArrowRightIcon
-                    size={12}
-                    aria-hidden="true"
-                    className={styles.audienceArrow}
-                  />
-                  {to.map(avatar)}
-                </>
-              )}
+              {!bubble && avatar(author)}
+              {open && bubble && "Collapse"}
               {!open && (
-                <span className={styles.audiencePreview}>{preview}</span>
+                <span className={styles.audiencePreviewText}>
+                  <ShimmerText active={active}>{visiblePreview}</ShimmerText>
+                </span>
               )}
               {!open && row.edited && <EditedMarker />}
             </Collapsible.Trigger>
             <Collapsible.Panel
-              className={`${styles.audiencePanel} ${styles.activityExpansion} ${styles.audienceBody}`}
+              className={`${styles.audiencePanel} ${styles.audienceBody}`}
               inert={!open || undefined}
               aria-hidden={!open || undefined}
             >
@@ -1484,13 +1574,32 @@ function AgentsMessageRow(props: MessageRowProps) {
                 <div className={styles.audienceContent}>{message}</div>
               </div>
             </Collapsible.Panel>
-            <span className={styles.audienceTime}>
-              <MessageTimestamp createdAt={row.createdAt} />
-            </span>
           </Collapsible.Root>
         </div>
       )}
     />
+  );
+  return bubble ? (
+    <>
+      {props.day && <DayDivider createdAt={row.createdAt} />}
+      <AgentResponsePreview
+        name={author.name}
+        participants={[
+          {
+            id: author.pubkey,
+            name: author.name,
+            picture: author.picture,
+          },
+        ]}
+        stackPrevious={activity?.container !== "standalone"}
+        picture={author.picture}
+        layout={props.layout === "thread" ? "thread" : "timeline"}
+      >
+        <div className={styles.standaloneActivity}>{content}</div>
+      </AgentResponsePreview>
+    </>
+  ) : (
+    content
   );
 }
 

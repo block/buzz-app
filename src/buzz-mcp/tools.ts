@@ -27,8 +27,10 @@ import {
   referencedEmoji,
 } from "../features/relay/emoji";
 import { newer } from "../features/relay/events";
+import { imageType } from "../features/relay/attachment-limits";
 import { CANVAS_BYTES } from "../features/channel-templates/model";
 import { threadReference } from "../features/relay/thread-reference";
+import { parseBuzzLink } from "../features/navigation/buzz-links";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import { channelLabelTags } from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
@@ -97,6 +99,11 @@ export async function captureToolBody(
   name: string,
   args: Record<string, unknown>,
 ) {
+  if (
+    (name === "agent_create" || name === "agent_update") &&
+    text(args.picture)
+  )
+    throw new Error("Protected picture uploads are not supported.");
   const message = name === "send" || name === "reply_in_subthread";
   if (
     !message &&
@@ -130,14 +137,14 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
-    { type: str, name: str },
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; picture is a local image file for its avatar.",
+    { type: str, name: str, picture: str },
     ["type", "name"],
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
-    { agent: str, name: str, type: str, instructions: str },
+    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Nothing changes until they save it.",
+    { agent: str, name: str, type: str, instructions: str, picture: str },
     ["agent"],
   ),
   tool(
@@ -195,6 +202,10 @@ export const TOOLS: readonly Tool[] = [
     {
       channel: str,
       thread: str,
+      message_url: {
+        type: "string",
+        description: "Buzz message link; replaces channel and thread.",
+      },
       q: str,
       author: {
         type: "string",
@@ -449,7 +460,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type)?.trim();
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
-    return JSON.stringify(await client.createAgent({ type, name }));
+    const picture = proposedPicture(client, args.picture);
+    return JSON.stringify(
+      await client.createAgent({ type, name, ...(picture && { picture }) }),
+    );
   },
   async self_handoff(tools, args) {
     const { client, context } = tools;
@@ -498,12 +512,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type);
     // Empty instructions propose clearing them.
     const { instructions } = args;
+    const picture = proposedPicture(client, args.picture);
     return JSON.stringify(
       await client.updateAgent({
         agent,
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+        ...(picture && { picture }),
       }),
     );
   },
@@ -617,6 +633,19 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async read(tools, args) {
     const { client, context } = tools;
+    if (args.message_url !== undefined) {
+      if (args.channel !== undefined || args.thread !== undefined)
+        throw new Error(
+          "message_url cannot be combined with channel or thread.",
+        );
+      const link =
+        typeof args.message_url === "string"
+          ? parseBuzzLink(args.message_url)
+          : null;
+      if (link?.format !== "legacy" || !link.messageId)
+        throw new Error("message_url must be a Buzz message link.");
+      args = { ...args, channel: link.channelId, thread: link.messageId };
+    }
     const limit = typeof args.limit === "number" ? args.limit : undefined;
     const before = unixTime(args, "before");
     const since = unixTime(args, "since");
@@ -2088,6 +2117,24 @@ function imeta(upload: Upload) {
   ];
 }
 
+/** A draft's picture: uploads the image at `path` as the agent once the
+ * draft is valid, giving its URL. */
+function proposedPicture(client: BuzzClient, path: unknown) {
+  const file = text(path)?.trim();
+  if (!file) return undefined;
+  const upload = client.uploadPicture?.bind(client);
+  if (!upload)
+    throw new Error("Picture proposals are unavailable on this host");
+  return async () => {
+    const data = await client.read(file);
+    // The preparer's own detector, so it never passes an image through.
+    const type = imageType(data);
+    if (!type)
+      throw new Error("picture must be a PNG, JPEG, GIF or WebP image");
+    return (await upload(data, type)).url;
+  };
+}
+
 /** An image or MP4's type, by the file's leading bytes. */
 function sniff(data: Uint8Array) {
   const at = (offset: number, ...bytes: number[]) =>
@@ -2335,7 +2382,7 @@ async function start(tools: Tools, channel: string, name: string) {
   return created;
 }
 
-/** The repository's URL and a Git command with its header. */
+/** The repository's URL and a Git command with its headers, one per line. */
 async function access(
   gitAuth: NonNullable<BuzzClient["gitAuth"]>,
   event: BuzzEvent,
@@ -2343,8 +2390,11 @@ async function access(
   const { url, header } = await gitAuth(event.pubkey, tag(event, "d") ?? "");
   return [
     `${tag(event, "name") ?? tag(event, "d")}: ${url}`,
-    "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
-    `git -c http.${url}.extraHeader='${header}' clone ${url}`,
+    "For the next 60 seconds, pass these headers to each git command (call again for a new one; never save it):",
+    `git ${header
+      .split("\n")
+      .map((line) => `-c http.${url}.extraHeader='${line}' `)
+      .join("")}clone ${url}`,
   ].join("\n");
 }
 

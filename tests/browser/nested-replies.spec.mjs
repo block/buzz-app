@@ -156,7 +156,9 @@ test("nested replies send, stay open, and reveal through links at readable panel
   await expect(editor).toHaveJSProperty("value", "Unsent nested draft");
   await editor.fill("");
   await expect(editor).toHaveJSProperty("value", "");
+  // Up selects the newest message in the thread; E edits it in this composer.
   await editor.press("ArrowUp");
+  await page.keyboard.press("e");
   const editInput = panel.getByRole("textbox", {
     name: "Edit message",
     exact: true,
@@ -492,6 +494,13 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
     if (await summary.count()) await summary.click();
   }
   await expect(row(startReply)).toBeVisible();
+  for (const event of [agentPeerReply, ownAgentsLeft, ownAgents]) {
+    await panel
+      .getByRole("button", {
+        name: new RegExp(`^Show activity history: .*: ${event.content}$`),
+      })
+      .click();
+  }
 
   // Peer- and viewer-started branches hook on their own side; a reply on the
   // other side gets a straight line past it.
@@ -539,7 +548,12 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   await reacted.scrollIntoViewIfNeeded();
   await hoverMessage(reacted);
   await reacted
-    .getByRole("button", { name: "React with 👍", exact: true })
+    .getByRole("button", { name: "Add reaction", exact: true })
+    .click();
+  await page.locator('em-emoji-picker input[type="search"]').fill("thumbsup");
+  await page
+    .locator("em-emoji-picker")
+    .getByRole("button", { name: "👍", exact: true })
     .click();
   await expect(
     reacted.getByRole("button", { name: /👍/ }).last(),

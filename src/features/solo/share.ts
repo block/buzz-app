@@ -4,6 +4,7 @@ import {
 } from "../relay/channel-details-protocol";
 import {
   addChannelMember,
+  addChannelMembersAtOnce,
   canAddMembers,
   canShareSoloChat,
 } from "../channel-members/members";
@@ -37,7 +38,8 @@ export const soloChatLink = (id: string) =>
 export const soloChatLinkMessage = (id: string, name = id.slice(0, 8)) =>
   `[Chat: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
 
-/** Exact selected people are grants to the chat, not the destination or its parent. */
+/** Exact selected people are grants to the chat, not the destination or its parent.
+ * Everyone goes in one batch first; anyone it didn't add gets a single addition. */
 export async function grantSoloChatAccess(
   session: RelaySession,
   channelId: string,
@@ -52,13 +54,27 @@ export async function grantSoloChatAccess(
 ) {
   if (people.length > 100 || new Set(people).size !== people.length)
     throw new Error("Choose at most 100 distinct recipients.");
+  const added = await addChannelMembersAtOnce(
+    session,
+    channelId,
+    people,
+    intents,
+    signal,
+    soloParticipant,
+    beforeDispatch,
+  );
   for (const key of people) {
     signal.throwIfAborted();
+    const intent = intents.get(key) ?? {};
+    intents.set(key, intent);
+    if (added.has(key)) {
+      intent.confirmed = true;
+      onConfirmed(key);
+      continue;
+    }
     // Channel audiences omit archived identities; direct selections still fail explicitly.
     if (skipArchived && archiveHides(session.archives, key, session.viewer))
       continue;
-    const intent = intents.get(key) ?? {};
-    intents.set(key, intent);
     await addChannelMember(
       session,
       channelId,
@@ -226,6 +242,7 @@ export async function applySharedChannelDetails(
     value.name === draft.name &&
     value.description === draft.description &&
     value.visibility === draft.visibility &&
+    (draft.joinRole === undefined || value.joinRole === draft.joinRole) &&
     value.ttlSeconds === draft.ttlSeconds &&
     (draft.labels === undefined ||
       sameLabels(value.labels ?? [], draft.labels));
@@ -245,6 +262,7 @@ export async function applySharedChannelDetails(
       base.name !== expected.name ||
       base.description !== expected.description ||
       base.visibility !== expected.visibility ||
+      base.joinRole !== expected.joinRole ||
       base.ttlSeconds !== expected.ttlSeconds ||
       (draft.labels !== undefined &&
         !sameLabels(base.labels ?? [], expected.labels ?? []))

@@ -962,6 +962,9 @@ it("collapsing the contributed Solo section in All hides its ordinary chats", as
     expect(
       document.getElementById(heading?.getAttribute("aria-controls") ?? ""),
     ).toHaveAttribute("hidden");
+    expect(
+      view.container.querySelector('[data-solo-channel-id="chat"]'),
+    ).not.toBeVisible();
   } finally {
     view.unmount();
     await h.dispose();

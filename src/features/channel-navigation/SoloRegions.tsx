@@ -462,8 +462,9 @@ function RegionFrame({
           ) : (
             recovery
           )}
+          {groupDisclosure ? ordinary : null}
         </SidebarSection>
-        {ordinary}
+        {groupDisclosure ? null : ordinary}
       </div>
     </RegionDestinationContext.Provider>
   );

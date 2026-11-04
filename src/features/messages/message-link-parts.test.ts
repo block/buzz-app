@@ -155,6 +155,10 @@ it.each([
   ["看这个 https://example.com/spec，大家看一下", "https://example.com/spec"],
   ["（https://example.com）", "https://example.com"],
   ["https://example.com/a?b=c。", "https://example.com/a?b=c"],
+  ["https://example.com/path．", "https://example.com/path"],
+  ["https://example.com/path［注］", "https://example.com/path"],
+  ["他说“https://example.com”。", "https://example.com"],
+  ["｢https://example.com｣", "https://example.com"],
   [
     "见 https://zh.wikipedia.org/wiki/中文",
     "https://zh.wikipedia.org/wiki/中文",

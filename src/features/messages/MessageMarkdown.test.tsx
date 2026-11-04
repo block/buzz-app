@@ -820,6 +820,7 @@ describe("Markdown inline extensions", () => {
     ],
     ["看这个 https://example.com/spec，大家看一下", "https://example.com/spec"],
     ["（https://example.com）", "https://example.com/"],
+    ["他说“https://example.com/a”。", "https://example.com/a"],
     [
       "https://zh.wikipedia.org/wiki/中文 ok",
       "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",

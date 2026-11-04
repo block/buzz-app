@@ -95,9 +95,9 @@ export function messageLinkParts(
 ): LinkPart[] {
   const parts: LinkPart[] = [];
   let offset = 0;
-  // Fullwidth punctuation ends a bare URL; CJK letters do not (IRIs stay whole).
+  // Fullwidth, CJK and curly-quote punctuation ends a bare URL; CJK letters do not.
   for (const match of content.matchAll(
-    /(?<!\\)\[((?:\\[^\r\n]|[^[\]\\\r\n])+)\]\\?\(|<(?:https?|buzz):\/\/[^\s<>"`]+>|(?:https?|buzz):\/\/[^\s<>"`，。、！？；：（）「」『』《》【】〈〉…～]+/gi,
+    /(?<!\\)\[((?:\\[^\r\n]|[^[\]\\\r\n])+)\]\\?\(|<(?:https?|buzz):\/\/[^\s<>"`]+>|(?:https?|buzz):\/\/[^\s<>"`，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜]+/gi,
   )) {
     if (match.index < offset) continue;
     if (match[1] !== undefined) {

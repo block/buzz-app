@@ -390,12 +390,16 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
   );
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
+  await expect(page.locator("html")).toHaveCSS("font-size", "32px");
+  // Let the resized, enlarged-text layout finish before testing focus reveal.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
   await share.focus();
-  // WebKit's focus reveal can lag viewport/text reflow. Reveal the result and
-  // wait for normal pointer actionability before measuring its final geometry.
-  await share.scrollIntoViewIfNeeded();
-  await share.click({ trial: true });
-  await expect(share).toBeFocused();
   await expect(share).toBeInViewport({ ratio: 1 });
   await expect
     .poll(() =>

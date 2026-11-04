@@ -441,6 +441,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("mesh manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
             .expect("huddles manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/popout/manifest.json"))
+            .expect("popout manifest"),
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
@@ -537,6 +539,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.links"
             | "buzz.voice-notes"
             | "buzz.huddles"
+            | "buzz.popout"
             | "buzz.github"
             | "buzz.watching"
             | "buzz.pairing"
@@ -2603,6 +2606,26 @@ mod tests {
         assert!(!huddles().enabled);
         manager.change("enable", "buzz.huddles").unwrap();
         assert!(huddles().enabled);
+    }
+
+    #[test]
+    fn popout_windows_are_available_on_desktop_and_enabled_by_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "popout-test", false).unwrap();
+        let popout = || {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.popout")
+                .expect("Desktop must expose the Pop-out windows plugin")
+        };
+        assert!(popout().enabled);
+        manager.change("disable", "buzz.popout").unwrap();
+        assert!(!popout().enabled);
+        manager.change("enable", "buzz.popout").unwrap();
+        assert!(popout().enabled);
     }
 
     #[test]

@@ -4,8 +4,20 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChannelSidebarRows } from "./ChannelSidebarRows";
 
-afterEach(() => {
+// Motion captures RAF at import; route it through the test-controlled clock.
+vi.hoisted(() => {
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    window.setTimeout(() => callback(performance.now()), 16),
+  );
+  vi.stubGlobal("cancelAnimationFrame", (id: number) =>
+    window.clearTimeout(id),
+  );
+});
+
+afterEach(async () => {
   cleanup();
+  // Do not strand Motion's captured frame callback when restoring real timers.
+  if (vi.isFakeTimers()) await vi.runOnlyPendingTimersAsync();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -53,6 +65,42 @@ it("applies the latest order when more activity arrives during a move", async ()
   expect(screen.getAllByRole("button").map((node) => node.textContent)).toEqual(
     ["gamma", "beta", "alpha"],
   );
+});
+
+it("cancels a distant fade when the desired order returns to the displayed order", async () => {
+  vi.useFakeTimers();
+  const original = ["alpha", "beta", "gamma", "delta", "echo"];
+  const view = render(rows(original));
+  const order = () =>
+    screen.getAllByRole("button").map((node) => node.textContent);
+  const echo = screen.getByRole("button", { name: "echo" });
+  const promoted = ["echo", "alpha", "beta", "gamma", "delta"];
+  echo.focus();
+  view.rerender(rows(promoted));
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  await act(() => vi.advanceTimersByTimeAsync(30));
+  expect(order()).toEqual(original);
+  expect(Number(echo.parentElement?.style.opacity)).toBeGreaterThan(0);
+  expect(Number(echo.parentElement?.style.opacity)).toBeLessThan(1);
+
+  view.rerender(rows(original));
+  for (let elapsed = 0; elapsed < 1000; elapsed += 20) {
+    await act(() => vi.advanceTimersByTimeAsync(20));
+    expect(order()).toEqual(original);
+  }
+  expect(echo.parentElement).toHaveStyle({ opacity: "1" });
+  expect(echo).toHaveFocus();
+
+  // Cancellation must leave the next prepared fade free to finish normally.
+  view.rerender(rows(promoted));
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(order()).toEqual(original);
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(order()).toEqual(promoted);
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(echo.parentElement).toHaveStyle({ opacity: "1" });
+  expect(screen.getByRole("button", { name: "echo" })).toBe(echo);
+  expect(echo).toHaveFocus();
 });
 
 it("preserves the stationary middle row and its appearance when neighbors swap", async () => {

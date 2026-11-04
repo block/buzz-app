@@ -75,6 +75,7 @@ export function ChannelSidebarRows({
     if (
       !animated ||
       !sameMembers ||
+      order === desired ||
       generation.current !== animationGeneration
     ) {
       generation.current = animationGeneration;
@@ -85,8 +86,7 @@ export function ChannelSidebarRows({
       setFading((previous) => (previous.size ? new Set() : previous));
       return;
     }
-    if (order === desired) batchStart.current = null;
-    if (order === desired || fading.size) return;
+    if (fading.size) return;
     const now = performance.now();
     batchStart.current ??= now;
     const timer = setTimeout(

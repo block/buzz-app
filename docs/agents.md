@@ -35,7 +35,8 @@ and reported as migration errors.
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
-`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name,
+and optionally the new agent's instructions, which the review form starts with.
 It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
 the usual Create agent form, may edit the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,

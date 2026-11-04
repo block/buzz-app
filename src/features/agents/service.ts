@@ -418,7 +418,7 @@ export type AgentHandle = Readonly<{
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: AgentCreateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Owner-reviewed changes to one of the owner's agents here. */
   updateAgent?(
@@ -897,6 +897,11 @@ export type RetypePreview = Readonly<{
     outcome: "reset" | "dropped";
   }>[];
 }>;
+export type AgentCreateInput = Readonly<{
+  type: string;
+  name: string;
+  instructions?: string;
+}>;
 /** An unsaved creation request. Only the owner-facing review may approve it. */
 export type AgentCreationRequest = Readonly<{
   id: string;
@@ -906,6 +911,7 @@ export type AgentCreationRequest = Readonly<{
   community: string;
   type: string;
   name: string;
+  instructions?: string;
 }>;
 /** Proposed changes; absent fields stay as they are. */
 export type AgentUpdate = Readonly<{
@@ -1819,6 +1825,8 @@ export class AgentsService extends Service implements Agents {
         if (!kind) throw new Error("That agent type is not available");
         if (kind.remote)
           throw new Error("A hosted agent's key stays with its provider");
+        if (input.instructions !== undefined && !kind.adopt)
+          throw new Error(`${kind.title} agents have no instructions to set`);
         if (this.requests.length + this.updates.length >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
@@ -1832,6 +1840,9 @@ export class AgentsService extends Service implements Agents {
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
+            ...(input.instructions !== undefined && {
+              instructions: input.instructions,
+            }),
           },
         ];
         this.notify();

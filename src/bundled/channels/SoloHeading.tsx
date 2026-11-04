@@ -5,6 +5,7 @@ import { soloNavigationFor } from "../../features/channel-navigation/solo-naviga
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -44,6 +45,12 @@ import { useSoloOwner } from "./ChatSharedMark";
 
 const noSubscription = () => () => {};
 
+/** A Solo header's dialog openers, which its page returns focus to. */
+export type SoloOpeners = {
+  share: RefObject<HTMLButtonElement | null>;
+  actions: RefObject<HTMLButtonElement | null>;
+};
+
 type SoloToolbarProps = {
   session: RelaySession;
   chatMenus?: Conversation["chatMenus"] | undefined;
@@ -62,6 +69,8 @@ type SoloToolbarProps = {
   onLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
   /** Reports a move started here; see `useSoloMoveRecovery`. */
   onMove(move: Promise<unknown>): void;
+  /** Registers this header's openers while it is mounted. */
+  registerOpeners?: ((openers: SoloOpeners) => () => void) | undefined;
 } & Pick<
   ComponentProps<typeof ChannelMembersDialog>,
   "canOpenLink" | "onOpenLink" | "onOpenConversation"
@@ -70,6 +79,7 @@ type SoloToolbarProps = {
 /** The header of a conversation shown with the Solo treatment. */
 export function SoloHeading(props: SoloToolbarProps) {
   const owner = useSoloOwner(props.session, props.channel);
+  const shareTrigger = useRef<HTMLButtonElement>(null);
   return props.channel.archived ? (
     <SoloTitle channel={props.channel}>
       <SoloToolbar {...props} />
@@ -85,12 +95,13 @@ export function SoloHeading(props: SoloToolbarProps) {
             owner={owner}
             navigator={props.navigator}
             signal={props.signal}
+            trigger={shareTrigger}
             canOpenLink={props.canOpenLink}
             onOpenLink={props.onOpenLink}
             onOpenConversation={props.onOpenConversation}
           />
         }
-        actions={<SoloToolbar {...props} membershipInHeader />}
+        actions={<SoloToolbar {...props} membershipInHeader={shareTrigger} />}
       />
     </div>
   );
@@ -113,8 +124,12 @@ export function SoloToolbar({
   canOpenLink,
   onOpenLink,
   onOpenConversation,
-  membershipInHeader = false,
-}: SoloToolbarProps & { membershipInHeader?: boolean }) {
+  registerOpeners,
+  membershipInHeader,
+}: SoloToolbarProps & {
+  /** The header's own Share access control, which replaces the toolbar's. */
+  membershipInHeader?: RefObject<HTMLButtonElement | null>;
+}) {
   const menus = useSyncExternalStore(
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
@@ -125,7 +140,15 @@ export function SoloToolbar({
       region.reason !== "disabled" &&
       region.channels.some((item) => item.id === channel.id),
   );
+  const ownShareTrigger = useRef<HTMLButtonElement>(null);
+  const shareTrigger = membershipInHeader ?? ownShareTrigger;
   const actionsTrigger = useRef<HTMLButtonElement>(null);
+  // A layout effect, so a remounted header registers before its page's
+  // layout effects run in the same commit.
+  useLayoutEffect(
+    () => registerOpeners?.({ share: shareTrigger, actions: actionsTrigger }),
+    [registerOpeners, shareTrigger],
+  );
   // Each dialog returns focus to the control that opened it.
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
@@ -162,6 +185,7 @@ export function SoloToolbar({
               owner={owner}
               navigator={navigator}
               signal={signal}
+              trigger={shareTrigger}
               canOpenLink={canOpenLink}
               onOpenLink={onOpenLink}
               onOpenConversation={onOpenConversation}
@@ -178,7 +202,6 @@ export function SoloToolbar({
               <IconButton
                 hint="familiar"
                 ref={actionsTrigger}
-                data-solo-opener="actions"
                 size="toolbar"
                 aria-label="Chat actions"
                 title="Chat actions"

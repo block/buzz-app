@@ -542,7 +542,8 @@ it.each([
     await user.click(
       screen.getByRole("combobox", { name: "Send messages with" }),
     );
-    await user.click(screen.getByRole("option", { name: label }));
+    // Base UI mounts/exposes the popup asynchronously after opening it.
+    await user.click(await screen.findByRole("option", { name: label }));
     expect(messageSendKeyPreference()).toBe("mod-enter");
     expect(localStorage.getItem("buzz-message-send-key.v1")).toBe("mod-enter");
     act(() => {

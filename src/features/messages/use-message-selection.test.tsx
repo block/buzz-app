@@ -16,7 +16,7 @@ function List({ rows }: { rows: readonly ChannelMessage[] }) {
   const list = useRef<HTMLElement>(null);
   useMessageSelection(list, rows, {} as RelaySession);
   return (
-    <section ref={list} data-testid="list">
+    <section ref={list} aria-label="Messages">
       {rows.map((row) => (
         <div key={row.id} data-message-id={row.id}>
           <div data-layout="timeline">{row.id}</div>
@@ -27,8 +27,10 @@ function List({ rows }: { rows: readonly ChannelMessage[] }) {
 }
 
 function newestSelected(rows: readonly ChannelMessage[]) {
-  const { getByTestId } = render(<List rows={rows} />);
-  expect(selectNewestMessage(getByTestId("list"))).toBe(true);
+  const { getByRole } = render(<List rows={rows} />, { reactStrictMode: true });
+  expect(selectNewestMessage(getByRole("region", { name: "Messages" }))).toBe(
+    true,
+  );
   return document.activeElement?.closest<HTMLElement>("[data-message-id]")
     ?.dataset.messageId;
 }

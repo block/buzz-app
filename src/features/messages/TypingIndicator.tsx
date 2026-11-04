@@ -214,6 +214,12 @@ export function useConversationAgents(
   };
 }
 
+// Base UI mounts popup content only while open; building the rows inside a
+// component keeps their per-request activity lookups off closed renders.
+function ChooserItems({ items }: { items: () => ReactNode }) {
+  return items();
+}
+
 /** Incoming conversation activity over existing stores; no reads or capture. */
 export function TypingIndicator({
   session,
@@ -700,7 +706,7 @@ function AgentChooser({
               if (directTarget) navigate(directTarget, directOrigin);
             }}
           />
-          {children(navigate)}
+          <ChooserItems items={() => children(navigate)} />
         </section>
       </PopoverPopup>
     </PopoverRoot>

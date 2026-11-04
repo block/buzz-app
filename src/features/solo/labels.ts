@@ -61,6 +61,10 @@ export function eligibleSolo(
   return (
     !channel.archived &&
     channel.channelType === "solo" &&
-    (!channel.readOnly || ownSolo(channel, viewer))
+    (!channel.readOnly ||
+      ownSolo(channel, viewer) ||
+      (!!viewer &&
+        channel.viewerRole === "guest" &&
+        !!channel.members?.includes(viewer)))
   );
 }

@@ -91,6 +91,7 @@ import {
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
 import { macWebKit, webKit } from "./mac-webkit";
+import { useMessageAutocorrectPreference } from "./autocorrect-preference";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
@@ -160,6 +161,14 @@ function keyboardKey(
   return (
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
+}
+/** The source offsets of the line edges, between line breaks, around `offset`. */
+function lineBounds(text: string, offset: number) {
+  const end = text.indexOf("\n", offset);
+  return {
+    start: offset === 0 ? 0 : text.lastIndexOf("\n", offset - 1) + 1,
+    end: end < 0 ? text.length : end,
+  };
 }
 /** Moves the selection head to a document position, keeping the anchor when
  * extending, and scrolls it into view. */
@@ -404,6 +413,7 @@ export function EditableInput({
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  const { enabled: autocorrect } = useMessageAutocorrectPreference();
   const current = useRef({
     draft,
     decorationsFor,
@@ -415,6 +425,7 @@ export function EditableInput({
     acceptRecipient,
     disabled,
     placeholder,
+    autocorrect,
   });
   current.current = {
     draft,
@@ -427,6 +438,7 @@ export function EditableInput({
     acceptRecipient,
     disabled,
     placeholder,
+    autocorrect,
   };
   const tokenClassName = styles.token ?? "";
   const tokenClass = useRef(tokenClassName);
@@ -1626,6 +1638,61 @@ export function EditableInput({
       syncNativeSelection({ scroll: true, directional: true });
       return true;
     };
+    /** Runs an Apple paragraph command in document terms, since native ones
+     * stop at a token's uneditable edge. Control-A and Control-E move to the
+     * paragraph's edge, and Option-Up and Option-Down first step off an edge
+     * they start at, as natively. Paragraphs are lines of the draft text, as
+     * for triple click. Control-K deletes to the paragraph's end across a
+     * token. Elsewhere it stays native, which keeps Control-Y working there. */
+    const paragraphKey = (event: globalThis.KeyboardEvent, named: string) => {
+      const { selection } = editor.state;
+      const key = named.toLowerCase();
+      const control = event.ctrlKey && !event.altKey && !event.metaKey;
+      const command =
+        control && (key === "a" || key === "e")
+          ? "move"
+          : control && key === "k" && !event.shiftKey
+            ? "kill"
+            : event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.shiftKey &&
+                (named === "ArrowUp" || named === "ArrowDown")
+              ? "step"
+              : null;
+      if (!command || !(selection instanceof TextSelection)) return false;
+      const backward = key === "a" || named === "ArrowUp";
+      const side = backward ? "start" : "end";
+      const source = projection(),
+        text = source.draft.text;
+      const at = event.shiftKey
+        ? selection.head
+        : backward
+          ? selection.from
+          : selection.to;
+      const offset = source.source(at);
+      let line = lineBounds(text, offset);
+      if (command === "step" && selection.empty && offset === line[side])
+        line = lineBounds(
+          text,
+          Math.max(0, Math.min(offset + (backward ? -1 : 1), text.length)),
+        );
+      const edge = source.position(line[side], backward ? 1 : -1);
+      if (command !== "kill") {
+        moveHead(editor, edge, event.shiftKey);
+        return true;
+      }
+      if (
+        !selection.empty ||
+        !editable() ||
+        !source.tokens.some((token) => token.from < edge && token.to > at)
+      )
+        return false;
+      editor.dispatch(
+        closeHistory(editor.state.tr.delete(at, edge)).scrollIntoView(),
+      );
+      return true;
+    };
     const adjacent = (backward: boolean, arrow: boolean, extend: boolean) => {
       const { from, to, head, anchor, empty } = editor.state.selection;
       if (!empty) {
@@ -1681,17 +1748,19 @@ export function EditableInput({
       {
         state: state(),
         editable,
-        attributes: {
+        attributes: () => ({
           role: "textbox",
           "aria-multiline": "true",
           class: styles.input ?? "",
-          // Keep spelling hints, but do not let native suggestions rewrite rich text.
+          // Keep spelling hints, but do not let native suggestions rewrite rich
+          // text unless this device opts in. WebKit greys out its Correct
+          // Spelling Automatically menu item while the root says "off".
           spellcheck: "true",
-          autocorrect: "off",
+          autocorrect: current.current.autocorrect ? "on" : "off",
           autocapitalize: "off",
           autocomplete: "off",
           writingsuggestions: "false",
-        },
+        }),
         dispatchTransaction(tr: Transaction) {
           if (tr.docChanged && separateHistory) {
             closeHistory(tr);
@@ -1847,7 +1916,8 @@ export function EditableInput({
           if (composing.current || event.isComposing || event.keyCode === 229)
             return false;
           syncNativeSelection();
-          const primary = isApplePlatform(navigator.platform)
+          const apple = isApplePlatform(navigator.platform);
+          const primary = apple
             ? event.metaKey && !event.ctrlKey
             : event.ctrlKey && !event.metaKey;
           const named = keyboardKey(event);
@@ -1856,6 +1926,7 @@ export function EditableInput({
             primary &&
             event.shiftKey &&
             (key === "v" || (event.altKey && event.code === "KeyV"));
+          if (apple && paragraphKey(event, named)) return true;
           if (primary && !event.altKey && !event.shiftKey && key === "a")
             return selectAll(editor.state, editor.dispatch);
           const pressed = (binding: ComposerFormatBinding) =>
@@ -2193,13 +2264,13 @@ export function EditableInput({
           return true;
         },
         handleTripleClick(_view, pos) {
-          const source = projection(),
-            offset = source.source(pos),
-            text = source.draft.text;
-          const start =
-            offset === 0 ? 0 : text.lastIndexOf("\n", offset - 1) + 1;
-          const end = text.indexOf("\n", offset);
-          setRange(start, end < 0 ? text.length : end + 1);
+          const source = projection();
+          const { start, end } = lineBounds(
+            source.draft.text,
+            source.source(pos),
+          );
+          // Include the line's break, as native triple click does.
+          setRange(start, Math.min(end + 1, source.draft.text.length));
           return true;
         },
       },
@@ -2388,10 +2459,12 @@ export function EditableInput({
     if (!editor) return;
     if (draft !== emitted.current && !composing.current)
       api.current?.sync(draft);
-    // setProps recomputes the decorations that read this committed hint.
+    // setProps recomputes the decorations and root attributes that read these
+    // committed props.
     current.current.placeholder = placeholder;
+    current.current.autocorrect = autocorrect;
     editor.setProps({ editable: () => !disabled && !locked.current });
-  }, [draft, disabled, placeholder]);
+  }, [draft, disabled, placeholder, autocorrect]);
 
   const projection =
     view.current && projectComposerDocument(view.current.state.doc);

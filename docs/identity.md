@@ -27,10 +27,10 @@ continuing as the old account, and one that times out fails as *Sign-in did
 not finish*. Setup's account calls then go through the native forwarder as the
 bundled plugin's installation, fenced to that session, and a backup hands the
 uploader the session's revision. Native admission checks only that
-installation's grant, so this works whether or not the plugin has started. The
-forwarder grants no backup-status route, so Welcome back offers no restore and
-an imported key is backed up automatically. The session outlives first run: sign-in
-at launch finds it signed in.
+installation's grant, so this works whether or not the plugin has started.
+*Checking for a backed-up key* (below) goes through the forwarder too, so
+Welcome back offers a restore where the portal accepts the session there. The
+session outlives first run: sign-in at launch finds it signed in.
 
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described
@@ -97,14 +97,15 @@ leaves the lookup unavailable rather than empty, and never fails setup: it only
 decides whether Welcome back offers a restore and whether an import needs
 automatic backup.
 
-**Not linked** pauses on **Get started with Buzz**. **Create my key** creates
-and links a key; **Use an existing key** opens **Enter your private key**. **Use a different
-account** signs out the first-run session and returns to the welcome screen.
+**Not linked** pauses on **Get started with Buzz**, which says the account will
+manage the Buzz identity. **Set me up** creates and links a key; **Use an
+existing key** opens **Enter your private key**. **Use a different account**
+signs out the first-run session and returns to the welcome screen.
 The browser may retain its portal session. This choice page shows the signed-in
 email so the account can be checked before linking a key.
 
 Builderlab setup automatically backs up the created key after linking it to the
-signed-in account and waits for the uploader. The create/import screens disclose
+signed-in account and waits for the uploader. The import screen discloses
 this behavior. A failed backup stays in setup with **Try again**, preserving the
 key on this device; it cannot be bypassed by disabling backup. If the session
 has expired, retry signs in again and must return to the original account before
@@ -165,7 +166,7 @@ counts as done only when kgoose confirms removing the old key, or the account
 then holds no key or the new one. If the old key is still bound (kgoose removes
 nothing when the sign-in is no longer active) or another key is, the step fails
 without Try again.
-Welcome back itself never offers Create my key.
+Welcome back itself never offers Set me up.
 
 Every lane ends the same way. A linked account runs **Finding communities**
 (the same real read) once its key is on the device; the old key's list is not
@@ -493,7 +494,10 @@ Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
 `BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity only after an explicit saved
 automatic-backup choice, Builderlab login, and matching key
 binding. Unset, self-managed, corrupt or mismatched consent prevents all backup
-requests, including retries. These are paired
+requests, including retries. An organization-managed build also sets
+`BUZZ_NSEC_BACKUP_CONSENT=managed`: backup then needs no saved choice and
+ignores one, so every local key is backed up, including one created before
+backup was configured. The service and namespace are paired
 native build-process inputs; unset or empty leaves the feature disabled. Preview
 releases that sign in to `app.builderlab.xyz` set them to that origin's
 `/api/goose` service and the `backup/bb-public/production` namespace. The service URL
@@ -795,10 +799,11 @@ The native identity service exposes `getBackupChoice()` and
 `setBackupChoice(pubkey, automatic)`. These APIs expose public metadata and do not
 change identity readiness. Reading a choice does not contact a server; saving
 automatic backup wakes the existing native uploader if a session is connected.
-Builderlab first run discloses automatic backup before creating, replacing or
-importing a key, then enables it after linking. There is no separate backup-choice
-screen or failure bypass. Independent imports without Builderlab sign-in do not
-enable backup. Settings retains control over future automatic uploads.
+Builderlab first run discloses automatic backup before replacing or importing a
+key, says the account manages a key it creates, then enables backup after
+linking. There is no separate backup-choice screen or failure bypass.
+Independent imports without Builderlab sign-in do not enable backup. Settings
+retains control over future automatic uploads.
 
 The choice is bound to the current public key and trusted build-configured backup
 service and namespace. Missing or mismatched metadata returns no choice;
@@ -1033,7 +1038,7 @@ Both validate HTTPS and the `/media/<hash>` URL shape but do not enforce
 saved-community membership; the selected server receives a short-lived token
 scoped to its origin. The scheme signs a fresh 60-second `get` token per request
 and forwards only a bounded single `Range`; non-image/video/audio types (and SVG)
-are served with download disposition and `nosniff`. The main webview does not navigate to protected media for downloads: a narrowly scoped native command authenticates the bounded media GET, saves to the OS Downloads directory without replacing existing files, and rejects unsafe filenames. `relay_upload`
+are served with download disposition and `nosniff`. The main webview does not navigate to protected media for downloads: a narrowly scoped native command authenticates the bounded media GET, saves to the OS Downloads directory without replacing existing files, and rejects unsafe filenames. On macOS, the main webview's native media menu also saves relay media to Downloads without replacing existing files, but under the blob's `<hash>.<ext>` name rather than the attachment name, and removes the partial file if a download fails or Buzz quits before it finishes. It refuses media of unknown length or larger than the largest video Buzz uploads. The menu omits the items that would copy, open or share the tokened loopback URL, and its Download item when Buzz cannot save it. `relay_upload`
 hashes, signs (`upload` + `x`) and sends the exact bytes JavaScript passes it,
 then requires the successful response's SHA-256 and size to match those bytes.
 Shared TypeScript (`hostUpload`) owns limits, error mapping and the remaining

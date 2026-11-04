@@ -360,6 +360,33 @@ burstTest(
     await others.press("Enter");
     await expect(popup).toBeVisible();
     await expect(people).toBeFocused();
+    // Names rest in the list's own color; Tab reaches the first one, whose
+    // ring and fill fit inside the scrollport instead of being clipped.
+    const first = people.getByRole("button").first();
+    await expect(first).toHaveCSS(
+      "color",
+      await people.evaluate((list) => getComputedStyle(list).color),
+    );
+    await page.keyboard.press("Tab");
+    await expect(first).toBeFocused();
+    await expect(first).toHaveCSS("outline-style", "solid");
+    const clipped = await first.evaluate((entry) => {
+      const list = entry.closest("section");
+      const port = list.getBoundingClientRect();
+      const box = entry.getBoundingClientRect();
+      const style = getComputedStyle(entry);
+      const ring =
+        parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+      return Math.max(
+        port.left - (box.left - ring),
+        port.top - (box.top - ring),
+        box.right + ring - (port.left + list.clientWidth),
+      );
+    });
+    expect(clipped).toBeLessThanOrEqual(0);
+    await popup.screenshot({
+      path: testInfo.outputPath("membership-people-focus.png"),
+    });
     await people.press("End");
     await expect(people.getByRole("listitem").last()).toBeInViewport();
     await page.keyboard.press("Escape");

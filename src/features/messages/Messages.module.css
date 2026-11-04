@@ -1831,12 +1831,13 @@ button.mediaPreview {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* A quiet log line: member names keep the caption color at rest, carry
-   medium weight as their only resting cue, and take the inline-reference
-   color while hovered or keyboard-focused. The shared chip fill and ring stay.
-   The "N others" list renders in a portal, outside the row, so it is named too. */
+/* A quiet log line: member names rest in their surrounding text color (the
+   row's caption, the list's body), keep the link underline, add medium weight,
+   and take the inline-reference color while hovered or keyboard-focused. The
+   shared chip fill and ring stay. The "N others" list renders in a portal,
+   outside the row, so it is named too. */
 :is(.membership, .membershipPeople) .membershipName {
-  --link-text: var(--text-subtle);
+  --link-text: currentColor;
   /* Restated over the channel host's button reset. */
   color: var(--link-text);
   font-weight: var(--type-weight-medium);
@@ -1852,7 +1853,14 @@ html[data-keyboard-navigation]
   overflow-y: auto;
   overscroll-behavior: contain;
   margin-top: var(--space-2);
+  /* Inline room in the scrollport for each name's hover overhang. */
+  padding-inline: var(--space-half);
+  margin-inline: calc(-1 * var(--space-half));
   @apply text-body-sm text-standard;
+}
+/* The scrollport would clip an offset ring, so the names' ring is inset. */
+html[data-keyboard-navigation] .membershipPeople .membershipName:focus-visible {
+  outline-offset: -2px;
 }
 .membershipPeople ul {
   list-style: none;

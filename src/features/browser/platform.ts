@@ -29,6 +29,16 @@ export function validateBrowsableUrl(url: string): UrlValidation {
   return { ok: true, url: normalized };
 }
 
+// A colon followed by a digit is a port ("localhost:3000"), not a scheme.
+const EXPLICIT_SCHEME = /^[a-z][a-z\d+.-]*:(?!\d)/i;
+
+/** Address-bar input without a scheme defaults to https, as Chrome does. */
+export function addressInputUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed || EXPLICIT_SCHEME.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 export type BrowserBounds = Readonly<{
   x: number;
   y: number;

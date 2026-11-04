@@ -757,6 +757,29 @@ it("keeps Reload keyboard-accessible while the website is loading", async () => 
   expect(platform.action).toHaveBeenCalledWith("session-1", "reload");
 });
 
+it("navigates address input without a scheme over https", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  const address = screen.getByLabelText("Address");
+  await user.clear(address);
+  await user.type(address, "grugbrain.dev/{Enter}");
+  expect(platform.navigate).toHaveBeenCalledWith(
+    "session-1",
+    "https://grugbrain.dev/",
+  );
+});
+
 it("shows a synchronous address validation error", async () => {
   const platform = fakePlatform();
   vi.mocked(platform.navigate).mockImplementation(() => {

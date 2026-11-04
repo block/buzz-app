@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBrowserPlatform, validateBrowsableUrl } from "./platform";
+import {
+  addressInputUrl,
+  createBrowserPlatform,
+  validateBrowsableUrl,
+} from "./platform";
 
 const sdk = vi.hoisted(() => ({ invoke: vi.fn(async () => undefined) }));
 const native = vi.hoisted(() => ({ value: false }));
@@ -31,6 +35,24 @@ describe("validateBrowsableUrl", () => {
     expect(
       validateBrowsableUrl(`https://example.com/#${"文".repeat(300)}`).ok,
     ).toBe(false);
+  });
+});
+
+describe("addressInputUrl", () => {
+  it("defaults address input without a scheme to https", () => {
+    expect(addressInputUrl("grugbrain.dev/")).toBe("https://grugbrain.dev/");
+    expect(addressInputUrl("  example.com/path?q=1  ")).toBe(
+      "https://example.com/path?q=1",
+    );
+    expect(addressInputUrl("localhost:3000")).toBe("https://localhost:3000");
+    expect(addressInputUrl("[::1]:8080/")).toBe("https://[::1]:8080/");
+  });
+
+  it("keeps an explicit scheme so validation still rejects unsafe input", () => {
+    expect(addressInputUrl("http://example.com")).toBe("http://example.com");
+    expect(addressInputUrl("javascript:alert(1)")).toBe("javascript:alert(1)");
+    expect(addressInputUrl("file:///etc/passwd")).toBe("file:///etc/passwd");
+    expect(addressInputUrl("   ")).toBe("");
   });
 });
 

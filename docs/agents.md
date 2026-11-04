@@ -55,6 +55,18 @@ agent's settings and the proposed changes, with the usual type-change preview;
 saving applies what the owner reviewed, and closing the review discards the
 request. A type change carries what the new type adopts, as a manual one does. Change
 requests share the creation requests' local bound and lifetime.
+
+Both drafts may also propose `model`, `provider` and `effort` in the type's own
+terms; values are not checked against a model list, so the owner reviews them in
+the form. A type takes them only through its optional `propose(settings, config)`,
+which throws for a setting it has no place for (Claude and Codex refuse a
+provider); without `propose`, a draft cannot set them. Like the settings screens,
+a new provider resets the model, and a new provider or model resets the effort,
+unless the draft names them too. The review applies them to the proposed type
+only, so they don't follow the owner to another harness, and `carry` and type
+changes are unaffected. An empty value in a change draft proposes the type's
+default.
+
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 

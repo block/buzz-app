@@ -5,7 +5,7 @@ import { apply } from "./index";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 
-it("shares a Pi agent's provider and model as the pi runtime and imports them back", () => {
+function applied() {
   let type: AgentType | undefined;
   apply({
     agentProtection: { registerModels: vi.fn() },
@@ -19,6 +19,11 @@ it("shares a Pi agent's provider and model as the pi runtime and imports them ba
     },
     effect: vi.fn(),
   } as never);
+  return type;
+}
+
+it("shares a Pi agent's provider and model as the pi runtime and imports them back", () => {
+  const type = applied();
   const shared = type?.exportShared?.({
     provider: "anthropic",
     model: "sonnet",
@@ -37,4 +42,20 @@ it("shares a Pi agent's provider and model as the pi runtime and imports them ba
   expect(
     type?.importShared?.({ runtime: "codex", model: "x" }),
   ).toBeUndefined();
+});
+
+it("takes a proposed provider, resetting the model and effort it leaves stale", () => {
+  const type = applied();
+  const saved = {
+    ...(type?.defaults().config as object),
+    provider: "openai",
+    model: "gpt-4o",
+    effort: "high",
+  };
+  expect(type?.propose?.({ provider: "anthropic" }, saved)).toEqual({
+    ...saved,
+    provider: "anthropic",
+    model: "",
+    effort: "",
+  });
 });

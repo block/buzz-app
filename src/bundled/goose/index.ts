@@ -4,6 +4,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 // in it; goose answers with the in-process Buzz tools, served to it over
 // loopback HTTP MCP.
 import { isTauri } from "@tauri-apps/api/core";
+import { withProposedSettings } from "../../features/agents/proposal";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
@@ -98,6 +99,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       instructions: carry.instructions ?? saved.instructions,
       workspace: carry.workspace ?? saved.workspace,
     }),
+    propose: withProposedSettings,
     carry: (saved) => {
       const { instructions, workspace } = config(saved);
       return {

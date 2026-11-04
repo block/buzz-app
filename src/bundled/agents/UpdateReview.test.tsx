@@ -30,6 +30,10 @@ const kind = (key: string, title: string) => ({
     ...config,
     reply: instructions ?? config.reply,
   }),
+  propose: (settings: { model?: string }, config: Config) => ({
+    ...config,
+    ...settings,
+  }),
   Create,
 });
 
@@ -128,6 +132,21 @@ it("starts the review from a proposed picture", async () => {
       picture: "https://example.test/kid.png",
       config: { reply: "Be brief.", model: "large" },
     }),
+  );
+});
+
+it("starts the review from proposed model settings", async () => {
+  const user = userEvent.setup();
+  const agents = fixture({ settings: { model: "small" } });
+  await screen.findByDisplayValue("Child");
+  await user.click(screen.getByRole("button", { name: /^Save changes$/ }));
+  await waitFor(() =>
+    expect(agents.approveUpdate).toHaveBeenCalledWith(
+      "draft",
+      expect.objectContaining({
+        config: { reply: "Be brief.", model: "small" },
+      }),
+    ),
   );
 });
 

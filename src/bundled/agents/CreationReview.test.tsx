@@ -14,12 +14,12 @@ import { CreationReview } from "./CreationReview";
 
 afterEach(cleanup);
 
-type Config = { reply: string };
+type Config = { reply: string; model?: string };
 const Create = ({ config, onChange }: AgentCreateProps<Config>) => (
   <textarea
     aria-label="Instructions"
     value={config.reply}
-    onChange={(event) => onChange({ reply: event.target.value })}
+    onChange={(event) => onChange({ ...config, reply: event.target.value })}
   />
 );
 
@@ -46,7 +46,12 @@ function fixture(proposed: Partial<AgentCreationRequest> = {}) {
     title,
     defaults: () => ({ config: { reply: "default" } }),
     adopt: ({ instructions }: { instructions?: string }, config: Config) => ({
+      ...config,
       reply: instructions ?? config.reply,
+    }),
+    propose: (settings: { model?: string }, config: Config) => ({
+      ...config,
+      ...settings,
     }),
     carry: ({ reply }: Config) => (reply.trim() ? { instructions: reply } : {}),
     Create,
@@ -135,4 +140,24 @@ it("keeps the owner's cleared instructions when they change the harness", async 
   await user.click(screen.getByRole("combobox", { name: "Harness" }));
   await user.click(await screen.findByRole("option", { name: "Other" }));
   expect(screen.getByLabelText("Instructions")).toHaveValue("default");
+});
+
+it("starts the proposed type from the proposed model, and another type from its own", async () => {
+  const user = userEvent.setup();
+  const agents = fixture({ settings: { model: "large" } });
+  await screen.findByDisplayValue("Child");
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Other" }));
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Echo" }));
+  await user.click(screen.getByRole("button", { name: /^Create agent$/ }));
+  await waitFor(() =>
+    expect(agents.approveCreation).toHaveBeenCalledWith(
+      "draft",
+      expect.objectContaining({
+        type: "test/echo",
+        config: { reply: "default", model: "large" },
+      }),
+    ),
+  );
 });

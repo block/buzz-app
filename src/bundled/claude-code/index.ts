@@ -6,6 +6,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { withProposedSettings } from "../../features/agents/proposal";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
@@ -124,6 +125,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       instructions: carry.instructions ?? saved.instructions,
       workspace: carry.workspace ?? saved.workspace,
     }),
+    propose: (settings, saved) => {
+      if (settings.provider)
+        throw new Error("Claude agents have no provider to set");
+      const { provider: _, ...rest } = settings;
+      return withProposedSettings(rest, saved);
+    },
     carry: (saved) => {
       const { instructions, workspace } = config(saved);
       return {

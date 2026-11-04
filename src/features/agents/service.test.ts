@@ -11210,6 +11210,64 @@ it("carries a creation draft's instructions and picture, refusing ones it cannot
   expect(service.creationRequests()).toHaveLength(1);
 });
 
+it("carries proposed model settings a type takes and refuses the rest", async () => {
+  const { service, plugin, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ model: string }>({
+      id: "modeled",
+      title: "Modeled",
+      defaults: () => ({ config: { model: "small" } }),
+      propose: ({ provider, ...settings }, saved) => {
+        if (provider !== undefined) throw new Error("No provider here");
+        return { ...saved, ...settings };
+      },
+      run: vi.fn(),
+    });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createAgent || !handle.updateAgent)
+    throw new Error("Missing draft handle");
+  const { requestId } = await handle.createAgent({
+    type: "other/modeled",
+    name: "Kid",
+    settings: { model: "large" },
+  });
+  expect(service.creationRequests()).toEqual([
+    expect.objectContaining({ id: requestId, settings: { model: "large" } }),
+  ]);
+  await expect(
+    handle.createAgent({
+      type: "other/modeled",
+      name: "Kid",
+      settings: { provider: "x" },
+    }),
+  ).rejects.toThrow("No provider here");
+  await expect(
+    handle.createAgent({
+      type: "example/echo",
+      name: "Kid",
+      settings: { model: "large" },
+    }),
+  ).rejects.toThrow("Echo agents take no proposed model settings");
+  // A change draft's settings are checked against the type it proposes.
+  const change = await handle.updateAgent({
+    agent: "Child",
+    type: "other/modeled",
+    settings: { model: "" },
+  });
+  expect(service.updateRequests()).toEqual([
+    expect.objectContaining({ id: change.requestId, settings: { model: "" } }),
+  ]);
+  await expect(
+    handle.updateAgent({ agent: "Child", settings: { model: "large" } }),
+  ).rejects.toThrow("Echo agents take no proposed model settings");
+  expect(service.creationRequests()).toHaveLength(1);
+  expect(service.updateRequests()).toHaveLength(1);
+});
+
 it("keeps a failed review for retry and rejects concurrent approvals", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

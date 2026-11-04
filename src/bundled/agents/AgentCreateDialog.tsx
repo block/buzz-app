@@ -108,7 +108,9 @@ export function AgentCreateDialog({
       return undefined;
     }
   };
-  /** The agent's settings in `item`, with `instructions`. */
+  const proposal = update?.request ?? request;
+  /** The agent's settings in `item`, with `instructions`, and the proposed
+   * model settings in the proposed type. */
   const seed = (
     item: RegisteredAgentType | undefined,
     instructions: string | undefined,
@@ -118,9 +120,15 @@ export function AgentCreateDialog({
       : item?.key === update.agent.type
         ? update.agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    return instructions !== undefined && item?.adopt
-      ? item.adopt({ instructions }, config)
-      : config;
+    const adopted =
+      instructions !== undefined && item?.adopt
+        ? item.adopt({ instructions }, config)
+        : config;
+    return proposal?.settings &&
+      item?.propose &&
+      item.key === (proposal.type ?? update?.agent.type)
+      ? item.propose(proposal.settings, adopted)
+      : adopted;
   };
   const [config, setConfig] = useState(() =>
     seed(type, (update?.request ?? request)?.instructions),

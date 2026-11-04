@@ -238,7 +238,7 @@ export function AgentConnectionForm({
                   </h3>
                   <p className="m-0 text-body-sm text-subtle">
                     {preview
-                      ? "Preview · Choose a harness to import this agent."
+                      ? "Choose a harness to import this agent."
                       : done
                         ? "Send a message to continue your conversation."
                         : draft

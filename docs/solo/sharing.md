@@ -39,13 +39,13 @@ owner's selectable agents are offered too and join as Bot, even with a Guest
 admission default, without starting a run. Composer mentions use the same grant.
 Where the viewer cannot add agents, a note says to mention an agent in the chat
 instead.
-Current access uses the channel groups (**People**, **Agents**) with Owner and
+Current access uses the channel groups (**Members**, **Agents**) with Owner and
 Admin tags, and each row has the channel members' actions menu, so the chat owner
 can remove someone. The verified roster shows loading or failure, never treating a
 failed read as an empty audience.
 
 Invitations use the same groups and controls as channels: **Your agents** first,
-then **People**, **Other agents** and **Your other agents**, omitting empty groups.
+then **Others**, **Other agents** and **Your other agents**, omitting empty groups.
 Solo still excludes agents the viewer cannot add directly. Each group uses shared
 name, relationship and usage ranking, begins with four rows, and expands with its
 own **Show more**. Only the viewer's client agents are suggested without typing,
@@ -76,14 +76,14 @@ relay's 15-minute intake window. After expiry, Retry fences local delivery and
 checks the original event ID with a fresh strong read. Verified absence can
 resolve it. If the command is recorded, a fresh signed roster reconciles its
 result. If that person has since been removed, Outbox **Retry** durably clears
-the old row without re-inviting them. An explicit **Add** from People still
+the old row without re-inviting them. An explicit **Add** still
 re-invites them in one action, including when the old receipt remains. Add finishes its fresh
 membership check before atomically retiring the original and saving a new
 explicit Member invitation. Closing or restarting keeps either original recovery
 or the replacement receipt. Failed reads or storage, active delivery, and an echo
 contradicting negative readback keep recovery. This uses the existing Outbox/member/share actions, with no
 background retry or new control. If signed roles confirm that the earlier invite
-admitted a Guest, remove that person in People and invite them again. Recovery
+admitted a Guest, remove that person in Members and invite them again. Recovery
 never silently promotes an existing Guest. A definitively failed invitation can
 also be replaced after explicitly dismissing it in Outbox.
 
@@ -100,7 +100,7 @@ explains that people already in the chat keep their access. Moving from View onl
 to Private warns that joined viewers remain members unless a verified role
 snapshot establishes that no Guests exist; loading or failed verification keeps
 the warning. Public (existing) → Private also warns that joined members retain
-their access until removed in People. One signed kind-9002 edit sets
+their access until removed in Members. One signed kind-9002 edit sets
 `visibility=open` and `join_role=guest` together, through the existing
 `channelDetails` save, conflict checks and exact readback.
 
@@ -121,7 +121,7 @@ Solo label, conversation ID and private workspace filing.
 
 Changing back to Private stops nonmembers from reading; it does not remove
 members or change their roles. Guests who joined through the CLI, MCP or another
-client while the chat was View only keep read access until removed in People.
+client while the chat was View only keep read access until removed in Members.
 Reading without joining creates no membership to retain. Neither transition
 changes invitations, creates a share message or adds notifications. Unconfirmed
 publication uses **Check save status**, without automatically resending.
@@ -171,7 +171,7 @@ reading of its full history and Canvas, including workspace folders and agent
 instructions. View only saves public visibility with Guest admission; Public saves
 Member admission; Private keeps reading restricted to members and retains the
 current admission default. Choosing Private for an open chat warns that joined
-people retain access until removed in People, using the same warning as General
+people retain access until removed in Members, using the same warning as General
 access. A selected share channel is never granted by conversion.
 Cancel writes nothing and returns focus to the retained initiating control.
 

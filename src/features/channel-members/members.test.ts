@@ -988,7 +988,7 @@ it("reports a recovered Guest and permits a fresh Member invite only after expli
   const original = await savedNoRoleInvitation(t);
   t.confirmPerson("guest");
   await expect(t.managedAdd()).rejects.toThrow(
-    /remove them in People.*invite them again/i,
+    /remove them in Members.*invite them again/i,
   );
   expect(t.publish).toHaveBeenCalledOnce();
   expect(t.records()[0]).toMatchObject({
@@ -997,7 +997,7 @@ it("reports a recovered Guest and permits a fresh Member invite only after expli
   });
   t.restart();
   await t.ready();
-  await expect(t.managedAdd()).rejects.toThrow(/remove them in People/i);
+  await expect(t.managedAdd()).rejects.toThrow(/remove them in Members/i);
   expect(t.publish).toHaveBeenCalledOnce();
   t.removePerson();
   await t.managedAdd();
@@ -1018,7 +1018,7 @@ it("preserves a legacy invitation while signed roles are unavailable", async () 
   expect(t.records()[0]?.acknowledged).toBeUndefined();
   expect(t.publish).toHaveBeenCalledOnce();
   t.setRolesAvailable(true);
-  await expect(t.managedAdd()).rejects.toThrow(/remove them in People/i);
+  await expect(t.managedAdd()).rejects.toThrow(/remove them in Members/i);
   expect(t.records()[0]?.acknowledged).toBe(true);
 });
 it("replaces a definitively failed no-role invitation only after explicit Outbox dismissal", async () => {
@@ -1292,7 +1292,7 @@ it.each([false, true])(
     afterInvitationWindow(t);
     if (recorded) t.recordOriginal();
     t.onInvitationRead(() => t.confirmPerson("guest"));
-    await expect(t.managedAdd()).rejects.toThrow(/remove them in People/);
+    await expect(t.managedAdd()).rejects.toThrow(/remove them in Members/);
     expect(t.publish).toHaveBeenCalledOnce();
     expect(t.records()[0]?.acknowledged).toBe(true);
   },

@@ -294,7 +294,7 @@ export async function addChannelMember(
       check();
       intent.confirmed = true;
       throw new Error(
-        "This earlier invitation granted view-only access. To grant participation, remove them in People and invite them again.",
+        "This earlier invitation granted view-only access. To grant participation, remove them in Members and invite them again.",
       );
     }
   }

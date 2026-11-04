@@ -861,6 +861,19 @@ export function ChannelMembersDialog({
       new Map(agentChoices.identities.map((agent) => [agent.pubkey, agent])),
     [agentChoices.identities],
   );
+  // Channel role and editable profile hints cannot erase positive agent evidence.
+  const trustedAgents = useMemo(
+    () =>
+      new Set([
+        ...known.keys(),
+        ...(administration.authority.agentPubkeys ?? []),
+      ]),
+    [known, administration.authority],
+  );
+  const agentIdentity = useCallback(
+    (key: string) => trustedAgents.has(key) || !!profiles.get(key)?.isAgent,
+    [trustedAgents, profiles],
+  );
   const search = useMemberSearch(
     session,
     query,
@@ -926,10 +939,9 @@ export function ChannelMembersDialog({
     (a, b) =>
       memberLabel(a).localeCompare(memberLabel(b)) || a.localeCompare(b),
   );
-  const currentGroups = ["People", "Agents"].map((name) => {
+  const currentGroups = ["Members", "Agents"].map((name) => {
     const keys = currentMembers.filter((key) => {
-      const group =
-        known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
+      const group = agentIdentity(key) ? "Agents" : "Members";
       return group === name;
     });
     return {
@@ -941,7 +953,12 @@ export function ChannelMembersDialog({
   // Optional profile updates change labels, not the identities being browsed.
   // Reopening or refreshing takes a new paging order. Live roster changes
   // retain surviving identities and append new members in their current order.
+  const trustedKey = currentMembers
+    .filter((key) => trustedAgents.has(key))
+    .sort()
+    .join(":");
   const [memberOrder, setMemberOrder] = useState({
+    trustedKey,
     session,
     channelId,
     memberKey,
@@ -954,26 +971,42 @@ export function ChannelMembersDialog({
     memberOrder.channelId !== channelId ||
     memberOrder.refresh !== refresh ||
     memberOrder.initialLoading !== initialLoading;
-  const previousMembers = new Set(
-    memberOrder.groups.flatMap((group) => group.keys),
+  const previousGroups = new Map(
+    memberOrder.groups.flatMap((group) =>
+      group.keys.map((key) => [key, group.name] as const),
+    ),
   );
+  const previouslyTrusted = new Set(memberOrder.trustedKey.split(":"));
+  const moved = new Set(
+    currentMembers.filter(
+      (key) =>
+        previouslyTrusted.has(key) !== trustedAgents.has(key) &&
+        previousGroups.get(key) !== (agentIdentity(key) ? "Agents" : "Members"),
+    ),
+  );
+  const orderChanged =
+    memberOrder.memberKey !== memberKey ||
+    memberOrder.trustedKey !== trustedKey;
   const orderedGroups =
     resetOrder || !largeRoster
       ? currentGroups
-      : memberOrder.memberKey !== memberKey
+      : orderChanged
         ? memberOrder.groups.map((group) => {
             const keys = [
-              ...group.keys.filter((key) => members.has(key)),
+              ...group.keys.filter(
+                (key) => members.has(key) && !moved.has(key),
+              ),
               ...(
                 currentGroups.find((current) => current.name === group.name)
                   ?.keys ?? []
-              ).filter((key) => !previousMembers.has(key)),
+              ).filter((key) => !previousGroups.has(key) || moved.has(key)),
             ];
             return { ...group, keys, count: keys.length };
           })
         : memberOrder.groups;
-  if (resetOrder || memberOrder.memberKey !== memberKey)
+  if (resetOrder || orderChanged)
     setMemberOrder({
+      trustedKey,
       session,
       channelId,
       memberKey,
@@ -1117,11 +1150,7 @@ export function ChannelMembersDialog({
     agentChoices.selectable.map((agent) => agent.pubkey),
   );
   const agentCandidate = (person: { pubkey: string; isAgent?: boolean }) =>
-    !!(
-      person.isAgent ||
-      known.has(person.pubkey) ||
-      profiles.get(person.pubkey)?.isAgent
-    );
+    !!(person.isAgent || agentIdentity(person.pubkey));
   const candidateGroup = (person: { pubkey: string; isAgent?: boolean }) =>
     known.get(person.pubkey)?.managed
       ? 0
@@ -1155,7 +1184,7 @@ export function ChannelMembersDialog({
         available.length > 0));
   const invitationGroups = [
     "Your agents",
-    "People",
+    "Others",
     "Other agents",
     "Your other agents",
   ].map((name, index) => {
@@ -1221,6 +1250,8 @@ export function ChannelMembersDialog({
   const shareChannels = offering && solo && text ? share.channels : [];
   // Keep roster ownership observed while filtering; retiring the view clears
   // valid hints and forces every retained agent row through recovery renders.
+  // Relay markers carry no public owner; they must not expand ownership reads
+  // beyond the existing inventory and page-loaded profile demand.
   const agentKeys = [
     ...new Set([
       ...currentMembers.filter(
@@ -1446,7 +1477,7 @@ export function ChannelMembersDialog({
   };
 
   const searchAgents = search.people
-    .filter((person) => person.isAgent)
+    .filter(agentCandidate)
     .map((person) => person.pubkey)
     .sort()
     .join(":");
@@ -1461,8 +1492,7 @@ export function ChannelMembersDialog({
         !session.directMessages.available ||
         !session.viewer ||
         key === session.viewer ||
-        known.has(key) ||
-        profiles.get(key)?.isAgent ||
+        agentIdentity(key) ||
         searchAgents.split(":").includes(key) ||
         administration.authority.roles[key] === "bot"
       )
@@ -1501,8 +1531,7 @@ export function ChannelMembersDialog({
       session,
       onOpenConversation,
       close,
-      profiles,
-      known,
+      agentIdentity,
       searchAgents,
       administration.authority.roles,
     ],
@@ -1529,7 +1558,7 @@ export function ChannelMembersDialog({
     agent?: boolean,
   ) => {
     const role = administration.authority.roles[key];
-    const isAgent = !!(agent || known.has(key) || profiles.get(key)?.isAgent);
+    const isAgent = !!(agent || agentIdentity(key));
     const owner = isAgent ? ownership.owners.get(key) : undefined;
     const target = profileTarget(key);
     const ownerTarget = owner ? profileTarget(owner) : undefined;
@@ -1611,9 +1640,7 @@ export function ChannelMembersDialog({
       />
     );
   };
-  const selectedAgent =
-    selection &&
-    (known.has(selection.pubkey) || profiles.get(selection.pubkey)?.isAgent);
+  const selectedAgent = selection && agentIdentity(selection.pubkey);
   const removalTarget = selectedAgent ? "agent" : "member";
   const selectedPicture = selection && profiles.get(selection.pubkey)?.picture;
   const selectedName =
@@ -1631,9 +1658,7 @@ export function ChannelMembersDialog({
         fallback={share.names(key)}
         src={avatarMedia(profiles.get(key)?.picture, session.media)}
         size="small"
-        shape={
-          known.has(key) || profiles.get(key)?.isAgent ? "squircle" : "circle"
-        }
+        shape={agentIdentity(key) ? "squircle" : "circle"}
       />
       <span className={styles.stagedName}>{share.names(key)}</span>
     </li>
@@ -2154,8 +2179,8 @@ export function ChannelMembersDialog({
                     <section
                       key={group.name}
                       aria-label={
-                        group.name === "People"
-                          ? `People not in this ${place}`
+                        group.name === "Others"
+                          ? `Others not in this ${place}`
                           : group.name
                       }
                       className="pb-4"

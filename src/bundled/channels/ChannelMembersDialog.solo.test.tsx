@@ -561,7 +561,7 @@ it.each(["guest", "member"] as const)(
     await user.click(audience);
     await user.click(await screen.findByRole("option", { name: "Private" }));
     expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-      `Only chat members will have access.${role === "guest" ? " People who joined while it was View only are members and keep reading until you remove them in People." : ""}`,
+      `Only chat members will have access.${role === "guest" ? " People who joined while it was View only are members and keep reading until you remove them in Members." : ""}`,
     );
     expect(t.published).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Change access" }));
@@ -622,7 +622,7 @@ it.each(["guest", "member"] as const)(
       await user.click(audience);
       await user.click(await screen.findByRole("option", { name: "Private" }));
       expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-        "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People.",
+        "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in Members.",
       );
       await act(async () => {
         reject(new Error("Roles unavailable"));
@@ -632,7 +632,7 @@ it.each(["guest", "member"] as const)(
         "error",
       );
       expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-        "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People.",
+        "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in Members.",
       );
       await user.keyboard("{Escape}");
       expect(t.published).toEqual([]);
@@ -686,7 +686,7 @@ it("adds a person at once under the chat's share rule, by Add or Enter", async (
   expect(await within(dialog).findByText("Aria is in the chat.")).toBeVisible();
   await user.clear(search(dialog));
   expect(
-    await within(dialog).findByRole("region", { name: "People" }),
+    await within(dialog).findByRole("region", { name: "Members" }),
   ).toHaveTextContent("Aria");
   await user.type(search(dialog), "Dev");
   await user.click(
@@ -853,7 +853,7 @@ it("shows loading and failed current access with refresh, never an empty roster"
       expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
     );
     await user.click(refresh);
-    await within(access).findByRole("region", { name: "People" });
+    await within(access).findByRole("region", { name: "Members" });
     // General access has its own failed metadata read and explicit recovery.
     const recovery = within(access).getByRole("group", {
       name: "General access recovery",
@@ -908,7 +908,7 @@ it("groups agents and people by role while only verified additional humans mark 
   const agents = await within(dialog).findByRole("region", { name: "Agents" });
   await within(agents).findByText("Helper Bot");
   expect(within(agents).getByRole("heading")).toHaveTextContent("Agents · 1");
-  const people = within(dialog).getByRole("region", { name: "People" });
+  const people = within(dialog).getByRole("region", { name: "Members" });
   expect(people).toHaveTextContent("(you)");
   expect(people).not.toHaveTextContent("Helper Bot");
 
@@ -919,7 +919,7 @@ it("groups agents and people by role while only verified additional humans mark 
   await waitFor(() =>
     expect(
       within(
-        within(dialog).getByRole("region", { name: "People" }),
+        within(dialog).getByRole("region", { name: "Members" }),
       ).getAllByRole("listitem"),
     ).toHaveLength(2),
   );
@@ -934,7 +934,7 @@ it("groups agents and people by role while only verified additional humans mark 
   await user.click(screen.getByRole("button", { name: "Access" }));
   dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(
-    await within(dialog).findByRole("region", { name: "People" }),
+    await within(dialog).findByRole("region", { name: "Members" }),
   ).toHaveTextContent("Guest Human");
   expect(t.publish).not.toHaveBeenCalled();
 
@@ -982,7 +982,7 @@ it("offers matching people and channels as labelled results without public keys"
   await user.click(screen.getByRole("button", { name: "Access" }));
   const dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(
-    await within(dialog).findByRole("region", { name: "People" }),
+    await within(dialog).findByRole("region", { name: "Members" }),
   ).toHaveTextContent("Aria");
   await user.type(search(dialog), "Planning");
   const people = await within(dialog).findByRole("region", {
@@ -1059,7 +1059,7 @@ it("lets the chat owner remove someone with access from the row menu", async () 
   t.mount();
   await user.click(screen.getByRole("button", { name: "Access" }));
   const dialog = screen.getByRole("dialog", { name: "Share access" });
-  const people = await within(dialog).findByRole("region", { name: "People" });
+  const people = await within(dialog).findByRole("region", { name: "Members" });
   await user.click(
     await within(people).findByRole("button", { name: "Actions for Aria" }),
   );

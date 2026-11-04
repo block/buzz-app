@@ -345,7 +345,10 @@ test("member identity geometry and separate addition focus", async ({
     expect(field.y - header.y - header.height).toBeCloseTo(12, 0);
     await expect(add).toHaveCSS("font-size", "12px");
     expect((await add.boundingBox()).height).toBe(24);
-    const members = dialog.getByRole("region", { name: "People", exact: true });
+    const members = dialog.getByRole("region", {
+      name: "Members",
+      exact: true,
+    });
     const others = dialog.getByRole("region", {
       name: "Not in this channel",
       exact: true,
@@ -358,10 +361,10 @@ test("member identity geometry and separate addition focus", async ({
     await expect(
       dialog
         .getByRole("region", {
-          name: "People not in this channel",
+          name: "Others not in this channel",
           exact: true,
         })
-        .getByRole("heading", { name: "People", exact: true }),
+        .getByRole("heading", { name: "Others", exact: true }),
     ).toHaveCSS("position", "sticky");
     // With no roster matches, search results start at the top without an orphan divider.
     await expect(others).toHaveCSS("border-top-width", "0px");
@@ -919,7 +922,7 @@ test("member identity filter sits inside search and preserves modal focus", asyn
     );
     // Reopening after every choice must retain both width and right edge,
     // including each identity group and its selection mark.
-    for (const name of ["People · 1", "All · 61", "Agents · 60"]) {
+    for (const name of ["Members · 1", "All · 61", "Agents · 60"]) {
       await page.getByRole("menuitemradio", { name, exact: true }).click();
       await expect(popup).toHaveCount(0);
       await filter.click();
@@ -940,7 +943,7 @@ test("member identity filter sits inside search and preserves modal focus", asyn
       "Filter people and agents: Agents",
     );
     await expect(
-      dialog.getByRole("region", { name: "People", exact: true }),
+      dialog.getByRole("region", { name: "Members", exact: true }),
     ).toHaveCount(0);
     await search.fill("Agent 12");
     await expect(dialog.getByRole("listitem")).toHaveCount(1);
@@ -1182,7 +1185,7 @@ for (const rejected of [false, true]) {
     } else {
       await expect(
         members
-          .getByRole("region", { name: "People", exact: true })
+          .getByRole("region", { name: "Members", exact: true })
           .getByRole("button", { name: /Open profile for Morgan/ }),
       ).toHaveCount(0);
       await expect(page.locator(".buzz-toast")).toHaveCount(0);
@@ -1216,7 +1219,7 @@ test("member helper aligns with content and Owner stays beside a person's name",
         name: "Manage members",
         exact: true,
       });
-      const heading = dialog.getByRole("heading", { name: /^People ·/ });
+      const heading = dialog.getByRole("heading", { name: /^Members ·/ });
       if (visitor) {
         // A visitor cannot read the roster, so no empty People group renders.
         const helper = dialog.getByText(
@@ -1322,7 +1325,7 @@ test("Solo adds an agent with pointer or Enter and retains the search focus", as
     await search.fill("Morgan");
     await expect(add).toBeEnabled();
     await expect(
-      dialog.getByRole("region", { name: "People", exact: true }),
+      dialog.getByRole("region", { name: "Members", exact: true }),
     ).toHaveCount(0);
     await expect(dialog.locator("mark")).toHaveCount(0);
     const neutralFill = await add.locator("../..").evaluate((row) => {
@@ -1354,7 +1357,7 @@ test("Solo adds an agent with pointer or Enter and retains the search focus", as
     ).toHaveClass("sr-only");
     await expect(search).toHaveValue("");
     await expect(
-      dialog.getByRole("region", { name: "People", exact: true }),
+      dialog.getByRole("region", { name: "Members", exact: true }),
     ).toContainText("Carl");
     await expect(search).toBeFocused();
     await expect(

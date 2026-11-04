@@ -244,7 +244,7 @@ test.describe("owner", () => {
       await audience.click();
       await page.getByRole("option", { name: "Private", exact: true }).click();
       await expect(confirm).toHaveAccessibleDescription(
-        "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People.",
+        "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in Members.",
       );
       await expect(
         confirm.getByRole("button", { name: "Cancel", exact: true }),
@@ -288,7 +288,7 @@ test.describe("owner", () => {
       await audience.click();
       await page.getByRole("option", { name: "Private", exact: true }).click();
       await expect(confirm).toHaveAccessibleDescription(
-        "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People.",
+        "Only chat members will have access. People who already joined remain members and keep their access until you remove them in Members.",
       );
       await expect(
         confirm.getByRole("button", { name: "Change access", exact: true }),
@@ -430,7 +430,7 @@ test.describe("visitor", () => {
     ).toHaveAttribute("data-refreshing", "false");
     await expect(existingAccess.getByRole("alert")).toHaveCount(0);
     await expect(
-      existingAccess.getByRole("region", { name: "People", exact: true }),
+      existingAccess.getByRole("region", { name: "Members", exact: true }),
     ).toBeVisible();
     await expect(
       existingAccess.getByRole("region", { name: "General access" }),

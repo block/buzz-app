@@ -18,9 +18,9 @@ export function soloRetainedAccessWarning(
 ): string {
   if (base.visibility !== "public") return "";
   if (base.joinRole !== "guest")
-    return "People who already joined remain members and keep their access until you remove them in People.";
+    return "People who already joined remain members and keep their access until you remove them in Members.";
   return mayHaveGuestMembers
-    ? "People who joined while it was View only are members and keep reading until you remove them in People."
+    ? "People who joined while it was View only are members and keep reading until you remove them in Members."
     : "";
 }
 

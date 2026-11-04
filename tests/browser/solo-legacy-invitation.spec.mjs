@@ -224,7 +224,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
   await expect(summary).toHaveText("Outbox · 0 items");
   expect(publications).toHaveLength(0);
 
-  // Only an explicit People Add may re-invite the removed person.
+  // Only an explicit Add may re-invite the removed person.
   await page.goto(
     `${app.origin}/#buzz=${encodeURIComponent(
       JSON.stringify({
@@ -267,7 +267,7 @@ test("Outbox Retry reconciles a recorded then removed Solo invitation without re
     .toBe(true);
   await expect(
     access
-      .getByRole("region", { name: "People", exact: true })
+      .getByRole("region", { name: "Members", exact: true })
       .getByRole("button", { name: "Actions for Aria", exact: true }),
   ).toBeVisible();
   await page.reload();

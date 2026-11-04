@@ -85,6 +85,16 @@ it("tells SVGs that paint with currentColor from other images", () => {
   expect(paintsCurrentColor(bag64)).toBe(true);
   expect(paintsCurrentColor(owl)).toBe(false);
   expect(paintsCurrentColor(fox)).toBe(false);
+  const styled =
+    '<svg><style>path{stroke: currentColor}</style><path d="M1 1"/></svg>';
+  expect(
+    paintsCurrentColor(`data:image/svg+xml,${encodeURIComponent(styled)}`),
+  ).toBe(true);
+  const named =
+    '<svg><title>currentColor example</title><!-- fill="currentColor" --><path fill="red"/><path fill="blue"/></svg>';
+  expect(
+    paintsCurrentColor(`data:image/svg+xml,${encodeURIComponent(named)}`),
+  ).toBe(false);
   expect(paintsCurrentColor("data:image/svg+xml,%E0%A4%A")).toBe(false);
   expect(paintsCurrentColor("data:image/svg+xml;base64,@@@")).toBe(false);
 });

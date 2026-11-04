@@ -10,6 +10,9 @@ type PageIconProps = {
 
 const pixelsPerRem = 16;
 const svgData = /^data:image\/svg\+xml((?:;[^,]*)?),/i;
+const nonPaint = /<!--[\s\S]*?-->|<(title|desc|metadata)\b[\s\S]*?<\/\1\s*>/gi;
+const currentColorPaint =
+  /(?:^|[\s;"'{])(?:fill|stroke|stop-color|flood-color|lighting-color)\s*(?:=\s*["']?|:)\s*currentcolor\b/i;
 
 /** An SVG that paints with `currentColor`, which an `<img>` can't resolve. */
 export function paintsCurrentColor(image: string): boolean {
@@ -20,7 +23,7 @@ export function paintsCurrentColor(image: string): boolean {
     const svg = /;base64$/i.test(match[1] ?? "")
       ? atob(payload)
       : decodeURIComponent(payload);
-    return /currentcolor/i.test(svg);
+    return currentColorPaint.test(svg.replace(nonPaint, ""));
   } catch {
     return false;
   }

@@ -19,11 +19,15 @@ export type InboxRoute =
       sender?: SenderFilter;
     }
   | { drafts: true };
-const filters: Readonly<Record<string, readonly JsonValue[]>> = {
-  attention: ["all", "unread"],
-  activity: ["all", "threads", "mentions", "dms"],
-  show: ["inbox", "archived"],
-  sender: ["everyone", "humans", "agents"],
+type Filters = Required<Exclude<InboxRoute, { drafts: true }>>;
+// Keyed by each union so a value added to one fails to compile until listed here.
+const filters: {
+  readonly [K in keyof Filters]: Readonly<Record<Filters[K], true>>;
+} = {
+  attention: { all: true, unread: true },
+  activity: { all: true, threads: true, mentions: true, dms: true },
+  show: { inbox: true, archived: true },
+  sender: { everyone: true, humans: true, agents: true },
 };
 
 function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
@@ -37,11 +41,14 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
       ? { drafts: true }
       : undefined;
   if (
-    keys.some(
-      (key) =>
+    keys.some((key) => {
+      const choice = value[key];
+      return (
         !Object.hasOwn(filters, key) ||
-        !filters[key]?.includes(value[key] as JsonValue),
-    )
+        typeof choice !== "string" ||
+        !Object.hasOwn(filters[key as keyof Filters], choice)
+      );
+    })
   )
     return;
   return Object.fromEntries(keys.map((key) => [key, value[key]])) as InboxRoute;

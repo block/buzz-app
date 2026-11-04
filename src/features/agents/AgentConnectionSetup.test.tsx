@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -195,27 +196,29 @@ it.each(["dm", "stream", "forum"] as const)(
     const { AgentsContext } = await import("./react");
     const { act } = await import("@testing-library/react");
     render(
-      <AgentsContext.Provider value={agents}>
-        <AgentConnectionSetup
-          session={session}
-          channel={channel}
-          rows={[
-            {
-              id: "b".repeat(64),
-              channelId: channel.id,
-              createdAt: 1,
-              content: "Hello",
-              attachments: [],
-              reactions: [],
-              replyCount: 0,
-              participants: [],
-              threadRootId: "c".repeat(64),
-              authorId: viewer,
-              mentions: [candidate.pubkey, "human"],
-            },
-          ]}
-        />
-      </AgentsContext.Provider>,
+      <ToastProvider>
+        <AgentsContext.Provider value={agents}>
+          <AgentConnectionSetup
+            session={session}
+            channel={channel}
+            rows={[
+              {
+                id: "b".repeat(64),
+                channelId: channel.id,
+                createdAt: 1,
+                content: "Hello",
+                attachments: [],
+                reactions: [],
+                replyCount: 0,
+                participants: [],
+                threadRootId: "c".repeat(64),
+                authorId: viewer,
+                mentions: [candidate.pubkey, "human"],
+              },
+            ]}
+          />
+        </AgentsContext.Provider>
+      </ToastProvider>,
     );
     await waitFor(() => expect(portable).toHaveBeenCalledOnce());
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
@@ -250,15 +253,20 @@ it.each(["dm", "stream", "forum"] as const)(
       for (const listener of [...listeners]) listener();
     });
     expect(screen.queryByRole("heading", { name: /^Connect / })).toBeNull();
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Import interrupted",
+    );
     if (channelType !== "dm") {
       act(() => {
         presence = "offline";
         for (const listener of [...listeners]) listener();
       });
       await user.click(await screen.findByRole("button", { name: "Connect" }));
-      await screen.findByRole("button", { name: "Send again" });
+      await screen.findByRole("button", { name: "Ask Helper to respond" });
       expect(reply).not.toHaveBeenCalled();
-      await user.click(screen.getByRole("button", { name: "Send again" }));
+      await user.click(
+        screen.getByRole("button", { name: "Ask Helper to respond" }),
+      );
       expect(reply).toHaveBeenCalledExactlyOnceWith(
         channel.id,
         "c".repeat(64),
@@ -362,15 +370,21 @@ it("requires an explicit follow-up after import and preserves send failure for r
     />,
   );
   const user = userEvent.setup();
-  expect(screen.queryByRole("button", { name: "Send again" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Ask Helper to respond" }),
+  ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Connect" }));
-  await screen.findByRole("button", { name: "Send again" });
+  await screen.findByRole("button", { name: "Ask Helper to respond" });
   expect(sendAgain).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Send again" }));
+  await user.click(
+    screen.getByRole("button", { name: "Ask Helper to respond" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Cannot send here",
   );
-  await user.click(screen.getByRole("button", { name: "Send again" }));
+  await user.click(
+    screen.getByRole("button", { name: "Ask Helper to respond" }),
+  );
   expect(
     await screen.findByRole("button", { name: "Follow-up queued" }),
   ).toBeDisabled();

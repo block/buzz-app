@@ -14086,4 +14086,57 @@ it("reports an incomplete import when adopting settings fails after identity ins
   ).rejects.toThrow("identity was imported");
   expect(native.port).toHaveBeenCalledOnce();
   expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+  await service.refresh();
+  expect(service.find(sibling)?.config).toEqual({ reply: "Reviewed" });
+});
+
+it("serializes inline import before the staged write is durable", async () => {
+  const { service, native, storage } = await setup();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const add = storage.add.bind(storage);
+  const staged = vi
+    .spyOn(storage, "add")
+    .mockImplementation(async (key, value) => {
+      const result = await add(key, value);
+      await held;
+      return result;
+    });
+  const input = {
+    source: "installed" as const,
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed" },
+  };
+  const first = service.port(input);
+  try {
+    await vi.waitFor(() => expect(staged).toHaveBeenCalledOnce());
+    await expect(service.port(input)).rejects.toThrow(
+      "already being connected",
+    );
+    expect(native.port).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+  await first;
+  expect(native.port).toHaveBeenCalledOnce();
+});
+
+it("preserves staged settings after native installation fails and later refreshes", async () => {
+  const { service, native, storage } = await setup();
+  native.port.mockRejectedValueOnce(new Error("Installation failed"));
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("Installation failed");
+  await service.refresh();
+  await settle();
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+  expect(service.find(sibling)).toBeUndefined();
 });

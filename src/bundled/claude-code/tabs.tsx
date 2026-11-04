@@ -372,20 +372,7 @@ export function createTabs({
     return (
       <CreateModelChoices
         {...props}
-        models={modelChoices(state.models).map((choice) => ({
-          ...choice,
-          efforts: effortsFor(choice.id, state.models).length
-            ? [
-                { id: "", label: "Automatic" },
-                ...effortsFor(choice.id, state.models),
-              ]
-            : [],
-        }))}
-        effort={current.effort}
-        effortLabel={current.effort ? effortLabel(current.effort) : "Automatic"}
-        onEffortChange={(model, effort) =>
-          onChange(readConfig({ ...current, model, effort }))
-        }
+        models={modelChoices(state.models)}
         value={current.model}
         defaultModel={providerDefaultModel(
           providerDefaults.model,
@@ -399,7 +386,21 @@ export function createTabs({
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
-        onChange={(model) => onChange({ ...current, model })}
+        onChange={(model) => {
+          const efforts = effortsFor(
+            model || providerDefaults.model,
+            state.models,
+          );
+          onChange({
+            ...current,
+            model,
+            effort:
+              state.models.length === 0 ||
+              efforts.some((level) => level.id === current.effort)
+                ? current.effort
+                : "",
+          });
+        }}
       />
     );
   }

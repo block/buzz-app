@@ -3051,33 +3051,40 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "The community changed. Reopen this conversation to connect.",
       );
-    if (config !== undefined) {
-      const kind = this.types().find(
-        (entry) => entry.key === type && !entry.remote,
+    if (this.reclaiming.has(pubkey))
+      throw new Error(
+        "This agent is already being connected. Wait for that attempt to finish.",
       );
-      if (!kind) throw new Error("That agent type is not available");
-      if (
-        this.identities.some(
-          (identity) => identity.pubkey === pubkey && !identity.deleted,
-        )
-      )
-        throw new Error(
-          "This agent has already been imported. Open its Settings to configure it.",
-        );
-      // Save the reviewed choices before installing the identity, so a failed
-      // write cannot start an imported agent with unintended model defaults.
-      const staged = { ...defaults(pubkey, kind), config };
-      const text = recordText(staged);
-      const kept = await this.storage.add(recordKey(pubkey), text);
-      if (kept !== text)
-        throw new Error(
-          "This agent already has saved setup. Finish importing it from Agents, then review its Settings.",
-        );
-    }
+    let staged: AgentRecord | undefined;
     const notes: string[] = [];
-    // A cleanup still running from its Delete must not touch it once it is back.
-    await this.reclaim(pubkey);
+    // Hold the identity before staging: another port must not observe an
+    // optimistic store value whose write has not reached disk yet.
     try {
+      await this.reclaim(pubkey);
+      if (config !== undefined) {
+        const kind = this.types().find(
+          (entry) => entry.key === type && !entry.remote,
+        );
+        if (!kind) throw new Error("That agent type is not available");
+        if (
+          this.identities.some(
+            (identity) => identity.pubkey === pubkey && !identity.deleted,
+          )
+        )
+          throw new Error(
+            "This agent has already been imported. Open its Settings to configure it.",
+          );
+        // Save the reviewed choices before installing the identity, so a failed
+        // write cannot start an imported agent with unintended model defaults.
+        const draft = { ...defaults(pubkey, kind), config };
+        const text = recordText(draft);
+        const kept = await this.storage.add(recordKey(pubkey), text);
+        if (kept !== text)
+          throw new Error(
+            "This agent already has saved setup. Finish importing it from Agents, then review its Settings.",
+          );
+        staged = draft;
+      }
       const agent = await this.add(
         type,
         async (native, destination, owner) => {
@@ -3088,6 +3095,7 @@ export class AgentsService extends Service implements Agents {
             owner,
             type,
           );
+          if (staged) this.records = { ...this.records, [pubkey]: staged };
           notes.push(...(ported.notes ?? []));
           return ported;
         },
@@ -3096,6 +3104,22 @@ export class AgentsService extends Service implements Agents {
       );
       await this.unarchiveHere(agent, binding, notes);
       return { agent, notes };
+    } catch (error) {
+      if (staged) {
+        try {
+          // Installation may have succeeded before a later write failed.
+          // Refresh with the durable reviewed record already in memory. Keep
+          // staged disk state: this process cannot safely delete shared state
+          // based on its cached copy when another app may have changed it.
+          await this.refresh();
+        } catch (recoveryError) {
+          console.warn(
+            "Imported agent setup recovery did not finish",
+            recoveryError,
+          );
+        }
+      }
+      throw error;
     } finally {
       this.reclaiming.delete(pubkey);
     }
@@ -5114,7 +5138,9 @@ export class AgentsService extends Service implements Agents {
           .filter((saved) => !saved.deleted)
           .flatMap((saved) => [saved.key, saved.pubkey]),
       );
-      const gone = Object.keys(this.records).filter((key) => !live.has(key));
+      const gone = Object.keys(this.records).filter(
+        (key) => !live.has(key) && !this.reclaiming.has(key),
+      );
       for (const key of gone)
         void this.change(key, () => null).catch((error) =>
           console.warn(`Agent ${key} settings were not removed`, error),

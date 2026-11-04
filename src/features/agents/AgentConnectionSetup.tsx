@@ -2,6 +2,7 @@ import { useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Select } from "../../shared/design-system/ui/Select";
 import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -157,6 +158,7 @@ function Candidate({
   peer: string;
   message?: ChannelMessage;
 }) {
+  const notify = useToastNotification();
   const owned = useAgentOwnerEvidence(session, peer);
   const existing = useAgent(agents, peer)?.agent.key;
   const choices = useSyncExternalStore(
@@ -214,7 +216,15 @@ function Candidate({
       candidate={candidate}
       scope={session.scope}
       onStart={() => setPhase("pending")}
-      onFinish={(success) => setPhase(success ? "done" : "idle")}
+      onFinish={(success, error) => {
+        if (error)
+          notify(error, "error", {
+            label: "Dismiss",
+            onClick() {},
+            timeout: Infinity,
+          });
+        setPhase(success ? "done" : "idle");
+      }}
       onSendAgain={
         message
           ? async () => {
@@ -248,7 +258,7 @@ export function AgentConnectionForm({
   candidate: PortableAgent;
   scope: string;
   onStart?: () => void;
-  onFinish?: (success: boolean) => void;
+  onFinish?: (success: boolean, error?: string) => void;
   preview?: boolean;
   onSendAgain?: (() => Promise<void>) | undefined;
 }) {
@@ -289,8 +299,9 @@ export function AgentConnectionForm({
       setDone(true);
       onFinish?.(true);
     } catch (reason) {
-      onFinish?.(false);
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const error = reason instanceof Error ? reason.message : String(reason);
+      setError(error);
+      onFinish?.(false, error);
     } finally {
       setPending(false);
     }
@@ -335,7 +346,7 @@ export function AgentConnectionForm({
                       ? "Choose a harness to import this agent."
                       : done
                         ? onSendAgain
-                          ? "Send a follow-up to this agent in your original message’s thread."
+                          ? `Send “Please respond to my message above.” to ${candidate.name} in your original message’s thread.`
                           : "Send a message to continue your conversation."
                         : draft
                           ? "Review the settings to import this agent and continue your conversation."
@@ -418,7 +429,7 @@ export function AgentConnectionForm({
                         ? "Follow-up queued"
                         : pending
                           ? "Sending…"
-                          : "Send again"}
+                          : `Ask ${candidate.name} to respond`}
                     </Button>
                   </div>
                 )}

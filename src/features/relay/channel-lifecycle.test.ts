@@ -783,7 +783,7 @@ describe("Leave confirmation across access revocation", () => {
       ["scoped", "global"].map((scope) => ({ action, scope })),
     ),
   )(
-    "$scope revocation still aborts published $action",
+    "$scope revocation lets published $action confirm",
     async ({ action, scope }) => {
       const h = harness();
       const publish = h.publish.getMockImplementation();
@@ -793,13 +793,16 @@ describe("Leave confirmation across access revocation", () => {
         h.owner.cancel(scope === "scoped" ? [id] : undefined);
       });
       try {
-        await expect(h.owner.capability.run(action, id)).rejects.toBeInstanceOf(
-          ChannelLifecycleUnconfirmed,
-        );
-        expect(h.read).toHaveBeenCalledTimes(2);
+        await h.owner.capability.run(action, id);
+        expect(h.read).toHaveBeenCalledTimes(3);
         expect(h.publish).toHaveBeenCalledOnce();
-        expect(h.acceptDiscovery).not.toHaveBeenCalled();
-        expect(h.removed).not.toHaveBeenCalled();
+        if (action === "archive") {
+          expect(h.acceptDiscovery).toHaveBeenCalledOnce();
+          expect(h.removed).not.toHaveBeenCalled();
+        } else {
+          expect(h.acceptDiscovery).not.toHaveBeenCalled();
+          expect(h.removed).toHaveBeenCalledExactlyOnceWith(id);
+        }
       } finally {
         h.owner.dispose();
       }
@@ -902,6 +905,10 @@ describe("Leave confirmation across access revocation", () => {
       const rejected = expect(
         h.owner.capability.run("leave", id),
       ).rejects.toBeInstanceOf(ChannelLifecycleUnconfirmed);
+      // The retired read is reread after a real macrotask the fake clock
+      // does not drive; start the poll budget once that reread is issued.
+      while (h.read.mock.calls.length < 4)
+        await new Promise<void>((resolve) => setImmediate(resolve));
       await vi.advanceTimersByTimeAsync(2500);
       await rejected;
       expect(h.publish).toHaveBeenCalledOnce();

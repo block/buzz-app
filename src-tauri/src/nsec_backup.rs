@@ -607,7 +607,10 @@ impl NsecBackupHost {
             config,
             &pubkey,
         )?;
-        if consent.automatic != Some(true) {
+        let managed =
+            crate::nsec_backup_config::managed(option_env!("BUZZ_NSEC_BACKUP_CONSENT"), true)
+                == Ok(true);
+        if !managed && consent.automatic != Some(true) {
             return Ok(Outcome::Waiting(Waiting::NoConsent));
         }
         // Hold consent's shared lease until this pass ends, including persisted retries.

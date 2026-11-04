@@ -154,13 +154,21 @@ fn restore_geometry_from<R: Runtime>(
         let header_height = (48.0 * window.scale_factor()?).ceil() as u32;
         let default = WindowConfig::default();
         let config = window.config().app.windows.first().unwrap_or(&default);
-        let (position, size) =
+        let (position, size, relocated) =
             restore_request(&saved, offset, header_height, &areas, fallback, config);
         // Validate the requested geometry BEFORE sending it. Native setters
         // may apply asynchronously (Linux/macOS); getters can still report the
-        // startup frame. Move first: crossing to a monitor with another scale
-        // can rescale the window (Windows DPI change), which would undo an
-        // earlier physical resize.
+        // startup frame. macOS and GTK convert physical values at the startup
+        // scale, so a relocated window is sent in its monitor's logical units.
+        let (position, size): (tauri::Position, tauri::Size) =
+            match relocated.filter(|_| cfg!(not(windows))) {
+                Some(scale) => (
+                    position.to_logical::<f64>(scale).into(),
+                    size.to_logical::<f64>(scale).into(),
+                ),
+                None => (position.into(), size.into()),
+            };
+        // Move first: a Windows DPI change rescales the window.
         window.set_position(position)?;
         window.set_size(size)?;
     }
@@ -174,7 +182,7 @@ fn restore_request(
     areas: &[PhysicalRect<i32, u32>],
     fallback: (PhysicalRect<i32, u32>, f64),
     config: &WindowConfig,
-) -> (PhysicalPosition<i32>, PhysicalSize<u32>) {
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>, Option<f64>) {
     let position = if saved.maximized {
         PhysicalPosition::new(saved.prev_x, saved.prev_y)
     } else {
@@ -187,13 +195,15 @@ fn restore_request(
         ),
         size: PhysicalSize::new(saved.width, saved.height),
     };
-    let target = reachable_client(client, header_height, areas, fallback, config).unwrap_or(client);
+    let relocated = reachable_client(client, header_height, areas, fallback, config);
+    let target = relocated.unwrap_or(client);
     (
         PhysicalPosition::new(
             target.position.x.saturating_sub(client_offset.x),
             target.position.y.saturating_sub(client_offset.y),
         ),
         target.size,
+        relocated.map(|_| fallback.1),
     )
 }
 
@@ -220,18 +230,18 @@ fn reachable_client(
                     && y < i64::from(area.position.y) + i64::from(area.size.height)
             })
         });
-    if reachable {
+    // A saved size below the minimum at the fallback's scale was saved at a
+    // lower scale. It would open clamped and re-save that smaller size. With a
+    // single monitor its scale is known even when the rect is still reachable.
+    let saved = client.size.to_logical::<f64>(fallback_scale);
+    let too_small = saved.width < config.min_width.unwrap_or(0.0)
+        || saved.height < config.min_height.unwrap_or(0.0);
+    if reachable && !(too_small && areas.len() == 1) {
         return None;
     }
     // Unlike any-corner intersection, this keeps the drag strip and both sets
     // of platform controls on-screen, including after removing an upper monitor.
-    // The saved size is physical at the missing monitor's scale. If it is below
-    // the minimum at the fallback's scale, the window would open clamped and
-    // re-save that smaller size, so use the configured default instead.
-    let saved = client.size.to_logical::<f64>(fallback_scale);
-    let wanted = if saved.width < config.min_width.unwrap_or(0.0)
-        || saved.height < config.min_height.unwrap_or(0.0)
-    {
+    let wanted = if too_small {
         LogicalSize::new(config.width, config.height).to_physical(fallback_scale)
     } else {
         client.size
@@ -291,17 +301,33 @@ mod tests {
     }
 
     #[test]
-    fn saved_size_on_a_present_monitor_is_kept_whatever_the_fallback_scale() {
+    fn saved_size_is_kept_with_monitors_attached_and_recovered_on_a_lone_monitor() {
         let external = rect(1512, 0, 1920, 1080);
         let laptop = rect(0, 50, 3024, 1840);
         let saved = decode(&saved_state(1600, 100, 602, 470));
         let offset = tauri::PhysicalPosition::new(0, 0);
-        let areas = [laptop, external];
+        let request = |areas: &[tauri::PhysicalRect<i32, u32>]| {
+            super::restore_request(&saved, offset, 96, areas, (laptop, 2.0), &config())
+        };
+        // The 1x external overlaps the 2x laptop's physical rect, so the scale
+        // this rect was saved at is ambiguous. Keep it as saved.
         assert_eq!(
-            super::restore_request(&saved, offset, 96, &areas, (laptop, 2.0), &config()),
+            request(&[laptop, external]),
             (
                 tauri::PhysicalPosition::new(1600, 100),
-                tauri::PhysicalSize::new(602, 470)
+                tauri::PhysicalSize::new(602, 470),
+                None
+            ),
+        );
+        // Unplugged: the laptop's physical rect still contains the saved rect,
+        // but 301x235 points is below the minimum at its known scale. Send the
+        // default in the laptop's logical units.
+        assert_eq!(
+            request(&[laptop]),
+            (
+                tauri::PhysicalPosition::new(312, 50),
+                tauri::PhysicalSize::new(2400, 1600),
+                Some(2.0)
             ),
         );
     }
@@ -314,6 +340,11 @@ mod tests {
         // Saved on a 1x monitor that is gone: 301x235 points on a 2x laptop.
         assert_frame(
             fallback(rect(5530, 100, 602, 470), laptop),
+            Some(rect(312, 50, 2400, 1600)),
+        );
+        // One axis below the minimum is enough.
+        assert_frame(
+            fallback(rect(5530, 100, 960, 799), laptop),
             Some(rect(312, 50, 2400, 1600)),
         );
         // At or above the minimum at the fallback's scale, the saved size stays.
@@ -411,7 +442,7 @@ mod tests {
                 (area, 1.0),
                 &config()
             ),
-            (tauri::PhysicalPosition::new(-7, 0), area.size),
+            (tauri::PhysicalPosition::new(-7, 0), area.size, None),
         );
     }
 
@@ -460,6 +491,7 @@ mod tests {
         let expected = (
             tauri::PhysicalPosition::new(240, 25),
             tauri::PhysicalSize::new(960, 640),
+            Some(1.0),
         );
         assert_frame(
             super::reachable_client(completed, 48, &[area], (area, 1.0), &config()),
@@ -475,7 +507,11 @@ mod tests {
         let saved = decode(&saved_state(100, 120, 1800, 800));
         assert_eq!(
             super::restore_request(&saved, offset, 48, &[area], (area, 1.0), &config()),
-            (area.position, tauri::PhysicalSize::new(1440, 800)),
+            (
+                area.position,
+                tauri::PhysicalSize::new(1440, 800),
+                Some(1.0)
+            ),
         );
     }
 
@@ -488,7 +524,8 @@ mod tests {
             super::restore_request(&saved, offset, 48, &[area], (area, 1.0), &config()),
             (
                 tauri::PhysicalPosition::new(-7, 0),
-                tauri::PhysicalSize::new(1920, 1000)
+                tauri::PhysicalSize::new(1920, 1000),
+                None
             ),
         );
         let mut state = saved_state(0, 0, 960, 640);
@@ -499,7 +536,8 @@ mod tests {
             super::restore_request(&decode(&state), offset, 48, &[area], (area, 1.0), &config()),
             (
                 tauri::PhysicalPosition::new(473, 0),
-                tauri::PhysicalSize::new(960, 640)
+                tauri::PhysicalSize::new(960, 640),
+                Some(1.0)
             ),
         );
         // Fullscreen uses x/y, not prev_x/prev_y, matching the plugin format.
@@ -509,7 +547,8 @@ mod tests {
             super::restore_request(&decode(&state), offset, 48, &[area], (area, 1.0), &config()),
             (
                 tauri::PhysicalPosition::new(0, 0),
-                tauri::PhysicalSize::new(960, 640)
+                tauri::PhysicalSize::new(960, 640),
+                None
             ),
         );
     }

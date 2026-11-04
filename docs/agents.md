@@ -158,6 +158,8 @@ behavior for its agents. Plugins can add a tab to every local agent with
 the Attention plugin's Attention tab holds the device Attention switch, and the
 Bestie plugin's Bestie tab shows only on your Bestie.
 
+Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. A new owner waits for the previous command to stop before starting its copy. Removing a watch or turning Attention off stops its command through the existing process host.
+
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
 attention tools. How to use the attention tools is in their own descriptions,
@@ -745,10 +747,11 @@ turning it back on does not restore old recipients. Solo chat auto-recipient rul
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
-Team records in the channel kit (see [Channels](channels.md); groups, Canvas and
-`buzz-channel-kit-v2` team manifests) appear in both mention choosers as shortcuts.
-No bundled plugin writes team records now, so they appear only for records already
-in the community. A team is a shortcut, not a group identity: explicit selection
+Saved teams from **Your teams**, both local and confirmed synced copies, appear
+in both mention choosers under the same community visibility rules. Legacy
+channel-kit teams (see [Channels](channels.md)) remain available independently;
+a legacy catalog failure does not block current teams. A team is a shortcut, not
+a group identity: explicit selection
 inserts its saved agent keys as individual mentions in one undoable edit through
 `insertMentions`. Names never resolve membership. Typing a team name or Space
 alone does not select it. Team names also prevent Space from accidentally selecting
@@ -1041,10 +1044,11 @@ direction. Agent-elided strings and payloads are labeled, not hidden. Turns whos
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
-The shared Claude, Goose, and Pi turn formatter encodes conversation history and
-the triggering event as JSON with escaped markup delimiters. Message text,
-display names, and tags therefore cannot create extra request sections. The
-transcript reads that JSON directly and retains support for older line-based
+The shared Claude, Goose, and Pi turn formatter sends conversation history and
+the triggering event as exact JSON records with escaped markup delimiters, the
+same records Codex sends. Message text and tags therefore cannot create extra
+request sections. The transcript reads those records directly and retains
+support for the earlier single-object JSON event and older line-based
 `buzz-event` and `buzz-events` records; it never parses decoded message content
 as another prompt.
 

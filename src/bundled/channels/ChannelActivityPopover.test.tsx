@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ChannelSidebarRows } from "../../features/channel-navigation/ChannelSidebarRows";
 import type { RelaySession } from "../../features/relay/session";
 import type {
   ThreadActivityItem,
@@ -12,6 +13,56 @@ import type {
 } from "../../features/relay/unread";
 
 afterEach(cleanup);
+
+test("closes activity while its row exits and does not reopen on re-entry", async () => {
+  const user = userEvent.setup();
+  const snapshot: ThreadActivitySnapshot = {
+    channelId: "studio",
+    items: [],
+    coverage: "observed",
+    freshness: "observed",
+  };
+  const session = {
+    unread: { activity: () => snapshot, subscribeActivity: () => () => {} },
+    agentActivity: {
+      snapshot: () => ({ records: [], turns: [], typing: [] }),
+      subscribe: () => () => {},
+    },
+    media: (url: string) => url,
+  } as unknown as RelaySession;
+  const view = (present: boolean) => (
+    <ChannelSidebarRows open>
+      {present
+        ? [
+            <ChannelActivityPopover
+              key="studio"
+              session={session}
+              channelId="studio"
+              channelName="Studio"
+              trigger={<Button>Activity</Button>}
+              agents={["a".repeat(64)]}
+              onOpenThread={vi.fn()}
+            />,
+          ]
+        : []}
+    </ChannelSidebarRows>
+  );
+  const mounted = render(view(true));
+  const trigger = screen.getByRole("button", { name: "Activity" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("dialog", { name: "Activity in Studio" });
+  mounted.rerender(view(false));
+  expect(trigger.closest("[inert]")).not.toBeNull();
+  expect(
+    screen.queryByRole("dialog", { name: "Activity in Studio" }),
+  ).toBeNull();
+  mounted.rerender(view(true));
+  expect(screen.getByRole("button", { name: "Activity" })).toBe(trigger);
+  expect(
+    screen.queryByRole("dialog", { name: "Activity in Studio" }),
+  ).toBeNull();
+});
 
 test("mouse presses do not pin the hover preview open, and only hover marks it a preview", async () => {
   const user = userEvent.setup();
@@ -265,7 +316,11 @@ test("working agents open their thread when linked, otherwise the conversation",
   });
   expect(activityAction.closest(".navigation-item")).toBeNull();
   await user.click(activityAction);
-  expect(openAgentActivity).toHaveBeenCalledExactlyOnceWith("studio", first);
+  expect(openAgentActivity).toHaveBeenCalledExactlyOnceWith(
+    "studio",
+    first,
+    messageId,
+  );
   expect(openWorkingAgent).not.toHaveBeenCalled();
   screen.getByRole("button", { name: "Activity" }).focus();
   await user.keyboard("{Enter}");
@@ -324,7 +379,11 @@ test("a typing agent still opens its profile activity while Agent Activity is of
   screen.getByRole("button", { name: "Activity" }).focus();
   await user.keyboard("{Enter}");
   await user.click(screen.getByRole("button", { name: "View Buzzy activity" }));
-  expect(openAgentActivity).toHaveBeenCalledExactlyOnceWith("studio", agent);
+  expect(openAgentActivity).toHaveBeenCalledExactlyOnceWith(
+    "studio",
+    agent,
+    undefined,
+  );
   screen.getByRole("button", { name: "Activity" }).focus();
   await user.keyboard("{Enter}");
   await user.click(

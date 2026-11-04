@@ -60,6 +60,7 @@ import {
   dispatchAgentHooks,
   type AgentHook,
   type AgentHookContext,
+  type AgentHookDispatchOptions,
 } from "./hooks";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
@@ -153,6 +154,7 @@ import {
   readArchiveUnchecked,
   readRecords,
   recordKey,
+  recordText,
   readTeams,
   readUnfinished,
   setAttention,
@@ -302,7 +304,9 @@ export type AgentViewProps<Config = unknown> = {
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
   /** Model fields may use the compact card treatment in the library. */
-  modelAppearance?: "glass-ghost";
+  modelAppearance?: "glass-ghost" | "inverted";
+  /** Hide effort editing in streamlined connection setup. */
+  showEffort?: boolean;
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
@@ -975,7 +979,13 @@ export type TeamChange = Omit<Team, "id" | "revision"> &
 /** What `port` imports: an identity an earlier agent system saved on this
  * machine, or an agent a community member shared. */
 export type PortInput = Readonly<
-  | { source: PortSource; pubkey: string; type: string }
+  | {
+      source: PortSource;
+      pubkey: string;
+      type: string;
+      config?: unknown;
+      scope?: string;
+    }
   | {
       source: "shared";
       type: string;
@@ -1037,7 +1047,7 @@ export type Agents = {
     event: string,
     input: unknown,
     context: AgentHookContext,
-    options: { accepts(output: unknown): boolean; milliseconds: number },
+    options: AgentHookDispatchOptions,
   ): Promise<unknown>;
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
@@ -1531,7 +1541,7 @@ export class AgentsService extends Service implements Agents {
     event: string,
     input: unknown,
     context: AgentHookContext,
-    options: { accepts(output: unknown): boolean; milliseconds: number },
+    options: AgentHookDispatchOptions,
   ) {
     const owner = this.ctx.pluginOwner;
     if (!owner || !harness.startsWith(`${owner.id}/`))
@@ -1544,6 +1554,7 @@ export class AgentsService extends Service implements Agents {
       context,
       options.accepts,
       options.milliseconds,
+      options.compose,
     );
   }
   private readonly contributions;
@@ -1593,6 +1604,11 @@ export class AgentsService extends Service implements Agents {
   /** Memberships a re-import or add is taking back; no cleanup starts for
    * them. */
   private reclaiming = new Set<AgentKey>();
+  /** Durable reviewed settings awaiting an observed native installation. */
+  private importDrafts = new Map<
+    string,
+    { type: string; record: AgentRecord }
+  >();
   /** Memberships, imported or added, whose archive state could not be
    * checked yet, saved so Retry survives a restart until a check confirms
    * the state. */
@@ -2309,6 +2325,7 @@ export class AgentsService extends Service implements Agents {
     };
     const spawn = async (
       key: AgentKey,
+      watch: string,
       process: string,
       options: Omit<HostProcessOptions, "mcp"> & {
         signal: AbortSignal;
@@ -2326,13 +2343,27 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           "Protected agents cannot run external Attention commands until that execution path supports complete protection",
         );
-      const source = ownerReads(this.relay(key), pubkeyOf(key));
-      if (!source) throw new Error("The agent's community is not connected");
+      const connectionSource = ownerReads(this.relay(key), pubkeyOf(key));
+      if (!connectionSource)
+        throw new Error("The agent's community is not connected");
       const spawn = host.spawn.bind(host);
       return spawnAgentCommand(
         {
           connect: (signal) => connect(key, { ...options, signal }),
-          spawn: (settings) => spawn(process, settings),
+          spawn: (settings) =>
+            spawn(process, {
+              ...settings,
+              env: {
+                ...settings.env,
+                BUZZ_ATTENTION_COMMAND: JSON.stringify([
+                  key,
+                  plugin,
+                  source.id,
+                  watch,
+                  process,
+                ]),
+              },
+            }),
           subscribe: (changed) => {
             const agent = this.subscribe(changed);
             const community = this.relay(key)?.subscribe(changed);
@@ -2346,7 +2377,7 @@ export class AgentsService extends Service implements Agents {
               throw new Error("Attention is off");
             if (
               ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
-              source.connection
+              connectionSource.connection
             )
               throw new Error("The agent's community connection changed");
           },
@@ -2367,7 +2398,7 @@ export class AgentsService extends Service implements Agents {
           await source.run({
             ...input,
             spawn: (process, options) =>
-              spawn(agent, process, {
+              spawn(agent, input.id, process, {
                 ...options,
                 signal,
                 channel,
@@ -3054,7 +3085,14 @@ export class AgentsService extends Service implements Agents {
   async port(input: PortInput): Promise<Ported> {
     const { type } = input;
     if (input.source !== "shared")
-      return this.portIdentity(input.source, input.pubkey, type);
+      return this.portIdentity(
+        input.source,
+        input.pubkey,
+        type,
+        undefined,
+        input.config,
+        input.scope,
+      );
     const name = input.name.trim();
     if (!name) throw new Error("Name the agent");
     const { picture, instructions } = input;
@@ -3082,12 +3120,49 @@ export class AgentsService extends Service implements Agents {
     pubkey: string,
     type: string,
     given?: Binding,
+    config?: unknown,
+    scope?: string,
   ): Promise<Ported> {
     const binding = given ?? this.selectedBinding();
+    if (scope && binding.scope !== scope)
+      throw new Error(
+        "The community changed. Reopen this conversation to connect.",
+      );
+    if (this.reclaiming.has(pubkey))
+      throw new Error(
+        "This agent is already being connected. Wait for that attempt to finish.",
+      );
+    let staged: AgentRecord | undefined;
     const notes: string[] = [];
-    // A cleanup still running from its Delete must not touch it once it is back.
-    await this.reclaim(pubkey);
+    // Hold the identity before staging: another port must not observe an
+    // optimistic store value whose write has not reached disk yet.
     try {
+      await this.reclaim(pubkey);
+      if (config !== undefined) {
+        const kind = this.types().find(
+          (entry) => entry.key === type && !entry.remote,
+        );
+        if (!kind) throw new Error("That agent type is not available");
+        if (
+          this.identities.some(
+            (identity) => identity.pubkey === pubkey && !identity.deleted,
+          )
+        )
+          throw new Error(
+            "This agent has already been imported. Open its Settings to configure it.",
+          );
+        // Save the reviewed choices before installing the identity, so a failed
+        // write cannot start an imported agent with unintended model defaults.
+        const draft = { ...defaults(pubkey, kind), config };
+        const text = recordText(draft);
+        const kept = await this.storage.add(recordKey(pubkey), text);
+        if (kept !== text)
+          throw new Error(
+            "This agent already has saved setup. Finish importing it from Agents, then review its Settings.",
+          );
+        staged = draft;
+        this.importDrafts.set(pubkey, { type, record: draft });
+      }
       const agent = await this.add(
         type,
         async (native, destination, owner) => {
@@ -3098,14 +3173,30 @@ export class AgentsService extends Service implements Agents {
             owner,
             type,
           );
+          if (staged) this.records = { ...this.records, [pubkey]: staged };
           notes.push(...(ported.notes ?? []));
           return ported;
         },
-        {},
+        config === undefined ? {} : { config, strict: true },
         binding,
       );
+      this.importDrafts.delete(pubkey);
       await this.unarchiveHere(agent, binding, notes);
       return { agent, notes };
+    } catch (error) {
+      if (staged) {
+        try {
+          // Refresh adopts the durable draft if installation persisted before
+          // rejecting. Keep it for a later refresh if native listing also fails.
+          await this.refresh();
+        } catch (recoveryError) {
+          console.warn(
+            "Imported agent setup recovery did not finish",
+            recoveryError,
+          );
+        }
+      }
+      throw error;
     } finally {
       this.reclaiming.delete(pubkey);
     }
@@ -3279,7 +3370,11 @@ export class AgentsService extends Service implements Agents {
       destination: string,
       owner: string,
     ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
-    made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
+    made: Readonly<{
+      config?: unknown;
+      picture?: string | undefined;
+      strict?: true;
+    }> = {},
     given?: Binding,
   ) {
     const native = this.native;
@@ -3304,6 +3399,11 @@ export class AgentsService extends Service implements Agents {
       await this.change(identity.pubkey, () => record);
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.
+      if (made.strict)
+        throw new Error(
+          "The identity was imported, but its settings could not be saved. Open Agents → Settings to finish setup.",
+          { cause: error },
+        );
       console.warn(`Agent ${identity.name} settings were not saved`, error);
     }
     // Before the refresh, which publishes its profile with the picture. The
@@ -5105,6 +5205,14 @@ export class AgentsService extends Service implements Agents {
       // One still joining, or a Join a crash cut short, is no membership.
       const identities = this.withKeys(rows.filter((row) => !row.joining));
       this.identities = identities;
+      for (const identity of identities) {
+        if (identity.deleted) continue;
+        const draft = this.importDrafts.get(identity.pubkey);
+        if (!draft || draft.type !== identity.type) continue;
+        if (!this.records[identity.pubkey])
+          this.records = { ...this.records, [identity.pubkey]: draft.record };
+        this.importDrafts.delete(identity.pubkey);
+      }
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
       this.state = Object.freeze({ ...state, status: "ready" });
@@ -5115,7 +5223,9 @@ export class AgentsService extends Service implements Agents {
           .filter((saved) => !saved.deleted)
           .flatMap((saved) => [saved.key, saved.pubkey]),
       );
-      const gone = Object.keys(this.records).filter((key) => !live.has(key));
+      const gone = Object.keys(this.records).filter(
+        (key) => !live.has(key) && !this.reclaiming.has(key),
+      );
       for (const key of gone)
         void this.change(key, () => null).catch((error) =>
           console.warn(`Agent ${key} settings were not removed`, error),

@@ -669,6 +669,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .feed:has(.emptyConversation) .edge:empty {
   min-height: 0;
 }
+:where(.feed:has([data-agent-connection-setup])) .emptyConversation {
+  display: none;
+}
 .emptyConversation {
   padding-block: var(--space-panel-inset);
 }
@@ -3175,8 +3178,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.message .delivery,
-.message > .messageBody > [data-activity-stopped] {
+.message .delivery {
   padding-inline-start: var(--space-4);
 }
 .message .reactions {
@@ -3225,10 +3227,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .message[data-viewer-message] > .messageBody > [data-message-activity] {
   align-self: flex-end;
-}
-.message[data-viewer-message] > .messageBody > [data-activity-stopped] {
-  align-self: flex-end;
-  padding-inline: 0 var(--space-4);
 }
 .message[data-viewer-message] > .messageBody > [data-thread-summary] {
   align-self: flex-end;

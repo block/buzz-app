@@ -1,4 +1,5 @@
 import { workflowLabel } from "../../features/relay/workflow-attribution";
+import { useIsPresent } from "motion/react";
 import { LightningIcon } from "../../shared/design-system/icons";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -178,9 +179,14 @@ export function ChannelActivityPopover({
     agent: string,
     messageId: string | undefined,
   ) => void;
-  onOpenAgentActivity?: (channelId: string, agent: string) => void;
+  onOpenAgentActivity?: (
+    channelId: string,
+    agent: string,
+    messageId: string | undefined,
+  ) => void;
   onOpenThread(item: ThreadActivityItem): void;
 }) {
+  const present = useIsPresent();
   const subscribe = useCallback(
     (listener: () => void) =>
       session.unread.subscribeActivity(channelId, listener),
@@ -195,6 +201,8 @@ export function ChannelActivityPopover({
   const activeAgents = agents ?? [];
   const agentIds = activeAgents.join(",");
   const [open, setOpen] = useState(false);
+  // Re-entry during the row's exit must not resurrect its old popup.
+  if (!present && open) setOpen(false);
   const triggerPointerType = useRef<string | null>(null);
   const actions =
     useRef<
@@ -252,7 +260,7 @@ export function ChannelActivityPopover({
   return (
     <PopoverRoot
       modal={false}
-      open={open}
+      open={open && present}
       actionsRef={actions}
       onOpenChange={(next, details) => {
         if (next && !hasActivity) return details.cancel();
@@ -351,7 +359,7 @@ export function ChannelActivityPopover({
                         onOpenAgentActivity
                           ? () => {
                               close();
-                              onOpenAgentActivity(channelId, agent);
+                              onOpenAgentActivity(channelId, agent, messageId);
                             }
                           : undefined
                       }

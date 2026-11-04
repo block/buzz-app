@@ -1,6 +1,10 @@
 import { BackupError } from "./backup";
 import type { Communities } from "../communities/service";
-import type { FirstRunAccount, OwnedCommunity } from "./builderlab-account";
+import type {
+  CommunityList,
+  FirstRunAccount,
+  OwnedCommunity,
+} from "./builderlab-account";
 import { type Restored, restoreKnown } from "./restore-communities";
 import type { Identity } from "./service";
 
@@ -166,19 +170,84 @@ export function backUp(
 }
 
 /**
+ * Real: a key the account already holds a backup of stays backed up. Only its
+ * automatic choice is saved, unless one already is, so setup uploads nothing
+ * and no backup prompt asks about it later. A build whose uploader cannot back
+ * up to Builderlab (a dev account seed's backups) has no choice to save.
+ * Rejects with a `BackupError`.
+ */
+export function keepBackup(identity: Identity): SetupStep {
+  return {
+    label: "Backing up your key…",
+    run: async () => {
+      if ((await identity.backup.ready()).builderlab)
+        await identity
+          .setBackupChoice(viewer(identity), true, true)
+          .catch(() => {
+            throw new BackupError("interrupted");
+          });
+    },
+  };
+}
+
+/**
  * Real: the communities the linked account owns, for Join a community's rows
  * and the start-over page. Runs only once a key is on the device and the
  * account is linked (the list is meaningless otherwise). A failed list is
  * reported as `undefined`, not a failed setup: the pages work without it.
+ *
+ * With `onCreatable`, the same list also answers `checkCreation`. Only for a
+ * lane whose key on this device is the linked one, which proves the binding.
  */
 export function findCommunities(
   account: FirstRunAccount,
   onFound: (owned: readonly OwnedCommunity[] | undefined) => void,
+  onCreatable?: (list: CommunityList | undefined) => void,
 ): SetupStep {
   return {
     label: "Finding communities…",
     run: () =>
-      account.ownedCommunities().then(onFound, () => onFound(undefined)),
+      account.communityList().then(
+        (list) => {
+          onFound(list.owned);
+          onCreatable?.(list.canCreate ? list : undefined);
+        },
+        () => {
+          onFound(undefined);
+          onCreatable?.(undefined);
+        },
+      ),
+  };
+}
+
+/**
+ * Real: whether Join a community offers Create a community, for an account at
+ * the public Builderlab: the account must be bound to the key now on this
+ * device, and its community list must allow one (`canCreate`). `onChecked`
+ * receives that list, for the create's quota copy, or `undefined` when it
+ * refuses. A failed check is `undefined` too, not a failed setup: joining
+ * works without it.
+ */
+export function checkCreation(
+  identity: Identity,
+  account: FirstRunAccount,
+  onChecked: (list: CommunityList | undefined) => void,
+): SetupStep {
+  return {
+    label: "Finding communities…",
+    run: async () => {
+      try {
+        const [bound, list] = await Promise.all([
+          account.linkedKey(),
+          account.communityList(),
+        ]);
+        onChecked(
+          bound === viewer(identity) && list.canCreate ? list : undefined,
+        );
+      } catch {
+        onChecked(undefined);
+      }
+    },
   };
 }
 

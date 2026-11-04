@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -21,9 +22,14 @@ import { fixture, owners, id, viewer, scope } from "./sidebar-testing";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
 import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { PrimarySidebar } from "./PrimarySidebar";
+import type {
+  RegisteredSidebarRestriction,
+  SidebarScope,
+} from "../../features/channel-navigation/sidebar-scope-service";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SOLO_LABEL } from "../../features/solo/labels";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
+import { SIDEBAR_REVEAL_BUDGET_MS } from "../../bundled/channels/useSidebarStartup";
 stubAvatarBrowserApis();
 afterEach(() => {
   cleanup();
@@ -194,6 +200,50 @@ it("keeps focus on a different chat after an Enter-save finishes", async () => {
   );
   expect(destination).toHaveFocus();
 });
+it("shows only Solo under a plugin restriction and restores the saved filter after", async () => {
+  const user = userEvent.setup();
+  let restrictions: readonly RegisteredSidebarRestriction[] = [];
+  const listeners = new Set<() => void>();
+  const publish = (next: readonly RegisteredSidebarRestriction[]) => {
+    restrictions = next;
+    for (const listener of listeners) listener();
+  };
+  const sidebarScope: SidebarScope = {
+    snapshot: () => restrictions,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    restrict: () => () => {},
+  };
+  fixture(true, false, undefined, undefined, 0, undefined, undefined, {
+    sidebarScope,
+  });
+  await user.click(screen.getByRole("tab", { name: "Team" }));
+  act(() =>
+    publish([
+      {
+        id: "focus",
+        scope: "solo",
+        banner: () => <span>Focusing</span>,
+        key: "test.focus/focus",
+        pluginId: "test.focus",
+        revision: "bundled",
+      },
+    ]),
+  );
+  expect(screen.queryByRole("tab")).toBeNull();
+  expect(screen.queryByRole("tabpanel")).toBeNull();
+  expect(screen.getByText("Focusing")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Inbox" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Solo" })).toBeVisible();
+  act(() => publish([]));
+  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
+});
 it("filters the combined sidebar without navigating or resetting Solo sections", async () => {
   const user = userEvent.setup();
   const f = fixture(true);
@@ -218,6 +268,10 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   );
   await user.click(solo);
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Solo" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "New chat or workspace" }),
+  ).toBeVisible();
   expect(screen.getByRole("button", { name: "Chats" })).toHaveAttribute(
     "aria-expanded",
     "false",
@@ -252,6 +306,98 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
     scope: { viewer, communityOrigin: "https://relay.test" },
     route: { version: 1, params: "new-message" },
   });
+});
+
+it("collapses the Solo and Team inventories independently in All", async () => {
+  const user = userEvent.setup();
+  fixture(true);
+  const section = (key: "solo" | "team") => {
+    const summary = document.querySelector<HTMLElement>(
+      `[data-sidebar-section="scope:${key}"] summary`,
+    );
+    expect(summary).not.toBeNull();
+    const panel = document.getElementById(
+      summary?.getAttribute("aria-controls") ?? "",
+    );
+    expect(panel).not.toBeNull();
+    return { summary: summary as HTMLElement, panel: panel as HTMLElement };
+  };
+  const solo = section("solo");
+  const team = section("team");
+  expect(solo.panel).not.toHaveAttribute("hidden");
+  expect(team.panel).not.toHaveAttribute("hidden");
+
+  await user.click(solo.summary);
+  expect(solo.panel).toHaveAttribute("hidden");
+  expect(team.panel).not.toHaveAttribute("hidden");
+
+  await user.click(team.summary);
+  expect(solo.panel).toHaveAttribute("hidden");
+  expect(team.panel).toHaveAttribute("hidden");
+
+  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  await user.click(screen.getByRole("tab", { name: "All" }));
+  expect(section("solo").panel).toHaveAttribute("hidden");
+  expect(section("team").panel).toHaveAttribute("hidden");
+});
+
+it("expands Team when navigation selects one of its conversations", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(true);
+    await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
+    const summary = document.querySelector<HTMLElement>(
+      '[data-sidebar-section="scope:team"] summary',
+    );
+    expect(summary).not.toBeNull();
+    const panel = document.getElementById(
+      summary?.getAttribute("aria-controls") ?? "",
+    );
+    expect(panel).not.toBeNull();
+    fireEvent.click(summary as HTMLElement);
+    expect(panel).toHaveAttribute("hidden");
+
+    await act(() =>
+      f.open({
+        version: 1,
+        kind: "conversation",
+        channelId: "team-channel",
+        scope: { viewer, communityOrigin: "https://relay.test" },
+      }),
+    );
+    expect(panel).not.toHaveAttribute("hidden");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("expands fallback Solo when navigation selects an ordinary chat", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(true);
+    f.navigate({
+      version: 1,
+      kind: "conversation",
+      channelId: "team-channel",
+      scope: { viewer, communityOrigin: "https://relay.test" },
+    });
+    await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
+    const summary = document.querySelector<HTMLElement>(
+      '[data-sidebar-section="scope:solo"] summary',
+    );
+    expect(summary).not.toBeNull();
+    const panel = document.getElementById(
+      summary?.getAttribute("aria-controls") ?? "",
+    );
+    expect(panel).not.toBeNull();
+    fireEvent.click(summary as HTMLElement);
+    expect(panel).toHaveAttribute("hidden");
+
+    await act(() => f.open(conversationTarget(scope, id)));
+    expect(panel).not.toHaveAttribute("hidden");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it.each([
@@ -677,6 +823,62 @@ it("changes Team to Solo only for a live explicit chip intent and does not repla
   }
 });
 
+it("an explicit Solo reveal during a restriction keeps the saved Team filter", async () => {
+  const h = createSoloRegionFixture(viewer);
+  let restrictions: readonly RegisteredSidebarRestriction[] = [];
+  const listeners = new Set<() => void>();
+  const publish = (next: readonly RegisteredSidebarRestriction[]) => {
+    restrictions = next;
+    for (const listener of listeners) listener();
+  };
+  const sidebarScope: SidebarScope = {
+    snapshot: () => restrictions,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    restrict: () => () => {},
+  };
+  const target = conversationTarget(h.scope, "owned");
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={h.navigator}
+        target={target}
+        sidebarScope={sidebarScope}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  try {
+    await act(() => h.navigate(target));
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Team" }));
+    act(() =>
+      publish([
+        {
+          id: "focus",
+          scope: "solo",
+          banner: () => <span>Focusing</span>,
+          key: "test.focus/focus",
+          pluginId: "test.focus",
+          revision: "bundled",
+        },
+      ]),
+    );
+    act(() => h.service.reveal("owned"));
+    act(() => publish([]));
+    expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    view.unmount();
+    await h.dispose();
+  }
+});
+
 it("uses one contributed heading and the prior All Team Nexus order without losing chat creation", async () => {
   const h = createSoloRegionFixture(viewer);
   await h.register({ title: "Nexus", component: () => null });
@@ -695,6 +897,11 @@ it("uses one contributed heading and the prior All Team Nexus order without losi
       "Nexus",
     ]);
     expect(screen.queryByText("Solo")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Nexus")).toHaveLength(2);
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Nexus" }));
+    expect(screen.getAllByText("Nexus")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Create" })).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "All" }));
     expect(screen.getAllByText("Nexus")).toHaveLength(2);
     await userEvent
       .setup()
@@ -783,7 +990,7 @@ it("merged Create keeps workspace creation and return focus when a plugin menu f
   }
 });
 
-it("collapsing the contributed task section keeps ordinary chats visible", async () => {
+it("collapsing the contributed Solo section in All hides its ordinary chats", async () => {
   const h = createSoloRegionFixture(viewer);
   await h.register({
     title: "Nexus",
@@ -806,14 +1013,19 @@ it("collapsing the contributed task section keeps ordinary chats visible", async
   );
   try {
     const heading = view.container.querySelector(
-      "[data-sidebar-section] summary",
+      '[data-sidebar-section^="solo-region:"] summary',
     );
     expect(heading).not.toBeNull();
     await userEvent.setup().click(heading as HTMLElement);
     await waitFor(() =>
       expect(heading?.closest("details")).not.toHaveAttribute("open"),
     );
-    expect(screen.getByRole("button", { name: /^Chat$/ })).toBeVisible();
+    expect(
+      document.getElementById(heading?.getAttribute("aria-controls") ?? ""),
+    ).toHaveAttribute("hidden");
+    expect(
+      view.container.querySelector('[data-solo-channel-id="chat"]'),
+    ).not.toBeVisible();
   } finally {
     view.unmount();
     await h.dispose();

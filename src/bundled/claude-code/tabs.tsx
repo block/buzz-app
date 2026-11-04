@@ -50,7 +50,7 @@ import {
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
 import type { ClaudeDefaults } from "./defaults";
-import { type ClaudeTranscript, TURN_LIMIT } from "./transcript";
+import type { ClaudeTranscript } from "./transcript";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -386,7 +386,21 @@ export function createTabs({
         loading={state.modelsChecking}
         error={state.modelsError}
         retry={() => void setup.loadModels(true)}
-        onChange={(model) => onChange({ ...current, model })}
+        onChange={(model) => {
+          const efforts = effortsFor(
+            model || providerDefaults.model,
+            state.models,
+          );
+          onChange({
+            ...current,
+            model,
+            effort:
+              state.models.length === 0 ||
+              efforts.some((level) => level.id === current.effort)
+                ? current.effort
+                : "",
+          });
+        }}
       />
     );
   }
@@ -773,7 +787,9 @@ export function createTabs({
                 )}
                 {read.transcript.more && (
                   <p className="m-0 text-body-sm text-subtle">
-                    Showing the latest {TURN_LIMIT} turns.
+                    {read.transcript.turns.length
+                      ? `Showing the latest ${read.transcript.turns.length === 1 ? "turn" : `${read.transcript.turns.length} turns`}.`
+                      : "The latest turn is too large to show."}
                   </p>
                 )}
               </>

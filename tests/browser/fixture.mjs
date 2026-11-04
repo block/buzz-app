@@ -445,6 +445,7 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const soloDetails = new Map();
+    const servedMembers = new Map(Object.entries(sessionMembers));
     const streams = new Map();
     const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
@@ -1173,6 +1174,32 @@ export const test = base.extend({
               lifecycleTime,
             ),
           );
+      // Search's member count reads rosters without the viewer filter, so
+      // the unjoined public channel answers with its members, not the viewer.
+      if (
+        filter.kinds?.includes(39002) &&
+        !filter["#p"] &&
+        openSearch &&
+        !rosterIds.includes(OPEN_CHANNEL) &&
+        filter["#d"]?.includes(OPEN_CHANNEL)
+      )
+        return [
+          sign(
+            39002,
+            [
+              ["d", OPEN_CHANNEL],
+              ...["a", "b", "c"].map((digit) => [
+                "p",
+                digit.repeat(64),
+                "",
+                "member",
+              ]),
+            ],
+            "",
+            relayKey,
+            lifecycleTime,
+          ),
+        ];
       if (filter.kinds?.includes(39002))
         return rosterIds
           .filter((id) => !filter["#d"] || filter["#d"].includes(id))
@@ -1199,7 +1226,7 @@ export const test = base.extend({
                 ...(ownerAgent && lifecycleRows.some((row) => row.id === id)
                   ? [["p", ownerAgent, "", "owner"]]
                   : []),
-                ...(sessionMembers[id] ?? []).map((pubkey) => [
+                ...(servedMembers.get(id) ?? []).map((pubkey) => [
                   "p",
                   pubkey,
                   "",
@@ -2688,6 +2715,12 @@ export const test = base.extend({
           const event = sign(0, [], JSON.stringify(body), key);
           servedProfiles.set(event.pubkey, event);
           return event;
+        },
+        // Configure pre-existing members before opening the app. Reads stay at
+        // the modeled relay, without a second browser-owned HTTP request.
+        serveMembers(id, pubkeys) {
+          expect(rosterIds).toContain(id);
+          servedMembers.set(id, [...pubkeys]);
         },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.

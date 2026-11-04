@@ -21,7 +21,12 @@ export type {
 } from "../features/identity-names/service";
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
-export type { Page, PageSidebarProps, Pages } from "../features/pages/service";
+export type {
+  Page,
+  PagePreviewProps,
+  PageSidebarProps,
+  Pages,
+} from "../features/pages/service";
 export type {
   SidebarSectionAction,
   SidebarSectionContribution,
@@ -33,6 +38,10 @@ export type {
   PluginInstallSource,
   PluginInstaller,
 } from "./installer";
+export type {
+  SidebarRestriction,
+  SidebarScope,
+} from "../features/channel-navigation/sidebar-scope-service";
 export type {
   Panel,
   Panels,
@@ -122,6 +131,7 @@ export type {
   Notifications,
   NotificationInput,
   NotificationCategoryDescriptor,
+  NotificationGate,
 } from "../features/notifications/service";
 
 export type { VoiceRecording } from "../features/relay/voice-media";

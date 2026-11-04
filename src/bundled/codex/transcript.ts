@@ -353,27 +353,31 @@ async function page(
       data.push(...next.data);
       cursor = next.data.length ? next.nextCursor : null;
     } while (cursor && data.length < limit);
-    for (const turn of data.slice(0, limit))
-      turn.items = await items(rpc, threadId, turn.id, signal);
+    // Each turn's items start at the page size the previous one ended on.
+    let size = ITEM_PAGE;
+    for (const turn of data)
+      [turn.items, size] = await items(rpc, threadId, turn.id, size, signal);
   } catch (error) {
     if (missing(error)) return undefined;
     throw error;
   }
-  return { data: data.slice(0, limit), more: !!cursor };
+  return { data, more: !!cursor };
 }
 
-/** A turn's items, oldest first, a page per request. A page over app-server's
- * frame closes the connection, so it is read again from its cursor on a fresh
- * one, at half the size, as is the rest of the turn. */
+/** A turn's items, oldest first, a page of `limit` per request, and the page
+ * size it ended on. A page over app-server's frame closes the connection, so
+ * it is read again from its cursor on a fresh one, at half the size, as is the
+ * rest of the turn. */
 async function items(
   rpc: AppServer,
   threadId: string,
   turnId: string,
+  limit: number,
   signal: AbortSignal,
-) {
+): Promise<[Json[], number]> {
   const all: Json[] = [];
   let cursor: string | null = null;
-  for (let limit = ITEM_PAGE; ; ) {
+  for (;;) {
     let next: { data: { item: Json }[]; nextCursor: string | null };
     try {
       next = await rpc.request("thread/items/list", {
@@ -385,6 +389,9 @@ async function items(
     } catch (error) {
       if (!(error instanceof Oversized) || limit === 1) throw error;
       limit = Math.ceil(limit / 2);
+      // An abort while closing opens no fresh connection.
+      await rpc.close();
+      signal.throwIfAborted();
       await rpc.reopen();
       // An abort while reopening closed the connection it replaced.
       signal.throwIfAborted();
@@ -392,7 +399,7 @@ async function items(
     }
     all.push(...next.data.map((entry) => entry.item));
     cursor = next.data.length ? next.nextCursor : null;
-    if (!cursor) return all;
+    if (!cursor) return [all, limit];
   }
 }
 const turns = async (

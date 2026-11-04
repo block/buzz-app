@@ -510,6 +510,39 @@ it("reads a page over app-server's output frame again on a fresh connection, at 
   );
 });
 
+it("starts each turn's items at the page size the previous turn ended on", async () => {
+  // 40 items of 200 KiB per turn: 13 fit a frame, so only the first turn
+  // halves its page down to them.
+  const big = (id: string) =>
+    turn({
+      id,
+      items: Array.from({ length: 40 }, (_, index) => ({
+        type: "commandExecution",
+        id: `c${index}`,
+        command: "cat log",
+        aggregatedOutput: "x".repeat(200 * 1024),
+        status: "completed",
+      })),
+    });
+  const { spawn, sent } = server(paged([big("b"), big("a")]));
+  const read = await readTranscript(
+    spawn,
+    { ...lookup, threadId: "thread-1" },
+    new AbortController().signal,
+  );
+  expect(
+    read?.turns.map((t) => t.items.filter((i) => i.type === "tool").length),
+  ).toEqual([40, 40]);
+  expect(
+    sent
+      .filter((w) => w.method === "thread/items/list")
+      .map((w) => (w.params as { limit: number }).limit),
+  ).toEqual([50, 25, 13, 13, 13, 13, 13, 13, 13, 13]);
+  expect(spawn.mock.calls.filter(([id]) => id === "app-server")).toHaveLength(
+    3,
+  );
+});
+
 it("stops a transcript aborted while reopening after an oversized page", async () => {
   const commands = Array.from({ length: 40 }, (_, index) => ({
     type: "commandExecution",
@@ -520,7 +553,6 @@ it("stops a transcript aborted while reopening after an oversized page", async (
   }));
   const { spawn, sent } = server(paged([turn({ items: commands })]));
   const controller = new AbortController();
-  const ended = vi.fn();
   let opened = 0;
   const aborting: typeof spawn = vi.fn(async (id, options) => {
     const process = await spawn(id, options);
@@ -531,7 +563,6 @@ it("stops a transcript aborted while reopening after an oversized page", async (
       end: async () => {
         // The transcript is closed while the oversized connection is closing.
         if (n === 1) controller.abort();
-        ended(n);
         await process.end();
       },
     };
@@ -548,7 +579,8 @@ it("stops a transcript aborted while reopening after an oversized page", async (
       .filter((w) => w.method === "thread/items/list")
       .map((w) => (w.params as { limit: number }).limit),
   ).toEqual([50]);
-  expect(ended).toHaveBeenLastCalledWith(2);
+  // No fresh app-server is opened for the aborted transcript.
+  expect(opened).toBe(1);
 });
 
 it("fails a transcript with an item over app-server's output frame", async () => {

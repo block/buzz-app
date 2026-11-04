@@ -185,9 +185,8 @@ it("signals only an explicit scoped purge, even when storage cleanup fails", asy
   expect(purged).toHaveBeenCalledTimes(2);
 });
 
-it("reports a failed marker write without deleting saved views and still signals the purge intent", async () => {
+it("reports a failed marker write after clearing saved views and still signals the purge intent", async () => {
   writeView("scope", "decision-inbox:v1", [{ question: "keep" }]);
-  const before = viewRevision("scope", "decision-inbox:v1");
   const listener = vi.fn();
   const subscription = subscribeViewScopePurge("scope", listener);
   const setItem = Storage.prototype.setItem;
@@ -202,12 +201,32 @@ it("reports a failed marker write without deleting saved views and still signals
   });
   try {
     await expect(clearViewScope("scope")).rejects.toThrow("marker rejected");
-    expect(viewRevision("scope", "decision-inbox:v1")).toBe(before);
+    expect(viewRevision("scope", "decision-inbox:v1")).toBeNull();
     expect(viewScopePurgeRevision("scope")).toBeNull();
     expect(listener).toHaveBeenCalledOnce();
   } finally {
     subscription.stop();
   }
+});
+
+it("frees scoped quota before writing the purge fence", async () => {
+  writeView("scope", "large", "x".repeat(2000));
+  const setItem = Storage.prototype.setItem;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    key,
+    value,
+  ) {
+    if (
+      key.startsWith("buzz-view-scope-purge.v1:") &&
+      viewRevision("scope", "large") !== null
+    )
+      throw new DOMException("Storage full", "QuotaExceededError");
+    setItem.call(this, key, value);
+  });
+  await clearViewScope("scope");
+  expect(viewRevision("scope", "large")).toBeNull();
+  expect(viewScopePurgeRevision("scope")).not.toBeNull();
 });
 
 it("fails safely without a scope lock and keeps saved views", async () => {

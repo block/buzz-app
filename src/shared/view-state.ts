@@ -239,7 +239,8 @@ export function listDraftViews(
 
 /** Forgets every key saved under one scope, for a community the viewer has left.
  * Decision Inbox writes share this lock and compare the purge revision inside it.
- * If locking or the revision marker fails, no saved keys are removed. */
+ * A missing lock leaves saved keys alone; a marker failure is reported after the
+ * best-effort key cleanup, which can free quota for the marker. */
 export async function clearViewScope(scope: string) {
   try {
     if (!navigator.locks?.request)
@@ -248,12 +249,6 @@ export async function clearViewScope(scope: string) {
       viewScopeLockName(scope),
       { mode: "exclusive" },
       () => {
-        // Advance before deleting keys. A queued first write still has a null
-        // list revision, but now carries an older purge revision.
-        localStorage.setItem(
-          purgeRevisionKey(scope),
-          `${Date.now()}:${++purgeSequence}:${Math.random()}`,
-        );
         const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
         const stale: string[] = [];
         for (let index = 0; index < localStorage.length; index++) {
@@ -261,7 +256,16 @@ export async function clearViewScope(scope: string) {
           if (key?.startsWith(prefix)) stale.push(key);
         }
         for (const key of stale) localStorage.removeItem(key);
-        changed(scope);
+        // The lock prevents queued writers from running between deletion and
+        // this fence. Deletion first leaves room when storage is at quota.
+        try {
+          localStorage.setItem(
+            purgeRevisionKey(scope),
+            `${Date.now()}:${++purgeSequence}:${Math.random()}`,
+          );
+        } finally {
+          changed(scope);
+        }
       },
     );
   } finally {

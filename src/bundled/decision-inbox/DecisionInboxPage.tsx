@@ -1,4 +1,4 @@
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { Navigation } from "../../features/navigation/controller";
 import { splitPartition } from "../../features/relay/partition";
 import { useRelayConnection } from "../../features/relay/react";
@@ -13,9 +13,17 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { subscribeView } from "../../shared/view-state";
+import {
+  subscribeView,
+  subscribeViewScopePurge,
+} from "../../shared/view-state";
 import { DecisionDialog } from "./DecisionDialog";
-import { editDrafts, forgetDraft } from "./drafts";
+import {
+  draftVersion,
+  forgetDraft,
+  retainedDrafts,
+  subscribeDrafts,
+} from "./drafts";
 import {
   readList,
   remove,
@@ -109,11 +117,17 @@ function ScopedPage({
   const snapshot = useCallback(() => revision(partition), [partition]);
   const savedRevision = useSyncExternalStore(subscribe, snapshot, snapshot);
   const list = readList(savedRevision);
+  const subscribeToDrafts = useCallback(
+    (listener: () => void) => subscribeDrafts(partition, listener),
+    [partition],
+  );
+  const draftSnapshot = useCallback(() => draftVersion(partition), [partition]);
+  useSyncExternalStore(subscribeToDrafts, draftSnapshot, draftSnapshot);
   const savedSources = new Set(
     list.status === "ready" ? list.records.map(sourceKey) : [],
   );
-  const orphanedEdits = editDrafts(partition).filter(
-    (item) => !savedSources.has(sourceKey(item)),
+  const recoverableDrafts = retainedDrafts(partition).filter(
+    (item) => item.kind === "capture" || !savedSources.has(sourceKey(item)),
   );
   const [editing, setEditing] = useState<{
     record: Decision;
@@ -126,6 +140,15 @@ function ScopedPage({
   const [resetting, setResetting] = useState<string>();
   const [discardingDraft, setDiscardingDraft] = useState<string>();
   const [error, setError] = useState("");
+  useEffect(() => {
+    const purge = subscribeViewScopePurge(partition, () => {
+      setEditing(undefined);
+      setRemoving(undefined);
+      setResetting(undefined);
+      setError("");
+    });
+    return purge.stop;
+  }, [partition]);
   const sameScope = () => {
     const connection = relay.snapshot();
     return (
@@ -348,46 +371,54 @@ function ScopedPage({
               ) : null;
             })
           )}
-          {orphanedEdits.length > 0 && (
-            <section className={styles.group} aria-label="Unsaved edits">
-              <InlineHeader title={`Unsaved edits · ${orphanedEdits.length}`} />
+          {recoverableDrafts.length > 0 && (
+            <section className={styles.group} aria-label="Unsaved drafts">
+              <InlineHeader
+                title={`Unsaved drafts · ${recoverableDrafts.length}`}
+              />
               <p className="text-body-sm text-subtle">
-                These decisions were removed in another window. Copy your edits
-                before discarding them.
+                Copy any text you need before discarding a draft.
               </p>
               <ul className={styles.list}>
-                {orphanedEdits.map(({ key, channelId, messageId, draft }) => (
-                  <li className={styles.row} key={key}>
-                    <div className={styles.details}>
-                      <strong className="text-label text-primary">
-                        {draft.question}
-                      </strong>
-                      <p className="text-body-sm text-subtle">
-                        Next actor: {draft.nextActor}
-                      </p>
-                      {draft.decision && (
-                        <p className="text-body-sm text-primary">
-                          Decision: {draft.decision}
+                {recoverableDrafts.map(
+                  ({ key, kind, channelId, messageId, draft }) => (
+                    <li className={styles.row} key={key}>
+                      <div className={styles.details}>
+                        <p className="text-body-sm text-subtle">
+                          {kind === "capture"
+                            ? "Unsaved capture"
+                            : "Unsaved edit"}
                         </p>
-                      )}
-                    </div>
-                    <div className={styles.actions}>
-                      <Button
-                        size="sm"
-                        onClick={() => openSource({ channelId, messageId })}
-                      >
-                        Open source
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setDiscardingDraft(key)}
-                      >
-                        Discard edit
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                        <strong className="text-label text-primary">
+                          {draft.question}
+                        </strong>
+                        <p className="text-body-sm text-subtle">
+                          Next actor: {draft.nextActor}
+                        </p>
+                        {draft.decision && (
+                          <p className="text-body-sm text-primary">
+                            Decision: {draft.decision}
+                          </p>
+                        )}
+                      </div>
+                      <div className={styles.actions}>
+                        <Button
+                          size="sm"
+                          onClick={() => openSource({ channelId, messageId })}
+                        >
+                          Open source
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDiscardingDraft(key)}
+                        >
+                          Discard draft
+                        </Button>
+                      </div>
+                    </li>
+                  ),
+                )}
               </ul>
             </section>
           )}
@@ -447,13 +478,13 @@ function ScopedPage({
         <Dialog
           open
           size="compact"
-          title="Discard unsaved edit?"
+          title="Discard unsaved draft?"
           description="This removes your unsaved changes from this window. Copy them first if you need them."
           onOpenChange={(open) => !open && setDiscardingDraft(undefined)}
           actions={
             <>
               <Button onClick={() => setDiscardingDraft(undefined)}>
-                Keep edit
+                Keep draft
               </Button>
               <Button
                 variant="destructive"
@@ -462,12 +493,14 @@ function ScopedPage({
                   setDiscardingDraft(undefined);
                 }}
               >
-                Discard edit
+                Discard draft
               </Button>
             </>
           }
         >
-          <p className="text-body">The saved decision is already gone.</p>
+          <p className="text-body">
+            This draft cannot be restored after discard.
+          </p>
         </Dialog>
       )}
     </div>

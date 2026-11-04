@@ -797,27 +797,119 @@ it("lets a removed decision's unsaved edit be copied or explicitly discarded", a
       }),
     );
   });
-  const edits = screen.getByRole("region", { name: "Unsaved edits" });
+  const edits = screen.getByRole("region", { name: "Unsaved drafts" });
   expect(within(edits).getByText("Decision: Ship tomorrow")).toBeVisible();
   await user.click(within(edits).getByRole("button", { name: "Open source" }));
   expect(h.navigator.open).toHaveBeenCalled();
-  await user.click(within(edits).getByRole("button", { name: "Discard edit" }));
-  await user.click(screen.getByRole("button", { name: "Keep edit" }));
+  await user.click(
+    within(edits).getByRole("button", { name: "Discard draft" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Keep draft" }));
   expect(within(edits).getByText("Decision: Ship tomorrow")).toBeVisible();
-  await user.click(within(edits).getByRole("button", { name: "Discard edit" }));
+  await user.click(
+    within(edits).getByRole("button", { name: "Discard draft" }),
+  );
   await user.click(
     within(
-      screen.getByRole("dialog", { name: "Discard unsaved edit?" }),
+      screen.getByRole("dialog", { name: "Discard unsaved draft?" }),
     ).getByRole("button", {
-      name: "Discard edit",
+      name: "Discard draft",
     }),
   );
   expect(
-    screen.queryByRole("region", { name: "Unsaved edits" }),
+    screen.queryByRole("region", { name: "Unsaved drafts" }),
   ).not.toBeInTheDocument();
   const unload = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(unload);
   expect(unload.defaultPrevented).toBe(false);
+});
+
+it("shows a retained capture even after its source message disappears", async () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const actionView = render(
+    <Action
+      message={message}
+      session={h.session}
+      close={() => {}}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "Decide after source removal" } },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Next actor" }), {
+    target: { value: "Morgan" },
+  });
+  actionView.unmount();
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  const drafts = screen.getByRole("region", { name: "Unsaved drafts" });
+  expect(within(drafts).getByText("Unsaved capture")).toBeVisible();
+  expect(within(drafts).getByText("Decide after source removal")).toBeVisible();
+  await userEvent
+    .setup()
+    .click(within(drafts).getByRole("button", { name: "Discard draft" }));
+  await userEvent
+    .setup()
+    .click(
+      within(
+        screen.getByRole("dialog", { name: "Discard unsaved draft?" }),
+      ).getByRole("button", { name: "Discard draft" }),
+    );
+  expect(
+    screen.queryByRole("region", { name: "Unsaved drafts" }),
+  ).not.toBeInTheDocument();
+});
+
+it("removes rendered draft text as soon as a purge clears the draft store", async () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const actionView = render(
+    <Action
+      message={message}
+      session={h.session}
+      close={() => {}}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "Sensitive draft" } },
+  );
+  actionView.unmount();
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Sensitive draft")).toBeVisible();
+  act(() => clearDrafts(scope));
+  expect(screen.queryByText("Sensitive draft")).not.toBeInTheDocument();
+});
+
+it("closes a pending removal confirmation when its scope is purged", async () => {
+  const h = fixture();
+  writeView(scope, key, [
+    {
+      channelId: "room",
+      messageId: message.id,
+      preview: "source",
+      question: "Purge this decision",
+      nextActor: "Morgan",
+      decision: "",
+      stage: "decision",
+      createdAt: 1,
+    },
+  ]);
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Remove" }));
+  expect(
+    screen.getByRole("dialog", { name: "Remove saved decision?" }),
+  ).toHaveTextContent("Purge this decision");
+  await act(() => clearViewScope(scope));
+  expect(
+    screen.queryByRole("dialog", { name: "Remove saved decision?" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Purge this decision")).not.toBeInTheDocument();
 });
 
 it("keeps the capture form and explains a failed device save", async () => {

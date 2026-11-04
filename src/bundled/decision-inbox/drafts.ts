@@ -11,7 +11,29 @@ export type Draft = {
 
 const entries = new Map<string, { scope: string; draft: Draft }>();
 const subscriptions = new Map<string, () => void>();
+const listeners = new Map<string, Set<() => void>>();
+const versions = new Map<string, number>();
 let warningActive = false;
+
+function changed(scope: string) {
+  versions.set(scope, (versions.get(scope) ?? 0) + 1);
+  for (const listener of listeners.get(scope) ?? []) listener();
+}
+
+export function subscribeDrafts(scope: string, listener: () => void) {
+  let scoped = listeners.get(scope);
+  if (!scoped) {
+    scoped = new Set();
+    listeners.set(scope, scoped);
+  }
+  scoped.add(listener);
+  return () => {
+    scoped.delete(listener);
+    if (!scoped.size) listeners.delete(scope);
+  };
+}
+
+export const draftVersion = (scope: string) => versions.get(scope) ?? 0;
 
 const warnBeforeUnload = (event: BeforeUnloadEvent) => {
   event.preventDefault();
@@ -32,9 +54,10 @@ export function draftFor(key: string) {
   return entries.get(key)?.draft;
 }
 
-export function editDrafts(scope: string) {
+export function retainedDrafts(scope: string) {
   const drafts: {
     key: string;
+    kind: "capture" | "edit";
     channelId: string;
     messageId: string;
     draft: Draft;
@@ -47,12 +70,13 @@ export function editDrafts(scope: string) {
         Array.isArray(pair) &&
         pair.length === 4 &&
         pair[0] === scope &&
-        pair[1] === "edit" &&
+        (pair[1] === "capture" || pair[1] === "edit") &&
         typeof pair[2] === "string" &&
         typeof pair[3] === "string"
       )
         drafts.push({
           key,
+          kind: pair[1],
           channelId: pair[2],
           messageId: pair[3],
           draft: entry.draft,
@@ -73,14 +97,20 @@ export function forgetDraft(key: string, expected?: Draft) {
     subscriptions.delete(entry.scope);
   }
   updateWarning();
+  changed(entry.scope);
 }
 
 export function clearDrafts(scope: string) {
+  let removed = false;
   for (const [key, entry] of entries)
-    if (entry.scope === scope) entries.delete(key);
+    if (entry.scope === scope) {
+      entries.delete(key);
+      removed = true;
+    }
   subscriptions.get(scope)?.();
   subscriptions.delete(scope);
   updateWarning();
+  if (removed) changed(scope);
 }
 
 /** Keep drafts only when an explicit purge can reach this window from peers. */
@@ -95,5 +125,6 @@ export function keepDraft(scope: string, key: string, draft: Draft) {
   }
   entries.set(key, { scope, draft });
   updateWarning();
+  changed(scope);
   return true;
 }

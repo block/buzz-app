@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ActivityTranscript } from "./ActivityTranscript";
+import styles from "./ActivityTranscript.module.css";
 import type { TranscriptTurn } from "./activity-transcript";
 import { withSessionPrompts } from "./session-prompts";
 import { codexTurns } from "../../bundled/codex/transcript";
@@ -518,9 +519,40 @@ it("divides sessions, and shows each one's prompt once at its top", () => {
   expect(screen.getByText("Agent instructions")).toBeInTheDocument();
 });
 
-it("sizes table columns to whole words, not single characters", () => {
+it("sizes table columns to whole words and scrolls a wrapper, not the table", () => {
+  render(
+    <ActivityTranscript
+      transcript={{
+        turns: [
+          {
+            turnId: "t",
+            startedAt: 0,
+            endedAt: 1,
+            threadRootId: null,
+            config: [],
+            items: [
+              {
+                id: "reply",
+                at: 0,
+                type: "message",
+                text: "| Key | Default |\n| --- | --- |\n| shape.wide_channels | 0 |",
+              },
+            ],
+          } as never,
+        ],
+      }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  const table = screen.getByRole("table");
+  // Older WebKit drops a block-displayed table's semantics, so a wrapper scrolls.
+  expect(table.parentElement?.className).toBe(styles.tableScroll);
   // No DOM emulator lays out tables, so this reads the stylesheet.
-  expect(
-    readFileSync("src/features/agents/ActivityTranscript.module.css", "utf8"),
-  ).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
+  const css = readFileSync(
+    "src/features/agents/ActivityTranscript.module.css",
+    "utf8",
+  );
+  expect(css).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
+  expect(css).not.toMatch(/\.markdown table \{[^}]*display:/);
 });

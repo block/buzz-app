@@ -637,9 +637,21 @@ it("reads a repository refused while signed out again once the organization sign
   expect(t.readGit).toHaveBeenCalledTimes(2);
 });
 
-it("sizes table columns to whole words, not single characters", () => {
+it("sizes table columns to whole words and scrolls a wrapper, not the table", async () => {
+  const t = setup({ type: "repo", owner, dtag: "repo" });
+  t.readGit.mockResolvedValue({
+    ...git,
+    readme: "| Key | Default |\n| --- | --- |\n| shape.wide_channels | 0 |",
+  });
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  const table = within(
+    screen.getByRole("region", { name: "Overview" }),
+  ).getByRole("table");
+  // Older WebKit drops a block-displayed table's semantics, so a wrapper scrolls.
+  expect(table.parentElement).toHaveClass("repo-table-scroll");
   // No DOM emulator lays out tables, so this reads the stylesheet.
-  expect(readFileSync("src/bundled/repos/repos.css", "utf8")).toMatch(
-    /\.repo-markdown table \{[^}]*overflow-wrap: normal;/,
-  );
+  const css = readFileSync("src/bundled/repos/repos.css", "utf8");
+  expect(css).toMatch(/\.repo-markdown table \{[^}]*overflow-wrap: normal;/);
+  expect(css).not.toMatch(/\.repo-markdown table \{[^}]*display:/);
 });

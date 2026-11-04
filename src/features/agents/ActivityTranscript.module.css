@@ -131,7 +131,7 @@
 .plain {
   white-space: pre-wrap;
 }
-.markdown :is(p, ul, ol, pre, blockquote, table) {
+.markdown :is(p, ul, ol, pre, blockquote, .tableScroll) {
   margin: var(--space-2) 0;
 }
 .markdown :is(ul, ol) {
@@ -152,9 +152,10 @@
 }
 /* Breaking anywhere shrinks auto-sized columns to one character. */
 .markdown table {
-  display: block;
-  overflow-x: auto;
   overflow-wrap: normal;
+}
+.tableScroll {
+  overflow-x: auto;
 }
 .markdown a {
   text-decoration: underline;

@@ -393,6 +393,12 @@ const MARKDOWN: Components = {
       <>{children}</>
     ),
   img: ({ alt }) => alt ?? null,
+  // Scroll a wrapper: older WebKit drops a block-displayed table's semantics.
+  table: ({ children }) => (
+    <div className={styles.tableScroll}>
+      <table>{children}</table>
+    </div>
+  ),
 };
 
 /** Agent replies are Markdown; remote images stay unloaded. */

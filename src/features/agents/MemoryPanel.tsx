@@ -65,6 +65,12 @@ const MARKDOWN: Components = {
     ),
   // Memories are private context; don't fetch remote images when they open.
   img: ({ alt }) => alt ?? null,
+  // Scroll a wrapper: older WebKit drops a block-displayed table's semantics.
+  table: ({ children }) => (
+    <div className={styles.tableScroll}>
+      <table>{children}</table>
+    </div>
+  ),
 };
 
 /** Keeps the view for exactly as long as its plaintext is rendered, so session

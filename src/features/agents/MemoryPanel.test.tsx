@@ -15,6 +15,7 @@ import { formatFullTimestamp } from "../../shared/datetime";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createAgentMemories, type MemoryListing } from "./memory";
 import { MemoryPanel } from "./MemoryPanel";
+import styles from "./MemoryPanel.module.css";
 import type { Agent } from "./service";
 import type { AgentScopeReader } from "./AgentCommunityScope";
 import type { CommunityReader } from "../communities/service";
@@ -398,9 +399,27 @@ it("retries a partial listing while retaining its memories until recovery", asyn
   ).toBeNull();
 });
 
-it("sizes table columns to whole words, not single characters", () => {
+it("sizes table columns to whole words and scrolls a wrapper, not the table", async () => {
+  const user = userEvent.setup();
+  setup(async () => ({
+    entries: [
+      entry(
+        "core",
+        "| Key | Default |\n| --- | --- |\n| shape.wide_channels | 0 |",
+      ),
+    ],
+    partial: false,
+  }));
+  const core = await screen.findByRole("region", { name: "Core memories" });
+  await user.click(within(core).getByRole("button", { name: "core" }));
+  const table = within(core).getByRole("table");
+  // Older WebKit drops a block-displayed table's semantics, so a wrapper scrolls.
+  expect(table.parentElement?.className).toBe(styles.tableScroll);
   // No DOM emulator lays out tables, so this reads the stylesheet.
-  expect(
-    readFileSync("src/features/agents/MemoryPanel.module.css", "utf8"),
-  ).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
+  const css = readFileSync(
+    "src/features/agents/MemoryPanel.module.css",
+    "utf8",
+  );
+  expect(css).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
+  expect(css).not.toMatch(/\.markdown table \{[^}]*display:/);
 });

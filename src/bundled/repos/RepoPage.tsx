@@ -651,6 +651,12 @@ function Body({
               {children}
             </a>
           ),
+          // Scroll a wrapper: older WebKit drops a block-displayed table's semantics.
+          table: ({ children }) => (
+            <div className="repo-table-scroll">
+              <table>{children}</table>
+            </div>
+          ),
         }}
       >
         {text}

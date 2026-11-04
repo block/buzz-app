@@ -58,7 +58,19 @@ async function capture(surface, info, name) {
     await surface.screenshot({ path: info.outputPath(`${name}.png`) });
 }
 
-// These preserve the two browser journeys: actual routing, signed discovery,
+async function openAccess(page) {
+  // Cached startup renders Share access too. Its local dialog is replaced
+  // with the live session; Chat actions exists only on the live header.
+  await expect(
+    page.getByRole("button", { name: "Chat actions", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Share access", exact: true })
+    .last()
+    .click();
+}
+
+// These preserve the browser journeys: actual routing, signed discovery,
 // broker save/readback, focus and responsive overlays. Role matrices stay in Vitest.
 test.describe("owner", () => {
   test.use({
@@ -74,22 +86,11 @@ test.describe("owner", () => {
   }, info) => {
     await openChat(page, app, own);
     const row = page.locator(`[data-solo-channel-id="${own}"]`);
-    const access = page
-      .getByRole("button", { name: "Share access", exact: true })
-      .last();
     const dialog = page.getByRole("dialog", {
       name: "Share access",
       exact: true,
     });
     const audience = dialog.getByRole("combobox", { name: "General access" });
-    const openAccess = async () => {
-      // Cached startup renders Share access too. Its local dialog is replaced
-      // with the live session; Chat actions exists only on the live header.
-      await expect(
-        page.getByRole("button", { name: "Chat actions", exact: true }),
-      ).toBeVisible();
-      await access.click();
-    };
     const confirm = page.getByRole("alertdialog", {
       name: "Change general access?",
     });
@@ -98,7 +99,7 @@ test.describe("owner", () => {
       const suffix = `${presentation.mode}_${presentation.width}`;
       await present(page, presentation);
       if (presentation.width === 1440) await expect(row).toBeVisible();
-      await openAccess();
+      await openAccess(page);
       await expect(audience).toBeEnabled();
       await expect(audience).toHaveText("Private");
       await expect(dialog.getByRole("alert")).toHaveCount(0);
@@ -173,7 +174,7 @@ test.describe("owner", () => {
       await capture(dialog, info, `SOLO_DROPDOWN_VIEW_ONLY_${suffix}`);
       await page.keyboard.press("Escape");
       await page.reload();
-      await openAccess();
+      await openAccess(page);
       await expect(audience).toHaveText("View only");
       await expect(audience).toBeEnabled();
       // A title update can arrive while Share access stays open. Switching
@@ -217,6 +218,28 @@ test.describe("owner", () => {
       ).toBeInViewport({ ratio: 1 });
       await page.keyboard.press("Escape");
     }
+    expect(app.report.detailsPublications.map(({ kind }) => kind)).toEqual(
+      Array(8).fill(9002),
+    );
+    expect(app.report.lifecyclePublications ?? []).toEqual([]);
+    expect(app.report.publications).toEqual([]);
+  });
+
+  // Keep the confirmation-only matrix on a fresh fixture and test budget:
+  // combining it with save/reload coverage exhausts WebKit's total timeout in CI.
+  test("explains retained member access when making View only or existing Public chats Private", async ({
+    page,
+    app,
+  }, info) => {
+    await openChat(page, app, own);
+    const dialog = page.getByRole("dialog", {
+      name: "Share access",
+      exact: true,
+    });
+    const audience = dialog.getByRole("combobox", { name: "General access" });
+    const confirm = page.getByRole("alertdialog", {
+      name: "Change general access?",
+    });
     // The longer conditional descriptions need real modal geometry and focus
     // coverage. Guest/status matrices remain in the component/session tests.
     const guest = app.serveProfile(generateSecretKey(), {
@@ -234,7 +257,7 @@ test.describe("owner", () => {
         ["join_role", "guest"],
       ]);
       await present(page, presentation);
-      await openAccess();
+      await openAccess(page);
       await expect(audience).toBeEnabled();
       await expect(audience).toHaveText("View only");
       await expect(
@@ -264,7 +287,7 @@ test.describe("owner", () => {
         ["join_role", "member"],
       ]);
       await page.reload();
-      await openAccess();
+      await openAccess(page);
       await expect(audience).toBeEnabled();
       await expect(audience).toHaveText("Public (existing)");
       await audience.click();
@@ -301,9 +324,7 @@ test.describe("owner", () => {
       await expect(audience).toBeFocused();
       await page.keyboard.press("Escape");
     }
-    expect(app.report.detailsPublications.map(({ kind }) => kind)).toEqual(
-      Array(8).fill(9002),
-    );
+    expect(app.report.detailsPublications ?? []).toEqual([]);
     expect(app.report.lifecyclePublications ?? []).toEqual([]);
     expect(app.report.publications).toEqual([]);
   });

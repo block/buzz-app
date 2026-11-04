@@ -3,7 +3,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import messages from "../messages/Messages.module.css";
@@ -35,13 +35,37 @@ export function connectionDraft(
   return undefined;
 }
 
+/** Latest explicit mention per agent, limited to the viewer's delivered messages. */
+export function connectionMentions(
+  rows: readonly ChannelMessage[],
+  viewer: string,
+) {
+  const mentions = new Map<string, ChannelMessage>();
+  for (const row of rows) {
+    if (
+      row.authorId !== viewer ||
+      (row.signerId && row.signerId !== viewer) ||
+      row.edited ||
+      row.agentEnvelope ||
+      (row.delivery && row.delivery !== "accepted" && row.delivery !== "seen")
+    )
+      continue;
+    for (const peer of row.mentions) {
+      if (peer !== viewer) mentions.set(peer, row);
+    }
+  }
+  return mentions;
+}
+
 /** A local setup message: never a relay event or an agent-authored response. */
 export function AgentConnectionSetup({
   session,
   channel,
+  rows = [],
 }: {
   session: RelaySession;
   channel: ChannelSummary | undefined;
+  rows?: readonly ChannelMessage[];
 }) {
   const agents = useContext(AgentsContext);
   const profiles = useSyncExternalStore(
@@ -82,7 +106,35 @@ export function AgentConnectionSetup({
         }}
       />
     );
-  if (!agents || !peer) return null;
+  if (!agents) return null;
+  if (
+    channel &&
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    session.viewer &&
+    channel.members?.includes(session.viewer) &&
+    !channel.archived &&
+    !channel.readOnly &&
+    !channel.cached &&
+    channel.viewerRole &&
+    channel.viewerRole !== "guest"
+  ) {
+    return (
+      <>
+        {[...connectionMentions(rows, session.viewer)].map(
+          ([mentioned, message]) => (
+            <Candidate
+              key={`${session.scope}:${channel.id}:${mentioned}`}
+              agents={agents}
+              session={session}
+              peer={mentioned}
+              message={message}
+            />
+          ),
+        )}
+      </>
+    );
+  }
+  if (!peer) return null;
   return (
     <Candidate
       key={`${session.scope}:${peer}`}
@@ -97,10 +149,12 @@ function Candidate({
   agents,
   session,
   peer,
+  message,
 }: {
   agents: Agents;
   session: RelaySession;
   peer: string;
+  message?: ChannelMessage;
 }) {
   const owned = useAgentOwnerEvidence(session, peer);
   const existing = useAgent(agents, peer)?.agent.key;
@@ -157,6 +211,20 @@ function Candidate({
       candidate={candidate}
       scope={session.scope}
       onStart={() => setStarted(true)}
+      onSendAgain={
+        message
+          ? async () => {
+              session.messages.reply(
+                message.channelId,
+                message.threadRootId ?? message.id,
+                "Please respond to my message above.",
+                [peer],
+                [],
+                message.id,
+              );
+            }
+          : undefined
+      }
     />
   );
 }
@@ -169,18 +237,21 @@ export function AgentConnectionForm({
   scope,
   onStart,
   preview = false,
+  onSendAgain,
 }: {
   agents: Agents;
   candidate: PortableAgent;
   scope: string;
   onStart?: () => void;
   preview?: boolean;
+  onSendAgain?: (() => Promise<void>) | undefined;
 }) {
   const { types } = useAgents(agents);
   const [draft, setDraft] = useState(() => connectionDraft(candidate, types));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [sentAgain, setSentAgain] = useState(false);
   const type = types.find((type) => type.key === draft?.type && !type.remote);
   const provider = type?.provider;
   const state = useSyncExternalStore(
@@ -216,6 +287,19 @@ export function AgentConnectionForm({
       setPending(false);
     }
   };
+  const sendAgain = async () => {
+    if (!onSendAgain || pending || sentAgain) return;
+    setPending(true);
+    setError("");
+    try {
+      await onSendAgain();
+      setSentAgain(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPending(false);
+    }
+  };
   return (
     <section aria-label="Agent connection setup" data-agent-connection-setup="">
       <div className={messages.message}>
@@ -242,7 +326,9 @@ export function AgentConnectionForm({
                     {preview
                       ? "Choose a harness to import this agent."
                       : done
-                        ? "Send a message to continue your conversation."
+                        ? onSendAgain
+                          ? "Send a follow-up to this agent in your original message’s thread."
+                          : "Send a message to continue your conversation."
                         : draft
                           ? "Review the settings to import this agent and continue your conversation."
                           : "Choose a harness for this agent. Its previous harness is not available here."}
@@ -311,6 +397,22 @@ export function AgentConnectionForm({
                       </Button>
                     </div>
                   </>
+                )}
+                {done && onSendAgain && (
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="prominent"
+                      disabled={pending || sentAgain}
+                      onClick={() => void sendAgain()}
+                    >
+                      {sentAgain
+                        ? "Follow-up queued"
+                        : pending
+                          ? "Sending…"
+                          : "Send again"}
+                    </Button>
+                  </div>
                 )}
                 {error && (
                   <p role="alert" className="m-0 text-body-sm text-danger">

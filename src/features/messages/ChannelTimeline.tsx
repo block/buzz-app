@@ -1588,6 +1588,7 @@ function Timeline({
         <AgentConnectionSetup
           key={channelId}
           session={queries}
+          rows={window.rows}
           channel={queries.channels.get?.(channelId)}
         />
         <TypingIndicator

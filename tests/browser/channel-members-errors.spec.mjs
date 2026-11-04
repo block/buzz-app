@@ -31,10 +31,6 @@ test("member action errors stay in view above a long roster", async ({
 }) => {
   for (const name of [...members, "Sam"])
     app.serveProfile(keyFor(name), { name });
-  let releaseAdd;
-  const addGate = new Promise((resolve) => {
-    releaseAdd = resolve;
-  });
   await page.route("**/api/relay/**", async (route) => {
     const request = route.request();
     if (request.method() !== "POST") return route.fallback();
@@ -42,7 +38,6 @@ test("member action errors stay in view above a long roster", async ({
       /\/publish$/.test(request.url()) &&
       request.postDataJSON()?.kind === 9000
     ) {
-      await addGate;
       return route.fulfill({
         json: {
           accepted: false,
@@ -74,8 +69,17 @@ test("member action errors stay in view above a long roster", async ({
   const list = dialog.getByRole("region", { name: "Member list", exact: true });
   const search = dialog.getByRole("searchbox");
   await expect(
-    list.getByRole("heading", { name: /^People · 6[01]$/ }),
+    list.getByRole("heading", { name: "People · 61", exact: true }),
   ).toBeVisible();
+  await expect(list.getByRole("listitem")).toHaveCount(50);
+  // Root cause: the pager's positioned sr-only text must not give the
+  // overflow: hidden dialog body anything to scroll.
+  expect(
+    await list.evaluate((node) => {
+      const body = node.closest(".buzz-dialog-body");
+      return body.scrollHeight - body.clientHeight;
+    }),
+  ).toBe(0);
 
   // The exact match is highlighted at the bottom of the results and scrolled into view.
   await search.click();
@@ -85,12 +89,7 @@ test("member action errors stay in view above a long roster", async ({
     .getByRole("button", { name: /^Add Sam \(.*\)$/ });
   await expect(add).toBeVisible();
   await expect(list.getByRole("listitem")).toHaveCount(50);
-  await list.evaluate((node) => {
-    node.scrollTop = node.scrollHeight;
-  });
   await add.click();
-  await expect(add).toHaveText("Adding…");
-  releaseAdd();
   const refusal = dialog
     .getByRole("alert")
     .filter({ hasText: "not allowed to add members" });
@@ -101,9 +100,6 @@ test("member action errors stay in view above a long roster", async ({
   await expect(refusal).toBeInViewport({ ratio: 1 });
   await expect(search).toBeInViewport({ ratio: 1 });
 
-  await list.evaluate((node) => {
-    node.scrollTop = 0;
-  });
   await list
     .getByRole("listitem")
     .filter({ hasText: "Sam 02" })

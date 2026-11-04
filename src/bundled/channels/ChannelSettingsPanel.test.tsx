@@ -528,6 +528,40 @@ it.each([
   },
 );
 
+it("drops an unconfirmed prompt once the signed flag shows the change landed", async () => {
+  const user = userEvent.setup();
+  const capability = lifecycle();
+  capability.run.mockRejectedValueOnce(
+    new ChannelLifecycleUnconfirmed(new Error("not confirmed")),
+  );
+  const { rerender } = render(autoJoinPanel(publicStream, "owner", capability));
+  await user.click(autoJoinSwitch());
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Saved, but not confirmed yet. Try again to check.",
+  );
+  expect(autoJoinSwitch().getAttribute("aria-describedby")).toContain(alert.id);
+  // A refresh that still lacks the flag keeps the prompt.
+  rerender(autoJoinPanel({ ...publicStream }, "owner", capability));
+  expect(screen.getByRole("alert")).toBe(alert);
+  // A later 39000 shows the flag on; "Try again" would now turn it off.
+  rerender(
+    autoJoinPanel({ ...publicStream, autoJoin: true }, "owner", capability),
+  );
+  expect(autoJoinSwitch()).toBeChecked();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(autoJoinSwitch().getAttribute("aria-describedby")).not.toContain(
+    alert.id,
+  );
+  expect(autoJoinSwitch()).toHaveAccessibleDescription(
+    "New community members are added to this channel automatically.",
+  );
+  // Another admin turning it off later does not bring the stale prompt back.
+  rerender(autoJoinPanel(publicStream, "owner", capability));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(capability.run).toHaveBeenCalledOnce();
+});
+
 it("disables the switch when channel actions are unavailable on this connection", () => {
   render(autoJoinPanel(publicStream, "owner", lifecycle(false)));
   expect(autoJoinSwitch()).toHaveAttribute("aria-disabled", "true");

@@ -257,7 +257,10 @@ function AutoJoinSetting({
   );
   useEffect(() => membership.ensure(), [membership]);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ enabled: boolean; message: string }>();
+  // Once the signed flag shows what a failed toggle wanted, the change is in
+  // effect, and "Try again" would flip it back.
+  if (error && !!channel.autoJoin === error.enabled) setError(undefined);
   const operation = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => operation.current?.abort(), []);
   const control = useId();
@@ -270,7 +273,7 @@ function AutoJoinSetting({
     const controller = new AbortController();
     operation.current = controller;
     setPending(true);
-    setError("");
+    setError(undefined);
     try {
       await lifecycle.run(
         enabled ? "auto-join-on" : "auto-join-off",
@@ -279,20 +282,22 @@ function AutoJoinSetting({
       );
     } catch (error) {
       if (!controller.signal.aborted)
-        setError(
-          // Setting the same value again is idempotent, so retrying is the check.
-          error instanceof ChannelLifecycleUnconfirmed
-            ? "Saved, but not confirmed yet. Try again to check."
-            : // A rate limit or a write that never left this device, not a refusal.
-              error instanceof PublishNotSent
-              ? "Not sent. Try again."
-              : error instanceof PublishRejected
-                ? (error.reason ??
-                  "Only community owners and admins can change this.")
-                : error instanceof Error
-                  ? error.message
-                  : String(error),
-        );
+        setError({
+          enabled,
+          message:
+            // Setting the same value again is idempotent, so retrying is the check.
+            error instanceof ChannelLifecycleUnconfirmed
+              ? "Saved, but not confirmed yet. Try again to check."
+              : // A rate limit or a write that never left this device, not a refusal.
+                error instanceof PublishNotSent
+                ? "Not sent. Try again."
+                : error instanceof PublishRejected
+                  ? (error.reason ??
+                    "Only community owners and admins can change this.")
+                  : error instanceof Error
+                    ? error.message
+                    : String(error),
+        });
     } finally {
       operation.current = undefined;
       if (!controller.signal.aborted) setPending(false);
@@ -323,7 +328,7 @@ function AutoJoinSetting({
         />
         {error && (
           <p id={alert} role="alert" className="text-danger">
-            {error}
+            {error.message}
           </p>
         )}
       </dd>

@@ -655,9 +655,14 @@ changes; none publishes immediately.
 **Starter channel for new members**, between Description and Members, is separate: an
 immediate switch that publishes its own narrow `9002` (see
 [Channel lifecycle](#channel-lifecycle)) and shows pending, the relay's refusal
-or, when the change is not confirmed, a prompt to try again beside itself. It appears only to community owners and admins
-(the relay-signed kind `13534` roster) on an active public stream channel; the
-relay enforces that rule, so the gate is display-only.
+or, when the change is not confirmed, a prompt to try again beside itself. Once the
+channel's metadata shows the value that toggle wanted, the prompt clears, so trying
+again cannot undo a change that landed. It appears only to community owners and admins
+(the relay-signed kind `13534` roster) who are members of an active public stream
+channel, not previewing it or a guest in it, and only once the channel is loaded
+live rather than from cache. The relay checks the community role, not channel
+membership, so the gate is display-only and narrower: an owner or admin must join
+the channel to see the switch.
 Archiving a starter channel or making it private hides the switch and pauses the
 flag without clearing it: the relay stops advertising and applying it, refuses
 to change it on a private channel, and resumes adding new members on Unarchive

@@ -859,8 +859,10 @@ impl Manager {
     }
     /// The managed plugin policy and how each recommendation stands in `catalog`.
     pub fn managed(&self, catalog: &Catalog) -> managed::Managed {
-        managed::status(
-            managed::path(&self.home, std::env::var_os(managed::PATH_ENV)),
+        managed::effective(
+            &self.home,
+            std::env::var_os(managed::PATH_ENV),
+            managed::PACKAGED,
             catalog,
         )
     }

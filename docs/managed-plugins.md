@@ -38,9 +38,29 @@ One file serves every local profile (`BUZZODZ_PROFILE`) under that folder. A too
 wants both an installed and a development Buzz to see the policy writes both paths.
 The pre-1.0 `dev.local.buzz.foundation` folder is not read.
 
-A missing file means no policy. Buzz never creates, edits or deletes the file; the
+A missing file means no policy, unless the build carries a
+[packaged policy](#packaged-policy). Buzz never creates, edits or deletes the file; the
 writer creates the folder if needed. "Sign out and erase local data" clears the whole
 app data folder, including this file, so a writer should restore it on its next run.
+
+### Packaged policy
+
+An internal packager can compile a policy into its build, so every fresh install
+recommends the same plugins without anything writing the file:
+
+```sh
+BUZZ_BUILD_MANAGED_PLUGINS="$(cat policy.json)" bin/pnpm tauri build
+```
+
+The value is the same version 1 JSON, read from the build process environment or
+repository-root `.env.local`. The build fails unless it is a JSON object of at most
+256 KiB. The schema rules below apply when Buzz reads it. Leave it unset for OSS builds.
+
+Buzz uses the packaged policy only when no file exists at the resolved location, and
+never when `BUZZ_MANAGED_PLUGINS` names a file. A file written by a machine manager
+therefore replaces it completely; the two are not merged. The packaged policy survives
+"Sign out and erase local data", and Settings and `buzzodz plugin managed` show its
+location as "built into this Buzz build". It recommends, exactly like the file.
 
 ### Writing the file safely
 
@@ -173,6 +193,10 @@ BUZZ_MANAGED_PLUGINS=/tmp/policy.json buzzodz plugin managed
 The command prints the file path, the source name, each valid entry with its state for
 the selected profile, and the reason for each ignored entry. `buzzodz` and the desktop
 share one implementation, so a writer can use it to check a file it wrote.
+
+For a packaged policy, run the `buzzodz` built with the same `BUZZ_BUILD_MANAGED_PLUGINS`
+against an empty `--home`, or run `cargo test -p buzzodz-plugins packaged_policy_is_usable`
+with it set. The test fails on any ignored entry.
 
 ## Writer checklist
 

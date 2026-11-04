@@ -17,6 +17,9 @@ use std::{
 
 pub const FILE_NAME: &str = "managed-plugins.json";
 pub const PATH_ENV: &str = "BUZZ_MANAGED_PLUGINS";
+/// The packager's policy, used only when no file is present.
+pub const PACKAGED: &str = env!("BUZZ_BUILD_MANAGED_PLUGINS");
+pub const PACKAGED_LABEL: &str = "built into this Buzz build";
 const MAX_BYTES: u64 = 256 * 1024;
 const MAX_PLUGINS: usize = 64;
 const MAX_PROBLEMS: usize = 16;
@@ -107,17 +110,30 @@ pub fn status(path: Result<PathBuf>, catalog: &Catalog) -> Managed {
         }
     };
     let shown = path.display().to_string();
-    let text = match read(&path) {
-        Ok(Some(text)) => text,
-        Ok(None) => return Managed::Absent,
-        Err(reason) => {
-            return Managed::Invalid {
-                path: shown,
-                reason,
-            }
+    match read(&path) {
+        Ok(Some(text)) => evaluate(shown, &text, catalog),
+        Ok(None) => Managed::Absent,
+        Err(reason) => Managed::Invalid {
+            path: shown,
+            reason,
+        },
+    }
+}
+
+/// The file's status, or the packaged policy when the file is absent and
+/// `BUZZ_MANAGED_PLUGINS` does not name one.
+pub fn effective(home: &Path, env: Option<OsString>, packaged: &str, catalog: &Catalog) -> Managed {
+    let explicit = env.as_ref().is_some_and(|value| !value.is_empty());
+    match status(path(home, env), catalog) {
+        Managed::Absent if !explicit && !packaged.is_empty() => {
+            evaluate(PACKAGED_LABEL.into(), packaged, catalog)
         }
-    };
-    match parse(&text) {
+        managed => managed,
+    }
+}
+
+fn evaluate(shown: String, text: &str, catalog: &Catalog) -> Managed {
+    match parse(text) {
         Ok(policy) => Managed::Ready {
             path: shown,
             source: policy.source,
@@ -821,6 +837,61 @@ mod tests {
             plugins.iter().map(|entry| entry.state).collect::<Vec<_>>(),
             [Missing, Current, Outdated, Outdated, Outdated, Other, Other, Other]
         );
+    }
+
+    #[test]
+    fn falls_back_to_the_packaged_policy_only_without_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(FILE_NAME);
+        let empty = catalog(vec![]);
+        let packaged = policy(&[entry("acme.packaged")]);
+        assert_eq!(effective(dir.path(), None, "", &empty), Managed::Absent);
+
+        let Managed::Ready { path, plugins, .. } = effective(dir.path(), None, &packaged, &empty)
+        else {
+            panic!("expected the packaged policy");
+        };
+        assert_eq!(path, PACKAGED_LABEL);
+        assert_eq!(plugins[0].plugin.id, "acme.packaged");
+        assert_eq!(plugins[0].state, ManagedState::Missing);
+        assert_eq!(
+            effective(dir.path(), Some("".into()), &packaged, &empty),
+            effective(dir.path(), None, &packaged, &empty)
+        );
+
+        assert!(matches!(
+            effective(dir.path(), None, "{", &empty),
+            Managed::Invalid { path, .. } if path == PACKAGED_LABEL
+        ));
+
+        fs::write(&file, policy(&[entry("acme.file")])).unwrap();
+        let Managed::Ready { plugins, .. } = effective(dir.path(), None, &packaged, &empty) else {
+            panic!("expected the file");
+        };
+        assert_eq!(plugins[0].plugin.id, "acme.file");
+        fs::write(&file, "{").unwrap();
+        assert!(matches!(
+            effective(dir.path(), None, &packaged, &empty),
+            Managed::Invalid { path, .. } if path != PACKAGED_LABEL
+        ));
+
+        #[cfg(unix)]
+        {
+            let missing = dir.path().join("missing.json");
+            assert_eq!(
+                effective(dir.path(), Some(missing.into()), &packaged, &empty),
+                Managed::Absent
+            );
+        }
+    }
+
+    #[test]
+    fn packaged_policy_is_usable() {
+        if PACKAGED.is_empty() {
+            return;
+        }
+        let policy = parse(PACKAGED).expect("BUZZ_BUILD_MANAGED_PLUGINS is not a usable policy");
+        assert!(policy.problems.is_empty(), "{:?}", policy.problems);
     }
 
     #[test]

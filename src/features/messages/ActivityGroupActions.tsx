@@ -3,6 +3,7 @@ import type { MessageLinkOrigin } from "./MessageRow";
 import {
   useCallback,
   useContext,
+  useMemo,
   useRef,
   useSyncExternalStore,
   type RefObject,
@@ -20,7 +21,7 @@ import {
 import type { RelaySession } from "../relay/session";
 import type { Profile } from "../relay/contracts";
 import {
-  useActivitySnapshot,
+  useChannelActivitySnapshot,
   type ActivityPresentation,
 } from "./activity-presentation";
 
@@ -70,8 +71,11 @@ export function ActivityGroupActions({
   // while a stop awaits its evidence, so its pending state still resolves.
   const stopping = useRef(false);
   const tracking = active || stopping.current;
-  const snapshot = useActivitySnapshot(
+  const channelId = group.latest.channelId;
+  const channels = useMemo(() => new Set([channelId]), [channelId]);
+  const snapshot = useChannelActivitySnapshot(
     tracking ? session.agentActivity : undefined,
+    channels,
   );
   const choices = useSyncExternalStore(
     tracking ? session.agentChoices.subscribe : noSubscribe,

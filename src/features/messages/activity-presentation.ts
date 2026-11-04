@@ -29,12 +29,50 @@ export type ActivityRowPresentation = {
   container: "history" | "bubble" | "standalone";
 };
 const noSubscribe = () => () => {};
-const noActivity = () => undefined;
-export function useActivitySnapshot(activity: Activity | undefined) {
-  return useSyncExternalStore(
-    activity?.subscribe ?? noSubscribe,
-    activity?.snapshot ?? noActivity,
+
+const sameItems = <T>(a: readonly T[], b: readonly T[]) =>
+  a.length === b.length && a.every((item, index) => item === b[index]);
+/** Whether two snapshots agree on everything a request projection in these
+ * channels reads: their records, turns and local work, status and trimming. */
+function sameChannelActivity(
+  a: Snapshot | undefined,
+  b: Snapshot | undefined,
+  channels: ReadonlySet<string>,
+) {
+  if (a === b) return true;
+  if (!a || !b || a.status !== b.status || a.trimmed !== b.trimmed)
+    return false;
+  const records = (snapshot: Snapshot) =>
+    snapshot.records.filter((record) =>
+      record.channelIds.some((id) => channels.has(id)),
+    );
+  const local = (snapshot: Snapshot) =>
+    (snapshot.local ?? []).filter((work) => channels.has(work.channelId));
+  const turns = (snapshot: Snapshot) =>
+    JSON.stringify(
+      snapshot.turns.filter(
+        (turn) => !!turn.channelId && channels.has(turn.channelId),
+      ),
+    );
+  return (
+    sameItems(records(a), records(b)) &&
+    sameItems(local(a), local(b)) &&
+    turns(a) === turns(b)
   );
+}
+/** The activity snapshot, changing only when these channels' evidence does:
+ * work elsewhere in the session does not re-render this conversation. */
+export function useChannelActivitySnapshot(
+  activity: Activity | undefined,
+  channels: ReadonlySet<string>,
+) {
+  const held = useRef<Snapshot | undefined>(undefined);
+  const read = () => {
+    const live = activity?.snapshot();
+    if (!sameChannelActivity(held.current, live, channels)) held.current = live;
+    return held.current;
+  };
+  return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
 }
 
 /** Status belongs to the triggering request, never to all work in its thread. */
@@ -221,7 +259,11 @@ export function useActivityPresentation(
   rootId?: string,
   pinnedIds?: ReadonlyMap<string, number>,
 ) {
-  const snapshot = useActivitySnapshot(activity);
+  const channels = useMemo(
+    () => new Set(rows.map((row) => row.channelId)),
+    [rows],
+  );
+  const snapshot = useChannelActivitySnapshot(activity, channels);
   const projection = useMemo(
     () => activityPresentation(rows, snapshot, agents, rootId),
     [rows, snapshot, agents, rootId],

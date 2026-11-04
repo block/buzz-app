@@ -5,7 +5,7 @@ import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
   activityDisplayRows,
-  useActivitySnapshot,
+  useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
 import { activityRuns } from "./activity-groups";
@@ -586,7 +586,11 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
-  const activitySnapshot = useActivitySnapshot(session.agentActivity);
+  const threadChannels = useMemo(() => new Set([channelId]), [channelId]);
+  const activitySnapshot = useChannelActivitySnapshot(
+    session.agentActivity,
+    threadChannels,
+  );
   const stableActivity = useStableRowActivity();
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);

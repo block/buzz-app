@@ -3,12 +3,19 @@ import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
 import {
+  useChannelActivitySnapshot,
   useStableRowActivity,
   type ActivityRowPresentation,
 } from "./activity-presentation";
 import { useActivityIndicator } from "./use-activity-indicator";
 import { useLiveConversationAgents } from "./TypingIndicator";
-import { agent, entry, fixture, root } from "./typing-indicator-testing";
+import {
+  agent,
+  entry,
+  fixture,
+  root,
+  type Snapshot,
+} from "./typing-indicator-testing";
 
 afterEach(cleanup);
 
@@ -75,4 +82,35 @@ it("re-renders a live-agents host only when its working agents change", () => {
   expect(renders).toBe(idle);
   live.update([entry()]);
   expect(result.current).toEqual([agent]);
+});
+
+it("keeps a conversation's activity snapshot through other channels' work", () => {
+  const live = fixture();
+  const record = (id: string, channelId: string) =>
+    Object.freeze({
+      id,
+      channelIds: Object.freeze([channelId]),
+    }) as unknown as Snapshot["records"][number];
+  const turn = (channelId: string, timestamp: number) =>
+    ({ agent, turnId: "t", channelId, timestamp, state: "working" }) as const;
+  const elsewhere = record("elsewhere", "other");
+  const here = record("here", "channel");
+  const channels = new Set(["channel"]);
+  let renders = 0;
+  const { result } = renderHook(() => {
+    renders++;
+    return useChannelActivitySnapshot(live.session.agentActivity, channels);
+  });
+  const initial = result.current;
+  const idle = renders;
+  live.update([], { records: [elsewhere] });
+  live.update([], { records: [elsewhere], turns: [turn("other", 1)] });
+  live.update([], { records: [elsewhere], turns: [turn("other", 2)] });
+  expect(renders).toBe(idle);
+  expect(result.current).toBe(initial);
+  live.update([], { records: [elsewhere, here] });
+  expect(result.current?.records).toEqual([elsewhere, here]);
+  const withRecord = result.current;
+  live.update([], { records: [elsewhere, here], turns: [turn("channel", 3)] });
+  expect(result.current).not.toBe(withRecord);
 });

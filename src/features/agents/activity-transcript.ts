@@ -148,7 +148,21 @@ export function promptMessage(sections: PromptSection[]) {
   );
   const authors: string[] = [];
   const contents: string[] = [];
-  for (const { body } of events)
+  for (const { body } of events) {
+    // Current harnesses serialize the event as escaped JSON. Never parse its
+    // decoded content again as framing; old saved transcripts use the lines below.
+    let event: Json | undefined;
+    try {
+      event = object(JSON.parse(body));
+    } catch {
+      // Legacy human-readable event block.
+    }
+    if (event && typeof event.content === "string") {
+      contents.push(event.content);
+      const author = str(event.author) || str(event.npub) || str(event.pubkey);
+      if (author) authors.push(author);
+      continue;
+    }
     for (const block of body.split(/\n(?=--- Event \d+ )/)) {
       const from = /^From: (.*)$/m.exec(block)?.[1];
       const start = block.indexOf("\nContent: ");
@@ -159,6 +173,7 @@ export function promptMessage(sections: PromptSection[]) {
       );
       if (from) authors.push(from.replace(/ \((?:npub|hex)[^)]*\)$/, ""));
     }
+  }
   return {
     text: contents.join("\n\n"),
     author: [...new Set(authors)].join(", ") || undefined,
@@ -223,7 +238,29 @@ function configLabels(options: unknown) {
   });
 }
 
+// Snapshot record arrays are frozen and replaced on change, while indicators,
+// stop controls and previews read the same agent/channel on every tick.
+const transcripts = new WeakMap<object, Map<string, Transcript>>();
+
 export function activityTranscript(
+  records: readonly Source[],
+  scope: TranscriptScope,
+): Transcript {
+  if (!Object.isFrozen(records)) return buildTranscript(records, scope);
+  let byScope = transcripts.get(records);
+  if (!byScope) {
+    byScope = new Map();
+    transcripts.set(records, byScope);
+  }
+  const key = `${scope.agent}\n${scope.channelId ?? ""}`;
+  const cached = byScope.get(key);
+  if (cached) return cached;
+  const transcript = buildTranscript(records, scope);
+  byScope.set(key, transcript);
+  return transcript;
+}
+
+function buildTranscript(
   records: readonly Source[],
   scope: TranscriptScope,
 ): Transcript {

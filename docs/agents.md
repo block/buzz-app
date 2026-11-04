@@ -35,8 +35,8 @@ and reported as migration errors.
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
-`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
-It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name,
+optionally with a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
 the usual Create agent form, may edit the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
@@ -47,12 +47,17 @@ the available operations and arguments. Agent tools do not expose draft approval
 
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
-key from `agent_types`, or new instructions. Absent fields stay as they are. The
+key from `agent_types`, new instructions or a new picture. An agent may propose
+changes to itself. Absent fields stay as they are. The
 owner reviews them in the New agent form, titled Edit and filled in with the
 agent's settings and the proposed changes, with the usual type-change preview;
 saving applies what the owner reviewed, and closing the review discards the
-request. A type change carries what the new type adopts, as a manual one does. Change
-requests share the creation requests' local bound and lifetime.
+request. A type change carries what the new type adopts, as a manual one does. A proposed picture
+is a local PNG, JPEG, GIF or WebP file that the tool uploads to the community as
+the requesting agent once the request is valid, stripped of metadata as the
+owner's own avatar upload is. The draft carries only its HTTPS URL, which starts the
+review's avatar picker, and saving sets it as the owner's own avatar change
+does. Change requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 
@@ -480,6 +485,45 @@ goose sessions end with the app, so a resumed goose turn opens a new one and is
 shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
+
+### Saved Solo follow-ups
+
+The queued rows above the Solo composer are unsent messages, separate from the
+agent runner's interrupted turns. They are saved on this device in view storage,
+partitioned by account and community. Text, recipients, uploaded attachments,
+references, and model/effort choices survive a reload or app restart. An upload
+still in progress has not yet entered this queue.
+
+Restored rows remain paused with **Send** and **Remove** while the owner decides.
+**Resume** also unpauses saved follow-ups in the chats whose interrupted requests
+are being resumed. Each chat waits for those exact requests to settle, including
+the read/startup gap, then sends one queued message per completed turn. An old
+observer turn associated with the resumed request does not hold the queue forever;
+fresh local completion is required. Uncertain or unreadable requests keep waiting.
+If a type cannot resume or the relay confirms a request is gone, its saved follow-ups
+return to paused; fresh follow-ups are not marked as restored, and other agents’ waits
+remain intact. Resume does not establish channel admission: an incomplete empty roster
+keeps saved rows until discovery or an explicit removal establishes their status. Incomplete recipient discovery
+defers release until availability can be determined. A predecessor removed by another
+window pauses only its successors when this window cannot establish its completion;
+earlier rows continue draining. Automatic release rechecks saved FIFO order under a
+chat-scoped lock. A durable handoff marker records the sent event and its confirmed completion,
+including completion after Resume. Explicit dismissal or abandonment retires the
+matching marker under the chat lock. A window-liveness Web Lock prevents a closed
+window’s stale marker from pausing fresh rows. It survives removal of the sent row; a
+window that cannot establish that predecessor's completion pauses its competing
+rows for explicit Send rather than starting overlapping work. The paused rows explain that an earlier message was
+handled in another window.
+**Don’t resume** leaves the saved follow-ups paused. Other chats remain paused.
+Every release rechecks membership and recipient availability. A failed save keeps the
+composer draft; a failed removal keeps the row. Delivery transfers to the existing
+Outbox only after its journal is durable. Once Outbox owns a message, Remove stays
+disabled even if saving its recovery receipt fails; Send retries that same receipt.
+Remove is disabled during an active handoff;
+a per-row lock also prevents another window from removing it mid-send. If another window has begun sending,
+reload to recover its original receipt rather than publishing a second message.
+If a handoff was interrupted before a receipt was saved, the row remains available
+for inspection; check the conversation before removing it and sending again.
 
 ## Shared agent selection
 
@@ -998,6 +1042,13 @@ direction. Agent-elided strings and payloads are labeled, not hidden. Turns whos
 `turn_started` frame is not loaded are marked as partial. Posted chat messages are
 not joined here; the transcript shows the agent's ACP output.
 
+The shared Claude, Goose, and Pi turn formatter encodes conversation history and
+the triggering event as JSON with escaped markup delimiters. Message text,
+display names, and tags therefore cannot create extra request sections. The
+transcript reads that JSON directly and retains support for older line-based
+`buzz-event` and `buzz-events` records; it never parses decoded message content
+as another prompt.
+
 The plugin's activation leases `session.agentActivity` for the live display;
 disabling the plugin clears its live evidence. While demanded, the shared live
 connection carries one dedicated owner (`#p=viewer`) route for kind 24200, with no
@@ -1028,6 +1079,25 @@ and `agent_panic` end the agent/turn pair even with a null session ID. Silence
 beyond 30 seconds or disconnect makes work unknown, not stopped. Terminal state
 retains a monotonic evidence timestamp through clock rollback and bounded eviction.
 There is no agent-global sequence gate: producer sequences reset, skip and interleave.
+
+### Activity updates in the conversation
+
+Conversation visibility is separate from execution status. Activity updates use
+explicit immediate reply IDs and activity message IDs to select request lifecycle
+evidence; a nearby human message or a shared thread root is not proof of a turn.
+Consecutive updates from different requests or threads remain separate groups.
+Known waiting, working, failed, or uncertain work stays visible even after a public
+reply. Once every represented agent has settled successfully, stopped, or been
+superseded, the updates leave the conversation flow. History and exact message
+links remain available.
+
+When lifecycle evidence is missing (including historical conversations after a
+reload), the next public reply can retire older updates from the same request
+if its author participated in the exchange or received the helper's last update.
+This is a display fallback, not a claim that execution completed. It never
+overrides available pending, failed, or uncertain lifecycle evidence. Durable
+cross-host completion would require retained request/turn relationships and
+terminal events; the current live-only feed does not provide that guarantee.
 
 ### Try with an existing owner account
 

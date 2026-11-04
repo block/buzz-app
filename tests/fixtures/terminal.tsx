@@ -4,6 +4,7 @@ import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { createScreen } from "../../src/bundled/terminal/renderer";
 import type { TerminalInputSource } from "../../src/bundled/terminal/renderer";
+import { createTerminalFontPreference } from "../../src/bundled/terminal/font-preference";
 
 function Fixture() {
   useKeyboardFocusVisibility();
@@ -11,6 +12,8 @@ function Fixture() {
   const [visible, show] = useState(true);
   const [input, setInput] = useState("");
   const [dimensions, resized] = useState("");
+  const [font] = useState(() => createTerminalFontPreference());
+  const [resizes] = useState<string[]>([]);
   const [generated] = useState<{ data: string; source: TerminalInputSource }[]>(
     [],
   );
@@ -20,7 +23,11 @@ function Fixture() {
         generated.push({ data, source });
         setInput((value) => value + data);
       },
-      (cols, rows) => resized(`${cols}x${rows}`),
+      (cols, rows) => {
+        resizes.push(`${cols}x${rows}`);
+        resized(`${cols}x${rows}`);
+      },
+      font,
     ),
   );
   useEffect(() => {
@@ -30,11 +37,16 @@ function Fixture() {
     Object.assign(window, {
       terminalRenderer: {
         generated,
+        font,
+        resizes,
         output: (data: string) => screen.output(new TextEncoder().encode(data)),
       },
     });
-    return () => screen.dispose();
-  }, [screen, generated]);
+    return () => {
+      screen.dispose();
+      font.dispose();
+    };
+  }, [screen, generated, font, resizes]);
   return (
     <>
       <button
@@ -101,4 +113,7 @@ function Fixture() {
 }
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing root");
+// Font-swap geometry needs a loaded baseline, independent of network timing.
+if (new URLSearchParams(location.search).has("fonts-ready"))
+  await document.fonts.load('12px "JetBrains Mono"');
 createRoot(root).render(<Fixture />);

@@ -6,6 +6,10 @@ import "@fontsource/jetbrains-mono/600.css";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { forwardTerminalKey } from "../../features/shortcuts/terminal-key-event";
 import { terminalAppearance } from "./appearance";
+import {
+  DEFAULT_FONT_SIZE,
+  type TerminalFontPreference,
+} from "./font-preference";
 import { createSplash } from "./splash";
 import styles from "./Terminal.module.css";
 
@@ -18,6 +22,7 @@ export type TerminalScreen = {
 export function createScreen(
   input: (data: string, source: TerminalInputSource) => void,
   resize: (cols: number, rows: number) => void,
+  font?: Pick<TerminalFontPreference, "snapshot" | "subscribe">,
 ): TerminalScreen {
   const element = document.createElement("div");
   element.dataset.buzzUi = "";
@@ -100,10 +105,18 @@ export function createScreen(
   let receivedOutput = false;
   let detach: (() => void) | undefined;
   const pending = new Set<() => void>();
+  const applyFont = () => {
+    const { family, size = DEFAULT_FONT_SIZE } = font?.snapshot() ?? {};
+    element.style.fontSize = `${size}px`;
+    element.style.fontFamily = family
+      ? `"${family}", var(--font-system-mono)`
+      : "";
+  };
   return {
     mount(host) {
       detach?.();
       host.append(element);
+      applyFont();
       terminal.options = terminalAppearance(element);
       if (!opened) {
         terminal.open(element);
@@ -112,6 +125,7 @@ export function createScreen(
       let attached = true;
       const update = () => {
         if (!attached || disposed) return;
+        applyFont();
         terminal.options = terminalAppearance(element);
         if (host.clientWidth && host.clientHeight) {
           fit.fit();
@@ -120,6 +134,7 @@ export function createScreen(
         }
       };
       const observer = new ResizeObserver(update);
+      const unsubscribe = font?.subscribe(update);
       observer.observe(host);
       const appearance = new MutationObserver(update);
       appearance.observe(document.documentElement, {
@@ -133,6 +148,7 @@ export function createScreen(
       terminal.focus();
       const cleanup = () => {
         attached = false;
+        unsubscribe?.();
         observer.disconnect();
         appearance.disconnect();
         element.removeEventListener("keydown", splash.dismiss);

@@ -5551,6 +5551,82 @@ it("opens a DM from a person row through the confirmed open until the relay's hi
   }
 });
 
+it.each(["loading", "error"] as const)(
+  "opens a DM from a person row through the confirmed open while the relay's hidden DMs are %s",
+  async (status) => {
+    // A refresh keeps the last hidden set, which may be stale, and a failed
+    // one never replaces it, so neither shows the DM is still visible.
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair();
+    const discovery = [
+      metadata(relay, "dm", "opaque", 1700000000, [
+        ["hidden", ""],
+        ["t", "dm"],
+        ["private", ""],
+      ]),
+      roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+      profile(alice, { display_name: "Alice Chen", name: "ally" }),
+    ];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      async query(filters) {
+        if (filters.some((filter) => filter.search !== undefined)) return [];
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+    });
+    const t = peopleSession(owner.session);
+    t.open.mockResolvedValueOnce("dm");
+    const lifecycle = owner.session.channelLifecycle;
+    const visibility = {
+      ...lifecycle.snapshot(),
+      status,
+      hidden: Object.freeze([]),
+    };
+    const session = {
+      ...t.session,
+      channelLifecycle: {
+        ...lifecycle,
+        snapshot: () => visibility,
+        subscribe: () => () => {},
+      },
+    } as typeof t.session;
+    const openConversation = vi.fn();
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query="ally"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+        />,
+      );
+      const people = within(
+        await screen.findByRole("group", { name: "People" }),
+      );
+      const row = await people.findByRole("option", { name: /Alice Chen/ });
+      expect(row.querySelector(".text-subtle")?.textContent).toBe(
+        "@ally · Direct message",
+      );
+      fireEvent.click(row);
+      await waitFor(() =>
+        expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
+      );
+      expect(t.open).toHaveBeenCalledExactlyOnceWith(
+        [alice.pubkey],
+        expect.any(AbortSignal),
+      );
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it("opens a sidebar-hidden DM from a person row when this connection cannot start DMs", async () => {
   // Relay-signed DM metadata carries NIP-29 `hidden`; the row must still find
   // the DM, or it would ask a connection without DMs to start one.

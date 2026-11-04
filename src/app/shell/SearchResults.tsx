@@ -1138,8 +1138,9 @@ export function SearchResults({
           channel.participants[0] === pubkey,
       );
     // Opening a DM hidden on this device goes through the confirmed open,
-    // which restores its sidebar row. So does one opened before the relay's
-    // hidden set has loaded, since it may be hidden. A visible DM just opens.
+    // which restores its sidebar row. So does any DM opened while the relay's
+    // hidden set is not ready, since it may be hidden: before the first load,
+    // during every refresh and after a failed one. A visible DM just opens.
     if (
       existing &&
       (!session.directMessages.available ||

@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "popout-window",
+  "description": "Presentation-only pop-out conversation windows; no identity, relay or signing authority.",
+  "webviews": ["popout-*"],
+  "permissions": [
+    "allow-popout-window-watch",
+    "allow-popout-window-action",
+    "allow-media-download",
+    "allow-clipboard-write-text",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "http://*"
+        }
+      ]
+    }
+  ]
+}

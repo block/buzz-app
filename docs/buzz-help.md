@@ -162,6 +162,13 @@ that agent in Buzz; they do not notify the external app through this connection.
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
   "no results".
+- **Join** in a View only chat or channel adds you as a viewer, with a sidebar
+  entry and normal unread tracking. Notifications follow your existing settings
+  and mention/thread rules. You appear in People as **Viewing only**; you still
+  cannot post or react. Reading without joining stays available.
+  Use **Leave chat** or **Leave channel** to remove your membership and sidebar
+  entry. Joined viewers keep reading after a switch to Private until they leave
+  or are removed in People.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
@@ -285,9 +292,19 @@ available rather than silently discarding it.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
+  On macOS, Claude security reviews need their own sign-in: run
+  `claude setup-token` in Terminal and paste its token under **Sign in for
+  reviews** in Claude's **Edit configuration**. Until it is saved, Claude
+  reviews fail closed. It needs a Claude subscription and lasts a year.
+  Codex security reviews for protected agents need a ChatGPT sign-in made
+  there, and fail until there is one, or while Codex's sign-in is for another
+  workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
+  and keyring sign-ins can't run them.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
-  opens that conversation. Working indicators describe current work,
+  opens that conversation. Choosing an agent in the activity under a message,
+  or a Working now agent whose conversation is known, opens that
+  conversation's transcript. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
@@ -321,6 +338,19 @@ available rather than silently discarding it.
   folder. After that the agent can reload it from that folder. A reload that
   fails to start restores the previous version. Changed host access still needs
   the person's review through the plugin's **Update**.
+- **Focus**, when its optional plugin is on, is in the profile menu. For a
+  chosen time it shows only Solo chats in the sidebar and lets only Solo chats
+  in the selected community show banners, play sounds or light the Dock dot. Links and search still open
+  any conversation. Other alerts are not shown or saved, and those
+  conversations keep their unread state. Focus sets 🔭 Focusing as the status
+  in the selected community. When Focus ends there, the earlier status comes
+  back if 🔭 is still the latest status. If Focus ends after you switch
+  communities, the earlier status comes back when you return to that community,
+  unless you start Focus elsewhere first. Focus is saved per device and ends at
+  its end time or with **End**, and ⌥F (Alt+F) starts it for an hour or ends
+  it. **Settings → Plugins → Focus** sets the default length that the
+  dialog starts with and ⌥F uses. Turning the plugin off mid-Focus shows everything again
+  at once; 🔭 stays until it expires.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching
   and whether Attention is on for this device. A mention can still wake an agent

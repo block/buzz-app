@@ -1,4 +1,5 @@
 import { ArtifactStorageService } from "../features/artifact-storage/service";
+import { provideArtifactStoreSync } from "../features/relay/artifact-store-sync";
 import { createAdminAccess } from "../bundled/admin-access";
 import { nativeRelayStaff } from "../features/relay-staff/native";
 import { createLocalAgentActivity } from "../features/agents/local-activity";
@@ -46,6 +47,7 @@ import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
 import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
 import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
+import { SidebarScopeService } from "../features/channel-navigation/sidebar-scope-service";
 import { bundledPlugins } from "../bundled";
 import { bundledFederatedIdentity } from "../bundled/builderlab/oauth/first-run";
 import { nativeBuilderlab } from "../bundled/builderlab/session";
@@ -96,6 +98,7 @@ export function createServices() {
       navigation.open({ version: 1, kind: "settings", section: "plugins" }),
   });
   createPluginInstallerService(ctx, { core: pluginInstallCore });
+  const sidebarScope = new SidebarScopeService(ctx);
   const panels = new PanelsService(ctx);
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -124,6 +127,7 @@ export function createServices() {
   });
   const relay = communities.relay;
   const artifactStorage = new ArtifactStorageService(ctx);
+  provideArtifactStoreSync(ctx, artifactStorage);
   // Expose v2 only with the complete label/projection/frame/Destination/guard slice.
   new SoloNavigationService(ctx, relay, plugins);
   // The one recovery point for federated sign-in; see onSignedIn.
@@ -234,7 +238,10 @@ export function createServices() {
   );
   if (notifications.indicator.available)
     ctx.effect(() =>
-      bindUnreadIndicator(communities, notifications.indicator.setUnread),
+      bindUnreadIndicator(communities, notifications.indicator.setUnread, {
+        allows: (target) => notifications.gated(target),
+        subscribe: notifications.subscribeGates,
+      }),
     );
   let disposal: Promise<void> | undefined;
   return {
@@ -256,6 +263,7 @@ export function createServices() {
     pages,
     sidebarSections,
     pluginInstallRequests,
+    sidebarScope,
     panels,
     plugins,
     federatedIdentity,

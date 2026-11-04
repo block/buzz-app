@@ -1134,10 +1134,13 @@ export function SearchResults({
   const directoryPending = publicChannels.loading || personDirectory.loading;
   const messagesPending = operatorLookupPending || search.loading;
   const slowMessages = useDelayedSearch(messagesPending);
+  // An author or date picker replaces the result groups, so it announces
+  // none of their lookups.
+  const resultsShown = !showAuthorPicker && !showDateChoices;
   const searchAnnouncement = useSearchAnnouncement(
-    slowChannels,
+    resultsShown && slowChannels,
     slowPeople,
-    slowMessages,
+    resultsShown && slowMessages,
   );
   const messageEmpty =
     operatorLookupPending || search.loading

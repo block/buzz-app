@@ -1386,6 +1386,61 @@ it.each([false, true])(
   },
 );
 
+it.each(["crew after:", "crew from:"])(
+  "announces no hidden result lookups behind the %s picker",
+  async (query) => {
+    vi.useFakeTimers();
+    const relay = keypair(),
+      viewer = keypair();
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query: async () => [],
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const searchPublic = vi.fn(async () => {
+      await held;
+      return { channels: [], partial: false };
+    });
+    const readPage = vi.fn(async () => {
+      await held;
+      return { events: [], relayCount: 0 };
+    });
+    const session = {
+      ...owner.session,
+      readPage,
+      channels: { ...owner.session.channels, searchPublic },
+    };
+    try {
+      render(
+        <SearchResults
+          session={session}
+          query={query}
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      await act(async () => vi.advanceTimersByTimeAsync(1500));
+      expect(searchPublic).toHaveBeenCalled();
+      expect(
+        screen.getByRole("group", {
+          name: query.endsWith("after:") ? "Dates" : "People",
+        }),
+      ).toBeVisible();
+      expect(screen.queryByText(/· Searching…/)).toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+    } finally {
+      release();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it.each([false, true])(
   "freezes the announcement with simultaneous sources=%s",
   async (simultaneous) => {
@@ -4229,7 +4284,6 @@ it("keeps a pending in: lookup pending, then retries its failure and resumes sco
       />,
     );
     await started;
-    expect(screen.queryByText("Searching messages…")).toBeNull();
     expect(
       screen.queryByText("No matching messages in accessible conversations."),
     ).toBeNull();
@@ -4247,6 +4301,64 @@ it("keeps a pending in: lookup pending, then retries its failure and resumes sco
     ).toBeVisible();
     expect(reads).toContainEqual([expect.objectContaining({ "#h": ["dev"] })]);
   } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("shows a pending in: channel lookup beside Most relevant", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    query: async () => [],
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let lookupStarted = false;
+  const searchPublic = vi.fn(async (query: string) => {
+    if (query === "dev") {
+      lookupStarted = true;
+      await held;
+    }
+    return { channels: [], partial: false };
+  });
+  const readPage = vi.fn(async () => ({ events: [], relayCount: 0 }));
+  const session = {
+    ...owner.session,
+    readPage,
+    channels: { ...owner.session.channels, searchPublic },
+  };
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="deploy in:#dev"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    for (let step = 0; step < 100 && !lookupStarted; step++)
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+    expect(lookupStarted).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    const group = screen.getByRole("group", { name: "Most relevant" });
+    expect(
+      within(group).getByRole("heading", { name: "Most relevant" }),
+    ).toHaveTextContent("Most relevant · Searching…");
+    expect(group.querySelector(".search-palette-group-empty")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Searching messages…");
+    expect(readPage).not.toHaveBeenCalled();
+    await act(async () => release());
+    expect(screen.queryByText(/· Searching…/)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  } finally {
+    release();
     cleanup();
     owner.dispose();
   }

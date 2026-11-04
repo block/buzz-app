@@ -281,6 +281,12 @@ that agent in Buzz; they do not notify the external app through this connection.
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
+  24-hour times. System, the default, follows the 24-hour setting in macOS
+  System Settings in the Mac app and the language and region elsewhere. Show
+  seconds adds seconds to clock times. **Message timestamps** can hide the
+  time beside each message everywhere or only in Solo chats; day dividers and
+  screen-reader dates remain.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

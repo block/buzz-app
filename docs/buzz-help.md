@@ -243,6 +243,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   of reopening where you left it. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
+- **Activity** threads name their channel above the original message. Select that
+  name, or **Open in channel** in the thread tab's menu, to open the thread in
+  Channels beside its original message, which the channel history shows and
+  highlights.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.

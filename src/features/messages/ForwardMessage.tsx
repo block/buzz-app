@@ -21,6 +21,7 @@ import type { Recipient } from "../direct-messages/usePeople";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import type { ChannelMessage } from "../relay/contracts";
+import type { OutgoingEvent } from "../relay/outbox";
 import { splitPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
 import styles from "./ForwardMessage.module.css";
@@ -31,9 +32,68 @@ type Source = Extract<OpenTarget, { kind: "conversation" }> & {
 const ForwardMessageContext = createContext<
   ((row: ChannelMessage) => void) | undefined
 >(undefined);
+/** Set by the provider that renders the dialog and owns pending forwards. */
+const ForwardOwnerContext = createContext(false);
 export const useForwardMessage = () => useContext(ForwardMessageContext);
 const noSubscribe = () => () => {};
 const noSnapshot = () => undefined;
+const emptyOperations: readonly OutgoingEvent[] = [];
+const noOperations = () => emptyOperations;
+
+const recoveryKey = "message:forward";
+const hex64 = /^[0-9a-f]{64}$/;
+type PendingForward = {
+  id: string;
+  channelId: string;
+  source: { channelId: string; forward: string };
+  person: Recipient;
+  note: string;
+};
+// The durable outbox, not component state, owns an uncertain forward: a reload
+// must restore and confirm the original event rather than publish another.
+function pendingForward(
+  operations: readonly OutgoingEvent[],
+  viewer: string | undefined,
+): PendingForward | undefined {
+  for (const item of operations) {
+    if (item.recovery?.key !== recoveryKey || item.event.kind !== 9) continue;
+    const channelId = item.event.tags.find(([name]) => name === "h")?.[1];
+    try {
+      const { source, person, note } = JSON.parse(item.recovery.value);
+      if (
+        channelId &&
+        typeof source?.channelId === "string" &&
+        source.channelId &&
+        typeof source.forward === "string" &&
+        hex64.test(source.forward) &&
+        typeof person?.pubkey === "string" &&
+        hex64.test(person.pubkey) &&
+        person.pubkey !== viewer &&
+        typeof person.name === "string" &&
+        typeof note === "string"
+      )
+        return {
+          id: item.event.id,
+          channelId,
+          source: { channelId: source.channelId, forward: source.forward },
+          person: {
+            pubkey: person.pubkey,
+            name: person.name.slice(0, 500),
+            ...(person.isAgent === true ? { isAgent: true } : {}),
+          },
+          note: note.slice(0, 4096),
+        };
+    } catch {
+      /* An unreadable payload stays visible in the outbox for removal. */
+    }
+  }
+}
+const isPendingSource = (
+  pending: PendingForward,
+  target: { channelId: string; forward?: string | undefined },
+) =>
+  target.forward === pending.source.forward &&
+  target.channelId === pending.source.channelId;
 
 export function ForwardMessageProvider({
   session,
@@ -49,6 +109,17 @@ export function ForwardMessageProvider({
   children: ReactNode;
 }) {
   const active = useConversationPresentation();
+  // Hosted conversations nest beneath the dialog's owner. Delegate to it so
+  // one provider holds the source, the pending guard and the retry notice.
+  const owned = useContext(ForwardOwnerContext);
+  const ownerForward = useContext(ForwardMessageContext);
+  const delegate = owned && !renderDialog;
+  const operations = useSyncExternalStore(
+    session.outbox?.subscribe ?? noSubscribe,
+    session.outbox?.snapshot ?? noOperations,
+    noOperations,
+  );
+  const pending = pendingForward(operations, session.viewer);
   const snapshot = useSyncExternalStore(
     navigation?.subscribe ?? noSubscribe,
     navigation?.snapshot ?? noSnapshot,
@@ -67,47 +138,51 @@ export function ForwardMessageProvider({
   if (
     requested &&
     !locked.current &&
+    (!pending || isPendingSource(pending, requested)) &&
     (source?.forward !== requested.forward ||
       source.channelId !== requested.channelId)
   )
     setSource(requested);
   const trigger = useRef<HTMLElement | null>(null);
   const [blocked, setBlocked] = useState(false);
-  const forward = useCallback(
-    (row: ChannelMessage) => {
+  const open = useCallback(
+    (channelId: string, id: string) => {
       const scopeParts = splitPartition(scope);
-      if (
-        !active ||
-        !navigation ||
-        !scopeParts ||
-        !session.directMessages.available
-      )
-        return;
+      if (!navigation || !scopeParts) return;
       const current = navigation.snapshot().entry.target;
-      if (
-        locked.current &&
-        (row.id !== source?.forward || row.channelId !== source?.channelId)
-      ) {
-        setBlocked(true);
-        return;
-      }
       trigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
       void navigation.open({
-        ...(current.kind === "conversation" &&
-        current.channelId === row.channelId
+        ...(current.kind === "conversation" && current.channelId === channelId
           ? current
           : {}),
         version: 1,
         kind: "conversation",
         scope: scopeParts,
-        channelId: row.channelId,
-        forward: row.id,
+        channelId,
+        forward: id,
       });
     },
-    [active, navigation, scope, session, source],
+    [navigation, scope],
+  );
+  const forward = useCallback(
+    (row: ChannelMessage) => {
+      if (!active || !session.directMessages.available) return;
+      const target = { channelId: row.channelId, forward: row.id };
+      if (
+        (locked.current &&
+          (row.id !== source?.forward ||
+            row.channelId !== source?.channelId)) ||
+        (pending && !isPendingSource(pending, target))
+      ) {
+        setBlocked(true);
+        return;
+      }
+      open(row.channelId, row.id);
+    },
+    [active, open, pending, session, source],
   );
   const close = (source: Source) => {
     if (!navigation) return;
@@ -123,39 +198,59 @@ export function ForwardMessageProvider({
     );
   };
   return (
-    <ForwardMessageContext
-      value={
-        navigation && session.directMessages.available ? forward : undefined
-      }
-    >
-      {children}
-      {renderDialog && source && navigation && (
-        <ForwardMessageDialog
-          key={`${source.channelId}:${source.forward}`}
-          session={session}
-          scope={scope}
-          source={source}
-          open={
-            requested?.forward === source.forward &&
-            requested.channelId === source.channelId &&
-            active
-          }
-          close={() => close(source)}
-          finalFocus={trigger}
-          lock={(value) => {
-            locked.current = value;
-          }}
-        />
-      )}
-      {blocked && (
-        <ToastNotice
-          title="Retry the pending forward before forwarding another message."
-          tone="info"
-          timeout={4000}
-          onDismiss={() => setBlocked(false)}
-        />
-      )}
-    </ForwardMessageContext>
+    <ForwardOwnerContext value={owned || renderDialog}>
+      <ForwardMessageContext
+        value={
+          delegate
+            ? ownerForward
+            : navigation && session.directMessages.available
+              ? forward
+              : undefined
+        }
+      >
+        {children}
+        {renderDialog && source && navigation && (
+          <ForwardMessageDialog
+            key={`${source.channelId}:${source.forward}`}
+            session={session}
+            scope={scope}
+            source={source}
+            recovered={
+              pending && isPendingSource(pending, source) ? pending : undefined
+            }
+            open={
+              requested?.forward === source.forward &&
+              requested.channelId === source.channelId &&
+              active
+            }
+            close={() => close(source)}
+            finalFocus={trigger}
+            lock={(value) => {
+              locked.current = value;
+            }}
+          />
+        )}
+        {blocked && !delegate && (
+          <ToastNotice
+            title="Retry the pending forward before forwarding another message."
+            tone="info"
+            timeout={pending ? 0 : 4000}
+            onDismiss={() => setBlocked(false)}
+          >
+            {pending && (
+              <Button
+                onClick={() => {
+                  setBlocked(false);
+                  open(pending.source.channelId, pending.source.forward);
+                }}
+              >
+                Review pending forward
+              </Button>
+            )}
+          </ToastNotice>
+        )}
+      </ForwardMessageContext>
+    </ForwardOwnerContext>
   );
 }
 
@@ -163,6 +258,7 @@ function ForwardMessageDialog({
   session,
   scope,
   source,
+  recovered,
   open,
   close,
   finalFocus,
@@ -171,13 +267,23 @@ function ForwardMessageDialog({
   session: RelaySession;
   scope: string;
   source: Source;
+  recovered: PendingForward | undefined;
   open: boolean;
   close(): void;
   finalFocus: React.RefObject<HTMLElement | null>;
   lock(value: boolean): void;
 }) {
-  const [people, setPeople] = useState<Recipient[]>([]);
-  const [note, setNote] = useState("");
+  const [people, setPeople] = useState<Recipient[]>(() =>
+    recovered ? [recovered.person] : [],
+  );
+  const [note, setNote] = useState(() => recovered?.note ?? "");
+  const restored = useRef(recovered?.id);
+  // The outbox can finish loading after the dialog mounts.
+  if (recovered && restored.current !== recovered.id) {
+    restored.current = recovered.id;
+    setPeople([recovered.person]);
+    setNote(recovered.note);
+  }
   const [typed, setTyped] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -185,10 +291,9 @@ function ForwardMessageDialog({
   const fields = useRef<HTMLDivElement>(null);
   const noteField = useRef<HTMLTextAreaElement>(null);
   const operation = useRef<AbortController | undefined>(undefined);
-  const sent = useRef<{ id: string; channelId: string } | undefined>(undefined);
   useEffect(() => () => operation.current?.abort(), []);
   const person = people[0];
-  const locked = pending || !!sent.current;
+  const locked = pending || !!recovered;
   const submit = async () => {
     if (!open || !person || typed || operation.current) return;
     const controller = new AbortController();
@@ -198,7 +303,11 @@ function ForwardMessageDialog({
     setError("");
     setNotice(undefined);
     try {
-      if (!sent.current) {
+      let sent = recovered && {
+        id: recovered.id,
+        channelId: recovered.channelId,
+      };
+      if (!sent) {
         const validateRecipient = () => {
           if (
             (person.isAgent ||
@@ -222,24 +331,53 @@ function ForwardMessageDialog({
         controller.signal.throwIfAborted();
         await session.outbox?.ready();
         controller.signal.throwIfAborted();
+        const saved = pendingForward(
+          session.outbox?.snapshot() ?? [],
+          session.viewer,
+        );
+        if (saved && !isPendingSource(saved, source))
+          throw new Error(
+            "Retry the pending forward before forwarding another message.",
+          );
         validateRecipient();
         const link = `buzz://message?${new URLSearchParams({ channel: source.channelId, id: source.forward })}`;
         const literalNote = note
           .trim()
           .replace(/[\\`*_{}[\]<>()#+\-.!|~]/g, "\\$&");
-        const id = session.messages.send(
+        sent = saved ?? {
+          id: session.messages.send(
+            channelId,
+            [literalNote, link].filter(Boolean).join("\n\n"),
+            [],
+            [],
+            {
+              key: recoveryKey,
+              value: JSON.stringify({
+                source: {
+                  channelId: source.channelId,
+                  forward: source.forward,
+                },
+                person: {
+                  pubkey: person.pubkey,
+                  name: person.name.slice(0, 500),
+                  ...(person.isAgent === true ? { isAgent: true } : {}),
+                },
+                note,
+              }),
+            },
+          ),
           channelId,
-          [literalNote, link].filter(Boolean).join("\n\n"),
-        );
-        sent.current = { id, channelId };
+        };
       }
       await session.directMessages.delivered(
-        sent.current.id,
-        sent.current.channelId,
+        sent.id,
+        sent.channelId,
         controller.signal,
       );
       controller.signal.throwIfAborted();
-      sent.current = undefined;
+      // Releasing recovery is the last step: until then a retry only confirms.
+      await session.outbox?.acknowledge(sent.id);
+      controller.signal.throwIfAborted();
       lock(false);
       setPeople([]);
       setNote("");
@@ -247,7 +385,8 @@ function ForwardMessageDialog({
       setNotice({ text: `Message forwarded to ${person.name}`, error: false });
     } catch (reason) {
       if (!controller.signal.aborted) {
-        if (!sent.current) lock(false);
+        // A sent forward stays locked by its outbox recovery.
+        lock(false);
         const text =
           reason instanceof Error
             ? reason.message
@@ -294,7 +433,7 @@ function ForwardMessageDialog({
               disabled={pending || !person || typed}
               onClick={() => void submit()}
             >
-              {sent.current ? "Retry forward" : "Forward"}
+              {recovered ? "Retry forward" : "Forward"}
             </Button>
           </>
         }

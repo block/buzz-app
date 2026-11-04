@@ -7,6 +7,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { ChannelMessage } from "../relay/contracts";
+import type { OutboxRecovery, OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import { ForwardMessageProvider, useForwardMessage } from "./ForwardMessage";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -17,6 +18,8 @@ const viewer = "a".repeat(64),
 const scope = `https://relay.example:${viewer}`;
 const destination = "11111111-1111-4111-8111-111111111111";
 const stops: (() => void)[] = [];
+// Toast actions sit on Sonner's swipeable card, which captures the pointer.
+HTMLElement.prototype.setPointerCapture ??= () => {};
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockImplementation(
     function (this: HTMLElement) {
@@ -82,7 +85,32 @@ function Trigger() {
     </>
   );
 }
-function setup() {
+function pendingForward(note = "Saved note"): OutgoingEvent {
+  return {
+    event: {
+      id: "9".repeat(64),
+      kind: 9,
+      tags: [["h", destination]],
+      content: "",
+    } as unknown as OutgoingEvent["event"],
+    recovery: {
+      key: "message:forward",
+      value: JSON.stringify({
+        source: { channelId: "alpha", forward: messageId },
+        person: { pubkey: recipient, name: "Avery Chen" },
+        note,
+      }),
+    },
+    delivery: "unknown",
+  };
+}
+function setup({
+  saved = [] as OutgoingEvent[],
+  nested = false,
+}: {
+  saved?: OutgoingEvent[];
+  nested?: boolean;
+} = {}) {
   const history = createMemoryHistory();
   const controller = createNavigationController(history);
   const navigation = controller.navigation;
@@ -120,14 +148,49 @@ function setup() {
       async () => {},
     ),
   };
+  let operations: readonly OutgoingEvent[] = saved;
+  const listeners = new Set<() => void>();
+  const publish = (next: readonly OutgoingEvent[]) => {
+    operations = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const outbox = {
+    ready: async () => {},
+    snapshot: () => operations,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    acknowledge: vi.fn(async (id: string) =>
+      publish(operations.filter((item) => item.event.id !== id)),
+    ),
+  };
   const messages = {
-    send: vi.fn<RelaySession["messages"]["send"]>(() => "e".repeat(64)),
+    send: vi.fn<RelaySession["messages"]["send"]>(
+      (channelId, content, _mentions, _attachments, recovery) => {
+        const id = "e".repeat(64);
+        publish([
+          ...operations,
+          {
+            event: {
+              id,
+              kind: 9,
+              tags: [["h", channelId]],
+              content,
+            } as unknown as OutgoingEvent["event"],
+            recovery: recovery as OutboxRecovery,
+            delivery: "sending",
+          },
+        ]);
+        return id;
+      },
+    ),
   };
   const session = {
     viewer,
     directMessages,
     messages,
-    outbox: { ready: async () => {} },
+    outbox,
     channels: { list: () => channels, subscribeList: () => () => {} },
     profiles: { snapshot: () => profiles, subscribe: () => () => {} },
     agentChoices: { snapshot: () => choices, subscribe: () => () => {} },
@@ -144,11 +207,29 @@ function setup() {
         navigation={navigation}
         renderDialog
       >
-        <Trigger />
+        {nested ? (
+          <ForwardMessageProvider
+            session={session}
+            scope={scope}
+            navigation={navigation}
+          >
+            <Trigger />
+          </ForwardMessageProvider>
+        ) : (
+          <Trigger />
+        )}
       </ForwardMessageProvider>
     </ToastProvider>,
   );
-  return { navigation, directMessages, messages, choices, profiles };
+  return {
+    navigation,
+    directMessages,
+    messages,
+    outbox,
+    operations: () => operations,
+    choices,
+    profiles,
+  };
 }
 async function choose(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Forward source" }));
@@ -158,7 +239,7 @@ async function choose(user: ReturnType<typeof userEvent.setup>) {
 
 it("forwards a note and permalink through the chosen person's DM and retires the completed dialog", async () => {
   const user = userEvent.setup();
-  const { navigation, directMessages, messages } = setup();
+  const { navigation, directMessages, messages, outbox, operations } = setup();
   await choose(user);
   expect(
     screen.getByRole("combobox", { name: "Message recipients" }),
@@ -180,12 +261,24 @@ it("forwards a note and permalink through the chosen person's DM and retires the
   expect(messages.send).toHaveBeenCalledWith(
     destination,
     `Worth a look\n\nbuzz://message?channel=alpha&id=${messageId}`,
+    [],
+    [],
+    {
+      key: "message:forward",
+      value: JSON.stringify({
+        source: { channelId: "alpha", forward: messageId },
+        person: { pubkey: recipient, name: "Avery Chen" },
+        note: "Worth a look",
+      }),
+    },
   );
   expect(directMessages.delivered).toHaveBeenCalledWith(
     "e".repeat(64),
     destination,
     expect.any(AbortSignal),
   );
+  expect(outbox.acknowledge).toHaveBeenCalledWith("e".repeat(64));
+  expect(operations()).toEqual([]);
   act(() => navigation.back());
   act(() => navigation.forward());
   expect(
@@ -255,6 +348,83 @@ it("keeps an uncertain send locked and retries its exact event without another D
   expect(messages.send.mock.calls[0]?.[1]).toBe(
     `buzz://message?channel=alpha&id=${messageId}`,
   );
+});
+
+it("restores a saved forward after reload and confirms its exact event instead of sending again", async () => {
+  const user = userEvent.setup();
+  const { directMessages, messages, outbox, operations } = setup({
+    saved: [pendingForward()],
+  });
+  await user.click(screen.getByRole("button", { name: "Forward source" }));
+  const retry = await screen.findByRole("button", { name: "Retry forward" });
+  expect(
+    screen.getByRole("button", { name: "Remove Avery Chen" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Note (optional)" })).toHaveValue(
+    "Saved note",
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Note (optional)" }),
+  ).toBeDisabled();
+  await user.click(retry);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Forward message" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(directMessages.open).not.toHaveBeenCalled();
+  expect(messages.send).not.toHaveBeenCalled();
+  expect(directMessages.delivered).toHaveBeenCalledWith(
+    "9".repeat(64),
+    destination,
+    expect.any(AbortSignal),
+  );
+  expect(outbox.acknowledge).toHaveBeenCalledWith("9".repeat(64));
+  expect(operations()).toEqual([]);
+});
+
+it("blocks another forward while a saved one is pending and offers to review it", async () => {
+  const user = userEvent.setup();
+  const { navigation, messages } = setup({ saved: [pendingForward()] });
+  await user.click(screen.getByRole("button", { name: "Forward another" }));
+  expect(navigation.snapshot().entry.target).not.toHaveProperty("forward");
+  await user.click(
+    await screen.findByRole("button", { name: "Review pending forward" }),
+  );
+  expect(navigation.snapshot().entry.target).toMatchObject({
+    channelId: "alpha",
+    forward: messageId,
+  });
+  expect(
+    await screen.findByRole("button", { name: "Retry forward" }),
+  ).toBeEnabled();
+  expect(messages.send).not.toHaveBeenCalled();
+});
+
+it("routes a hosted conversation's forwards through the dialog owner's pending guard", async () => {
+  const user = userEvent.setup();
+  const { navigation, directMessages, messages } = setup({ nested: true });
+  directMessages.delivered.mockRejectedValueOnce(
+    new Error("Delivery could not be confirmed"),
+  );
+  await choose(user);
+  await user.click(screen.getByRole("button", { name: "Forward" }));
+  await screen.findByRole("button", { name: "Retry forward" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Forward another" }));
+  expect(navigation.snapshot().entry.target).not.toHaveProperty("forward");
+  await user.click(
+    await screen.findByRole("button", { name: "Review pending forward" }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Retry forward" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Forward message" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(messages.send).toHaveBeenCalledTimes(1);
 });
 
 it("retains an editable draft when opening the DM fails", async () => {

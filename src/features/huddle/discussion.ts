@@ -1,9 +1,7 @@
 import { huddleRoom } from "./lifecycle";
 import type { RelaySession } from "../relay/session";
-import type { Attachment, ChannelMessage } from "../relay/contracts";
-import type { Delivery } from "../relay/outbox";
-import { formatPublicKey } from "../../shared/identity/public-key";
-import { avatarMedia, avatarSource } from "../../shared/avatar-source";
+import type { ChannelMessage } from "../relay/contracts";
+import { type CompanionRow, projectCompanionRow } from "../companion/row";
 
 export type HuddleDiscussion = {
   composer?: string | undefined;
@@ -15,27 +13,7 @@ export type HuddleDiscussion = {
   sending: boolean;
   sent: number;
   hasMore: boolean;
-  rows: {
-    id: string;
-    author: string;
-    authorId: string;
-    channelId: string;
-    attachments: (Attachment & {
-      source: string | null;
-      previewSource: string | null;
-    })[];
-    picture: string | null;
-    /** Original profile URL; picture remains its authorized media source. */
-    pictureUrl?: string | null;
-    text: string;
-    mentions?: readonly string[];
-    mentionNames?: Record<string, string>;
-    edited?: boolean;
-    attachmentSeams?: readonly number[];
-    mentionReferences?: readonly string[];
-    time: number;
-    delivery: Delivery;
-  }[];
+  rows: CompanionRow[];
 };
 
 const visibleMessages = (rows: readonly ChannelMessage[]) =>
@@ -153,89 +131,9 @@ export function createHuddleDiscussion(
         sending,
         sent,
         hasMore: resolved && window.hasMore && rows.length < 200,
-        rows: (available() ? rows : []).slice(-200).map((r) => {
-          const profile = profiles.get(r.authorId);
-          const pictureUrl = avatarSource(profile?.picture);
-          const picture = avatarMedia(pictureUrl, session.media);
-          return {
-            id: r.id,
-            authorId: r.authorId,
-            channelId: room,
-            attachments: r.attachments.flatMap((attachment) => {
-              // Keep one malformed metadata value from rejecting the entire native view.
-              // URLs are omitted, never truncated into a different resource.
-              const bounded = (value: string | undefined, bytes: number) =>
-                value !== undefined &&
-                new TextEncoder().encode(value).length <= bytes
-                  ? value
-                  : undefined;
-              const url = bounded(attachment.url, 8192);
-              if (!url) return [];
-              const mime = bounded(attachment.mime, 256);
-              const name = bounded(attachment.name, 4096);
-              const blurhash = bounded(attachment.blurhash, 256);
-              const previewUrl = bounded(attachment.previewUrl, 8192);
-              return [
-                {
-                  url,
-                  kind: attachment.kind,
-                  ...(mime !== undefined ? { mime } : {}),
-                  ...(name !== undefined ? { name } : {}),
-                  ...(blurhash !== undefined ? { blurhash } : {}),
-                  ...(previewUrl !== undefined ? { previewUrl } : {}),
-                  ...(attachment.size !== undefined
-                    ? { size: attachment.size }
-                    : {}),
-                  ...(attachment.duration !== undefined
-                    ? { duration: attachment.duration }
-                    : {}),
-                  ...(attachment.dimensions
-                    ? { dimensions: attachment.dimensions }
-                    : {}),
-                  ...(attachment.voiceNote
-                    ? { voiceNote: attachment.voiceNote }
-                    : {}),
-                  ...(attachment.waveform
-                    ? { waveform: attachment.waveform }
-                    : {}),
-                  source: bounded(session.media(url), 8192) ?? null,
-                  previewSource: previewUrl
-                    ? (bounded(session.media(previewUrl), 8192) ?? null)
-                    : null,
-                },
-              ];
-            }),
-            author: (
-              profile?.name ||
-              formatPublicKey(r.authorId) ||
-              "Participant"
-            ).slice(0, 1000),
-            picture:
-              picture && new TextEncoder().encode(picture).length <= 8192
-                ? picture
-                : null,
-            pictureUrl:
-              pictureUrl && new TextEncoder().encode(pictureUrl).length <= 8192
-                ? pictureUrl
-                : null,
-            text: r.content.slice(0, 16000),
-            mentions: r.mentions,
-            edited: r.edited === true,
-            attachmentSeams: r.attachmentSeams ?? [],
-            mentionNames: Object.fromEntries(
-              [
-                ...new Set([...r.mentions, ...(r.mentionReferences ?? [])]),
-              ].flatMap((key) => {
-                const name = profiles.get(key)?.name;
-                return name && name.length <= 1000 ? [[key, name]] : [];
-              }),
-            ),
-            mentionReferences: r.mentionReferences ?? [],
-            time: r.createdAt,
-            delivery:
-              r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
-          };
-        }),
+        rows: (available() ? rows : [])
+          .slice(-200)
+          .map((r) => projectCompanionRow(session, profiles, r, room)),
       };
     },
     async send(text: string) {

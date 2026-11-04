@@ -31,7 +31,6 @@ import {
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import {
   MenuPopup,
   MenuRadioGroup,
@@ -108,6 +107,41 @@ const noMembers: readonly string[] = [];
  * extends it; neither is a result. */
 const isSearchAction = (key: string) =>
   key.startsWith("scope:") || key === "more-messages";
+
+function useDelayedSearch(pending: boolean) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!pending) return;
+    const timer = setTimeout(() => setSlow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [pending]);
+  return pending && slow;
+}
+
+function useSearchAnnouncement(
+  channels: boolean,
+  people: boolean,
+  messages: boolean,
+) {
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const sources = [
+      channels && "channels",
+      people && "people",
+      messages && "messages",
+    ].filter(Boolean);
+    setAnnouncement((previous) => {
+      if (!sources.length) return "";
+      const names =
+        sources.length === 3
+          ? `${sources.slice(0, 2).join(", ")}, and ${sources[2]}`
+          : sources.join(" and ");
+      return previous || `Searching ${names}…`;
+    });
+  }, [channels, people, messages]);
+  return announcement;
+}
 
 export function SearchResults({
   session,
@@ -526,6 +560,10 @@ export function SearchResults({
     scopedChannelId ? "" : parsed.text,
     list.status === "ready",
   );
+  const channelsPending =
+    !!query.trim() && !scopedChannelId && publicChannels.loading;
+  const slowChannels = useDelayedSearch(channelsPending);
+  const slowPeople = useDelayedSearch(peopleActive && personDirectory.loading);
 
   const profileKey = [
     ...new Set([
@@ -1094,9 +1132,16 @@ export function SearchResults({
     ? operatorPublicChannels.error
     : undefined;
   const directoryPending = publicChannels.loading || personDirectory.loading;
+  const messagesPending = operatorLookupPending || search.loading;
+  const slowMessages = useDelayedSearch(messagesPending);
+  const searchAnnouncement = useSearchAnnouncement(
+    slowChannels,
+    slowPeople,
+    slowMessages,
+  );
   const messageEmpty =
     operatorLookupPending || search.loading
-      ? "Searching messages…"
+      ? undefined
       : operatorLookupError || search.error
         ? "Message search is unavailable."
         : query.trim()
@@ -1147,6 +1192,7 @@ export function SearchResults({
                 label: messageOrder,
                 rank: Infinity,
                 destinations: messageRows,
+                headingStatus: slowMessages ? "Searching…" : undefined,
                 empty: messageEmpty,
               },
             ]
@@ -1193,10 +1239,12 @@ export function SearchResults({
                     label: "Channels",
                     destinations: channelResults.map(conversationDestination),
                     best: Math.min(...channelResults.map(channelRank)),
+                    headingStatus: slowChannels ? "Searching…" : undefined,
                   },
                   {
                     label: "People",
                     destinations: personResults,
+                    headingStatus: slowPeople ? "Searching…" : undefined,
                     best: Math.min(...personResults.map(({ score }) => score)),
                   },
                   {
@@ -1251,6 +1299,7 @@ export function SearchResults({
                   label: messageOrder,
                   rank: Infinity,
                   destinations: messageRows,
+                  headingStatus: slowMessages ? "Searching…" : undefined,
                   empty:
                     directMessageResults.length ||
                     chatResults.length ||
@@ -1438,16 +1487,9 @@ export function SearchResults({
           </div>
         )}
       </div>
-      {/* A warm directory answers within the typing pause, so this feedback
-          waits a second; the rows and errors above are immediate. */}
-      {query.trim() && !scopedChannelId && (
-        <LoadingRegion
-          pending={publicChannels.loading}
-          label="Searching open channels…"
-        >
-          {null}
-        </LoadingRegion>
-      )}
+      <p className="sr-only" role={searchAnnouncement ? "status" : undefined}>
+        {searchAnnouncement}
+      </p>
     </SearchChoices>
   );
 }

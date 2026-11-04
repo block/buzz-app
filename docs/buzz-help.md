@@ -100,13 +100,6 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 ## Conversations and communities
 
-- On macOS/Linux desktop, **Settings → Plugins → Terminal** sets BuzzTerm's
-  installed font family and size (8–32 px, default 12), independently of interface
-  text size. **Apply** updates open terminals; **Use default** resets both choices.
-  Install Nerd Fonts separately and use a Mono variant. Applying a new family
-  requires a successful load check; failures show an inline error with Retry. If a saved font
-  later becomes unavailable, settings explain the fallback to JetBrains Mono.
-  Choices are saved on this device.
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds

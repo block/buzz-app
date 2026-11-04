@@ -7,6 +7,8 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { Server as HttpServer } from "node:http";
+import { Server, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,6 +131,55 @@ test("app builds, previews and fixture servers in one worker do not change each 
     await server?.close();
     await previewServer?.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("port 0 servers and previews bind where the OS assigns, not a probed port", async () => {
+  // Vite probes for a free port, closes the probe and binds that number later.
+  // Take each such port just before its bind, as a concurrent process can.
+  const listen = Server.prototype.listen;
+  const blockers = [];
+  Server.prototype.listen = function (port, ...args) {
+    if (!(this instanceof HttpServer) || !port)
+      return listen.call(this, port, ...args);
+    const blocker = createNetServer();
+    blockers.push(blocker);
+    blocker.listen(port, "127.0.0.1", () => listen.call(this, port, ...args));
+    return this;
+  };
+  const bound = (server) => {
+    const { port } = server.httpServer.address();
+    assert.equal(server.resolvedUrls.local[0], `http://127.0.0.1:${port}/`);
+  };
+  let server, previewServer;
+  try {
+    server = await createServer({
+      configFile: false,
+      envDir: false,
+      logLevel: "silent",
+      server: {
+        host: "127.0.0.1",
+        port: 0,
+        strictPort: true,
+        ws: false,
+        watch: null,
+      },
+    });
+    await server.listen();
+    bound(server);
+    previewServer = await preview({
+      root,
+      configFile: false,
+      envFile: false,
+      logLevel: "silent",
+      preview: { host: "127.0.0.1", port: 0, strictPort: true },
+    });
+    bound(previewServer);
+  } finally {
+    Server.prototype.listen = listen;
+    await server?.close();
+    await previewServer?.close();
+    for (const blocker of blockers) blocker.close();
   }
 });
 

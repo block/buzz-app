@@ -105,8 +105,32 @@ async function keepNodeEnv(run) {
   }
 }
 
+// Vite resolves port 0 by probing for a free port, closing the probe and then
+// binding that number, so another process can take it in between and the bind
+// fails with "Port N is already in use". Bind port 0 itself instead: the OS
+// assigns a free port in the same step, and Vite reads the bound address back.
+function bindAssignedPort(httpServer) {
+  const listen = httpServer.listen;
+  httpServer.listen = (_port, ...args) => listen.call(httpServer, 0, ...args);
+}
+
 export const build = (config) => keepNodeEnv(() => viteBuild(config));
-export const preview = (config) => keepNodeEnv(() => vitePreview(config));
+export const preview = (config) =>
+  keepNodeEnv(() =>
+    vitePreview({
+      ...config,
+      plugins: [
+        ...(config.plugins ?? []),
+        {
+          name: "buzz-fixture-assigned-port",
+          configurePreviewServer(server) {
+            if (server.config.preview.port === 0)
+              bindAssignedPort(server.httpServer);
+          },
+        },
+      ],
+    }),
+  );
 
 // Run once per test run, before any test: it scans and bundles the fixture
 // dependencies so no server does that work inside a navigation budget.
@@ -157,6 +181,8 @@ export async function createServer(config) {
     const server = await keepNodeEnv(() =>
       createViteServer({ ...fixture, cacheDir }),
     );
+    if (server.httpServer && server.config.server.port === 0)
+      bindAssignedPort(server.httpServer);
     const close = server.close.bind(server);
     server.close = async () => {
       try {

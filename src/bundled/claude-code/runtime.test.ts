@@ -373,6 +373,7 @@ it("hands a mention to its thread's session", async () => {
     }),
   );
   expect(prompt).toContain(`Request: ${quoted("@Claude can you look?")}`);
+  expect(promptContent(prompt)).toBe("@Claude can you look?");
   expect(prompt).not.toContain(RESUMED_PROMPT);
   // The process holds no key: it acts through the tools.
   expect(claude?.options).not.toHaveProperty("agent");

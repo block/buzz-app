@@ -1,6 +1,5 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
-import type { EventData } from "../../features/relay/events";
 import { turnPrompt } from "../claude-code/prompt";
 import type { PiEntry } from "./transcript";
 import { conversationUsage, readUsage } from "./usage";
@@ -13,21 +12,7 @@ const ask = (id: number, text: string, json = false): PiEntry => ({
     {
       role: "user",
       content: json
-        ? turnPrompt({
-            agent: "c".repeat(64),
-            event: {
-              id: "e".repeat(64),
-              pubkey: "a".repeat(64),
-              kind: 9,
-              created_at: id,
-              content: text,
-              tags: [],
-            } as EventData,
-            channel: { id: "chan", name: "general" },
-            scope: "thread",
-            context: [],
-            total: 1,
-          })
+        ? `<context>\nChannel: general (#chan)\n</context>\n\n<buzz-event type="@mention">\n${JSON.stringify({ id: "e".repeat(64), pubkey: "a".repeat(64), author: "Sal", content: text, tags: [] })}\n</buzz-event>`
         : `<context>\nChannel: general (#chan)\n</context>\n\n<buzz-event type="@mention">\nFrom: Sal (npub1x)\nContent: ${text}\nTags: []\n</buzz-event>`,
       timestamp: id * 1000,
     },

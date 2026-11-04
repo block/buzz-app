@@ -10,6 +10,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
+import {
+  PROFILE_CACHE_BASE,
+  profileRosterRoom,
+} from "../../features/relay/budget";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { useProfileGeneration } from "../../features/relay/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -65,15 +69,36 @@ export function useWorkflowMentionMembers(
     selection.snapshot,
   );
   const generation = useProfileGeneration(session.profiles);
+  // Evictions also count cancelled reads, so a shrink asks again for this roster.
+  const readEvictions = () => session.profiles.evictions?.() ?? 0;
+  const evictions = useSyncExternalStore(
+    session.profiles.subscribe,
+    readEvictions,
+    readEvictions,
+  );
   const label = useChannelIdentityNames(session, channel?.id);
+  // As an open channel does (ConversationChannel), keep room for the whole
+  // roster on top of the base, so the base stays free for every other name. A
+  // layout effect, so the reads below see the grown limit.
+  useLayoutEffect(
+    () => (ids.length ? session.profiles.reserve?.(ids.length) : undefined),
+    [session, ids.length],
+  );
   useEffect(() => {
+    // An access purge, an eviction or a cancelled read drops names; names still
+    // loaded cost no read when requested again.
     void generation;
+    void evictions;
+    const roster = ids.slice(
+      0,
+      profileRosterRoom(session.profiles.limit?.() ?? PROFILE_CACHE_BASE),
+    );
     // The profile directory's per-call budget, as for workflow owners.
-    for (let offset = 0; offset < ids.length; offset += 500)
+    for (let offset = 0; offset < roster.length; offset += 500)
       void session.profiles
-        .ensure(ids.slice(offset, offset + 500), "background")
+        .ensure(roster.slice(offset, offset + 500), "background")
         .catch(() => {});
-  }, [session, ids, generation]);
+  }, [session, ids, generation, evictions]);
   return useMemo(
     () =>
       ids.flatMap((pubkey) => {

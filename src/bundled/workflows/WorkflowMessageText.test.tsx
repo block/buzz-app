@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { WorkflowForm, type WorkflowSelection } from "./WorkflowForm";
 import {
   type WorkflowMentionMember,
   WorkflowMentionMembers,
+  useWorkflowMentionMembers,
 } from "./WorkflowMessageText";
+import { createProfileDirectory } from "../../features/relay/profile-directory";
+import type { RelaySession } from "../../features/relay/session";
 import {
   DEFAULT_FORM_STATE,
   type WorkflowFormState,
@@ -112,4 +115,35 @@ it("shows the composer's 50 rows and asks to narrow past them", async () => {
   expect(screen.getByRole("status")).toHaveTextContent(
     "Narrow your search to see more members.",
   );
+});
+
+it("reserves profile room for the channel's roster while mounted", () => {
+  const read = vi.fn(async () => []);
+  const directory = createProfileDirectory({ read }).queries;
+  const release = vi.fn();
+  const reserve = vi.fn((members: number) => {
+    const give = directory.reserve?.(members);
+    return () => {
+      give?.();
+      release();
+    };
+  });
+  const ensure = vi.fn(directory.ensure);
+  const ids = Array.from({ length: 1500 }, (_, index) =>
+    index.toString(16).padStart(64, "0"),
+  );
+  const channel = { id: "c", members: ids };
+  const session = {
+    profiles: { ...directory, reserve, ensure },
+    channels: {
+      list: () => ({ status: "ready", channels: [channel] }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const view = renderHook(() => useWorkflowMentionMembers(session, channel));
+  expect(reserve).toHaveBeenCalledExactlyOnceWith(1500);
+  // Past the base: every member is asked for, in per-call batches.
+  expect(ensure.mock.calls.flatMap(([batch]) => batch)).toEqual(ids);
+  view.unmount();
+  expect(release).toHaveBeenCalledOnce();
 });

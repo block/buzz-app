@@ -15,6 +15,7 @@ const archived = "e".repeat(64);
 function session(
   channel: Record<string, unknown> | undefined,
   viewer?: string,
+  complete = true,
 ): RelaySession {
   return {
     viewer,
@@ -27,7 +28,10 @@ function session(
       }),
     },
     agentChoices: {
-      snapshot: () => ({ identities: [{ pubkey: library, name: "Honey" }] }),
+      snapshot: () => ({
+        identities: [{ pubkey: library, name: "Honey" }],
+        complete,
+      }),
     },
     archives: {
       state: (key: string) => (key === archived ? "archived" : "active"),
@@ -56,6 +60,15 @@ it("keeps Solo chat, roster and agent-invite limits", () => {
   const inviting = mentionAdmission(sessionChannel, "channel", true);
   expect(inviting(library)).toBe(true);
   expect(inviting(outside)).toBe(true);
+  // Until the agent read is complete, an outside key may be the viewer's
+  // agent, so none is admitted; the agents it lists still are.
+  const reading = mentionAdmission(
+    session({ channelType: "solo" }, undefined, false),
+    "channel",
+    true,
+  );
+  expect(reading(library)).toBe(true);
+  expect(reading(outside)).toBe(false);
   // The owner's roster leaves a member out on purpose; naming outside people
   // does not bring that member back.
   const owned = mentionAdmission(sessionChannel, "channel", true, [

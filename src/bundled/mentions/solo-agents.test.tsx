@@ -2494,6 +2494,64 @@ it("keeps the Solo agent menu to agents: it searches no directory", async () => 
   t.library.dispose();
 });
 
+it("offers an outside Solo choice only after a complete agent read, so a row never calls your agent a reference", async () => {
+  const t = setup(false);
+  // Carol is the viewer's agent, but only the agent read can say so.
+  const carol = { pubkey: "e".repeat(64), name: "Carol" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const library = createAgentLibrary(async () => {
+    await gate;
+    return { definitions: [], identities: [carol] };
+  });
+  const people = vi.fn(async () => ({ people: [carol], hasMore: false }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+    agentLibrary: library.queries,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  } as unknown as RelaySession;
+  const publish = vi.fn();
+  render(
+    <MentionCompletion
+      session={session}
+      scope="test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@Car", start: 4, end: 4 }}
+      publish={publish}
+      query={{ start: 0, end: 4, query: "Car" }}
+      inviteAgents
+    />,
+  );
+  const carolRows = () =>
+    publish.mock.calls.flatMap(
+      ([result]) =>
+        (result as CompletionResult | undefined)?.items.filter(
+          (item) => item.label === "Carol",
+        ) ?? [],
+    );
+  // The directory answers while the agent read is still loading.
+  await waitFor(() => expect(people).toHaveBeenCalled());
+  await act(() => people.mock.results[0]?.value);
+  expect(session.agentChoices.snapshot().complete).toBe(false);
+  expect(mentionAdmission(session, "parent", true)(carol.pubkey)).toBe(false);
+  await act(async () => release());
+  await waitFor(() =>
+    expect(carolRows().at(-1)?.detail).toBe(`Adds to chat · ${carol.pubkey}`),
+  );
+  expect(carolRows().map((row) => row.detail)).not.toContain(
+    "Not in chat · Will not be notified",
+  );
+  library.dispose();
+  t.library.dispose();
+});
+
 it("offers directory people as references in a New chat's first message", async () => {
   // A New chat's id is not listed until it starts.
   const t = setup(null);

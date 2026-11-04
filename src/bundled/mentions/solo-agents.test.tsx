@@ -1144,6 +1144,77 @@ it.each([
   }
 });
 
+it.each(["after", "before"] as const)(
+  "keeps a failed names read and its Retry across keystrokes that remount the provider (%s it fails)",
+  async (order) => {
+    const test = setup();
+    const nameless = "c".repeat(64);
+    const channel = test.session.channels.list().channels[0];
+    if (channel) Object.assign(channel, { members: [test.member, nameless] });
+    let fail: (() => void) | undefined;
+    let fails = true;
+    const ensure = vi.fn(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          if (!fails) return resolve();
+          fail = () => reject(new Error("relay unavailable"));
+        }),
+    );
+    const session = {
+      ...test.session,
+      profiles: { ...test.session.profiles, ensure },
+    } as RelaySession;
+    let result: CompletionResult | undefined;
+    // The host keys each keystroke's provider by revision: a new mount.
+    const typed = (revision: number, query: string) => (
+      <MentionCompletion
+        key={revision}
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{
+          revision,
+          text: `@${query}`,
+          start: query.length + 1,
+          end: query.length + 1,
+        }}
+        query={{ start: 0, end: query.length + 1, query }}
+        publish={(next: CompletionResult) => {
+          result = next;
+          return () => {};
+        }}
+      />
+    );
+    const failed = "Could not load some names. Retry to refresh.";
+    const view = render(typed(1, "M"));
+    try {
+      await waitFor(() => expect(ensure).toHaveBeenCalledTimes(1));
+      if (order === "after") {
+        await act(async () => fail?.());
+        await waitFor(() => expect(result?.status).toBe(failed));
+        view.rerender(typed(2, "Me"));
+      } else {
+        view.rerender(typed(2, "Me"));
+        await act(async () => fail?.());
+      }
+      await waitFor(() => expect(result?.status).toBe(failed));
+      expect(result?.retry).toEqual(expect.any(Function));
+      // Typing does not reread the failed names; only Retry does.
+      view.rerender(typed(3, "Mem"));
+      await waitFor(() => expect(result?.status).toBe(failed));
+      expect(ensure).toHaveBeenCalledTimes(1);
+      fails = false;
+      await act(async () => result?.retry?.());
+      await waitFor(() => expect(result?.status).toBeUndefined());
+      expect(result?.retry).toBeUndefined();
+      expect(ensure).toHaveBeenCalledTimes(2);
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
+  },
+);
+
 // Exercise selection, wire text/p tags, and sent rendering, not an already-bound @name.
 it.each(["picker", "completion"] as const)(
   "%s keeps local display labels out of serialized mentions",

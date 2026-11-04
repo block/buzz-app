@@ -1,6 +1,7 @@
 import { useProfileGeneration } from "../../features/relay/react";
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
 import {
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -27,10 +28,30 @@ import {
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
-const demands = new WeakMap<
-  ComposerSession,
-  { generation: number; evictions: number; ids: Set<string> }
->();
+// `failed` outlives the per-keystroke mount: a failed read stays reported, with
+// Retry, until a later read of those names succeeds or the demand resets.
+type Demand = {
+  generation: number;
+  evictions: number;
+  ids: Set<string>;
+  failed: Set<string>;
+};
+const demands = new WeakMap<ComposerSession, Demand>();
+const failureListeners = new WeakMap<ComposerSession, Set<() => void>>();
+function settle(
+  session: ComposerSession,
+  demand: Demand,
+  ids: readonly string[],
+  failed: boolean,
+) {
+  // A reset demand (purge, eviction) starts over; its old outcome is stale.
+  if (demands.get(session) !== demand) return;
+  for (const id of ids) {
+    if (failed) demand.failed.add(id);
+    else demand.failed.delete(id);
+  }
+  for (const listener of failureListeners.get(session) ?? []) listener();
+}
 export function MentionCompletion({
   session,
   scope,
@@ -72,7 +93,23 @@ export function MentionCompletion({
     ids: string[];
   }>(undefined);
   const [attempt, retry] = useState(0);
-  const [error, setError] = useState(false);
+  const error = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => {
+        const listeners = failureListeners.get(session) ?? new Set();
+        failureListeners.set(session, listeners);
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      [session],
+    ),
+    () => {
+      const failed = demands.get(session)?.failed;
+      return (
+        !draftRoster && !!failed?.size && members.some((key) => failed.has(key))
+      );
+    },
+  );
   const profileGeneration = useProfileGeneration(session.profiles);
   // Evictions also count cancelled reads, so a shrink asks again for this roster.
   const readEvictions = () => session.profiles.evictions?.() ?? 0;
@@ -92,8 +129,14 @@ export function MentionCompletion({
       demand?.generation !== profileGeneration ||
       demand.evictions !== evictions
     ) {
-      demand = { generation: profileGeneration, evictions, ids: new Set() };
+      demand = {
+        generation: profileGeneration,
+        evictions,
+        ids: new Set(),
+        failed: new Set(),
+      };
       demands.set(session, demand);
+      for (const listener of failureListeners.get(session) ?? []) listener();
     }
     const requested = demand.ids;
     // An open channel reserves room for its whole roster (ConversationChannel).
@@ -113,16 +156,15 @@ export function MentionCompletion({
       .slice(0, attempt > 0 ? limit : Math.max(0, limit - asked));
     if (!ids.length) return;
     for (const id of ids) requested.add(id);
-    let live = true;
-    // Retry is explicit: a foreground read rereads known absences.
+    // Retry is explicit: a foreground read rereads known absences. The
+    // outcome belongs to the session's demand, not this keystroke's mount.
+    const current = demand;
     void session.profiles
       .ensure(ids, attempt > 0 ? "foreground" : "background")
-      .catch(() => {
-        if (live) setError(true);
-      });
-    return () => {
-      live = false;
-    };
+      .then(
+        () => settle(session, current, ids, false),
+        () => settle(session, current, ids, true),
+      );
   }, [session, memberKey, attempt, draftRoster, profileGeneration, evictions]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
@@ -328,7 +370,6 @@ export function MentionCompletion({
                 !!inviteAgents || teams.includeLegacy,
               );
               void session.archives?.refresh();
-              setError(false);
               retry((value) => value + 1);
               if (membershipMissing || membershipError)
                 session.channels.refreshList?.();

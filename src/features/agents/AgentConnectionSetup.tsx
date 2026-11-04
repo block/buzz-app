@@ -72,6 +72,7 @@ export function AgentConnectionSetup({
     session.profiles.subscribe,
     session.profiles.snapshot,
   );
+  const isAgent = (key: string) => profiles.get(key)?.isAgent === true;
   const members = [...new Set(channel?.members ?? [])];
   const peer =
     channel?.channelType === "dm" &&
@@ -120,8 +121,9 @@ export function AgentConnectionSetup({
   ) {
     return (
       <>
-        {[...connectionMentions(rows, session.viewer)].map(
-          ([mentioned, message]) => (
+        {[...connectionMentions(rows, session.viewer)]
+          .filter(([key]) => isAgent(key))
+          .map(([mentioned, message]) => (
             <Candidate
               key={`${session.scope}:${channel.id}:${mentioned}`}
               agents={agents}
@@ -129,12 +131,11 @@ export function AgentConnectionSetup({
               peer={mentioned}
               message={message}
             />
-          ),
-        )}
+          ))}
       </>
     );
   }
-  if (!peer) return null;
+  if (!peer || !isAgent(peer)) return null;
   return (
     <Candidate
       key={`${session.scope}:${peer}`}

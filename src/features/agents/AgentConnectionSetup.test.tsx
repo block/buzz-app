@@ -122,20 +122,23 @@ it.each(["dm", "stream", "forum"] as const)(
     };
     const view = { status: "ready", events: [profile] };
     const choices = { identities: [] };
-    const profiles = new Map();
+    const profiles = new Map([
+      [candidate.pubkey, { name: candidate.name, isAgent: true }],
+    ]);
     const listeners = new Set<() => void>();
     let presence = "offline";
     const noop = () => () => {};
     const reply = vi.fn();
+    const observe = vi.fn(() => ({
+      snapshot: () => view,
+      subscribe: noop,
+      dispose: () => {},
+    }));
     const session = {
       messages: { reply },
       scope: "scope",
       viewer,
-      observe: () => ({
-        snapshot: () => view,
-        subscribe: noop,
-        dispose: () => {},
-      }),
+      observe,
       profiles: {
         subscribe: noop,
         snapshot: () => profiles,
@@ -194,7 +197,7 @@ it.each(["dm", "stream", "forum"] as const)(
               participants: [],
               threadRootId: "c".repeat(64),
               authorId: viewer,
-              mentions: [candidate.pubkey],
+              mentions: [candidate.pubkey, "human"],
             },
           ]}
         />
@@ -204,6 +207,9 @@ it.each(["dm", "stream", "forum"] as const)(
       await screen.findByRole("heading", { name: /^Connect / }),
     ).toBeVisible();
     expect(portable).toHaveBeenCalledOnce();
+    expect(observe).toHaveBeenCalledExactlyOnceWith([
+      { kinds: [0], authors: [candidate.pubkey], limit: 1 },
+    ]);
     act(() => {
       presence = "online";
       for (const listener of [...listeners]) listener();

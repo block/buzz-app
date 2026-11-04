@@ -85,8 +85,8 @@ builds.
 
 ## Recommended agent
 
-Packagers can list the harness, model and thinking level Buzz recommends for
-agents. `BUZZ_RECOMMENDED_AGENT`
+Packagers can offer a recommended agent setup, which picks a harness, model and
+thinking level for new agents and keeps them current. `BUZZ_RECOMMENDED_AGENT`
 is a JSON array of candidates, best first; a harness may have several. Each
 one has `harness` (`codex` or `goose`), `model`, `effort`, `label` (the model's
 display name) and, for goose only, `provider`. For example, with placeholder
@@ -100,8 +100,34 @@ The frontend reads it from repository-root `.env.local` or the process
 environment (process wins) and compiles it in; invalid values fail the build,
 naming the candidate and field at fault, such as
 `BUZZ_RECOMMENDED_AGENT[1].model`, without echoing values.
-Leave it unset for OSS builds. The list is only validated and compiled in so
-far; the agent features that use it read it from there.
+Set it in `.env.local` to try the feature in `just web` or `just desktop`.
+Leave it unset for OSS builds: the create form then works as before.
+
+With it set:
+
+- An agent on Recommended has `preset: "recommended"` in its config, with
+  its own model, provider and thinking level cleared. Its harness is never
+  changed for it.
+- At run time it uses the first candidate for its own harness whose model is
+  still offered, checked once per app launch (Codex: installed, signed in,
+  model in its catalog with the candidate's thinking level; goose: provider
+  set up, model in its live list with the candidate's thinking level). Each
+  check may take up to 8 seconds. If none is, it runs on the harness's own
+  default instead of failing, and it asks again at a run a minute or more
+  later, so a harness set up or signed in since then is picked up. A later
+  build's recommendation reaches it the same way.
+- Any model, provider or thinking change, on the agent's card or in Settings,
+  takes it off Recommended.
+
+The mark stays in this computer's agent state and is never written to the
+agent's synced `buzz.agent.settings` (kind 45010), because older app versions
+reject a settings key they don't know. Synced settings carry the agent's model,
+provider and thinking level blank or not at all. A synced revision that names
+any of them, such as one restored from History, takes the agent off
+Recommended on this computer, and its next Settings save there drops the mark.
+Until then, a later synced revision with blank model settings would put it
+back on Recommended. Which harness an agent runs on is the `runtime` tag of
+its kind 30177 record.
 
 ## Builderlab URL build input
 

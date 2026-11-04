@@ -11,7 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentDefaults } from "../agents/AgentDefaults";
 import type {
   Agents,
@@ -19,7 +19,12 @@ import type {
 } from "../../features/agents/service";
 import type { Agent } from "../../features/agents/service";
 import { fakeSpawn } from "./goose-testing";
-import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
+import {
+  type Config,
+  DEFAULT_CONFIG,
+  type GooseRuntime,
+  running,
+} from "./runtime";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
@@ -1353,3 +1358,110 @@ it.each([false, true])(
     expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
   },
 );
+
+describe("Recommended", () => {
+  // A synthetic candidate on a provider the fake goose has set up.
+  const candidate = {
+    harness: "goose",
+    provider: "databricks",
+    model: "goose-model-b",
+    effort: "high",
+    label: "Model B",
+  };
+  beforeEach(() =>
+    vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", JSON.stringify([candidate])),
+  );
+  afterEach(() => vi.unstubAllEnvs());
+  const settings = (config: Config, supported = ["goose-model-b"]) => {
+    const fake = fakeSpawn({
+      providers: PROVIDERS,
+      defaults: { providerId: "databricks", modelId: "goose-claude" },
+      supported,
+      thinking: {
+        "goose-model-b": { current: "low", levels: ["low", "high"] },
+      },
+    });
+    const { SettingsTab } = createTabs({
+      setup: new GooseSetup(fake),
+      ...unused,
+    });
+    const save = vi.fn(async (_config: Config) => undefined);
+    render(
+      <SettingsTab
+        agent={
+          {
+            key: "c".repeat(64),
+            pubkey: "c".repeat(64),
+            name: "Agent A",
+            type: "buzz.goose/goose",
+            owner: "a".repeat(64),
+            config,
+          } as Agent<Config>
+        }
+        save={save}
+      />,
+    );
+    return { save, user: userEvent.setup() };
+  };
+
+  it("runs an agent on Recommended on the current candidate", () => {
+    const saved = { ...DEFAULT_CONFIG, preset: "recommended" };
+    expect(running(saved, candidate)).toMatchObject({
+      provider: "databricks",
+      model: "goose-model-b",
+      effort: "high",
+    });
+    // With none offered it runs on goose's own default.
+    expect(running(saved, null)).toEqual(saved);
+    expect(running(DEFAULT_CONFIG, candidate)).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("takes a card's model pick off Recommended", async () => {
+    vi.stubEnv(
+      "VITE_BUZZ_RECOMMENDED_AGENT",
+      JSON.stringify([
+        { ...candidate, provider: "anthropic", model: "claude-opus-5-5" },
+      ]),
+    );
+    const { changes } = created({
+      saved: { anthropic: ["ANTHROPIC_API_KEY"] },
+      modelAppearance: "glass-ghost",
+      config: { ...DEFAULT_CONFIG, preset: "recommended" } as Config,
+    });
+    const user = userEvent.setup();
+    // The card shows what the agent runs on.
+    await waitFor(() => expect(modelButton()).toBeEnabled());
+    expect(modelButton()).toHaveTextContent(/^claude-opus-5-5$/);
+    await user.click(modelButton());
+    (await screen.findByRole("menuitem", { name: "Claude" })).focus();
+    await user.keyboard("{ArrowRight}");
+    (
+      await screen.findByRole("menuitemradio", { name: "claude-opus-5-5" })
+    ).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitemradio", { name: "Low" }));
+    expect(changes.at(-1)).toEqual({
+      ...DEFAULT_CONFIG,
+      provider: "anthropic",
+      model: "claude-opus-5-5",
+      effort: "low",
+    });
+  });
+
+  it("drops a mark left from before on any save of a Custom agent", async () => {
+    // A model synced in from elsewhere made it Custom; the mark stayed.
+    const { save, user } = settings({
+      ...DEFAULT_CONFIG,
+      model: "own",
+      preset: "recommended",
+    } as Config);
+    await user.type(
+      screen.getByRole("textbox", { name: "Instructions" }),
+      "Be brief.",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ model: "own" });
+    expect(save.mock.calls[0]?.[0]).not.toHaveProperty("preset");
+  });
+});

@@ -52,6 +52,7 @@ import type { TeamResult } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
+import type { RecommendedCandidate } from "./recommended";
 import { nativeRelayInfo } from "../relay/native";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
@@ -815,6 +816,11 @@ export type AgentType<Config = unknown> = {
       settings: Readonly<Record<string, string>>,
     ): Config;
   }>;
+  /** Whether `candidate`, a recommended setting for this type, can run on
+   * this computer now: installed, signed in and set up. A type with it
+   * follows Recommended (`recommended.ts`): an agent whose config is on it
+   * runs on the current candidate for its type. */
+  recommends?(candidate: RecommendedCandidate): Promise<boolean>;
   /** Runtime routes its supported security boundaries through AgentHandle.protection. */
   protection?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */

@@ -23,6 +23,13 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
+  candidatesFor,
+  followRecommended,
+  offRecommended,
+  onRecommended,
+  type RecommendedCandidate,
+} from "../../features/agents/recommended";
+import {
   ConversationName,
   OpenedConversation,
   useOpenedSession,
@@ -209,8 +216,38 @@ export class CodexProvider {
     );
     this.set({ defaults });
   }
+  /** Whether Codex is installed, signed in and offers the candidate's model
+   * on its thinking level. */
+  async recommends(candidate: RecommendedCandidate) {
+    if (this.state.readiness !== "ready") await this.check();
+    return (
+      this.state.readiness === "ready" &&
+      !!this.state.data &&
+      offers(this.state.data, candidate)
+    );
+  }
+  /** What its agents on Recommended run on: the first Codex candidate its
+   * catalog offers. Undefined until the catalog is read; `null`, for Codex's
+   * own default, when none is offered or the catalog can't be read. */
+  recommended(): RecommendedCandidate | null | undefined {
+    if (this.found !== undefined) return this.found;
+    const { data, readiness } = this.state;
+    if (!data) return readiness === "attention" ? null : undefined;
+    // Kept for the launch, as goose keeps its own: a later failed check
+    // doesn't move agents to the default mid-session.
+    this.found =
+      candidatesFor("codex").find((candidate) => offers(data, candidate)) ??
+      null;
+    return this.found;
+  }
+  private found: RecommendedCandidate | null | undefined;
   resolve(raw: unknown): Config {
-    const explicit = readConfig(raw);
+    // Recommended picks the model and level, as an explicit choice would.
+    const explicit = followRecommended(
+      raw,
+      readConfig(raw),
+      this.recommended(),
+    );
     const inheritedModel = this.state.defaults.model;
     const unavailable = Boolean(
       inheritedModel && this.state.data && !this.model(inheritedModel),
@@ -287,6 +324,16 @@ const catalogModel = (model: string, data?: Catalog) => {
   const resolved = resolveModel(model, data.models);
   return data.models.find((choice) => choice.model === resolved);
 };
+/** Whether the catalog lists a candidate's model on its thinking level, so
+ * a run never swaps in another level than the one shown. */
+const offers = (data: Catalog, { model, effort }: RecommendedCandidate) =>
+  data.models.some(
+    (row) =>
+      row.model === model &&
+      row.supportedReasoningEfforts.some(
+        (choice) => choice.reasoningEffort === effort,
+      ),
+  );
 const providerDefaultLabel = (model: string, data?: Catalog) => {
   const selected = catalogModel(model, data);
   const name = selected?.displayName || selected?.model;
@@ -439,8 +486,11 @@ export function createTabs(
     onChange,
     ...props
   }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
+    // A pick here takes the agent off Recommended, from what it runs on.
     const { data, checking, error, defaults: providerDefaults } = useProvider();
+    const current = offRecommended(
+      followRecommended(config, readConfig(config), provider.recommended()),
+    );
     // The setup's status holds through the provider's next check, so the
     // button, and its focus, stays put as Install Codex becomes Sign in.
     const { status } = useSyncExternalStore(
@@ -1052,7 +1102,11 @@ export function createTabs(
         const settings = readConfig(draft);
         if (!validWorkspace(settings.workspace))
           throw new Error("Enter an absolute or ~/… workspace path.");
-        await save(settings);
+        // A Custom agent's save drops a mark left from before, which a later
+        // blank synced model would otherwise turn back on.
+        await save(
+          onRecommended(settings) ? settings : offRecommended(settings),
+        );
       } catch (reason) {
         setError(message(reason));
       } finally {
@@ -1088,8 +1142,11 @@ export function createTabs(
             defaultDescription="Following the provider's model default"
             loading={checking}
             disabled={saving}
+            // A manual choice, even of the default, is never Recommended.
             onChange={(model) =>
-              setDraft({ ...draft, ...modelChange(model, data) })
+              setDraft(
+                offRecommended({ ...draft, ...modelChange(model, data) }),
+              )
             }
           />
           <Select
@@ -1104,7 +1161,9 @@ export function createTabs(
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
             disabled={checking || saving || !selected}
-            onValueChange={(effort) => setDraft({ ...draft, effort })}
+            onValueChange={(effort) =>
+              setDraft(offRecommended({ ...draft, effort }))
+            }
           />
         </>
       </>

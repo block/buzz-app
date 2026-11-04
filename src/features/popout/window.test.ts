@@ -217,3 +217,24 @@ it("retires windows left by an earlier renderer at startup", async () => {
   expect(bridge.update).toHaveBeenCalledWith("popout-old", null);
   await windows.dispose();
 });
+
+it("names windows holding unsent work for a community exit, until they let go or close", async () => {
+  const h = harness();
+  await h.windows.open({ channelId: "channel", threadRootId: ROOT });
+  const changed = vi.fn();
+  h.windows.subscribeHeld(changed);
+  expect(h.windows.held()).toEqual([]);
+  h.control("guard", "1");
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(h.windows.held()).toEqual([
+    "The pop-out window for “Conversation” has an unsent reply.",
+  ]);
+  h.control("guard", "1");
+  expect(changed).toHaveBeenCalledTimes(1);
+  h.control("guard", "0");
+  expect(h.windows.held()).toEqual([]);
+  h.control("guard", "1");
+  h.control("closed");
+  expect(h.windows.held()).toEqual([]);
+  expect(changed).toHaveBeenCalledTimes(4);
+});

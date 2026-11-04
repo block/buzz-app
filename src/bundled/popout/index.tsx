@@ -11,7 +11,13 @@ import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
-export const inject = ["relay", "conversation", "navigation", "agents"];
+export const inject = [
+  "relay",
+  "conversation",
+  "navigation",
+  "agents",
+  "communityReader",
+];
 
 /** The thread a message belongs to, when it has one to pop out. */
 export function popoutThreadRoot(message: ChannelMessage) {
@@ -109,7 +115,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
         .catch(() => {});
     },
   });
+  // A voluntary community exit asks before discarding a window's unsent reply.
+  const releaseHold = ctx.communityReader.holdExit?.(
+    windows.held,
+    windows.subscribeHeld,
+  );
   ctx.effect(() => async () => {
+    releaseHold?.();
     await windows.dispose();
   });
 };

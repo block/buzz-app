@@ -137,6 +137,7 @@ export function IdentitySettings({
   profileSession,
   community,
   memberships = [],
+  exitHolds,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
@@ -154,6 +155,8 @@ export function IdentitySettings({
   profileSession?: RelaySession | undefined;
   community?: Membership | undefined;
   memberships?: readonly Membership[];
+  /** Work that signing out would discard, named in its confirmation. */
+  exitHolds?: readonly string[] | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
@@ -437,6 +440,7 @@ export function IdentitySettings({
                 <SignOutDialog
                   identity={identity}
                   onClose={() => setSigningOut(false)}
+                  holds={exitHolds}
                 />
               )}
             </>

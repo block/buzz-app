@@ -1224,8 +1224,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   window without closing the pop-out. Main and pop-out share one draft per
   thread; reading in the pop-out counts as reading; links to other
   conversations open in the main window. Closing a pop-out that holds unsaved
-  work asks first. Pop-outs close when the community or session changes and
-  are not restored after a restart. They show messages and attachments, not
+  work asks first, and so does switching community or signing out while one
+  does (the prompt names the window; Keep working leaves everything as it
+  was). Losing access to the channel closes its pop-out at once. Pop-outs are
+  not restored after a restart. They show messages and attachments, not
   reactions or message actions; use the main window for those. Not available
   in the browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers

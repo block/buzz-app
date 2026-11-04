@@ -365,12 +365,14 @@ export function useAppNavigation(
       });
       return;
     }
+    // The route already passed the shell's departure guard, which asks about
+    // held work before a community change commits; select without asking again.
     if (
       scope === null &&
       client.status !== "loading" &&
       client.selected !== null
     )
-      services.communities.select(null);
+      services.communities.select(null, { force: true });
     if (
       scope &&
       client.status !== "loading" &&
@@ -378,7 +380,7 @@ export function useAppNavigation(
       membership &&
       client.selected !== membership.id
     ) {
-      services.communities.select(membership.id);
+      services.communities.select(membership.id, { force: true });
     }
   }, [services, state.attempt, failure, scope, client, membership]);
   // A visit that failed while its connection was down, or whose connection has

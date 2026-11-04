@@ -190,8 +190,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,
   without being marked read. Sending a message reopens the DM and brings it
-  back to the sidebar. After **Hide conversation**, the row can take until the
-  channel list next refreshes to return.
+  back to the sidebar. For a one-to-one DM, choosing the person in search is
+  quicker and brings it back the same way. After **Hide conversation**, the row
+  can take until the channel list next refreshes to return. If this connection
+  can't start DMs, New message still shows the earlier messages but Send is
+  disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have

@@ -603,9 +603,9 @@ rows; it does not deny access, prevent exact conversation navigation or stop
 New message from previewing the DM's history (see
 [Starting a direct message](#starting-a-direct-message)). Visibility
 refreshes with the channel roster, preserves the last good set on failure and
-rejects older snapshots. Live cross-device visibility updates and an in-app DM
-reopen/unhide flow are deferred; opening a DM through another supported client's
-`41010` flow and refreshing restores the row.
+rejects older snapshots. Live cross-device visibility updates are deferred; any
+confirmed `41010` open, including New message Send, unhides the DM, and its row
+returns when visibility next refreshes.
 
 A definitive rejection offers retry without optimistic removal. If publication or
 confirmation has an uncertain outcome, the dialog warns that the command may have

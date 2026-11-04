@@ -5449,6 +5449,12 @@ it("opens an existing DM from a person row and reports a failed start", async ()
     { pubkey: bob.pubkey, name: "Ally Bob" },
   ]);
   t.open.mockRejectedValueOnce(new Error("Relay refused the DM."));
+  // The relay's DM visibility has loaded and hides nothing.
+  await owner.session.channelLifecycle.refreshVisibility();
+  expect(owner.session.channelLifecycle.snapshot()).toMatchObject({
+    status: "ready",
+    hidden: [],
+  });
   const openConversation = vi.fn();
   try {
     render(
@@ -5478,6 +5484,67 @@ it("opens an existing DM from a person row and reports a failed start", async ()
       "Relay refused the DM.",
     );
     expect(openConversation).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("opens a DM from a person row through the confirmed open until the relay's hidden DMs load", async () => {
+  // Before the first visibility snapshot, a DM the relay hides looks
+  // visible. The confirmed open asks the relay to unhide it, so the sidebar
+  // cannot hide the row once the snapshot lands.
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { display_name: "Alice Chen", name: "ally" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // A username match leaves the DM out of Direct messages, so the person row
+  // is what opens it.
+  const t = peopleSession(owner.session);
+  t.open.mockResolvedValueOnce("dm");
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="ally"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    const row = await people.findByRole("option", { name: /Alice Chen/ });
+    expect(row.querySelector(".text-subtle")?.textContent).toBe(
+      "@ally · Direct message",
+    );
+    expect(owner.session.channelLifecycle.snapshot().status).toBe("idle");
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
+    );
+    expect(t.open).toHaveBeenCalledExactlyOnceWith(
+      [alice.pubkey],
+      expect.any(AbortSignal),
+    );
   } finally {
     cleanup();
     owner.dispose();
@@ -6655,6 +6722,17 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
       [dms[0]?.key.pubkey],
       expect.any(AbortSignal),
     );
+    // So does the DM the relay's visibility snapshot hides.
+    open.mockResolvedValueOnce("relay-dm");
+    fireEvent.click(await people.findByRole("option", { name: /Scooby/ }));
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenLastCalledWith("relay-dm"),
+    );
+    expect(open).toHaveBeenLastCalledWith(
+      [dms[1]?.key.pubkey],
+      expect.any(AbortSignal),
+    );
+    expect(open).toHaveBeenCalledTimes(2);
     // When the sidebar restores the row, search follows without remounting.
     act(() => {
       writeView(scope, "hidden-dms", []);

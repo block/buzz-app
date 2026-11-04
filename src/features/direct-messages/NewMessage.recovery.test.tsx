@@ -126,11 +126,14 @@ function setup(
   const events = [
     profile(other, { name: "Avery", ...metadata }),
     profile(another, { name: "Zoe" }),
+    // Relay-signed DM metadata carries the NIP-29 `hidden` and `private` tags.
     signed(relay, {
       kind: 39000,
       tags: [
         ["d", channel],
+        ["hidden", ""],
         ["t", "dm"],
+        ["private", ""],
       ],
       content: JSON.stringify({ name: "Avery", channel_type: "dm" }),
     }),
@@ -794,7 +797,9 @@ function groupHistory(t: ReturnType<typeof setup>) {
       kind: 39000,
       tags: [
         ["d", group],
+        ["hidden", ""],
         ["t", "dm"],
+        ["private", ""],
       ],
       content: JSON.stringify({ name: "Avery, Zoe", channel_type: "dm" }),
     }),

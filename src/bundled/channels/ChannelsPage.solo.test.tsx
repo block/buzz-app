@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ChatNotStarted } from "../../features/relay/channel-writes";
@@ -383,7 +384,10 @@ function fixture({
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
   const read: ReadShortcut = {};
-  const page = (sidebar = false) => (
+  const page = (
+    sidebar = false,
+    sidebarProps: Partial<ComponentProps<typeof SoloWorkspaces>> = {},
+  ) => (
     <ChannelNavigationProvider relay={relay}>
       {sidebar && (
         <SoloWorkspaces
@@ -395,6 +399,7 @@ function fixture({
             title: chat.name,
           }))}
           renderChat={(item) => <button type="button">{item.title}</button>}
+          {...sidebarProps}
         />
       )}
       <ChannelsPage
@@ -416,7 +421,9 @@ function fixture({
   );
   return {
     mount: () => render(page()),
-    mountWithSidebar: () => render(page(true)),
+    mountWithSidebar: (
+      sidebarProps?: Partial<ComponentProps<typeof SoloWorkspaces>>,
+    ) => render(page(true, sidebarProps)),
     mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
     abort,
     archive,
@@ -1368,4 +1375,49 @@ it("leaves Escape to a text field outside the composer", async () => {
   field.focus();
   expect(f.read.current?.available()).toBe(false);
   field.remove();
+});
+
+it("archives in one click from a plugin's row action, without a menu or confirmation", async () => {
+  const f = fixture();
+  f.mountWithSidebar({
+    renderRowAction: (item, archive) => (
+      <button type="button" onClick={archive}>
+        Archive {item.title}
+      </button>
+    ),
+  });
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Archive Planning" }),
+  );
+  await waitFor(() => expect(f.run).toHaveBeenCalled());
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.run).toHaveBeenCalledExactlyOnceWith(
+    "archive",
+    id,
+    expect.any(AbortSignal),
+  );
+  expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
+});
+
+it("lists folded chats after the workspaces, closed until opened", async () => {
+  const other = "22222222-2222-4222-8222-222222222222";
+  const f = fixture({ others: [other] });
+  f.mountWithSidebar({
+    folded: { label: "Inactive · last 72h", ids: new Set([other]) },
+  });
+  const user = userEvent.setup();
+  const toggle = await screen.findByRole("button", {
+    name: /Inactive · last 72h\s*1/,
+  });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("button", { name: "Planning" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Other 1" })).toBeNull();
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(
+    await screen.findByRole("button", { name: "Other 1" }),
+  ).toBeInTheDocument();
+  expect(readView(f.scope, "solo:folded-open", false)).toBe(true);
 });

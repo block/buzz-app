@@ -399,3 +399,75 @@
     display: none;
   }
 }
+
+.foldedCount {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+/* A plugin row action sits just before the overflow action and shows with it. */
+[data-solo-chat-action] {
+  display: flex;
+  opacity: 0;
+}
+.organizedRow:is(
+    :hover,
+    [data-context-menu-present],
+    :has(:focus-visible),
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  )
+  [data-solo-chat-action] {
+  opacity: 1;
+}
+@media (hover: none) {
+  [data-solo-chat-action] {
+    opacity: 1;
+  }
+}
+@media (hover: hover) {
+  .organizedRow [data-solo-chat-action] {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    inset-inline-end: calc(
+      var(--session-trailing-end) +
+      var(--session-action-size)
+    );
+  }
+  .organizedRow:has([data-solo-shared]) [data-solo-chat-action] {
+    inset-inline-end: calc(
+      var(--session-trailing-end) +
+      var(--session-action-size) *
+      2
+    );
+  }
+  .sidebarContents
+    .organizedRow:has([data-solo-chat-action]):is(
+      :hover,
+      [data-context-menu-present],
+      :has(:focus-visible),
+      :has([aria-expanded="true"][aria-haspopup="menu"])
+    )
+    > div
+    > [data-variant="row"] {
+    padding-inline-end: calc(
+      var(--session-action-size) *
+      2 +
+      var(--session-trailing-offset)
+    );
+  }
+  .sidebarContents
+    .organizedRow:has([data-solo-chat-action]):has([data-solo-shared]):is(
+      :hover,
+      [data-context-menu-present],
+      :has(:focus-visible),
+      :has([aria-expanded="true"][aria-haspopup="menu"])
+    )
+    > div
+    > [data-variant="row"] {
+    padding-inline-end: calc(
+      var(--session-action-size) *
+      3 +
+      var(--session-trailing-offset)
+    );
+  }
+}

@@ -55,6 +55,36 @@ export type ChatMenu = Readonly<{
   component: ComponentType<ChatMenuProps>;
 }>;
 
+/** A Solo chat as the sidebar lists it, newest message first. */
+export type ChatListEntry = Readonly<{
+  id: string;
+  title: string;
+  /** Unix seconds of the latest message, once the relay has reported it. */
+  lastMessageAt?: number;
+  /** Open, working or unread: always listed and never folded. */
+  pinned: boolean;
+}>;
+export type ChatListLayout = Readonly<{
+  /** Listed order; chats it leaves out follow in the host's order. */
+  order?: readonly string[];
+  /** Chats moved out of their workspaces into one collapsed list at the end. */
+  folded?: Readonly<{ label: string; ids: readonly string[] }>;
+}>;
+export type ChatRowActionProps = Readonly<{
+  session: RelaySession;
+  channelId: string;
+  title: string;
+  /** Archives with the sidebar's own flow, including its Undo toast. */
+  archive(): void;
+}>;
+export type ChatList = Readonly<{
+  id: string;
+  /** Called on each render, so it must be pure and fast. */
+  arrange?: (chats: readonly ChatListEntry[]) => ChatListLayout;
+  /** Shown on each Solo row beside its actions while the row is active. */
+  rowAction?: ComponentType<ChatRowActionProps>;
+}>;
+
 export type Conversation = {
   chatMenus: ContributionReader<ChatMenu>;
   registerChatMenu(component: ComponentType<ChatMenuProps>): void;
@@ -94,6 +124,10 @@ export type Conversation = {
   /** Shows `component` as each Solo chat's sidebar icon while the providing
    * plugin runs. */
   registerChatIcon(component: ComponentType<ChatIconProps>): void;
+  /** Solo list arrangements; the sidebar uses the first one. */
+  chatLists: ContributionReader<ChatList>;
+  /** Arranges the Solo sidebar while the providing plugin runs. */
+  registerChatList(list: Omit<ChatList, "id">): void;
   /** The host's date labels, so plugin text reads like the message rows. */
   format: {
     /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
@@ -160,6 +194,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly chatMenuEntries;
   readonly chatIcons;
   private readonly chatIconEntries;
+  readonly chatLists;
+  private readonly chatListEntries;
   readonly ui: Conversation["ui"];
   constructor(ctx: Context) {
     super(ctx, "conversation");
@@ -222,6 +258,12 @@ export class ConversationService extends Service implements Conversation {
       snapshot: chatIcons.snapshot,
       subscribe: chatIcons.subscribe,
     };
+    const chatLists = createContributions<ChatList>(ctx);
+    this.chatListEntries = chatLists;
+    this.chatLists = {
+      snapshot: chatLists.snapshot,
+      subscribe: chatLists.subscribe,
+    };
     const Tabs = (props: PageTabsProps) => {
       const Provided = tabs.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
@@ -258,6 +300,20 @@ export class ConversationService extends Service implements Conversation {
     if (typeof component !== "function")
       throw new Error("A chat icon needs a component");
     this.chatIconEntries.register(this.ctx, { id: "chat-icon", component });
+  }
+  registerChatList(list: Omit<ChatList, "id">) {
+    if (
+      !list ||
+      (list.arrange === undefined && list.rowAction === undefined) ||
+      (list.arrange !== undefined && typeof list.arrange !== "function") ||
+      (list.rowAction !== undefined && typeof list.rowAction !== "function")
+    )
+      throw new Error("A chat list needs an arrange function or a row action");
+    this.chatListEntries.register(this.ctx, {
+      id: "chat-list",
+      ...(list.arrange ? { arrange: list.arrange } : {}),
+      ...(list.rowAction ? { rowAction: list.rowAction } : {}),
+    });
   }
   registerMessageAction(value: MessageAction) {
     validate(value);

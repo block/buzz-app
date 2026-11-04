@@ -181,6 +181,11 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
+- **Make sticker** in a message's More menu saves its image as your own custom
+  emoji, ready for messages and reactions. In the Mac app on macOS 14 or later,
+  it first lifts the subject off the background; turn off **Remove background**
+  to keep the whole image. Elsewhere, or when no subject is found, it uses the
+  whole image.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and

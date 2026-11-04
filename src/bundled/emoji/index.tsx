@@ -12,7 +12,11 @@ import { EmojiPicker } from "./EmojiPicker";
 import { CustomEmoji } from "./CustomEmoji";
 import { copyEmoji } from "./copy-emoji";
 import { CustomEmojiSettings } from "./CustomEmojiSettings";
-import { SmileyIcon } from "../../shared/design-system/icons";
+import { StickerDialog, stickerSource } from "./StickerDialog";
+import {
+  SmileyIcon,
+  SmileyStickerIcon,
+} from "../../shared/design-system/icons";
 
 export const inject = ["conversation"];
 const entries = (content: InlineContent) =>
@@ -75,6 +79,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
         insert={insertText}
       />
     ),
+  });
+  ctx.conversation.registerMessageAction({
+    id: "make-sticker",
+    title: "Make sticker",
+    icon: () => <SmileyStickerIcon size={16} aria-hidden="true" />,
+    matches: (message, session) =>
+      !!stickerSource(message) &&
+      !!session.emoji.add &&
+      !!session.emoji.upload &&
+      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
+    component: StickerDialog,
   });
   ctx.conversation.registerInline({
     id: "custom",

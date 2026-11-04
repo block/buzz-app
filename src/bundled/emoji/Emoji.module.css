@@ -165,6 +165,33 @@
   object-fit: contain;
 }
 
+/* Transparent sticker pixels show over the panel, as they will in messages. */
+.stickerPreview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 10rem;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+}
+.stickerPreview img {
+  max-width: 9rem;
+  max-height: 9rem;
+  object-fit: contain;
+}
+/* A checkerboard behind the cutout shows which pixels are transparent. */
+.stickerPreview img[data-cutout] {
+  background-color: var(--surface-panel);
+  background-image: repeating-conic-gradient(
+    var(--surface-inset) 0 25%,
+    transparent 0 50%
+  );
+  background-size: var(--space-4) var(--space-4);
+}
+.stickerPreview img[data-lifting] {
+  opacity: 0.5;
+}
+
 .emojiBrowseControls {
   display: grid;
   gap: var(--space-2);

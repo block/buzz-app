@@ -87,6 +87,7 @@
     "allow-media-download",
     "allow-file-download",
     "allow-media-copy-image",
+    "allow-media-lift-subject",
     "allow-clipboard-write-text",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",

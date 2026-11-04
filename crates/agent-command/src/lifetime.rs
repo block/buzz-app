@@ -32,9 +32,6 @@ pub(super) fn watch() -> Result<Option<File>> {
     }
     // Never unlink the file: all builds must lock the same inode, including when
     // a previous app died. The OS releases its lock when its helper exits.
-    lease
-        .try_lock()
-        .map_err(|error| format!("This Attention command is already running: {error}"))?;
     std::thread::Builder::new()
         .name("attention-parent".into())
         .spawn(move || loop {
@@ -46,5 +43,13 @@ pub(super) fn watch() -> Result<Option<File>> {
             }
             std::thread::sleep(Duration::from_millis(100));
         })?;
+    match lease.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            eprintln!("Waiting for another Buzz copy to release this Attention command");
+            lease.lock()?;
+        }
+        Err(error) => return Err(error.into()),
+    }
     Ok(Some(lease))
 }

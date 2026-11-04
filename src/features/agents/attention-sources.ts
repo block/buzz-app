@@ -37,7 +37,7 @@ export type AttentionSource = Readonly<{
       /** Runs a declared process as this watch's agent and destination.
        * On macOS and Linux, only one instance of each declared process may run
        * per agent, provider and watch, including across Buzz builds. A concurrent
-       * instance exits with "already running". Await `process.exited` before respawning.
+       * instance waits for its predecessor to stop. Await `process.exited` before respawning.
        * Buzz revokes access when this run returns, throws or is cancelled. */
       spawn(
         process: string,

@@ -158,7 +158,7 @@ behavior for its agents. Plugins can add a tab to every local agent with
 the Attention plugin's Attention tab holds the device Attention switch, and the
 Bestie plugin's Bestie tab shows only on your Bestie.
 
-Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. Another live build refuses that command; pause or remove the owning watch before enabling it elsewhere. Removing a watch or turning Attention off stops its command through the existing process host.
+Attention command processes on macOS and Linux stop when their app process exits, including an abrupt exit. A shared lease allows one running command per agent, provider, watch and declared process across Buzz builds on the same computer. A new owner waits for the previous command to stop before starting its copy. Removing a watch or turning Attention off stops its command through the existing process host.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the

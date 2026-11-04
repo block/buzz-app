@@ -415,7 +415,7 @@ fn command_tree_exits_when_its_host_dies() {
     );
 }
 #[test]
-fn two_builds_cannot_execute_the_same_attention_source() {
+fn a_second_build_waits_then_takes_over_the_attention_source() {
     use std::process::Stdio;
     let home = tempfile::tempdir().unwrap();
     let connection = connection(&server("singleton", &[]), "singleton", false);
@@ -429,17 +429,26 @@ fn two_builds_cannot_execute_the_same_attention_source() {
         .env("BUZZ_AGENT_CONNECTION", &connection)
         .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
         .stdout(Stdio::null())
+        .stderr(Stdio::piped())
         .process_group(0)
         .spawn()
         .unwrap();
+    let mut waiting = String::new();
+    BufReader::new(second.stderr.take().unwrap())
+        .read_line(&mut waiting)
+        .unwrap();
     assert!(
-        !second.wait().unwrap().success(),
-        "a second build accepted the same source"
+        waiting.contains("Waiting for another Buzz copy"),
+        "{waiting}"
+    );
+    assert!(
+        second.try_wait().unwrap().is_none(),
+        "takeover exited instead of waiting"
     );
     assert!(!marker.exists(), "both builds executed the source");
-    // A different saved source is independent, even with the same command.
+    // A different saved source is independent while the takeover waits.
     assert!(Command::new(&second_binary)
-        .args(["--launch", "/usr/bin/touch", marker.to_str().unwrap()])
+        .args(["--launch", "/usr/bin/true"])
         .env("HOME", home.path())
         .env("BUZZ_AGENT_CONNECTION", &connection)
         .env("BUZZ_ATTENTION_COMMAND", "agent/other-watch")
@@ -450,6 +459,9 @@ fn two_builds_cannot_execute_the_same_attention_source() {
     first.host.kill().unwrap();
     first.host.wait().unwrap();
     assert!(wait_until(|| !alive(first.group) && !alive(first.child)));
+    assert!(wait_until(|| second.try_wait().unwrap().is_some()));
+    assert!(second.wait().unwrap().success());
+    assert!(marker.exists(), "waiting build did not take over");
     // Dead owners leave a reusable lock file, never a permanently stale lease.
     assert!(Command::new(&second_binary)
         .args(["--launch", "/usr/bin/true"])
@@ -460,4 +472,58 @@ fn two_builds_cannot_execute_the_same_attention_source() {
         .status()
         .unwrap()
         .success());
+}
+
+#[test]
+fn a_waiting_command_exits_when_its_host_dies() {
+    use std::process::Stdio;
+    let home = tempfile::tempdir().unwrap();
+    let connection = connection(&server("waiting", &[]), "waiting", false);
+    let first = running_command(home.path(), &connection, "agent/watch");
+    let marker = home.path().join("waiting-command-executed");
+    let mut host = Command::new("/bin/bash")
+        .args([
+            "-c",
+            "set -m; \"$@\" & wait",
+            "buzz-host",
+            env!("CARGO_BIN_EXE_buzz-agent-command"),
+            "--launch",
+            "/usr/bin/touch",
+            marker.to_str().unwrap(),
+        ])
+        .env("HOME", home.path())
+        .env("BUZZ_AGENT_CONNECTION", &connection)
+        .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut waiting = String::new();
+    BufReader::new(host.stderr.take().unwrap())
+        .read_line(&mut waiting)
+        .unwrap();
+    assert!(
+        waiting.contains("Waiting for another Buzz copy"),
+        "{waiting}"
+    );
+    let output = Command::new("pgrep")
+        .args(["-P", &host.id().to_string()])
+        .output()
+        .unwrap();
+    let group: i32 = String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    host.kill().unwrap();
+    host.wait().unwrap();
+    let stopped = wait_until(|| !alive(group));
+    if !stopped {
+        unsafe { libc::kill(-group, libc::SIGKILL) };
+    }
+    assert!(stopped, "waiting helper survived its host");
+    assert!(
+        alive(first.group),
+        "waiting copy stopped the existing owner"
+    );
+    assert!(!marker.exists(), "waiting command executed");
 }

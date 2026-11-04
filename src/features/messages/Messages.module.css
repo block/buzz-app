@@ -372,6 +372,11 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   height: 0.75rem;
   object-fit: contain;
 }
+/* Enlarge 12px artwork by 2pt without changing the capsule's layout box. */
+.reactionGlyph [data-reaction-artwork],
+.reactionGlyph .reactionCustomEmoji {
+  scale: calc(11 / 9);
+}
 .visuallyHidden {
   position: absolute;
   width: 1px;

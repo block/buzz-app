@@ -7,6 +7,7 @@ import {
   type ActivityRowPresentation,
 } from "./activity-presentation";
 import { useActivityIndicator } from "./use-activity-indicator";
+import { useLiveConversationAgents } from "./TypingIndicator";
 import { agent, entry, fixture, root } from "./typing-indicator-testing";
 
 afterEach(cleanup);
@@ -58,4 +59,20 @@ it("re-renders on typing and activity only for the row that owns the live signal
   const owner = renders;
   live.update([entry()]);
   expect(renders).toBeGreaterThan(owner);
+});
+
+it("re-renders a live-agents host only when its working agents change", () => {
+  const live = fixture();
+  let renders = 0;
+  const { result } = renderHook(() => {
+    renders++;
+    return useLiveConversationAgents(live.session, "channel", root);
+  });
+  expect(result.current).toEqual([]);
+  const idle = renders;
+  live.update([{ pubkey: agent, channelId: "elsewhere", threadRootId: root }]);
+  live.update([], { trimmed: 1 });
+  expect(renders).toBe(idle);
+  live.update([entry()]);
+  expect(result.current).toEqual([agent]);
 });

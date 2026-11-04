@@ -1,5 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
-import { TypingIndicator, useConversationAgents } from "./TypingIndicator";
+import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -293,7 +293,7 @@ function Timeline({
   );
   const activity = presentation.groups;
   const stableActivity = useStableRowActivity();
-  const { agents: liveAgents } = useConversationAgents(
+  const liveAgents = useLiveConversationAgents(
     queries,
     channelId,
     undefined,

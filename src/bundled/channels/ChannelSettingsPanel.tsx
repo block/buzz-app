@@ -17,6 +17,9 @@ import {
 import { PublishNotSent, PublishRejected } from "../../features/relay/outbox";
 import { managesCommunity } from "../../features/communities/roster";
 import type { CommunityMembership } from "../moderation/membership";
+import type { RelaySession } from "../../features/relay/session";
+import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
+import { useReferenceDirectory } from "../../features/messages/ReferenceText";
 import { channelIcon } from "../../features/channels/channel-icon";
 import {
   GearIcon,
@@ -48,6 +51,9 @@ export function ChannelSettingsPanel({
   lifecycle,
   membership,
   openMembers,
+  session,
+  canOpenLink,
+  onOpenLink,
 }: {
   channel: ChannelSummary | undefined;
   scope: string;
@@ -59,8 +65,13 @@ export function ChannelSettingsPanel({
   lifecycle?: ChannelLifecycleCapability | undefined;
   membership?: CommunityMembership | undefined;
   openMembers?(trigger: HTMLButtonElement): void;
+  /** Links the description like a message; without these it stays plain text. */
+  session?: RelaySession | undefined;
+  canOpenLink?(target: string): boolean;
+  onOpenLink?(url: string): boolean;
 }) {
   const tabbed = !!usePanelTabHost();
+  const directory = useReferenceDirectory(session);
   const header = useRef<HTMLDivElement>(null);
   const panelId = useId();
   useEffect(() => {
@@ -175,7 +186,34 @@ export function ChannelSettingsPanel({
                           ? "Not available"
                           : channel.description || "No description"
                       }
+                      content={
+                        channel.description &&
+                        session &&
+                        onOpenLink && (
+                          <MessageMarkdown
+                            row={{
+                              id: "channel-description",
+                              authorId: "",
+                              createdAt: 0,
+                              channelId: channel.id,
+                              content: channel.description,
+                              mentions: [],
+                              participants: [],
+                              attachments: [],
+                              reactions: [],
+                              replyCount: 0,
+                            }}
+                            directory={directory}
+                            session={session}
+                            scope={scope}
+                            media={session.media}
+                            onOpenLink={onOpenLink}
+                            canOpenLink={canOpenLink}
+                          />
+                        )
+                      }
                       valueClassName={styles.settingsDescription}
+                      labelOnly
                       actionLabel="Edit"
                       loading={edit?.pending}
                       onOpen={
@@ -340,6 +378,7 @@ function AutoJoinSetting({
 function SettingsDetail({
   label,
   value,
+  content,
   valueClassName,
   feedback,
   actionLabel,
@@ -349,10 +388,14 @@ function SettingsDetail({
   hasPopup = "dialog",
   disabled = false,
   loading = false,
+  labelOnly = false,
   renderAction = (action) => action,
 }: {
   label: string;
+  /** Plain value, also the action's description. */
   value: string;
+  /** Rendered in place of `value` when present. */
+  content?: ReactNode;
   valueClassName?: string | undefined;
   feedback?: ReactNode;
   actionLabel?: string | undefined;
@@ -361,6 +404,8 @@ function SettingsDetail({
   hasPopup?: "dialog" | false;
   disabled?: boolean;
   loading?: boolean | undefined;
+  /** Only the label opens the action, so the value's own links stay usable. */
+  labelOnly?: boolean;
   renderAction?(action: ReactElement<ComponentProps<"button">>): ReactNode;
   onOpen?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
@@ -371,7 +416,11 @@ function SettingsDetail({
           ? renderAction(
               <button
                 type="button"
-                className={styles.settingsDetailAction}
+                className={
+                  labelOnly
+                    ? `${styles.settingsDetailAction} ${styles.settingsLabelAction}`
+                    : styles.settingsDetailAction
+                }
                 aria-label={
                   actionLabel
                     ? `${actionLabel} ${label.toLowerCase()}`
@@ -410,7 +459,7 @@ function SettingsDetail({
           : label}
       </dt>
       <dd className={valueClassName}>
-        {value}
+        {content || value}
         {feedback}
       </dd>
     </div>

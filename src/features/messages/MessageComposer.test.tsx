@@ -14210,6 +14210,79 @@ it("queues an agent follow-up that also references a person outside the Solo cha
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("sends now a shared Solo chat message whose only tag is a reference, like untagged conversation", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  const guest = { pubkey: "d".repeat(64), name: "Guest" };
+  const outside = { pubkey: "e".repeat(64), name: "Teammate" };
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  h.setProfiles(
+    new Map([
+      [guest.pubkey, { name: "Guest" }],
+      [outside.pubkey, { name: "Teammate" }],
+    ]),
+  );
+  const activity = {
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state: "working",
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  };
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: ["viewer", first.pubkey, guest.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => channelList.channels[0],
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: () => () => {},
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(outside);
+    h.commands().insertText("what did they say?");
+  });
+  h.submit();
+  // A reference addresses nobody: with a person in the chat this is
+  // conversation, which goes out now, not a queued agent follow-up.
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+  expect(h.messages.send.mock.calls[0]?.[5]).toEqual([outside.pubkey]);
+  expect(
+    screen.queryByRole("region", { name: "Queued follow-ups" }),
+  ).toBeNull();
+});
+
 it("queues a tagged agent follow-up while agent choices no longer list it", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
   const h = mount();
@@ -14231,10 +14304,18 @@ it("queues a tagged agent follow-up while agent choices no longer list it", asyn
       },
     ],
   };
-  // A store snapshot keeps its identity until the store changes.
+  // A store snapshot keeps its identity until the store changes. The
+  // working agent is a member, so it is never taken for a reference.
   const channelList = {
     status: "ready",
-    channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: [first.pubkey],
+      },
+    ],
   };
   h.retarget({
     ownSoloConversation: true,
@@ -14543,13 +14624,28 @@ it("adds a known agent while one agent source failed, but refuses a name it cann
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   expect(addAgents).toHaveBeenCalledOnce();
-  // A key the partial list lacks may be an agent it failed to read.
+  // A key the partial list lacks may be an agent it failed to read, so the
+  // composer does not take it as a reference.
   h.fill("");
   act(() => {
     h.commands().insertMention(first);
     h.commands().insertMention(stranger);
+  });
+  expect(
+    screen.getByText(
+      "This recipient is no longer available. Remove it or refresh choices.",
+    ),
+  ).toBeVisible();
+  expect(h.commands().recipients.map((p) => p.pubkey)).not.toContain(
+    stranger.pubkey,
+  );
+  // One picked while the read was complete is refused if the send's read is not.
+  h.setLibrary([first]);
+  act(() => {
+    h.commands().insertMention(stranger);
     h.commands().insertText("ask her");
   });
+  h.setLibrary([first], "ready", "Relay inventory unavailable");
   h.submit();
   expect(
     await screen.findByText("Could not load your agents. Retry."),

@@ -110,8 +110,14 @@ export function mentionAdmission(
       allowed.add(agent.pubkey);
   // A roster leaves some members out on purpose (another person's agent in
   // a Solo chat); naming outside people must not bring them back. Without
-  // known membership a roster admits no outside key.
-  const open = allowsOutsideMentions(channel, roster, inviteAgents);
+  // known membership a roster admits no outside key. A Solo chat tells a
+  // reference from your agent only by a complete agent read, so until then
+  // it admits no outside key: a row must not say "Will not be notified" for
+  // an agent the send would add.
+  const open =
+    allowsOutsideMentions(channel, roster, inviteAgents) &&
+    (channel?.channelType !== "solo" ||
+      session.agentChoices.snapshot().complete);
   const members = roster ? channel?.members : undefined;
   const outside = (pubkey: string) =>
     open && (!roster || (!!members && !members.includes(pubkey)));

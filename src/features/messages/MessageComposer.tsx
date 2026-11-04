@@ -2821,20 +2821,18 @@ function Composer({
     const fromPill =
       routing &&
       captured.recipients.every((person) => referenced(person.pubkey));
+    // A reference addresses nobody: a send that tags only references is
+    // untagged conversation.
+    const addressedKeys = capturedRecipients
+      .map(({ pubkey }) => pubkey)
+      .filter((pubkey) => !referenced(pubkey));
     const queueFollowUp =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue" &&
-      capturedRecipients.length > 0 &&
-      !soloHasPeople(
-        capturedRecipients
-          .map(({ pubkey }) => pubkey)
-          .filter((pubkey) => !referenced(pubkey)),
-        session.viewer,
-        profileSnapshot,
-        agentKeys,
-      );
+      addressedKeys.length > 0 &&
+      !soloHasPeople(addressedKeys, session.viewer, profileSnapshot, agentKeys);
     try {
       const tokens = draftTokens(captured);
       messageTokenTags(tokens);

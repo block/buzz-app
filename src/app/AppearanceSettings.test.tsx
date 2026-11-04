@@ -44,6 +44,7 @@ afterEach(() => {
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 it("hidden settings do not portal errors; returning retains both save recovery actions", async () => {
@@ -446,10 +447,12 @@ it("offers message spelling correction only on Mac WebKit, off until this device
     />
   );
   const toggle = () =>
-    screen.getByRole("switch", { name: "Correct spelling automatically" });
+    screen.getByRole("switch", { name: "Allow automatic spelling correction" });
   const view = render(page(false), { wrapper: ToastProvider });
   expect(
-    screen.queryByRole("switch", { name: "Correct spelling automatically" }),
+    screen.queryByRole("switch", {
+      name: "Allow automatic spelling correction",
+    }),
   ).not.toBeInTheDocument();
   view.rerender(page(true));
   expect(toggle()).not.toBeChecked();
@@ -481,7 +484,7 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
       throw new Error("unavailable");
     });
   await user.click(
-    screen.getByRole("switch", { name: "Correct spelling automatically" }),
+    screen.getByRole("switch", { name: "Allow automatic spelling correction" }),
   );
   expect(messageAutocorrectPreference()).toBe(true);
   expect(await screen.findByRole("dialog")).toHaveTextContent(
@@ -496,3 +499,24 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
 });
+
+it.each([
+  ["Mac WebKit", "Apple Computer, Inc.", 0, true],
+  ["desktop-mode iPad", "Apple Computer, Inc.", 5, false],
+  ["Chrome on Mac", "Google Inc.", 0, false],
+] as const)(
+  "detects whether %s can offer message spelling correction",
+  (_browser, vendor, maxTouchPoints, shown) => {
+    vi.stubGlobal("navigator", {
+      platform: "MacIntel",
+      vendor,
+      maxTouchPoints,
+    });
+    render(preferencesPage(), { wrapper: ToastProvider });
+    expect(
+      screen.queryByRole("switch", {
+        name: "Allow automatic spelling correction",
+      }) !== null,
+    ).toBe(shown);
+  },
+);

@@ -172,8 +172,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires.
 - **Spelling**: on a Mac, the message box underlines misspellings but does not
-  correct them unless you turn on **Settings → Appearance → Correct spelling
-  automatically**. Correct Spelling Automatically in the message box's
+  correct them unless you turn on **Settings → Appearance → Allow automatic
+  spelling correction**. Correct Spelling Automatically in the message box's
   right-click Spelling and Grammar menu then turns correction on or off.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the

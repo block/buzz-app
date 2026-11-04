@@ -289,8 +289,8 @@ export function AppearanceSettings({
           />
           {autocorrectAvailable && (
             <SwitchPreferenceRow
-              label="Correct spelling automatically"
-              description="Lets macOS fix misspelled words in messages, following the message box’s Spelling and Grammar menu."
+              label="Allow automatic spelling correction"
+              description="Lets macOS correct misspelled words in messages. Turn correction on or off from the message box’s Spelling and Grammar menu."
               checked={autocorrect.enabled}
               onCheckedChange={setMessageAutocorrectPreference}
             />

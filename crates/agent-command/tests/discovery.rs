@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Output};
 use std::time::{Duration, SystemTime};
@@ -316,4 +317,147 @@ fn help_names_the_path_an_outside_agent_runs() {
     let usage = stdout(&helper(home.path(), None, &["--help"]));
     let path = env!("CARGO_BIN_EXE_buzz-agent-command");
     assert!(usage.contains(&format!("{path} tools")), "{usage}");
+}
+
+// The shell stands in for Buzz's process owner. The helper is a group leader,
+// exactly as the native host starts it, while the loop creates a descendant.
+struct RunningCommand {
+    host: std::process::Child,
+    group: i32,
+    child: i32,
+}
+impl Drop for RunningCommand {
+    fn drop(&mut self) {
+        unsafe {
+            libc::kill(-self.group, libc::SIGKILL);
+        }
+        let _ = self.host.kill();
+        let _ = self.host.wait();
+    }
+}
+fn running_command(home: &Path, connection: &str, label: &str) -> RunningCommand {
+    use std::process::Stdio;
+    let mut host = Command::new("/bin/bash")
+        .args([
+            "-c",
+            "set -m; \"$@\" & wait",
+            "buzz-host",
+            env!("CARGO_BIN_EXE_buzz-agent-command"),
+            "--launch",
+            "/bin/sh",
+            "-c",
+            "sleep 600 & echo \"$$ $!\"; wait",
+        ])
+        .env("HOME", home)
+        .env("BUZZ_AGENT_CONNECTION", connection)
+        .env("BUZZ_ATTENTION_COMMAND", label)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(host.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let ids: Vec<i32> = line
+        .split_whitespace()
+        .map(|id| id.parse().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2, "command never started: {line}");
+    // Its direct child is the helper; get it without assuming a scheduling delay.
+    let output = Command::new("pgrep")
+        .args(["-P", &host.id().to_string()])
+        .output()
+        .unwrap();
+    let group = String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    RunningCommand {
+        host,
+        group,
+        child: ids[1],
+    }
+}
+fn alive(pid: i32) -> bool {
+    // A zombie has stopped executing but awaits its new parent's reap.
+    let output = Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .any(|state| !state.starts_with('Z'))
+}
+fn wait_until(mut condition: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+#[test]
+fn command_tree_exits_when_its_host_dies() {
+    let home = tempfile::tempdir().unwrap();
+    let connection = connection(&server("lifetime", &[]), "lifetime", false);
+    let mut running = running_command(home.path(), &connection, "agent/watch");
+    running.host.kill().unwrap();
+    running.host.wait().unwrap();
+    assert!(
+        wait_until(|| !alive(running.group) && !alive(running.child)),
+        "orphaned helper {} or descendant {} survived its host",
+        running.group,
+        running.child
+    );
+}
+#[test]
+fn two_builds_cannot_execute_the_same_attention_source() {
+    use std::process::Stdio;
+    let home = tempfile::tempdir().unwrap();
+    let connection = connection(&server("singleton", &[]), "singleton", false);
+    let mut first = running_command(home.path(), &connection, "agent/watch");
+    let second_binary = home.path().join("other-build");
+    std::fs::copy(env!("CARGO_BIN_EXE_buzz-agent-command"), &second_binary).unwrap();
+    let marker = home.path().join("duplicate-executed");
+    let mut second = Command::new(&second_binary)
+        .args(["--launch", "/usr/bin/touch", marker.to_str().unwrap()])
+        .env("HOME", home.path())
+        .env("BUZZ_AGENT_CONNECTION", &connection)
+        .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
+        .stdout(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    assert!(
+        !second.wait().unwrap().success(),
+        "a second build accepted the same source"
+    );
+    assert!(!marker.exists(), "both builds executed the source");
+    // A different saved source is independent, even with the same command.
+    assert!(Command::new(&second_binary)
+        .args(["--launch", "/usr/bin/touch", marker.to_str().unwrap()])
+        .env("HOME", home.path())
+        .env("BUZZ_AGENT_CONNECTION", &connection)
+        .env("BUZZ_ATTENTION_COMMAND", "agent/other-watch")
+        .process_group(0)
+        .status()
+        .unwrap()
+        .success());
+    first.host.kill().unwrap();
+    first.host.wait().unwrap();
+    assert!(wait_until(|| !alive(first.group) && !alive(first.child)));
+    // Dead owners leave a reusable lock file, never a permanently stale lease.
+    assert!(Command::new(&second_binary)
+        .args(["--launch", "/usr/bin/true"])
+        .env("HOME", home.path())
+        .env("BUZZ_AGENT_CONNECTION", &connection)
+        .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
+        .process_group(0)
+        .status()
+        .unwrap()
+        .success());
 }

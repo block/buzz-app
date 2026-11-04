@@ -34,9 +34,13 @@ the interface unless an available tool actually supports that action.
   it to the signed-in account. Builderlab setup backs the key up automatically;
   if backup fails temporarily, retry to complete setup. If backup is not supported
   by the build or account, choose **Continue without backup** to finish setup.
-  Independent-community key imports without Builderlab sign-in, and an identity
-  brought over from the older Buzz app, are not backed up automatically, even if
-  the key is linked to a Builderlab account later. After signing in to the
+  Independent-community key imports
+  without Builderlab sign-in do not upload a backup during setup. Later, while
+  signed in to Builderlab on a build with backup, a key with no backup choice is
+  backed up automatically if you belong to a Builderlab-hosted community;
+  otherwise Buzz asks **Back up your key?**, again on the next launch or sign-in
+  if the dialog is closed. **Settings → Buzz → Identity → Key backup** shows the
+  backup status and, while backup is off, offers **Back up key**. After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,

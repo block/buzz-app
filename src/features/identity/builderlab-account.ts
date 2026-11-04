@@ -705,7 +705,7 @@ function seededRecovery(
     async installRecovery() {
       if (!seed.recovery) return;
       publish({ status: "saving" });
-      await identity.importKey(seed.recovery.nsec, false);
+      await identity.importKey(seed.recovery.nsec);
       const saved = identity.snapshot();
       publish(
         saved.status === "ready"

@@ -242,7 +242,10 @@ export function ModelPicker({
   };
   return (
     <>
-      <div ref={control} className="flex max-w-full flex-wrap items-center gap-3">
+      <div
+        ref={control}
+        className="flex max-w-full flex-wrap items-center gap-3"
+      >
         {groupByFamily ? (
           <ModelFamilyMenu
             leading={leading}

@@ -127,7 +127,11 @@ it("shows setup only for the exact owned DM identity and hides it when that agen
       subscribe: noop,
       dispose: () => {},
     }),
-    profiles: { subscribe: noop, snapshot: () => profiles, event: () => profile },
+    profiles: {
+      subscribe: noop,
+      snapshot: () => profiles,
+      event: () => profile,
+    },
     agentChoices: { subscribe: noop, snapshot: () => choices },
     presence: {
       status: () => presence,
@@ -176,9 +180,7 @@ it("shows setup only for the exact owned DM identity and hides it when that agen
     presence = "online";
     for (const listener of [...listeners]) listener();
   });
-  expect(
-    screen.queryByRole("heading", { name: /^Connect / }),
-  ).toBeNull();
+  expect(screen.queryByRole("heading", { name: /^Connect / })).toBeNull();
 });
 
 it("removes a disabled harness from the choices and never imports from a preview", async () => {
@@ -214,9 +216,9 @@ it("removes a disabled harness from the choices and never imports from a preview
     types = [];
     for (const listener of [...listeners]) listener();
   });
-  expect(
-    screen.getByRole("combobox", { name: "Harness" }),
-  ).toHaveTextContent("Choose harness");
+  expect(screen.getByRole("combobox", { name: "Harness" })).toHaveTextContent(
+    "Choose harness",
+  );
   expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
   expect(screen.queryByText("Goose")).toBeNull();
 });

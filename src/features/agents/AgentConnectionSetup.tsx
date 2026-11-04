@@ -73,10 +73,11 @@ export function AgentConnectionSetup({
           source: "installed",
           pubkey: peer ?? "preview",
           name: (peer && profiles.get(peer)?.name) || channel.name,
-          picture: avatarMedia(
-            peer ? profiles.get(peer)?.picture : undefined,
-            session.media,
-          ) ?? "",
+          picture:
+            avatarMedia(
+              peer ? profiles.get(peer)?.picture : undefined,
+              session.media,
+            ) ?? "",
           relay: "",
         }}
       />

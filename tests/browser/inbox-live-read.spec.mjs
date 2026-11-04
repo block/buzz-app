@@ -41,7 +41,15 @@ test("a live reply in the open Inbox conversation is read while focus stays on i
     name: "Thread messages",
     exact: true,
   });
+  // Opening reveals the exact message, which takes focus once it settles;
+  // move focus back to the row only after that, so nothing takes it again.
+  await expect
+    .poll(() =>
+      detail.evaluate((element) => element.contains(document.activeElement)),
+    )
+    .toBe(true);
   await open.focus();
+  await expect(open).toBeFocused();
   app.reply(app.inboxWindow.root.id);
   await expect(
     detail.getByText("New peer reply", { exact: true }),

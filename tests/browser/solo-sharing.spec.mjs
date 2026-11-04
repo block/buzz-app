@@ -172,36 +172,10 @@ test.describe("View only channel share", () => {
         name: `Existing person ${index + 1}`,
       }),
     );
-    await page.route("**/api/relay/**/query", async (route) => {
-      const filters = route.request().postDataJSON();
-      if (!filters.some((filter) => filter.kinds?.includes(39002)))
-        return route.continue();
-      const response = await route.fetch();
-      const events = await response.json();
-      await route.fulfill({
-        json: events.map((event) => {
-          if (
-            event.kind !== 39002 ||
-            !event.tags.some(
-              ([key, value]) => key === "d" && value === sharedChatId,
-            )
-          )
-            return event;
-          return app.signRelay({
-            ...event,
-            tags: [
-              ...event.tags,
-              ...legacyPeople.map((person) => [
-                "p",
-                person.pubkey,
-                "",
-                "member",
-              ]),
-            ],
-          });
-        }),
-      });
-    });
+    app.serveMembers(
+      sharedChatId,
+      legacyPeople.map((person) => person.pubkey),
+    );
     await page.goto(app.origin);
     await openChat(page, app, sharedChatId);
     const trigger = page.getByRole("button", {

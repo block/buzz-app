@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 
 afterEach(() => {
@@ -48,6 +48,9 @@ it("shows known channel details with diagnostics collapsed until requested", asy
 it("closes with Escape or its close button without swallowing other keys", async () => {
   const user = userEvent.setup();
   const close = vi.fn();
+  const windowKeyDown = vi.fn();
+  window.addEventListener("keydown", windowKeyDown);
+  onTestFinished(() => window.removeEventListener("keydown", windowKeyDown));
   render(
     <ChannelSettingsPanel
       scope="community:viewer"
@@ -59,8 +62,18 @@ it("closes with Escape or its close button without swallowing other keys", async
   );
   await user.keyboard("{ArrowDown}");
   expect(close).not.toHaveBeenCalled();
+  // Shift+Escape is Mark all as read; only plain Escape dismisses.
+  await user.keyboard("{Shift>}{Escape}{/Shift}");
+  expect(close).not.toHaveBeenCalled();
+  expect(windowKeyDown).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "Escape", shiftKey: true }),
+  );
+  windowKeyDown.mockClear();
   await user.keyboard("{Escape}");
   expect(close).toHaveBeenCalledTimes(1);
+  expect(windowKeyDown).not.toHaveBeenCalledWith(
+    expect.objectContaining({ key: "Escape" }),
+  );
   await user.click(
     screen.getByRole("button", { name: "Close Channel settings tab" }),
   );
@@ -68,37 +81,6 @@ it("closes with Escape or its close button without swallowing other keys", async
   await user.click(screen.getByRole("tab", { name: "Channel settings" }));
   await user.keyboard("{Delete}");
   expect(close).toHaveBeenCalledTimes(3);
-});
-
-it("leaves Shift+Escape to Mark all as read", async () => {
-  const user = userEvent.setup();
-  const close = vi.fn();
-  const windowKeyDown = vi.fn();
-  window.addEventListener("keydown", windowKeyDown);
-  try {
-    render(
-      <ChannelSettingsPanel
-        scope="community:viewer"
-        channel={undefined}
-        close={close}
-      >
-        Diagnostics content
-      </ChannelSettingsPanel>,
-    );
-    await user.keyboard("{Shift>}{Escape}{/Shift}");
-    expect(close).not.toHaveBeenCalled();
-    expect(windowKeyDown).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "Escape", shiftKey: true }),
-    );
-    windowKeyDown.mockClear();
-    await user.keyboard("{Escape}");
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(windowKeyDown).not.toHaveBeenCalledWith(
-      expect.objectContaining({ key: "Escape" }),
-    );
-  } finally {
-    window.removeEventListener("keydown", windowKeyDown);
-  }
 });
 
 it("does not invent unknown metadata and still exposes diagnostics without a channel", async () => {

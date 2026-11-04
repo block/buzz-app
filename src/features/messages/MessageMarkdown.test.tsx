@@ -813,6 +813,28 @@ describe("Markdown inline extensions", () => {
     },
   );
 
+  it.each([
+    [
+      "https://github.com/block/buzz-app。",
+      "https://github.com/block/buzz-app",
+    ],
+    ["看这个 https://example.com/spec，大家看一下", "https://example.com/spec"],
+    ["（https://example.com）", "https://example.com/"],
+    [
+      "https://zh.wikipedia.org/wiki/中文 ok",
+      "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",
+    ],
+    ["<https://example.com/a。>", "https://example.com/a%E3%80%82"],
+  ])("ends a bare link at fullwidth punctuation: %s", (content, href) => {
+    const html = render(content);
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      href,
+    ]);
+    expect(html.replace(/<[^>]*>/g, "")).toBe(
+      content.replace(/^<(.*)>$/, "$1"),
+    );
+  });
+
   it("keeps emoji-only sizing and readable fallback when media or extensions are unavailable", () => {
     const options = { emoji: [party], extensions, largeEmoji: true };
     const html = render(":party_parrot:", {

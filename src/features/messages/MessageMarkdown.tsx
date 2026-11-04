@@ -341,6 +341,33 @@ function rehypeEditedSlot() {
   };
 }
 
+/** GFM ends a bare URL only at whitespace. End it where bare message links end;
+ * `<url>` and `[url](url)` keep their destination. */
+function remarkBareLinkEnd(content: string) {
+  return function visit(parent: MarkdownNode) {
+    if (!parent.children) return;
+    parent.children = parent.children.flatMap((child) => {
+      const text = child.url;
+      const { start, end } = child.position ?? {};
+      if (
+        child.type !== "link" ||
+        !text ||
+        child.children?.[0]?.value !== text ||
+        (start && content.slice(start.offset, end?.offset) !== text)
+      ) {
+        visit(child);
+        return [child];
+      }
+      const url = messageLinkParts(text).find((part) => part.url)?.url;
+      if (!url || url === text || !text.startsWith(url)) return [child];
+      return [
+        { ...child, url, children: [{ type: "text", value: url }] },
+        { type: "text", value: text.slice(url.length) },
+      ];
+    });
+  };
+}
+
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
@@ -855,6 +882,7 @@ const MarkdownBody = memo(function MarkdownBody({
       Markdown({
         remarkPlugins: [
           remarkGfm,
+          [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
           [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
           [remarkInlineContent, protectedContent],

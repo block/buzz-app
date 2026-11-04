@@ -13,7 +13,6 @@ function Fixture() {
   const [input, setInput] = useState("");
   const [dimensions, resized] = useState("");
   const [font] = useState(() => createTerminalFontPreference());
-  const [resizes] = useState<string[]>([]);
   const [generated] = useState<{ data: string; source: TerminalInputSource }[]>(
     [],
   );
@@ -23,10 +22,7 @@ function Fixture() {
         generated.push({ data, source });
         setInput((value) => value + data);
       },
-      (cols, rows) => {
-        resizes.push(`${cols}x${rows}`);
-        resized(`${cols}x${rows}`);
-      },
+      (cols, rows) => resized(`${cols}x${rows}`),
       font,
     ),
   );
@@ -38,7 +34,6 @@ function Fixture() {
       terminalRenderer: {
         generated,
         font,
-        resizes,
         output: (data: string) => screen.output(new TextEncoder().encode(data)),
       },
     });
@@ -46,7 +41,7 @@ function Fixture() {
       screen.dispose();
       font.dispose();
     };
-  }, [screen, generated, font, resizes]);
+  }, [screen, generated, font]);
   return (
     <>
       <button

@@ -12,7 +12,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-it("bounds font sizes and restores old family-only preferences", () => {
+it("bounds font sizes and defaults malformed saved sizes", () => {
   for (const size of [8, 12, 17.5, 32]) expect(parseFontSize(size)).toBe(size);
   for (const size of [null, "16", NaN, Infinity, 0, 7.9, 32.1])
     expect(parseFontSize(size)).toBeNull();
@@ -54,18 +54,11 @@ it("saves family and size together, retains size on a family change, and resets 
   restored.dispose();
 });
 
-it("retries a failed combined save and failed read without losing either choice", () => {
-  const font = createTerminalFontPreference();
-  const write = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(() => {
-      throw new Error("Unavailable");
-    });
-  font.set("MesloLGS NF", 18);
-  expect(font.snapshot()).toMatchObject({ family: "MesloLGS NF", size: 18 });
-  expect(font.snapshot().error).toContain("could not be saved");
-  write.mockRestore();
-  font.retry();
+it("retries a failed read without deleting either saved choice", () => {
+  localStorage.setItem(
+    TERMINAL_FONT_KEY,
+    JSON.stringify({ family: "MesloLGS NF", size: 18 }),
+  );
   const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
     throw new Error("Unavailable");
   });
@@ -80,7 +73,6 @@ it("retries a failed combined save and failed read without losing either choice"
     size: 18,
     error: null,
   });
-  font.dispose();
   restored.dispose();
 });
 
@@ -151,14 +143,16 @@ it("applies in memory on save failure, retries, and resets even when removal fai
     .mockImplementation(() => {
       throw new Error("Unavailable");
     });
-  font.set(" MesloLGS NF ");
-  expect(font.snapshot().family).toBe("MesloLGS NF");
+  font.set(" MesloLGS NF ", 18);
+  expect(font.snapshot()).toMatchObject({ family: "MesloLGS NF", size: 18 });
   expect(font.snapshot().error).toContain("could not be saved");
   expect(changed).toHaveBeenCalledTimes(1);
   write.mockRestore();
   font.retry();
   expect(font.snapshot().error).toBeNull();
-  expect(localStorage.getItem(TERMINAL_FONT_KEY)).toBe("MesloLGS NF");
+  expect(JSON.parse(localStorage.getItem(TERMINAL_FONT_KEY) ?? "null")).toEqual(
+    { family: "MesloLGS NF", size: 18 },
+  );
   const remove = vi
     .spyOn(Storage.prototype, "removeItem")
     .mockImplementation(() => {
@@ -167,6 +161,7 @@ it("applies in memory on save failure, retries, and resets even when removal fai
   font.reset();
   expect(font.snapshot().family).toBeNull();
   expect(font.snapshot().error).toContain("could not be saved");
+  expect(font.snapshot().error).toContain("may return after restarting");
   remove.mockRestore();
   font.retry();
   expect(font.snapshot().error).toBeNull();

@@ -164,6 +164,21 @@ export function promptMessage(
       continue;
     }
     if (tag !== "buzz-event" && tag !== "buzz-events") continue;
+    // Turns from before exact records serialized the event as escaped JSON.
+    // Never parse its decoded content again as framing; older saved
+    // transcripts use the lines below.
+    let event: Json | undefined;
+    try {
+      event = object(JSON.parse(body));
+    } catch {
+      // Legacy human-readable event block.
+    }
+    if (event && typeof event.content === "string") {
+      contents.push(event.content);
+      const author = str(event.author) || str(event.npub) || str(event.pubkey);
+      if (author) authors.push(author);
+      continue;
+    }
     for (const block of body.split(/\n(?=--- Event \d+ )/)) {
       const from = /^From: (.*)$/m.exec(block)?.[1];
       const start = block.indexOf("\nContent: ");
@@ -239,10 +254,35 @@ function configLabels(options: unknown) {
   });
 }
 
+// Snapshot record arrays are frozen and replaced on change, while indicators,
+// stop controls and previews read the same agent/channel on every tick.
+const transcripts = new WeakMap<object, Map<string, Transcript>>();
+
 export function activityTranscript(
   records: readonly Source[],
   scope: TranscriptScope,
   /** Names an exact-record prompt's author, if known. */
+  name?: (pubkey: string) => string | undefined,
+): Transcript {
+  // The cache is per records, agent and channel, not per `name`.
+  if (name || !Object.isFrozen(records))
+    return buildTranscript(records, scope, name);
+  let byScope = transcripts.get(records);
+  if (!byScope) {
+    byScope = new Map();
+    transcripts.set(records, byScope);
+  }
+  const key = `${scope.agent}\n${scope.channelId ?? ""}`;
+  const cached = byScope.get(key);
+  if (cached) return cached;
+  const transcript = buildTranscript(records, scope);
+  byScope.set(key, transcript);
+  return transcript;
+}
+
+function buildTranscript(
+  records: readonly Source[],
+  scope: TranscriptScope,
   name?: (pubkey: string) => string | undefined,
 ): Transcript {
   const events: { id: string; at: number; order: number; event: Json }[] = [];

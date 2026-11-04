@@ -100,7 +100,7 @@ export type TurnInput = Readonly<{
 export function turnPrompt(input: TurnInput) {
   const { event, channel, thread } = input;
   const channelLabel = channel.name
-    ? `${channel.name.replace(/\s+/g, " ")} (#${channel.id})`
+    ? `${quoted(channel.name.replace(/\s+/g, " ")).slice(1, -1)} (#${channel.id})`
     : channel.id;
   // A session shared by a channel's threads (or a DM's) cannot tell which
   // thread a reply is for, so it names the thread itself.

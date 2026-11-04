@@ -31,7 +31,7 @@ export const REQUEST_TIMEOUT_MS = 60_000;
  * `buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
 
-/** How long a harness whose start was cancelled has to exit once stopped. */
+/** How long a harness that failed to start has to exit once stopped. */
 const STOP_TIMEOUT_MS = 5_000;
 
 const STDERR_LIMIT = 4_000;
@@ -111,6 +111,9 @@ export class AcpProcess {
       env?: Readonly<Record<string, string | null>>;
       serve?: ServeMcp;
       signal?: AbortSignal;
+      /** Given the harness as soon as it has started, before `initialize`, so
+       * a caller can keep one whose start fails until it has exited. */
+      onProcess?: (acp: AcpProcess) => void;
     }>,
   ) {
     const { signal } = launch;
@@ -145,6 +148,7 @@ export class AcpProcess {
         .finally(() => signal?.removeEventListener("abort", cancel));
     });
     acp = new AcpProcess(process, hooks, launch.serve);
+    launch.onProcess?.(acp);
     for (const data of earlyErrors) acp.readError(data);
     for (const data of early) acp.read(data);
     // A cancel rejects the pending `initialize` at once, clearing its
@@ -180,9 +184,9 @@ export class AcpProcess {
         void acp.stop(STOP_TIMEOUT_MS);
         throw signal.reason;
       }
-      // Rejects only once it has exited, so its owner never loses one running.
-      await acp.kill().catch(() => undefined);
-      await acp.exited;
+      // Rejects once it has exited or the time limit has passed; a caller
+      // that must keep one still running takes it through `onProcess`.
+      await acp.stop(STOP_TIMEOUT_MS);
       // A program `env` cannot find or run exits before it answers.
       if (hooks.diagnoseStartup && MISSING_CODES.has(acp.code ?? 0))
         throw new Error(hooks.missing);

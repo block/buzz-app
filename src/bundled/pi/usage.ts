@@ -50,8 +50,9 @@ const text = (content: unknown) =>
 /** What was asked, from the conversation's first prompt. */
 function title(entries: readonly PiEntry[]) {
   const first = entries.find((entry) => entry.kind === "pi.user")?.model?.[0];
-  const sections = promptSections(text(first?.content));
-  return promptMessage(sections).text.split("\n")[0]?.trim() || undefined;
+  return promptMessage(promptSections(text(first?.content)))
+    .text.split("\n", 1)[0]
+    ?.trim();
 }
 
 /** A conversation's model requests, its entries oldest first, and Pi's

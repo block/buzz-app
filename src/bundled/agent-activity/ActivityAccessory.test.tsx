@@ -741,6 +741,59 @@ it("notes a stopped request in the response lane", async () => {
     f.dispose();
   }
 });
+it("moves a stopped note below the agent's latest public reply", async () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const reply = {
+    ...f.props.message,
+    id: next,
+    authorId: A,
+    createdAt: 2,
+    content: "On it",
+  };
+  const view = render(
+    <>
+      <div data-testid="request">
+        <ActivityAccessory {...f.props} repliedAgents={[A]} />
+      </div>
+      <div data-testid="reply">
+        <ActivityAccessory
+          {...f.props}
+          message={reply}
+          stoppedRequest={f.props.message}
+        />
+      </div>
+    </>,
+  );
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .interruptible(async () => {});
+    });
+    // Live work stays on its request; a reply does not take the bubble.
+    expect(
+      within(screen.getByTestId("request")).getByRole("button", {
+        name: /View agent activity: Blossom/,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
+    await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
+    expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+    expect(
+      within(screen.getByTestId("reply")).getByText("Blossom · Stopped"),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 it("notes only stopped requests once their work settles", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

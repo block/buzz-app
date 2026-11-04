@@ -1519,6 +1519,11 @@ function ThreadMessages({
               row.id,
               presentation.representedAgents.get(row.id),
             )}
+            stoppedRequest={
+              rootId && rootPresentation.replyRequests.get(row.id) === rootId
+                ? snapshot.root
+                : undefined
+            }
             recordedActivity={stableActivity.activity(
               row.id,
               recordedActivity,
@@ -1849,6 +1854,10 @@ function ThreadMessages({
               representedAgents={stableActivity.agents(
                 snapshot.root.id,
                 rootPresentation.representedAgents.get(snapshot.root.id),
+              )}
+              repliedAgents={stableActivity.agents(
+                `replied:${snapshot.root.id}`,
+                rootPresentation.repliedAgents.get(snapshot.root.id),
               )}
               recordedActivity={stableActivity.activity(
                 snapshot.root.id,

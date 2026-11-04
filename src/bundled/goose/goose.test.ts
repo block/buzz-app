@@ -128,6 +128,45 @@ describe("GooseProcess", () => {
     expect(fake.geese[0]?.killed).toBe(true);
   });
 
+  it("still fails a protected start at its time limit when a goose without the security hooks never exits", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSpawn();
+    let kills = 0;
+    const spawn: typeof fake.spawn = async (id, options = {}) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (!data.includes('"method":"_buzz/security/capabilities"'))
+            return process.write(data);
+          const { id: request } = JSON.parse(data);
+          options.onStdout?.(
+            `${JSON.stringify({ jsonrpc: "2.0", id: request, result: { version: 1 } })}\n`,
+          );
+        },
+        // Asked to stop, it exits only once the test lets it.
+        kill: async () => void kills++,
+      };
+    };
+    let failure: unknown;
+    void GooseProcess.start(spawn, { cwd: "/work", protected: true }).catch(
+      (error: unknown) => {
+        failure = error;
+      },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(kills).toBe(1);
+      expect(failure).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failure).toEqual(
+        new Error("This Goose build lacks mandatory security hooks"),
+      );
+    } finally {
+      fake.geese[0]?.exit(null);
+    }
+  });
+
   it("opens a session with its own Buzz MCP server and its system prompt", async () => {
     const { open, process, fake } = await start();
     const session = await open({ systemPrompt: "Be Buzz" });

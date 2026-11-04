@@ -32,7 +32,7 @@ export const REQUEST_TIMEOUT_MS = 60_000;
 export const TOOL_SERVER = "buzz";
 
 /** How long a harness that failed to start has to exit once stopped. */
-const STOP_TIMEOUT_MS = 5_000;
+export const STOP_TIMEOUT_MS = 5_000;
 
 const STDERR_LIMIT = 4_000;
 

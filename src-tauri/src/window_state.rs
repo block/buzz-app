@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use tauri::utils::config::WindowConfig;
 use tauri::{LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, Runtime, Window};
 use tauri_plugin_window_state::{AppHandleExt, Builder, StateFlags, WindowExt};
 
@@ -152,23 +151,18 @@ fn restore_geometry_from<R: Runtime>(
         );
         // AppShell owns a 48 logical-pixel header on all desktop platforms.
         let header_height = (48.0 * window.scale_factor()?).ceil() as u32;
-        let default = WindowConfig::default();
-        let config = window.config().app.windows.first().unwrap_or(&default);
+        let windows = &window.config().app.windows;
+        let config = windows.first().cloned().unwrap_or_default();
         let (position, size, relocated) =
-            restore_request(&saved, offset, header_height, &areas, fallback, config);
+            restore_request(&saved, offset, header_height, &areas, fallback, &config);
         // Validate the requested geometry BEFORE sending it. Native setters
         // may apply asynchronously (Linux/macOS); getters can still report the
-        // startup frame. macOS and GTK convert physical values at the startup
-        // scale, so a relocated window is sent in its monitor's logical units.
-        let (position, size): (tauri::Position, tauri::Size) =
-            match relocated.filter(|_| cfg!(not(windows))) {
-                Some(scale) => (
-                    position.to_logical::<f64>(scale).into(),
-                    size.to_logical::<f64>(scale).into(),
-                ),
-                None => (position.into(), size.into()),
-            };
-        // Move first: a Windows DPI change rescales the window.
+        // startup frame.
+        // Move first: Windows rescales on DPI change. macOS/GTK convert at the startup scale.
+        if let Some(scale) = relocated.filter(|_| cfg!(not(windows))) {
+            window.set_position(position.to_logical::<f64>(scale))?;
+            return window.set_size(size.to_logical::<f64>(scale));
+        }
         window.set_position(position)?;
         window.set_size(size)?;
     }
@@ -180,8 +174,8 @@ fn restore_request(
     client_offset: PhysicalPosition<i32>,
     header_height: u32,
     areas: &[PhysicalRect<i32, u32>],
-    fallback: (PhysicalRect<i32, u32>, f64),
-    config: &WindowConfig,
+    (fallback, scale): (PhysicalRect<i32, u32>, f64),
+    config: &tauri::utils::config::WindowConfig,
 ) -> (PhysicalPosition<i32>, PhysicalSize<u32>, Option<f64>) {
     let position = if saved.maximized {
         PhysicalPosition::new(saved.prev_x, saved.prev_y)
@@ -195,7 +189,12 @@ fn restore_request(
         ),
         size: PhysicalSize::new(saved.width, saved.height),
     };
-    let relocated = reachable_client(client, header_height, areas, fallback, config);
+    // A size below the minimum at the fallback's scale (in pixels, rounded as
+    // tao rounds it) was saved at a lower scale and would reopen clamped.
+    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale).round() as u32;
+    let default = (saved.width < px(config.min_width) || saved.height < px(config.min_height))
+        .then(|| LogicalSize::new(config.width, config.height).to_physical(scale));
+    let relocated = reachable_client(client, header_height, areas, fallback, default);
     let target = relocated.unwrap_or(client);
     (
         PhysicalPosition::new(
@@ -203,16 +202,16 @@ fn restore_request(
             target.position.y.saturating_sub(client_offset.y),
         ),
         target.size,
-        relocated.map(|_| fallback.1),
+        relocated.map(|_| scale),
     )
 }
 
 fn reachable_client(
-    client: PhysicalRect<i32, u32>,
+    mut client: PhysicalRect<i32, u32>,
     header_height: u32,
     areas: &[PhysicalRect<i32, u32>],
-    (fallback, fallback_scale): (PhysicalRect<i32, u32>, f64),
-    config: &WindowConfig,
+    fallback: PhysicalRect<i32, u32>,
+    default: Option<PhysicalSize<u32>>,
 ) -> Option<PhysicalRect<i32, u32>> {
     let x = i64::from(client.position.x);
     let y = i64::from(client.position.y);
@@ -230,25 +229,16 @@ fn reachable_client(
                     && y < i64::from(area.position.y) + i64::from(area.size.height)
             })
         });
-    // A saved size below the minimum at the fallback's scale was saved at a
-    // lower scale. It would open clamped and re-save that smaller size. With a
-    // single monitor its scale is known even when the rect is still reachable.
-    let saved = client.size.to_logical::<f64>(fallback_scale);
-    let too_small = saved.width < config.min_width.unwrap_or(0.0)
-        || saved.height < config.min_height.unwrap_or(0.0);
-    if reachable && !(too_small && areas.len() == 1) {
+    // A lone monitor's scale is known, so a sub-minimum size is replaced even there.
+    if reachable && !(default.is_some() && areas.len() == 1) {
         return None;
     }
+    client.size = default.unwrap_or(client.size);
     // Unlike any-corner intersection, this keeps the drag strip and both sets
     // of platform controls on-screen, including after removing an upper monitor.
-    let wanted = if too_small {
-        LogicalSize::new(config.width, config.height).to_physical(fallback_scale)
-    } else {
-        client.size
-    };
     let size = PhysicalSize::new(
-        wanted.width.min(fallback.size.width),
-        wanted.height.min(fallback.size.height),
+        client.size.width.min(fallback.size.width),
+        client.size.height.min(fallback.size.height),
     );
     Some(PhysicalRect {
         position: PhysicalPosition::new(
@@ -335,26 +325,40 @@ mod tests {
     #[test]
     fn fallback_uses_default_size_when_saved_size_is_below_minimum_at_its_scale() {
         let laptop = rect(0, 50, 3024, 1840);
-        let fallback =
-            |client, area| super::reachable_client(client, 96, &[area], (area, 2.0), &config());
+        let left = rect(-3024, 0, 3024, 1964);
+        let fallback = |width, height, area| {
+            let saved = decode(&saved_state(5530, 100, width, height));
+            let offset = tauri::PhysicalPosition::new(0, 0);
+            let (position, size, scale) =
+                super::restore_request(&saved, offset, 96, &[area, left], (area, 2.0), &config());
+            assert_eq!(scale, Some(2.0));
+            Some(tauri::PhysicalRect { position, size })
+        };
         // Saved on a 1x monitor that is gone: 301x235 points on a 2x laptop.
-        assert_frame(
-            fallback(rect(5530, 100, 602, 470), laptop),
-            Some(rect(312, 50, 2400, 1600)),
-        );
+        assert_frame(fallback(602, 470, laptop), Some(rect(312, 50, 2400, 1600)));
         // One axis below the minimum is enough.
-        assert_frame(
-            fallback(rect(5530, 100, 960, 799), laptop),
-            Some(rect(312, 50, 2400, 1600)),
-        );
+        assert_frame(fallback(960, 799, laptop), Some(rect(312, 50, 2400, 1600)));
         // At or above the minimum at the fallback's scale, the saved size stays.
-        assert_frame(
-            fallback(rect(5530, 100, 960, 800), laptop),
-            Some(rect(1032, 50, 960, 800)),
-        );
+        assert_frame(fallback(960, 800, laptop), Some(rect(1032, 50, 960, 800)));
         // The default still fits inside a small fallback work area.
         let small = rect(0, 25, 1440, 875);
-        assert_frame(fallback(rect(5530, 100, 602, 470), small), Some(small));
+        assert_frame(fallback(602, 470, small), Some(small));
+    }
+
+    #[test]
+    fn minimum_size_is_compared_with_the_rounding_tao_applies() {
+        // At 110 DPI the 480x400 minimum is 550x458.33, and tao enforces 550x458.
+        let scale = 110.0 / 96.0;
+        let area = rect(0, 0, 2200, 1200);
+        let offset = tauri::PhysicalPosition::new(0, 0);
+        let relocated = |width, height| {
+            let saved = decode(&saved_state(100, 100, width, height));
+            super::restore_request(&saved, offset, 55, &[area], (area, scale), &config())
+                .2
+                .is_some()
+        };
+        assert!(!relocated(550, 458));
+        assert!(relocated(550, 457));
     }
 
     #[test]
@@ -362,12 +366,12 @@ mod tests {
         let laptop = rect(0, 25, 1440, 875);
         let saved = rect(100, -450, 960, 640);
         assert_frame(
-            super::reachable_client(saved, 48, &[laptop], (laptop, 1.0), &config()),
+            super::reachable_client(saved, 48, &[laptop], laptop, None),
             Some(rect(240, 25, 960, 640)),
         );
         let upper = rect(0, -900, 1440, 900);
         assert_frame(
-            super::reachable_client(saved, 48, &[laptop, upper], (laptop, 1.0), &config()),
+            super::reachable_client(saved, 48, &[laptop, upper], laptop, None),
             None,
         );
     }
@@ -378,7 +382,7 @@ mod tests {
         let left = rect(-1920, 0, 1920, 1080);
         for saved in [rect(100, 120, 960, 640), rect(-1800, 80, 960, 640)] {
             assert_frame(
-                super::reachable_client(saved, 48, &[primary, left], (primary, 1.0), &config()),
+                super::reachable_client(saved, 48, &[primary, left], primary, None),
                 None,
             );
         }
@@ -394,7 +398,7 @@ mod tests {
             rect(100, 860, 960, 640),
         ] {
             assert_frame(
-                super::reachable_client(saved, 48, &[area], (area, 1.0), &config()),
+                super::reachable_client(saved, 48, &[area], area, None),
                 Some(rect(240, 25, 960, 640)),
             );
         }
@@ -404,27 +408,15 @@ mod tests {
     fn oversized_window_fits_remaining_work_area_and_scaled_header_is_checked() {
         let area = rect(0, 50, 1440, 850);
         assert_frame(
-            super::reachable_client(rect(0, 50, 2800, 1800), 96, &[area], (area, 1.0), &config()),
+            super::reachable_client(rect(0, 50, 2800, 1800), 96, &[area], area, None),
             Some(area),
         );
         assert_frame(
-            super::reachable_client(
-                rect(100, 820, 960, 640),
-                48,
-                &[area],
-                (area, 1.0),
-                &config(),
-            ),
+            super::reachable_client(rect(100, 820, 960, 640), 48, &[area], area, None),
             None,
         );
         assert_frame(
-            super::reachable_client(
-                rect(100, 820, 960, 640),
-                96,
-                &[area],
-                (area, 1.0),
-                &config(),
-            ),
+            super::reachable_client(rect(100, 820, 960, 640), 96, &[area], area, None),
             Some(rect(240, 50, 960, 640)),
         );
     }
@@ -452,12 +444,12 @@ mod tests {
         let right = rect(0, 0, 1920, 1080);
         let spanning = rect(-480, 100, 960, 640);
         assert_frame(
-            super::reachable_client(spanning, 48, &[left, right], (right, 1.0), &config()),
+            super::reachable_client(spanning, 48, &[left, right], right, None),
             None,
         );
         let below = rect(0, 300, 1920, 1080);
         assert_frame(
-            super::reachable_client(spanning, 48, &[left, below], (left, 1.0), &config()),
+            super::reachable_client(spanning, 48, &[left, below], left, None),
             Some(rect(-1440, 0, 960, 640)),
         );
     }
@@ -482,7 +474,7 @@ mod tests {
         let saved = decode(&saved_state(100, -450, 960, 640));
         // The old post-set guard approves this stale, reachable startup frame.
         assert_frame(
-            super::reachable_client(startup, 48, &[area], (area, 1.0), &config()),
+            super::reachable_client(startup, 48, &[area], area, None),
             None,
         );
         // The planner accepts no current bounds: they can be either startup or
@@ -494,7 +486,7 @@ mod tests {
             Some(1.0),
         );
         assert_frame(
-            super::reachable_client(completed, 48, &[area], (area, 1.0), &config()),
+            super::reachable_client(completed, 48, &[area], area, None),
             Some(rect(240, 25, 960, 640)),
         );
         let offset = tauri::PhysicalPosition::new(0, 0);

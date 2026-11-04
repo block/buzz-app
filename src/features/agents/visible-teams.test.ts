@@ -15,10 +15,7 @@ it("shares local teams by membership and keeps confirmed synced teams in their h
   const missing = { ...local, id: "missing", members: ["missing"] };
   const snapshot = {
     teams: [local, synced, elsewhere, empty, missing],
-    agents: [
-      { pubkey: "ada", relay: "wss://here.example", place: "here" },
-      { pubkey: "bo", relay: "wss://other.example", place: "elsewhere" },
-    ],
+    agents: [{ pubkey: "ada", relay: "wss://here.example", place: "here" }],
   } as unknown as AgentsSnapshot;
   const agents: Pick<Agents, "snapshot" | "memberships" | "teamHere"> = {
     snapshot: () => snapshot,
@@ -41,6 +38,8 @@ it("shares local teams by membership and keeps confirmed synced teams in their h
   expect(visibleTeams(agents, "https://here.example").map((t) => t.id)).toEqual(
     ["local", "synced", "empty", "missing"],
   );
+  // The snapshot contains only the selected community's agents. A retained
+  // composer elsewhere must use memberships rather than that selected list.
   expect(
     visibleTeams(agents, "https://other.example").map((t) => t.id),
   ).toEqual(["synced", "elsewhere", "empty", "missing"]);

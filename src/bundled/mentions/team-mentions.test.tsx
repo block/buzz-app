@@ -13,7 +13,18 @@ import { memoryStorage } from "../../features/agents/test-fakes";
 import { readTeams, type Team } from "../../features/agents/store";
 import { AgentsPage } from "../agents/AgentsPage";
 import { resolveSpaceMention } from "./resolve-space-mention";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import * as communityConfig from "../../features/agents/community-config";
+import { SyncedTeams, teamArtifact } from "../../features/agents/team-config";
+import type { RelayEvent } from "../../features/relay/events";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MentionCompletion } from "./MentionCompletion";
@@ -833,7 +844,7 @@ function completion(publish: ReturnType<typeof vi.fn>): CompletionResult {
   return result;
 }
 
-async function savedTeamFixture(elsewhere = false) {
+async function savedTeamFixture(elsewhere = false, storage = memoryStorage()) {
   const h = fixture({ count: 2, team: elsewhere ? 1 : 2 });
   h.catalog({ status: "ready", entries: [] });
   const context = new Context();
@@ -847,7 +858,6 @@ async function savedTeamFixture(elsewhere = false) {
     relay,
     fakeRelay("https://other.example.test"),
   );
-  const storage = memoryStorage();
   const service = new AgentsService(
     context,
     communities.communities,
@@ -973,6 +983,15 @@ it.each(["loading", "error", "unavailable"] as const)(
       completion(publish)?.items.find((item) => item.label === "Review Crew");
     try {
       await waitFor(() => expect(choice()?.canSelect?.("Enter")).toBe(true));
+      await waitFor(() =>
+        expect(completion(publish).status).toBe(
+          status === "loading"
+            ? "Loading legacy teams…"
+            : status === "error"
+              ? "Could not load legacy teams. Retry to refresh."
+              : undefined,
+        ),
+      );
       const accepted = choice();
       await act(() =>
         h.service.saveTeam({ ...team, members: [h.agent.pubkey] }),
@@ -1213,6 +1232,186 @@ it("retires saved choices when the composer switches community sessions", async 
         completion(publish)?.items.some((item) => item.label === "ReviewCrew"),
       ).toBe(true),
     );
+  } finally {
+    view.unmount();
+    h.library.dispose();
+    await h.context.fiber.dispose();
+  }
+});
+
+it("refreshes team visibility on an agents snapshot change with the same teams array and choice model", async () => {
+  const h = await savedTeamFixture();
+  const team = await h.service.saveTeam({
+    name: "ReviewCrew",
+    instructions: "",
+    members: [h.agent.pubkey],
+  });
+  let origin = "https://other.example.test";
+  let snapshot = { ...h.service.snapshot(), agents: [], teams: [team] };
+  const listeners = new Set<() => void>();
+  const service = {
+    snapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    memberships: () => [{ origin }],
+    teamHere: () => false,
+    joinable: () => [],
+  } as unknown as Agents;
+  const model = {
+    pending: false,
+    channel: h.session.channels.list().channels[0],
+  } as ReturnType<typeof useMentionChoices>;
+  const hook = renderHook(
+    () => useTeamMentions(h.session, "parent", false, "Review", model),
+    {
+      wrapper: ({ children }) => (
+        <AgentsContext.Provider value={service}>
+          {children}
+        </AgentsContext.Provider>
+      ),
+    },
+  );
+  try {
+    expect(hook.result.current.choices).toEqual([]);
+    const teams = snapshot.teams;
+    act(() => {
+      origin = h.relay.origin;
+      snapshot = { ...snapshot };
+      listeners.forEach((listener) => {
+        listener();
+      });
+    });
+    expect(snapshot.teams).toBe(teams);
+    expect(hook.result.current.choices.map((choice) => choice.name)).toEqual([
+      "ReviewCrew",
+    ]);
+    expect(hook.result.current.choices[0]?.canSelect()).toBe(true);
+  } finally {
+    hook.unmount();
+    h.library.dispose();
+    await h.context.fiber.dispose();
+  }
+});
+
+it("projects confirmed synced teams through the real service without colliding with legacy IDs", async () => {
+  const configs = new Map<string, communityConfig.CommunityConfigInput>();
+  vi.spyOn(communityConfig, "communityConfig").mockImplementation(
+    async (input) => {
+      configs.set(input.community, input);
+      return {
+        attach: async () => {},
+        binding: () => undefined,
+        dispose: () => {},
+      } as unknown as communityConfig.CommunityConfig;
+    },
+  );
+  const home = "https://relay.example.test";
+  const storage = memoryStorage();
+  const team = {
+    id: "6f1c2b9e-3d4a-4f5b-8c7d-1e2f3a4b5c6d",
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    archived: false,
+    members: ["1".padStart(64, "0"), "2".padStart(64, "0")],
+  };
+  const archived = {
+    ...team,
+    id: "archived",
+    channel: "archived-channel",
+    archived: true,
+  };
+  new SyncedTeams(storage).set(viewer, home, [team, archived]);
+  const h = await savedTeamFixture(false, storage);
+  h.catalog({
+    status: "ready",
+    entries: [
+      {
+        eventId: "legacy-head",
+        createdAt: 1,
+        record: {
+          version: 1,
+          community: "fixture",
+          deleted: false,
+          value: {
+            type: "team",
+            id: team.id,
+            name: "Legacy Crew",
+            agents: [h.agent.pubkey],
+          },
+        },
+      },
+    ],
+  });
+  const publish = vi.fn();
+  const view = render(
+    <AgentsContext.Provider value={h.service}>
+      <MentionCompletion
+        session={h.session}
+        scope={h.session.scope}
+        channelId="parent"
+        publish={publish}
+        observation={{ revision: 1, text: "@", start: 1, end: 1 }}
+        query={{ start: 0, end: 1, query: "" }}
+      />
+    </AgentsContext.Provider>,
+  );
+  try {
+    await waitFor(() => expect(configs.has(home)).toBe(true));
+    await waitFor(() =>
+      expect(
+        completion(publish).items.some((item) => item.label === "Legacy Crew"),
+      ).toBe(true),
+    );
+    // Discovery alone is not a confirmed copy. Startup and rendering settled.
+    expect(h.service.snapshot().teams).toEqual([]);
+    expect(
+      completion(publish).items.some((item) => item.label === "Synced Crew"),
+    ).toBe(false);
+    const input = configs.get(home);
+    if (!input) throw new Error("Config coordinator did not start");
+    const confirm = (entry: typeof team, name: string) => {
+      const subject = teamArtifact(viewer, home, entry);
+      input.store.applyRead(subject, input.store.capture(subject), {
+        kind: "head",
+        event: finalizeEvent(
+          {
+            kind: 45010,
+            created_at: 1,
+            content: JSON.stringify({ version: 1, name, instructions: "" }),
+            tags: [["op", "create"]],
+          },
+          generateSecretKey(),
+        ) as RelayEvent,
+      });
+    };
+    act(() => confirm(archived, "Archived Crew"));
+    expect(h.service.snapshot().teams).toEqual([]);
+    act(() => confirm(team, "Synced Crew"));
+    await waitFor(() =>
+      expect(
+        completion(publish).items.some((item) => item.label === "Synced Crew"),
+      ).toBe(true),
+    );
+    const choices = completion(publish).items;
+    const synced = choices.find((item) => item.label === "Synced Crew");
+    const legacy = choices.find((item) => item.label === "Legacy Crew");
+    expect(synced?.edit).toEqual({ mentions: h.people });
+    expect(legacy?.edit).toEqual({ mentions: [h.agent] });
+    expect(synced?.id).not.toBe(legacy?.id);
+    expect(synced?.canSelect?.("Enter")).toBe(true);
+    expect(legacy?.canSelect?.("Enter")).toBe(true);
+    expect(choices.some((item) => item.label === "Archived Crew")).toBe(false);
+    act(() => {
+      input.teams.set(viewer, home, [{ ...team, archived: true }, archived]);
+      input.changed();
+    });
+    expect(synced?.canSelect?.("Enter")).toBe(false);
+    expect(
+      completion(publish).items.find((item) => item.label === "Synced Crew")
+        ?.disabled,
+    ).toContain("changed");
+    expect(legacy?.canSelect?.("Enter")).toBe(true);
   } finally {
     view.unmount();
     h.library.dispose();

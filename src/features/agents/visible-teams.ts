@@ -21,7 +21,14 @@ export function visibleTeams(
   );
   return snapshot.teams.filter(
     (team) =>
-      team.members.some((pubkey) => members.has(pubkey)) ||
+      team.members.some(
+        (pubkey) =>
+          members.has(pubkey) ||
+          (!!community &&
+            agents
+              .memberships(pubkey)
+              .some(({ origin }) => origin === community)),
+      ) ||
       (team.revision
         ? !team.members.length || agents.teamHere({ id: team.id }, community)
         : !team.members.some((pubkey) => agents.memberships(pubkey).length)),

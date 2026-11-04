@@ -1,4 +1,4 @@
-import { AgentsContext, useTeams } from "../../features/agents/react";
+import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
 import { visibleTeams } from "../../features/agents/visible-teams";
 import { splitPartition } from "../../features/relay/partition";
 import {
@@ -57,7 +57,7 @@ export function useTeamMentions(
 ) {
   const roster = model.roster;
   const owner = useContext(AgentsContext);
-  const saved = useTeams(owner);
+  const snapshot = useAgentsSnapshot(owner);
   const origin =
     session.scope && splitPartition(session.scope)?.communityOrigin;
   const readSaved = useCallback(
@@ -76,8 +76,7 @@ export function useTeamMentions(
   const teams = useMemo(() => {
     // The service owns local persistence and confirmed synced copies. Neither
     // depends on the legacy catalog being available.
-    void saved;
-    void model;
+    void snapshot;
     return [
       ...readSaved().map((team) => ({
         ready: true,
@@ -121,7 +120,7 @@ export function useTeamMentions(
           : [],
       ),
     ];
-  }, [readSaved, saved, model, catalog, kit]);
+  }, [readSaved, snapshot, catalog, kit]);
   const hasTeams = open && teams.length > 0;
   useEffect(() => {
     if (!hasTeams) return;
@@ -271,9 +270,9 @@ export function useTeamMentions(
       readNames: () => readSaved().map((team) => team.name),
       status:
         open && (catalog.status === "idle" || catalog.status === "loading")
-          ? "Loading saved teams…"
+          ? "Loading legacy teams…"
           : open && catalog.status === "error"
-            ? "Could not load saved teams. Retry to refresh."
+            ? "Could not load legacy teams. Retry to refresh."
             : undefined,
       canRetry: open && catalog.status === "error",
       retry: () => void kit?.refresh(),

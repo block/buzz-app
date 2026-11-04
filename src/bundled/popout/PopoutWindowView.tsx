@@ -9,7 +9,6 @@ import { useHuddleComposer } from "../huddles/HuddleComposer";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import styles from "./Popout.module.css";
 
@@ -84,14 +83,6 @@ export function PopoutWindowView({
   return (
     <MessageEditScope>
       <div className={styles.window} data-reading-surface="">
-        <PanelHeader
-          title={view.title}
-          actions={
-            <Button size="sm" onClick={() => act("openInMain")}>
-              Open in main window
-            </Button>
-          }
-        />
         {view.detached && (
           <p role="status" className={styles.notice}>
             Buzz is reconnecting. This window shows what it last received.

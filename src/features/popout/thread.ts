@@ -81,15 +81,12 @@ export function createPopoutThread(
       snap.root.channelId === channelId
     );
   };
+  // As the main thread composer decides: the relay's readOnly/cached flags,
+  // not the roster, which the summary may not carry ("absent means unknown").
   const writable = () => {
     const c = channel();
     return (
-      rootVerified() &&
-      !!c &&
-      !c.archived &&
-      !c.readOnly &&
-      !!session.viewer &&
-      !!c.members?.includes(session.viewer)
+      rootVerified() && !!c && !c.archived && !c.readOnly && !!session.viewer
     );
   };
   return {

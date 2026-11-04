@@ -45,6 +45,9 @@ afterEach(() => {
   notify.mockReset();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  // Transcript requests live in a module-level map; each test starts clean.
+  for (const agent of [A, B])
+    claimProfileTranscript(`buzz:profile?agent=${agent}&tab=activity`);
 });
 const A = "b".repeat(64),
   B = "c".repeat(64),
@@ -445,9 +448,9 @@ it("shows local receipt and failure without requiring an ACP transcript, and ope
     fireEvent.click(
       screen.getByRole("button", { name: "View activity for Blossom" }),
     );
-    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(
-      `buzz:profile?agent=${A}&tab=activity`,
-    );
+    const activity = `buzz:profile?agent=${A}&tab=activity`;
+    expect(f.props.open).toHaveBeenCalledExactlyOnceWith(activity);
+    expect(claimProfileTranscript(activity)).toBeDefined();
   } finally {
     view.unmount();
     f.dispose();

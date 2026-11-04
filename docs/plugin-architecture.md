@@ -243,7 +243,7 @@ external source project with `pnpm exec tsc` in that directory.
 The host owns navigation, Settings, loading errors, and render error boundaries.
 Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
 is running. A selected page remounts when its revision changes; its local React
-state resets. Plugin-specific persistent data has no host API yet.
+state resets. Plugin-specific persistent data has no host API yet; bundled plugins such as Reminders and Focus keep small device-local state in namespaced `localStorage` keys.
 
 Plugins are trusted code executing in the app's JavaScript context. They are not
 sandboxed: infinite loops, global changes, and external side effects cannot be
@@ -354,6 +354,17 @@ ctx.reflect.get("sidebarSections")?.register({
 });
 ```
 
+### Solo-only sidebar
+
+`sidebarScope.restrict({ id, scope: "solo", banner })` shows only the Solo
+inventory while it is registered. The All/Solo/Team tabs and page destinations
+give way to the plugin's `banner` component, and the person's saved tab returns
+when the last restriction is removed. It returns a remover; disable, replacement
+and teardown remove it too, so a restriction can never outlive its plugin. A
+banner that throws renders nothing and leaves the sidebar usable. It changes
+only the sidebar: links, search and alert clicks still open any conversation.
+Focus is the first caller and registers its restriction only while Focus is on.
+
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
@@ -438,6 +449,24 @@ gets the agent's Buzz client and where it is working, so the tool acts as the
 agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
+
+The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
+default) gives local agents three tools. `plugin_authoring_guide` returns
+[the authoring guide](plugin-authoring-guide.md), bundled with the app.
+`plugin_status` lists plugins with their activation state, and for one plugin
+its error, revision, folder, host access and what it registered.
+`plugin_reload` reloads an installed folder plugin the way Settings does: it
+disables the plugin, reloads it (refused when host access changed), enables it,
+waits for activation and rolls back to the revision that was running when the
+new one fails to start. It returns `application` (`applied`, `saved` or
+`failed`) with a `nextStep`. It never installs a new plugin or widens host
+access; those stay with the owner in Settings. The tools reach the plugin manager
+through the `pluginDevelopment` service, which throws for any other plugin, as
+`connectExternal` does for any plugin but Agents. While the plugin is on, every
+local agent gets these tools, so an agent that can write into an installed
+plugin's folder can replace that plugin's code, though not its host access,
+without a new review. Plugin code is trusted and unsandboxed, so only load folders
+that the agents you run may change.
 
 `ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
@@ -557,6 +586,15 @@ same way message alerts are (`title` to 128 characters; `body` as Markdown prose
 to 200), so a plugin cannot send raw markup or unlimited text to the OS. Without
 them the banner reads `Buzz` / `New <label>`. The host applies no age limit to
 plugin submissions; the plugin decides what is still worth announcing.
+
+`notifications.gate({ id, allows(target) })` narrows which targets may alert.
+While any gate is registered, a banner, its sound and the Dock unread dot need
+every gate to allow the target; the Dock asks about each conversation as a
+`conversation` target. Pending alerts are rechecked when a gate is added or
+removed. A throwing gate is skipped. `gate` returns a remover, and disabling the
+plugin removes its gates. Gates never widen the host's own access and
+preference checks. A refused alert is dropped, not queued. Focus registers one
+only while Focus is on.
 
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
@@ -901,7 +939,8 @@ its text when the save finishes. If the loaded Canvas was written in the current
 a single cancellable wait respects its timestamp ordering; there is no background
 retry loop. Failures and recovered drafts expose Retry rather than silently publishing
 on reopen. Save uses the existing session Canvas/outbox contract, including its
-24 KiB limit, fresh membership check, writer-backed Canvas head/editor-confirmation
+256 KiB content limit (the complete signed event must also fit the relay's
+512 KiB frame), fresh membership check, writer-backed Canvas head/editor-confirmation
 reads and exact signed-event recovery. Canvas reads default to strong consistency
 for editor/Todos bases and setup preconditions. Setup delivery and its separate
 exact-ID confirmation both use writer-backed reads; unknown seed outcomes are
@@ -931,13 +970,31 @@ storage is unavailable they survive only while the editor stays open. Save never
 promotes local recovery storage to shared state. Already accepted outbox operations
 remain session-owned if the drawer closes or plugin is disabled.
 
+**Canvas view:** Channel actions → View canvas opens on View, which renders the
+saved head (never a local draft) as GitHub-flavored Markdown with its own loading,
+read-failure retry and empty states. Raw HTML shows as text, inline images show
+their alt text, and only credential-free HTTP(S) and validated Buzz links are
+active. Rendering has its own budget of 128 KiB of text, independent of the save
+limit: larger Canvases, and Canvases nested past the shared Markdown depth limit,
+show a labelled source view even when saving them is allowed. History compares
+versions against the same saved head (below); read-only viewers keep Edit so recovered drafts stay visible, with
+Save and Restore disabled. Restoring does not switch tabs.
+
 **Canvas history:** Channel actions → View canvas → History lazily reads retained
-kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+kind-40100 revisions in pages of 16 (as many full-size signed revisions as one 8 MiB read holds), ordered by `created_at DESC, id ASC` with
 `until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
 revision is visible; older pages remain replica-eligible. The current marker uses
 the editor's strong-read head, not list position. Refresh history rechecks the
 head without replacing the editor draft. Author labels use the shared profile
-directory, with public-key fallbacks; previews are read-only Markdown source.
+directory, with public-key fallbacks. The selected revision shows a line diff
+(`diff` package `diffLines(current, revision)`) against the editor's strong-read
+head, as old Buzz did: added lines are the revision's lines the current Canvas
+lacks, removed lines are current lines the revision drops. Lines carry +/−
+markers alongside colour and unchanged runs collapse to 3 lines of context. The
+head, or a revision with identical content, shows "Same as current version".
+Comparisons over 5,000 lines or past the library's edit-length or time bound
+show the full content with a label, and "Show full content" switches to the
+read-only Markdown source at any time.
 
 Restore requires explicit confirmation and publishes the selected content as a
 new signed revision through the existing Canvas save/outbox owner. Its precondition
@@ -949,9 +1006,9 @@ which may automatically replay the exact signed event with its original
 `expected-revision`. It never creates a fresh event or substitutes a newer
 precondition to retry. If confirmation ultimately fails or remains uncertain,
 the dialog retains drafts and shows the error without starting another restore.
-Empty revisions can be restored; revisions exceeding the existing 24 KiB save
-limit remain previewable but cannot be restored here. No diff viewer or new
-delivery owner is introduced.
+Empty revisions can be restored; revisions exceeding the 256 KiB live Canvas
+limit remain previewable but cannot be restored here. No new delivery owner is
+introduced.
 
 ### Top-bar launchers and the companion slot
 
@@ -1209,19 +1266,23 @@ SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access by default; the import preview says so.
 `protection: { readOnlyPaths, hiddenPaths }` adds macOS containment for the worker
-and descendants. Both arrays contain absolute existing paths. Read-only paths
-reject writes; hidden paths reject reads and writes. The host adds its application,
-plugin storage and actual Agents folder, blocks Apple Events, and refuses mutable
-development frontends or unsupported operating systems.
+and descendants. Both arrays contain paths, absolute or under the user's home
+written `~/…`. Hidden paths must exist; a read-only path may lack only its last
+component, under an existing parent other than `/`. Read-only paths reject writes,
+including creating a missing one; hidden paths reject reads and writes. The host
+adds its application, plugin storage and actual Agents folder, blocks Apple
+Events, and refuses mutable development frontends or unsupported operating
+systems.
 
 Contained launches require an app-bundled executable or an `artifact` descriptor;
-PATH-only entrypoints are refused. Artifact descriptors name an absolute executable,
-its SHA-256, and optional flat sibling files with their hashes. Native launch hashes
-while copying those declared files into a content-addressed generation beneath the
-actual shared Agents folder, then launches that copy. All contained workers are
-prevented from writing this store. Corrupt generations fail closed and are never
-repaired in place. Equivalent Windows path forms are accepted; symlinks remain
-rejected. Control characters in containment paths refuse launch.
+PATH-only entrypoints are refused. Artifact descriptors name an executable, absolute
+or under the user's home written `~/…`, its SHA-256, and optional flat sibling files
+with their hashes. Native launch hashes while copying those declared files into a
+content-addressed generation beneath the actual shared Agents folder, then launches
+that copy. All contained workers are prevented from writing this store. Corrupt
+generations fail closed and are never repaired in place. Equivalent Windows path
+forms are accepted; symlinks remain rejected. Control characters in containment
+paths refuse launch.
 
 This is approval-authority containment, covering the application, controls, private
 approval state, and declared launch files. It does not verify every dependency an
@@ -2111,7 +2172,8 @@ still revokes unpublished work, without exposing ARIA controls for a missing lis
 
 Providers receive immutable observation/range evidence and `publish(result)`—not
 DOM, focus or replacement commands. Results contain stable IDs, labels, optional
-detail/decorative previews and either text, an exact `{ pubkey, name }` mention,
+detail/decorative previews, an optional `agent` flag (marked and announced only
+for the bundled mention and channel providers) and either text, an exact `{ pubkey, name }` mention,
 or a `mentions` array of up to 32 such recipients. Batch edit primitives are
 copied and frozen before display, and accepted as a single editor transaction.
 The host copies edit/query primitives and caps publications at 50 choices. A

@@ -65,6 +65,15 @@ grant fails, the dialog shows the error and **Retry share**; a retry reads the
 channel again and grants only whoever is still missing. Grants already confirmed
 stay. With no channel selected, **Done** closes without writes.
 
+People added together (a share, a team, mentioned nonmembers or brought agents)
+go in one kind 9000 per role, at most 100 each, and the roster is read once after.
+A relay without batch support adds only the first person an event names, so the
+roster decides who was added; anyone else, or anyone with an earlier addition
+still pending, gets the single addition, which reports their own failure. A batch
+is never resent, and stays in Outbox until everyone it names is in the roster or
+has their own addition; its **Retry** checks each person again. See the
+relay's kind 9000 entry in block/buzz `NOSTR.md`.
+
 The sidebar's Shared mark is status only: it uses the verified current roster and
 cached non-agent evidence for an additional human. Unknown profiles remain
 unclassified; absence of the indicator is **not** a privacy promise. Clicking the
@@ -116,12 +125,17 @@ With View only, visitors can find the chat by name in Search Buzz or open its
 ordinary chat link. They read without joining and cannot send messages, react or wake agents.
 The relay's ordinary Guest/default-Guest write policy enforces this boundary;
 the absent composer is only its client presentation. View-only access grants no
-membership and adds no sidebar entry for a visitor. The owner keeps the same
-Solo label, conversation ID and private workspace filing.
+membership and adds no sidebar entry for a visitor. **Join** adds a visitor as a
+Guest, listed in People as **Viewing only**.
+The chat then appears under Solo/Chats with normal unread tracking; notifications
+follow existing settings and mention/thread rules. It stays read-only. **Leave
+chat** removes membership and the sidebar entry; an open chat can still be read
+without joining. The owner keeps the same Solo label, conversation ID and private
+workspace filing.
 
 Changing back to Private stops nonmembers from reading; it does not remove
-members or change their roles. Guests who joined through the CLI, MCP or another
-client while the chat was View only keep read access until removed in People.
+members or change their roles. Guests who joined while the chat was View only
+keep read access until they leave or are removed in People.
 Reading without joining creates no membership to retain. Neither transition
 changes invitations, creates a share message or adds notifications. Unconfirmed
 publication uses **Check save status**, without automatically resending.

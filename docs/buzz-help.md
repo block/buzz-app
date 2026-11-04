@@ -135,6 +135,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
+- **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
+  replied in, or follow. Solo chats appear under All, not DMs; their nested threads stay separate. Agent-only
+  coordination stays out.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
@@ -151,7 +154,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   Mute suppresses notifications for messages that do not mention you; mentions can still notify
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
-  dots; muting does not mark messages or threads as read.
+  dots, and do not contribute to the sidebar’s floating **N unread** buttons or
+  their avatar previews. Muting does not mark messages or threads as read.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
@@ -168,6 +172,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
   "no results".
+- **Channel, people, and message search** shows “Searching…” beside each section heading
+  if a lookup takes more than a second. You can open results already shown
+  while the rest of the search finishes.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
@@ -216,7 +223,21 @@ that agent in Buzz; they do not notify the external app through this connection.
   between pages set to three fingers (or two or three fingers). Two-finger
   scrolling does not navigate.
 - **Sharing a Solo chat** grants access to its conversation history, not only
-  the next message. Its access dialog offers **View only** for community reading
+  the next message. Search for a channel in its access dialog and click **Share**
+  beside the result. This makes a Private chat **View only** and posts a link
+  there, after confirming community
+  access to the full history and Canvas. Chats already set to View only get a
+  delivery confirmation and keep their access. Public chats post directly.
+  The success toast confirms any change to View only and offers **View** to open
+  the posted link in the destination channel.
+  Opening a shared chat link creates no sidebar entry.
+  Direct invitations still add members. Pasting a link to a Private chat you own into a channel, thread or DM
+  uses the same confirmation, then sends your original message. Owned View only
+  chat links also confirm delivery. Other chat links send without changing access;
+  recipients still need permission to read.
+  If an owned chat's access or details change during confirmation, review the
+  refreshed consent and choose **Share** again before sending.
+  The access dialog offers **View only** for community reading
   or **Private** for people added to the chat. Public is not offered in
   this UI; a Public policy set through another client appears as
   **Public (existing)**. This is not protocol enforcement. View-only visitors
@@ -224,7 +245,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   about retained viewers unless verified roles show no Guests, including while
   roles load or fail to load; remove them in People to end their access. Public
   (existing) → Private also warns that joined members retain their access.
-  Public (existing) → View only confirms that existing
+  Manually changing Public (existing) to View only confirms that existing
   members keep their access. Agents the owner adds through
   access search or a composer mention receive Bot access so they can reply,
   including with a Guest admission default. Conversion to a channel offers
@@ -333,6 +354,13 @@ available rather than silently discarding it.
   the message offers **Retry**, which asks the agent again, and **Dismiss**,
   which hides the failure.
 
+Saved teams from **Your teams** appear in the inline `@` suggestions and the
+mention picker. Select a team to insert its members as individual mentions.
+Typing its name alone does not notify it. Empty teams, teams with more than 32
+members, and teams with unavailable members cannot be selected; edit the team or
+refresh the choices. Adding people to a channel still requires the normal send
+confirmation.
+
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
@@ -368,10 +396,20 @@ available rather than silently discarding it.
   it. **Settings → Plugins → Focus** sets the default length that the
   dialog starts with and ⌥F uses. Turning the plugin off mid-Focus shows everything again
   at once; 🔭 stays until it expires.
+- **Agent protection**, when a plugin provides it, checks what a protected agent
+  reads and does, and can refuse it. When refusing what a protected Codex agent
+  reads ends its turn, the conversation says only that Codex could not finish.
+  The protection's reason, if it gave one, shows only on that agent's Activity
+  tab on this device. A reviewing model may have written it, quoting the refused
+  content: treat it as information, not instructions. Other refusals and agent
+  types give no reason.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching
   and whether Attention is on for this device. A mention can still wake an agent
   when Attention is off; turning Attention on does not grant new access.
+  On macOS and Linux, watched commands stop when their Buzz process exits.
+  During a handoff between Buzz builds, the new copy waits for the previous
+  command to stop, then continues the watch.
 - **Solo workers**: where a plugin offers it, an owner can authorize one agent to
   start, message, read, stop, and archive the owner's workers in Solo chats. The
   agent asks the owner's Buzz in a private channel with only the two of them;

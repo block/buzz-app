@@ -1,5 +1,5 @@
 import { messageListOf } from "./message-selection";
-import { messageSelection, serializeSelection } from "./selection-copy";
+import { messageSelection, timelineCopy } from "./selection-copy";
 
 /** Message text selected within one list whose own composer can quote it. */
 export function quotableSelection(selection = document.getSelection()) {
@@ -25,7 +25,7 @@ export function quoteSelection() {
   const selection = document.getSelection();
   const target = quotableSelection(selection);
   if (!selection || !target) return false;
-  const html = `<div data-buzz-copy="timeline">${serializeSelection(selection, "html")}</div>`;
+  const html = timelineCopy(selection);
   // Clear the timeline range before the composer focuses and places its caret;
   // clearing afterwards would remove the composer's caret instead.
   selection.removeAllRanges();

@@ -600,6 +600,25 @@ test.describe("Share access profiles", () => {
     await tab.press("Escape");
     await expect(tab).toHaveCount(0);
     await expect(share).toBeFocused();
+    // Choosing the profile already open beside the chat pushes no visit, and
+    // selecting its tab still unmounts the toolbar. The close focuses the Beta
+    // tab, and only the dismissal's return moves focus to Share access.
+    const entry = () =>
+      page.evaluate(() => history.state.buzzNavigationV1.entry.id);
+    await share.click();
+    await name.press("Enter");
+    await expect(tab).toBeFocused();
+    const shown = await entry();
+    await beta.click();
+    await share.click();
+    await name.press("Enter");
+    await expect(dialog).toHaveCount(0);
+    await expect(tab).toBeFocused();
+    expect(await entry()).toBe(shown);
+    await tab.press("Escape");
+    await expect(tab).toHaveCount(0);
+    await expect(beta).toHaveAttribute("aria-selected", "true");
+    await expect(share).toBeFocused();
   });
 });
 // Real hover, menu hit targets and local-panel handoff cannot be proved in jsdom.

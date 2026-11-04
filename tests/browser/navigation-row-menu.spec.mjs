@@ -80,15 +80,54 @@ test.describe("menu placement lifetime", () => {
         },
       });
     });
+    // Keep the actual exiting row mounted so portal closure cannot pass merely
+    // because the row's 100 ms fade finished. Entry and popup motion stay live.
+    const exits = await page.evaluateHandle(() => {
+      const animate = Element.prototype.animate;
+      const held = [];
+      let holding = true;
+      Element.prototype.animate = function (...args) {
+        const animation = animate.apply(this, args);
+        if (
+          this.hasAttribute("inert") &&
+          this.firstElementChild?.matches("[data-channel-sidebar-row]")
+        ) {
+          held.push(animation);
+          queueMicrotask(() => {
+            if (!holding) return;
+            animation.pause();
+            animation.currentTime = 0;
+          });
+        }
+        return animation;
+      };
+      return {
+        held,
+        release() {
+          holding = false;
+          Element.prototype.animate = animate;
+          for (const animation of held)
+            if (animation.playState === "paused") animation.finish();
+        },
+      };
+    });
     try {
       await refresh.click();
       await started;
       await expect(refresh).toBeDisabled();
       await beta.click({ button: "right" });
       await expect(menu).toBeVisible();
+      const leaving = await beta.elementHandle();
       release();
       await expect(starred.locator('[data-channel-id="beta"]')).toBeVisible();
+      await expect
+        .poll(() => exits.evaluate(({ held }) => held.length))
+        .toBeGreaterThan(0);
       await expect(menu).toHaveCount(0);
+      expect(await leaving.evaluate((row) => !!row.closest("[inert]"))).toBe(
+        true,
+      );
+      await expect(beta).toBeFocused();
       stars = ["alpha"];
       await expect(refresh).toBeEnabled();
       await refresh.click();
@@ -102,6 +141,7 @@ test.describe("menu placement lifetime", () => {
       await expect(beta).toBeFocused();
     } finally {
       release();
+      await exits.evaluate((state) => state.release());
       await page.unroute("**/sidebar-preferences");
     }
   });

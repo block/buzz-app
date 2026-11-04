@@ -778,6 +778,25 @@ it("rebuilds only the changed row on a list publish", async () => {
   ]);
 });
 
+it("closes a removed DM's menu and focuses its neighbor before the exit ends", async () => {
+  const h = fixture(undefined, "ready", [
+    { id: "alice", name: "Alice", channelType: "dm" },
+    { id: "bob", name: "Bob", channelType: "dm" },
+  ]);
+  render(h.view("alice"));
+  const alice = await screen.findByRole("button", { name: "Alice" });
+  const bob = screen.getByRole("button", { name: "Bob" });
+  fireEvent.keyDown(alice, { key: "ContextMenu" });
+  await screen.findByRole("menu", { name: "Actions for Alice" });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Remove from Team" }));
+  // Assert synchronously while the retained row's exit is still mounted.
+  expect(alice.closest("[inert]")).not.toBeNull();
+  expect(screen.queryByRole("menu", { name: "Actions for Alice" })).toBeNull();
+  await act(async () => {});
+  expect(alice).toBeInTheDocument();
+  expect(bob).toHaveFocus();
+});
+
 it("copies a channel link that opens the same channel", async () => {
   const writeText = vi
     .fn()

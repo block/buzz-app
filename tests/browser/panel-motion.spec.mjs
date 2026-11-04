@@ -2,7 +2,7 @@ import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
 // Exercise generic panel motion independently of the bundled Bestie content.
-test.use({ companionFixture: true });
+test.use({ enabledPlugins: ["buzz.workflows"], companionFixture: true });
 
 // Capture real CSS transitions at the DOM-change boundary, before rendering can
 // finish them. transitionrun is queued: a busy renderer can deliver it after the
@@ -300,10 +300,11 @@ for (const destination of ["Messages", "Workflows"]) {
     await expect
       .poll(async () => (await dock.boundingBox()).width)
       .toBeCloseTo(adjusted, 0);
+    // The companion keeps one minimum on every host.
     await handle.press("Home");
     await expect
       .poll(async () => (await dock.boundingBox()).width)
-      .toBeCloseTo(destination === "Workflows" ? 300 : 316, 0);
+      .toBeCloseTo(300, 0);
     await handle.press("End");
     expect(
       await dock.evaluate(

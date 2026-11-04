@@ -447,6 +447,9 @@ export async function readTranscript(
   const turns: TranscriptTurn[] = [];
   let found = false;
   let cut = false;
+  // A cut session's older turns are left, so other sessions' turns before its
+  // first kept one would leave a gap; the transcript starts there instead.
+  let since = Number.NEGATIVE_INFINITY;
   for (const name of names) {
     const session = {
       sessionId: name.slice(0, -".jsonl".length),
@@ -471,17 +474,21 @@ export async function readTranscript(
     if (name !== saved && !startedFor(await file.start(), conversation))
       continue;
     found = true;
+    const own = claudeTurns(file.text, session, working && name === saved);
     cut ||= file.cut;
-    turns.push(...claudeTurns(file.text, session, working && name === saved));
+    if (file.cut && own[0]) since = Math.max(since, own[0].startedAt);
+    turns.push(...own);
   }
   // Nothing found is no transcript only when every file was searched.
   if (!found) {
     if (failure) throw failure;
     return undefined;
   }
-  turns.sort((a, b) => a.startedAt - b.startedAt);
+  const kept = turns
+    .filter((turn) => turn.startedAt >= since)
+    .sort((a, b) => a.startedAt - b.startedAt);
   return {
-    turns: turns.slice(-TURN_LIMIT),
+    turns: kept.slice(-TURN_LIMIT),
     more: cut || turns.length > TURN_LIMIT,
     ...(failure
       ? {

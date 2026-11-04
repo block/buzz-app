@@ -416,6 +416,37 @@ it("reads no more than two pages of a large session with few turns", async () =>
   ]);
 });
 
+it("leaves other sessions' turns from before a large session's kept ones", async () => {
+  const third = "x".repeat(30 * 1024 * 1024);
+  const files = large(
+    line("user", prompt("newer")),
+    ...[1, 2, 3].map(() =>
+      line("assistant", [{ type: "text", text: third }]),
+    ),
+    line("user", prompt("latest")),
+  );
+  clock = -10;
+  const { spawn } = host({
+    ...files,
+    "./-Users-me--buzz/session-1.jsonl": line("user", prompt("old")),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  // "newer" was in the page left, so "old" before it would hide the gap.
+  expect(read?.more).toBe(true);
+  expect(read?.turns.map((turn) => turn.items[0])).not.toContainEqual(
+    expect.objectContaining({ text: "old" }),
+  );
+  expect(read?.turns.at(-1)?.items[0]).toEqual(
+    expect.objectContaining({ text: "latest" }),
+  );
+});
+
 it("merges the agent's other sessions for the thread, oldest turn first", async () => {
   const session = (start: number, context: string, content: string) => {
     clock = start;

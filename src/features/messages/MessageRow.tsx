@@ -23,6 +23,7 @@ import { threadWorkingAgents } from "../agents/thread-working";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { BubblePresentation } from "./message-bubbles";
 import { MessageLink } from "../conversation/MessageLink";
 import {
   DayDivider,
@@ -43,6 +44,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useContext,
   useSyncExternalStore,
   type ReactNode,
   type ReactElement,
@@ -365,9 +367,15 @@ function MessageRowContent({
     !row.agentEnvelope &&
     row.attachments.length > 0 &&
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
+  const presentation = useContext(BubblePresentation);
+  const bubbles = presentation === "bubbles";
   // Own-message surface colours apply to a bubble, never to a shown thread root.
   const ownBubble =
-    !shownRow && !row.workflowOwnerId && !!viewer && row.authorId === viewer;
+    presentation !== "unboxed" &&
+    !shownRow &&
+    !row.workflowOwnerId &&
+    !!viewer &&
+    row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -931,10 +939,14 @@ function MessageRowContent({
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
-          alignViewer && !row.workflowOwnerId && row.authorId === viewer
+          bubbles &&
+          alignViewer &&
+          !row.workflowOwnerId &&
+          row.authorId === viewer
             ? ""
             : undefined
         }
+        data-unboxed={bubbles ? undefined : ""}
         data-own={
           (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
           undefined
@@ -952,9 +964,10 @@ function MessageRowContent({
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
-            {!renderMessage && (!stackNext || avatarFocused) && (
-              <div className={styles.messageAvatar}>{avatar}</div>
-            )}
+            {!renderMessage &&
+              ((bubbles ? !stackNext : !stackPrevious) || avatarFocused) && (
+                <div className={styles.messageAvatar}>{avatar}</div>
+              )}
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
@@ -1464,6 +1477,7 @@ export const MessageRow = memo(function AudienceMessageRow(
 function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const references = props.references ?? session;
+  const bubbles = useContext(BubblePresentation) === "bubbles";
   const [open, setOpen] = useState(false);
   const activity = props.recordedActivity;
   const bubble =
@@ -1553,6 +1567,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           data-stack-previous={props.stackPrevious || undefined}
           data-stack-next={props.stackNext || undefined}
           data-viewer-message={
+            bubbles &&
             (props.alignViewer ?? true) &&
             !row.workflowOwnerId &&
             row.authorId === (props.viewer ?? session?.viewer)

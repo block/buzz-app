@@ -29,6 +29,14 @@ import { useListedChannel } from "../relay/listed-channel";
 import { ownSolo } from "../solo/labels";
 import { useSoloHasPeople } from "../solo/people";
 import {
+  BubblePresentation,
+  PersonThreadLayout,
+  useAgentsOnlyChat,
+  useDmBubbles,
+  useMessageStyle,
+  useOwnColor,
+} from "../messages/message-bubbles";
+import {
   ConversationHost,
   type ConversationHostServices,
   type ConversationInteractions,
@@ -223,6 +231,14 @@ function Provider({
   const id = channel?.id;
   const soloConversation = channel?.channelType === "solo";
   const ownSoloConversation = ownSolo(channel, session.viewer);
+  const style = useMessageStyle();
+  const ownColor = useOwnColor();
+  const dmBubbles = useDmBubbles() && channel?.channelType === "dm";
+  const agentsOnly = useAgentsOnlyChat(
+    session,
+    id ?? "",
+    !!id && style === "agents" && !dmBubbles,
+  );
   const value = useMemo(
     () =>
       id
@@ -252,9 +268,22 @@ function Provider({
       onOpenMediaReview,
     ],
   );
+  const unboxed = ownColor ? "unboxed-own-color" : "unboxed";
   return (
     <Context.Provider value={value}>
-      <ActivityIndicatorPresentation>{children}</ActivityIndicatorPresentation>
+      <BubblePresentation.Provider
+        value={
+          style === "bubbles" || agentsOnly || dmBubbles ? "bubbles" : unboxed
+        }
+      >
+        <PersonThreadLayout.Provider
+          value={style === "agents" && !dmBubbles ? unboxed : undefined}
+        >
+          <ActivityIndicatorPresentation>
+            {children}
+          </ActivityIndicatorPresentation>
+        </PersonThreadLayout.Provider>
+      </BubblePresentation.Provider>
     </Context.Provider>
   );
 }

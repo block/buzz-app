@@ -354,7 +354,9 @@ Use a compact shared Select at the trailing edge of a PreferenceRow for Mode,
 with System, Light, and Dark options. Mode, interface size, accent color, and
 vibe level rows share one Appearance group beneath the live illustrative preview.
 Accent applies only to message bubbles and their related content, Send, and
-sidebar row hover/selection. Shared controls stay neutral. Use another compact
+sidebar row hover/selection; conversations shown without bubbles have no
+accent message surface unless Keep my messages in a bubble is on. Shared controls
+stay neutral. Use another compact
 Select for Chillin’ (soft own bubbles, neutral received bubbles) and Buzzin’
 (solid own bubbles, neutral received bubbles). Sidebar selection stays
 solid accent and Send keeps its strong fill at both levels. Rows wrap controls below their

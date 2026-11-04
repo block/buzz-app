@@ -35,6 +35,14 @@ import {
   clockPreference,
   setClockPreference,
 } from "../shared/clock-preference";
+import {
+  messageStylePreference,
+  dmBubblesPreference,
+  ownColorPreference,
+  setDmBubblesPreference,
+  setMessageStylePreference,
+  setOwnColorPreference,
+} from "../features/messages/message-bubbles";
 
 const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
 function preferencesPage() {
@@ -57,6 +65,9 @@ afterEach(() => {
     seconds: false,
     messageTimestamps: "show",
   });
+  setMessageStylePreference("bubbles");
+  setOwnColorPreference(false);
+  setDmBubblesPreference(true);
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -342,6 +353,82 @@ it("saves new-thread placement, restores it, and follows another window", async 
     );
   });
   expect(choice()).toHaveTextContent("Side pane");
+});
+
+it("saves the message style and own color, and offers recovery when saving fails", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), { wrapper: ToastProvider });
+  const choice = () => screen.getByRole("combobox", { name: "Message style" });
+  const keepColor = () =>
+    screen.getByRole("switch", { name: "Keep my messages in a bubble" });
+  expect(choice()).toHaveTextContent("Bubbles everywhere");
+  expect(
+    screen.queryByRole("switch", { name: "Keep my messages in a bubble" }),
+  ).toBeNull();
+  await user.click(choice());
+  await user.click(
+    await screen.findByRole("option", { name: "Bubbles only with agents" }),
+  );
+  expect(messageStylePreference()).toBe("agents");
+  expect(localStorage.getItem("buzz-message-style.v1")).toBe("agents");
+  await user.click(keepColor());
+  expect(ownColorPreference()).toBe(true);
+  const dms = screen.getByRole("switch", {
+    name: "Bubbles in direct messages",
+  });
+  expect(dms).toHaveAttribute("aria-checked", "true");
+  await user.click(dms);
+  expect(dmBubblesPreference()).toBe(false);
+
+  const failing = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(dms);
+  expect(dmBubblesPreference()).toBe(true);
+  expect(
+    await screen.findByText("“Bubbles in direct messages” wasn’t saved"),
+  ).toBeInTheDocument();
+  await user.click(keepColor());
+  expect(ownColorPreference()).toBe(false);
+  expect(
+    await screen.findByText("“Keep my messages in a bubble” wasn’t saved"),
+  ).toBeInTheDocument();
+  failing.mockRestore();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Retry saving bubbles in direct messages",
+    }),
+  );
+  expect(localStorage.getItem("buzz-message-dm-bubbles.v1")).toBe("on");
+  await user.click(
+    screen.getByRole("button", {
+      name: "Retry saving my messages in a bubble",
+    }),
+  );
+  expect(localStorage.getItem("buzz-message-own-color.v1")).toBe("off");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(choice());
+  await user.click(
+    await screen.findByRole("option", { name: "Bubbles everywhere" }),
+  );
+  expect(messageStylePreference()).toBe("bubbles");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Message style preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving message style" }),
+  );
+  expect(localStorage.getItem("buzz-message-style.v1")).toBe("bubbles");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("keeps unsaved thread placement and recovery through remount, then retries the same choice", async () => {

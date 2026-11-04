@@ -372,6 +372,29 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Inbox list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
+- **Message style** in **Settings → Appearance → Conversations** chooses where
+  messages show as bubbles, with yours on the right. **Bubbles everywhere** is
+  the default. **Bubbles only with agents** keeps bubbles in conversations with
+  just you and up to 20 agents, and in threads where only you and agents have
+  posted. Other conversations and threads show messages full width, on the
+  left; direct messages with people keep bubbles unless you turn that off
+  below. Huddle discussions and the Watching tab keep bubbles.
+  Buzz picks a layout when you open a conversation or thread and keeps it while
+  it stays open, so new replies don't rearrange what you're reading. Opening it
+  again picks again, and a conversation picks again if its members change. A
+  thread with only your own messages keeps its conversation's layout until
+  someone else replies.
+  Buzz counts an agent only if it already recognizes it: its profile marks it
+  as an agent, or it is one of your own agents. With an agent Buzz doesn't
+  recognize yet, you see full-width messages this time and bubbles the next
+  time you open it, once its profile has loaded. Right after you launch Buzz, a
+  chat with your own agents can also show full width for a moment, until your
+  agents have loaded.
+  With **Bubbles only with agents**, two more options appear. **Bubbles in
+  direct messages** (on by default) keeps bubbles in direct messages with
+  people. **Keep my messages in a bubble** (off by default) shows your own
+  messages in an accent-color bubble, still on the left, where bubbles are off.
+  These choices are saved on this device.
 
 ## Saved Solo follow-ups
 

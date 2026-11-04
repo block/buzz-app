@@ -9,11 +9,17 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { StrictMode } from "react";
+import { StrictMode, useContext } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { selectNewestMessage } from "./message-selection";
+import {
+  BubblePresentation,
+  PersonThreadLayout,
+  type BubbleLayout,
+  setMessageStylePreference,
+} from "./message-bubbles";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
 import { createAgentLibrary } from "../agents/library";
@@ -49,7 +55,11 @@ vi.mock("./MessageRow", () => ({
     onOpenMediaReview,
     onMediaPlayback,
   }: MessageRowProps) => (
-    <article data-message-id={row.id} data-scope={scope}>
+    <article
+      data-message-id={row.id}
+      data-scope={scope}
+      data-presentation={useContext(BubblePresentation)}
+    >
       <span>{row.content}</span>
       {row.attachments
         .filter((attachment) => attachment.kind === "video")
@@ -160,6 +170,8 @@ function ordinaryNavigation() {
 function messagesHarness(
   navigation?: PageNavigation,
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
+  conversationLayout?: BubbleLayout,
+  personLayout?: BubbleLayout,
 ) {
   const snapshot: { -readonly [K in keyof ThreadSnapshot]: ThreadSnapshot[K] } =
     {
@@ -208,7 +220,7 @@ function messagesHarness(
     viewer,
     thread,
     profiles: { ensure, snapshot: () => profiles, subscribe: () => () => {} },
-    agentChoices: createAgentLibrary(undefined).queries,
+    agentChoices: { ...createAgentLibrary(undefined).queries, ensure() {} },
     messages: { retry: vi.fn() },
     media: () => undefined,
     unread: {
@@ -265,6 +277,22 @@ function messagesHarness(
   };
   let mounted: ReturnType<typeof render> | undefined;
   let element: HTMLElement;
+  const layoutTree = () => {
+    const panel = (
+      <div role="application" onKeyDown={bubble}>
+        <ThreadPanel {...props} />
+      </div>
+    );
+    return conversationLayout ? (
+      <BubblePresentation.Provider value={conversationLayout}>
+        <PersonThreadLayout.Provider value={personLayout}>
+          {panel}
+        </PersonThreadLayout.Provider>
+      </BubblePresentation.Provider>
+    ) : (
+      panel
+    );
+  };
   return {
     snapshot,
     session,
@@ -290,11 +318,7 @@ function messagesHarness(
           for (const listener of view.listeners) listener();
       });
       if (!mounted) {
-        const tree = (
-          <div role="application" onKeyDown={bubble}>
-            <ThreadPanel {...props} />
-          </div>
-        );
+        const tree = layoutTree();
         mounted = render(strict ? <StrictMode>{tree}</StrictMode> : tree);
       }
       element =
@@ -302,11 +326,7 @@ function messagesHarness(
       return element;
     },
     rerenderProps() {
-      mounted?.rerender(
-        <div role="application" onKeyDown={bubble}>
-          <ThreadPanel {...props} />
-        </div>,
-      );
+      mounted?.rerender(layoutTree());
     },
     resize(value: number) {
       height = value;
@@ -2354,3 +2374,298 @@ it("reveals a completed step selected by an exact thread link", async () => {
   expect(await screen.findByText("Completed tool result")).toBeVisible();
   expect(screen.queryByRole("button", { name: /activity history/ })).toBeNull();
 });
+
+const agent = "d".repeat(64);
+const person = row.authorId;
+
+/** An agent library whose evidence the test changes live. */
+function agentSource(
+  initial: { identities: { pubkey: string }[]; pending?: boolean } = {
+    identities: [{ pubkey: agent }],
+  },
+) {
+  let snapshot = initial;
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    retain: () => () => {},
+    ensure() {},
+    set(next: typeof initial) {
+      act(() => {
+        snapshot = next;
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+
+function reply(id: string, authorId: string) {
+  return {
+    ...row,
+    id: id.repeat(64),
+    authorId,
+    threadRootId: row.id,
+    replyCount: 0,
+  };
+}
+
+function bubbleHarness(
+  library = agentSource(),
+  conversationLayout: BubbleLayout = "unboxed",
+  personLayout: BubbleLayout | "conversation" = "unboxed",
+) {
+  const h = messagesHarness(
+    undefined,
+    undefined,
+    conversationLayout,
+    personLayout === "conversation" ? undefined : personLayout,
+  );
+  Object.assign(h.session, { agentChoices: library });
+  const presentation = () =>
+    [...h.render().querySelectorAll("[data-presentation]")].map((node) =>
+      node.getAttribute("data-presentation"),
+    );
+  return Object.assign(h, { presentation });
+}
+
+function withListStyle(test: () => void) {
+  return () => {
+    setMessageStylePreference("agents");
+    try {
+      test();
+    } finally {
+      setMessageStylePreference("bubbles");
+      localStorage.clear();
+    }
+  };
+}
+
+it(
+  "keeps bubbles for a thread of the viewer and only agents, for the whole visit",
+  withListStyle(() => {
+    const other = "e".repeat(64);
+    const library = agentSource({
+      identities: [{ pubkey: agent }, { pubkey: other }],
+    });
+    const h = bubbleHarness(library);
+    h.snapshot.root = { ...row, authorId: viewer };
+    // Only the viewer has written: undecided, so the conversation's layout.
+    expect(h.presentation()).toEqual(["unboxed"]);
+    h.snapshot.replies = [reply("1", agent), reply("2", other)];
+    h.snapshot.canLoadMore = true;
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
+    // A person's reply keeps this visit's bubbles; the next visit decides again.
+    h.snapshot.replies = [reply("1", agent), reply("3", person)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
+    cleanup();
+    const next = bubbleHarness(library);
+    next.snapshot.root = { ...row, authorId: viewer };
+    next.snapshot.replies = [reply("1", agent), reply("3", person)];
+    expect(next.presentation()).toEqual(["unboxed", "unboxed", "unboxed"]);
+  }),
+);
+
+it(
+  "keeps a viewer's thread undecided through the viewer's own follow-up until an agent answers",
+  withListStyle(() => {
+    const h = bubbleHarness();
+    h.snapshot.root = { ...row, authorId: viewer };
+    h.snapshot.replies = [reply("1", viewer)];
+    expect(h.presentation()).toEqual(["unboxed", "unboxed"]);
+    h.snapshot.replies = [reply("1", viewer), reply("2", agent)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
+  }),
+);
+
+it(
+  "shows an agent's thread as bubbles before the viewer replies, and a person's as a list",
+  withListStyle(() => {
+    const h = bubbleHarness();
+    h.snapshot.root = { ...row, authorId: agent };
+    expect(h.presentation()).toEqual(["bubbles"]);
+    h.snapshot.replies = [reply("1", viewer)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
+    cleanup();
+    const people = bubbleHarness();
+    people.snapshot.root = { ...row, authorId: person };
+    people.snapshot.replies = [reply("1", agent)];
+    expect(people.presentation()).toEqual(["unboxed", "unboxed"]);
+  }),
+);
+
+it(
+  "decides a reply-opened thread only once its root arrives",
+  withListStyle(() => {
+    for (const [rootAuthor, expected] of [
+      [person, "unboxed"],
+      [viewer, "bubbles"],
+    ] as const) {
+      const h = bubbleHarness();
+      const opened = reply("1", agent);
+      Object.assign(h.props as ThreadPanelProps, {
+        messageId: opened.id,
+        retainThread: true,
+        revealSelected: true,
+      });
+      h.snapshot.root = undefined;
+      h.snapshot.replies = [opened, reply("2", viewer)];
+      h.snapshot.target = opened;
+      h.snapshot.targetStatus = "ready";
+      expect(h.presentation()).toEqual(["unboxed", "unboxed"]);
+      h.snapshot.root = { ...row, authorId: rootAuthor };
+      expect(h.presentation()).toEqual([expected, expected, expected]);
+      cleanup();
+    }
+  }),
+);
+
+it(
+  "lists a thread whose agent isn't known yet for the visit, and bubbles it next time",
+  withListStyle(() => {
+    const library = agentSource({ identities: [] });
+    const open = () => {
+      const h = bubbleHarness(library);
+      h.snapshot.root = { ...row, authorId: viewer };
+      h.snapshot.replies = [reply("1", agent)];
+      return h;
+    };
+    const first = open();
+    expect(first.presentation()).toEqual(["unboxed", "unboxed"]);
+    library.set({ identities: [{ pubkey: agent }] });
+    expect(first.presentation()).toEqual(["unboxed", "unboxed"]);
+    cleanup();
+    expect(open().presentation()).toEqual(["bubbles", "bubbles"]);
+  }),
+);
+
+it(
+  "waits for the viewer's own agents to load before deciding a thread",
+  withListStyle(() => {
+    const library = agentSource({ identities: [], pending: true });
+    const h = bubbleHarness(library);
+    h.snapshot.root = { ...row, authorId: viewer };
+    h.snapshot.replies = [reply("1", agent)];
+    expect(h.presentation()).toEqual(["unboxed", "unboxed"]);
+    library.set({ identities: [{ pubkey: agent }] });
+    expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
+  }),
+);
+
+it(
+  "keeps a thread's first layout while the pane shows it, and decides again after another thread",
+  withListStyle(() => {
+    const h = bubbleHarness();
+    h.snapshot.root = { ...row, authorId: agent };
+    h.snapshot.replies = [reply("1", agent)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
+    h.snapshot.replies = [reply("1", agent), reply("2", person)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
+    const other = { ...row, id: "9".repeat(64), authorId: viewer };
+    h.props.messageId = other.id;
+    h.snapshot.root = other;
+    h.snapshot.replies = [];
+    h.rerenderProps();
+    expect(h.presentation()).toEqual(["unboxed"]);
+    h.props.messageId = row.id;
+    h.snapshot.root = { ...row, authorId: agent };
+    h.snapshot.replies = [reply("1", agent), reply("2", person)];
+    h.rerenderProps();
+    expect(h.presentation()).toEqual(["unboxed", "unboxed", "unboxed"]);
+  }),
+);
+
+it(
+  "waits for the first page before deciding a thread seeded with an agent's root",
+  withListStyle(() => {
+    const h = bubbleHarness();
+    h.snapshot.status = "loading";
+    h.snapshot.root = { ...row, authorId: agent };
+    expect(h.presentation()).toEqual(["unboxed"]);
+    h.snapshot.status = "ready";
+    h.snapshot.replies = [reply("1", person)];
+    expect(h.presentation()).toEqual(["unboxed", "unboxed"]);
+  }),
+);
+
+it("demands the viewer's own agents only with bubbles only with agents, until the pane closes", () => {
+  const demanded: string[] = [];
+  const library = Object.assign(agentSource(), {
+    retain: () => {
+      demanded.push("retain");
+      return () => demanded.push("release");
+    },
+    ensure: () => demanded.push("ensure"),
+  });
+  bubbleHarness(library).presentation();
+  expect(demanded).toEqual([]);
+  cleanup();
+  withListStyle(() => {
+    bubbleHarness(library).presentation();
+    expect(demanded).toEqual(["retain", "ensure"]);
+    cleanup();
+    expect(demanded).toEqual(["retain", "ensure", "release"]);
+  })();
+});
+
+it(
+  "keeps a thread's layout when the pane reopens it from another of its messages",
+  withListStyle(() => {
+    const h = bubbleHarness();
+    h.snapshot.root = { ...row, authorId: viewer };
+    h.snapshot.replies = [reply("1", agent)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
+    h.snapshot.replies = [reply("1", agent), reply("2", person)];
+    h.props.messageId = reply("1", agent).id;
+    h.rerenderProps();
+    expect(h.thread).toHaveBeenCalledTimes(2);
+    expect(h.presentation()).toEqual(["bubbles", "bubbles", "bubbles"]);
+  }),
+);
+
+it(
+  "lists a thread with a person in it inside a chat of only agents",
+  withListStyle(() => {
+    const h = bubbleHarness(agentSource(), "bubbles");
+    h.snapshot.root = { ...row, authorId: person };
+    h.snapshot.replies = [reply("1", agent), reply("2", viewer)];
+    expect(h.presentation()).toEqual(["unboxed", "unboxed", "unboxed"]);
+    cleanup();
+    const mine = bubbleHarness(agentSource(), "bubbles");
+    mine.snapshot.root = { ...row, authorId: viewer };
+    expect(mine.presentation()).toEqual(["bubbles"]);
+  }),
+);
+
+it(
+  "keeps a person's thread in a conversation's bubbles where people keep them",
+  withListStyle(() => {
+    const h = bubbleHarness(agentSource(), "bubbles", "conversation");
+    h.snapshot.root = { ...row, authorId: person };
+    h.snapshot.replies = [reply("1", viewer)];
+    expect(h.presentation()).toEqual(["bubbles", "bubbles"]);
+  }),
+);
+
+it(
+  "keeps bubbles for a thread of more agents than a chat's roster limit",
+  withListStyle(() => {
+    const crowd = Array.from({ length: 21 }, (_, i) =>
+      (i + 10).toString(16).padStart(64, "0"),
+    );
+    const h = bubbleHarness(
+      agentSource({ identities: crowd.map((pubkey) => ({ pubkey })) }),
+    );
+    h.snapshot.root = { ...row, authorId: viewer };
+    h.snapshot.replies = crowd.map((key, i) => ({
+      ...reply(String(i % 10), key),
+      id: key,
+    }));
+    expect(new Set(h.presentation())).toEqual(new Set(["bubbles"]));
+  }),
+);

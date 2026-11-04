@@ -1650,6 +1650,8 @@ neutral at both levels. Vibe changes bubble
 contrast only: sidebar rows keep a solid selected fill with paired ink and a
 quieter hover at both levels, and Send keeps a strong accent fill.
 Saved low or retired quiet contrast maps to Chillin’; high remains Buzzin’.
+Unboxed rows (see message actions) have no accent bubble fill at either level
+unless Keep my messages in a bubble is on.
 
 Keep appearance decisions with the existing owners. `SidebarNavigation` scopes
 `surface-sidebar-selected`, `text-sidebar-selected`, `affordance-sidebar-hover`,
@@ -1852,6 +1854,33 @@ When message actions show, both received and own bubbles use their
 `surface-message-hover` or `surface-message-own-hover` fill: 5% toward black in
 light mode and 5% toward white in dark mode. This changes only the background,
 without a stroke or an overlay on text and media. Emoji-only messages stay clear.
+
+With Appearance → Conversations → Message style set to **Bubbles only with
+agents**, a conversation with anyone besides the viewer and agents (except a
+direct message while **Bubbles in direct messages** is on) lays every row out
+as received and unboxed: no bubble fill, no own pairing or alignment,
+links and metadata in their panel roles, and text up to the row width. A thread
+there is decided once its first page has loaded and anyone besides the viewer
+has written in it: if they are all agents it shows bubbles. The thread pane keeps
+the first layout it settles on, either way, until it closes or shows another
+thread, so no reply reflows it under the reader; a thread with only the
+viewer's messages switches when someone else replies.
+Only members already known as agents (profile or the viewer's agents) count,
+and nothing is decided while the viewer's own agents are loading; an unknown
+member is a person. A chat keeps its first layout for the visit until its
+members change, so an agent learned later applies on the next open. A chat is
+decided by its members, not by who wrote its messages: a person who has left a
+chat of agents still shows in bubbles in its timeline, though a thread they
+wrote in is a list.
+Tables and diffs start at the text column. While message actions show, the row
+takes `affordance-row-hover` (proposed; pending design sign-off for message
+rows) in the arrival cue's row geometry, quieter than the
+cue; inline code then sits on its own fill, as in a received bubble. A run's
+avatar sits on its first row beside the byline. These rows have no accent
+bubble fill, so vibe does not apply to them, unless **Keep my messages in a bubble**
+(shown only with that style) is on: the viewer's own rows then keep their
+bubble, its `-own` pairing, hover and arrival cue, left-aligned, with an edge
+in forced colors.
 
 These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

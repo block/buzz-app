@@ -43,6 +43,14 @@ import {
   setClockPreference,
   useClockPreference,
 } from "../shared/clock-preference";
+import {
+  setMessageStylePreference,
+  setDmBubblesPreference,
+  setOwnColorPreference,
+  useDmBubblesPreference,
+  useMessageStylePreference,
+  useOwnColorPreference,
+} from "../features/messages/message-bubbles";
 
 export function AppearanceSettings({
   appearance,
@@ -59,6 +67,9 @@ export function AppearanceSettings({
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
   const { placement, unsaved } = useThreadPlacementPreference();
+  const messageStyle = useMessageStylePreference();
+  const ownColor = useOwnColorPreference();
+  const dmBubbles = useDmBubblesPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -370,6 +381,47 @@ export function AppearanceSettings({
             checked={unreadFirst.enabled}
             onCheckedChange={setUnreadFirstPreference}
           />
+
+          <PreferenceRow
+            title="Message style"
+            subtitle="Bubbles only with agents keeps bubbles in conversations and threads with just you and agents. Other conversations show full-width messages on the left."
+            trailing={
+              <Select
+                variant="compact"
+                label="Message style"
+                value={messageStyle.style}
+                groups={[
+                  {
+                    label: "Style",
+                    options: [
+                      { value: "bubbles", label: "Bubbles everywhere" },
+                      { value: "agents", label: "Bubbles only with agents" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "bubbles" || value === "agents")
+                    setMessageStylePreference(value);
+                }}
+              />
+            }
+          />
+          {messageStyle.style === "agents" && (
+            <>
+              <SwitchPreferenceRow
+                label="Bubbles in direct messages"
+                description="Keep bubbles in direct messages with people, even though other conversations don’t."
+                checked={dmBubbles.dmBubbles}
+                onCheckedChange={setDmBubblesPreference}
+              />
+              <SwitchPreferenceRow
+                label="Keep my messages in a bubble"
+                description="Show your own messages in a bubble in your accent color, still on the left, in conversations without bubbles."
+                checked={ownColor.ownColor}
+                onCheckedChange={setOwnColorPreference}
+              />
+            </>
+          )}
         </SettingsGroup>
         {active && followUp.unsaved && (
           <ToastNotice
@@ -425,6 +477,48 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && dmBubbles.unsaved && (
+          <ToastNotice
+            title="“Bubbles in direct messages” wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setDmBubblesPreference(dmBubbles.dmBubbles)}
+            >
+              Retry saving bubbles in direct messages
+            </Button>
+          </ToastNotice>
+        )}
+        {active && ownColor.unsaved && (
+          <ToastNotice
+            title="“Keep my messages in a bubble” wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setOwnColorPreference(ownColor.ownColor)}
+            >
+              Retry saving my messages in a bubble
+            </Button>
+          </ToastNotice>
+        )}
+        {active && messageStyle.unsaved && (
+          <ToastNotice
+            title="Message style preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setMessageStylePreference(messageStyle.style)}
+            >
+              Retry saving message style
             </Button>
           </ToastNotice>
         )}

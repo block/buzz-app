@@ -2160,6 +2160,22 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   border-end-start-radius: var(--radius-control);
   pointer-events: none;
 }
+@supports not (anchor-name: --reply-avatar) {
+  /* Without bubbles the avatar starts the row instead. */
+  .replyBranchPanel
+    > ol
+    > .replyItem:has(
+      > .replyBranch > .replyBranchMessage > [data-message-id] > [data-unboxed]
+    )::before {
+    inset-block-end: auto;
+    block-size: calc(
+      var(--space-3) +
+      var(--space-half) +
+      var(--size-control-sm) /
+      2
+    );
+  }
+}
 /* Each reply's own avatar anchors its hook, so the hook lands on the avatar
    whatever renders around it: reactions, delivery notices, an open agents
    disclosure, or an agent's activity on the reply, whose avatar is not the
@@ -2181,12 +2197,24 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
     inline-size: auto;
   }
 }
-/* Stacked bubbles share the last one's avatar, so only that row hooks in.
-   Match the row's own marker, not rows nested inside an agents disclosure. */
+/* Stacked bubbles share the last one's avatar, so only that row hooks in;
+   without bubbles the first row carries it. Match the row's own marker, not
+   rows nested inside an agents disclosure. */
 .replyBranchPanel
   > ol
   > .replyItem:has(
-    > .replyBranch > .replyBranchMessage > [data-message-id] > [data-stack-next]
+    > .replyBranch
+      > .replyBranchMessage
+      > [data-message-id]
+      > [data-stack-next]:not([data-unboxed])
+  )::before,
+.replyBranchPanel
+  > ol
+  > .replyItem:has(
+    > .replyBranch
+      > .replyBranchMessage
+      > [data-message-id]
+      > [data-stack-previous][data-unboxed]
   )::before {
   content: none;
 }
@@ -2972,7 +3000,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 @media (hover: hover) and (pointer: fine) {
   /* An arrival cue replaces hover on its bubble rather than stacking on it. */
-  .message[data-actions-revealed]:not(.messageHighlight)
+  .message[data-actions-revealed]:not(.messageHighlight, [data-unboxed])
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only], [data-diff-only]):not(
@@ -2990,9 +3018,47 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
     ) {
     background: var(--surface-message-own-hover);
   }
+  /* Without a bubble to fill, hover washes the row like the arrival cue. */
+  .message[data-unboxed][data-actions-revealed]:not(
+    .messageHighlight,
+    [data-own],
+    :focus-visible
+  )::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline: calc(-1 * var(--space-2));
+    z-index: -1;
+    border-radius: var(--radius-row);
+    background: var(--affordance-row-hover);
+    pointer-events: none;
+  }
 }
 .message[data-layout="continuation"] .messageBubble {
   margin-top: 0;
+}
+
+.message[data-unboxed] > .messageBody {
+  max-width: none;
+}
+.message[data-unboxed] {
+  isolation: isolate;
+}
+@media (forced-colors: active) {
+  /* Forced colours drop the fill, so a kept own bubble keeps an edge. */
+  .message[data-unboxed]
+  .messageBubble[data-own]:not([data-emoji-only], [data-diff-only]):not(
+    :has(> .text > table:only-child),
+    :has(> .text > table:first-child + .edited:last-child)
+  ) {
+    border: 1px solid CanvasText;
+  }
+}
+.message[data-unboxed] .messageBubble:not([data-own]) {
+  max-width: 100%;
+  background: none;
+  --message-link: var(--text-link);
+  --message-metadata: initial;
 }
 
 .message[data-stack-previous] .messageBubble {
@@ -3026,6 +3092,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message[data-viewer-message] .messageAvatar {
   right: auto;
   left: calc(100% + var(--space-1));
+}
+/* Without bubbles a run's avatar sits on its first row, beside the byline. */
+.message[data-unboxed] .messageAvatar {
+  top: 0;
+  bottom: auto;
 }
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
@@ -3490,14 +3561,17 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .messageHighlight {
   isolation: isolate;
 }
-.messageHighlight:not(
-  :has(
-    > .messageBody
-      > .messageContent
-      .messageBubble:not([data-emoji-only], [data-diff-only]):not(
-        :has(> .text > table:only-child),
-        :has(> .text > table:first-child + .edited:last-child)
-      )
+.messageHighlight:is(
+  [data-unboxed]:not([data-own]),
+  :not(
+    :has(
+      > .messageBody
+        > .messageContent
+        .messageBubble:not([data-emoji-only], [data-diff-only]):not(
+          :has(> .text > table:only-child),
+          :has(> .text > table:first-child + .edited:last-child)
+        )
+    )
   )
 )::after {
   content: "";
@@ -3523,7 +3597,7 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .messageHighlight > .messageBody > .messageContent .messageBubble {
   isolation: isolate;
 }
-.messageHighlight
+.messageHighlight:not([data-unboxed]:not([data-own]))
   > .messageBody
   > .messageContent
   .messageBubble:not([data-emoji-only], [data-diff-only]):not(
@@ -3664,6 +3738,16 @@ html[data-keyboard-navigation]
   > .reactions {
   margin-inline-start: 0;
   max-width: 100%;
+}
+/* Without bubble edges to align with, a standalone renderer starts at the
+   text column. */
+.message[data-unboxed]
+.messageBubble:is(
+  [data-diff-only],
+  :has(> .text > table:only-child),
+  :has(> .text > table:first-child + .edited:last-child)
+) {
+  padding: var(--space-2) var(--space-4);
 }
 .workflowAttribution {
   display: inline-flex;

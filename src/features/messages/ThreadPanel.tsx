@@ -30,6 +30,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -64,6 +65,15 @@ import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import {
+  BubblePresentation,
+  PersonThreadLayout,
+  threadAuthors,
+  threadVisit,
+  ThreadVisit,
+  useMessageStyle,
+  useOwnAgentsPending,
+} from "./message-bubbles";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
 
@@ -124,6 +134,7 @@ const THREAD_FAILED = "This thread didn’t load.";
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   useMessageSelectionCopy();
+  const [visit] = useState(threadVisit);
   const host = !!usePanelTabHost();
   const tabbed = props.tabbed ?? host;
   const { close } = props;
@@ -134,49 +145,51 @@ export function ThreadPanel(props: ThreadPanelProps) {
     props.retainThread ? undefined : props.messageId,
   );
   return (
-    <aside
-      className={
-        close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
-      }
-      data-attachment-drop-zone=""
-      data-reading-surface=""
-      aria-label="Thread"
-      onKeyDown={(event) => {
-        // Portalled viewers bubble here through React but own their Escape.
-        if (
-          event.key === "Escape" &&
-          !event.shiftKey &&
-          !event.defaultPrevented &&
-          !tabbed &&
-          close &&
-          event.currentTarget.contains(event.target as Node)
-        ) {
-          event.stopPropagation();
-          close();
+    <ThreadVisit.Provider value={visit}>
+      <aside
+        className={
+          close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
         }
-      }}
-    >
-      {!tabbed && close && (
-        <ThreadHeader
-          key={`header:${viewKey}`}
-          close={close}
-          actions={props.headerActions}
-        />
-      )}
-      {props.parent && (
-        <p className={styles.threadParent}>
-          In{" "}
-          <Button variant="link" size="inline" onClick={props.parent.open}>
-            {props.parent.label}
-          </Button>
-        </p>
-      )}
-      {props.retainThread ? (
-        <RetainedThreadPanel key={viewKey} {...props} />
-      ) : (
-        <OwnedThreadPanel key={viewKey} {...props} />
-      )}
-    </aside>
+        data-attachment-drop-zone=""
+        data-reading-surface=""
+        aria-label="Thread"
+        onKeyDown={(event) => {
+          // Portalled viewers bubble here through React but own their Escape.
+          if (
+            event.key === "Escape" &&
+            !event.shiftKey &&
+            !event.defaultPrevented &&
+            !tabbed &&
+            close &&
+            event.currentTarget.contains(event.target as Node)
+          ) {
+            event.stopPropagation();
+            close();
+          }
+        }}
+      >
+        {!tabbed && close && (
+          <ThreadHeader
+            key={`header:${viewKey}`}
+            close={close}
+            actions={props.headerActions}
+          />
+        )}
+        {props.parent && (
+          <p className={styles.threadParent}>
+            In{" "}
+            <Button variant="link" size="inline" onClick={props.parent.open}>
+              {props.parent.label}
+            </Button>
+          </p>
+        )}
+        {props.retainThread ? (
+          <RetainedThreadPanel key={viewKey} {...props} />
+        ) : (
+          <OwnedThreadPanel key={viewKey} {...props} />
+        )}
+      </aside>
+    </ThreadVisit.Provider>
   );
 }
 function ThreadHeader({
@@ -716,6 +729,43 @@ function ThreadMessages({
   }, [session.profiles, authors, profileGeneration]);
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const conversationLayout = useContext(BubblePresentation);
+  const listStyle = useMessageStyle() === "agents";
+  const rootKey = `thread:${snapshot.root?.id ?? messageId}`;
+  const openedKey = `thread:${messageId}`;
+  const ownPending = useOwnAgentsPending(session, listStyle);
+  // Once its first page is in (a seeded root alone is not yet the thread), a
+  // thread is decided by anyone besides the viewer who wrote in it: only
+  // agents keep bubbles, anyone else makes it a list.
+  const others =
+    listStyle && snapshot.root
+      ? threadAuthors(rows).filter((key) => key !== session.viewer)
+      : [];
+  // No roster cap: these authors are already loaded, not fetched to decide.
+  const agentsOnly =
+    others.length > 0 && others.every((key) => agentPubkeys.has(key));
+  const settled =
+    snapshot.status === "ready" &&
+    others.length > 0 &&
+    (agentsOnly || !ownPending);
+  // The first settled layout holds while the pane shows this thread, so no
+  // reply reflows it under the reader; showing it again decides again.
+  const visit = useContext(ThreadVisit);
+  useLayoutEffect(() => {
+    if (!listStyle) visit.show([], undefined);
+    else if (visit.layout([openedKey, rootKey]) === undefined)
+      visit.show([openedKey, rootKey], settled ? agentsOnly : undefined);
+  }, [listStyle, settled, agentsOnly, visit, openedKey, rootKey]);
+  const personLayout = useContext(PersonThreadLayout) ?? conversationLayout;
+  const decided = listStyle
+    ? (visit.layout([openedKey, rootKey]) ?? (settled ? agentsOnly : undefined))
+    : undefined;
+  const threadLayout =
+    decided === undefined
+      ? conversationLayout
+      : decided
+        ? "bubbles"
+        : personLayout;
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const shown = useRef(active);
@@ -1851,100 +1901,102 @@ function ThreadMessages({
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}
         />
-        <div
-          data-thread-rows=""
-          data-activity-history-scope=""
-          inert={positioning}
-        >
-          {snapshot.root ? (
-            <MessageRow
-              viewer={session.viewer}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={soloConversation ? undefined : focusReply}
-              stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
-              row={snapshot.root}
-              representedAgents={stableActivity.agents(
-                snapshot.root.id,
-                rootPresentation.representedAgents.get(snapshot.root.id),
-              )}
-              repliedAgents={stableActivity.agents(
-                `replied:${snapshot.root.id}`,
-                rootReplies.repliedAgents.get(snapshot.root.id),
-              )}
-              recordedActivity={stableActivity.activity(
-                snapshot.root.id,
-                rootActivity,
-                "history",
-              )}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={false}
-              layout="thread"
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-          ) : snapshot.status !== "loading" ? (
-            targetUnavailable ? (
-              // One notice, with its recovery beside it, when nothing loaded.
-              <div className={styles.threadNotice}>
-                <p role="status">This message isn’t available.</p>
-                {!historyError && (
-                  <Button type="button" onClick={() => void view.refresh()}>
+        <BubblePresentation.Provider value={threadLayout}>
+          <div
+            data-thread-rows=""
+            data-activity-history-scope=""
+            inert={positioning}
+          >
+            {snapshot.root ? (
+              <MessageRow
+                viewer={session.viewer}
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                onReply={soloConversation ? undefined : focusReply}
+                stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
+                row={snapshot.root}
+                representedAgents={stableActivity.agents(
+                  snapshot.root.id,
+                  rootPresentation.representedAgents.get(snapshot.root.id),
+                )}
+                repliedAgents={stableActivity.agents(
+                  `replied:${snapshot.root.id}`,
+                  rootReplies.repliedAgents.get(snapshot.root.id),
+                )}
+                recordedActivity={stableActivity.activity(
+                  snapshot.root.id,
+                  rootActivity,
+                  "history",
+                )}
+                profile={profiles.get(snapshot.root.authorId)}
+                participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
+                media={session.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                day={false}
+                layout="thread"
+                retry={session.messages.retry}
+                mediaMode="thread"
+                {...(mediaSeek
+                  ? {
+                      mediaSeekTo: mediaSeek.seconds,
+                      mediaSeekRequest: mediaSeek.request,
+                    }
+                  : {})}
+                {...(onOpenMediaReview
+                  ? { onOpenMediaReview: openRootMedia }
+                  : {})}
+              />
+            ) : snapshot.status !== "loading" ? (
+              targetUnavailable ? (
+                // One notice, with its recovery beside it, when nothing loaded.
+                <div className={styles.threadNotice}>
+                  <p role="status">This message isn’t available.</p>
+                  {!historyError && (
+                    <Button type="button" onClick={() => void view.refresh()}>
+                      Try again
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <p className={styles.empty}>Original message unavailable.</p>
+              )
+            ) : null}
+            <ol>
+              {showOlderPageStatus && snapshot.error && (
+                <li className={styles.threadHistoryPageStatus}>
+                  <p role="alert">{snapshot.error}</p>
+                  <Button type="button" onClick={retryThread}>
                     Try again
                   </Button>
-                )}
-              </div>
-            ) : (
-              <p className={styles.empty}>Original message unavailable.</p>
-            )
-          ) : null}
-          <ol>
-            {showOlderPageStatus && snapshot.error && (
-              <li className={styles.threadHistoryPageStatus}>
-                <p role="alert">{snapshot.error}</p>
-                <Button type="button" onClick={retryThread}>
-                  Try again
-                </Button>
-              </li>
+                </li>
+              )}
+              {renderReplies(undefined)}
+            </ol>
+            {!preview && !positioning && composerRoot && (
+              <AgentConnectionSetup
+                key={`${channelId}:${rootId}`}
+                session={session}
+                channel={session.channels?.get?.(channelId)}
+                rows={rows}
+              />
             )}
-            {renderReplies(undefined)}
-          </ol>
-          {!preview && !positioning && composerRoot && (
-            <AgentConnectionSetup
-              key={`${channelId}:${rootId}`}
-              session={session}
-              channel={session.channels?.get?.(channelId)}
-              rows={rows}
-            />
-          )}
-          {!positioning && rootId && (
-            <TypingIndicator
-              audience="agents"
-              inFlow
-              session={session}
-              channelId={channelId}
-              threadRootId={rootId}
-              previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
-              openActivity={onOpenLink}
-              canOpenActivity={canOpenLink}
-            />
-          )}
-        </div>
+            {!positioning && rootId && (
+              <TypingIndicator
+                audience="agents"
+                inFlow
+                session={session}
+                channelId={channelId}
+                threadRootId={rootId}
+                previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+                openActivity={onOpenLink}
+                canOpenActivity={canOpenLink}
+              />
+            )}
+          </div>
+        </BubblePresentation.Provider>
         {requireReadyRoot &&
           snapshot.root &&
           snapshot.root.id !== messageId && (

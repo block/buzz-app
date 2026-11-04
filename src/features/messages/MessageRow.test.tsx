@@ -34,6 +34,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
 import { setClockPreference } from "../../shared/clock-preference";
+import { BubblePresentation } from "./message-bubbles";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -2837,6 +2838,64 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
     expect(screen.queryByText("action dialog")).toBeNull();
     swap([entry()]);
     expect(screen.queryByText("action dialog")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+it("lays own rows out as received text, avatar on a run's first row, when bubbles are off", () => {
+  const props = {
+    row: { ...row, authorId: "ab".repeat(32) },
+    viewer: "ab".repeat(32),
+    profile: { name: "author" },
+    media: () => undefined,
+    onOpenLink: () => true,
+    canOpenLink: () => true,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const { container, rerender } = renderDom(
+      <BubblePresentation.Provider value="unboxed">
+        <MessageRow {...props} />
+      </BubblePresentation.Provider>,
+    );
+    expect(container.querySelector("[data-viewer-message]")).toBeNull();
+    expect(container.querySelector("[data-own]")).toBeNull();
+    expect(container.querySelector("[data-unboxed]")).toHaveTextContent("Root");
+    const avatar = () =>
+      screen.queryByRole("button", { name: "View author profile" });
+    rerender(
+      <BubblePresentation.Provider value="unboxed">
+        <MessageRow {...props} stackNext />
+      </BubblePresentation.Provider>,
+    );
+    expect(avatar()).toBeInTheDocument();
+    rerender(
+      <BubblePresentation.Provider value="unboxed">
+        <MessageRow {...props} stackPrevious />
+      </BubblePresentation.Provider>,
+    );
+    expect(avatar()).toBeNull();
+    rerender(
+      <BubblePresentation.Provider value="bubbles">
+        <MessageRow {...props} />
+      </BubblePresentation.Provider>,
+    );
+    expect(container.querySelector("[data-viewer-message]")).toHaveTextContent(
+      "Root",
+    );
+    expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+    expect(container.querySelector("[data-unboxed]")).toBeNull();
+    rerender(
+      <BubblePresentation.Provider value="unboxed-own-color">
+        <MessageRow {...props} />
+      </BubblePresentation.Provider>,
+    );
+    expect(container.querySelector("[data-viewer-message]")).toBeNull();
+    expect(container.querySelector("[data-unboxed]")).toHaveAttribute(
+      "data-own",
+    );
   } finally {
     cleanup();
   }

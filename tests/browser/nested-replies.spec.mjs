@@ -1078,3 +1078,60 @@ for (const width of [1492, 1280, 1024, 700, 390])
       path: test.info().outputPath(`crowded-${width}.png`),
     });
   });
+
+test("without bubbles, a stacked run hooks in on its first row and hover washes it", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-message-style.v1", "agents"),
+  );
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  const post = (content, own, parent) =>
+    app.append("primary", "alpha", content, false, own, root.id, parent);
+  const branch = post("Unboxed branch", false);
+  const first = post("First of a run", true, branch.id);
+  const second = post("Second of a run", true, branch.id);
+  await open(page, app);
+  await page.setViewportSize({ width: 1280, height: 1600 });
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = (event) => panel.locator(`[data-message-id="${event.id}"]`);
+  const summary = row(branch)
+    .locator("xpath=ancestor::*[@data-depth][1]")
+    .locator(":scope > div [data-thread-summary]");
+  await expect(summary).toBeVisible();
+  await summary.click();
+  await expect(row(second)).toBeVisible();
+  const surface = row(first).locator("[data-unboxed]");
+  await expect(surface).toHaveAttribute("data-stack-next");
+  await expect(row(second).locator('[class*="messageAvatar"]')).toHaveCount(0);
+  await row(first).scrollIntoViewIfNeeded();
+  // The viewer's own run sits on the left like every other unboxed row.
+  expectHookOnAvatar(await hookFor(row(first)), "left");
+  expect(
+    await row(second).evaluate(
+      (node) => getComputedStyle(node.closest("li"), "::before").content,
+    ),
+  ).toBe("none");
+
+  await panel
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .focus();
+  await expect(surface).not.toHaveAttribute("data-actions-revealed");
+  const wash = () =>
+    surface.evaluate(
+      (node) => getComputedStyle(node, "::after").backgroundColor,
+    );
+  await hoverMessage(row(first));
+  await expect(surface).toHaveAttribute("data-actions-revealed");
+  expect(await wash()).not.toBe("rgba(0, 0, 0, 0)");
+});

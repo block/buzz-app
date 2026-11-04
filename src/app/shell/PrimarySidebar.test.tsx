@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -28,6 +29,7 @@ import type {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SOLO_LABEL } from "../../features/solo/labels";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
+import { SIDEBAR_REVEAL_BUDGET_MS } from "../../bundled/channels/useSidebarStartup";
 stubAvatarBrowserApis();
 afterEach(() => {
   cleanup();
@@ -337,6 +339,36 @@ it("collapses the Solo and Team inventories independently in All", async () => {
   await user.click(screen.getByRole("tab", { name: "All" }));
   expect(section("solo").panel).toHaveAttribute("hidden");
   expect(section("team").panel).toHaveAttribute("hidden");
+});
+
+it("expands Team when navigation selects one of its conversations", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(true);
+    await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
+    const summary = document.querySelector<HTMLElement>(
+      '[data-sidebar-section="scope:team"] summary',
+    );
+    expect(summary).not.toBeNull();
+    const panel = document.getElementById(
+      summary?.getAttribute("aria-controls") ?? "",
+    );
+    expect(panel).not.toBeNull();
+    fireEvent.click(summary as HTMLElement);
+    expect(panel).toHaveAttribute("hidden");
+
+    await act(() =>
+      f.open({
+        version: 1,
+        kind: "conversation",
+        channelId: "team-channel",
+        scope: { viewer, communityOrigin: "https://relay.test" },
+      }),
+    );
+    expect(panel).not.toHaveAttribute("hidden");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it.each([

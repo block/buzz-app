@@ -10,7 +10,10 @@ import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
-import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
+import {
+  ChannelInventory,
+  sidebarEntryLocation,
+} from "../../features/channel-navigation/ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
@@ -169,6 +172,9 @@ function ScopedSidebar({
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;
+  const sidebarLocation = destination
+    ? sidebarEntryLocation(target)
+    : undefined;
   const restriction = useSyncExternalStore(
     props.sidebarScope?.subscribe ?? noSubscription,
     () => props.sidebarScope?.snapshot()[0],
@@ -341,7 +347,7 @@ function ScopedSidebar({
                         sectionKey="scope:team"
                         title="Team"
                         ownsCurrent={destination === "team"}
-                        location={location}
+                        location={sidebarLocation}
                       >
                         {content}
                       </InventoryGroup>

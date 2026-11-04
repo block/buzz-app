@@ -773,7 +773,9 @@ export function createTabs({
                 )}
                 {read.transcript.more && (
                   <p className="m-0 text-body-sm text-subtle">
-                    Showing the latest {read.transcript.turns.length} turns.
+                    {read.transcript.turns.length
+                      ? `Showing the latest ${read.transcript.turns.length === 1 ? "turn" : `${read.transcript.turns.length} turns`}.`
+                      : "The latest turn is too large to show."}
                   </p>
                 )}
               </>

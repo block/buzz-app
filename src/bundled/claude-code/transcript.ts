@@ -307,8 +307,8 @@ const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 /** A session file in `~/.claude/projects`. One too large to read whole is
  * read a page at a time from its end, until `enough` of its latest lines are
  * read, its start is or `PAGE_BUDGET` pages are; `cut` says older ones were
- * left. Its `start` says
- * whose conversation it is. */
+ * left. Its `start` is the session's first lines even then, which say whose
+ * conversation it is. */
 async function readSession(
   spawn: Spawn,
   path: string,
@@ -334,14 +334,19 @@ async function readSession(
       throw error;
   }
   let output = "";
-  const process = await spawn("size", {
+  const sizing = await spawn("size", {
     args: [path],
     cwd: "~/.claude/projects",
     onStdout: (data) => {
       output += data;
     },
   });
-  const code = await process.exited;
+  const stop = () => void sizing.kill();
+  signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop();
+  const code = await sizing.exited.finally(() =>
+    signal.removeEventListener("abort", stop),
+  );
   const size = Number.parseInt(output, 10);
   if (code !== 0 || !(size > 0)) throw new Error(`Could not read ${path}`);
   signal.throwIfAborted();
@@ -476,7 +481,12 @@ export async function readTranscript(
     found = true;
     const own = claudeTurns(file.text, session, working && name === saved);
     cut ||= file.cut;
-    if (file.cut && own[0]) since = Math.max(since, own[0].startedAt);
+    if (file.cut) {
+      // Its first kept turn did not start the session, and with none kept
+      // (one record larger than the budget) nothing older is contiguous.
+      if (own[0]) own[0].newSession = false;
+      since = Math.max(since, own[0]?.startedAt ?? Number.POSITIVE_INFINITY);
+    }
     turns.push(...own);
   }
   // Nothing found is no transcript only when every file was searched.

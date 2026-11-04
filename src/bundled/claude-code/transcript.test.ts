@@ -445,6 +445,51 @@ it("leaves other sessions' turns from before a large session's kept ones", async
   );
 });
 
+it("labels no turn of a cut session as its start", async () => {
+  const reply = (mib: number) =>
+    line("assistant", [{ type: "text", text: "x".repeat(mib << 20) }]);
+  const { spawn } = host(
+    large(
+      reply(40),
+      line("user", prompt("mid")),
+      reply(30),
+      line("user", prompt("latest")),
+    ),
+  );
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.more).toBe(true);
+  expect(read?.turns[0]?.items[0]).toEqual(
+    expect.objectContaining({ text: "mid" }),
+  );
+  expect(read?.turns.some((turn) => turn.newSession)).toBe(false);
+});
+
+it("keeps no older sessions' turns when a cut session kept none", async () => {
+  const files = large(
+    line("user", prompt("huge")),
+    line("assistant", [{ type: "text", text: "x".repeat(70 << 20) }]),
+  );
+  clock = -10;
+  const { spawn } = host({
+    ...files,
+    "./-Users-me--buzz/session-1.jsonl": line("user", prompt("old")),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  expect(read).toEqual(expect.objectContaining({ more: true, turns: [] }));
+});
+
 it("merges the agent's other sessions for the thread, oldest turn first", async () => {
   const session = (start: number, context: string, content: string) => {
     clock = start;

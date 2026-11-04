@@ -326,12 +326,6 @@ export interface ChannelQueries {
     channelId: string,
     options?: ChannelReadOptions,
   ): Promise<boolean>;
-  /** Display-only roster sizes for the given channels, joined or not. Channels
-   * without a relay-signed roster are absent. Never grants access. */
-  memberCounts?(
-    channelIds: readonly string[],
-    options?: ReadOptions,
-  ): Promise<ReadonlyMap<string, number>>;
   /** Lists a Solo chat this device is creating, as `pending`, until the
    * relay's signed metadata and roster for it arrive. It has no history to
    * read meanwhile. Local display and intent only; never saved. */

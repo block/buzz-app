@@ -24,7 +24,6 @@ export type ComposerSession = Pick<
     | "searchPublic"
     | "matchPublic"
     | "openDirectory"
-    | "memberCounts"
   > &
     Partial<Pick<RelaySession["channels"], "subscribeWindow" | "window">>;
   profiles: RelaySession["profiles"];

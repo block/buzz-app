@@ -2754,60 +2754,6 @@ export function createChannelStore(
       !discovery.get(channelId)?.cached
     );
   }
-  /** Display-only member counts: the size of each channel's relay-signed
-   * roster, read without the viewer filter so channels the viewer has not
-   * joined count too. Never applied to discovery, so it grants nothing. */
-  async function memberCounts(
-    channelIds: readonly string[],
-    settings?: ReadOptions,
-  ): Promise<ReadonlyMap<string, number>> {
-    if (disposed || !transport || options.cachedOnly)
-      throw new Error("Relay is unavailable");
-    const ids = [...new Set(channelIds)];
-    if (!ids.length) return new Map();
-    if (ids.length > 128) throw new Error("Too many channels to count");
-    const events = await transport.read(
-      [
-        {
-          kinds: [39002],
-          authors: [transport.relayAuthor],
-          "#d": ids,
-          limit: ids.length + 1,
-        },
-      ],
-      { ...settings, fresh: true },
-    );
-    settings?.signal?.throwIfAborted();
-    if (events.length > ids.length)
-      throw new ReadError(
-        "invalid-response",
-        "Channel member counts exceeded their read budget",
-      );
-    const rosters = new Map<string, RelayEvent>();
-    for (const event of events) {
-      const id = tag(event, "d");
-      if (
-        event.kind !== 39002 ||
-        event.pubkey !== transport.relayAuthor ||
-        !id ||
-        !ids.includes(id)
-      )
-        continue;
-      rosters.set(id, newer(rosters.get(id), event));
-    }
-    return new Map(
-      [...rosters].map(([id, roster]) => [
-        id,
-        new Set(
-          roster.tags.flatMap(([name, value]) =>
-            name === "p" && value && /^[0-9a-f]{64}$/.test(value)
-              ? [value]
-              : [],
-          ),
-        ).size,
-      ]),
-    );
-  }
   const cachedResolutions = new Set<string>();
   function revalidateCached(channelId: string) {
     if (
@@ -3161,7 +3107,6 @@ export function createChannelStore(
     // A cached-only store never looks a reference up, so it offers no lookup.
     ...(options.cachedOnly ? {} : { refer: referChannel }),
     refreshRoster,
-    memberCounts,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>
       windows.get(channelId)?.snapshot ?? idleWindow(channelId),

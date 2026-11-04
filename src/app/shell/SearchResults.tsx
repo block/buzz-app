@@ -54,7 +54,7 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
-import { useChannelMemberCounts } from "../../features/channels/useChannelMemberCounts";
+import { useMemberCounts } from "../../features/channels/useChannelDirectory";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -850,7 +850,10 @@ export function SearchResults({
     ],
     channelRank,
   ).slice(0, 8);
-  const memberCount = useChannelMemberCounts(session, channelResults);
+  // Display only; joined rows count the roster they carry.
+  const memberCounts = useMemberCounts(session.channels);
+  const memberCount = (channel: ChannelSummary) =>
+    channel.members?.length || memberCounts.counts.get(channel.id);
   // A chat found by its agent, not its name, says which agent it has.
   const soloDetail = (channel: ChannelSummary) => {
     const agent = newChatAmong(channel.members);
@@ -1281,6 +1284,19 @@ export function SearchResults({
               ];
   return (
     <SearchChoices
+      onRowsShown={(keys) => {
+        // Only channel results without a roster read a count.
+        const unknown = new Set(
+          channelResults.flatMap((channel) =>
+            channel.members?.length ? [] : [`channel:${channel.id}`],
+          ),
+        );
+        memberCounts.show(
+          keys.flatMap((key) =>
+            unknown.has(key) ? [key.slice("channel:".length)] : [],
+          ),
+        );
+      }}
       inlineSettings={inlineSettings}
       query={query}
       onQueryChange={onQueryChange}

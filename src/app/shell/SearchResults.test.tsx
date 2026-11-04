@@ -1190,7 +1190,7 @@ it("shows each channel result's member count, reading an unjoined channel's rost
         kinds: [39002],
         authors: [relay.pubkey],
         "#d": ["lobby", "solo-room"],
-        limit: 3,
+        limit: 2,
       },
     ]);
     expect(owner.session.channels.get?.("lobby")?.members).toEqual([]);

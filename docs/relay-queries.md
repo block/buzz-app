@@ -417,13 +417,10 @@ member and enables the composer, which then receives focus. An accepted but
 unconfirmed join reports that it may have taken effect and stays retryable.
 
 Palette channel rows show member counts. Joined rows count the roster discovery
-already holds. For the rest, `channels.memberCounts(ids)` sends one bounded
-`39002` read (`authors: [relay]`, `#d: ids`, `limit: ids.length + 1`) without
-the viewer `#p` filter, after the same 300 ms typing pause. It counts distinct
-well-formed `p` entries in the newest relay-authored roster per channel. Answers
-over the bound fail. The rosters never reach discovery, so a counted roster
-grants no reading, membership or sidebar row. The palette keeps each answer
-while its rows stay mounted and does not refresh it.
+already holds. The rest use the Channels tab's display-only
+`channels.readMemberCounts(ids)` once the row is on screen, so they share its
+cache, retry backoff and bounded `39002` reads. The rosters never reach
+discovery, so a counted roster grants no reading, membership or sidebar row.
 
 ### Finite read recovery
 

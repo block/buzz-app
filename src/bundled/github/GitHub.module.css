@@ -268,8 +268,11 @@
   padding: var(--space-3);
   background: var(--surface-panel);
 }
+/* Breaking anywhere shrinks auto-sized columns to one character; .tableScroll
+   scrolls a table that long words widen past the panel. */
 .body table {
   border-collapse: collapse;
+  overflow-wrap: normal;
 }
 .body th,
 .body td {

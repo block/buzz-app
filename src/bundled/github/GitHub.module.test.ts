@@ -78,3 +78,11 @@ it("keeps the own bubble's state icon pair out of its neutral insets", () => {
       `.pullState reads ${name} with ${shared} as its fallback`,
     ).toBe(true);
 });
+
+// No DOM emulator lays out tables either, so this reads the declaration.
+it("sizes body table columns to whole words, not single characters", () => {
+  const table = github.find(({ selectors }) =>
+    selectors.includes(".body table"),
+  );
+  expect(table?.declarations.get("overflow-wrap")).toBe("normal");
+});

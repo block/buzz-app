@@ -75,16 +75,31 @@ export function SessionPullLauncher({
 }) {
   const pull = useSoloPull(pulls, channelId);
   if (!pull) return null;
-  const label = `Open linked ${describePull(pull).toLowerCase()}`;
   const Icon = stateIcons[pull.state?.state ?? "open"];
+  const icon = <Icon size="1rem" aria-hidden="true" />;
+  const label = `Open linked ${describePull(pull).toLowerCase()}`;
+  if (!canOpen(pull.url)) {
+    const external = `${label} on GitHub`;
+    return (
+      <IconButton
+        size="sm"
+        variant="ghost"
+        nativeButton={false}
+        role="link"
+        render={<a href={pull.url} target="_blank" rel="noreferrer" />}
+        aria-label={external}
+        title={external}
+        icon={icon}
+      />
+    );
+  }
   return (
     <IconButton
       size="sm"
       variant="ghost"
       aria-label={label}
       title={label}
-      disabled={!canOpen(pull.url)}
-      icon={<Icon size="1rem" aria-hidden="true" />}
+      icon={icon}
       onClick={() => open(pull.url)}
     />
   );

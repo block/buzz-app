@@ -291,7 +291,7 @@ it("keeps unlink visible but disabled when the connection cannot sign link updat
   );
 });
 
-it("opens the current linked PR from the header and removes the shortcut on unlink", async () => {
+it("opens the current linked PR from the header, in the browser when the panel can’t, and removes the shortcut on unlink", async () => {
   const pulls = fakePulls({
     [chat]: { url: pull, state: { state: "merged" } },
   });
@@ -322,9 +322,13 @@ it("opens the current linked PR from the header and removes the shortcut on unli
       canOpen={() => false}
     />,
   );
-  expect(screen.getByRole("button")).toBeDisabled();
+  const link = screen.getByRole("link", {
+    name: "Open linked pull request on GitHub",
+  });
+  expect(link).toHaveAttribute("href", `${pull}8`);
+  expect(link).toHaveAttribute("target", "_blank");
   act(() => pulls.linked(chat, null));
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
 
 it("only mounts the PR shortcut for a Solo in the current community", () => {

@@ -219,7 +219,8 @@ export function appClient(
 }
 
 /** Reads a file with the plugin's declared `read` process (`base64 -i`),
- * which passes binary files through intact, or another that prints base64. */
+ * which passes binary files through intact, or another that prints base64
+ * given the path and `args`. */
 export async function readFile(
   spawn: Spawn,
   cwd: string,
@@ -227,6 +228,7 @@ export async function readFile(
   signal?: AbortSignal,
   protection?: ProcessProtection,
   process = protection ? "read-protected" : "read",
+  args: string[] = [],
 ) {
   // `-` would wait on stdin.
   if (path.trim() === "-" || !path.trim())
@@ -236,7 +238,7 @@ export async function readFile(
   let large = false;
   let child: Awaited<ReturnType<Spawn>> | undefined;
   child = await spawn(process, {
-    args: [path],
+    args: [path, ...args],
     cwd,
     ...(protection ? { protection: structuredClone(protection) } : {}),
     onStdout: (data) => {

@@ -297,35 +297,74 @@ export async function workspaceProject(
   return project.length > PROJECT_NAME_LIMIT ? undefined : project;
 }
 
+/** MiB per page of a session too large to read whole, under its 50 MB. */
+const PAGE_MIB = 32;
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
 /** A session file in `~/.claude/projects`. One too large to read whole is
- * read as its `start`, which says whose conversation it is, and its last
- * 40 MB as `text`, which has its latest turns; `cut` says it was. */
-async function readSession(spawn: Spawn, path: string, signal: AbortSignal) {
-  const read = async (process?: string) =>
-    new TextDecoder().decode(
-      await readFile(
-        spawn,
-        "~/.claude/projects",
-        path,
-        signal,
-        undefined,
-        process,
-      ),
+ * read a page at a time from its end, until `enough` of its latest lines are
+ * read or its start is; `cut` says older ones were left. Its `start` says
+ * whose conversation it is. */
+async function readSession(
+  spawn: Spawn,
+  path: string,
+  signal: AbortSignal,
+  enough: (text: string) => boolean,
+) {
+  const read = (process?: string, ...args: string[]) =>
+    readFile(
+      spawn,
+      "~/.claude/projects",
+      path,
+      signal,
+      undefined,
+      process,
+      args,
     );
   try {
-    const text = await read();
-    return { start: text, text, cut: false };
+    const text = decode(await read());
+    return { text, cut: false, start: async () => text };
   } catch (error) {
     signal.throwIfAborted();
     if (!/larger than 50 MB/.test(error instanceof Error ? error.message : ""))
       throw error;
   }
-  const [start, end] = await Promise.all([
-    read("read-start"),
-    read("read-end"),
-  ]);
-  // Its end starts partway through a line.
-  return { start, text: end.slice(end.indexOf("\n") + 1), cut: true };
+  let output = "";
+  const process = await spawn("size", {
+    args: [path],
+    cwd: "~/.claude/projects",
+    onStdout: (data) => {
+      output += data;
+    },
+  });
+  const code = await process.exited;
+  const size = Number.parseInt(output, 10);
+  if (code !== 0 || !(size > 0)) throw new Error(`Could not read ${path}`);
+  signal.throwIfAborted();
+  let page = Math.floor((size - 1) / (PAGE_MIB << 20));
+  let text = "";
+  // A page starts partway through a line, which ends the page before it.
+  let rest = new Uint8Array();
+  for (; page >= 0; page--) {
+    const chunk = await read(
+      "read-page",
+      String(page * PAGE_MIB),
+      String(PAGE_MIB),
+    );
+    const bytes = new Uint8Array(chunk.length + rest.length);
+    bytes.set(chunk);
+    bytes.set(rest, chunk.length);
+    const line = page ? bytes.indexOf(10) + 1 || bytes.length : 0;
+    rest = bytes.subarray(0, line);
+    text = decode(bytes.subarray(line)) + text;
+    if (enough(text)) break;
+  }
+  const cut = page > 0;
+  return {
+    text,
+    cut,
+    start: async () => (cut ? decode(await read("read-page", "0", "4")) : text),
+  };
 }
 
 /** The title Claude Code generated for a session (its latest `ai-title`
@@ -344,6 +383,7 @@ export async function readSessionTitle(
       spawn,
       `./${project}/${sessionId}.jsonl`,
       signal,
+      (text) => text.includes('"ai-title"'),
     ));
   } catch (error) {
     signal.throwIfAborted();
@@ -404,31 +444,31 @@ export async function readTranscript(
   let found = false;
   let cut = false;
   for (const name of names) {
+    const session = {
+      sessionId: name.slice(0, -".jsonl".length),
+      channelId: conversation.channelId,
+      ...(conversation.root ? { root: conversation.root } : {}),
+    };
     let file: Awaited<ReturnType<typeof readSession>>;
     try {
       // Project names start with `-`; GNU base64 would read one as options.
-      file = await readSession(spawn, `./${project}/${name}`, signal);
+      file = await readSession(
+        spawn,
+        `./${project}/${name}`,
+        signal,
+        (text) => claudeTurns(text, session, false).length > TURN_LIMIT,
+      );
     } catch (error) {
       signal.throwIfAborted();
       if (/no such file/i.test(error instanceof Error ? error.message : ""))
         continue;
       throw error;
     }
-    if (name !== saved && !startedFor(file.start, conversation)) continue;
+    if (name !== saved && !startedFor(await file.start(), conversation))
+      continue;
     found = true;
     cut ||= file.cut;
-    const sessionId = name.slice(0, -".jsonl".length);
-    turns.push(
-      ...claudeTurns(
-        file.text,
-        {
-          sessionId,
-          channelId: conversation.channelId,
-          ...(conversation.root ? { root: conversation.root } : {}),
-        },
-        working && name === saved,
-      ),
-    );
+    turns.push(...claudeTurns(file.text, session, working && name === saved));
   }
   // Nothing found is no transcript only when every file was searched.
   if (!found) {

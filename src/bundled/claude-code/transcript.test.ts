@@ -13,7 +13,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import { manifestProcesses } from "./claude-testing";
 import manifest from "./manifest.json";
-import { claudeTurns, projectName, readTranscript } from "./transcript";
+import {
+  claudeTurns,
+  projectName,
+  readTranscript,
+  TURN_LIMIT,
+} from "./transcript";
 
 const root = "c".repeat(64);
 const homes: string[] = [];
@@ -225,7 +230,7 @@ it("names projects as Claude Code does", () => {
 });
 
 /** `workspace` prints the resolved folder and `read` serves `files` as
- * base64; the manifest's `list` and `starts` run for real on a copy of them. */
+ * base64; the manifest's other processes run for real on a copy of them. */
 function host(files: Record<string, string>) {
   const home = mkdtempSync(join(tmpdir(), "claude-transcript-"));
   homes.push(home);
@@ -240,7 +245,7 @@ function host(files: Record<string, string>) {
   const listed = manifestProcesses(home);
   const reads: HostProcessOptions[] = [];
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
-    if (["list", "starts", "read-start", "read-end"].includes(id))
+    if (["list", "starts", "size", "read-page"].includes(id))
       return listed(id, options);
     let code = 0;
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
@@ -299,21 +304,61 @@ it("treats a missing session file as no transcript, not a failure", async () => 
   ).resolves.toBeUndefined();
 });
 
-it("reads the latest turns of a session too large to read whole", async () => {
+/** A session for the thread that is not the saved one, so its start must say
+ * it is the thread's, with `turns` after it. */
+const large = (...turns: string[]) => {
   clock = 0;
   const thread = `Session scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent}`;
-  const { spawn } = host({
-    // Not the saved session, so its start must say it is this thread's.
+  return {
     "./-Users-me--buzz/large.jsonl": [
       line(
         "user",
         prompt("first").replace("Scope: thread", `Scope: thread\n${thread}`),
       ),
-      line("assistant", [{ type: "text", text: "x".repeat(55 * 1024 * 1024) }]),
+      ...turns,
+    ].join("\n"),
+  };
+};
+const long = "x".repeat(55 * 1024 * 1024);
+
+it("reads a session too large to read whole a page at a time", async () => {
+  const { spawn } = host(
+    large(
+      line("assistant", [{ type: "text", text: long }]),
       line("user", prompt("latest")),
       line("assistant", [{ type: "text", text: "re: latest" }]),
-    ].join("\n"),
-  });
+    ),
+  );
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.more).toBe(false);
+  // The reply that spans two pages is read whole.
+  expect(read?.turns.map((turn) => turn.items)).toEqual([
+    [
+      expect.objectContaining({ text: "first" }),
+      expect.objectContaining({ text: long }),
+    ],
+    [
+      expect.objectContaining({ text: "latest" }),
+      expect.objectContaining({ text: "re: latest" }),
+    ],
+  ]);
+});
+
+it("stops reading a large session once it has its latest turns", async () => {
+  const { spawn } = host(
+    large(
+      line("assistant", [{ type: "text", text: long }]),
+      ...Array.from({ length: TURN_LIMIT + 1 }, (_, turn) =>
+        line("user", prompt(`turn ${turn}`)),
+      ),
+    ),
+  );
   const read = await readTranscript(
     spawn,
     "~/.buzz",
@@ -322,8 +367,19 @@ it("reads the latest turns of a session too large to read whole", async () => {
     new AbortController().signal,
   );
   expect(read?.more).toBe(true);
-  expect(read?.turns.map((turn) => turn.items[0])).toEqual([
-    expect.objectContaining({ text: "latest" }),
+  expect(read?.turns.map((turn) => turn.items[0])).toEqual(
+    Array.from({ length: TURN_LIMIT }, (_, turn) =>
+      expect.objectContaining({ text: `turn ${turn + 1}` }),
+    ),
+  );
+  // Only its last page and its start were read.
+  expect(
+    spawn.mock.calls
+      .filter(([id]) => id === "read-page")
+      .map(([, options]) => options?.args?.slice(1)),
+  ).toEqual([
+    ["32", "32"],
+    ["0", "4"],
   ]);
 });
 

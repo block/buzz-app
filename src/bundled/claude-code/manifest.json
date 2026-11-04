@@ -36,22 +36,14 @@
         "program": "base64",
         "args": ["-i"]
       },
+      { "id": "size", "program": "wc", "args": ["-c"] },
       {
-        "id": "read-start",
+        "id": "read-page",
         "program": "bash",
         "args": [
           "-c",
-          "set -o pipefail; head -c 4194304 -- \"$1\" | base64",
-          "buzz-read-start"
-        ]
-      },
-      {
-        "id": "read-end",
-        "program": "bash",
-        "args": [
-          "-c",
-          "set -o pipefail; tail -c 41943040 -- \"$1\" | base64",
-          "buzz-read-end"
+          "set -o pipefail; dd if=\"$1\" bs=1048576 skip=\"$2\" count=\"$3\" | base64",
+          "buzz-read-page"
         ]
       },
       {

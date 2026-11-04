@@ -3288,6 +3288,7 @@ export function createRelaySession(
     receive(events, provenance) {
       if (closed) return;
       reminders?.receive(events);
+      lifecycle.receive(events);
       const candidates = new Set(
         provenance?.phase === "live" && provenance.channelId
           ? events

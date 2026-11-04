@@ -783,9 +783,12 @@ export function policyRelay({
             !filters.some(
               (filter) =>
                 filter.kinds.includes(event.kind) &&
-                filter["#h"]?.some((h) =>
+                (filter["#h"]?.some((h) =>
                   event.tags.some(([k, v]) => k === destinationTag && h === v),
-                ),
+                ) ||
+                  (event.kind === 30622 &&
+                    filter["#p"]?.includes(viewer) &&
+                    event.tags.some(([k, v]) => k === "p" && v === viewer))),
             )
           )
             continue;

@@ -391,6 +391,12 @@ it("uses independent explicit channel routes and self-p globals; equal interests
     since: expect.any(Number),
     limit: 500,
   });
+  expect(h.first.requests()[1]?.[4]).toEqual({
+    kinds: [30622],
+    "#p": [h.key.pubkey],
+    since: expect.any(Number),
+    limit: 500,
+  });
   const before = h.first.sent.length;
   h.owner.update(["b", "a", "a"]);
   expect(h.first.sent).toHaveLength(before);

@@ -2193,3 +2193,65 @@ it("retires queued entries and waits only after confirmed removal, including pen
     h.owner.dispose();
   }
 });
+
+it("applies private live visibility and never rolls it back with an older read", async () => {
+  const h = harness("owner", "dm");
+  await h.owner.capability.run("hide", id);
+  const old = h.record(30622, [
+    ["d", viewer],
+    ["p", viewer],
+    ["h", id],
+  ]);
+  const restored = h.record(30622, [
+    ["d", viewer],
+    ["p", viewer],
+  ]);
+  h.owner.receive([restored]);
+  expect(h.owner.capability.snapshot().hidden).toEqual([]);
+  h.setVisible([old]);
+  await h.owner.capability.refreshVisibility();
+  expect(h.owner.capability.snapshot().hidden).toEqual([]);
+  h.owner.receive([
+    h.record(30622, [
+      ["d", viewer],
+      ["p", viewer],
+      ["h", id],
+    ]),
+  ]);
+  expect(h.owner.capability.snapshot().hidden).toEqual([id]);
+  h.owner.receive([
+    h.record(30622, [
+      ["d", viewer],
+      ["p", other],
+    ]),
+  ]);
+  h.owner.receive([
+    h.record(30622, [
+      ["d", other],
+      ["p", viewer],
+    ]),
+  ]);
+  h.owner.receive([
+    finalizeEvent(
+      {
+        kind: 30622,
+        tags: [
+          ["d", viewer],
+          ["p", viewer],
+        ],
+        content: "",
+        created_at: 10000,
+      },
+      agentKey,
+    ),
+  ]);
+  expect(h.owner.capability.snapshot().hidden).toEqual([id]);
+  h.owner.dispose();
+  h.owner.receive([
+    h.record(30622, [
+      ["d", viewer],
+      ["p", viewer],
+    ]),
+  ]);
+  expect(h.owner.capability.snapshot().hidden).toEqual([id]);
+});

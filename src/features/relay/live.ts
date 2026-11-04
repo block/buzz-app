@@ -1151,6 +1151,7 @@ export function subscribeRelayTraffic(
                   // NIP-CL: the relay sends a system channel's notices only
                   // to a filter that asks for them with #t.
                   { kinds: [44100, 44101], "#p": [viewer], "#t": ["system"] },
+                  { kinds: [30622], "#p": [viewer] },
                 ];
       send([
         "REQ",

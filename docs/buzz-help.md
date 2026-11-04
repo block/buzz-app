@@ -342,3 +342,11 @@ Release builds ignore this optional helper.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+
+### Hidden direct messages
+
+**Hide conversation** removes a DM from your sidebar while keeping its messages
+and membership. On relays supporting automatic restoration, a new message brings
+it back. Reactions and edits do not restore it. **Remove from Team** is a separate,
+local sidebar preference that also restores on new messages.

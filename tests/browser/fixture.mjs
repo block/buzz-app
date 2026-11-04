@@ -2820,6 +2820,24 @@ export const test = base.extend({
             (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
+          if (hiddenDmIds.delete(channel)) {
+            lifecycleTime++;
+            if (relay && deliver)
+              relay.publish(
+                community,
+                sign(
+                  30622,
+                  [
+                    ["d", viewer],
+                    ["p", viewer],
+                    ...[...hiddenDmIds].map((id) => ["h", id]),
+                  ],
+                  "",
+                  relayKey,
+                  lifecycleTime,
+                ),
+              );
+          }
           if (relay && deliver) relay.publish(community, event);
           else if (relay) return event;
           else {

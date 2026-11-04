@@ -862,3 +862,32 @@ test.describe("remote Solo unarchive", () => {
     expect(app.report.unexpected).toEqual([]);
   });
 });
+
+for (const live of [true, false]) {
+  test(`a new incoming message restores a hidden conversation ${live ? "live" : "after reload"}`, async ({
+    page,
+    app,
+  }) => {
+    await openLifecycle(page, app);
+    const id = "22222222-2222-4222-8222-222222222222";
+    const row = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .locator(`[data-channel-id="${id}"]`);
+    await expect(row).toBeVisible();
+    await row.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Hide conversation", exact: true })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Hide conversation", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(row).toHaveCount(0);
+    await expect.poll(() => app.relay.hasRoute("primary", id)).toBe(true);
+    app.append("primary", id, "A new message after hiding", live, false);
+    if (!live) await page.reload();
+    await expect(row).toBeVisible();
+    await expect(row.locator("[data-channel-unread]")).toBeVisible();
+  });
+}

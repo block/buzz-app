@@ -579,9 +579,11 @@ The separate, confirmed Hide conversation action publishes `41012`, not Leave or
 visibility snapshot (`d=viewer`, `p=viewer`, hidden DM `h` tags) only filters sidebar
 rows; it does not deny access or prevent exact conversation navigation. Visibility
 refreshes with the channel roster, preserves the last good set on failure and
-rejects older snapshots. Live cross-device visibility updates and an in-app DM
-reopen/unhide flow are deferred; opening a DM through another supported client's
-`41010` flow and refreshing restores the row.
+rejects older snapshots. The shared live connection also subscribes to the viewer's
+private visibility snapshots. On relays supporting automatic restoration, a newly
+accepted message clears the participants' hidden state and restores the row live;
+duplicate deliveries, reactions and edits do not. Explicit `41010` reopen updates
+use the same visibility path. An in-app manual unhide action remains deferred.
 
 A definitive rejection offers retry without optimistic removal. If publication or
 confirmation has an uncertain outcome, the dialog warns that the command may have

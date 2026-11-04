@@ -269,6 +269,12 @@ export function createChannelLifecycle({
       true,
       strong,
     );
+    acceptVisibility(events);
+    if (snapshot.status !== "ready")
+      emit({ status: "ready", hidden: snapshot.hidden });
+    return snapshot.hidden;
+  }
+  function acceptVisibility(events: readonly RelayEvent[]) {
     const record = lifecycleRecord(
       events,
       DM_VISIBILITY_KIND,
@@ -290,9 +296,6 @@ export function createChannelLifecycle({
       }
     } else if (!visibility)
       emit({ status: "ready", hidden: Object.freeze([]) });
-    if (snapshot.status !== "ready")
-      emit({ status: "ready", hidden: snapshot.hidden });
-    return snapshot.hidden;
   }
   const capability: ChannelLifecycleCapability = Object.freeze({
     available,
@@ -519,6 +522,16 @@ export function createChannelLifecycle({
   });
   return {
     capability,
+    /** Verified transport delivery; private snapshots are still checked for owner and authority. */
+    receive(events: readonly RelayEvent[]) {
+      if (closed || !events.some((event) => event.kind === DM_VISIBILITY_KIND))
+        return;
+      try {
+        acceptVisibility(events);
+      } catch {
+        // A malformed live snapshot must not replace the last valid hidden set.
+      }
+    },
     /** Abort unpublished work on `ids` and id-less visibility reads; without
      * `ids`, all unpublished work. */
     cancel(ids?: readonly string[]) {

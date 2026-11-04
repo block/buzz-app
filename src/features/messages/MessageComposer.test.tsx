@@ -1,3 +1,4 @@
+import { setMessageSendKeyPreference } from "./send-key-preference";
 // @vitest-environment jsdom
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -172,6 +173,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  setMessageSendKeyPreference("enter");
   for (const owner of owners.splice(0)) owner.dispose();
   Reflect.deleteProperty(navigator, "locks");
   vi.unstubAllGlobals();
@@ -4731,6 +4733,84 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.messages.send).toHaveBeenCalledTimes(1);
   expect(h.onSend.mock.calls).toEqual([["channel-id"], ["reply-id"]]);
   expect(h.input()).toHaveValue("");
+});
+
+it.each(["MacIntel", "Win32", "Linux x86_64"])(
+  "uses the chosen send key on %s without sending line breaks or IME confirmation",
+  async (platform) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const h = mount();
+    await h.user.type(h.input(), "first");
+    act(() => setMessageSendKeyPreference("mod-enter"));
+    await h.user.keyboard("{Enter}second{Shift>}{Enter}{/Shift}third");
+    expect(h.input()).toHaveValue("first\nsecond\nthird");
+    const mod = platform === "MacIntel" ? { metaKey: true } : { ctrlKey: true };
+    fireEvent.keyDown(h.input(), { key: "Enter", ...mod, repeat: true });
+    fireEvent.keyDown(h.input(), { key: "Enter", ...mod, isComposing: true });
+    fireEvent.keyDown(h.input(), { key: "Enter", ...mod, keyCode: 229 });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    fireEvent.keyDown(h.input(), { key: "Enter", ...mod });
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "first\nsecond\nthird",
+        [],
+        [],
+      ),
+    );
+    h.retarget({ threadRootId: "root" });
+    await h.user.type(h.input(), "reply{Enter}next");
+    expect(h.messages.reply).not.toHaveBeenCalled();
+    fireEvent.keyDown(h.input(), { key: "Enter", ...mod });
+    await waitFor(() =>
+      expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "root",
+        "reply\nnext",
+        [],
+        [],
+      ),
+    );
+  },
+);
+
+it("continues lists with Enter but sends them with the chosen modified Enter", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+  const h = mount();
+  act(() => setMessageSendKeyPreference("mod-enter"));
+  await h.user.type(h.input(), "- first{Enter}second");
+  expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  fireEvent.keyDown(h.input(), { key: "Enter", metaKey: true });
+  await waitFor(() =>
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "- first\n- second",
+      [],
+      [],
+    ),
+  );
+});
+
+it("switches a mounted composer back to Enter-to-send", async () => {
+  const h = mount();
+  act(() => setMessageSendKeyPreference("mod-enter"));
+  await h.user.type(h.input(), "draft{Enter}next");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  act(() => setMessageSendKeyPreference("enter"));
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "draft\nnext",
+    [],
+    [],
+  );
 });
 
 it.each([

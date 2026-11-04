@@ -1,3 +1,5 @@
+import { useMessageSendKeyPreference } from "./send-key-preference";
+import { isApplePlatform } from "../shortcuts/format";
 import { useChatLinkSharing } from "./useChatLinkSharing";
 import {
   draftGif,
@@ -491,6 +493,8 @@ function Composer({
   trailingTool,
 }: MessageComposerProps) {
   const active = useConversationPresentation();
+  const sendKey = useMessageSendKeyPreference();
+  const apple = isApplePlatform(navigator.platform);
   // Previews replace the list on every message; subscribe to this channel's facts.
   const listed =
     session.channels?.get || soloConversation ? session.channels : undefined;
@@ -3190,15 +3194,19 @@ function Composer({
                   event.key === "Enter" &&
                   !event.shiftKey &&
                   !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
+                  (sendKey.behavior === "enter"
+                    ? !event.ctrlKey && !event.metaKey
+                    : apple
+                      ? event.metaKey && !event.ctrlKey
+                      : event.ctrlKey && !event.metaKey)
                 ) {
                   event.preventDefault();
                   // Holding Enter must not send after an empty list item exits.
                   if (event.repeat) return;
                   if (
-                    activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
+                    sendKey.behavior === "enter" &&
+                    (activeFormats.includes("bullet_list") ||
+                      activeFormats.includes("ordered_list"))
                   ) {
                     event.currentTarget.insertLineBreak();
                     return;

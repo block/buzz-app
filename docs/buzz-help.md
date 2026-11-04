@@ -187,6 +187,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   ⌘1–9 switch communities, and ⇧Esc marks everything read. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires.
+- **Send key**: choose **Settings → Appearance → Conversations → Send messages
+  with**. Enter sends by default. Choose Cmd+Enter (Ctrl+Enter on Windows/Linux)
+  to make Enter add a new line instead. Shift+Enter always adds a new line.
+  This choice is saved on this device and applies to messages and thread replies.
 - **Spelling**: in the Mac app or Safari, the message box underlines
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling

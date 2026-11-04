@@ -561,9 +561,8 @@ export function SearchResults({
     scopedChannelId ? "" : parsed.text,
     list.status === "ready",
   );
-  const channelsPending =
-    !!query.trim() && !scopedChannelId && publicChannels.loading;
-  const slowChannels = useDelayedSearch(channelsPending);
+  // Scoped search passes no text, so the lookup is idle there.
+  const slowChannels = useDelayedSearch(publicChannels.loading);
   const slowPeople = useDelayedSearch(peopleActive && personDirectory.loading);
 
   const profileKey = [

@@ -1363,6 +1363,8 @@ it.each([false, true])(
         populated ? 1 : 0,
       );
       expect(group.querySelector(".search-palette-group-empty")).toBeNull();
+      if (populated) expect(group).not.toHaveAttribute("aria-busy");
+      else expect(group).toHaveAttribute("aria-busy", "true");
       expect(screen.getByRole("status")).toHaveTextContent("Searching people…");
       await act(async () => release());
       expect(screen.queryByRole("status")).toBeNull();

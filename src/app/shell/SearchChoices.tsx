@@ -519,6 +519,10 @@ export function SearchChoices({
                     key={label}
                     role={hasControls ? "rowgroup" : "group"}
                     aria-label={label}
+                    // A status-only group has no rows yet; busy states why.
+                    aria-busy={
+                      (!!headingStatus && !destinations.length) || undefined
+                    }
                     className="search-palette-group"
                   >
                     <div className="navigation-section" data-buzz-ui="">
@@ -527,7 +531,9 @@ export function SearchChoices({
                           className="navigation-section-heading"
                           aria-hidden={hasControls || undefined}
                         >
-                          <h2 className="navigation-section-label text-body text-secondary truncate">
+                          <h2
+                            className={`navigation-section-label text-body text-secondary${headingStatus ? " truncate" : ""}`}
+                          >
                             {label}
                             {headingStatus && (
                               <span aria-hidden="true"> · {headingStatus}</span>

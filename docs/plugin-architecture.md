@@ -366,6 +366,19 @@ active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
+An installed harness plugin gets the Buzz side of each turn from
+`ctx.agents.harness`, as the bundled harnesses do it, and keeps its own
+process, sessions and saved state. `conversation(delivery, scope)` admits a
+mention or wake (undefined means the harness ignores it: not the owner's own
+or attested by them, or with no conversation to go to) and freezes where
+it goes. `systemPrompt` and `turnPrompt` give Buzz's prompts, `turnPrompt`
+showing what came after the session's `seen` and taking plugins' notes, and
+`reply` posts as the agent there. `tools(agent, conversation, { read })`
+answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
+declares `host.mcp`; `read` is the plugin's own file access (`host.files`),
+which uploads of local files use. The kit grants nothing `ctx.agents` and
+`ctx.host` do not already give the plugin.
+
 A plugin, bundled or installed, can add a tab to the settings of agents
 running on this device, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives

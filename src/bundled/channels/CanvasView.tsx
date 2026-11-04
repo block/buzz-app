@@ -1,5 +1,5 @@
 import { memo, type Ref } from "react";
-import { fromMarkdown } from "mdast-util-from-markdown";
+import { fromMarkdown, type Options } from "mdast-util-from-markdown";
 import {
   SafeMarkdown,
   safeMarkdownPlugins,
@@ -26,7 +26,10 @@ type Node = { type: string; children?: Node[] };
 function tableCells(content: string) {
   // Parse as remark-parse does under the renderer's plugins, so every table
   // the renderer will build is counted, before any HAST or React conversion.
-  const data: Record<string, unknown[]> = {};
+  const data: {
+    micromarkExtensions?: NonNullable<Options["extensions"]>;
+    fromMarkdownExtensions?: NonNullable<Options["mdastExtensions"]>;
+  } = {};
   const processor = {
     data: () => data,
   };
@@ -34,8 +37,8 @@ function tableCells(content: string) {
     (plugin as (this: typeof processor) => void).call(processor);
   const pending: Node[] = [
     fromMarkdown(content, {
-      extensions: data.micromarkExtensions as never,
-      mdastExtensions: data.fromMarkdownExtensions as never,
+      extensions: data.micromarkExtensions,
+      mdastExtensions: data.fromMarkdownExtensions,
     }),
   ];
   let cells = 0;

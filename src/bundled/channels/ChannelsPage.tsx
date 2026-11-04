@@ -1156,8 +1156,8 @@ function ChannelWorkspace({
           ...(entry.rootId ? { rootId: entry.rootId } : {}),
         },
       });
-      // A panel opened in place of a Solo opener's panel, such as an agent's
-      // owner from its profile, is that opener's visit too.
+      // A Solo opener's record adopts any visit pushed from one of its visits
+      // in the same chat, such as an agent's owner opened from its profile.
       const opener = soloOpener.current;
       if (target.channelId === entry.channelId && opener?.visits.includes(from))
         opener.visits.push(navigator.snapshot().entry.id);
@@ -1286,9 +1286,9 @@ function ChannelWorkspace({
   }, [mediaReview, showingMediaReview]);
   // The main Solo header remounts for each visit, ending that visit's dialogs
   // and menus, and a side tab's toolbar unmounts while a panel covers its
-  // chat. A panel opened from either outlives its opener, so the same control
-  // in that chat's header takes focus back on the dismissal's return. Only a
-  // visit it opened does: Back can restore the same panel from another opener.
+  // chat. Either way the opener is gone by the dismissal's return, so the same
+  // control in that chat's header takes focus back then. Only the record's
+  // visits do: Back can restore the same panel from another opener.
   const soloOpener = useRef<{
     trigger: HTMLElement;
     tab: string | undefined;
@@ -1399,15 +1399,17 @@ function ChannelWorkspace({
       if (!fallback || !navigator) return;
       const visits = tabState.detailVisits(entry.channelId, entry.target);
       const from = navigator.snapshot().entry.id;
-      // The recorded opener takes focus back only from a visit it opened, and
-      // only while it is still that panel's trigger. The dismissal retires
-      // this panel's visits; once none of its own remain, it is forgotten.
+      // The recorded opener takes focus back only from one of its visits, and
+      // only while it is still that panel's trigger. A main header opener
+      // that reopened the panel already showing is still mounted, but the
+      // return remounts its header. The dismissal retires this panel's
+      // visits; once none of its own remain, it is forgotten.
       const opener = soloOpener.current;
       const control =
         opener?.visits.includes(from) &&
         visits.includes(from) &&
         opener.trigger === panelTrigger.current &&
-        !opener.trigger.isConnected
+        (opener.tab === undefined || !opener.trigger.isConnected)
           ? opener.trigger.dataset.soloOpener
           : undefined;
       if (opener) {
@@ -1641,6 +1643,8 @@ function ChannelWorkspace({
         soloOpenerReturn.current = undefined;
         // Only while focus waits where the close left it: on the chat once the
         // pane emptied, or on the chat's tab that its pane selected instead.
+        // A main header opener that was still mounted took focus itself, and
+        // this commit's header remount removed it.
         // Side-tab toolbars live in the PanelDock, outside the main pane, and
         // the dock shows only its selected tab's toolbar.
         const focused = document.activeElement;
@@ -1649,7 +1653,7 @@ function ChannelWorkspace({
             focused.dataset.tabValue === opener.tab
             ? focused.closest("[data-panel-workspace]")
             : null
-          : focused === historyContainer.current
+          : focused === historyContainer.current || focused === document.body
             ? historyContainer.current?.closest("[data-solo-focus-pane]")
             : null;
         const control =
@@ -1965,7 +1969,8 @@ function ChannelWorkspace({
         if (!fromThread && routedThread && !historyPanel(next))
           select(channelId);
         open(next, fromThread);
-        // The opener owns the visit now showing its panel, pushed or current.
+        // Record the visit now showing the panel. Reopening the panel already
+        // shown pushes none, so the opener takes over the current visit.
         soloOpener.current =
           trigger && header && navigator && historyPanel(next)
             ? { trigger, tab, visits: [navigator.snapshot().entry.id] }

@@ -303,6 +303,35 @@ test.describe("Share access profiles", () => {
     await closeProfile(page).click();
     await expect(tab).toHaveCount(0);
     await expect(actions).toBeFocused();
+    // Choosing the profile already showing pushes no visit, so the opener
+    // stays mounted until the close's return remounts its header.
+    const shareFromActions = async () => {
+      await actions.click();
+      await page
+        .getByRole("menuitem", { name: "Share access", exact: true })
+        .click();
+    };
+    for (const [openDialog, opener] of [
+      [() => share.click(), share],
+      [shareFromActions, actions],
+    ]) {
+      await openDialog();
+      await name.press("Enter");
+      await expect(tab).toBeFocused();
+      const shown = await entry();
+      await openDialog();
+      await name.press("Enter");
+      await expect(dialog).toHaveCount(0);
+      await expect(tab).toBeFocused();
+      expect(await entry()).toBe(shown);
+      const header = await opener.elementHandle();
+      await tab.press("Escape");
+      await expect(tab).toHaveCount(0);
+      await expect
+        .poll(() => header.evaluate((el) => el.isConnected))
+        .toBe(false);
+      await expect(opener).toBeFocused();
+    }
     // An agent's profile opens its owner's in its place. Closing the owner's
     // still returns to Share access.
     const agent = page.getByRole("tab", { name: "Scout", exact: true });
@@ -370,8 +399,6 @@ test.describe("Share access profiles", () => {
       name: "Fixture Reader",
       exact: true,
     });
-    const entry = () =>
-      page.evaluate(() => history.state.buzzNavigationV1.entry.id);
     // Beta: the viewer's profile, opened from a message's author.
     await sidebar.locator(`[data-solo-channel-id="${other}"]`).click();
     await conversation
@@ -402,11 +429,14 @@ test.describe("Share access profiles", () => {
       page.getByRole("region", { name: "Chat Beta", exact: true }),
     ).toBeVisible();
     await expect(profile).toHaveAttribute("aria-selected", "true");
-    const restored = await entry();
+    const header = await share.elementHandle();
     await profile.press("Escape");
     await expect(profile).toHaveCount(0);
-    // The dismissal's return is where a stale opener would take focus.
-    await expect.poll(entry).not.toBe(restored);
+    // The dismissal's return remounts the header, in the commit where a stale
+    // opener would take focus.
+    await expect
+      .poll(() => header.evaluate((el) => el.isConnected))
+      .toBe(false);
     await expect(
       page.getByRole("region", { name: "Chat Beta", exact: true }),
     ).toBeFocused();
@@ -436,10 +466,12 @@ test.describe("Share access profiles", () => {
     });
     const closeRestored = async () => {
       await expect(sam).toHaveAttribute("aria-selected", "true");
-      const restored = await entry();
+      const header = await share.elementHandle();
       await sam.press("Escape");
       await expect(sam).toHaveCount(0);
-      await expect.poll(entry).not.toBe(restored);
+      await expect
+        .poll(() => header.evaluate((el) => el.isConnected))
+        .toBe(false);
       await expect(chat).toBeFocused();
     };
     await author.click();

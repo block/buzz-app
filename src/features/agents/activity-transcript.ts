@@ -1,6 +1,7 @@
 /** Owner-only display projection of observer telemetry into turns and items.
  * Raw session retention is unchanged; this reads allowlisted ACP fields only. */
 import { readEventBody } from "../agent-harness/turn-records";
+import { terminalOutcome } from "./observer";
 
 type Source = Readonly<{
   id: string;
@@ -68,6 +69,7 @@ export type TranscriptTurn = {
   config: string[];
   startedAt: number;
   endedAt?: number;
+  outcome?: ReturnType<typeof terminalOutcome>;
   error?: string;
   stopReason?: string;
   context?: { used: number; size: number };
@@ -421,8 +423,12 @@ function buildTranscript(
       turn.newSession = payload.isNewSession === true;
     } else if (kind === "session_config_captured") {
       turn.config = configLabels(payload.configOptions) ?? turn.config;
-    } else if (kind === "turn_completed") turn.endedAt ??= at;
-    else if (kind === "turn_error" || kind === "agent_panic") {
+    } else if (kind === "turn_completed") {
+      if (turn.endedAt === undefined) {
+        turn.endedAt = at;
+        turn.outcome = terminalOutcome(kind, payload.outcome);
+      }
+    } else if (kind === "turn_error" || kind === "agent_panic") {
       turn.endedAt ??= at;
       turn.error =
         str(payload.error).slice(0, 2000) || str(payload.outcome) || kind;

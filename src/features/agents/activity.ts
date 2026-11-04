@@ -5,6 +5,7 @@ import type { LiveSnapshot } from "../relay/live";
 import {
   ACTIVITY_HISTORY_AGE_MS,
   observerFrame,
+  terminalOutcome,
   type ObserverFrame,
 } from "./observer";
 
@@ -25,6 +26,9 @@ export type ActivityTurn = Readonly<{
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
+  /** Retained independently of the bounded raw activity buffer. */
+  outcome?: ReturnType<typeof terminalOutcome>;
+  triggeringEventIds?: readonly string[];
   /** Roots established from retained signed triggering messages, not typing. */
   requests?: readonly Readonly<{ messageId: string; threadRootId: string }>[];
 }>;
@@ -177,6 +181,10 @@ export function createAgentActivity(
           turnId: turn.turnId,
           channelId: turn.channelId,
           timestamp: turn.timestamp,
+          ...(turn.outcome ? { outcome: turn.outcome } : {}),
+          ...(turn.triggeringEventIds
+            ? { triggeringEventIds: turn.triggeringEventIds }
+            : {}),
           ...(turn.triggeringEventIds ? { requests: turn.requests ?? [] } : {}),
           state: turn.ended
             ? "ended"
@@ -302,6 +310,7 @@ export function createAgentActivity(
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
+      outcome: terminalOutcome(item.kind, object(item.payload)?.outcome),
       epoch,
     };
     associate(turn);

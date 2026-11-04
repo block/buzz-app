@@ -210,6 +210,44 @@ it("does not show sibling thread work and reports lost freshness without pretend
     f.dispose();
   }
 });
+it.each([
+  ["failed", "1 failed"],
+  ["terminated", "1 failed"],
+  ["cancelled", "Stopped"],
+])(
+  "shows remote %s after stale activity and raw-buffer eviction",
+  (outcome, label) => {
+    const f = fixture();
+    const view = render(<ActivityAccessory {...f.props} />);
+    try {
+      f.send(A, "remote", 1, "turn_started", { triggeringEventIds: [root] });
+      act(() => vi.advanceTimersByTime(31000));
+      expect(screen.getByText("Status unknown")).toBeInTheDocument();
+      f.send(A, "remote", 2, "turn_completed", { outcome });
+      expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
+      for (let seq = 1; seq <= 201; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      expect(screen.queryByText("Status unknown")).not.toBeInTheDocument();
+      expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
+      if (outcome !== "cancelled") {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: /View agent activity: Blossom, failed/,
+          }),
+        );
+        expect(
+          screen.getByRole("button", { name: "View activity for Blossom" }),
+        ).toHaveTextContent("failed");
+        expect(
+          screen.queryByRole("button", { name: /Dismiss error/ }),
+        ).not.toBeInTheDocument();
+      }
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
 it("keeps namesakes as separate exact identities", () => {
   const f = fixture();
   f.profiles.set(B, { name: "Blossom", isAgent: true as const });

@@ -1257,6 +1257,13 @@ beyond 30 seconds or disconnect makes work unknown, not stopped. Terminal state
 retains a monotonic evidence timestamp through clock rollback and bounded eviction.
 There is no agent-global sequence gate: producer sequences reset, skip and interleave.
 
+Remote completion outcomes distinguish success, failure (`failed` or
+`terminated`), and stopped execution (`cancelled`). Stopped execution does not
+establish who cancelled it. The bounded turn states retain exact trigger IDs and
+outcomes independently of raw tool records, so raw-buffer trimming cannot turn
+a received terminal result into unknown. Missed terminal frames still require
+server status readback; silence and reconnect alone cannot establish an outcome.
+
 ### Activity updates in the conversation
 
 Conversation visibility is separate from execution status. Activity updates use

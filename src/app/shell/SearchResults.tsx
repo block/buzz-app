@@ -1134,7 +1134,6 @@ export function SearchResults({
         (channel) =>
           channel.channelType === "dm" &&
           !channel.archived &&
-          !channel.hidden &&
           channel.participants?.length === 1 &&
           channel.participants[0] === pubkey,
       );

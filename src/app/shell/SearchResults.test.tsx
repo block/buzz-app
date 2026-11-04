@@ -4949,6 +4949,7 @@ it("matches an in: operator against the rendered DM participant label", async ()
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const discovery = [
     metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -5428,6 +5429,7 @@ it("opens an existing DM from a person row and reports a failed start", async ()
     bob = keypair();
   const discovery = [
     metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -5479,6 +5481,72 @@ it("opens an existing DM from a person row and reports a failed start", async ()
   } finally {
     cleanup();
     owner.dispose();
+  }
+});
+
+it("opens a sidebar-hidden DM from a person row when this connection cannot start DMs", async () => {
+  // Relay-signed DM metadata carries NIP-29 `hidden`; the row must still find
+  // the DM, or it would ask a connection without DMs to start one.
+  const scope = "search-hidden-dm-unavailable";
+  writeView(scope, "hidden-dms", [{ id: "dm" }]);
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["hidden", ""],
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { name: "Alice Chen" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const open = vi.fn();
+  const session = {
+    ...owner.session,
+    directMessages: {
+      ...owner.session.directMessages,
+      available: false,
+      open,
+    },
+  } as typeof owner.session;
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="alice"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+        sidebarScope={scope}
+      />,
+    );
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    const row = await people.findByRole("option", { name: /Alice Chen/ });
+    expect(row.querySelector(".text-subtle")?.textContent).toBe(
+      "Direct message",
+    );
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm"),
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+    clearViewScope(scope);
   }
 });
 
@@ -5690,6 +5758,7 @@ it.each([true, false])(
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
     const dm = (id: string, member: string) => [
       metadata(relay, id, "opaque", 1700000000, [
+        ["hidden", ""],
         ["t", "dm"],
         ["private", ""],
       ]),
@@ -5878,6 +5947,7 @@ it.each([
   const lower = exactName.toLowerCase();
   const dm = (id: string, member: string) => [
     metadata(relay, id, "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),
@@ -6505,6 +6575,7 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
   ];
   const discovery = dms.flatMap(({ id, key, name }) => [
     metadata(relay, id, "opaque", 1700000000, [
+      ["hidden", ""],
       ["t", "dm"],
       ["private", ""],
     ]),

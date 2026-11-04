@@ -501,14 +501,15 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
 });
 
 it.each([
-  ["Mac WebKit", "Apple Computer, Inc.", 0, true],
-  ["desktop-mode iPad", "Apple Computer, Inc.", 5, false],
-  ["Chrome on Mac", "Google Inc.", 0, false],
+  ["Mac WebKit", "MacIntel", "Apple Computer, Inc.", 0, true],
+  ["desktop-mode iPad", "MacIntel", "Apple Computer, Inc.", 5, false],
+  ["Chrome on Mac", "MacIntel", "Google Inc.", 0, false],
+  ["Linux WebKitGTK", "Linux x86_64", "Apple Computer, Inc.", 0, false],
 ] as const)(
   "detects whether %s can offer message spelling correction",
-  (_browser, vendor, maxTouchPoints, shown) => {
+  (_browser, platform, vendor, maxTouchPoints, shown) => {
     vi.stubGlobal("navigator", {
-      platform: "MacIntel",
+      platform,
       vendor,
       maxTouchPoints,
     });

@@ -1386,7 +1386,7 @@ function MessageRowContent({
               : undefined
           }
           canOpen={canOpenLink ?? (() => false)}
-          open={onOpenLink}
+          open={openLink}
         />
       )}
     </div>

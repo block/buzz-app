@@ -1634,12 +1634,14 @@ it.each(
   },
 );
 
-it.each([
-  { threadRootId: undefined, rootId: "root" },
-  { threadRootId: "parent", rootId: "parent" },
-])(
+it.each(
+  (["message", "response"] as const).flatMap((placement) => [
+    { placement, threadRootId: undefined, rootId: "root" },
+    { placement, threadRootId: "parent", rootId: "parent" },
+  ]),
+)(
   "opens message accessory targets in the row's own thread (%o)",
-  ({ threadRootId, rootId }) => {
+  ({ placement, threadRootId, rootId }) => {
     const subscribe = () => () => {};
     const channels = { channels: [], status: "ready" };
     const noTyping: never[] = [];
@@ -1664,7 +1666,7 @@ it.each([
         pluginId: "test",
         revision: "1",
         title: "Agent activity",
-        placement: "message" as const,
+        placement,
         component: ({
           open,
         }: import("../conversation/contracts").ComposerAccessoryProps) => (

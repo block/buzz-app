@@ -3,6 +3,7 @@ import type { MessageLinkOrigin } from "./MessageRow";
 import {
   useCallback,
   useContext,
+  useRef,
   useSyncExternalStore,
   type RefObject,
 } from "react";
@@ -23,6 +24,8 @@ import {
   type ActivityPresentation,
 } from "./activity-presentation";
 
+const noSubscribe = () => () => {};
+
 /** The visible history owns navigation and controls for its exact request. */
 export function ActivityGroupActions({
   session,
@@ -31,8 +34,11 @@ export function ActivityGroupActions({
   open,
   canOpen,
   returnFocus,
+  active,
 }: {
   returnFocus: RefObject<HTMLButtonElement | null>;
+  /** False while the history is collapsed; a pending stop keeps tracking. */
+  active: boolean;
   session: RelaySession;
   group: ActivityPresentation;
   profiles: ReadonlyMap<string, Profile>;
@@ -60,9 +66,15 @@ export function ActivityGroupActions({
     },
     [returnFocus],
   );
-  const snapshot = useActivitySnapshot(session.agentActivity);
+  // Collapsed controls are hidden; follow live work only while shown or
+  // while a stop awaits its evidence, so its pending state still resolves.
+  const stopping = useRef(false);
+  const tracking = active || stopping.current;
+  const snapshot = useActivitySnapshot(
+    tracking ? session.agentActivity : undefined,
+  );
   const choices = useSyncExternalStore(
-    session.agentChoices.subscribe,
+    tracking ? session.agentChoices.subscribe : noSubscribe,
     session.agentChoices.snapshot,
   );
   const resolveName = useChannelIdentityNames(session, group.latest.channelId);
@@ -74,7 +86,7 @@ export function ActivityGroupActions({
         agent.slice(0, 10),
     );
   const agents = useContext(AgentsContext);
-  useAgentsSnapshot(agents);
+  useAgentsSnapshot(tracking ? agents : undefined);
   const { requestId, latest, participants } = group;
   const work =
     snapshot && requestId
@@ -95,6 +107,7 @@ export function ActivityGroupActions({
     return control ? [{ control, agent: entry.agent }] : [];
   });
   const { pending, stop } = useWorkStops(controls.map((row) => row.control));
+  stopping.current = pending.size > 0;
   return (
     <div className="flex flex-wrap items-center gap-2">
       {participants.map((agent) => {

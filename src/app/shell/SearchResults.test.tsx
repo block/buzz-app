@@ -33,6 +33,7 @@ import {
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
 import type { AppServices } from "../services";
+import type { SearchGroup } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
 import { useSearchSettings } from "./SearchSettings";
 import {
@@ -5099,11 +5100,25 @@ it.each([true, false])(
   },
 );
 
-it("leads a message hit's conversation name with its sidebar icon", async () => {
+it("leads a message hit's conversation name with its type icon and words", async () => {
   const relay = keypair(),
     viewer = keypair(),
-    peer = keypair();
-  const ids = ["crew", "plans", "board", "notes", "dm"];
+    peer = keypair(),
+    other = keypair();
+  // Each hit's channel, its icon, and the words read in place of the icon.
+  const rows = [
+    ["crew", "hash", "Public channel", "crew"],
+    ["plans", "lock", "Private channel", "plans"],
+    ["board", "hash", "Public channel", "board"],
+    ["vault", "lock", "Private channel", "vault"],
+    ["notes", "message-circle", "Chat", "Notes"],
+    ["dm", "message-circle", "Direct message", "Pinky"],
+    ["group", "message-circle", "Direct message", "Brain, Pinky"],
+  ] as const;
+  const dm = [
+    ["t", "dm"],
+    ["private", ""],
+  ];
   const discovery = [
     metadata(relay, "crew", "crew", 1700000000, [["t", "stream"]]),
     metadata(relay, "plans", "plans", 1700000000, [
@@ -5111,23 +5126,30 @@ it("leads a message hit's conversation name with its sidebar icon", async () => 
       ["private"],
     ]),
     metadata(relay, "board", "board", 1700000000, [["t", "forum"]]),
+    metadata(relay, "vault", "vault", 1700000000, [
+      ["t", "forum"],
+      ["private"],
+    ]),
     metadata(relay, "notes", "Notes", 1700000000, [
       ["t", "stream"],
       ["private"],
       ["t", "buzz.solo"],
     ]),
-    metadata(relay, "dm", "opaque", 1700000000, [
-      ["t", "dm"],
-      ["private", ""],
-    ]),
-    ...ids.map((id) =>
+    metadata(relay, "dm", "opaque", 1700000000, dm),
+    metadata(relay, "group", "opaque", 1700000000, dm),
+    ...rows.map(([id]) =>
       roster(
         relay,
         id,
-        id === "dm" ? [viewer.pubkey, peer.pubkey] : [viewer.pubkey],
+        id === "dm"
+          ? [viewer.pubkey, peer.pubkey]
+          : id === "group"
+            ? [viewer.pubkey, peer.pubkey, other.pubkey]
+            : [viewer.pubkey],
       ),
     ),
     profile(peer, { name: "Pinky" }),
+    profile(other, { name: "Brain" }),
   ];
   const owner = createRelaySession({
     ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
@@ -5135,39 +5157,62 @@ it("leads a message hit's conversation name with its sidebar icon", async () => 
       if (filters.some((filter) => filter.search !== undefined))
         return filters.some((filter) => filter.kinds?.includes(0))
           ? []
-          : ids.map((id) => message(viewer, id, `match in ${id}`, 1700000001));
+          : rows.map(([id]) =>
+              message(viewer, id, `match in ${id}`, 1700000001),
+            );
       return discovery.filter((event) =>
         filters.some((filter) => matchFilter(filter as Filter, event)),
       );
     },
   });
-  // The detail's icon class, then the conversation name it leads.
-  const subtitle = (id: string) => {
-    const icon = screen
-      .getByRole("option", { name: new RegExp(`match in ${id}`) })
-      .querySelector(".search-palette-detail-icon");
-    return `${icon?.getAttribute("class")?.match(/tabler-icon-[\w-]+/)?.[0]} ${icon?.parentElement?.textContent?.split(" · ")[0]}`;
-  };
+  const palette = (inlineSettings?: SearchGroup[]) => (
+    <SearchResults
+      session={owner.session}
+      query="match"
+      onQueryChange={() => {}}
+      input={createRef()}
+      pages={[]}
+      openConversation={() => {}}
+      inlineSettings={inlineSettings}
+    />
+  );
   try {
-    render(
-      <SearchResults
-        session={owner.session}
-        query="match"
-        onQueryChange={() => {}}
-        input={createRef()}
-        pages={[]}
-        openConversation={() => {}}
-      />,
-    );
-    await waitFor(() =>
-      expect(ids.map(subtitle)).toEqual([
-        "tabler-icon-hash crew",
-        "tabler-icon-lock plans",
-        "tabler-icon-hash board",
-        "tabler-icon-message-circle Notes",
-        "tabler-icon-message-circle Pinky",
+    const { rerender } = render(palette());
+    // An option is named from its content: the preview, then the detail led
+    // by its icon's hidden words (jsdom joins the two block lines unspaced).
+    await waitFor(() => {
+      for (const [id, icon, kind, name] of rows) {
+        const option = screen.getByRole("option", {
+          name: new RegExp(`^match in ${id}\\s*${kind}, ${name} · `),
+        });
+        expect(option.querySelector(".search-palette-detail-icon")).toHaveClass(
+          `tabler-icon-${icon}`,
+        );
+        expect(within(option).getByText(`${kind},`)).toHaveClass("sr-only");
+      }
+    });
+    // A grid row's own label reads the same words before the detail.
+    rerender(
+      palette([
+        {
+          label: "Settings",
+          destinations: [
+            {
+              key: "sound-setting",
+              label: "Notifications",
+              detail: "Sound",
+              icon: ChatCircleIcon,
+              content: <button type="button">Sound</button>,
+              run: vi.fn(),
+            },
+          ],
+        },
       ]),
     );
+    for (const [id, , kind, name] of rows)
+      screen.getByRole("row", {
+        name: new RegExp(`^match in ${id} — ${kind}, ${name} · `),
+      });
   } finally {
     cleanup();
     owner.dispose();

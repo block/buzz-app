@@ -24,8 +24,12 @@ export type SearchDestination = {
   detail?: string;
   /** Quiet metadata at the row's end, such as a count. */
   trailing?: ReactNode;
-  /** Leads `detail`, as a channel's type icon leads its name. */
+  /** Leads `detail`, as a channel's type icon leads its name in the channel
+   * header and page tabs. */
   detailIcon?: typeof ChatCircleIcon | undefined;
+  /** What `detailIcon` shows, read before `detail` but neither shown nor
+   * matched. */
+  detailIconLabel?: string | undefined;
   /** Code points of `label` that match the typed text. */
   matches?: readonly number[];
   icon: typeof ChatCircleIcon;
@@ -580,6 +584,7 @@ export function SearchChoices({
                             label,
                             detail,
                             detailIcon: DetailIcon,
+                            detailIconLabel,
                             trailing,
                             matches,
                             icon,
@@ -654,7 +659,12 @@ export function SearchChoices({
                                 role={hasControls ? "row" : "presentation"}
                                 aria-label={
                                   hasControls
-                                    ? [label, detail]
+                                    ? [
+                                        label,
+                                        detail && detailIconLabel
+                                          ? `${detailIconLabel}, ${detail}`
+                                          : detail,
+                                      ]
                                         .filter(Boolean)
                                         .join(" — ")
                                     : undefined
@@ -744,6 +754,14 @@ export function SearchChoices({
                                         </span>
                                         {detail && (
                                           <span className="block truncate text-body-sm text-subtle">
+                                            {/* Read in place of the icon. Accessible names trim the span's
+                                                edges, so the space sits outside it; shown, it collapses at
+                                                the line's start. */}
+                                            {detailIconLabel && (
+                                              <>
+                                                <span className="sr-only">{`${detailIconLabel},`}</span>{" "}
+                                              </>
+                                            )}
                                             {DetailIcon && (
                                               <DetailIcon className="search-palette-detail-icon" />
                                             )}

@@ -84,11 +84,11 @@
     transition: none;
   }
 
-  /* Inline with the detail's text, as a channel reference's icon sits in prose. */
+  /* Inline with the detail's text, spaced as a message author's agent icon. */
   .search-palette-detail-icon {
     display: inline-block;
     vertical-align: -0.125em;
-    margin-inline-end: var(--space-half);
+    margin-inline-end: var(--space-1);
   }
 
   .search-palette-group-empty,

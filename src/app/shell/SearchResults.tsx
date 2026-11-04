@@ -55,7 +55,10 @@ import {
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
 import { useMemberCounts } from "../../features/channels/useChannelDirectory";
-import { channelIcon } from "../../features/channels/channel-icon";
+import {
+  channelIcon,
+  channelIconLabel,
+} from "../../features/channels/channel-icon";
 import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import {
   MESSAGE_SEARCH_MIN_CHARS,
@@ -1288,6 +1291,7 @@ export function SearchResults({
       label: message.preview,
       detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
       detailIcon: channel && channelIcon(channel),
+      detailIconLabel: channel && channelIconLabel(channel),
       icon: ChatCircleIcon,
       run: () => {
         cancelPersonOpen();

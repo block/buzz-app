@@ -28,8 +28,9 @@ type Item = {
   attentionRequest?: number | undefined;
   /** Stable for one opening, including retained exit content. */
   instance?: object;
-  /** Omit for a permanent tab such as a channel's own conversation. */
-  close?: (() => void) | undefined;
+  /** Omit for a permanent tab such as a channel's own conversation. Returns
+   * false when it keeps the tab, as when asking about unsaved edits first. */
+  close?: (() => unknown) | undefined;
   /** Keyboard placement: one position left or right, across panes at an edge. */
   move?: ((delta: -1 | 1) => void) | undefined;
   /** A blank name restores the tab's own title. */
@@ -259,7 +260,7 @@ export function PanelWorkspace({
       // Commit before another native menu request can reuse this selection.
       flushSync(() => {
         closingTab.current = active.id;
-        active.close?.();
+        if (active.close?.() === false) closingTab.current = undefined;
       });
       // Fallback closes another pane, not the editor the person is still using.
       if (keptFocus instanceof HTMLElement && keptFocus.isConnected)
@@ -422,7 +423,7 @@ export function PanelWorkspace({
                       ?.parentElement?.contains(document.activeElement)
                       ? tab.id
                       : undefined;
-                    tab.close?.();
+                    if (tab.close?.() === false) closingTab.current = undefined;
                   }
                 : undefined,
             }))}

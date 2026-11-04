@@ -52,6 +52,11 @@ import {
   sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
+import {
+  AgentSaveState,
+  DiscardChanges,
+  useAgentSaveReports,
+} from "../../features/agents/AgentSaveButton";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import type {
@@ -278,8 +283,30 @@ export function AgentsPage({
   const find = (pubkey: string | undefined) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
   const selected = find(selectedKey);
-  const browse = (pubkey?: string) => setSelectedKey(pubkey);
+  // The open panel's unsaved edits, asked about before it is replaced or closed.
+  const [unsaved, reportUnsaved] = useAgentSaveReports();
+  const [leaving, setLeaving] = useState<{
+    pubkey: string | undefined;
+    then: (() => void) | undefined;
+  }>();
+  // The prompt is stale once nothing is left to discard behind it.
+  if (leaving && !unsaved.dirty) setLeaving(undefined);
+  // Choosing another agent or none asks first, as switching sections does,
+  // and returns false while the current one stays.
+  const browse = (pubkey?: string, then?: () => void) => {
+    const leaves = pubkey !== selectedKey;
+    if (leaves && (unsaved.saving || unsaved.dirty)) {
+      if (!unsaved.saving) setLeaving({ pubkey, then });
+      return false;
+    }
+    setSelectedKey(pubkey);
+    then?.();
+    return true;
+  };
   const build = (pubkey: string) => browse(pubkey);
+  // Removing an agent closes only its own panel, without asking.
+  const removed = (pubkey: string) =>
+    setSelectedKey((key) => (key === pubkey ? undefined : key));
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   // Teams are shared by every community; this one shows each with a member
@@ -324,10 +351,7 @@ export function AgentsPage({
     (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
-  const openImport = () => {
-    browse();
-    setFlow("import");
-  };
+  const openImport = () => browse(undefined, () => setFlow("import"));
   const openMarketplace = () => {
     browse();
     changeTab("marketplace");
@@ -463,6 +487,7 @@ export function AgentsPage({
       typeOf,
       onSelect: browse,
       onBuild: build,
+      onRemoved: removed,
       newAgent: !toolbarAction && starts,
       // A published agent's toast opens it where everyone else finds it.
       onViewListing: (agent: SharedAgent) => {
@@ -544,7 +569,7 @@ export function AgentsPage({
             ? connection.session.agentMemories
             : undefined
         }
-        onRemoved={() => browse()}
+        onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,
@@ -694,7 +719,11 @@ export function AgentsPage({
                   {
                     id: selected.pubkey,
                     label: selected.name,
-                    content: panel,
+                    content: (
+                      <AgentSaveState value={reportUnsaved}>
+                        {panel}
+                      </AgentSaveState>
+                    ),
                     close: () => browse(),
                   },
                 ]}
@@ -730,6 +759,17 @@ export function AgentsPage({
           />
         </Dialog>
       )}
+      {leaving && selected && (
+        <DiscardChanges
+          description={`Your unsaved changes to ${selected.name} will be lost.`}
+          onKeep={() => setLeaving(undefined)}
+          onDiscard={() => {
+            setLeaving(undefined);
+            setSelectedKey(leaving.pubkey);
+            leaving.then?.();
+          }}
+        />
+      )}
       {creating && (
         <AgentCreateDialog
           agents={agents}
@@ -764,6 +804,7 @@ type InventoryProps = {
   typeOf(agent: Agent): RegisteredAgentType | undefined;
   onSelect(pubkey?: string): void;
   onBuild(pubkey: string): void;
+  onRemoved(pubkey: string): void;
   newAgent: ReactNode;
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
@@ -868,6 +909,7 @@ function Inventory({
   typeOf,
   onSelect,
   onBuild,
+  onRemoved,
   newAgent,
   bestie,
   defaultChoices,
@@ -954,7 +996,7 @@ function Inventory({
                   type={type}
                   onViewListing={onViewListing}
                   onBuild={() => onBuild(agent.pubkey)}
-                  onRemoved={() => onSelect()}
+                  onRemoved={() => onRemoved(agent.pubkey)}
                   role="gridcell"
                   aria-label={isBestie ? `${agent.name}, Bestie` : agent.name}
                   data-selected={active}

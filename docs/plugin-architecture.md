@@ -2058,14 +2058,15 @@ behavior Channels rows have, without showing a thread or visiting the channel:
 mounting it never marks anything read, follows a thread or holds the channel's
 roster. `children(interactions)` receives the host's `onOpenLink`, `canOpenLink`
 and `onOpenMediaReview` for those rows. Inside it, rows offer Edit and Delete
-under the usual permissions; Edit fills the `ui.Composer` in the same scope
-(pass the rows it may edit as `editMessages`), and a row has no Edit without one.
-Delete asks for confirmation, and a failed edit or deletion shows a notice to
-retry or discard it before `children`. Media review and registered panels open
-over the page, one at a time per scope, and stop opening once its session is
-no longer the ready one. Use one scope per channel or card, so each card's
-edits and recovery stay its own; `threadId` keeps panels opened from a card in
-that thread. Writes, mark read/unread and follow remain explicit menu actions.
+under the usual permissions; Edit fills the `ui.Composer` inside the same
+`ui.Conversation` (pass the rows it may edit as `editMessages`), and a row has
+no Edit without one. Delete asks for confirmation, and a failed edit or deletion
+shows a notice to retry or discard it before `children`. Media review and
+registered panels open over the page and stop opening once its session is no
+longer the ready one. Render one `ui.Conversation` per channel or card, so each
+card's edits and recovery stay its own; `threadId` keeps panels opened from a
+card in that thread. Writes, mark read/unread and follow remain explicit menu
+actions.
 
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.

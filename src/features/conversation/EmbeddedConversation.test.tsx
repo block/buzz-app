@@ -131,7 +131,7 @@ async function fixture() {
     expect(live.channels.window("alpha").rows).toHaveLength(1);
     expect(live.channels.window("beta").rows).toHaveLength(1);
   });
-  // The session is frozen, so read-state entry points are observed through delegates.
+  // The session is frozen, so visit entry points are observed through delegates.
   const reads = {
     enterChannel: vi.fn(live.unread.enterChannel),
     leaveChannel: vi.fn(live.unread.leaveChannel),
@@ -139,9 +139,14 @@ async function fixture() {
     markMessageRead: vi.fn(live.unread.markMessageRead),
     markChannelRead: vi.fn(live.unread.markChannelRead),
   };
+  // An open channel reserves profile room for its roster; a no-visit scope holds none.
+  const reserve = vi.fn(
+    (members: number) => live.profiles.reserve?.(members) ?? (() => {}),
+  );
   const session: RelaySession = {
     ...live,
     unread: { ...live.unread, ...reads },
+    profiles: { ...live.profiles, reserve },
   };
   const root = new Context();
   new PluginRuntime(root, async () => ({ apply() {} }));
@@ -251,7 +256,7 @@ async function fixture() {
     session,
     service,
     posts,
-    reads,
+    reads: { ...reads, reserve },
     publications,
     Overview,
     loseAccess() {

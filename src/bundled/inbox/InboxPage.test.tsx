@@ -3797,7 +3797,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
   expect(h.published[0]?.tags.filter(([name]) => name === "p")).toEqual([]);
 });
 
-it("a Solo chat row includes ordinary agent responses under DMs, keeping threads separate", async () => {
+it("a Solo chat row includes ordinary agent responses under All, not DMs, keeping threads separate", async () => {
   const h = fixture({ soloChannel: true, memberAgents: 1 });
   const progress = message(h.agent, "room", "Agent progress", 30);
   h.addEvent(progress);
@@ -3807,9 +3807,9 @@ it("a Solo chat row includes ordinary agent responses under DMs, keeping threads
   await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
   expect(rows()[1]).toHaveTextContent("A thread update");
   expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+  // The sidebar keeps Solo chats apart from direct messages; so does Inbox.
   await chooseFilter("DMs");
-  expect(rows()).toHaveLength(1);
-  expect(rows()[0]).toHaveTextContent("Agent progress");
+  expect(screen.queryByText("Agent progress")).not.toBeInTheDocument();
 });
 
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {

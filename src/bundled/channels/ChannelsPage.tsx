@@ -1279,12 +1279,20 @@ function ChannelWorkspace({
     if (mediaReview && !showingMediaReview) setMediaReview(undefined);
   }, [mediaReview, showingMediaReview]);
   // The main Solo header remounts for each visit, ending that visit's dialogs
-  // and menus, so a panel opened from it outlives its opener. The same control
-  // in the header of the dismissal's return takes focus back instead.
+  // and menus, and a side tab's toolbar unmounts while a panel covers its
+  // chat. A panel opened from either outlives its opener, so the same control
+  // in that chat's header takes focus back on the dismissal's return.
+  const soloOpener = useRef<{
+    trigger: HTMLElement;
+    channelId: string;
+    target: string;
+    tab: string | undefined;
+  }>(undefined);
   const soloOpenerReturn = useRef<{
     from: string;
     target: string;
     control: string;
+    tab: string | undefined;
   }>(undefined);
   // Member lists open profiles and DMs through this page. Side-tab Solo
   // toolbars render inside useConversationTabs, before canOpenLink and
@@ -1379,18 +1387,26 @@ function ChannelWorkspace({
       );
     },
     onClosePanel: (entry, remaining) => {
+      // Any close consumes the recorded opener. Only the panel it opened, while
+      // it is still that panel's trigger, returns focus to it.
+      const opener = soloOpener.current;
+      soloOpener.current = undefined;
       if (!historyPanel(entry)) return;
       const pane = entryPane(tabState.mainEntries, entry);
       const fallback = closeTarget(pane, remaining);
       if (!fallback || !navigator) return;
       const visits = tabState.detailVisits(entry.channelId, entry.target);
       const from = navigator.snapshot().entry.id;
-      const control = panelTrigger.current?.isConnected
-        ? undefined
-        : panelTrigger.current?.dataset.soloOpener;
+      const control =
+        opener?.channelId === entry.channelId &&
+        opener.target === entry.target &&
+        opener.trigger === panelTrigger.current &&
+        !opener.trigger.isConnected
+          ? opener.trigger.dataset.soloOpener
+          : undefined;
       soloOpenerReturn.current =
         control && visits.includes(from)
-          ? { from, target: targetKey(fallback), control }
+          ? { from, target: targetKey(fallback), control, tab: opener?.tab }
           : undefined;
       dismissContent(visits, fallback, pane, remaining);
     },
@@ -1614,18 +1630,30 @@ function ChannelWorkspace({
       const opener = soloOpenerReturn.current;
       if (opener && navigation.entryId !== opener.from) {
         soloOpenerReturn.current = undefined;
-        // Only while focus waits on the chat, where the emptied pane left it.
-        // The main header precedes any side tab's toolbar.
-        if (
-          targetKey(navigation.target) === opener.target &&
-          document.activeElement === historyContainer.current
-        )
-          historyContainer.current
-            ?.closest("[data-solo-focus-pane]")
-            ?.querySelector<HTMLElement>(
-              `[data-solo-opener="${opener.control}"]`,
-            )
-            ?.focus({ preventScroll: true });
+        // Only while focus waits where the close left it: on the chat once the
+        // pane emptied, or on the chat's tab that its pane selected instead.
+        // Side-tab toolbars live in the PanelDock, outside the main pane, and
+        // the dock shows only its selected tab's toolbar.
+        const focused = document.activeElement;
+        const pane = opener.tab
+          ? focused instanceof HTMLElement &&
+            focused.dataset.tabValue === opener.tab
+            ? focused.closest("[data-panel-workspace]")
+            : null
+          : focused === historyContainer.current
+            ? historyContainer.current?.closest("[data-solo-focus-pane]")
+            : null;
+        const control =
+          targetKey(navigation.target) === opener.target
+            ? pane?.querySelector<HTMLElement>(
+                `[data-solo-opener="${opener.control}"]`,
+              )
+            : undefined;
+        if (control) {
+          control.focus({ preventScroll: true });
+          // The opener, rather than its chat's tab, takes focus back.
+          focusKept.current = undefined;
+        }
       }
       if (navigation.focus === "preserve") setPreservedVisit(navigation);
     }
@@ -1911,11 +1939,27 @@ function ChannelWorkspace({
       const next = channelId && panelOpening(panels, channelId, url, rootId);
       if (next) {
         setSettings(undefined);
-        panelTrigger.current =
+        const trigger =
           returnFocus ??
           (document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null);
+        panelTrigger.current = trigger;
+        // Record a Solo header's opener while it is connected to its header.
+        const header = trigger?.dataset.soloOpener
+          ? trigger.closest("[data-solo-focus-pane], [data-panel-workspace]")
+          : null;
+        soloOpener.current =
+          trigger && header
+            ? {
+                trigger,
+                channelId: next.channelId,
+                target: next.target,
+                tab: header.hasAttribute("data-panel-workspace")
+                  ? tabState.getSelected()
+                  : undefined,
+              }
+            : undefined;
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread && !historyPanel(next))
           select(channelId);
@@ -1938,6 +1982,7 @@ function ChannelWorkspace({
       // recreate openLink and re-render each memoized message row.
       tabState.setTabs,
       tabState.select,
+      tabState.getSelected,
       tabState.leaveVisit,
       panelTrigger,
     ],

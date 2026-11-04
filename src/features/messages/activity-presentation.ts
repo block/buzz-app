@@ -1,4 +1,4 @@
-import { useMemo, useRef, useSyncExternalStore } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { requestWork } from "../agents/request-work";
@@ -265,4 +265,53 @@ export function activityDisplayRows<T extends ChannelMessage>(
   return hiddenIds.size
     ? rows.filter((row) => row.id === revealedId || !hiddenIds.has(row.id))
     : rows;
+}
+
+/** Each activity projection allocates fresh row values. Reuse the previous ones
+ * while they are equal, so memoized rows skip unrelated activity updates. */
+export function useStableRowActivity() {
+  const [stable] = useState(() => {
+    const activities = new Map<string, ActivityRowPresentation>();
+    const agents = new Map<string, readonly string[]>();
+    return {
+      activity(
+        id: string,
+        next: ActivityRowPresentation | undefined,
+        container = next?.container,
+      ) {
+        if (!next || !container) {
+          activities.delete(id);
+          return undefined;
+        }
+        const prior = activities.get(id);
+        if (
+          prior &&
+          prior.requestId === next.requestId &&
+          prior.active === next.active &&
+          prior.ownsLive === next.ownsLive &&
+          prior.container === container
+        )
+          return prior;
+        const value = { ...next, container };
+        activities.set(id, value);
+        return value;
+      },
+      agents(id: string, next: readonly string[] | undefined) {
+        if (!next) {
+          agents.delete(id);
+          return undefined;
+        }
+        const prior = agents.get(id);
+        if (
+          prior &&
+          prior.length === next.length &&
+          prior.every((agent, index) => agent === next[index])
+        )
+          return prior;
+        agents.set(id, next);
+        return next;
+      },
+    };
+  });
+  return stable;
 }

@@ -16,6 +16,7 @@ import {
 import {
   activityDisplayRows,
   useActivityPresentation,
+  useStableRowActivity,
 } from "./activity-presentation";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -291,6 +292,7 @@ function Timeline({
     pinnedIds,
   );
   const activity = presentation.groups;
+  const stableActivity = useStableRowActivity();
   const { agents: liveAgents } = useConversationAgents(
     queries,
     channelId,
@@ -1451,16 +1453,17 @@ function Timeline({
                   ).toDateString() !==
                   new Date(row.createdAt * 1000).toDateString();
             const renderMessage = (row: ChannelMessage, inside = false) => {
-              const recordedActivity = presentation.byRow.get(row.id);
               return (
                 <MessageRow
-                  representedAgents={presentation.representedAgents.get(row.id)}
-                  recordedActivity={
-                    recordedActivity && {
-                      ...recordedActivity,
-                      container: "history",
-                    }
-                  }
+                  representedAgents={stableActivity.agents(
+                    row.id,
+                    presentation.representedAgents.get(row.id),
+                  )}
+                  recordedActivity={stableActivity.activity(
+                    row.id,
+                    presentation.byRow.get(row.id),
+                    "history",
+                  )}
                   stackPrevious={
                     inside ||
                     (!!previousRow &&

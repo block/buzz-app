@@ -91,8 +91,9 @@ export function apply(ctx: Context) {
       if (!conversation) return delivery.ignored?.();
       void [conversation.key, conversation.channel, conversation.root, conversation.topLevel, conversation.where];
       const system: string = await harness.systemPrompt(delivery, { scope: "thread", cwd: "~", instructions: "", tools: false });
-      const prompt = await harness.turnPrompt(delivery, conversation, { seen: 0 });
-      const next: number = prompt.seen;
+      const first = await harness.turnPrompt(delivery, conversation);
+      const prompt = await harness.turnPrompt(delivery, conversation, { cursor: first.cursor });
+      const next: string = prompt.cursor;
       const tools: McpHandler = harness.tools(delivery.agent, conversation, { read: async () => new Uint8Array() });
       void host.serveMcp?.(tools);
       void [system, prompt.text, next];

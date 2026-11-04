@@ -56,9 +56,9 @@ export type HarnessPrompt = Readonly<{
   /** The routing context, the conversation's messages the session has not
    * been shown, the event, plugins' notes and the tools' end-of-turn note. */
   text: string;
-  /** `created_at` of the newest message the prompt shows: the next turn's
-   * `seen`. */
-  seen: number;
+  /** What the session has been shown, once this prompt reaches it: save it
+   * with the session and give it to the next turn's prompt. Opaque. */
+  cursor: string;
   /** Puts back the notes the prompt took, for a turn that never started. */
   restore(): void;
 }>;
@@ -85,13 +85,14 @@ export type HarnessKit = Readonly<{
       tools?: boolean;
     }>,
   ): Promise<string>;
-  /** The turn's prompt, for a session last shown the conversation up to
-   * `seen` (0 for a new one). Takes the notes plugins left for the turn;
-   * after `restore`, asking again takes them again. */
+  /** The turn's prompt, for a session at `cursor`, the one its last prompt
+   * gave; none for a new session, which is shown the conversation so far.
+   * Takes the notes plugins left for the turn; after `restore`, asking
+   * again takes them again. */
   turnPrompt(
     delivery: Delivery,
     conversation: HarnessConversation,
-    options: Readonly<{ seen: number }>,
+    options?: Readonly<{ cursor?: string }>,
   ): Promise<HarnessPrompt>;
   /** A watch's or timer's turn `text` with its routing context. */
   standalonePrompt(agent: AgentHandle, text: string): string;
@@ -133,6 +134,51 @@ type Admitted = Readonly<{
 }>;
 
 const CHAT = [9, 40002];
+/** Threads a channel conversation's cursor keeps a mark for; forgetting one
+ * only shows that thread's context again. */
+const THREADS_LIMIT = 200;
+
+type Cursor = Readonly<{
+  seen: number;
+  threads?: Readonly<Record<string, number>>;
+}>;
+
+function parseCursor(cursor: string | undefined): Cursor {
+  try {
+    const value = cursor ? JSON.parse(cursor) : undefined;
+    if (typeof value?.seen !== "number") return { seen: 0 };
+    const threads =
+      value.threads && typeof value.threads === "object"
+        ? Object.fromEntries(
+            Object.entries(value.threads).filter(
+              (entry): entry is [string, number] =>
+                typeof entry[1] === "number",
+            ),
+          )
+        : undefined;
+    return { seen: value.seen, ...(threads ? { threads } : {}) };
+  } catch {
+    return { seen: 0 };
+  }
+}
+
+function advance(cursor: Cursor, newest: number, contextRoot?: string) {
+  let threads = cursor.threads;
+  if (contextRoot) {
+    const { [contextRoot]: previous = 0, ...rest } = threads ?? {};
+    threads = Object.fromEntries(
+      Object.entries({
+        ...rest,
+        [contextRoot]: Math.max(newest, previous),
+      }).slice(-THREADS_LIMIT),
+    );
+  }
+  return JSON.stringify({
+    seen: Math.max(newest, cursor.seen),
+    ...(threads ? { threads } : {}),
+  });
+}
+
 const NO_TOOLS = `<buzz-tools-unavailable>
 This session has no Buzz tools: the tools named above, such as send and read, do not exist here. Your final message is posted as your reply in the conversation, so write it as that reply, and say there what you need from anyone.
 </buzz-tools-unavailable>`;
@@ -232,15 +278,28 @@ export function harnessKit(sources: Sources): HarnessKit {
       return tools ? text : `${text}\n\n${NO_TOOLS}`;
     },
 
-    async turnPrompt({ agent, wakeText }: Delivery, conversation, { seen }) {
+    async turnPrompt(
+      { agent, wakeText }: Delivery,
+      conversation,
+      options = {},
+    ) {
       const { event, solo, dm, name, wake, resumed } = known(conversation);
       const { key, channel: channelId, topLevel } = conversation;
       const ready = session(agent.key);
       const thread = threadReference(event);
       const rootId = thread?.rootId ?? event.id;
+      const shown = parseCursor(options.cursor);
+      // Sharing a session does not mean it has seen every thread in the
+      // channel, so a channel conversation keeps a mark for each thread.
+      const contextRoot =
+        key === channelId && !dm && !topLevel ? rootId : undefined;
       // A resumed turn's session never saw its thread, its own replies
       // included.
-      const since = resumed ? 0 : seen;
+      const since = resumed
+        ? 0
+        : contextRoot
+          ? (shown.threads?.[contextRoot] ?? 0)
+          : shown.seen;
       const owner = agent.owner;
       // Only a Solo chat's Canvas is handed over.
       const reading = solo
@@ -339,15 +398,11 @@ export function harnessKit(sources: Sources): HarnessKit {
         ]
           .filter(Boolean)
           .join("\n\n"),
-        // A thread read in a channel conversation stops at the event: the
-        // other threads were not read.
-        seen:
-          threadRead && key === channelId
-            ? event.created_at
-            : Math.max(
-                event.created_at,
-                ...unseen.map((item) => item.created_at),
-              ),
+        cursor: advance(
+          shown,
+          Math.max(event.created_at, ...unseen.map((item) => item.created_at)),
+          contextRoot,
+        ),
         restore: () => agent.restoreNotes?.(channelId, notes, noteRoot),
       };
     },

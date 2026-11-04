@@ -372,7 +372,9 @@ process, sessions and saved state. `conversation(delivery, scope)` admits a
 mention or wake (undefined means the harness ignores it: not the owner's own
 or attested by them, or with no conversation to go to) and freezes where
 it goes. `systemPrompt` and `turnPrompt` give Buzz's prompts, `turnPrompt`
-showing what came after the session's `seen` and taking plugins' notes, and
+showing what the session has not seen and taking plugins' notes. Its
+`cursor` is opaque: save it with the session and give it to the next
+`turnPrompt`, which keeps a mark for each thread of a channel conversation.
 `reply` posts as the agent there. `tools(agent, conversation, { read })`
 answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
 declares `host.mcp`; `read` is the plugin's own file access (`host.files`),

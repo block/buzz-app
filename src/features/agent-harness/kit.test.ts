@@ -46,7 +46,17 @@ function setup(
     notes?: readonly string[];
   }> = {},
 ) {
-  const read = vi.fn(async () => options.thread ?? []);
+  const read = vi.fn(
+    async (filters: readonly { ids?: string[]; "#e"?: string[] }[]) => {
+      const root = filters[0]?.ids?.[0];
+      return (options.thread ?? []).filter(
+        (event) =>
+          !root ||
+          event.id === root ||
+          event.tags.some((tag) => tag[0] === "e" && tag[1] === root),
+      );
+    },
+  );
   const session = {
     read,
     channels: {
@@ -224,17 +234,16 @@ describe("harnessKit.turnPrompt", () => {
     const conversation = await kit.conversation(d, "thread");
     if (!conversation) throw new Error("not admitted");
 
-    const fresh = await kit.turnPrompt(d, conversation, { seen: 0 });
+    const fresh = await kit.turnPrompt(d, conversation);
     expect(fresh.text).toContain("Kick off");
     expect(fresh.text).toContain("Some context");
     expect(fresh.text).toContain("On it");
     expect(fresh.text).toContain("@Ampy and now?");
     expect(fresh.text).toContain("<note>from a plugin</note>");
-    expect(fresh.seen).toBe(event.created_at);
+    expect(JSON.parse(fresh.cursor)).toEqual({ seen: event.created_at });
 
-    const later = await kit.turnPrompt(d, conversation, {
-      seen: earlier.created_at,
-    });
+    const cursor = JSON.stringify({ seen: earlier.created_at });
+    const later = await kit.turnPrompt(d, conversation, { cursor });
     expect(later.text).not.toContain("Some context");
     expect(later.text).not.toContain("On it");
     expect(later.text).toContain("@Ampy and now?");
@@ -243,10 +252,48 @@ describe("harnessKit.turnPrompt", () => {
     expect(restored).toEqual([
       [channel, ["<note>from a plugin</note>"], "1".repeat(64)],
     ]);
-    const again = await kit.turnPrompt(d, conversation, {
-      seen: earlier.created_at,
-    });
+    const again = await kit.turnPrompt(d, conversation, { cursor });
     expect(again.text).toBe(later.text);
+  });
+
+  it("keeps a mark for each thread of a channel conversation", async () => {
+    const rootA = message("1", "Thread A");
+    const rootB = message("2", "Thread B");
+    const contextB = reply("3", "2", "Context in B");
+    const mentionA = reply("7", "1", "@Ampy in A");
+    const mentionB = reply("8", "2", "@Ampy in B");
+    const laterB = reply("9", "2", "@Ampy again in B");
+    const { kit, delivery } = setup({
+      thread: [rootA, rootB, contextB, mentionA, mentionB, laterB],
+    });
+    const turn = async (event: RelayEvent, cursor?: string) => {
+      const d = delivery({ type: "mention", event });
+      const conversation = await kit.conversation(d, "channel");
+      if (!conversation) throw new Error("not admitted");
+      expect(conversation.key).toBe(channel);
+      return kit.turnPrompt(d, conversation, cursor ? { cursor } : {});
+    };
+
+    const a = await turn(mentionA);
+    expect(a.text).toContain("Thread A");
+    const b = await turn(mentionB, a.cursor);
+    expect(b.text).toContain("Thread B");
+    expect(b.text).toContain("Context in B");
+    const again = await turn(laterB, b.cursor);
+    expect(again.text).not.toContain("Context in B");
+    expect(again.text).toContain("@Ampy again in B");
+  });
+
+  it("starts over from a cursor it cannot read", async () => {
+    const event = reply("2", "1", "@Ampy go");
+    const earlier = reply("1", "1", "Earlier");
+    const { kit, delivery } = setup({ thread: [earlier, event] });
+    const d = delivery({ type: "mention", event });
+    const conversation = await kit.conversation(d, "thread");
+    if (!conversation) throw new Error("not admitted");
+    expect(
+      (await kit.turnPrompt(d, conversation, { cursor: "{nope" })).text,
+    ).toContain("Earlier");
   });
 
   it("tells a resumed turn to carry on", async () => {
@@ -256,18 +303,23 @@ describe("harnessKit.turnPrompt", () => {
     const conversation = await kit.conversation(d, "thread");
     if (!conversation) throw new Error("not admitted");
     expect(
-      (await kit.turnPrompt(d, conversation, { seen: 150 })).text,
+      (
+        await kit.turnPrompt(d, conversation, {
+          cursor: JSON.stringify({ seen: 150 }),
+        })
+      ).text,
     ).toContain(RESUMED_PROMPT);
   });
 
   it("rejects a conversation it did not admit", async () => {
     const { kit, delivery } = setup();
     await expect(
-      kit.turnPrompt(
-        delivery({ type: "mention", event: message("1", "x") }),
-        { key: channel, channel, topLevel: false, where: "#general" },
-        { seen: 0 },
-      ),
+      kit.turnPrompt(delivery({ type: "mention", event: message("1", "x") }), {
+        key: channel,
+        channel,
+        topLevel: false,
+        where: "#general",
+      }),
     ).rejects.toThrow("not admitted");
   });
 });

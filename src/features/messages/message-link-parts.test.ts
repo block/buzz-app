@@ -167,6 +167,11 @@ it.each([
   ["https://[::1]。OK", "https://[::1]"],
   ["https:///example.com/x。", "https:///example.com/x"],
   [
+    "https://github。com:/block/buzz-app",
+    "https://github。com:/block/buzz-app",
+  ],
+  ["https://github｡com/x。", "https://github｡com/x"],
+  [
     "见 https://zh.wikipedia.org/wiki/中文",
     "https://zh.wikipedia.org/wiki/中文",
   ],
@@ -178,6 +183,15 @@ it.each([
     expect(parts.map((part) => part.text).join("")).toBe(content);
   },
 );
+
+it("ends a bare URL at fullwidth punctuation before another scheme", () => {
+  expect(
+    messageLinkParts("https://a.com。https://b.com").filter((part) => part.url),
+  ).toEqual([
+    { text: "https://a.com", url: "https://a.com" },
+    { text: "https://b.com", url: "https://b.com" },
+  ]);
+});
 
 it.each([
   "[this shadcdn/ui clone](https://github.com/duobaseio/forui)",

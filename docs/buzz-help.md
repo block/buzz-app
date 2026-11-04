@@ -302,7 +302,9 @@ available rather than silently discarding it.
   and keyring sign-ins can't run them.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
-  opens that conversation. Working indicators describe current work,
+  opens that conversation. Choosing an agent in the activity under a message,
+  or a Working now agent whose conversation is known, opens that
+  conversation's transcript. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary

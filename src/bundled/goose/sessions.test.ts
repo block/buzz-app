@@ -1023,7 +1023,7 @@ describe("AgentSessions shutdown", () => {
   });
 });
 
-it("keeps a worker whose initialize failed until it has exited", async () => {
+it("keeps a worker whose initialize failed until it has exited, though its start fails at the time limit", async () => {
   vi.useFakeTimers();
   const fake = fakeSpawn();
   let kills = 0;
@@ -1047,24 +1047,34 @@ it("keeps a worker whose initialize failed until it has exited", async () => {
     };
   };
   const process = new SharedProcess({ ...fake, spawn }, fake.serve);
-  const starting = process.get();
-  starting.catch(() => undefined);
-  // Past the 5 s a failed start used to wait for its exit.
-  await vi.advanceTimersByTimeAsync(5_000);
+  const starting = tracked(process.get());
+  // A failed start waits 5 s for its worker to exit, then fails anyway.
+  await vi.advanceTimersByTimeAsync(4_999);
   expect(kills).toBe(1);
+  expect(starting.settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(starting.settled).toBe(true);
+  await expect(starting.work).rejects.toThrow("init failed");
   // Asked for again while it is exiting, it is the same failed start.
   const again = process.get();
-  again.catch(() => undefined);
+  expect(again).toBe(starting.work);
   await flush(30);
   expect(fake.geese).toHaveLength(1);
   const shutdown = tracked(process.shutdown());
   await vi.advanceTimersByTimeAsync(5_000);
   await flush(30);
   expect(shutdown.settled).toBe(false);
+  expect(kills).toBe(2);
   fake.geese[0]?.exit(null);
   await shutdown.work;
-  await expect(starting).rejects.toThrow("init failed");
   await expect(again).rejects.toThrow("init failed");
+  // Once it has exited, the next call starts another.
+  const retry = process.get();
+  retry.catch(() => undefined);
+  await flush(30);
+  expect(fake.geese).toHaveLength(2);
+  fake.geese[1]?.exit(null);
+  await expect(retry).rejects.toThrow("init failed");
 });
 
 it("repeats a failed kill on the next retirement", async () => {

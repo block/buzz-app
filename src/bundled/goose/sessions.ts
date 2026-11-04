@@ -28,6 +28,9 @@ export {
  * runtime shares one. */
 export class SharedProcess {
   private ready: Promise<GooseProcess> | undefined;
+  /** The process `ready` started, kept until it exits, even when its start
+   * failed. */
+  private process: GooseProcess | undefined;
   constructor(
     private readonly host: GooseHost,
     /** Starts a session's MCP server for its agent's tools. */
@@ -53,6 +56,7 @@ export class SharedProcess {
           {
             cwd: await this.host.resolveDirectory("~"),
             serve: this.serve,
+            onProcess: (goose) => (this.process = goose),
             ...(bridge && {
               protected: true,
               env: {
@@ -76,9 +80,15 @@ export class SharedProcess {
       }
     })();
     const forget = () => {
-      if (this.ready === ready) this.ready = undefined;
+      if (this.ready !== ready) return;
+      this.ready = undefined;
+      this.process = undefined;
     };
-    void ready.then((goose) => goose.exited.then(forget), forget);
+    // `process` is still this start's: only `forget` lets another begin.
+    void ready.then(
+      (goose) => goose.exited.then(forget),
+      () => (this.process ? this.process.exited.then(forget) : forget()),
+    );
     this.ready = ready;
     return ready;
   }
@@ -86,10 +96,11 @@ export class SharedProcess {
   stop() {
     void this.shutdown().catch(() => undefined);
   }
-  /** Stops it and resolves once it has exited; one that failed to start
-   * has. It stays here until then, so a failed stop is repeated. */
+  /** Stops it and resolves once it has exited, whether or not its start
+   * succeeded. It stays here until then, so a failed stop is repeated. */
   async shutdown() {
-    const goose = await this.ready?.catch(() => undefined);
+    await this.ready?.catch(() => undefined);
+    const goose = this.process;
     await goose?.kill();
     await goose?.exited;
   }

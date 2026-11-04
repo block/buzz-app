@@ -53,7 +53,7 @@ function buzzStart(messages: readonly Message[]) {
   const channelId = field("Channel")?.match(/\(#([^)]+)\)$/)?.[1];
   if (!channelId) return undefined;
   const root = field("Session scope") === "thread" && field("Thread root");
-  const title = promptMessage(sections).text.split("\n")[0]?.trim();
+  const title = promptMessage(sections).text.split("\n", 1)[0]?.trim();
   return {
     channelId,
     ...(root ? { root } : {}),

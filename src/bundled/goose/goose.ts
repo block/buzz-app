@@ -175,6 +175,7 @@ export const GooseProcess = {
       serve?: ServeMcp;
       protected?: boolean;
       signal?: AbortSignal;
+      onProcess?: (goose: AcpProcess) => void;
     }>,
   ) => {
     const goose = await AcpProcess.start(spawn, GOOSE, {

@@ -3,6 +3,7 @@ import { createBackupStatus } from "./backup";
 
 export type BackupChoice = Readonly<{
   available: boolean;
+  managed: boolean;
   pubkey: string;
   automatic: boolean | null;
 }>;

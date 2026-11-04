@@ -18,7 +18,7 @@ import {
 } from "../features/identity/backup";
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
-import type { Identity } from "../features/identity/service";
+import type { BackupChoice, Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { IdentitySettings } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
@@ -45,7 +45,22 @@ const at = (seq: number, progress: Progress, builderlab = true) =>
   ({ seq, pass: seq, builderlab, ...progress }) as BackupStatus;
 
 /** The real status store over a native side that answers `initial` and records its watcher. */
-function backupHost(initial: BackupStatus) {
+function backupHost(
+  initial: BackupStatus,
+  automatic: boolean | null = true,
+  managed = false,
+) {
+  let choice: BackupChoice = {
+    available: true,
+    managed,
+    pubkey: viewer,
+    automatic,
+  };
+  const getBackupChoice = vi.fn(async () => choice);
+  const setBackupChoice = vi.fn(async (pubkey: string, automatic: boolean) => {
+    choice = { ...choice, pubkey, automatic };
+    return choice;
+  });
   const watchers: { onmessage: (status: BackupStatus) => void }[] = [];
   const send = vi.fn(
     async (
@@ -61,17 +76,14 @@ function backupHost(initial: BackupStatus) {
     },
   );
   const store = createBackupStatus(send as Send);
-  const setBackupChoice = vi.fn(async (pubkey: string, automatic: boolean) => ({
-    available: true,
-    pubkey,
-    automatic,
-  }));
   return {
     identity: {
       exportKey: vi.fn(),
       backup: store,
+      getBackupChoice,
       setBackupChoice,
     } as unknown as Identity,
+    getBackupChoice,
     setBackupChoice,
     push: (status: BackupStatus) =>
       act(() => watchers.at(-1)?.onmessage(status)),
@@ -339,73 +351,6 @@ it.each([
   },
 );
 
-it("while backup waits for consent, Back up identity opens the backup prompt and saves its answer", async () => {
-  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
-  const host = renderBackup(at(1, { status: "waiting", reason: "no_consent" }));
-  await host.settled();
-  const user = userEvent.setup();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Your identity is not backed up to your Builderlab account.",
-  );
-  await user.click(screen.getByRole("button", { name: "Back up identity" }));
-  const prompt = screen.getByRole("alertdialog", {
-    name: "Back up your identity?",
-  });
-  // Closing saves nothing, and the surviving action takes focus back.
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(prompt).not.toBeInTheDocument());
-  expect(host.setBackupChoice).not.toHaveBeenCalled();
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Back up identity" }),
-    ).toHaveFocus(),
-  );
-  await user.click(screen.getByRole("button", { name: "Back up identity" }));
-  await user.click(screen.getByRole("button", { name: "Sync" }));
-  expect(host.setBackupChoice).toHaveBeenCalledExactlyOnceWith(viewer, true);
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  // The saved choice wakes the uploader, and the action goes with the wait.
-  host.push(at(2, { status: "running" }));
-  expect(screen.queryByRole("button", { name: "Back up identity" })).toBeNull();
-});
-
-// Native publishes `running` before it answers, but the two reach the page
-// on different channels, so either can arrive first.
-it.each([
-  ["after the save is answered", false],
-  ["before the save is answered", true],
-] as const)(
-  "Sync leaves focus on the backup status when the consent wait ends %s",
-  async (_, waitEndsFirst) => {
-    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
-    const host = renderBackup(
-      at(1, { status: "waiting", reason: "no_consent" }),
-    );
-    await host.settled();
-    let answer = () => {};
-    host.setBackupChoice.mockImplementationOnce(
-      (pubkey, automatic) =>
-        new Promise((resolve) => {
-          answer = () => resolve({ available: true, pubkey, automatic });
-        }),
-    );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Back up identity" }));
-    await user.click(screen.getByRole("button", { name: "Sync" }));
-    expect(host.setBackupChoice).toHaveBeenCalledExactlyOnceWith(viewer, true);
-    if (waitEndsFirst) host.push(at(2, { status: "running" }));
-    await act(async () => answer());
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    if (!waitEndsFirst) host.push(at(2, { status: "running" }));
-    expect(
-      screen.queryByRole("button", { name: "Back up identity" }),
-    ).toBeNull();
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("Backing up your identity…");
-    await waitFor(() => expect(status).toHaveFocus());
-  },
-);
-
 it("hides the backup row wherever first run would not offer backup", async () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   // This build's uploader has no Builderlab source.
@@ -440,8 +385,157 @@ it("follows the status store as it publishes a higher seq", async () => {
   expect(status).toHaveTextContent(
     "Your identity is backed up to your Builderlab account.",
   );
-  // Read-only: no consent, retry or other control beside the status.
+  // Consent remains on regardless of the uploader's latest outcome.
   const row = status.closest(".buzz-preference-row") as HTMLElement;
   expect(within(row).queryByRole("button")).toBeNull();
-  expect(within(row).queryByRole("switch")).toBeNull();
+  expect(
+    within(row).getByRole("switch", { name: "Identity backup" }),
+  ).toBeChecked();
+});
+
+it("persists both switch directions and keeps an existing backup after turning off", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "complete" }), false);
+  const view = render(
+    <IdentitySettings viewer={viewer} identity={host.identity} />,
+  );
+  const toggle = await screen.findByRole("switch", { name: "Identity backup" });
+  await waitFor(() =>
+    expect(toggle).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  expect(toggle).not.toBeChecked();
+  const user = userEvent.setup();
+  await user.click(toggle);
+  await waitFor(() => expect(toggle).toBeChecked());
+  expect(host.setBackupChoice).toHaveBeenLastCalledWith(viewer, true);
+  toggle.focus();
+  await user.keyboard(" ");
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(host.setBackupChoice).toHaveBeenLastCalledWith(viewer, false);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Automatic backup is off. Any existing backup is kept.",
+  );
+  view.unmount();
+  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("switch", { name: "Identity backup" }),
+    ).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  expect(
+    screen.getByRole("switch", { name: "Identity backup" }),
+  ).not.toBeChecked();
+});
+
+it("keeps the saved choice and explains a refused write, then allows retry", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "running" }));
+  let refuse!: (reason: string) => void;
+  host.setBackupChoice.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        refuse = reject;
+      }),
+  );
+  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  const toggle = await screen.findByRole("switch", { name: "Identity backup" });
+  await waitFor(() =>
+    expect(toggle).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  await userEvent.click(toggle);
+  try {
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    expect(toggle).toBeChecked();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Saving your backup choice",
+    );
+  } finally {
+    await act(async () =>
+      refuse("A backup is in progress. Wait for it to finish and try again."),
+    );
+  }
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "A backup is in progress",
+  );
+  expect(toggle).toBeChecked();
+  await userEvent.click(toggle);
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("labels organization-managed backups without an off control", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "complete" }), null, true);
+  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  expect(
+    await screen.findByText(
+      "Automatic backup is managed by your organization.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("switch", { name: "Identity backup" })).toBeNull();
+  expect(host.setBackupChoice).not.toHaveBeenCalled();
+});
+
+it("disables the switch when consent cannot be read and offers a retry", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "idle" }));
+  host.getBackupChoice.mockRejectedValueOnce(new Error("storage unavailable"));
+  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t read your backup choice",
+  );
+  expect(
+    screen.getByRole("switch", { name: "Identity backup" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("switch", { name: "Identity backup" }),
+    ).not.toHaveAttribute("aria-disabled", "true"),
+  );
+  expect(screen.getByRole("switch", { name: "Identity backup" })).toBeChecked();
+});
+
+it("clears a read failure when a later uploader update successfully reads consent", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "idle" }));
+  host.getBackupChoice.mockRejectedValueOnce(
+    new Error("temporarily unavailable"),
+  );
+  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t read");
+  host.push(at(2, { status: "complete" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getByRole("switch", { name: "Identity backup" })).toBeChecked();
+});
+
+it("ignores an old consent read that arrives after the switch saved a new choice", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const host = backupHost(at(1, { status: "complete" }));
+  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  const toggle = await screen.findByRole("switch", { name: "Identity backup" });
+  await waitFor(() => expect(toggle).toBeChecked());
+  let finish!: (choice: BackupChoice) => void;
+  host.getBackupChoice.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  host.push(at(2, { status: "running" }));
+  try {
+    await userEvent.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+  } finally {
+    await act(async () =>
+      finish({
+        available: true,
+        managed: false,
+        pubkey: viewer,
+        automatic: true,
+      }),
+    );
+  }
+  expect(toggle).not.toBeChecked();
+  expect(host.setBackupChoice).toHaveBeenCalledExactlyOnceWith(viewer, false);
 });

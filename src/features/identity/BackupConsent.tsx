@@ -51,6 +51,20 @@ function hosted(id: string, build?: string) {
 
 /** Answers given in a backup prompt, here or in Settings, still being saved. */
 let answering = 0;
+let answerRevision = 0;
+
+/** Settings and the prompt both take precedence over an automatic choice. */
+export function saveBackupChoice(
+  identity: Pick<Identity, "setBackupChoice">,
+  pubkey: string,
+  automatic: boolean,
+) {
+  answering++;
+  answerRevision++;
+  return identity.setBackupChoice(pubkey, automatic).finally(() => {
+    answering--;
+  });
+}
 
 /**
  * Fills in a missing backup choice once first run is over: Welcome renders
@@ -106,9 +120,12 @@ export function BackupConsent({
       const { memberships } = client;
       if (client.status !== "ready" || memberships === latest) return;
       latest = memberships;
+      const revision = answerRevision;
       identity.getBackupChoice().then(
         (choice) => {
           if (memberships !== latest) return;
+          if (answering || revision !== answerRevision)
+            return retry(memberships);
           const decision = decideBackup(
             identity.backup.snapshot(),
             choice,
@@ -117,7 +134,6 @@ export function BackupConsent({
           if (decision === "save") {
             // The user's own answer, still being saved, stands; the next
             // update decides again in case it is refused.
-            if (answering) return retry(memberships);
             setAsking(undefined);
             void identity
               .setBackupChoice(choice.pubkey, true)
@@ -169,23 +185,17 @@ export function BackupPrompt({
   const answer = (automatic: boolean) => {
     setSaving(automatic);
     setError(undefined);
-    answering++;
-    identity
-      .setBackupChoice(pubkey, automatic)
-      .finally(() => {
-        answering--;
-      })
-      .then(
-        () => onClose(automatic),
-        (reason) => {
-          setSaving(undefined);
-          setError(
-            typeof reason === "string"
-              ? reason
-              : "Could not save your choice. Try again.",
-          );
-        },
-      );
+    saveBackupChoice(identity, pubkey, automatic).then(
+      () => onClose(automatic),
+      (reason) => {
+        setSaving(undefined);
+        setError(
+          typeof reason === "string"
+            ? reason
+            : "Could not save your choice. Try again.",
+        );
+      },
+    );
   };
   return (
     <AlertDialog

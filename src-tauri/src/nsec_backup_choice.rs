@@ -16,6 +16,7 @@ pub(crate) const BUSY: &str = "A backup is in progress. Wait for it to finish an
 #[derive(Serialize)]
 pub(crate) struct BackupChoice {
     pub(crate) available: bool,
+    pub(crate) managed: bool,
     pub(crate) pubkey: String,
     pub(crate) automatic: Option<bool>,
     // Retain this value through an upload. A successful choice change cannot race it.
@@ -131,6 +132,7 @@ pub(crate) fn read(path: &Path, config: &Config, pubkey: &str) -> Result<BackupC
         .map(|record| record.automatic);
     Ok(BackupChoice {
         available: true,
+        managed: false,
         pubkey: pubkey.into(),
         automatic,
         _lease: Some(lease),
@@ -172,6 +174,7 @@ pub(crate) async fn set(
         Err(error) if automatic && managed && error == BUSY => {
             return Ok(BackupChoice {
                 available: true,
+                managed,
                 pubkey: pubkey.into(),
                 automatic: Some(true),
                 _lease: None,
@@ -212,6 +215,7 @@ pub(crate) async fn set(
         .map_err(|_| FAILED)?;
     Ok(BackupChoice {
         available: true,
+        managed,
         pubkey: pubkey.into(),
         automatic: Some(automatic),
         _lease: None,
@@ -226,12 +230,15 @@ pub(crate) async fn nsec_backup_choice(
     let Some(config) = config()? else {
         return Ok(BackupChoice {
             available: false,
+            managed: false,
             pubkey,
             automatic: None,
             _lease: None,
         });
     };
-    read(&path()?, &config, &pubkey)
+    let mut choice = read(&path()?, &config, &pubkey)?;
+    choice.managed = crate::nsec_backup::managed_build();
+    Ok(choice)
 }
 
 #[tauri::command]

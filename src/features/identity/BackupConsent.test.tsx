@@ -7,7 +7,12 @@ import { emptySync, type SyncState } from "../communities/known-communities";
 import { importLegacyCommunities } from "../communities/legacy-communities";
 import type { ClientSnapshot } from "../communities/service";
 import { type BackupStatus, createBackupStatus } from "./backup";
-import { BackupConsent, BackupPrompt, decideBackup } from "./BackupConsent";
+import {
+  BackupConsent,
+  BackupPrompt,
+  decideBackup,
+  saveBackupChoice,
+} from "./BackupConsent";
 import type { Identity } from "./service";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
@@ -116,11 +121,13 @@ function setup(
   );
   const getBackupChoice = vi.fn(async () => ({
     available: true,
+    managed: false,
     pubkey: viewer,
     automatic,
   }));
   const setBackupChoice = vi.fn(async (pubkey: string, value: boolean) => ({
     available: true,
+    managed: false,
     pubkey,
     automatic: value,
   }));
@@ -277,7 +284,8 @@ it("a user's answer still being saved stands over a hosted community joined mean
   app.setBackupChoice.mockImplementationOnce(
     (pubkey, automatic) =>
       new Promise((resolve) => {
-        release = () => resolve({ available: true, pubkey, automatic });
+        release = () =>
+          resolve({ available: true, managed: false, pubkey, automatic });
       }),
   );
   await screen.findByRole("alertdialog");
@@ -297,6 +305,54 @@ it("a user's answer still being saved stands over a hosted community joined mean
   await waitFor(() => expect(prompt()).toBeNull());
   expect(app.setBackupChoice).toHaveBeenCalledExactlyOnceWith(viewer, false);
 });
+
+it.each([false, true])(
+  "an old automatic decision cannot override a Settings answer (save finished: %s)",
+  async (finished) => {
+    const app = setup(consent(), [INDEPENDENT]);
+    await screen.findByRole("alertdialog");
+    let read!: () => void;
+    app.getBackupChoice.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          read = () =>
+            resolve({
+              available: true,
+              managed: false,
+              pubkey: viewer,
+              automatic: null,
+            });
+        }),
+    );
+    await app.join([HOSTED]);
+    let save!: () => void;
+    app.setBackupChoice.mockImplementationOnce(
+      (pubkey, automatic) =>
+        new Promise((resolve) => {
+          save = () =>
+            resolve({ available: true, managed: false, pubkey, automatic });
+        }),
+    );
+    const saved = saveBackupChoice(app, viewer, false);
+    try {
+      if (finished)
+        await act(async () => {
+          save();
+          await saved;
+        });
+      await act(async () => read());
+      expect(app.setBackupChoice).toHaveBeenCalledExactlyOnceWith(
+        viewer,
+        false,
+      );
+    } finally {
+      await act(async () => {
+        save();
+        await saved;
+      });
+    }
+  },
+);
 
 it("a hosted community joined while the user's answer was saving is backed up once that answer is refused and the prompt closed", async () => {
   const app = setup(consent(), [INDEPENDENT]);
@@ -394,7 +450,12 @@ it("a prompt already open is held while old Buzz's import runs, and stays closed
     () =>
       new Promise((resolve) => {
         read = () =>
-          resolve({ available: true, pubkey: viewer, automatic: null });
+          resolve({
+            available: true,
+            managed: false,
+            pubkey: viewer,
+            automatic: null,
+          });
       }),
   );
   const legacy = app.importLegacy("wss://communities.buzz.xyz");

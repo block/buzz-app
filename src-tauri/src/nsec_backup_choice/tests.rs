@@ -1,5 +1,30 @@
 use super::*;
 
+#[tokio::test]
+async fn public_choice_reports_managed_policy_separately_from_saved_consent() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("choice.json");
+    let identity = IdentityHost::fixture();
+    let pubkey = identity.viewer().await.unwrap();
+    let config = config();
+    for managed in [false, true] {
+        let choice = set(&identity, &path, &config, &pubkey, false, managed)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&choice).unwrap(),
+            serde_json::json!({
+                "available": true, "managed": managed, "pubkey": pubkey, "automatic": false,
+            })
+        );
+        // Exposing policy changes neither the saved preference nor managed admission.
+        assert_eq!(
+            admit(&path, &config, &pubkey, managed).unwrap().is_some(),
+            managed
+        );
+    }
+}
+
 fn config() -> Config {
     Config {
         service_url: "https://backup.example".into(),

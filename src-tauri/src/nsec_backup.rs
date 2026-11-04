@@ -296,7 +296,7 @@ impl Default for NsecBackupHost {
 }
 /// Whether this build was compiled with `BUZZ_NSEC_BACKUP_CONSENT=managed`.
 /// build.rs rejects managed consent without configured backup.
-fn managed_build() -> bool {
+pub(crate) fn managed_build() -> bool {
     crate::nsec_backup_config::managed(option_env!("BUZZ_NSEC_BACKUP_CONSENT"), true) == Ok(true)
 }
 

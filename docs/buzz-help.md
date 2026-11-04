@@ -40,8 +40,8 @@ the interface unless an available tool actually supports that action.
   backed up automatically if you belong to a Builderlab-hosted community;
   otherwise Buzz asks **Back up your identity?**, again on the next launch or
   sign-in if the dialog is closed. **Settings → Buzz → Identity → Identity
-  backup** shows the backup status and, while backup is off, offers **Back up
-  identity**. Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
+  backup** shows the backup status and lets you change automatic backup.
+  Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
   brings that identity over without signing in; **Not now** keeps the welcome
@@ -55,6 +55,10 @@ the interface unless an available tool actually supports that action.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- Where backup is available, **Settings → Buzz → Identity → Identity backup**
+  turns automatic backup on or off. Turning it off keeps any existing backup.
+  If a backup is in progress, wait for it to finish before trying to turn it off.
+  Organization-managed builds show that backup is managed instead of a switch.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.

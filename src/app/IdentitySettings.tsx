@@ -1,10 +1,17 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import type { BackupStatus } from "../features/identity/backup";
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
-import { BackupPrompt } from "../features/identity/BackupConsent";
+import { saveBackupChoice } from "../features/identity/BackupConsent";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
-import type { Identity } from "../features/identity/service";
+import type { BackupChoice, Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
 import { PrivateKey } from "../features/identity/PrivateKey";
@@ -12,6 +19,7 @@ import { SignOutDialog } from "../features/identity/SignOut";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { Switch } from "../shared/design-system/ui/Switch";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { Button } from "../shared/design-system/ui/Button";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
@@ -21,7 +29,7 @@ import styles from "./IdentitySettings.module.css";
 import { writeClipboardText } from "../shared/clipboard";
 
 const WAITING = {
-  no_consent: "Your identity is not backed up to your Builderlab account.",
+  no_consent: "Automatic backup is off for this key.",
   no_session: "Sign in to Builderlab to back up your identity.",
   not_linked: BACKUP_FAILURES.not_linked.message,
 } as const;
@@ -51,12 +59,7 @@ function backupSentence(status: BackupStatus) {
   }
 }
 
-/**
- * The uploader's status. While it waits for consent (signed in to Builderlab,
- * backup off or not yet chosen), Back up identity opens the backup prompt, so a
- * declined prompt can be reversed. Hidden wherever first run would not offer
- * backup, by the same rule.
- */
+/** Consent is separate from upload status: turning it off keeps existing backups. */
 function BackupRow({
   identity,
   viewer,
@@ -66,49 +69,121 @@ function BackupRow({
 }) {
   const { backup } = identity;
   const status = useSyncExternalStore(backup.subscribe, backup.snapshot);
+  const controlId = useId();
   const [offered, setOffered] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const action = useRef<HTMLButtonElement>(null);
-  const sentence = useRef<HTMLSpanElement>(null);
-  const backedUp = useRef(false);
+  const [choice, setChoice] = useState<BackupChoice>();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [readError, setReadError] = useState("");
+  const attempt = useRef(0);
   useEffect(() => {
-    void backupOfferedFor(backup).then(setOffered);
+    let active = true;
+    void backupOfferedFor(backup).then((value) => active && setOffered(value));
+    return () => {
+      active = false;
+    };
   }, [backup]);
+  // Status changes also follow consent from first run or the launch prompt.
+  // Retire reads before a write so an older read cannot undo its visible result.
+  const readChoice = useCallback(() => {
+    const current = ++attempt.current;
+    void identity.getBackupChoice().then(
+      (next) => {
+        if (current !== attempt.current) return;
+        if (next.pubkey === viewer && next.available) {
+          setChoice(next);
+          setReadError("");
+        } else {
+          setChoice(undefined);
+          setReadError(
+            "Your identity changed or backup is unavailable. Reopen Settings to try again.",
+          );
+        }
+      },
+      () => {
+        if (current === attempt.current)
+          setReadError("Couldn’t read your backup choice. Try again.");
+      },
+    );
+  }, [identity, viewer]);
+  useEffect(() => {
+    if (!offered || saving || !status) return;
+    readChoice();
+    return () => {
+      attempt.current++;
+    };
+  }, [offered, saving, status, readChoice]);
+  function change(automatic: boolean) {
+    if (!choice || choice.managed || saving) return;
+    attempt.current++;
+    setSaving(true);
+    setError("");
+    void saveBackupChoice(identity, choice.pubkey, automatic).then(
+      (next) => {
+        // Native fences writes to the key read above; this row is keyed by viewer.
+        setChoice(next);
+        setSaving(false);
+      },
+      (reason: unknown) => {
+        setSaving(false);
+        setError(
+          typeof reason === "string"
+            ? reason
+            : "Couldn’t save your backup choice. Try again.",
+        );
+      },
+    );
+  }
   if (!offered || !status) return null;
-  const waiting = status.status === "waiting" && status.reason === "no_consent";
   return (
-    <>
-      <PreferenceRow
-        title="Identity backup"
-        subtitle={
-          <span ref={sentence} role="status" tabIndex={-1}>
-            {backupSentence(status)}
+    <PreferenceRow
+      title="Identity backup"
+      {...(choice?.managed ? {} : { controlId })}
+      subtitle={
+        <>
+          <span>
+            {choice?.managed
+              ? "Automatic backup is managed by your organization."
+              : "Back up your key to Builderlab. Block can use that copy to restore your identity, including anywhere else you use it."}
+          </span>{" "}
+          <span role="status">
+            {saving
+              ? "Saving your backup choice…"
+              : choice && !choice.managed && choice.automatic !== true
+                ? "Automatic backup is off. Any existing backup is kept."
+                : backupSentence(status)}
           </span>
-        }
-        trailing={
-          waiting ? (
-            <Button ref={action} type="button" onClick={() => setAsking(true)}>
-              Back up identity
-            </Button>
-          ) : null
-        }
-      />
-      {asking && (
-        <BackupPrompt
-          identity={identity}
-          pubkey={viewer}
-          onClose={(saved) => {
-            backedUp.current = saved === true;
-            setAsking(false);
-          }}
-          // Sync ends the consent wait, which removes the action, perhaps
-          // only after the prompt has closed; the status stays in Settings.
-          finalFocus={() =>
-            (backedUp.current ? null : action.current) ?? sentence.current
-          }
-        />
-      )}
-    </>
+          {(error || readError) && (
+            <span role="alert"> {error || readError}</span>
+          )}
+        </>
+      }
+      trailing={(labelProps) =>
+        choice?.managed ? null : (
+          <>
+            <Switch
+              {...labelProps}
+              id={controlId}
+              aria-label="Identity backup"
+              checked={choice?.automatic === true}
+              disabled={!choice || saving}
+              onCheckedChange={change}
+            />
+            {!choice && readError && (
+              <Button
+                type="button"
+                onClick={() => {
+                  setReadError("");
+                  readChoice();
+                }}
+              >
+                Try again
+              </Button>
+            )}
+          </>
+        )
+      }
+    />
   );
 }
 
@@ -194,7 +269,7 @@ export function IdentitySettings({
                 {!signingOut && <PrivateKey identity={identity} />}
               </SettingsGroup>
               <SettingsGroup>
-                <BackupRow identity={identity} viewer={viewer} />
+                <BackupRow key={viewer} identity={identity} viewer={viewer} />
                 <PreferenceRow
                   title="Sign out of Buzz"
                   subtitle="Remove your private key from this device. Also signs you out of your organization and ends Builderlab and hosted community logins."

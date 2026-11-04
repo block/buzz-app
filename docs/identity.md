@@ -833,8 +833,13 @@ own key** save the answer, which a hosted membership arriving while it is
 saved does not override; closing it saves nothing, and it asks
 again on the next launch or Builderlab sign-in. A build whose Builderlab hosts
 no listed community, including an FI build, always asks. Settings → **Identity
-backup** shows the uploader's status and, while it waits for consent, **Back up
-identity** opens the same prompt. Settings does not turn automatic backup off.
+backup** shows the saved automatic-backup choice as an on/off switch, separately
+from the uploader's latest status. A failed save keeps the previous choice and
+shows the error beside the switch. Turning it off prevents future uploads but
+keeps existing backups. Organization-managed builds label the policy instead of
+offering a switch; public consent metadata includes `managed` so the UI does not
+present a saved opt-out as effective there. Settings answers, like prompt answers,
+take precedence over an automatic choice still being decided.
 
 An automatic choice is bound to the current public key and the trusted
 build-configured backup service and namespace; a self-managed choice holds for its

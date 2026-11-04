@@ -142,3 +142,17 @@ it("binds a verified person's prose written under either name preference", () =>
     ]);
   }
 });
+it("does not bind by an unverified kind-0 handle", () => {
+  const sam = "e".repeat(64);
+  const handle = "f".repeat(64);
+  const result = profileMentionParts(
+    { ...row, content: "hi @sam", mentions: [sam, handle] },
+    new Map([
+      [sam, { name: "Sam Lee", username: "sam" }],
+      [handle, { name: "sam" }],
+    ]),
+  );
+  expect(result.filter((part) => part.target)).toEqual([
+    { text: "@sam", target: profileTarget(handle) },
+  ]);
+});

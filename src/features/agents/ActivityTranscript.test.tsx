@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -515,4 +516,11 @@ it("divides sessions, and shows each one's prompt once at its top", () => {
   ).toEqual(["Session continued; earlier turns not shown", "New session"]);
   expect(screen.getAllByText(/System prompt/)).toHaveLength(1);
   expect(screen.getByText("Agent instructions")).toBeInTheDocument();
+});
+
+it("sizes table columns to whole words, not single characters", () => {
+  // No DOM emulator lays out tables, so this reads the stylesheet.
+  expect(
+    readFileSync("src/features/agents/ActivityTranscript.module.css", "utf8"),
+  ).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
 });

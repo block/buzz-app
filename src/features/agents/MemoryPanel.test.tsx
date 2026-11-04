@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -395,4 +396,11 @@ it("retries a partial listing while retaining its memories until recovery", asyn
   expect(
     screen.queryByRole("button", { name: /Retry loading memories|Refresh/ }),
   ).toBeNull();
+});
+
+it("sizes table columns to whole words, not single characters", () => {
+  // No DOM emulator lays out tables, so this reads the stylesheet.
+  expect(
+    readFileSync("src/features/agents/MemoryPanel.module.css", "utf8"),
+  ).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
 });

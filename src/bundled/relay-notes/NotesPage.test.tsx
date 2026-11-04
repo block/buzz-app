@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -1285,3 +1286,10 @@ it.each([false, true])(
     ).toHaveFocus();
   },
 );
+
+it("sizes table columns to whole words, not single characters", () => {
+  // No DOM emulator lays out tables, so this reads the stylesheet.
+  expect(
+    readFileSync("src/bundled/relay-notes/NotesPage.module.css", "utf8"),
+  ).toMatch(/\.markdown table \{[^}]*overflow-wrap: normal;/);
+});

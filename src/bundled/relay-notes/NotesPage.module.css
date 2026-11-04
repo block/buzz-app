@@ -155,9 +155,11 @@
 .markdown img {
   max-width: 100%;
 }
+/* Breaking anywhere shrinks auto-sized columns to one character. */
 .markdown table {
   display: block;
   overflow: auto;
+  overflow-wrap: normal;
 }
 .markdown ul,
 .markdown ol {

@@ -93,6 +93,11 @@
   overflow-x: auto;
 }
 
+/* Breaking anywhere shrinks auto-sized columns to one character. */
+.readme table {
+  overflow-wrap: normal;
+}
+
 .readme :is(th, td) {
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-standard);

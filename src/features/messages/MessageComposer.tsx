@@ -2808,31 +2808,15 @@ function Composer({
       captured.text.trim().startsWith("/")
         ? captured.text.trim()
         : undefined;
-    // A send is an agent follow-up unless it addresses a confirmed person
-    // (a loaded, non-agent profile). Those, and untagged conversation in a
-    // shared chat, go out now; recipients still being classified keep the
-    // owner's queue preference.
-    const profileSnapshot = session.profiles.snapshot();
-    const agentKeys = knownAgentPubkeys(
-      profileSnapshot,
-      session.agentChoices.snapshot(),
-    );
     // The toolbar's agents stand in when the text tags only references.
     const fromPill =
       routing &&
       captured.recipients.every((person) => referenced(person.pubkey));
-    // A reference addresses nobody: a send that tags only references is
-    // untagged conversation.
-    const addressedKeys = capturedRecipients
-      .map(({ pubkey }) => pubkey)
-      .filter((pubkey) => !referenced(pubkey));
-    const queueFollowUp =
+    const queueable =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
-      followUpBehaviorPreference() === "queue" &&
-      addressedKeys.length > 0 &&
-      !soloHasPeople(addressedKeys, session.viewer, profileSnapshot, agentKeys);
+      followUpBehaviorPreference() === "queue";
     try {
       const tokens = draftTokens(captured);
       messageTokenTags(tokens);
@@ -3111,7 +3095,24 @@ function Composer({
       ) => {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        if (!queueFollowUp || !host) return publishNow(uploaded, session);
+        // A send is an agent follow-up unless it addresses a confirmed person
+        // (a loaded, non-agent profile). Those, and untagged conversation in
+        // a shared chat, go out now; recipients still being classified keep
+        // the owner's queue preference. The recipients are the fresh ones,
+        // without references: someone may have joined or left since.
+        const profiles = session.profiles.snapshot();
+        if (
+          !queueable ||
+          !host ||
+          !recipients.length ||
+          soloHasPeople(
+            recipients,
+            session.viewer,
+            profiles,
+            knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+          )
+        )
+          return publishNow(uploaded, session);
         const message = {
           channelId,
           text: content,

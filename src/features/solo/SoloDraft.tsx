@@ -740,11 +740,14 @@ export function SoloDraft({
                 if (!writeView(scope, `${draftKey}:new-project`, project))
                   missing.push("workspace");
                 // The pill's agents, when it routed the send; the composer reads
-                // them as it mounts. Tags in the text carry their own.
+                // them as it mounts. Tags in the text carry their own; when those
+                // are only references, the pill routed the send too.
+                const typed = new Set(draft.recipients.map((p) => p.pubkey));
+                const pill =
+                  addressed?.filter((p) => !typed.has(p.pubkey)) ?? [];
                 if (
-                  addressed &&
-                  !draft.recipients.length &&
-                  !writeView(scope, `${draftKey}:new-draft:agents`, addressed)
+                  pill.length &&
+                  !writeView(scope, `${draftKey}:new-draft:agents`, pill)
                 )
                   missing.push("agents");
                 attachmentDraft(

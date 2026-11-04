@@ -415,9 +415,17 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
   }
 });
 
-it.each(["", "not a relay"])(
+const unreadable = "Enter a community address or invite link.";
+const bareCode = "Paste the whole invite link, not only its code.";
+
+it.each([
+  ["", unreadable],
+  ["not a relay", unreadable],
+  ["v2.invite", bareCode],
+  ["v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo", bareCode],
+])(
   "shows inline relay validation for %j without contacting a relay",
-  async (value) => {
+  async (value, message) => {
     const user = userEvent.setup();
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
@@ -436,15 +444,14 @@ it.each(["", "not a relay"])(
       />,
     );
     const input = screen.getByLabelText("Community URL");
-    if (value) await user.type(input, value);
+    if (value) {
+      await user.click(input);
+      await user.paste(value);
+    }
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Enter a community address or invite link.",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(input).toHaveAttribute("aria-invalid", "true");
-    expect(input).toHaveAccessibleDescription(
-      /Enter a community address or invite link\./,
-    );
+    expect(input).toHaveAccessibleDescription(expect.stringContaining(message));
     expect(fetch).not.toHaveBeenCalled();
     await user.clear(input);
     await user.type(input, "wss://relay.example");

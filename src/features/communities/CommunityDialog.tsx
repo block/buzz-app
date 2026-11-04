@@ -11,7 +11,7 @@ import { communityRequest, inspectProfile, type CommunityInfo } from "./api";
 import type { Communities, PersonalProfile } from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
 import { communityDestination } from "./destination";
-import { parsePastedInvite } from "./invite-link";
+import { parsePastedInvite, pastedInviteError } from "./invite-link";
 import { nativeIdentityEnabled } from "../identity/service";
 import { isTransientFailure, readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
@@ -201,7 +201,9 @@ export function CommunityDialog({
       await work(async (signal) => {
         const entered = parsePastedInvite(url);
         if (!entered)
-          throw new Error("Enter a community address or invite link.");
+          throw new Error(
+            pastedInviteError(url, "Enter a community address or invite link."),
+          );
         const next = communityDestination(entered.community);
         // A pasted invite link carries its code the way an opened invite does.
         if (entered.code) {

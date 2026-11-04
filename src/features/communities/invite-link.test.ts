@@ -86,14 +86,18 @@ it.each([
     { community: "https://relay.example.com:8443", code: "" },
   ],
   ["localhost:3000", { community: "https://localhost:3000", code: "" }],
-  // A bare invite code with a dot reads as a host, so it fails at lookup.
-  ["v2.invite", { community: "https://v2.invite", code: "" }],
+  // Only a lone code segment after `v2.` is a bare invite code.
+  ["v2.relay.example", { community: "https://v2.relay.example", code: "" }],
+  ["wss://v2.invite", { community: "https://v2.invite", code: "" }],
 ])("reads a pasted invite or address: %s", (input, expected) => {
   expect(parsePastedInvite(input)).toEqual(expected);
 });
 
 it.each([
   "",
+  // A bare invite code is never read as a host.
+  "v2.invite",
+  " v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo ",
   "not a relay",
   "ws://relay.example",
   "http://relay.example",

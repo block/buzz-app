@@ -71,9 +71,26 @@ export function parsePastedInvite(input: string): InviteLink | null {
   } catch {
     // Not a URL; a bare host is read as wss:// below.
   }
+  // Looking a code up as a host would send it to DNS and fail as a lookup.
+  if (isBareInviteCode(value)) return null;
   try {
     return { community: enteredRelayOrigin(value), code: "" };
   } catch {
     return null;
   }
+}
+
+/** The relay reads a `v2.` value as an invite code (buzz-core `V2_PREFIX`).
+ * Followed by one base64url segment, with no further dot, port or path, it is
+ * a code pasted without its link; `v2.relay.example` stays a host. */
+function isBareInviteCode(value: string) {
+  return /^v2\.[\w-]+$/.test(value);
+}
+
+/** Refusal copy for input `parsePastedInvite` cannot read: a bare invite code
+ * asks for its whole link, which also names the community. */
+export function pastedInviteError(input: string, fallback: string) {
+  return isBareInviteCode(input.trim())
+    ? "Paste the whole invite link, not only its code."
+    : fallback;
 }

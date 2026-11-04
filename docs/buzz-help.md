@@ -152,7 +152,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   identity alone does not grant membership. The same identity can be used in
   more than one community. To add another, choose **Join a community** in the
   community picker and paste an invite link or type an address such as
-  `relay.example.com`; an invite link fills in its invite code.
+  `relay.example.com`; an invite link fills in its invite code. Paste the whole
+  link there; a code on its own is refused.
 - Community owners and admins invite people with **Invite members** in the
   community's **Membership** settings (also reached from **Invite to community**
   in the community picker's right-click menu). The dialog creates an invite

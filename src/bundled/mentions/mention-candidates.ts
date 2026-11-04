@@ -30,7 +30,8 @@ function availableMentionAgents<T extends { pubkey: string }>(
   return agents.filter((agent) => !members.has(agent.pubkey));
 }
 
-/** Row detail for an outside choice. Nobody can be added to a DM. */
+/** Row detail for an outside choice. Nobody can be added to a DM, and a Solo
+ * chat adds only the viewer's agents (outsideMentionReferences). */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
   elsewhere?: string,
@@ -38,7 +39,9 @@ export function outsideMentionDetail(
   if (elsewhere) return `In ${elsewhere}`;
   return channel?.channelType === "dm"
     ? "Not in DM · Will not be notified"
-    : "Not in channel";
+    : channel?.channelType === "solo"
+      ? "Not in chat · Will not be notified"
+      : "Not in channel";
 }
 
 /**
@@ -206,7 +209,7 @@ function buildCandidates(
           session.outbox?.supports(9000),
         )))
     choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-  if (!roster && !inviteAgents && allowsOutsideMentions(channel))
+  if (allowsOutsideMentions(channel, roster, inviteAgents))
     for (const person of directory) choices.set(person.pubkey, person);
   // Another community's agent is never a member or an agent here; it only
   // takes a row no one in this community has. Sending asks before it joins.

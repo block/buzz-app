@@ -2,7 +2,10 @@ import {
   fullSession,
   type ComposerSession,
 } from "../../features/messages/composer-session";
-import { allowsOutsideMentions } from "../../features/messages/mention-admission";
+import {
+  allowsOutsideMentions,
+  outsideMentionReferences,
+} from "../../features/messages/mention-admission";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import type { MentionRoster } from "../../features/messages/draft-mention-roster";
 import type { Agent } from "../../features/agents/service";
@@ -184,11 +187,16 @@ async function resolve(
     });
     const choice = choices.find((c) => c.recipient.pubkey === pubkey);
     if (choice) {
-      // Nobody can be added to a DM, and the chooser row that says "Will not
-      // be notified" was never shown: a chip must not promise a notification.
+      // A DM adds nobody and a Solo chat only the viewer's agents, and the
+      // chooser row that says "Will not be notified" was never shown: a chip
+      // must not promise a notification.
       if (
-        channel?.channelType === "dm" &&
-        !members.includes(choice.recipient.pubkey)
+        !members.includes(choice.recipient.pubkey) &&
+        outsideMentionReferences(
+          channel,
+          session.agentChoices.snapshot().identities,
+          choice.recipient.pubkey,
+        )
       )
         return null;
       return choice.recipient;
@@ -211,10 +219,10 @@ async function resolve(
   // directory, as it does in the chooser.
   const direct = decide([], false, name);
   if (direct) return direct;
+  // Where outside people only become references, the directory still names
+  // namesakes of members, as the chooser shows them.
   const outside =
-    !roster &&
-    !invite &&
-    allowsOutsideMentions(channel) &&
+    allowsOutsideMentions(channel, roster, inviteAgents) &&
     !channel?.archived &&
     !channel?.readOnly;
   if (!outside) return decide([], true, name);

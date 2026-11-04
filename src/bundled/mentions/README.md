@@ -78,10 +78,15 @@ archived and not read-only, the choice set is:
    bring into this one (section 7); and
 4. people and agents found by a community directory search for the current query.
 
-Solo chats MUST NOT add directory people or agents from other communities. This
-follows the channel type, so it also holds in Solo chat composers that do not
-invite agents, such as media comments and edits. A Solo chat that invites agents uses its own agent list
-instead of items 3 and 4. Archived or read-only channels have
+Solo chats MUST NOT add agents from other communities. A Solo chat composer
+that invites agents (the chat and its threads, the owner's or a shared chat's)
+offers the Solo chat's own agent list instead of item 3, and also offers item 4
+so people can name anyone. It never adds directory people: an outside key that
+is not one of the viewer's own agents is a reference (section 7). When the
+owner's composer limits members to its own roster, the directory MUST NOT
+bring back a member that the roster leaves out. Other Solo chat composers, such
+as media comments and edits, do not invite agents and offer the members only.
+Archived or read-only channels have
 no choices. Clients MUST exclude invalid keys and identities known to be
 archived, except the viewer's own key: a user always sees themself. Unknown
 archive state does not exclude a key.
@@ -304,8 +309,9 @@ for the pending name already settles the directory for every query extending
 it (section 6), so no search is waiting and the Space that completes the
 longer name selects it: `@mira Exam` returned to prose, then `ple ` selects
 `Mira Example`. In a
-DM a pending name that resolves to someone outside the DM returns to prose,
-since the chooser's "Will not be notified" row was never shown. Sending while
+DM, or in a Solo chat when the person is not one of the viewer's agents, a
+pending name that resolves to someone outside the destination returns to
+prose, since the chooser's "Will not be notified" row was never shown. Sending while
 a mention is pending waits for it, through such an extension; if a mention the
 send waited for returns to prose, the client MUST NOT send in that same action,
 since the user saw the name held and would notify no one: it keeps the draft,
@@ -363,8 +369,10 @@ A DM has fixed participants, so there is no choice to make. The client MUST NOT
 ask. It sends outside keys in a DM as references, which do not notify them. The
 chooser row says so before the user picks the person.
 
-A Solo chat MUST NOT ask either, in any Solo chat composer. Its recipients follow
-the Solo chat choice policy.
+A Solo chat MUST NOT ask either, in any Solo chat composer. A composer that
+invites agents adds the viewer's available agents that the draft names. Every
+other outside key is a reference, as in a DM, and the chooser row says so
+before the user picks the person.
 
 An agent from the viewer's other communities (section 1, item 3) is not a
 member here and cannot be added until it joins this community. Before the

@@ -14144,6 +14144,69 @@ it("a member whose profile has not loaded turns pill routing off", async () => {
   expect(h.commands().audience).toBeDefined();
 });
 
+it("queues an agent follow-up that also references a person outside the Solo chat", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  const human = { pubkey: "e".repeat(64), name: "Teammate" };
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  h.setProfiles(new Map([[human.pubkey, { name: "Teammate" }]]));
+  const activity = {
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state: "working",
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  };
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: ["viewer", first.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => channelList.channels[0],
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: () => () => {},
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(human);
+    h.commands().insertText("Follow up");
+  });
+  h.submit();
+  // A referenced person addresses nobody, so this is still an agent follow-up.
+  await screen.findByRole("region", { name: "Queued follow-ups" });
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("queues a tagged agent follow-up while agent choices no longer list it", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
   const h = mount();
@@ -14401,7 +14464,7 @@ it("withholds recording tools while a message edit cannot take attachments", asy
 });
 
 it.each([true, false])(
-  "Solo human addressing is explicit for owner=%s and never enrolls outsiders",
+  "Solo human addressing is explicit for owner=%s and only references outsiders",
   async (owner) => {
     const h = mount();
     const human = { pubkey: "e".repeat(64), name: "Teammate" };
@@ -14427,14 +14490,21 @@ it.each([true, false])(
     await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
     expect(h.messages.send.mock.calls[0]?.[2]).toEqual([human.pubkey]);
     expect(addAgents).not.toHaveBeenCalled();
-    // Previously selected human loses membership before the fresh send check.
+    // A selected human loses membership before the fresh send check: they
+    // become a reference, which addresses nobody.
     act(() => h.commands().insertMention(human));
     channel.members = [first.pubkey];
     h.submit();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "already in this chat",
+      "Tag an agent to send.",
     );
     expect(h.messages.send).toHaveBeenCalledOnce();
+    // With an agent tagged, the outside human goes out as a reference.
+    act(() => h.commands().insertMention(first));
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+    expect(h.messages.send.mock.calls[1]?.[2]).toEqual([first.pubkey]);
+    expect(h.messages.send.mock.calls[1]?.[5]).toEqual([human.pubkey]);
     expect(addAgents).not.toHaveBeenCalled();
   },
 );

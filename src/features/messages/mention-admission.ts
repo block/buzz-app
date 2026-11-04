@@ -47,6 +47,44 @@ export function outsideMentionReferences(
   return false;
 }
 
+/** Solo chats a New chat is about to start, by their reserved ids. */
+const startingChats = new Map<string, ChannelSummary>();
+
+/**
+ * Reserve `channelId` for the Solo chat a New chat starts. Until that chat
+ * lists, its mentions follow a Solo chat holding only the viewer, so the
+ * first message can reference people as later ones do. Returns the release.
+ */
+export function reserveSoloMentions(
+  session: ComposerSession,
+  channelId: string,
+) {
+  const chat: ChannelSummary = {
+    id: channelId,
+    name: "",
+    channelType: "solo",
+    members: session.viewer ? [session.viewer] : [],
+  };
+  startingChats.set(channelId, chat);
+  return () => {
+    if (startingChats.get(channelId) === chat) startingChats.delete(channelId);
+  };
+}
+
+/** The destination a draft's mentions follow: its listed channel, else the
+ * Solo chat a New chat reserved it for. */
+export function mentionChannel(session: ComposerSession, channelId: string) {
+  return (
+    session.channels.list().channels.find((c) => c.id === channelId) ??
+    startingChats.get(channelId)
+  );
+}
+
+/** The reserved New chat stand-in alone, for callers that read the listed channel reactively. */
+export function startingChat(channelId: string) {
+  return startingChats.get(channelId);
+}
+
 /**
  * Which keys a draft may address in this destination, read once from current
  * state. The host owns this rule; the mentions plugin offers a subset of it and
@@ -62,9 +100,7 @@ export function mentionAdmission(
    * takes it out of its archive here, as after a Remove. */
   bringable: ReadonlySet<string> = new Set(),
 ): (pubkey: string) => boolean {
-  const channel = session.channels
-    .list()
-    .channels.find((c) => c.id === channelId);
+  const channel = mentionChannel(session, channelId);
   if (channel?.archived || channel?.readOnly) return () => false;
   const allowed = roster
     ? new Set(roster.map((person) => person.pubkey))

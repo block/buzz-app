@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import styles from "./Messages.module.css";
@@ -98,18 +104,21 @@ function mount(
           </div>
         </div>
         <button type="button">Elsewhere</button>
+        <textarea aria-label="Composer" />
       </>
     );
   }
   const result = render(<Surface />);
   const row = screen.getByText("Target");
   const outside = screen.getByRole("button", { name: "Elsewhere" });
+  const composer = screen.getByRole("textbox", { name: "Composer" });
   return {
     ...result,
     request,
     complete,
     row,
     outside,
+    composer,
     restart: () => result.rerender(<Surface prepare={() => {}} />),
     remountRow: () => result.rerender(<Surface rowKey={1} />),
     next: () =>
@@ -222,6 +231,47 @@ it("marks a reveal beside the reader only once its row is uncovered", async () =
   expect(complete).toHaveBeenCalledOnce();
   expect(highlighted(row)).toBe(true);
   expect(document.activeElement).toBe(outside);
+});
+
+it("focuses the revealed row when nothing claimed focus since the request", async () => {
+  const { row, complete } = mount();
+  await frame(); // Attach observers.
+  await frame(); // Reveal.
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it.each(["pointerDown", "keyDown"] as const)(
+  "leaves focus with a composer the person focused before the reveal lands (%s)",
+  async (input) => {
+    const { row, composer, complete } = mount();
+    const focus = vi.spyOn(row, "focus");
+    await frame(); // Attach observers; the target is still loading.
+    fireEvent[input](composer);
+    composer.focus();
+    await frame(); // Reveal.
+    expect(row.scrollIntoView).toHaveBeenCalled();
+    expect(document.activeElement).toBe(composer);
+    await mutate(row); // Another reveal attempt still leaves the composer.
+    await frame();
+    await frame();
+    expect(document.activeElement).toBe(composer);
+    expect(focus).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+    await idle();
+    expect(highlighted(row)).toBe(true);
+  },
+);
+
+it("takes focus the app handed to another control without the person's input", async () => {
+  const { row, composer, complete } = mount();
+  await frame();
+  composer.focus(); // Such as a closing dialog's focus return.
+  await frame();
+  expect(document.activeElement).toBe(row);
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
 });
 
 it.each([false, true])(

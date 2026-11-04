@@ -53,6 +53,33 @@ export function useMessageReveal({
     },
     [],
   );
+  // Focus as each request arrives: the control that opened it, or none once
+  // that control unmounted. Recorded before the target loads, however late,
+  // with whether the person has pressed a key or pointer since.
+  const opener = useRef<{
+    signal: AbortSignal;
+    element: Element | null;
+    input: boolean;
+  }>(undefined);
+  useLayoutEffect(() => {
+    if (!signal) return;
+    if (opener.current?.signal !== signal)
+      opener.current = {
+        signal,
+        element: document.activeElement,
+        input: false,
+      };
+    const request = opener.current;
+    const input = () => {
+      request.input = true;
+    };
+    document.addEventListener("pointerdown", input, true);
+    document.addEventListener("keydown", input, true);
+    return () => {
+      document.removeEventListener("pointerdown", input, true);
+      document.removeEventListener("keydown", input, true);
+    };
+  }, [signal]);
   useLayoutEffect(() => {
     if (
       !ready ||
@@ -91,15 +118,25 @@ export function useMessageReveal({
       });
       placed?.();
       settled.current = true;
-      // A replacement may recover lost focus, but must not take it from another
-      // control after this request already focused a row successfully.
+      // The first focus yields to a control the person moved to after the
+      // request arrived, such as the composer of a still-loading conversation,
+      // so their typing stays there. Focus handed off by the app meanwhile, or
+      // left on the opener or the surface around the scroller, is still taken.
+      // A replacement may recover lost focus, but must not take it from
+      // another control after this request already focused a row successfully.
+      const active = document.activeElement;
+      const lost = !active || active === document.body;
+      const claimed =
+        !lost &&
+        !active.contains(container) &&
+        active !== opener.current?.element &&
+        !!opener.current?.input;
       let focusPending = false;
       if (
         focus &&
-        (focused.current?.signal !== signal ||
-          (focused.current.row !== row &&
-            (!document.activeElement ||
-              document.activeElement === document.body)))
+        (focused.current?.signal !== signal
+          ? !claimed
+          : focused.current.row !== row && lost)
       ) {
         row.focus({ preventScroll: true });
         focusPending = document.activeElement !== row;

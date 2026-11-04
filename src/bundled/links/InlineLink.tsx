@@ -153,7 +153,14 @@ export function LinkLabel({
     label === href ||
     (linkKind(label) !== null && new URL(label).href === new URL(href).href);
   const Icon = kind === "channel" && privateChannel ? LockIcon : icons[kind];
-  icon ??= <Icon aria-hidden="true" className={styles.icon} />;
+  icon ??= (
+    <Icon
+      aria-hidden="true"
+      className={
+        kind === "channel" ? `${styles.icon} ${styles.flush}` : styles.icon
+      }
+    />
+  );
   if (content !== undefined && !rawDestination)
     return (
       <span data-link-kind={kind}>

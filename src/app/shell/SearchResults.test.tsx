@@ -5172,7 +5172,16 @@ it("leads a message hit's conversation name with its type icon and words", async
       query="match"
       onQueryChange={() => {}}
       input={createRef()}
-      pages={[]}
+      // A detail without a type icon, for contrast.
+      pages={[
+        {
+          key: "page",
+          label: "Inbox",
+          detail: "Page",
+          icon: ChatCircleIcon,
+          run: () => {},
+        },
+      ]}
       openConversation={() => {}}
       inlineSettings={inlineSettings}
     />
@@ -5189,12 +5198,14 @@ it("leads a message hit's conversation name with its type icon and words", async
         // The icon styled as a channel mention's in a message.
         expect(
           option.querySelector(
-            `[data-link-kind="channel"] .${referenceStyles.icon}`,
+            `.${referenceStyles.icon}.${referenceStyles.flush}`,
           ),
         ).toHaveClass(`tabler-icon-${icon}`);
         expect(within(option).getByText(`${kind},`)).toHaveClass("sr-only");
       }
     });
+    const page = screen.getByRole("option", { name: /^Inbox\s*Page$/ });
+    expect(page.querySelector(`.${referenceStyles.icon}`)).toBeNull();
     // A grid row's own label reads the same words before the detail.
     rerender(
       palette([

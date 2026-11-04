@@ -61,7 +61,9 @@ it("renders private channel links with the design-system lock icon", () => {
     </LinkChannelPrivateContext>,
   );
   expect(markup).toContain(
-    renderToStaticMarkup(<LockIcon className={styles.icon} />),
+    renderToStaticMarkup(
+      <LockIcon className={`${styles.icon} ${styles.flush}`} />,
+    ),
   );
   expect(textOf(markup)).toBe("private");
 });

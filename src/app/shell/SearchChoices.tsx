@@ -754,14 +754,7 @@ export function SearchChoices({
                                           />
                                         </span>
                                         {detail && (
-                                          // A channel label, as LinkLabel marks a channel mention in a message,
-                                          // so the reference icon keeps text size and drops its gap.
-                                          <span
-                                            className="block truncate text-body-sm text-subtle"
-                                            data-link-kind={
-                                              DetailIcon && "channel"
-                                            }
-                                          >
+                                          <span className="block truncate text-body-sm text-subtle">
                                             {/* Read in place of the icon. jsdom (dom-accessibility-api) trims
                                                 each element's text, so the space sits outside the span;
                                                 browsers don't trim it. Shown, the space collapses at the
@@ -771,9 +764,10 @@ export function SearchChoices({
                                                 <span className="sr-only">{`${detailIconLabel},`}</span>{" "}
                                               </>
                                             )}
+                                            {/* Text-sized and flush, as LinkLabel shows a channel mention's icon. */}
                                             {DetailIcon && (
                                               <DetailIcon
-                                                className={referenceStyles.icon}
+                                                className={`${referenceStyles.icon} ${referenceStyles.flush}`}
                                               />
                                             )}
                                             {detail}

@@ -62,8 +62,8 @@ export type SearchInputProps = {
   scopeAction?: ReactNode;
   authorChip?:
     | {
-        /** `in:@person` shares the chip with `from:@author`. */
-        operator: "from" | "in";
+        /** `in:@person` and `in:#channel` share the chip with `from:@author`. */
+        operator: "from" | "in" | "channel";
         label: string;
         title: string;
         onRemove: () => void;
@@ -410,11 +410,14 @@ export function SearchChoices({
               <button
                 type="button"
                 className="search-palette-author-chip"
-                aria-label={`Remove ${authorChip.operator === "in" ? "conversation with" : "author"} ${authorChip.label}`}
+                aria-label={`Remove ${{ from: "author", in: "conversation with", channel: "channel" }[authorChip.operator]} ${authorChip.label}`}
                 title={authorChip.title}
                 onClick={authorChip.onRemove}
               >
-                <span aria-hidden="true">×</span> {authorChip.operator}:@
+                <span aria-hidden="true">×</span>{" "}
+                {authorChip.operator === "channel"
+                  ? "in:#"
+                  : `${authorChip.operator}:@`}
                 {authorChip.label}
               </button>
             </span>

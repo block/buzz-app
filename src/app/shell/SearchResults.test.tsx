@@ -4172,7 +4172,7 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
       ).toEqual(["builds" + "Channel", "buzz-bugs" + "Channel"]),
     );
     fireEvent.click(channels.getByRole("option", { name: /buzz-bugs/ }));
-    expect(change).toHaveBeenLastCalledWith("deploy in:#buzz-bugs ");
+    expect(change).toHaveBeenLastCalledWith("deploy in:bugs ");
     view.rerender(<SearchResults {...props} query="in:#" />);
     expect(
       await within(
@@ -4188,6 +4188,100 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
     owner.dispose();
   }
 });
+
+it("keeps a picked channel's identity past an open live namesake", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const joined = "00000000-0000-4000-8000-000000000001";
+  const { owner, reads } = operatorSession(
+    viewer,
+    relay,
+    [
+      metadata(relay, joined, "crew", 1700000000, [
+        ["t", "stream"],
+        ["archived", "true"],
+      ]),
+      roster(relay, joined, [viewer.pubkey]),
+      metadata(relay, "open", "crew", 1700000000, openChannel),
+    ],
+    [message(viewer, joined, "deploy archived", 1700000001)],
+  );
+  const change = vi.fn();
+  const props = {
+    ...operatorProps,
+    session: owner.session,
+    onQueryChange: change,
+  };
+  try {
+    const view = render(<SearchResults {...props} query="deploy in:#cr" />);
+    const channels = within(
+      await screen.findByRole("group", { name: "Channels" }),
+    );
+    fireEvent.click(await channels.findByRole("option", { name: /crew/ }));
+    expect(change).toHaveBeenLastCalledWith(`deploy in:${joined} `);
+    view.rerender(<SearchResults {...props} query={`deploy in:${joined} `} />);
+    expect(
+      screen.getByRole("button", { name: "Remove channel crew" }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(reads.flat()).toEqual([
+        expect.objectContaining({ "#h": [joined] }),
+      ]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each([
+  ["from:@ali", "Alice", "in:@bo", "Bob"],
+  ["IN:@bo", "Bob", "from:@ali", "Alice"],
+])(
+  "keeps %s when a person is then picked for the other operator",
+  async (first, firstName, second, secondName) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      alice = keypair(),
+      bob = keypair();
+    const { owner } = operatorSession(viewer, relay, []);
+    const session = {
+      ...owner.session,
+      searchProfiles: async () => [
+        eventDto(profile(alice, { display_name: "Alice" })),
+        eventDto(profile(bob, { display_name: "Bob" })),
+      ],
+    };
+    const operand = (name: string, typed: string) =>
+      /^in:/i.test(typed)
+        ? `in:@${(name === "Bob" ? bob : alice).pubkey}`
+        : `from:${(name === "Bob" ? bob : alice).pubkey}`;
+    const change = vi.fn();
+    const props = { ...operatorProps, session, onQueryChange: change };
+    try {
+      const view = render(<SearchResults {...props} query={first} />);
+      fireEvent.click(
+        await within(
+          await screen.findByRole("group", { name: "People" }),
+        ).findByRole("option", { name: new RegExp(firstName) }),
+      );
+      const picked = `${operand(firstName, first)} `;
+      expect(change).toHaveBeenLastCalledWith(picked);
+      view.rerender(<SearchResults {...props} query={`${picked}${second}`} />);
+      fireEvent.click(
+        await within(
+          await screen.findByRole("group", { name: "People" }),
+        ).findByRole("option", { name: new RegExp(secondName) }),
+      );
+      expect(change).toHaveBeenLastCalledWith(
+        `${picked}${operand(secondName, second)} `,
+      );
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it("shows only messages once text sits beside an operator", async () => {
   const relay = keypair(),

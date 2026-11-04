@@ -228,9 +228,9 @@ export function SearchResults({
     (savedHidden.has(channel.id) || dmVisibility.hidden.includes(channel.id));
   const [selectedAuthor, setSelectedAuthor] = useState<{
     query: string;
-    /** `from:<key>` or `in:@<key>`, as the query holds it. */
+    /** `from:<key>`, `in:@<key>` or `in:<channel id>`, as the query holds it. */
     operand: string;
-    pubkey: string;
+    title: string;
     name: string;
     index: number;
   }>();
@@ -259,6 +259,43 @@ export function SearchResults({
     if (!selectedAuthor || !showAuthorChip) return;
     onQueryChange(displayQuery ?? "");
     setSelectedAuthor(undefined);
+    input.current?.focus();
+  };
+  /**
+   * Put a chosen operand in place of its unfinished token and on the chip.
+   * Replacing the chip's own operator drops the old operand; another
+   * operator is an independent filter, so the query keeps it.
+   */
+  const selectOperand = (
+    tokenStart: number,
+    tokenEnd: number,
+    operand: string,
+    name: string,
+    title: string,
+  ) => {
+    const replacing =
+      showAuthorChip &&
+      operand.slice(0, operand.indexOf(":")) ===
+        authorOperand.slice(0, authorOperand.indexOf(":"));
+    // The prompt's leading separator may be the one removed with the old
+    // chip. Map the token itself through that removal, rather than
+    // subtracting the separator from its start twice.
+    const oldEnd = selectedIndex + authorOperand.length;
+    const shift =
+      replacing && selectedIndex < tokenStart
+        ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
+        : 0;
+    const visible = replacing ? (displayQuery ?? query) : query;
+    const prefix = visible.slice(0, tokenStart - shift);
+    const nextQuery = `${prefix}${operand}${visible.slice(tokenEnd - shift) || " "}`;
+    setSelectedAuthor({
+      query: nextQuery,
+      operand,
+      title,
+      name,
+      index: prefix.length,
+    });
+    onQueryChange(nextQuery);
     input.current?.focus();
   };
   /** Replace the query, keeping the author chip on its operand. */
@@ -451,28 +488,26 @@ export function SearchResults({
               Number(!!a.archived) - Number(!!b.archived),
           )
           .slice(0, 12)
-          .map((channel) => {
-            // A namesake would leave the name ambiguous; the id is exact.
-            const value =
-              list.channels.filter(
-                (other) => !other.huddle && sameName(other.name, channel.name),
-              ).length > 1
-                ? channel.id
-                : `#${channel.name}`;
-            return {
-              key: `in:${channel.id}`,
-              label: channel.name,
-              detail: channel.archived ? "Archived channel" : "Channel",
-              icon: ChatCircleIcon,
-              run: () => {
-                const start =
-                  channelPrompt.index +
-                  (channelPrompt[0].match(/^\s*/)?.[0].length ?? 0);
-                replaceQuery(`${query.slice(0, start)}in:${value} `);
-                input.current?.focus();
-              },
-            };
-          })
+          .map((channel) => ({
+            key: `in:${channel.id}`,
+            label: channel.name,
+            detail: channel.archived ? "Archived channel" : "Channel",
+            icon: ChatCircleIcon,
+            // The id keeps the choice exact past any namesake; the chip shows
+            // its name.
+            run: () => {
+              const start =
+                channelPrompt.index +
+                (channelPrompt[0].match(/^\s*/)?.[0].length ?? 0);
+              selectOperand(
+                start,
+                start + channelPrompt[0].trimStart().length,
+                `in:${channel.id}`,
+                channel.name,
+                channel.id,
+              );
+            },
+          }))
       : [];
   // The author picker also matches a selectable agent by its own name, so a
   // completed from: name resolves against the same names.
@@ -671,37 +706,18 @@ export function SearchResults({
               },
               isAgent,
               run: () => {
-                // The prompt's leading separator may be the one removed with
-                // the old chip. Map the token itself through that removal,
-                // rather than subtracting the separator from its start twice.
-                const visible = displayQuery ?? query;
-                const oldEnd = selectedIndex + authorOperand.length;
-                const removedLength = showAuthorChip
-                  ? authorOperand.length + (query[oldEnd] === " " ? 1 : 0)
-                  : 0;
                 const tokenStart =
                   authorToken.index +
                   (authorToken[0].match(/^\s*/)?.[0].length ?? 0);
-                const promptStart =
-                  showAuthorChip && selectedIndex < tokenStart
-                    ? tokenStart - removedLength
-                    : tokenStart;
-                const promptEnd =
-                  promptStart + authorToken[0].trimStart().length;
-                const prefix = visible.slice(0, promptStart);
-                const operand = authorToken[0].trimStart().startsWith("in:")
-                  ? `in:@${pubkey}`
-                  : `from:${pubkey}`;
-                const nextQuery = `${prefix}${operand}${visible.slice(promptEnd) || " "}`;
-                setSelectedAuthor({
-                  query: nextQuery,
-                  operand,
-                  pubkey,
-                  name: profile.name,
-                  index: prefix.length,
-                });
-                onQueryChange(nextQuery);
-                input.current?.focus();
+                selectOperand(
+                  tokenStart,
+                  tokenStart + authorToken[0].trimStart().length,
+                  /^in:/i.test(authorToken[0].trimStart())
+                    ? `in:@${pubkey}`
+                    : `from:${pubkey}`,
+                  profile.name,
+                  npubEncode(pubkey),
+                );
               },
             };
           })
@@ -1523,11 +1539,13 @@ export function SearchResults({
       authorChip={
         showAuthorChip && selectedAuthor
           ? {
-              operator: selectedAuthor.operand.startsWith("in:")
+              operator: selectedAuthor.operand.startsWith("in:@")
                 ? ("in" as const)
-                : ("from" as const),
+                : selectedAuthor.operand.startsWith("in:")
+                  ? ("channel" as const)
+                  : ("from" as const),
               label: selectedAuthor.name,
-              title: npubEncode(selectedAuthor.pubkey),
+              title: selectedAuthor.title,
               onRemove: removeSelectedAuthor,
             }
           : undefined

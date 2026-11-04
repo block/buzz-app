@@ -4397,6 +4397,7 @@ it.each([
       }),
     );
     const quinn: Profile = { name: "Quinn", isAgent: true };
+    const open = vi.fn(() => true);
     const verifications = vi.mocked(attestedOwner);
     verifications.mockClear();
     // The owner's name arrives after verification, as a background load.
@@ -4420,6 +4421,8 @@ it.each([
       participantProfiles: new Map([[agent.pubkey, quinn]]),
       session,
       viewer: viewer === "owner" ? owner.pubkey : row.authorId,
+      onOpenLink: open,
+      canOpenLink: () => true,
     });
     try {
       const byline = view.container.querySelector("strong")?.parentElement;
@@ -4439,6 +4442,15 @@ it.each([
           expect(view.container).toHaveTextContent(`Quinn· ${label}`),
         );
         expect(read).toHaveBeenCalledWith(...ownerRead);
+        // The owner's name is a link to their profile, beside quiet text.
+        const ownerLinkButton = screen.getByRole("button", {
+          name: "View Logan profile",
+        });
+        expect(ownerLinkButton).toHaveTextContent("Logan");
+        fireEvent.click(ownerLinkButton);
+        expect(open).toHaveBeenCalledWith(profileTarget(owner.pubkey), {
+          rootId: row.id,
+        });
       } else if (viewer === "owner") {
         await expect(verifications.mock.results[0]?.value).resolves.toBe(
           owner.pubkey,

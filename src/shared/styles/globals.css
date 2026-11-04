@@ -195,6 +195,18 @@
     background-color: var(--bg-app);
     @apply texture-dots;
   }
+  /* Only while a plugin registers a backdrop: its layer paints above the
+     shell's own background and below every descendant. */
+  .shell-background:has(> .shell-backdrop) {
+    isolation: isolate;
+  }
+  .shell-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+  }
 
   .shell-header {
     --interaction-hover: var(--affordance-backdrop-hover);

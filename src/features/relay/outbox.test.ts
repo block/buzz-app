@@ -1260,6 +1260,116 @@ it("restores a journal with every allowance exactly full", async () => {
     h.outbox.send({ kind: 40100, content: "x", tags: [["h", "c"]] }),
   ).toThrow("Outbox storage is full");
 });
+it("keeps a full message allowance's signing and delivery errors from blocking a Canvas", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage);
+  await h.open();
+  const ids: string[] = [];
+  try {
+    for (;;) ids.push(h.send("m".repeat(30 * 1024)));
+  } catch (error) {
+    expect(String(error)).toMatch("Outbox storage is full");
+  }
+  await h.signNext();
+  await vi.waitFor(() => expect(h.publications).toHaveLength(1));
+  h.publications[0]?.reject(new Error("Synthetic no ACK"));
+  await vi.waitFor(() =>
+    expect(
+      h.outbox.snapshot().find((item) => item.event.id === ids[0])?.error,
+    ).toMatch("Synthetic no ACK"),
+  );
+  const id = h.outbox.send({
+    kind: 40100,
+    content: "a".repeat(LIVE_CANVAS_BYTES),
+    tags: [["h", "c"]],
+  });
+  await vi.waitFor(async () => {
+    const saved = await storage.load();
+    expect(saved.some((item) => item.event.id === id)).toBe(true);
+    expect(saved.find((item) => item.event.id === ids[0])?.error).toMatch(
+      "Synthetic no ACK",
+    );
+  });
+});
+it("keeps a full Canvas allowance's signing and delivery errors from blocking messages", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage, 50);
+  const canvas = (channel: string) =>
+    h.outbox.send({
+      kind: 40100,
+      content: "a".repeat(LIVE_CANVAS_BYTES),
+      tags: [["h", channel]],
+    });
+  for (let i = 0; i < 7; i++) canvas(`c${i}`);
+  expect(() => canvas("c7")).toThrow("Outbox storage is full");
+  await h.signNext();
+  // Delivery times out, storing an error on every admitted Canvas.
+  await vi.waitFor(() =>
+    expect(h.outbox.snapshot().every((item) => item.error)).toBe(true),
+  );
+  const id = h.send("still deliverable");
+  await vi.waitFor(async () =>
+    expect((await storage.load()).some((item) => item.event.id === id)).toBe(
+      true,
+    ),
+  );
+});
+it("admits sends made before the journal loads without blocking the other allowance", async () => {
+  const content = "a".repeat(LIVE_CANVAS_BYTES);
+  const restored = Array.from({ length: 7 }, (_, i) => {
+    const event = signed(viewer, {
+      kind: 40100,
+      content,
+      tags: [["h", `c${i}`]],
+      created_at: 1700000000 + i,
+    });
+    return { event, signed: event, delivery: "unknown" as const };
+  });
+  let hydrate!: (records: readonly OutgoingEvent[]) => void;
+  let saved: readonly OutgoingEvent[] = [];
+  const h = setup({
+    load: () =>
+      new Promise((resolve) => {
+        hydrate = resolve;
+      }),
+    save: (records) => {
+      saved = structuredClone(records);
+    },
+  });
+  // Sent before loading: the restored canvases are not known yet.
+  const early = h.outbox.send({ kind: 40100, content, tags: [["h", "x"]] });
+  hydrate(restored);
+  await vi.waitFor(() => expect(h.outbox.snapshot()).toHaveLength(8));
+  expect(() =>
+    h.outbox.send({ kind: 40100, content: "x", tags: [["h", "y"]] }),
+  ).toThrow("Outbox storage is full");
+  const id = h.send("still deliverable");
+  await vi.waitFor(() => {
+    expect(saved.some((item) => item.event.id === early)).toBe(true);
+    expect(saved.some((item) => item.event.id === id)).toBe(true);
+  });
+});
+it("restores a stored row at its saved size", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage);
+  const id = h.send("pending");
+  await h.signNext();
+  const row = async () =>
+    (await storage.load()).find((item) => item.event.id === id);
+  await vi.waitFor(async () => expect((await row())?.signed).toBeDefined());
+  const before = await row();
+  // The stored row keeps its unsigned event next to the signed copy.
+  expect(before?.event).not.toHaveProperty("sig");
+  h.dispose();
+  const restored = setup(storage);
+  await vi.waitFor(() => expect(restored.outbox.snapshot()).toHaveLength(1));
+  restored.send("another");
+  await vi.waitFor(async () => expect(await storage.load()).toHaveLength(2));
+  expect(byteSize(await row())).toBe(byteSize(before));
+  restored.dispose();
+  const again = setup(storage);
+  await vi.waitFor(() => expect(again.outbox.snapshot()).toHaveLength(2));
+});
 it("admits a live Canvas up to its own limits, persists it, and retries the same signed event", async () => {
   const storage = memoryStorage();
   const first = setup(storage);

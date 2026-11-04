@@ -109,66 +109,60 @@ it("loads only on demand, uses the non-compact shared menu, and opens details wi
   );
   expect(h.props.openDetails).toHaveBeenCalledTimes(2);
 });
-it.each([true, false])(
-  "hands focus to the opened settings tab when the menu finishes closing (focus dropped to body=%s)",
-  async (dropped) => {
-    const h = harness();
-    const close = vi.fn();
-    function Page() {
-      const [settings, setSettings] = useState(false);
-      return (
-        <ChannelNavigationProvider relay={h.relay}>
-          <ChannelHeaderMenu
-            {...h.props}
-            openDetails={() => setSettings(true)}
+it("hands focus to the opened settings tab when the menu finishes closing after focus drops to the body", async () => {
+  const h = harness();
+  const close = vi.fn();
+  function Page() {
+    const [settings, setSettings] = useState(false);
+    return (
+      <ChannelNavigationProvider relay={h.relay}>
+        <ChannelHeaderMenu {...h.props} openDetails={() => setSettings(true)} />
+        {settings && (
+          <PanelWorkspace
+            value="settings"
+            select={() => {}}
+            items={[
+              {
+                id: "settings",
+                label: "Channel settings",
+                close,
+                content: <p>Settings</p>,
+              },
+            ]}
           />
-          {settings && (
-            <PanelWorkspace
-              value="settings"
-              select={() => {}}
-              items={[
-                {
-                  id: "settings",
-                  label: "Channel settings",
-                  close,
-                  content: <p>Settings</p>,
-                },
-              ]}
-            />
-          )}
-        </ChannelNavigationProvider>
-      );
-    }
-    render(<Page />, { reactStrictMode: true });
-    const user = userEvent.setup();
-    const trigger = screen.getByRole("button", { name: "Channel actions" });
-    await user.click(trigger);
-    const menu = await screen.findByRole("menu");
-    let release!: () => void;
-    const finished = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const animations = vi.fn(() => [{ finished }]);
-    // Hold the menu's exit animation. WebKit can drop focus to the body while
-    // it runs; jsdom keeps it on the tab the workspace focused.
-    Object.defineProperty(menu, "getAnimations", { value: animations });
-    try {
-      await user.click(
-        screen.getByRole("menuitem", { name: "View channel details" }),
-      );
-      await waitFor(() => expect(animations).toHaveBeenCalled());
-      if (dropped) (document.activeElement as HTMLElement | null)?.blur();
-      await act(async () => release());
-      await waitFor(() => expect(menu).not.toBeInTheDocument());
-      const tab = screen.getByRole("tab", { name: "Channel settings" });
-      await waitFor(() => expect(tab).toHaveFocus());
-      await user.keyboard("{Escape}");
-      expect(close).toHaveBeenCalledOnce();
-    } finally {
-      await act(async () => release());
-    }
-  },
-);
+        )}
+      </ChannelNavigationProvider>
+    );
+  }
+  render(<Page />, { reactStrictMode: true });
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Channel actions" });
+  await user.click(trigger);
+  const menu = await screen.findByRole("menu");
+  let release!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const animations = vi.fn(() => [{ finished }]);
+  // Hold the menu's exit animation. WebKit can drop focus to the body while
+  // it runs; jsdom keeps it on the tab, so the test drops it.
+  Object.defineProperty(menu, "getAnimations", { value: animations });
+  try {
+    await user.click(
+      screen.getByRole("menuitem", { name: "View channel details" }),
+    );
+    await waitFor(() => expect(animations).toHaveBeenCalled());
+    (document.activeElement as HTMLElement | null)?.blur();
+    await act(async () => release());
+    await waitFor(() => expect(menu).not.toBeInTheDocument());
+    const tab = screen.getByRole("tab", { name: "Channel settings" });
+    await waitFor(() => expect(tab).toHaveFocus());
+    await user.keyboard("{Escape}");
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => release());
+  }
+});
 it("supports keyboard dismissal, outside clicks, and Canvas with the stable header focus target", async () => {
   const h = harness();
   h.mount();

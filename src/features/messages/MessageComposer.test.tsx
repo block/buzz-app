@@ -14283,6 +14283,88 @@ it("sends now a shared Solo chat message whose only tag is a reference, like unt
   ).toBeNull();
 });
 
+it.each(["joined", "left"] as const)(
+  "decides a follow-up's queue from the fresh roster when the named person %s",
+  async (change) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    const h = mount();
+    const pat = { pubkey: "e".repeat(64), name: "Pat" };
+    h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+    h.setProfiles(new Map([[pat.pubkey, { name: "Pat" }]]));
+    const activity = {
+      status: "unavailable",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state: "working",
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+    // The rendered roster and the send's fresh read disagree about Pat.
+    const before = ["viewer", first.pubkey];
+    const after = [...before, pat.pubkey];
+    const channel = (members: string[]) => ({
+      id: "channel",
+      channelType: "solo",
+      creator: "viewer",
+      members,
+    });
+    const channelList = {
+      status: "ready",
+      channels: [channel(change === "joined" ? before : after)],
+    };
+    h.retarget({
+      ownSoloConversation: true,
+      requireMention: true,
+      session: {
+        ...h.session,
+        viewer: "viewer",
+        channels: { ...h.session.channels, list: () => channelList },
+        channelWrites: {
+          refreshMembership: async () =>
+            channel(change === "joined" ? after : before),
+          addAgents: vi.fn(),
+        },
+        agentActivity: {
+          activate: () => () => {},
+          snapshot: () => activity,
+          subscribe: () => () => {},
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(pat);
+      h.commands().insertText("Follow up");
+    });
+    h.submit();
+    if (change === "joined") {
+      // Pat is in the chat now, so the message addresses a person: it goes
+      // out at once instead of waiting in a queue it could not leave.
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+        first.pubkey,
+        pat.pubkey,
+      ]);
+      expect(
+        screen.queryByRole("region", { name: "Queued follow-ups" }),
+      ).toBeNull();
+    } else {
+      // Pat left, so Pat is only named and the agent follow-up is queued.
+      await screen.findByRole("region", { name: "Queued follow-ups" });
+      expect(h.messages.send).not.toHaveBeenCalled();
+    }
+  },
+);
+
 it("queues a tagged agent follow-up while agent choices no longer list it", async () => {
   localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
   const h = mount();

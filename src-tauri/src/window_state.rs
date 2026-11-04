@@ -189,14 +189,16 @@ fn restore_request(
         ),
         size: PhysicalSize::new(saved.width, saved.height),
     };
-    // A size below the minimum at the fallback's scale (in pixels, rounded as tao
-    // rounds it) was saved at a lower scale and would reopen at or below it. Windows
-    // applies the minimum to the undecorated frame and the shadow insets come off
-    // the saved client, so allow 8% there (scale steps are at least 11% apart).
-    let slack = if cfg!(windows) { 0.92 } else { 1.0 };
-    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale * slack).round() as u32;
-    let default = (saved.width < px(config.min_width) || saved.height < px(config.min_height))
-        .then(|| LogicalSize::new(config.width, config.height).to_physical(scale));
+    // A size below the minimum at the fallback's scale (rounded as tao rounds it) was
+    // saved at a lower scale and would reopen below it. Windows applies the minimum to
+    // the frame: take off tao's shadow insets (default metrics, Windows 11 top).
+    let win = u32::from(cfg!(windows));
+    let side = win * (4 * (scale * 96.0).round() as u32 + 48) / 96 * 2;
+    let top = win * scale.round() as u32;
+    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale).round() as u32;
+    let below = saved.width < px(config.min_width).saturating_sub(2 * side)
+        || saved.height < px(config.min_height).saturating_sub(side + top);
+    let default = below.then(|| LogicalSize::new(config.width, config.height).to_physical(scale));
     let relocated = reachable_client(client, header_height, areas, fallback, default);
     let target = relocated.unwrap_or(client);
     (
@@ -339,8 +341,8 @@ mod tests {
         };
         // Saved on a 1x monitor that is gone: 301x235 points on a 2x laptop.
         assert_frame(fallback(602, 470, laptop), Some(rect(312, 50, 2400, 1600)));
-        // One axis clearly below the minimum is enough.
-        assert_frame(fallback(960, 700, laptop), Some(rect(312, 50, 2400, 1600)));
+        // One axis below the minimum is enough (781 is under the Windows client too).
+        assert_frame(fallback(960, 781, laptop), Some(rect(312, 50, 2400, 1600)));
         // At or above the minimum at the fallback's scale, the saved size stays.
         assert_frame(fallback(960, 800, laptop), Some(rect(1032, 50, 960, 800)));
         // The default still fits inside a small fallback work area.
@@ -364,9 +366,23 @@ mod tests {
         for (scale, width, height) in [(1.0, 464, 391), (1.25, 580, 489), (2.0, 928, 782)] {
             assert_eq!(relocated(scale, width, height), !cfg!(windows));
         }
-        // macOS does not clamp a programmatic resize, so a 1x save of 900x750
-        // would open at 450x375 points on a 2x laptop. Windows clamps the frame.
-        assert_eq!(relocated(2.0, 900, 750), !cfg!(windows));
+        // One pixel under that client is replaced everywhere.
+        assert!(relocated(1.0, 463, 391));
+        assert!(relocated(1.0, 464, 390));
+        assert!(relocated(2.0, 927, 782));
+        // Neither tao on Windows nor macOS clamps a programmatic resize, so a 1x
+        // save of 900x750 would open at 450x375 points on a 2x laptop.
+        assert!(relocated(2.0, 900, 750));
+        // At 110 DPI the minimum rounds to 550x458, and the Windows client to 530x447.
+        let scale = 110.0 / 96.0;
+        assert!(!relocated(scale, 550, 458));
+        assert_eq!(relocated(scale, 550, 457), !cfg!(windows));
+        assert_eq!(relocated(scale, 530, 447), !cfg!(windows));
+        assert!(relocated(scale, 529, 447));
+        // At 100 DPI the height rounds up (416.67 to 417; 408 on Windows).
+        let scale = 100.0 / 96.0;
+        assert_eq!(relocated(scale, 500, 416), !cfg!(windows));
+        assert!(relocated(scale, 484, 407));
         // A client saved at the minimum one scale step lower is replaced
         // everywhere, including across the smallest step, 225% to 250%.
         assert!(relocated(1.25, 464, 391));

@@ -371,6 +371,35 @@ it("expands Team when navigation selects one of its conversations", async () => 
   }
 });
 
+it("expands fallback Solo when navigation selects an ordinary chat", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(true);
+    f.navigate({
+      version: 1,
+      kind: "conversation",
+      channelId: "team-channel",
+      scope: { viewer, communityOrigin: "https://relay.test" },
+    });
+    await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
+    const summary = document.querySelector<HTMLElement>(
+      '[data-sidebar-section="scope:solo"] summary',
+    );
+    expect(summary).not.toBeNull();
+    const panel = document.getElementById(
+      summary?.getAttribute("aria-controls") ?? "",
+    );
+    expect(panel).not.toBeNull();
+    fireEvent.click(summary as HTMLElement);
+    expect(panel).toHaveAttribute("hidden");
+
+    await act(() => f.open(conversationTarget(scope, id)));
+    expect(panel).not.toHaveAttribute("hidden");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it.each([
   ["New workspace", "New workspace", "Cancel"],
   ["New channel", "Create a channel", "Close channel creation"],

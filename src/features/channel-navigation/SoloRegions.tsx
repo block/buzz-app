@@ -100,6 +100,40 @@ export function SoloRegions({
     })),
     sidebar.contributionOrder,
   ).map(({ region }) => region);
+  const primary = regions.findIndex((region) => region.source);
+  const current = target.kind === "conversation" ? target.channelId : undefined;
+  const currentChannel = current
+    ? session.channels.list().channels.find((channel) => channel.id === current)
+    : undefined;
+  const fallbackOwnsCurrent =
+    primary < 0 &&
+    currentChannel?.channelType === "solo" &&
+    !snapshot.excluded.has(currentChannel.id);
+  const fallbackSectionKey = groupDisclosure?.sectionKey;
+  const fallbackOpen = groupDisclosure?.open;
+  useLayoutEffect(
+    () =>
+      sidebar.beforeReveal((location) => {
+        if (
+          !fallbackSectionKey ||
+          fallbackOpen ||
+          !fallbackOwnsCurrent ||
+          !current ||
+          location !== `conversation:${current}`
+        )
+          return true;
+        sidebar.toggle(fallbackSectionKey, true);
+        return false;
+      }),
+    [
+      current,
+      fallbackOpen,
+      fallbackOwnsCurrent,
+      fallbackSectionKey,
+      sidebar.beforeReveal,
+      sidebar.toggle,
+    ],
+  );
   const fallbackContents = groupDisclosure ? (
     <SidebarSection
       sectionKey={groupDisclosure.sectionKey}
@@ -127,7 +161,6 @@ export function SoloRegions({
     (fallback ?? null)
   );
   if (!service) return fallbackContents;
-  const primary = regions.findIndex((region) => region.source);
   return (
     <>
       {regions.map((region, index) => (

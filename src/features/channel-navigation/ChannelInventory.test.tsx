@@ -42,6 +42,7 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
+import { setHideMutedChannelsPreference } from "../../bundled/channels/hide-muted-preference";
 import styles from "../../app/shell/PrimarySidebar.module.css";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { PageNavigation } from "../../app/shell/PageNavigation";
@@ -481,6 +482,69 @@ it.each(["Retry", "Dismiss"] as const)(
     }
   },
 );
+
+it("hides confirmed mutes on this device's opt-in and lists them under Muted", async () => {
+  const user = userEvent.setup();
+  let muted = ["beta"];
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted,
+    }),
+    available: true,
+    writeMute: async ({ channelId, muted: next }) => {
+      muted = next
+        ? [...muted, channelId]
+        : muted.filter((id) => id !== channelId);
+      return muted;
+    },
+  });
+  try {
+    const h = fixture(preferences.queries);
+    const mounted = render(h.view("alpha"));
+    expect(await screen.findByRole("button", { name: /^beta/ })).toBeVisible();
+    act(() => setHideMutedChannelsPreference(true));
+    expect(screen.queryByRole("button", { name: /^beta/ })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("button", { name: /^gamma/ }), {
+      key: "ContextMenu",
+    });
+    await user.click(await screen.findByRole("menuitem", { name: "Mute" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^gamma/ })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Channels" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+    const group = await screen.findByRole("group", { name: "Muted" });
+    expect(
+      within(group)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      expect.stringContaining("beta"),
+      expect.stringContaining("gamma"),
+    ]);
+    fireEvent.click(within(group).getByRole("menuitem", { name: /beta/ }));
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+    );
+    mounted.rerender(h.view("beta"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^beta/ })).toBeVisible(),
+    );
+    act(() => setHideMutedChannelsPreference(false));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^gamma/ })).toBeVisible(),
+    );
+  } finally {
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
 
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
   const user = userEvent.setup();

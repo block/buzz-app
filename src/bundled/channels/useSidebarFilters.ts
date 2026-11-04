@@ -6,12 +6,15 @@ import {
   useSyncExternalStore,
 } from "react";
 import { DEFAULT_ACTIVE_WINDOW_SECONDS } from "../../features/relay/sidebar-preferences";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { UnreadCapability } from "../../features/relay/unread";
 import type { sidebarSections } from "./sidebar-sections";
 
 export type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
 import type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
 export const SIDEBAR_ACTIVE_WINDOW = DEFAULT_ACTIVE_WINDOW_SECONDS * 1000;
+
+const NO_MUTES: readonly string[] = [];
 
 /** Filter only the existing section roster; the current destination always stays. */
 export function useSidebarFilters(
@@ -21,6 +24,7 @@ export function useSidebarFilters(
   unread: UnreadCapability,
   windows: Readonly<Record<string, number>> = {},
   activityReady = true,
+  hiddenMutes: readonly string[] = NO_MUTES,
 ) {
   const ids = JSON.stringify(
     sections.flatMap((section) =>
@@ -30,6 +34,18 @@ export function useSidebarFilters(
     ),
   );
   const unreadSet = useUnreadChannelIds(unread, ids);
+  const muted = new Set(hiddenMutes);
+  // Starred is an explicit pin, and DMs are people rather than channels.
+  const hideable = (key: string, channel: ChannelSummary) =>
+    key !== "starred" && channel.channelType !== "dm" && muted.has(channel.id);
+  const mutedIds = JSON.stringify(
+    sections.flatMap((section) =>
+      section.rows
+        .filter((channel) => hideable(section.key, channel))
+        .map(({ id }) => id),
+    ),
+  );
+  const attention = useUnreadChannelIds(unread, mutedIds, channelHasAttention);
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
@@ -39,7 +55,15 @@ export function useSidebarFilters(
     const mode = filters[section.key] ?? "all";
     const activeWindow =
       (windows[section.key] ?? DEFAULT_ACTIVE_WINDOW_SECONDS) * 1000;
+    const mutedRows = section.rows.filter(
+      (channel) =>
+        channel.id !== current &&
+        hideable(section.key, channel) &&
+        !attention.has(channel.id),
+    );
+    const quieted = new Set(mutedRows.map(({ id }) => id));
     const rows = section.rows.filter((channel) => {
+      if (quieted.has(channel.id)) return false;
       if (mode === "active" && channel.lastActivityAt !== undefined) {
         const expiry = channel.lastActivityAt * 1000 + activeWindow;
         if (expiry > now) nextExpiry = Math.min(nextExpiry, expiry);
@@ -59,7 +83,10 @@ export function useSidebarFilters(
       ...section,
       allRows: section.rows,
       rows,
-      hiddenRows: section.rows.filter(({ id }) => !visibleIds.has(id)),
+      hiddenRows: section.rows.filter(
+        ({ id }) => !visibleIds.has(id) && !quieted.has(id),
+      ),
+      mutedRows,
     };
   });
   // One owned deadline keeps an idle sidebar correct when activity ages out.
@@ -84,8 +111,21 @@ export function channelHasUnread(unread: UnreadCapability, channelId: string) {
   );
 }
 
+/** Mentions and manual unread marks still reach the viewer through a mute. */
+export function channelHasAttention(
+  unread: UnreadCapability,
+  channelId: string,
+) {
+  const state = unread.snapshot({ kind: "channel", channelId });
+  return state.manual !== "none" || (state.attentionCount ?? 0) > 0;
+}
+
 /** Channels among `ids` (a JSON id array) with unread messages or threads. */
-export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
+export function useUnreadChannelIds(
+  unread: UnreadCapability,
+  ids: string,
+  matches: typeof channelHasUnread = channelHasUnread,
+) {
   const targets = useMemo(
     () =>
       (JSON.parse(ids) as string[]).map((channelId) => ({
@@ -110,10 +150,10 @@ export function useUnreadChannelIds(unread: UnreadCapability, ids: string) {
     () =>
       JSON.stringify(
         targets
-          .filter((target) => channelHasUnread(unread, target.channelId))
+          .filter((target) => matches(unread, target.channelId))
           .map((target) => target.channelId),
       ),
-    [targets, unread],
+    [targets, unread, matches],
   );
   const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);

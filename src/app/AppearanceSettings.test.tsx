@@ -27,6 +27,10 @@ import {
   messageAutocorrectPreference,
   setMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
+import {
+  hideMutedChannelsPreference,
+  setHideMutedChannelsPreference,
+} from "../bundled/channels/hide-muted-preference";
 
 const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
 function preferencesPage() {
@@ -43,6 +47,7 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
+  setHideMutedChannelsPreference(false);
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -521,3 +526,39 @@ it.each([
     ).toBe(shown);
   },
 );
+
+it("saves the hide-muted sidebar choice on this device and retries a failed save", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), { wrapper: ToastProvider });
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Hide muted channels" });
+  expect(toggle()).not.toBeChecked();
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(toggle());
+  expect(hideMutedChannelsPreference()).toBe(true);
+  expect(toggle()).toBeChecked();
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Sidebar preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Retry saving muted channel visibility",
+    }),
+  );
+  expect(localStorage.getItem("buzz-hide-muted-channels.v1")).toBe("on");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  act(() => {
+    localStorage.setItem("buzz-hide-muted-channels.v1", "off");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-hide-muted-channels.v1" }),
+    );
+  });
+  expect(toggle()).not.toBeChecked();
+});

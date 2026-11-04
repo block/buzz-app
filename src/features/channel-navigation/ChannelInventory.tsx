@@ -72,6 +72,7 @@ import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
+import { useHideMutedChannelsPreference } from "../../bundled/channels/hide-muted-preference";
 import {
   sidebarSections,
   contributedSidebarSectionKey,
@@ -168,6 +169,7 @@ export function ChannelInventory({
     rosterRecovering(live.roster),
   );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const hideMuted = useHideMutedChannelsPreference().enabled;
   const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
   useEffect(() => {
@@ -515,6 +517,7 @@ export function ChannelInventory({
       ),
     ),
     list.activityStatus === "ready",
+    hideMuted && !preferences.cached ? preferences.data?.muted : undefined,
   );
   const firstChannelSection = filteredSections.find(({ key }) =>
     isChannelSectionKey(key),
@@ -525,7 +528,9 @@ export function ChannelInventory({
   useLayoutEffect(() => {
     hiddenRowSections.current = new Map(
       filteredSections.flatMap((section) =>
-        section.hiddenRows.map(({ id }) => [id, section.key] as const),
+        [...section.hiddenRows, ...section.mutedRows].map(
+          ({ id }) => [id, section.key] as const,
+        ),
       ),
     );
   }, [filteredSections]);
@@ -1280,6 +1285,7 @@ export function ChannelInventory({
               }
               channels={{
                 rows: section.hiddenRows,
+                muted: section.mutedRows,
                 selected: current?.id,
                 select,
               }}

@@ -310,3 +310,99 @@ it("keeps known-inactive rows hidden through refreshes while new rows remain vis
   unmount();
   owner.dispose();
 });
+
+it("hides muted channels outside Starred and DMs unless open or asking for attention", () => {
+  const owner = createRelaySession(null);
+  const listeners = new Set<() => void>();
+  const attention = new Map<string, "mention" | "manual">();
+  const unread = {
+    ...owner.session.unread,
+    snapshot: (
+      target: Parameters<typeof owner.session.unread.snapshot>[0],
+    ) => ({
+      ...owner.session.unread.snapshot(target),
+      attentionCount: attention.get(target.channelId) === "mention" ? 1 : null,
+      manual:
+        attention.get(target.channelId) === "manual"
+          ? ("local-only" as const)
+          : ("none" as const),
+    }),
+    subscribe: (_target: unknown, listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  const sections = sidebarSections(
+    [
+      { id: "quiet", name: "Quiet", lastActivityAt: Date.now() / 1000 },
+      { id: "loud", name: "Loud", lastActivityAt: Date.now() / 1000 },
+      { id: "pinned", name: "Pinned" },
+      { id: "grouped", name: "Grouped" },
+      { id: "stale", name: "Stale", lastActivityAt: 1 },
+      { id: "person", name: "Person", channelType: "dm" },
+    ],
+    {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: { grouped: "work" },
+      starred: ["pinned"],
+      muted: [],
+    },
+  );
+  const muted = ["quiet", "pinned", "grouped", "stale", "person"];
+  const { result, rerender, unmount } = renderHook(
+    ({ current, hidden }) =>
+      useSidebarFilters(
+        sections,
+        { channels: "active" },
+        current,
+        unread,
+        {},
+        true,
+        hidden,
+      ),
+    {
+      initialProps: {
+        current: undefined as string | undefined,
+        hidden: muted as readonly string[] | undefined,
+      },
+    },
+  );
+  const view = () =>
+    result.current.map(({ key, rows, hiddenRows, mutedRows }) => [
+      key,
+      rows.map(({ id }) => id),
+      hiddenRows.map(({ id }) => id),
+      mutedRows.map(({ id }) => id),
+    ]);
+  expect(view()).toEqual([
+    ["starred", ["pinned"], [], []],
+    ["group:work", [], [], ["grouped"]],
+    ["channels", ["loud"], [], ["quiet", "stale"]],
+    ["dms", ["person"], [], []],
+  ]);
+  act(() => {
+    attention.set("quiet", "mention");
+    attention.set("grouped", "manual");
+    for (const listener of listeners) listener();
+  });
+  rerender({ current: "stale", hidden: muted });
+  expect(view()).toEqual([
+    ["starred", ["pinned"], [], []],
+    ["group:work", ["grouped"], [], []],
+    ["channels", ["loud", "quiet", "stale"], [], []],
+    ["dms", ["person"], [], []],
+  ]);
+  attention.clear();
+  rerender({ current: undefined, hidden: undefined });
+  expect(view()).toEqual([
+    ["starred", ["pinned"], [], []],
+    ["group:work", ["grouped"], [], []],
+    ["channels", ["loud", "quiet"], ["stale"], []],
+    ["dms", ["person"], [], []],
+  ]);
+  expect(listeners.size).toBe(0);
+  unmount();
+  owner.dispose();
+});

@@ -2,6 +2,7 @@ import { RenameSidebarSection } from "./RenameSidebarSection";
 import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
 import {
+  Fragment,
   useId,
   useRef,
   useState,
@@ -122,6 +123,8 @@ export function SidebarSection({
   channels?:
     | {
         rows: readonly ChannelSummary[];
+        /** Hidden by the device's hide-muted preference, not the filter. */
+        muted?: readonly ChannelSummary[] | undefined;
         selected?: string | undefined;
         select: (id: string) => void;
       }
@@ -315,46 +318,58 @@ export function SidebarSection({
                       </MenuRadioItem>
                     </MenuRadioGroup>
                     {channels &&
-                      filter.value !== "all" &&
-                      channels.rows.length > 0 && (
-                        <>
-                          <MenuSeparator />
-                          <MenuGroup>
-                            <MenuGroupLabel emphasis="quiet">
-                              {filter.value === "unreads"
-                                ? "No unread messages"
-                                : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`}
-                            </MenuGroupLabel>
-                            {channels.rows.map((channel) => {
-                              const select = () => {
-                                onToggle(true);
-                                channels.select(channel.id);
-                                setMenuOpen(false);
-                              };
-                              return session ? (
-                                <ChannelSidebarMenuItem
-                                  key={channel.id}
-                                  channel={channel}
-                                  session={session}
-                                  selected={channels.selected === channel.id}
-                                  onSelect={select}
-                                />
-                              ) : (
-                                <MenuItem
-                                  key={channel.id}
-                                  aria-current={
-                                    channels.selected === channel.id
-                                      ? "page"
-                                      : undefined
-                                  }
-                                  onClick={select}
-                                >
-                                  {channel.name}
-                                </MenuItem>
-                              );
-                            })}
-                          </MenuGroup>
-                        </>
+                      [
+                        filter.value !== "all" && {
+                          label:
+                            filter.value === "unreads"
+                              ? "No unread messages"
+                              : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`,
+                          rows: channels.rows,
+                        },
+                        { label: "Muted", rows: channels.muted ?? [] },
+                      ].map(
+                        (group) =>
+                          group &&
+                          group.rows.length > 0 && (
+                            <Fragment key={group.label}>
+                              <MenuSeparator />
+                              <MenuGroup>
+                                <MenuGroupLabel emphasis="quiet">
+                                  {group.label}
+                                </MenuGroupLabel>
+                                {group.rows.map((channel) => {
+                                  const select = () => {
+                                    onToggle(true);
+                                    channels.select(channel.id);
+                                    setMenuOpen(false);
+                                  };
+                                  return session ? (
+                                    <ChannelSidebarMenuItem
+                                      key={channel.id}
+                                      channel={channel}
+                                      session={session}
+                                      selected={
+                                        channels.selected === channel.id
+                                      }
+                                      onSelect={select}
+                                    />
+                                  ) : (
+                                    <MenuItem
+                                      key={channel.id}
+                                      aria-current={
+                                        channels.selected === channel.id
+                                          ? "page"
+                                          : undefined
+                                      }
+                                      onClick={select}
+                                    >
+                                      {channel.name}
+                                    </MenuItem>
+                                  );
+                                })}
+                              </MenuGroup>
+                            </Fragment>
+                          ),
                       )}
                   </MenuSubmenuPopup>
                 </MenuSubmenu>

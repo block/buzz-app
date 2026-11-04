@@ -534,3 +534,69 @@ it("offers rename only for saved sections with a rename writer", async () => {
   await screen.findByRole("menuitem", { name: "Move up" });
   expect(screen.queryByRole("menuitem", { name: "Rename section" })).toBeNull();
 });
+
+it("lists channels hidden by mute under Muted even when the filter shows all", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  const toggle = vi.fn();
+  const { rerender } = render(
+    <SidebarSection
+      sectionKey="channels"
+      title="Channels"
+      open={false}
+      onToggle={toggle}
+      filter={{ value: "all", change: vi.fn() }}
+      channels={{
+        rows: [],
+        muted: [{ id: "noisy", name: "Noisy channel" }],
+        select,
+      }}
+    >
+      <p>No channels match this filter.</p>
+    </SidebarSection>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  fireEvent.click(
+    within(await screen.findByRole("group", { name: "Muted" })).getByRole(
+      "menuitem",
+      { name: "Noisy channel" },
+    ),
+  );
+  expect(select).toHaveBeenCalledExactlyOnceWith("noisy");
+  expect(toggle).toHaveBeenCalledExactlyOnceWith(true);
+  rerender(
+    <SidebarSection
+      sectionKey="channels"
+      title="Channels"
+      open
+      onToggle={toggle}
+      filter={{ value: "unreads", change: vi.fn() }}
+      channels={{
+        rows: [{ id: "quiet", name: "Quiet channel" }],
+        muted: [{ id: "noisy", name: "Noisy channel" }],
+        select,
+      }}
+    >
+      <p>No channels match this filter.</p>
+    </SidebarSection>,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  const unread = await screen.findByRole("group", {
+    name: "No unread messages",
+  });
+  const muted = screen.getByRole("group", { name: "Muted" });
+  expect(
+    unread.compareDocumentPosition(muted) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    within(
+      screen.getByRole("group", { name: "No unread messages" }),
+    ).queryByRole("menuitem", { name: "Noisy channel" }),
+  ).toBeNull();
+});

@@ -174,6 +174,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   can still make the name bold. Muted rows show no unread dots, including thread
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muting does not mark messages or threads as read.
+- **Hide muted channels** (Settings → Appearance, off by default, this device only)
+  removes muted channels from the sidebar. Starred channels, DMs, the channel you
+  have open, and muted channels with a mention or manual unread mark stay visible.
+  Hidden ones are listed under **Muted** in each section's **Filter** menu, and ⌘K
+  still finds them.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have

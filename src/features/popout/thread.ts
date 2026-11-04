@@ -14,6 +14,11 @@ export type PopoutThreadView = {
   loadingOlder: boolean;
   /** Reading bridge token: main publishes reading intent for this window. */
   reading?: string | undefined;
+  /** Main's durable read-intent revision when this view was produced. A
+   * companion lease request carries the revision its event saw; main grants
+   * it only while that is still current, so a manual unread in main cannot
+   * be undone by reading intent formed before it. */
+  readingRevision: number;
   composer?: string | undefined;
   version: number;
   root?: CompanionRow | undefined;
@@ -51,6 +56,9 @@ export function createPopoutThread(
     thread?.subscribe(notify),
     session.channels.subscribeList(notify),
     session.profiles.subscribe(notify),
+    session.unread.subscribe({ kind: "channel", channelId }, notify),
+    session.unread.subscribe({ kind: "thread", channelId, rootId }, notify),
+    session.unread.subscribeSync(notify),
   ];
   const channel = () =>
     session.channels.get?.(channelId) ??
@@ -120,6 +128,7 @@ export function createPopoutThread(
         canLoadMore: !!snap?.canLoadMore && !snap.limited,
         limited: !!snap?.limited || replies.length > MAX_REPLIES,
         loadingOlder: snap?.readKind === "older",
+        readingRevision: session.unread.revision(),
         version,
         root: snap?.root && available() ? project(snap.root) : undefined,
         replies: available() ? replies.slice(-MAX_REPLIES).map(project) : [],

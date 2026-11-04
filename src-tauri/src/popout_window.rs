@@ -62,6 +62,7 @@ pub(crate) struct View {
     /// Reading bridge token: main publishes reading intent for this window.
     #[serde(default)]
     reading: Option<String>,
+    reading_revision: u64,
     #[serde(default)]
     composer: Option<String>,
     version: u64,
@@ -507,20 +508,29 @@ pub(crate) fn main_closing<R: tauri::Runtime>(
     let Ok(mut map) = host.0.lock() else {
         return false;
     };
-    let mut guarded = Vec::new();
-    for (label, session) in map.iter_mut() {
-        if session.guarded {
+    let guarded: Vec<String> = map
+        .iter()
+        .filter(|(_, s)| s.guarded)
+        .map(|(label, _)| label.clone())
+        .collect();
+    if guarded.is_empty() {
+        // Nothing to ask: every companion closes with its owner.
+        for label in map.keys() {
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.destroy();
+            }
+        }
+        return false;
+    }
+    // Ask first; nothing else closes until main's close is accepted, so
+    // Keep editing leaves every window as it was.
+    for label in &guarded {
+        if let Some(session) = map.get_mut(label) {
             session.view.close_requested += 1;
             if let Some(updates) = &session.updates {
                 let _ = updates.send(session.view.clone());
             }
-            guarded.push(label.clone());
-        } else if let Some(window) = app.get_webview_window(label) {
-            let _ = window.destroy();
         }
-    }
-    if guarded.is_empty() {
-        return false;
     }
     api.prevent_close();
     if let Some(window) = guarded
@@ -599,6 +609,7 @@ mod tests {
             limited: false,
             loading_older: false,
             reading: None,
+            reading_revision: 0,
             composer: None,
             version: 1,
             close_requested: 0,

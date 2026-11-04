@@ -7,7 +7,7 @@ import type { ReadingHandle, UnreadCapability } from "../relay/unread";
  * main's durability completes, so the earned lease is disposed only afterward;
  * a lease disposed by blur, hide or manual unread answers no later request. */
 export type ReadingRequest =
-  | { kind: "acquire"; lease: string }
+  | { kind: "acquire"; lease: string; revision: number }
   | { kind: "view"; lease: string; ids: readonly string[] }
   | { kind: "observe"; id: number; lease: string; ids: readonly string[] }
   | { kind: "catchUp"; id: number; lease: string; messageId: string }
@@ -21,7 +21,7 @@ const channelName = (token: string) => `buzz.popout.reading.${token}`;
 
 /** Main-window side: one owner per pop-out window. */
 export function createReadingOwner(
-  reading: Pick<UnreadCapability, "reading">,
+  reading: Pick<UnreadCapability, "reading" | "revision">,
   channelId: string,
   rootId: string,
   /** Ids this window currently presents; nothing else is ever claimed read. */
@@ -57,7 +57,11 @@ export function createReadingOwner(
     const handle = leases.get(data.lease);
     switch (data.kind) {
       case "acquire":
-        if (handle || !enabled()) return;
+        // Event-time fence: intent formed before any newer durable change in
+        // main (a manual unread, above all) acquires nothing. The companion
+        // re-measures on its next event with the revision it then sees.
+        if (handle || !enabled() || data.revision !== reading.revision())
+          return;
         if (leases.size >= MAX_LEASES) {
           const oldest = leases.keys().next().value;
           if (oldest) {
@@ -127,7 +131,12 @@ export function createReadingOwner(
 }
 
 /** Companion side: a `useReading` session whose leases live in main. */
-export function createReadingProxy(token: string, enabled: () => boolean) {
+export function createReadingProxy(
+  token: string,
+  enabled: () => boolean,
+  /** The latest `readingRevision` this window received from main. */
+  revision: () => number,
+) {
   const channel = new BroadcastChannel(channelName(token));
   let next = 0;
   let closed = false;
@@ -172,7 +181,8 @@ export function createReadingProxy(token: string, enabled: () => boolean) {
     reading(_channelId): ReadingHandle {
       const lease = crypto.randomUUID();
       let disposed = false;
-      if (!closed) channel.postMessage({ kind: "acquire", lease });
+      if (!closed)
+        channel.postMessage({ kind: "acquire", lease, revision: revision() });
       return {
         view(ids) {
           if (!disposed && !closed)

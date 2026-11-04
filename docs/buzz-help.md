@@ -121,6 +121,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   level rather than requiring a new thread for each reply. Solo chats can also
   be shared with other people; do not describe every Solo chat as visible only
   to its creator.
+
+  When available, each chat row shows a compact age for its last activity. If
+  activity time is absent, a valid last-update time is used; an unusable selected
+  timestamp (including zero) has no age. This label does not change row order.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;

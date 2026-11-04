@@ -12,6 +12,11 @@ import { useChannelNavigation } from "./ChannelNavigationState";
 import { eligibleSolo } from "../solo/labels";
 import { conversationTarget, soloDraft, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
+import {
+  SoloActivityAge,
+  soloActivityAgeId,
+  soloActivityDateTime,
+} from "./SoloActivityAge";
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
@@ -391,6 +396,18 @@ function SoloConversationRow({
   // Describe only by a mark that renders, using the same Shared evidence.
   const owner = useSoloOwner(session, channel);
   const shared = useSharedWithPeople(session, channel) || !!owner;
+  const activityTimestamp = channel?.lastActivityAt ?? channel?.updatedAt ?? 0;
+  const activitySource =
+    channel?.lastActivityAt === undefined || channel.lastActivityAt === null
+      ? "updated"
+      : "activity";
+  const activityDateTime = soloActivityDateTime(activityTimestamp);
+  const showActivityAge = activityDateTime !== undefined && !agents.length;
+  const activityAgeId = soloActivityAgeId(id);
+  const descriptions = [
+    ...(shared ? [soloSharedMarkId(id)] : []),
+    ...(showActivityAge ? [activityAgeId] : []),
+  ].join(" ");
   return (
     <ChannelActivityPopover
       session={session}
@@ -407,7 +424,7 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
-          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
+          aria-describedby={descriptions || undefined}
           {...activation}
           icon={
             Icon ? (
@@ -427,16 +444,27 @@ function SoloConversationRow({
             </span>
           }
           trailing={
-            <span
-              className={channelStyles.indicatorStack}
-              data-solo-working-indicator=""
-            >
-              <WorkingAgentsBadge
-                agents={agents}
-                profiles={agentProfiles}
-                channelName={title}
-                waiting={waiting}
-              />
+            <span className={creationStyles.rowTrailing}>
+              <span
+                className={channelStyles.indicatorStack}
+                data-solo-working-indicator=""
+              >
+                <WorkingAgentsBadge
+                  agents={agents}
+                  profiles={agentProfiles}
+                  channelName={title}
+                  waiting={waiting}
+                />
+              </span>
+              {showActivityAge && (
+                <span className={creationStyles.activityAge}>
+                  <SoloActivityAge
+                    timestamp={activityTimestamp}
+                    source={activitySource}
+                    descriptionId={activityAgeId}
+                  />
+                </span>
+              )}
             </span>
           }
         />

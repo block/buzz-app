@@ -155,6 +155,21 @@ async function expectTrailingAlignment(row, status, touch = false) {
     )
     .toBe(true);
 }
+
+async function expectAgeFitsRow(row, age) {
+  const [rowBox, ageBox, labelBox] = await Promise.all([
+    row.boundingBox(),
+    age.boundingBox(),
+    row.locator(".navigation-item-label").boundingBox(),
+  ]);
+  expect(rowBox).not.toBeNull();
+  expect(ageBox).not.toBeNull();
+  expect(labelBox).not.toBeNull();
+  expect(ageBox.x).toBeGreaterThanOrEqual(labelBox.x + labelBox.width - 1);
+  expect(ageBox.x + ageBox.width).toBeLessThanOrEqual(
+    rowBox.x + rowBox.width + 1,
+  );
+}
 // Verifies shell routing, actual hover/focus and retained drafts across the real panel host.
 test("Solo chat Activity opens the agent's profile locally, restores per conversation and retires on plugin disable", async ({
   page,
@@ -240,17 +255,71 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
 }, info) => {
   // Install before app timers exist so hover cleanup never mixes real/fake IDs.
   await page.clock.install();
+  const hostNow = Date.now();
   await page.goto(app.origin);
   await newChat(page);
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const alpha = sidebar.locator(`[data-solo-channel-id="${id}"]`);
+  const beta = sidebar.locator(`[data-solo-channel-id="${other}"]`);
+  const betaTime = beta.locator("time");
+  const defaultLabelFontSize = await beta
+    .locator(".navigation-item-label")
+    .evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).fontSize),
+    );
+  await page.mouse.move(0, 0);
+  await expect(betaTime).toBeVisible();
+  await expect(beta).toHaveAccessibleName(/^Beta/);
+  const betaTimestamp = Date.parse(await betaTime.getAttribute("datetime"));
+  expect(Number.isFinite(betaTimestamp)).toBe(true);
+  // Capture the age-free comparison from the same fixture without changing app state.
+  await betaTime.evaluate((time) => {
+    if (time.parentElement) time.parentElement.style.display = "none";
+  });
+  await beta.screenshot({
+    path: info.outputPath("solo-activity-age-before-light-normal.png"),
+  });
+  await betaTime.evaluate((time) => {
+    if (time.parentElement) time.parentElement.style.display = "";
+  });
+  await expect(betaTime).toBeVisible();
+  await beta.screenshot({
+    path: info.outputPath("solo-activity-age-after-light-default.png"),
+  });
+  const rowOrder = () =>
+    sidebar
+      .locator("[data-solo-channel-id]")
+      .evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute("data-solo-channel-id")),
+      );
+  const originalOrder = await rowOrder();
+  // A visibility resume updates the mounted label from wall time without
+  // resorting the source-ordered Solo inventory.
+  for (const hour of [1, 2]) {
+    await page.clock.setFixedTime(
+      new Date(betaTimestamp + hour * 60 * 60 * 1000),
+    );
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await expect(betaTime).toHaveText(`${hour}h`);
+    const unit = hour === 1 ? "hour" : "hours";
+    await expect(beta).toHaveAccessibleDescription(
+      new RegExp(`^(Active|Updated) ${hour} ${unit} ago$`),
+    );
+    expect(await rowOrder()).toEqual(originalOrder);
+  }
+  await page.clock.setFixedTime(new Date(hostNow));
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();
   const event = (kind) => ({
     kind,
     seq: 1,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(hostNow).toISOString(),
     channelId: id,
     sessionId: "S",
     turnId: "sidebar-solo",
@@ -272,9 +341,9 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     name: "Resize sidebar",
     exact: true,
   });
-  for (const [keyName, size, mode] of [
-    ["Home", "", "light"],
-    ["End", "larger", "dark"],
+  for (const [keyName, size, mode, width] of [
+    ["Home", "", "light", "narrow"],
+    ["End", "larger", "dark", "wide"],
   ]) {
     await resize.press(keyName);
     await page.evaluate(
@@ -284,8 +353,22 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
       },
       { size, mode },
     );
+    const labelFontSize = await beta
+      .locator(".navigation-item-label")
+      .evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).fontSize),
+      );
+    if (size === "larger")
+      expect(labelFontSize).toBeGreaterThan(defaultLabelFontSize);
     await page.mouse.move(0, 0);
+    await expect(betaTime).toBeVisible();
+    await expectAgeFitsRow(beta, betaTime);
     await expectTrailingAlignment(alpha, badge);
+    await sidebar.screenshot({
+      path: info.outputPath(
+        `solo-activity-age-${mode}-${width}-${size || "normal"}.png`,
+      ),
+    });
   }
   await page.evaluate(() => {
     document.documentElement.dataset.fontSize = "";
@@ -746,15 +829,13 @@ test.describe("touch sidebar activity", () => {
     await menu.focus();
     await expect(menu).toBeFocused();
     await expect(indicator).toHaveCSS("opacity", "1");
-    const label = row.locator(".navigation-item-label");
-    const labelWidth = await label.evaluate((element) => element.clientWidth);
     const before = await menu.boundingBox();
     app.observer(event("turn_completed"), key);
     await expect(badge).toHaveCount(0);
     await expect(indicator).toBeHidden();
-    await expect
-      .poll(() => label.evaluate((element) => element.clientWidth))
-      .toBeGreaterThan(labelWidth);
+    const age = row.locator("time");
+    await expect(age).toBeVisible();
+    await expectAgeFitsRow(row, age);
     const after = await menu.boundingBox();
     expect(after.x).toBeCloseTo(before.x, 1);
     expect(after.y).toBeCloseTo(before.y, 1);

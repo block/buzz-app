@@ -14,6 +14,7 @@ import { writeView } from "../../shared/view-state";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import type { Contribution } from "../../plugins/contributions";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
+import type { Profile } from "../relay/contracts";
 
 import {
   fixture,
@@ -31,6 +32,7 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   localStorage.clear();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it.each(["unavailable", "cached", "readOnly"])(
@@ -77,10 +79,21 @@ it("opens the chat if rename admission changes before the double-click completes
   expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
 });
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.UTC(2026, 10, 3, 1, 30));
   const f = fixture();
+  const channel = f.session.channels
+    .list()
+    .channels.find((item) => item.id === id);
+  if (!channel) throw new Error("Missing Planning fixture");
+  Object.assign(channel, {
+    lastActivityAt: Math.floor(Date.now() / 1000) - 60,
+  });
+  f.replaceSession();
   const row = screen.getByRole("button", { name: /^Planning/ });
   const bold = () => row.querySelector('[data-channel-unread-title="true"]');
   expect(bold()).toBeInTheDocument();
+  expect(row.querySelector("time")).toHaveTextContent("1m");
   f.typing([{ channelId: id, threadRootId: root, pubkey: outsider }]);
   expect(within(row).queryByRole("img", { name: /working/ })).toBeNull();
   f.typing([{ channelId: other, pubkey: agent }]);
@@ -89,6 +102,8 @@ it("keeps unread state while owned thread typing and observer working signals st
   expect(
     within(row).getByRole("img", { name: "Owned Agent working in Planning" }),
   ).toBeInTheDocument();
+  expect(row.querySelector("time")).toBeNull();
+  expect(row).not.toHaveAttribute("aria-describedby");
   expect(bold()).toBeInTheDocument();
   expect(row).toHaveAccessibleName(/observed unread messages/);
   expect(row).toHaveAccessibleName(/Owned Agent working in Planning/);
@@ -106,11 +121,32 @@ it("keeps unread state while owned thread typing and observer working signals st
     ],
   });
   expect(row.querySelectorAll("[data-channel-working]")).toHaveLength(1);
+  expect(row).not.toHaveAttribute("aria-describedby");
   f.typing([]);
   expect(within(row).getByRole("img", { name: /working/ })).toBeInTheDocument();
   f.activity(f.activitySnapshot);
   expect(within(row).queryByRole("img", { name: /working/ })).toBeNull();
+  expect(row.querySelector("time")).toHaveTextContent("1m");
   expect(bold()).toBeInTheDocument();
+  f.activity({
+    ...f.activitySnapshot,
+    local: [
+      {
+        scope,
+        agent,
+        channelId: id,
+        messageId: "waiting-message",
+        threadRootId: root,
+        state: "waiting",
+        startedAt: Date.now(),
+      },
+    ],
+  });
+  expect(
+    within(row).getByRole("img", { name: "Owned Agent waiting in Planning" }),
+  ).toBeInTheDocument();
+  expect(row.querySelector("time")).toBeNull();
+  expect(row).not.toHaveAttribute("aria-describedby");
   f.clearUnread();
   expect(row.querySelector("[data-channel-unread]")).toBeNull();
   cleanup();
@@ -297,6 +333,188 @@ it("keeps the open, unread and working chats listed past a workspace's cap", () 
   });
   expect(listed()).toContain("newer-9");
   expect(listed()).not.toContain("newer-8");
+});
+
+it.each([
+  [0, "now", "just now"],
+  [59, "now", "just now"],
+  [60, "1m", "1 minute ago"],
+  [3_599, "59m", "59 minutes ago"],
+  [3_600, "1h", "1 hour ago"],
+  [86_399, "23h", "23 hours ago"],
+  [86_400, "1d", "1 day ago"],
+] as const)(
+  "shows an accessible compact age at the %s-second boundary",
+  (age, compact, spoken) => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 10, 3, 1, 30);
+    vi.setSystemTime(now);
+    const f = fixture();
+    const channel = f.session.channels
+      .list()
+      .channels.find((item) => item.id === id);
+    if (!channel) throw new Error("Missing Planning fixture");
+    const timestamp = now / 1000 - age;
+    Object.assign(channel, { lastActivityAt: timestamp });
+    f.navigate(conversationTarget(scope, other));
+
+    const row = screen.getByRole("button", { name: /^Planning/ });
+    const time = row.querySelector("time");
+    expect(time).toHaveTextContent(compact);
+    expect(time).toHaveAttribute(
+      "dateTime",
+      new Date(timestamp * 1000).toISOString(),
+    );
+    expect(row).toHaveAccessibleName(/^Planning/);
+    expect(row).not.toHaveAccessibleName(/(?:Active|Updated) .+ ago/);
+    expect(row).toHaveAccessibleDescription(`Active ${spoken}`);
+    expect(row.getAttribute("aria-describedby")?.split(" ")).toEqual([
+      `solo-activity-age-${id}`,
+    ]);
+  },
+);
+
+it("refreshes mounted ages, resumes after sleep, and releases its shared clock", () => {
+  vi.useFakeTimers();
+  const now = Date.UTC(2026, 10, 3, 1, 30);
+  vi.setSystemTime(now);
+  const focusAdd = vi.spyOn(window, "addEventListener");
+  const focusRemove = vi.spyOn(window, "removeEventListener");
+  const visibilityAdd = vi.spyOn(document, "addEventListener");
+  const visibilityRemove = vi.spyOn(document, "removeEventListener");
+  const f = fixture(false, false, undefined, undefined, 2);
+  const timersBeforeAgeSubscriptions = vi.getTimerCount();
+  const channels = f.session.channels.list().channels;
+  const planning = channels.find((item) => item.id === id);
+  const otherChannel = channels.find((item) => item.id === other);
+  if (!planning || !otherChannel) throw new Error("Missing Solo fixtures");
+  Object.assign(planning, { lastActivityAt: now / 1000 - 59 });
+  Object.assign(otherChannel, { lastActivityAt: now / 1000 - 3_599 });
+  f.navigate(conversationTarget(scope, other));
+  const row = screen.getByRole("button", { name: /^Planning/ });
+  const otherRow = screen.getByRole("button", { name: /^Other/ });
+  const listed = () =>
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("data-solo-channel-id"))
+      .filter(Boolean);
+  const order = listed();
+  row.focus();
+  fireEvent.pointerEnter(row, { pointerType: "mouse" });
+  expect(row.querySelector("time")).toHaveTextContent("now");
+  expect(otherRow.querySelector("time")).toHaveTextContent("59m");
+  expect(vi.getTimerCount()).toBe(timersBeforeAgeSubscriptions + 1);
+
+  act(() => vi.advanceTimersByTime(1_000));
+  expect(row.querySelector("time")).toHaveTextContent("1m");
+  expect(otherRow.querySelector("time")).toHaveTextContent("1h");
+  expect(screen.getByRole("button", { name: /^Planning/ })).toBe(row);
+  expect(row).toHaveFocus();
+  expect(listed()).toEqual(order);
+
+  vi.setSystemTime(now + 3 * 60 * 60 * 1000);
+  expect(row.querySelector("time")).toHaveTextContent("1m");
+  act(() => document.dispatchEvent(new Event("visibilitychange")));
+  expect(row.querySelector("time")).toHaveTextContent("3h");
+  expect(otherRow.querySelector("time")).toHaveTextContent("3h");
+  expect(row).toHaveFocus();
+  expect(listed()).toEqual(order);
+
+  vi.setSystemTime(now + 4 * 60 * 60 * 1000);
+  act(() => window.dispatchEvent(new Event("focus")));
+  expect(row.querySelector("time")).toHaveTextContent("4h");
+  expect(row).toHaveAccessibleDescription("Active 4 hours ago");
+  expect(listed()).toEqual(order);
+
+  const focusListeners = focusAdd.mock.calls
+    .filter(([type]) => type === "focus")
+    .map(([, listener]) => listener);
+  const visibilityListeners = visibilityAdd.mock.calls
+    .filter(([type]) => type === "visibilitychange")
+    .map(([, listener]) => listener);
+  expect(focusListeners).toHaveLength(1);
+  expect(visibilityListeners).toHaveLength(1);
+  cleanup();
+  expect(vi.getTimerCount()).toBe(0);
+  for (const listener of focusListeners)
+    expect(focusRemove).toHaveBeenCalledWith("focus", listener);
+  for (const listener of visibilityListeners)
+    expect(visibilityRemove).toHaveBeenCalledWith("visibilitychange", listener);
+
+  const remounted = fixture();
+  const timersBeforeRemount = vi.getTimerCount();
+  const remountedChannel = remounted.session.channels
+    .list()
+    .channels.find((item) => item.id === id);
+  if (!remountedChannel) throw new Error("Missing remount fixture");
+  Object.assign(remountedChannel, {
+    lastActivityAt: Math.floor(Date.now() / 1000) - 60,
+  });
+  remounted.navigate(conversationTarget(scope, other));
+  expect(
+    screen.getByRole("button", { name: /^Planning/ }).querySelector("time"),
+  ).toHaveTextContent("1m");
+  expect(vi.getTimerCount()).toBe(timersBeforeRemount + 1);
+  cleanup();
+  expect(vi.getTimerCount()).toBe(timersBeforeRemount);
+});
+
+it("uses only the selected nullish sort timestamp and composes shared descriptions", () => {
+  vi.useFakeTimers();
+  const now = Date.UTC(2026, 10, 3, 1, 30);
+  vi.setSystemTime(now);
+  const f = fixture();
+  const channel = f.session.channels
+    .list()
+    .channels.find((item) => item.id === id);
+  if (!channel) throw new Error("Missing Planning fixture");
+  const human = "e".repeat(64);
+  (f.session.profiles.snapshot() as Map<string, Profile>).set(human, {
+    name: "Person",
+  });
+  Object.assign(channel, {
+    members: [human],
+    updatedAt: now / 1000 - 3_600,
+  });
+  f.navigate(conversationTarget(scope, other));
+
+  const row = screen.getByRole("button", { name: /^Planning/ });
+  expect(row.querySelector("time")).toHaveTextContent("1h");
+  expect(row).toHaveAccessibleDescription("Shared Updated 1 hour ago");
+  expect(row.getAttribute("aria-describedby")?.split(" ")).toEqual([
+    `solo-shared-${id}`,
+    `solo-activity-age-${id}`,
+  ]);
+  expect(document.querySelectorAll(`#solo-shared-${id}`)).toHaveLength(1);
+  expect(document.querySelectorAll(`#solo-activity-age-${id}`)).toHaveLength(1);
+
+  vi.setSystemTime(now + 60 * 60 * 1000);
+  act(() => window.dispatchEvent(new Event("focus")));
+  expect(row).toHaveAccessibleDescription("Shared Updated 2 hours ago");
+  expect(row.getAttribute("aria-describedby")?.split(" ")).toEqual([
+    `solo-shared-${id}`,
+    `solo-activity-age-${id}`,
+  ]);
+  expect(document.querySelectorAll(`#solo-shared-${id}`)).toHaveLength(1);
+  expect(document.querySelectorAll(`#solo-activity-age-${id}`)).toHaveLength(1);
+
+  for (const invalid of [0, Number.NaN, Number.POSITIVE_INFINITY, 1e300]) {
+    Object.assign(channel, { lastActivityAt: invalid });
+    f.navigate(conversationTarget(scope, other));
+    expect(row.querySelector("time")).toBeNull();
+    expect(row.getAttribute("aria-describedby")).toBe(`solo-shared-${id}`);
+    expect(row).toHaveAccessibleDescription("Shared");
+  }
+
+  Object.assign(channel, { lastActivityAt: now / 1000 + 3_600 });
+  f.navigate(conversationTarget(scope, other));
+  expect(row.querySelector("time")).toHaveTextContent("now");
+  expect(row).toHaveAccessibleDescription("Shared Active just now");
+
+  Object.assign(channel, { lastActivityAt: undefined, updatedAt: undefined });
+  f.navigate(conversationTarget(scope, other));
+  expect(row.querySelector("time")).toBeNull();
+  expect(row.getAttribute("aria-describedby")).toBe(`solo-shared-${id}`);
 });
 
 it("describes a Solo row as Shared only when its Shared mark renders", () => {

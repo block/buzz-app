@@ -10,15 +10,41 @@ export function archivedMention(session: ComposerSession, pubkey: string) {
 }
 
 /**
- * Whether a destination can name people outside it from the community
- * directory. A Solo chat cannot: its mentions admit agents through the Solo chat
- * choice policy. This follows the channel type, not composer props, because
- * some Solo chat composers (media comments, edits) do not carry Solo mode.
+ * Whether a composer can name people outside its destination from the
+ * community directory. In a Solo chat only the composers that invite agents
+ * can (the chat and its threads, the owner's and a shared chat's), so its
+ * people can reference anyone; media comments and edits do not invite agents
+ * and keep their members-only choices. Other known channels can unless a
+ * closed roster or agent invitation limits the choices. Delivery decides what
+ * an outside key becomes: an added member, or a reference that notifies
+ * nobody (`outsideMentionReferences`).
  */
 export function allowsOutsideMentions(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
+  roster?: readonly MentionRecipient[],
+  inviteAgents = false,
 ) {
-  return !!channel && channel.channelType !== "solo";
+  if (!channel) return false;
+  return channel.channelType === "solo"
+    ? inviteAgents
+    : !roster && !inviteAgents;
+}
+
+/**
+ * Whether sending names this outside key only as a reference, which adds and
+ * notifies nobody. Nobody can be added to a DM. A Solo chat adds only the
+ * viewer's available agents; any other outside key is a reference there too.
+ * Elsewhere the sender chooses whether to add outside people.
+ */
+export function outsideMentionReferences(
+  channel: Pick<ChannelSummary, "channelType"> | undefined,
+  agents: readonly { pubkey: string }[],
+  pubkey: string,
+) {
+  if (channel?.channelType === "dm") return true;
+  if (channel?.channelType === "solo")
+    return !agents.some((agent) => agent.pubkey === pubkey);
+  return false;
 }
 
 /**
@@ -46,13 +72,19 @@ export function mentionAdmission(
   if (!roster && inviteAgents && channel?.channelType !== "dm")
     for (const agent of session.agentChoices.snapshot().identities)
       allowed.add(agent.pubkey);
-  const outside = !roster && !inviteAgents && allowsOutsideMentions(channel);
+  // A roster leaves some members out on purpose (another person's agent in
+  // a Solo chat); naming outside people must not bring them back. Without
+  // known membership a roster admits no outside key.
+  const open = allowsOutsideMentions(channel, roster, inviteAgents);
+  const members = roster ? channel?.members : undefined;
+  const outside = (pubkey: string) =>
+    open && (!roster || (!!members && !members.includes(pubkey)));
   return (pubkey) =>
     /^[0-9a-f]{64}$/.test(pubkey) &&
     // Whatever route offers it: member, roster, directory or bring-back, which
     // takes an agent out of its archive but never offers one being deleted.
     !agentUnavailable(session, pubkey, bringable) &&
-    (outside || allowed.has(pubkey));
+    (allowed.has(pubkey) || outside(pubkey));
 }
 
 /**

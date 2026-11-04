@@ -37,6 +37,7 @@ import {
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
+  outsideMentionReferences,
   mentionAdmission,
   pastedMentionRecipient,
 } from "./mention-admission";
@@ -2520,7 +2521,23 @@ function Composer({
       )
     )
       throw new Error("Someone joined this chat. Tag an agent to send.");
-    const recipients = [...explicit];
+    let references: readonly string[] = [];
+    if (explicit.some((key) => !channel.members?.includes(key))) {
+      // Only your agents join. Anyone else outside the chat is a reference,
+      // as in a DM; a failed agent read cannot tell the two apart.
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      const agents = session.agentChoices.snapshot();
+      if (agents.status !== "ready" || agents.error)
+        throw new Error("Could not load your agents. Retry.");
+      references = explicit.filter(
+        (key) =>
+          !channel.members?.includes(key) &&
+          outsideMentionReferences(channel, agents.identities, key),
+      );
+    }
+    const recipients = explicit.filter((key) => !references.includes(key));
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.
@@ -2540,10 +2557,6 @@ function Composer({
     }
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
-      // Classification no longer depends on inventory; refresh before admission.
-      await session.agentChoices.refresh();
-      if (!currentAdmission())
-        throw new Error("The session changed. Review its channel and retry.");
       if (
         missing.some(
           (key) =>
@@ -2563,7 +2576,7 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
     }
-    return recipients;
+    return { recipients, references };
   }
   async function send() {
     if (!permitted.current || voice.isCapturing()) return;
@@ -2769,6 +2782,18 @@ function Composer({
       profileSnapshot,
       session.agentChoices.snapshot(),
     );
+    // A person outside the chat is only referenced, so it addresses nobody.
+    const soloAddressed = (keys: readonly string[]) => {
+      const chat = session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      const agents = session.agentChoices.snapshot().identities;
+      return keys.filter(
+        (key) =>
+          chat?.members?.includes(key) ||
+          !outsideMentionReferences(chat, agents, key),
+      );
+    };
     const queueFollowUp =
       !!host &&
       ownSoloConversation &&
@@ -2776,7 +2801,7 @@ function Composer({
       followUpBehaviorPreference() === "queue" &&
       capturedRecipients.length > 0 &&
       !soloHasPeople(
-        capturedRecipients.map(({ pubkey }) => pubkey),
+        soloAddressed(capturedRecipients.map(({ pubkey }) => pubkey)),
         session.viewer,
         profileSnapshot,
         agentKeys,
@@ -2854,10 +2879,10 @@ function Composer({
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
-        recipients = await prepareRecipients(
+        ({ recipients, references } = await prepareRecipients(
           recipients,
           routing && !captured.recipients.length,
-        );
+        ));
       } else if (recipients.length) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
         const lookup = oldAgents.find(captured.recipients);

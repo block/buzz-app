@@ -18,7 +18,10 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
-import { archivedMention } from "../../features/messages/mention-admission";
+import {
+  allowsOutsideMentions,
+  archivedMention,
+} from "../../features/messages/mention-admission";
 import { mentionHistory } from "../../features/messages/mention-history";
 import {
   directoryChanges,
@@ -300,7 +303,7 @@ export function useMentionChoices(
     session,
     channel,
     query,
-    open && !roster && !invite,
+    open && allowsOutsideMentions(channel, roster, invite),
     lifetime,
   );
   const archives = useMentionArchives(session, open);
@@ -543,7 +546,7 @@ export function useMentionChoices(
     const added = rank(
       matches.filter((c) =>
         invite
-          ? c.agent
+          ? c.agent || !local.has(c.recipient.pubkey)
           : !local.has(c.recipient.pubkey) || (c.agent && !c.member),
       ),
     )

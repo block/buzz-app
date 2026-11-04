@@ -1215,6 +1215,77 @@ it.each(["after", "before"] as const)(
   },
 );
 
+it.each(["loaded by another reader", "removed from the channel"] as const)(
+  "reports a failed names read only for members still unresolved (%s)",
+  async (recovery) => {
+    const test = setup();
+    const unread = "c".repeat(64);
+    const channel = test.session.channels.list().channels[0];
+    if (channel) Object.assign(channel, { members: [test.member, unread] });
+    // The cached member is never read; the batch fails for the unread one.
+    let profiles = new Map(test.profiles);
+    const listeners = new Set<() => void>();
+    const ensure = vi.fn(async () => {
+      throw new Error("relay unavailable");
+    });
+    const session = {
+      ...test.session,
+      profiles: {
+        ...test.session.profiles,
+        snapshot: () => profiles,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        ensure,
+      },
+    } as RelaySession;
+    let result: CompletionResult | undefined;
+    const typed = (revision: number, query: string) => (
+      <MentionCompletion
+        key={revision}
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{
+          revision,
+          text: `@${query}`,
+          start: query.length + 1,
+          end: query.length + 1,
+        }}
+        query={{ start: 0, end: query.length + 1, query }}
+        publish={(next: CompletionResult) => {
+          result = next;
+          return () => {};
+        }}
+      />
+    );
+    const view = render(typed(1, "M"));
+    try {
+      await waitFor(() =>
+        expect(result?.status).toBe(
+          "Could not load some names. Retry to refresh.",
+        ),
+      );
+      act(() => {
+        if (recovery === "loaded by another reader") {
+          profiles = new Map([...profiles, [unread, { name: "Una" }]]);
+          for (const listener of listeners) listener();
+        } else if (channel) Object.assign(channel, { members: [test.member] });
+      });
+      // Every later keystroke remounts; none brings the warning back.
+      view.rerender(typed(2, "Me"));
+      view.rerender(typed(3, "Mem"));
+      await waitFor(() => expect(result?.status).toBeUndefined());
+      expect(result?.retry).toBeUndefined();
+      expect(ensure).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
+  },
+);
+
 // Exercise selection, wire text/p tags, and sent rendering, not an already-bound @name.
 it.each(["picker", "completion"] as const)(
   "%s keeps local display labels out of serialized mentions",

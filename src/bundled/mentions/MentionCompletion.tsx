@@ -47,7 +47,8 @@ function settle(
   // A reset demand (purge, eviction) starts over; its old outcome is stale.
   if (demands.get(session) !== demand) return;
   for (const id of ids) {
-    if (failed) demand.failed.add(id);
+    // A batch that failed may still have answered for some of its names.
+    if (failed && !session.profiles.snapshot().has(id)) demand.failed.add(id);
     else demand.failed.delete(id);
   }
   for (const listener of failureListeners.get(session) ?? []) listener();
@@ -93,20 +94,29 @@ export function MentionCompletion({
     ids: string[];
   }>(undefined);
   const [attempt, retry] = useState(0);
+  // A failed read reports only names still unresolved: a member loaded since
+  // (by any reader) or known unnamed, or one no longer in the roster, is not.
   const error = useSyncExternalStore(
     useCallback(
       (listener: () => void) => {
         const listeners = failureListeners.get(session) ?? new Set();
         failureListeners.set(session, listeners);
         listeners.add(listener);
-        return () => listeners.delete(listener);
+        const unsubscribe = session.profiles.subscribe(listener);
+        return () => {
+          listeners.delete(listener);
+          unsubscribe();
+        };
       },
       [session],
     ),
     () => {
       const failed = demands.get(session)?.failed;
-      return (
-        !draftRoster && !!failed?.size && members.some((key) => failed.has(key))
+      if (draftRoster || !failed?.size) return false;
+      const loaded = session.profiles.snapshot();
+      const unnamed = session.profiles.unnamed?.();
+      return members.some(
+        (key) => failed.has(key) && !loaded.has(key) && !unnamed?.has(key),
       );
     },
   );

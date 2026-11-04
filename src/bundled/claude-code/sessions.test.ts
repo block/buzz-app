@@ -1101,3 +1101,88 @@ it("releases a conversation handover when its refresh fails", async () => {
     f.pool.dispose();
   }
 });
+
+it("collects turn context for starts but never for steers or compaction", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const turnContext = vi.fn(async () => "recalled");
+  const first = pool.deliver("c/root", "first", 1, { turnContext });
+  await vi.waitFor(() =>
+    expect(claudes()[0]?.prompts).toEqual(["first\n\nrecalled"]),
+  );
+  const second = pool.deliver("c/root", "second", 2, { turnContext });
+  await vi.waitFor(() =>
+    expect(claudes()[0]?.prompts).toEqual(["first\n\nrecalled", "second"]),
+  );
+  expect(turnContext).toHaveBeenCalledOnce();
+  claudes()[0]?.finish();
+  await Promise.all([first, second]);
+  const compact = pool.compact("c/root");
+  await vi.waitFor(() => expect(claudes()[0]?.prompts.at(-1)).toBe("/compact"));
+  expect(turnContext).toHaveBeenCalledOnce();
+  claudes()[0]?.finish();
+  await compact;
+  pool.dispose();
+});
+
+it("stop aborts pending turn preparation before sending a Claude prompt", async () => {
+  const { pool, claudes } = sessions();
+  let signal: AbortSignal | undefined;
+  let release!: (value: string) => void;
+  const done = pool.deliver("c/root", "first", 1, {
+    turnContext: (value) => {
+      signal = value;
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  await vi.waitFor(() => expect(signal).toBeDefined());
+  await pool.interrupt("c/root");
+  expect(signal?.aborted).toBe(true);
+  release("late");
+  await expect(done).resolves.toEqual({ ok: true, undelivered: true });
+  expect(claudes()[0]?.prompts).toEqual([]);
+  pool.dispose();
+});
+
+it("failed context leaves the original Claude prompt usable", async () => {
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "first", 1, {
+    turnContext: async () => {
+      throw new Error("failed");
+    },
+  });
+  expect(claudes()[0]?.prompts).toEqual(["first"]);
+  pool.dispose();
+});
+
+it("keeps an idle process while turn context is being prepared", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "first", 1);
+  await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: (value: string) => void;
+  const done = pool.deliver("c/root", "next", 2, {
+    turnContext: () => {
+      entered();
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  await started;
+  try {
+    await vi.advanceTimersByTimeAsync(2);
+    expect(pool.seen("c/root")).toBe(1);
+  } finally {
+    release("recalled");
+  }
+  await expect(done).resolves.toEqual({ ok: true });
+  expect(claudes()).toHaveLength(1);
+  expect(claudes()[0]?.prompts).toEqual(["first", "next\n\nrecalled"]);
+  pool.dispose();
+});

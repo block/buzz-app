@@ -29,6 +29,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
     repositoriesContext,
     agents.storage,
+    (...args) => agents.collectTurnContext(...args),
   );
   const desktop =
     host.spawn && host.resolveDirectory

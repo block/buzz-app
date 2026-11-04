@@ -59,6 +59,7 @@ function fixture(
   } = {},
   repositories?: (scope: string | undefined) => string,
   hooks?: ConstructorParameters<typeof CodexRuntime>[7],
+  collectContext?: ConstructorParameters<typeof CodexRuntime>[8],
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -339,6 +340,7 @@ function fixture(
     () => added,
     repositories,
     hooks,
+    collectContext,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -463,6 +465,7 @@ function fixture(
         relay: () => relay,
         core,
         tools: () => added,
+        collectTurnContext: collectContext ?? (async () => ""),
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -4652,4 +4655,72 @@ it("keeps interrupting an idle existing conversation a no-op", async () => {
   await expect(
     f.runtime.session(agent, { channelId: "channel", root }, "interrupt"),
   ).resolves.toBeUndefined();
+});
+
+it("adds turn context only to new-turn user input, never steering or developer context", async () => {
+  const collect = vi.fn(async () => "RECALLED_🦉".repeat(600));
+  const f = fixture([], undefined, false, {}, undefined, undefined, collect);
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const first = f.starts()[0]?.params as {
+    input: unknown;
+    additionalContext: unknown;
+  };
+  expect(JSON.stringify(first.input)).toContain("RECALLED_🦉".repeat(600));
+  expect(JSON.stringify(first.additionalContext)).not.toContain("RECALLED_");
+  await f.runtime.run(f.delivery("steered"));
+  await vi.waitFor(() =>
+    expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
+  );
+  expect(collect).toHaveBeenCalledTimes(1);
+  expect(
+    JSON.stringify(f.sent.find((w) => w.method === "turn/steer")?.params),
+  ).not.toContain("RECALLED_");
+  f.complete();
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  collect.mockResolvedValue("");
+  await f.runtime.run(f.delivery("next"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(JSON.stringify(f.starts()[1]?.params)).not.toContain("RECALLED_");
+  expect(collect).toHaveBeenCalledTimes(2);
+});
+
+it("revokes pending turn context on Interrupt without starting a Codex turn", async () => {
+  const started = deferred<AbortSignal>();
+  const release = deferred<string>();
+  const collect: NonNullable<
+    ConstructorParameters<typeof CodexRuntime>[8]
+  > = async (_key, _trigger, _channel, signal) => {
+    started.resolve(signal);
+    return release.promise;
+  };
+  const f = fixture([], undefined, false, {}, undefined, undefined, collect);
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  const signal = await started.promise;
+  const stopping = interruptible.mock.calls[0]?.[0]();
+  expect(signal.aborted).toBe(true);
+  release.resolve("late recalled data");
+  await stopping;
+  expect(f.starts()).toHaveLength(0);
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("revokes pending turn context when the Codex connection closes", async () => {
+  const started = deferred<AbortSignal>();
+  const release = deferred<string>();
+  const collect: NonNullable<
+    ConstructorParameters<typeof CodexRuntime>[8]
+  > = async (_key, _trigger, _channel, signal) => {
+    started.resolve(signal);
+    return release.promise;
+  };
+  const f = fixture([], undefined, false, {}, undefined, undefined, collect);
+  await f.runtime.run(f.delivery("work"));
+  const signal = await started.promise;
+  f.exits.resolve(1);
+  await vi.waitFor(() => expect(signal.aborted).toBe(true));
+  release.resolve("late");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.starts()).toHaveLength(0);
 });

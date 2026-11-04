@@ -33,6 +33,8 @@ export type Settled = Readonly<{
 }>;
 
 export type ActivityReceipt = Readonly<{
+  /** Bounded host context, collected only for a new prompt, never a steer. */
+  turnContext?: (signal: AbortSignal) => Promise<string>;
   current?: () => boolean;
   /** Rebuilds an Attention prompt after startup or queue waits. */
   refresh?: (fresh?: boolean) => Promise<string>;

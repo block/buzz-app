@@ -165,6 +165,7 @@ export class GooseRuntime {
       "",
     /** Agent storage, where what each session started with is kept. */
     private readonly agentStore: AgentStore = localStore(),
+    private readonly collectContext?: Agents["collectTurnContext"],
   ) {}
 
   /** What each of the agent's sessions started with. */
@@ -447,7 +448,21 @@ export class GooseRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
+          const collectContext = this.collectContext;
           delivered = entry.sessions.deliver(key, text, shown, {
+            current,
+            ...(!wake && collectContext
+              ? {
+                  turnContext: (signal: AbortSignal) =>
+                    collectContext(
+                      agent.key,
+                      trigger,
+                      channel,
+                      signal,
+                      () => !current || current(),
+                    ),
+                }
+              : {}),
             ...(wake
               ? {
                   current,

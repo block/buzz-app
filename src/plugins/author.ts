@@ -1,4 +1,8 @@
 // FOUNDATION: Type-only author entry. Runtime capabilities come from injected ctx.
+export type {
+  Turn,
+  TurnContextContribution,
+} from "../features/agents/turn-context";
 export type { AgentHook, AgentHookContext } from "../features/agents/hooks";
 export type { PluginManifest, PluginModule } from "./api";
 export type { SettingsCard, SettingsCards } from "../features/settings/service";

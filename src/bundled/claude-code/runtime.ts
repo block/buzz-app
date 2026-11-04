@@ -205,6 +205,7 @@ export class ClaudeRuntime {
       event: string,
       input: unknown,
     ) => Promise<Record<string, unknown>> = async () => ({}),
+    private readonly collectContext?: Agents["collectTurnContext"],
   ) {}
 
   /** The host's own spawn, not a copy: history read with it is kept for it,
@@ -586,7 +587,20 @@ export class ClaudeRuntime {
                 ? { channel }
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
+          const collectContext = this.collectContext;
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            ...(!wake && collectContext
+              ? {
+                  turnContext: (signal: AbortSignal) =>
+                    collectContext(
+                      agent.key,
+                      trigger,
+                      channel,
+                      signal,
+                      () => !interrupted && (!current || current()),
+                    ),
+                }
+              : {}),
             current: () => !interrupted && (!current || current()),
             ...(wake
               ? {

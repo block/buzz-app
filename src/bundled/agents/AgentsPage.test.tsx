@@ -394,6 +394,8 @@ function setup(
     updateRequests: () => [],
     dismissUpdate: vi.fn(),
     approveUpdate: vi.fn(),
+    registerTurnContext: vi.fn(),
+    collectTurnContext: vi.fn(async () => ""),
     registerHook: vi.fn(),
     dispatchHook: vi.fn(async () => undefined),
     configHistory: () => undefined,

@@ -1,0 +1,11 @@
+{
+  "id": "buzz.recall",
+  "name": "Recall",
+  "apiVersion": 1,
+  "description": "When an agent starts a turn, shows it the past messages and memories that help.",
+  "discovery": { "category": "agent-tools" },
+  "host": {
+    "turnContext": true,
+    "networkOrigins": ["*"]
+  }
+}

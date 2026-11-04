@@ -184,3 +184,66 @@ it("uses the existing unchanged disclosure for managed saves", () => {
     screen.getByRole("button", { name: /Save temporary plugin files/ }),
   ).toBeVisible();
 });
+
+it("discloses turn-scoped reads and retained copies", async () => {
+  render(
+    <PluginAccessReview
+      manifest={{
+        id: "recall",
+        name: "Recall",
+        apiVersion: 1,
+        host: { turnContext: true },
+      }}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /Read conversations and memory/ }),
+  );
+  await waitFor(() =>
+    expect(screen.getByText(/Copied text cannot/)).toBeVisible(),
+  );
+  expect(
+    screen.getByText(/Excerpts may be sent to your Decisions provider/),
+  ).toBeVisible();
+});
+
+it("discloses plugin-chosen wildcard destinations and compares exact-origin updates", async () => {
+  render(
+    <PluginAccessReview
+      manifest={{
+        id: "recall",
+        name: "Recall",
+        apiVersion: 1,
+        host: { networkOrigins: ["*"] },
+      }}
+      previousManifest={{
+        id: "recall",
+        name: "Recall",
+        apiVersion: 1,
+        host: { networkOrigins: ["https://example.test"] },
+      }}
+    />,
+  );
+  const added = within(
+    screen.getByRole("region", { name: "Added declarations" }),
+  );
+  fireEvent.click(
+    added.getByRole("button", { name: /Connect to any web address/ }),
+  );
+  expect(
+    added.getByText(/Can send what it reads to servers it chooses/),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      added.getByText(/Any HTTPS server and local HTTP services/),
+    ).toBeVisible(),
+  );
+  expect(
+    added.getByText(/Destinations are chosen by the plugin/),
+  ).toBeVisible();
+  expect(
+    within(
+      screen.getByRole("region", { name: "Removed declarations" }),
+    ).getByRole("button", { name: /Connect to https:\/\/example.test/ }),
+  ).toBeVisible();
+});

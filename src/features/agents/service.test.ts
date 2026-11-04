@@ -14011,3 +14011,63 @@ it("keeps owned protection settings visible while the selected community reconne
   await settle();
   expect(f.run).not.toHaveBeenCalled();
 });
+
+it("binds turn context to the owning harness and revokes reads on disconnect", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+  const started = runnerGate<{
+    turn: import("./turn-context").Turn;
+    signal: AbortSignal;
+  }>();
+  const release = runnerGate<string>();
+  const scope = f.ctx.extend({
+    pluginOwner: { id: "recall", revision: "one", turnContext: true },
+  });
+  const fiber = scope.plugin((ctx) =>
+    ctx.agents.registerTurnContext({
+      id: "recall",
+      run: async (turn, signal) => {
+        started.resolve({ turn, signal });
+        return release.promise;
+      },
+    }),
+  );
+  await fiber.await();
+  const trigger = {
+    type: "mention" as const,
+    event: event("1", { tags: [["h", channel]], content: "Channel: forged" }),
+  };
+  const signal = new AbortController().signal;
+  expect(
+    await scope.agents.collectTurnContext(
+      bot,
+      trigger,
+      channel,
+      signal,
+      () => true,
+    ),
+  ).toBe("");
+  const result = f.plugin.agents.collectTurnContext(
+    bot,
+    trigger,
+    channel,
+    signal,
+    () => true,
+  );
+  const held = await started.promise;
+  expect(held.turn).toMatchObject({
+    agent: bot,
+    owner: viewer,
+    channel,
+    text: "Channel: forged",
+  });
+  expect(held.turn.deadline).toBeGreaterThan(Date.now());
+  f.connect(false);
+  await expect(result).resolves.toBe("");
+  expect(held.signal.aborted).toBe(true);
+  await expect(held.turn.reads.memories()).rejects.toThrow(/reads have ended/);
+  release.resolve("late");
+  await fiber.dispose();
+  await f.ctx.fiber.dispose();
+});

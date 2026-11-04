@@ -58,6 +58,9 @@ pub struct HostGrants {
     /// Hook callbacks may observe and influence these agent types.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_hooks: Vec<String>,
+    /// Read and contribute context during an admitted agent turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_context: bool,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -295,6 +298,9 @@ impl Manifest {
             }
             let mut origins = std::collections::HashSet::new();
             for origin in &host.network_origins {
+                if origin == "*" && host.network_origins.len() == 1 {
+                    continue;
+                }
                 let url = url::Url::parse(origin).map_err(err)?;
                 if url.scheme() != "https"
                     || !url.username().is_empty()
@@ -416,6 +422,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/recall/manifest.json"))
+            .expect("recall manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
@@ -2598,6 +2606,44 @@ mod tests {
         assert!(plugin.enabled);
         assert_eq!(plugin.revision, first);
         assert_eq!(plugin.previous, None);
+    }
+    #[test]
+    fn wildcard_origin_must_be_the_only_entry() {
+        for (origins, valid) in [
+            (vec!["*"], true),
+            (vec!["*", "https://example.test"], false),
+            (vec!["https://example.test", "*"], false),
+            (vec!["*", "*"], false),
+        ] {
+            let manifest = serde_json::json!({
+                "id": "recall", "name": "Recall", "apiVersion": 1,
+                "host": { "networkOrigins": origins },
+            });
+            assert_eq!(
+                artifact_from_text(&manifest.to_string(), "export const x = 1".into()).is_ok(),
+                valid,
+                "{origins:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validates_turn_context_grant() {
+        for enabled in [true, false] {
+            let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
+                "id": "recall", "name": "Recall", "apiVersion": 1,
+                "host": { "turnContext": enabled },
+            }))
+            .unwrap();
+            assert!(manifest.validate().is_ok());
+            assert_eq!(manifest.host.unwrap().turn_context, enabled);
+        }
+        assert!(
+            serde_json::from_value::<super::HostGrants>(serde_json::json!({
+                "turnContext": "true"
+            }))
+            .is_err()
+        );
     }
     #[test]
     fn validates_agent_hook_grants() {

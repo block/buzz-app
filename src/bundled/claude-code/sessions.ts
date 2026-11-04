@@ -61,6 +61,8 @@ export type SessionsOptions = Readonly<{
 }>;
 
 type DeliveryOptions = Readonly<{
+  /** Runs only when this delivery starts a turn, never when it steers. */
+  turnContext?: (signal: AbortSignal) => Promise<string>;
   steer?: string;
   current?: () => boolean;
   refresh?: (fresh?: boolean) => Promise<string>;
@@ -84,6 +86,7 @@ type Live = {
 
 export class AgentSessions {
   private readonly live = new Map<string, Live>();
+  private readonly preparing = new Map<string, AbortController>();
   /** One-off turns running or starting, by label. */
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
@@ -225,6 +228,7 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      turnContext,
       current,
       refresh,
       fresh,
@@ -238,6 +242,7 @@ export class AgentSessions {
     }: DeliveryOptions,
     handed: () => void,
   ): Promise<Settled> {
+    let context: string | undefined;
     for (;;) {
       if (this.disposed)
         return { ok: false, error: "Claude was stopped", undelivered: true };
@@ -283,6 +288,28 @@ export class AgentSessions {
           !live.process.busy)
       )
         continue;
+      if (!live.process.busy && turnContext && context === undefined) {
+        const preparing = new AbortController();
+        this.preparing.set(key, preparing);
+        try {
+          context = await turnContext(preparing.signal).catch(() => "");
+        } finally {
+          this.preparing.delete(key);
+        }
+        if (
+          preparing.signal.aborted ||
+          this.disposed ||
+          (current && !current())
+        )
+          return { ok: true, undelivered: true };
+        // Preparation may outlive a process or its fixed settings.
+        if (
+          this.live.get(key) !== live ||
+          !live.process.running ||
+          live.fingerprint !== this.options.fingerprint(key)
+        )
+          continue;
+      }
       this.touch(key, live, seen, contextRoot);
       const activity = {
         ...pick,
@@ -294,7 +321,7 @@ export class AgentSessions {
       const answering = this.answer(
         key,
         live,
-        live.process.busy ? steer : text,
+        live.process.busy ? steer : context ? `${text}\n\n${context}` : text,
         activity,
       );
       // Later messages may steer this turn once its prompt has been submitted.
@@ -319,6 +346,7 @@ export class AgentSessions {
         return this.deliver(key, retry, seen, {
           pick,
           ...(current ? { current } : {}),
+          ...(context ? { turnContext: async () => context ?? "" } : {}),
           ...(admit ? { admit } : {}),
           ...(refresh ? { refresh: () => refresh(true) } : {}),
           ...(contextRoot ? { contextRoot } : {}),
@@ -332,6 +360,7 @@ export class AgentSessions {
   /** Stops the turn running in conversation `key`, if any, once a process
    * starting for it has taken its message. */
   async interrupt(key: string) {
+    this.preparing.get(key)?.abort();
     await this.opening.get(key);
     await this.live.get(key)?.process.interrupt();
   }
@@ -425,6 +454,7 @@ export class AgentSessions {
 
   dispose() {
     this.disposed = true;
+    for (const preparing of this.preparing.values()) preparing.abort();
     this.clearDiscovery();
     for (const [key, live] of this.live) this.drop(key, live);
     for (const live of this.once.values()) void live?.process.kill();
@@ -572,13 +602,15 @@ export class AgentSessions {
   private countdown(key: string, live: Live) {
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.process.active) this.countdown(key, live);
+      if (live.process.active || this.preparing.has(key))
+        this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);
     if (this.live.get(key) === live) {
+      this.preparing.get(key)?.abort();
       this.live.delete(key);
       this.options.onChange?.();
     }

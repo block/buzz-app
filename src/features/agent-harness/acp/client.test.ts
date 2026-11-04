@@ -616,3 +616,63 @@ describe("the shared server pool", () => {
     genericSessions.dispose();
   });
 });
+
+it("collects context only on ACP prompt starts and preserves user text on failure", async () => {
+  const harness = fakeHarness({ hold: true });
+  const hooks: AcpHooks = {
+    ...HOOKS,
+    steering: {
+      runId: (update) =>
+        update.sessionUpdate !== "run"
+          ? null
+          : typeof update.runId === "string"
+            ? update.runId
+            : undefined,
+      steer: async (acp, sessionId, runId, text) => {
+        await acp.request("steer", { sessionId, runId, text });
+      },
+    },
+  };
+  const acp = await start(harness, {}, hooks);
+  const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+  const turnContext = vi.fn(async () => "recalled");
+  const first = session.send("first", { turnContext });
+  await vi.waitFor(() =>
+    expect(harness.turns[0]?.text).toBe("first\n\nrecalled"),
+  );
+  const second = session.send("second", { turnContext });
+  await vi.waitFor(() => expect(harness.turns[0]?.steered).toEqual(["second"]));
+  expect(turnContext).toHaveBeenCalledOnce();
+  harness.turns[0]?.finish();
+  await Promise.all([first, second]);
+  const third = session.send("third", {
+    turnContext: async () => {
+      throw new Error("failed");
+    },
+  });
+  await vi.waitFor(() => expect(harness.turns[1]?.text).toBe("third"));
+  harness.turns[1]?.finish();
+  await third;
+});
+
+it("ACP stop revokes preparation and discards its late context", async () => {
+  const harness = fakeHarness();
+  const acp = await start(harness);
+  const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+  let signal: AbortSignal | undefined;
+  let release!: (value: string) => void;
+  const done = session.send("first", {
+    turnContext: (value) => {
+      signal = value;
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  await vi.waitFor(() => expect(signal).toBeDefined());
+  session.interrupt();
+  expect(signal?.aborted).toBe(true);
+  release("late");
+  await done;
+  expect(harness.turns).toEqual([]);
+});

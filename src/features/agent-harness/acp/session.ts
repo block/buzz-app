@@ -35,6 +35,7 @@ export class AcpSession {
   private runWaiters: ((runId: string | undefined) => void)[] = [];
   /** A `session/prompt` is in flight. */
   private prompting = false;
+  private preparing: AbortController | undefined;
   private readonly steering = new Set<Waiter>();
   private steered = Promise.resolve();
   /** Turns to run, each with the model and level it was asked for, if any. */
@@ -45,6 +46,7 @@ export class AcpSession {
     kept?: string;
     current?: () => boolean;
     refresh?: ActivityReceipt["refresh"];
+    turnContext?: ActivityReceipt["turnContext"];
     waiter?: Waiter;
     delivered?: () => void;
   }[] = [];
@@ -159,6 +161,7 @@ export class AcpSession {
         ...(activity.delivered ? { delivered: activity.delivered } : {}),
         ...(activity.current ? { current: activity.current } : {}),
         ...(activity.refresh ? { refresh: activity.refresh } : {}),
+        ...(activity.turnContext ? { turnContext: activity.turnContext } : {}),
         waiter,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
@@ -184,6 +187,7 @@ export class AcpSession {
    * harness ends it; a message sent before it has runs as a new turn after. */
   interrupt() {
     if (!this.working || this.closed) return;
+    this.preparing?.abort();
     this.queue.length = 0;
     this.steered = Promise.resolve();
     this.stopped = {
@@ -234,6 +238,7 @@ export class AcpSession {
   /** Ends the session's work with `error`; nothing more is sent to it. */
   fail(error: string) {
     this.closed = true;
+    this.preparing?.abort();
     this.queue.length = 0;
     this.settle({ ok: false, error });
   }
@@ -295,6 +300,9 @@ export class AcpSession {
           ...(activity.delivered ? { delivered: activity.delivered } : {}),
           ...(activity.current ? { current: activity.current } : {}),
           ...(activity.refresh ? { refresh: activity.refresh } : {}),
+          ...(activity.turnContext
+            ? { turnContext: activity.turnContext }
+            : {}),
           waiter,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
@@ -351,6 +359,7 @@ export class AcpSession {
           kept,
           current,
           refresh,
+          turnContext,
           waiter,
           delivered,
         } = this.queue.shift() ?? {
@@ -369,7 +378,25 @@ export class AcpSession {
                 `${this.acp.hooks.label}'s ${this.model || "default model"}`,
               ),
             );
-          const prompt = refresh ? await refresh() : text;
+          let prompt = refresh ? await refresh() : text;
+          if (
+            turnContext &&
+            !this.stopped &&
+            !this.closed &&
+            (!current || current())
+          ) {
+            const preparing = new AbortController();
+            this.preparing = preparing;
+            try {
+              const context = await turnContext(preparing.signal).catch(
+                () => "",
+              );
+              if (context && !preparing.signal.aborted)
+                prompt += `\n\n${context}`;
+            } finally {
+              this.preparing = undefined;
+            }
+          }
           // The owner stopped it while its provider switch was going.
           if (this.stopped) {
             this.cancelEnded();

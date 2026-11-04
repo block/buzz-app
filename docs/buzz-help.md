@@ -301,8 +301,21 @@ available rather than silently discarding it.
 
 ## Optional features and limits
 
+- Plugins can request network access to declared HTTPS servers, or to any HTTPS
+  server and local HTTP services. The installation review describes this access:
+  a plugin may send what it reads to servers it chooses.
+- Plugins may request permission to read conversations and agent memory when a new agent turn starts, and add selected context to that request. The installation review describes this access; copied excerpts may be retained or sent to your Decisions provider.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+- **Recall** is bundled and off by default. Enable it in **Settings → Plugins → Manage plugins**.
+  It adds selected past messages and memories when an agent starts a turn, using your
+  **Decisions API** provider. It searches the current channel by default; Recall settings
+  offer whole-relay search and shared-memory opt-in. For semantic recall, configure an
+  **Embedding server URL** for a separately managed llama.cpp-compatible embedding server
+  that accepts requests without a model selector. **Test** saves and reports model dimensions and round-trip time.
+  An optional key and model-specific query/document prefixes are saved on this device.
+  Conversation text and eligible memory are sent to that server. Clear the URL and
+  **Save** for lexical recall only; Buzz does not install or manage the model.
 - Some plugins let the person's other agents on this computer, such as Claude
   Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
   helper Buzz installs, for example

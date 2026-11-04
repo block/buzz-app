@@ -76,6 +76,7 @@ import {
 import { findConversation } from "./transcript";
 
 type Request = {
+  turnContext?: (signal: AbortSignal) => Promise<string>;
   current?: () => boolean;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
@@ -123,6 +124,7 @@ type Saved = {
   tools?: string;
 };
 type Active = {
+  preparing?: AbortController;
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
   threadId?: string;
@@ -276,6 +278,7 @@ export class CodexRuntime {
         input: unknown,
       ): Promise<Record<string, unknown>>;
     },
+    private readonly collectContext?: Agents["collectTurnContext"],
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -752,9 +755,22 @@ export class CodexRuntime {
     delivery.workingUntil(replied);
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
+    const collectContext = this.collectContext;
     const request: Request = {
+      ...(trigger.type === "mention" && collectContext
+        ? {
+            turnContext: (signal: AbortSignal) =>
+              collectContext(
+                agent.key,
+                trigger,
+                channelId,
+                signal,
+                () => !delivery.current || delivery.current(),
+              ),
+          }
+        : {}),
       scope: reads.scope,
-      ...(wake ? { current: delivery.current } : {}),
+      ...(delivery.current ? { current: delivery.current } : {}),
       event,
       ...(wake ? { wake } : {}),
       ...(delivery.wakeText ? { wakeText: delivery.wakeText } : {}),
@@ -1063,6 +1079,7 @@ export class CodexRuntime {
     if (!active?.requests.includes(request) || active.finished)
       return Promise.resolve();
     active.stopped = true;
+    active.preparing?.abort();
     active.stopping ??= (async () => {
       try {
         await active.ready;
@@ -1578,6 +1595,9 @@ export class CodexRuntime {
           `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
         );
     });
+    void followed.completed.catch((error) => {
+      if (!active.turnId) turnAbort.abort(error);
+    });
     let hookBridge: Awaited<ReturnType<typeof openHookBridge>> | undefined;
     try {
       const rpc = await server.opening;
@@ -1652,6 +1672,26 @@ export class CodexRuntime {
         this.history(request, signal),
         this.core(request.agent.key, signal),
       ]);
+      let recalled = "";
+      if (request.turnContext && !active.stopped) {
+        const preparing = new AbortController();
+        active.preparing = preparing;
+        try {
+          recalled = await request
+            .turnContext(AbortSignal.any([signal, preparing.signal]))
+            .catch(() => "");
+        } finally {
+          delete active.preparing;
+        }
+      }
+      if (active.stopped) {
+        restoreNotes(request);
+        request.answered(true);
+        this.status(agent.key, key, "Stopped");
+        active.finished = true;
+        ready();
+        return;
+      }
       const wake = request.wake && {
         ...request.wake,
         text: (await request.wakeText?.()) ?? request.wake.text,
@@ -1675,7 +1715,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake)}`,
+          `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, false, noteOf(request), wake)}${recalled ? `\n\n${recalled}` : ""}`,
         ),
         model,
         effort,

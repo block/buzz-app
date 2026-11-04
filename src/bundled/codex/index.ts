@@ -60,6 +60,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           },
         }
       : undefined,
+    (...args) => ctx.agents.collectTurnContext(...args),
   );
   /** A Codex agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

@@ -153,6 +153,7 @@ export class PluginRuntime {
         pluginOwner: Object.freeze({
           id: entry.plugin.manifest.id,
           revision: entry.plugin.revision,
+          turnContext: entry.plugin.manifest.host?.turnContext === true,
           agentHooks: Object.freeze([
             ...(entry.plugin.manifest.host?.agentHooks ?? []),
           ]),

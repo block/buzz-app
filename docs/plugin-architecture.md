@@ -1213,6 +1213,14 @@ the call started under. Plugin reload, recovery and enable changes retire
 registrations; a caller registers again once. The token never enters the
 renderer, and an ordinary network origin is never authority to use it.
 
+`host.networkOrigins: ["*"]` admits any HTTPS server and HTTP only at
+parsed loopback IP addresses (127.0.0.0/8 and [::1]); hostnames such as
+`localhost` do not qualify for HTTP. The wildcard must be the sole entry.
+The plugin chooses destinations and can send what it reads to those servers;
+plugin settings do not create a native owner-selected origin restriction.
+URL credentials are refused and redirects remain disabled. Exact HTTPS origin
+declarations keep their existing restrictions.
+
 Requests use the native HTTPS client, so a plugin can declare an exact
 origin without changing the renderer CSP. URLs must use a declared origin; redirects
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
@@ -2422,3 +2430,26 @@ change to the plugin-facing matching rules and is deliberately not part of the
 Settings page.
 
 Native agent hook callbacks are described in [Agent hook callbacks](agent-tool-hooks.md).
+
+### Additive turn context
+
+Declare `host.turnContext: true` to register
+`ctx.agents.registerTurnContext({ id, async run(turn, signal) { ... } })`.
+The host invokes contributors concurrently for ordinary mention starts in Claude,
+Codex and goose. Steering, wake, title and compaction paths do not invoke them.
+Returned text is appended to the **user input**, including on Codex; it never
+becomes developer instructions. Native hook callbacks retain their own semantics.
+
+`Turn` supplies trusted `agent`, `owner`, `community`, `channel`, optional `root`,
+trigger `event`, verbatim untrusted `text`, an absolute epoch-millisecond `deadline`,
+and `reads`. Reads expose bounded message `events(filter)`, authoritative audience
+`channel(id)` facts, and the owner's `memories()` listing. Message and audience
+reads run as the agent. A separate lease for each contributor expires on settlement,
+stop, unload, connection change or the shared three-second deadline. Retaining a
+method does not retain authority; copied plaintext cannot be revoked.
+
+Failures yield no section and preserve successful peers. The host admits whole
+sections in plugin/id order, up to 8 KiB each and 16 KiB total in UTF-8, including
+host wrappers. Contributors must quote and attribute untrusted excerpts, apply
+source-to-destination disclosure rules, and budget their own wrapper text.
+`host.turnContext` is shown in the installation access review.

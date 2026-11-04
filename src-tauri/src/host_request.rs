@@ -640,9 +640,22 @@ fn multipart(
 }
 
 fn allows_origin(grants: &HostGrants, url: &reqwest::Url) -> bool {
-    grants
-        .network_origins
-        .contains(&url.origin().ascii_serialization())
+    (url.scheme() == "https"
+        && grants
+            .network_origins
+            .contains(&url.origin().ascii_serialization()))
+        || (grants.network_origins == ["*"] && allowed_destination(url))
+}
+
+/// HTTP is limited to parsed loopback IPs; hostnames are never resolved here.
+fn allowed_destination(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        || (url.scheme() == "http"
+            && match url.host() {
+                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                _ => false,
+            })
 }
 
 fn validate_request(
@@ -652,8 +665,8 @@ fn validate_request(
         return Err("Invalid host request URL".into());
     }
     let url = reqwest::Url::parse(&request.url).map_err(|_| "Invalid host request URL")?;
-    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
-        return Err("Host requests require HTTPS without URL credentials".into());
+    if !allowed_destination(&url) || !url.username().is_empty() || url.password().is_some() {
+        return Err("Host requests require HTTPS or loopback HTTP without URL credentials".into());
     }
     let method = match request.method.as_str() {
         "GET" => reqwest::Method::GET,
@@ -839,6 +852,70 @@ mod tests {
             body: Some("{}".into()),
             timeout_ms: None,
         }
+    }
+
+    #[test]
+    fn wildcard_admits_https_and_only_literal_loopback_http() {
+        let wildcard = HostGrants {
+            network_origins: vec!["*".into()],
+            ..Default::default()
+        };
+        let exact = HostGrants {
+            network_origins: vec!["https://example.test".into()],
+            ..Default::default()
+        };
+        for address in [
+            "https://example.test/path",
+            "https://other.test:9443/",
+            "http://127.0.0.1:8080/v1/embeddings",
+            "http://127.23.45.67/",
+            "http://[::1]:8080/",
+        ] {
+            let (url, _, _) = validate_request(&request(address)).unwrap();
+            assert!(allows_origin(&wildcard, &url), "{address}");
+            if url.scheme() == "http" {
+                assert!(!allows_origin(&exact, &url));
+                assert!(!allows_origin(&HostGrants::default(), &url));
+            }
+        }
+        for address in [
+            "http://localhost:8080/",
+            "http://127.0.0.1.evil.test/",
+            "http://example.test/",
+            "http://192.168.1.1/",
+            "http://[::ffff:127.0.0.1]/",
+            "ftp://127.0.0.1/",
+            "https://user:pass@example.test/",
+            "http://user:pass@127.0.0.1/",
+            "http://user@127.0.0.1/",
+            "https://user@example.test/",
+        ] {
+            assert!(validate_request(&request(address)).is_err(), "{address}");
+            let url = reqwest::Url::parse(address).unwrap();
+            if url.scheme() == "http" && url.username().is_empty() {
+                assert!(!allows_origin(&wildcard, &url), "{address}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn wildcard_loopback_request_crosses_the_real_http_boundary() {
+        let (url, server) = local_response(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".to_vec(),
+        );
+        let grants = HostGrants {
+            network_origins: vec!["*".into()],
+            ..Default::default()
+        };
+        let (url, method, headers) = validate_request(&request(url.as_str())).unwrap();
+        assert!(allows_origin(&grants, &url));
+        let response =
+            send_request_with_policy(url, method, headers, Some("{}".into()), DEADLINE, false)
+                .await
+                .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, "{}");
+        server.join().unwrap();
     }
 
     #[test]

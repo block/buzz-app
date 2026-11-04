@@ -53,6 +53,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       )) ?? {}) as Record<string, unknown>;
     },
+    (...args) => agents.collectTurnContext(...args),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

@@ -19,6 +19,8 @@ export type PluginManifest = Readonly<{
   host?: Readonly<{
     /** Observe and influence native hook events for these agent type keys. */
     agentHooks?: readonly string[];
+    /** Contribute bounded context when an agent starts a turn. */
+    turnContext?: boolean;
     commands?: readonly Readonly<{
       id: string;
       program: string;
@@ -28,6 +30,7 @@ export type PluginManifest = Readonly<{
       /** Maximum UTF-8 stdout bytes; defaults to 4096, bounded at 1048576. */
       maxOutputBytes?: number;
     }>[];
+    /** Exact HTTPS origins, or ["*"] for any HTTPS server and loopback HTTP. */
     networkOrigins?: readonly string[];
     /** Separate authority access; ordinary HTTPS grants never authorize a session. */
     federatedIdentity?: Readonly<{
@@ -79,6 +82,8 @@ declare module "@deepseek-ai/cordis" {
       id: string;
       revision: string;
       agentHooks?: readonly string[];
+      /** Contribute bounded context when an agent starts a turn. */
+      turnContext?: boolean;
     }>;
   }
 }

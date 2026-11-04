@@ -60,6 +60,12 @@ import {
   type AgentHookContext,
 } from "./hooks";
 import { ownerReads } from "./reads";
+import {
+  createTurnContext,
+  type Turn,
+  type TurnContextContribution,
+} from "./turn-context";
+import { createTurnReads, turnFacts } from "./turn-reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -1017,6 +1023,15 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  registerTurnContext(contribution: TurnContextContribution): void;
+  /** Starts additive context only for this plugin's own agent types. */
+  collectTurnContext(
+    key: AgentKey,
+    trigger: Trigger,
+    channelId: string,
+    signal: AbortSignal,
+    current: () => boolean,
+  ): Promise<string>;
   registerHook(hook: AgentHook): void;
   /** Dispatches hooks for this plugin's agent types in contribution order. */
   dispatchHook(
@@ -1491,6 +1506,60 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  private readonly turnContributions;
+  registerTurnContext(contribution: TurnContextContribution) {
+    this.turnContributions.register(this.ctx, contribution);
+  }
+  async collectTurnContext(
+    key: AgentKey,
+    trigger: Trigger,
+    channelId: string,
+    signal: AbortSignal,
+    current: () => boolean,
+  ): Promise<string> {
+    const handle = this.handle(key);
+    const source = ownerReads(this.relay(key), pubkeyOf(key));
+    const community = this.agent(key)?.relay;
+    if (!handle || !source || !community || signal.aborted) return "";
+    const facts = turnFacts({ agent: handle, trigger, channelId }, community);
+    if (!facts) return "";
+    const cancelled = new AbortController();
+    const live = () =>
+      !signal.aborted &&
+      !cancelled.signal.aborted &&
+      current() &&
+      !!this.handle(key) &&
+      ownerReads(this.relay(key), pubkeyOf(key))?.connection ===
+        source.connection;
+    const changed = () => {
+      if (!live()) cancelled.abort();
+    };
+    const agentOff = this.subscribe(changed);
+    const relayOff = this.relay(key)?.subscribe(changed);
+    try {
+      return await this.turnContributions.collect({
+        signal: AbortSignal.any([signal, cancelled.signal]),
+        current: live,
+        turn: (lease) =>
+          Object.freeze({
+            ...facts,
+            deadline: lease.deadline,
+            reads: createTurnReads(
+              {
+                query: (filters) => handle.query(filters),
+                memories: (signal) => source.memoryListing(signal),
+                relayAuthor: source.relayAuthor?.(),
+              },
+              lease,
+            ),
+          }),
+      });
+    } finally {
+      agentOff();
+      relayOff?.();
+      cancelled.abort();
+    }
+  }
   private readonly hookContributions;
   registerHook(hook: AgentHook) {
     const adapter = this.contributions
@@ -1637,6 +1706,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
+    this.turnContributions = createTurnContext<Turn>(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);

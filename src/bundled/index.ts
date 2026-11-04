@@ -1,3 +1,5 @@
+import recallManifest from "./recall/manifest.json";
+import * as recall from "./recall";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
@@ -64,6 +66,11 @@ import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...recallManifest, apiVersion: 1 },
+    module: recall,
+    enabledByDefault: false,
+  },
   {
     manifest: { ...relayNotesManifest, apiVersion: 1 },
     module: relayNotes,

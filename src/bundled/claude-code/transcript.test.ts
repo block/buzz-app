@@ -387,7 +387,9 @@ it("reads no more than two pages of a large session with few turns", async () =>
   const third = "x".repeat(30 * 1024 * 1024);
   const { spawn } = host(
     large(
-      ...[1, 2, 3].map(() => line("assistant", [{ type: "text", text: third }])),
+      ...[1, 2, 3].map(() =>
+        line("assistant", [{ type: "text", text: third }]),
+      ),
       line("user", prompt("latest")),
     ),
   );

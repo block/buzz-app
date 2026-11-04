@@ -5,6 +5,8 @@ import { GitHubRateLimited } from "./data";
 import {
   BODY_CHARS,
   createPullStates,
+  type PullSource,
+  type PullState,
   PANEL_REFRESH_MS,
   PUBLIC_READS_PER_HOUR,
   PUBLIC_READS_PER_POLL,
@@ -1879,4 +1881,124 @@ it("reads a pull request a panel and a watch share without gh once, not again an
   // The pull request and its two kinds of checks, once; public data has no
   // feedback to read again for.
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+const relaySource = (initial: Record<string, PullState> = {}) => {
+  const held = new Map(Object.entries(initial));
+  const listeners = new Set<() => void>();
+  const get = vi.fn((url: string, _details: boolean) => held.get(url));
+  const source: PullSource = {
+    get,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  return {
+    source,
+    get,
+    listeners,
+    set(url: string, state: PullState | undefined) {
+      if (state) held.set(url, state);
+      else held.delete(url);
+      for (const listener of [...listeners]) listener();
+    },
+  };
+};
+const relayed = (state: PullState["state"], extra: Partial<PullState> = {}) =>
+  ({ state, source: "relay", ...extra }) as PullState;
+
+it("answers from the relay's record without asking GitHub, and keeps it current", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full() }));
+  const relay = relaySource({ [pull]: relayed("open", { checks: "pending" }) });
+  const states = createPullStates(gh, relay.source);
+  const changed = vi.fn();
+  const stop = states.watch(pull, changed);
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  expect(states.get(pull)).toMatchObject({
+    source: "relay",
+    checks: "pending",
+  });
+  expect(gh).not.toHaveBeenCalled();
+  expect(relay.listeners.size).toBe(1);
+
+  relay.set(pull, relayed("open", { checks: "success" }));
+  expect(states.get(pull)).toMatchObject({ checks: "success" });
+  expect(changed).toHaveBeenCalledTimes(2);
+  relay.set(pull, relayed("merged"));
+  expect(states.get(pull)).toMatchObject({ state: "merged" });
+  await vi.advanceTimersByTimeAsync(3 * PULL_REFRESH_MS);
+  expect(gh).not.toHaveBeenCalled();
+
+  stop();
+  expect(relay.listeners.size).toBe(0);
+});
+
+it("reads what the relay holds no record of from GitHub, in the same refresh", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, "FAILURE") }));
+  const relay = relaySource({ [pull]: relayed("merged") });
+  const states = createPullStates(gh, relay.source);
+  states.watch(pull, () => {});
+  states.watch(second, () => {});
+  await vi.waitFor(() => expect(states.get(second)).toBeDefined());
+  expect(states.get(pull)).toMatchObject({ state: "merged", source: "relay" });
+  expect(states.get(second)).toMatchObject({
+    state: "open",
+    checks: "failure",
+  });
+  expect(states.get(second)).not.toHaveProperty("source");
+  expect(gh).toHaveBeenCalledOnce();
+  expect(gh.mock.calls[0]?.[1]).toEqual({ o0: "block", n0: "buzz", p0: 9 });
+});
+
+it("falls back to GitHub when the relay's record goes away", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, "SUCCESS") }));
+  const relay = relaySource({ [pull]: relayed("open") });
+  const states = createPullStates(gh, relay.source);
+  states.watch(pull, () => {});
+  await vi.waitFor(() => expect(states.get(pull)).toBeDefined());
+  expect(gh).not.toHaveBeenCalled();
+  relay.set(pull, undefined);
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(gh).toHaveBeenCalledOnce();
+  expect(states.get(pull)).toMatchObject({ state: "open", checks: "success" });
+});
+
+it("leaves feedback, and the panel's details where gh reads them, to GitHub", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gh = ghFor(() => ({ r0: full() }));
+  const relay = relaySource({ [pull]: relayed("open") });
+  const states = createPullStates(gh, relay.source);
+  states.watch(pull, () => {}, "feedback");
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toMatchObject({ feedback: expect.anything() }),
+  );
+  expect(listings(gh)).toHaveLength(1);
+
+  const other = createPullStates(gh, relay.source);
+  other.watch(pull, () => {}, "details");
+  await vi.waitFor(() =>
+    expect(other.get(pull)).toMatchObject({ details: expect.anything() }),
+  );
+  expect(listings(gh)).toHaveLength(2);
+  expect(relay.get).not.toHaveBeenCalledWith(pull, true);
+});
+
+it("asks the relay for the panel's details when there is no gh", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const relay = relaySource();
+  relay.get.mockImplementation((url, details) =>
+    url === pull
+      ? relayed("open", details ? ({ details: {} } as Partial<PullState>) : {})
+      : undefined,
+  );
+  const states = createPullStates(undefined, relay.source);
+  states.watch(pull, () => {}, "details");
+  await vi.waitFor(() =>
+    expect(states.get(pull)).toMatchObject({ details: expect.anything() }),
+  );
+  expect(relay.get).toHaveBeenCalledWith(pull, true);
 });

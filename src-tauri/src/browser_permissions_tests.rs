@@ -125,6 +125,7 @@ fn native_command_permissions_isolate_webviews() {
         "relay_kit_sign",
         "relay_kit_prepare",
         "relay_kit_decode",
+        "relay_seal_hook_secret",
         "relay_direct_message",
         "relay_decode_sidebar",
         "relay_sign_sidebar",

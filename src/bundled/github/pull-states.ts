@@ -112,6 +112,8 @@ export type PullState = Readonly<{
     | undefined;
   /** At `details`. */
   details?: PullDetails | undefined;
+  /** Read from the relay's pull request record rather than GitHub. */
+  source?: "relay" | undefined;
 }>;
 
 /** A pull request's latest state and when it was read, and why the last
@@ -180,6 +182,15 @@ const POLLING: Readonly<Record<PullLevel, Polling>> = {
 /** Which feedback a reader wants the text of, by id; by default all. A
  * watch wants only what it has not seen. */
 export type WantsText = (id: string) => boolean;
+
+/** Pull requests the relay follows, kept current by it: the store's first
+ * answer, before GitHub. */
+export type PullSource = Readonly<{
+  /** `url`'s state, as its canonical lowercase key names it, with details
+   * when `details`; undefined when the relay has no record of it. */
+  get(url: string, details: boolean): PullState | undefined;
+  subscribe(listener: () => void): () => void;
+}>;
 
 export type PullStates = Readonly<{
   /** Keeps `url`'s state current at `level` while subscribed, read again as
@@ -641,7 +652,7 @@ const holds = (state: PullState | "failed" | undefined, level: PullLevel) =>
  * request with one number keep their own. */
 /** GitHub names are not case-sensitive, so one key holds every casing a
  * link, the panel or a watch gives. */
-const keyOf = (url: string, level: PullLevel = "state") => {
+export const keyOf = (url: string, level: PullLevel = "state") => {
   const reference = parseGitHubReference(url);
   return reference?.kind === "pull" ||
     (reference?.kind === "issue" && level === "state")
@@ -668,10 +679,17 @@ const allText: WantsText = () => true;
  * not counted against it. While GitHub holds that limit only the panel's own
  * reads try it.
  *
+ * A pull request the relay follows is read from `relay` instead, as long as
+ * no reader wants its feedback, or its details where `gh` could give more.
+ * It is then kept current as the relay changes it, with no reads at all.
+ *
  * A read asked for joins the next one, shown or not, unless what is held is
  * recent enough. What a level adds is held while someone asks for it; a pull
  * request nobody watches or asks for is forgotten after a while. */
-export function createPullStates(gh: GitHubCli | undefined): PullStates {
+export function createPullStates(
+  gh: GitHubCli | undefined,
+  relay?: PullSource,
+): PullStates {
   const listeners = new Map<string, Set<Listener>>();
   const states = new Map<string, PullState | "failed">();
   /** Why each that could not be read last time could not. */
@@ -706,6 +724,12 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   /** Until when to read public data instead, after `gh` was unavailable. */
   let publicUntil = 0;
   const readsPublic = () => !gh || Date.now() < publicUntil;
+  /** `url` as the relay has it, unless a reader wants what only GitHub has:
+   * feedback, or the panel's details where `gh` reads them. */
+  const fromRelay = (url: string, wants: (level: PullLevel) => boolean) =>
+    !wants("feedback") && !(wants("details") && !readsPublic())
+      ? relay?.get(url, wants("details"))
+      : undefined;
   /** Until when GitHub refuses public reads, once it has refused one. */
   let publicHeldUntil = 0;
   /** The public reads that can be spent now, and up to when they were
@@ -733,6 +757,24 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
     [...(listeners.get(url) ?? [])].some(
       (listener) => listener.level === level,
     );
+  let stopRelay: (() => void) | undefined;
+  /** The relay changed: the watched pull requests it follows show it at once. */
+  const syncRelay = () => {
+    const changed: string[] = [];
+    const now = Date.now();
+    for (const url of listeners.keys()) {
+      const read = fromRelay(url, (level) => watchedAt(url, level));
+      if (!read || same(states.get(url), read)) continue;
+      states.set(url, read);
+      readAt.set(url, now);
+      polledAt.set(url, now);
+      errors.delete(url);
+      unreadable.delete(url);
+      needed.delete(url);
+      changed.push(url);
+    }
+    notify(changed);
+  };
   /** How often `url`'s readers want it read now: the most often any does. */
   const interval = (url: string) => {
     const state = states.get(url);
@@ -873,11 +915,23 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       plan.set(url, asking);
       return asking;
     };
-    const free = due.filter(own).length;
+    // What the relay holds is answered without a read, whatever GitHub is
+    // doing.
+    const answered = new Map<string, PullState>();
+    for (const url of due) {
+      const read = fromRelay(url, (level) => at(url, level));
+      if (read) answered.set(url, read);
+    }
+    const free = due.filter((url) => !answered.has(url) && own(url)).length;
     // While GitHub holds public reads for its limit, only reads someone in
     // the app asked for try it again.
-    const reading =
-      readsPublic() && now < publicHeldUntil ? due.filter(interactive) : due;
+    const direct = (
+      readsPublic() && now < publicHeldUntil ? due.filter(interactive) : due
+    )
+      .filter((url) => !answered.has(url))
+      // Their own first, so they are the free ones.
+      .sort((a, b) => Number(own(b)) - Number(own(a)));
+    const reading = [...direct, ...answered.keys()];
     /** Whether this read asked for every level its readers want; a level
      * asked for once it started is read next. */
     const plannedAll = (url: string) => {
@@ -894,13 +948,12 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         return;
       }
       for (const url of reading) asks(url);
-      const found = await readAll(
-        // Their own first, so they are the free ones.
-        reading.sort((a, b) => Number(own(b)) - Number(own(a))),
-        asks,
-        Math.min(free, reading.length),
-        signal,
-      );
+      const found = [
+        ...(direct.length
+          ? await readAll(direct, asks, Math.min(free, direct.length), signal)
+          : []),
+        ...answered.values(),
+      ];
       // One that timed out still records what it read, and what it could not.
       if (current.signal.aborted) return;
       const changed: string[] = [];
@@ -1062,8 +1115,10 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       let set = listeners.get(url);
       if (!set) {
         set = new Set();
-        if (!listeners.size)
+        if (!listeners.size) {
           document.addEventListener("visibilitychange", returned);
+          stopRelay = relay?.subscribe(syncRelay);
+        }
         listeners.set(url, set);
       }
       set.add(listener);
@@ -1078,6 +1133,8 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         listeners.delete(url);
         if (listeners.size) return;
         document.removeEventListener("visibilitychange", returned);
+        stopRelay?.();
+        stopRelay = undefined;
         clearTimeout(timer);
         timer = undefined;
         // A reader's read in flight still wants its answer.

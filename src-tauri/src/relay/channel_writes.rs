@@ -237,6 +237,24 @@ mod tests {
         event.tags[1][1] = "#C".into();
         assert!(!valid("channel-details", &event));
     }
+
+    #[tokio::test]
+    async fn hook_secret_opens_only_for_the_relay() {
+        let host = IdentityHost::fixture();
+        let relay = nostr::key::Keys::generate();
+        let viewer = nostr::key::PublicKey::from_hex(&host.viewer().await.unwrap()).unwrap();
+        let secret = "ab".repeat(32);
+        let sealed = host
+            .seal_hook_secret(relay.public_key().to_hex(), secret.clone())
+            .await
+            .unwrap();
+        let opened = nostr::nips::nip44::decrypt(relay.secret_key(), &viewer, &sealed).unwrap();
+        assert_eq!(opened, secret);
+        assert!(host
+            .seal_hook_secret("not a key".into(), secret)
+            .await
+            .is_err());
+    }
 }
 
 #[tauri::command]
@@ -281,6 +299,21 @@ pub(crate) async fn relay_kit_decode(
         decoded.push(serde_json::json!({"eventId": event["id"], "record": record}));
     }
     Ok(decoded)
+}
+
+/// A GitHub webhook's secret, a 32-byte hex string, sealed from the viewer's key to the relay's.
+#[tauri::command]
+pub(crate) async fn relay_seal_hook_secret(
+    host: tauri::State<'_, IdentityHost>,
+    community: String,
+    relay: String,
+    secret: String,
+) -> Result<String> {
+    origin(&community)?;
+    if !super::hex_key(&relay) || !super::hex_key(&secret) {
+        return Err("Invalid webhook secret".into());
+    }
+    host.seal_hook_secret(relay, secret).await
 }
 
 #[tauri::command]

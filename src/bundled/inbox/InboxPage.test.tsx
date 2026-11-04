@@ -2429,6 +2429,22 @@ it("a route that swaps Drafts keeps focus on the filter trigger", async () => {
   expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus();
 });
 
+it("a route that leaves Drafts from the open filter menu returns focus to its trigger", async () => {
+  const h = fixture();
+  const view = render(viewAt(h, visit({ drafts: true })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Drafts"));
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Inbox filters" }).focus();
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu", { name: "Inbox filters" });
+  await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
+  view.rerender(viewAt(h, visit({ activity: "threads" })));
+  await waitFor(() => expect(filterSummary()).toHaveTextContent("Threads"));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Inbox filters" })).toHaveFocus(),
+  );
+});
+
 it("a drafts route on a fresh Inbox leaves focus where navigation put it", async () => {
   const h = fixture();
   const focused: Element[] = [];

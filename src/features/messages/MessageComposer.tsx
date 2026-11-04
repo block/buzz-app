@@ -1203,9 +1203,9 @@ function Composer({
   // A member not yet known to be an agent (say, an unloaded profile) is a
   // person: routing stays off and mentions in the text decide.
   const routing = solo && !withPeople && agentsOnly && !editing.target;
-  // A refresh drops the agents until it completes. Picked names keep the
-  // last complete read's classification meanwhile: admission picked them
-  // from one, and the send reads again before it goes.
+  // A refresh or a failed source drops agents until a read completes. Until
+  // then, an agent the current read lists or the last complete read listed
+  // stays an agent: admission picked it from one, and the send reads again.
   const completeAgents = useRef<{
     source: RelaySession["agentChoices"];
     identities: readonly { pubkey: string }[];
@@ -1224,7 +1224,9 @@ function Composer({
       !chat?.members?.includes(pubkey) &&
       outsideMentionReferences(
         chat,
-        kept?.source === source ? kept.identities : read.identities,
+        !read.complete && kept?.source === source
+          ? [...read.identities, ...kept.identities]
+          : read.identities,
         pubkey,
       )
     );

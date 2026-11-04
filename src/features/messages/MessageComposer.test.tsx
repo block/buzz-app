@@ -14784,6 +14784,30 @@ it("keeps an owned agent's chip on the pill while the agent read refreshes", () 
   expect(sendingTo("Bea")).toBeInTheDocument();
 });
 
+it("takes an agent a partial read lists as an agent, even when an older complete read lacks it", async () => {
+  const { h, bea, sendingTo } = mountSoloAgents({ members: [first.pubkey] });
+  // The last complete read predates Bea; a newer partial read lists her. A
+  // reference chip, removed again, classified names under the older read.
+  h.setLibrary([first]);
+  act(() =>
+    h.commands().insertMention({ pubkey: "e".repeat(64), name: "Carol" }),
+  );
+  h.fill("");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  h.setLibrary([first, second], "ready", "Relay inventory unavailable");
+  act(() => {
+    h.commands().insertMention(bea);
+    h.commands().insertText("hi");
+  });
+  // Tagging Bea replaces the pill's Ada, as for any agent.
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.commands().audience?.recipients).toEqual([bea]);
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([bea.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.[5] ?? []).toEqual([]);
+});
+
 it("does not seed the pill with another person's agent outside the Solo chat", () => {
   setDefaultAgent("scope", first.pubkey);
   const viewer = "f".repeat(64);

@@ -479,7 +479,6 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   const emoji = post("Emoji branch", false);
   const emojiReply = post("🎉", false, emoji.id);
   await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.serveProfile(agent, { name: "Hook Agent", is_agent: true });
   await page.setViewportSize({ width: 1280, height: 1600 });
   await page
@@ -577,8 +576,25 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
 
   // An agent's activity under a reply carries the agent's avatar on the left;
   // the hook stays on the reply's own avatar rather than crossing the
-  // transparent activity bubble to reach it.
-  for (const [index, reply] of [peerReply, viewerReply].entries())
+  // transparent activity bubble to reach it. An agents reply mounts its
+  // activity only inside its open disclosure.
+  const disclosure = row(agentPeerReply).getByRole("button", {
+    name: /coordination note/,
+  });
+  await row(agentPeerReply).scrollIntoViewIfNeeded();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await row(agentPeerReply).evaluate((node) =>
+    Promise.all(
+      node.getAnimations({ subtree: true }).map((motion) => motion.finished),
+    ),
+  );
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  for (const [index, reply] of [
+    peerReply,
+    viewerReply,
+    agentPeerReply,
+  ].entries())
     app.observer(
       {
         kind: "turn_started",
@@ -594,6 +610,7 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   for (const [reply, side] of [
     [peerReply, "left"],
     [viewerReply, "right"],
+    [agentPeerReply, "left"],
   ]) {
     const activity = row(reply).getByRole("region", {
       name: "Agent activity on this message",

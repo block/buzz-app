@@ -2355,9 +2355,9 @@ it.each(["shared", "owner"] as const)(
       ),
     );
     // The viewer's own agent still joins when tagged.
-    expect(
-      items().find((item) => item.label === "Outside agent")?.detail,
-    ).toMatch(mode === "owner" ? /^b{64}$/ : /^Adds to chat · /);
+    expect(items().find((item) => item.label === "Outside agent")?.detail).toBe(
+      mode === "owner" ? undefined : "Adds to chat",
+    );
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Mention a member" }));
@@ -2366,7 +2366,9 @@ it.each(["shared", "owner"] as const)(
         name: "Search community people and agents",
       }),
     ).toBeInTheDocument();
-    const row = await screen.findByRole("button", { name: /^Outside e/ });
+    const row = await screen.findByRole("button", {
+      name: rowName("Outside", "Not in chat · Will not be notified"),
+    });
     expect(row).toHaveTextContent("Not in chat · Will not be notified");
   },
 );
@@ -2487,8 +2489,12 @@ it("keeps the Solo agent menu to agents: it searches no directory", async () => 
   // A reference picked in the menu would go out with a message whose text
   // never names that person.
   expect(people).toHaveBeenCalledOnce();
-  await outsideRow(t);
-  expect(screen.queryByRole("button", { name: /^Outside e/ })).toBeNull();
+  await screen.findByRole("button", {
+    name: rowName("Outside agent", "Adds to chat when you send"),
+  });
+  expect(
+    screen.queryByRole("button", { name: /^Outside(?!\s*agent)/ }),
+  ).toBeNull();
   expect(toggle).not.toHaveBeenCalled();
   view.unmount();
   t.library.dispose();
@@ -2542,9 +2548,7 @@ it("offers an outside Solo choice only after a complete agent read, so a row nev
   expect(session.agentChoices.snapshot().complete).toBe(false);
   expect(mentionAdmission(session, "parent", true)(carol.pubkey)).toBe(false);
   await act(async () => release());
-  await waitFor(() =>
-    expect(carolRows().at(-1)?.detail).toBe(`Adds to chat · ${carol.pubkey}`),
-  );
+  await waitFor(() => expect(carolRows().at(-1)?.detail).toBe("Adds to chat"));
   expect(carolRows().map((row) => row.detail)).not.toContain(
     "Not in chat · Will not be notified",
   );

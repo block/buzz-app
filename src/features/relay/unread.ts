@@ -2,7 +2,7 @@ import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
-import type { ChannelQueries } from "./contracts";
+import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
   effectiveFrontier,
@@ -352,6 +352,20 @@ export function createUnread({
     quiet: boolean;
   };
   let indexed = false;
+  // Rows folded from the indexed events, so read marks reuse them.
+  const foldedRows = new Map<string, readonly ChannelMessage[]>();
+  function folded(channelId: string) {
+    let rows = foldedRows.get(channelId);
+    if (!rows) {
+      rows = foldMessages(channelId, "", [...events.values()], {
+        includeReplies: true,
+        signingAuthority,
+        agentOwner: profiles?.owner && agentOwner,
+      });
+      foldedRows.set(channelId, rows);
+    }
+    return rows;
+  }
   const byChannel = new Map<string, Evidence[]>();
   const byId = new Map<string, Evidence>();
   const tombstones = new Set<string>();
@@ -445,6 +459,7 @@ export function createUnread({
   function indexEvidence() {
     if (indexed) return;
     indexed = true;
+    foldedRows.clear();
     byChannel.clear();
     byId.clear();
     tombstones.clear();
@@ -874,11 +889,7 @@ export function createUnread({
         continue;
       const current = grouped.get(rootId);
       presented ??= new Map(
-        foldMessages(channelId, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner && agentOwner,
-        }).map((message) => [message.id, message.content]),
+        folded(channelId).map((message) => [message.id, message.content]),
       );
       const preview = presented.get(event.id) ?? event.content;
       if (!current) {
@@ -1018,11 +1029,7 @@ export function createUnread({
           groups.set(id, group);
         }
         if (!groups.size) continue;
-        const rows = foldMessages(channel.id, "", [...events.values()], {
-          includeReplies: true,
-          signingAuthority,
-          agentOwner: profiles?.owner && agentOwner,
-        });
+        const rows = folded(channel.id);
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
         // else to everyone, even one that is not Inbox evidence, unless that
@@ -1231,6 +1238,9 @@ export function createUnread({
   }
   const stopRead = reads.subscribe(publish);
   const stopProfiles = profiles?.subscribe(() => {
+    // Owners resolve one at a time, so a fold since the last notification can
+    // already hold a newer answer than another channel's cached fold.
+    foldedRows.clear();
     const owner = profiles.owner;
     if (!owner || [...ownersRead].every(([key, value]) => owner(key) === value))
       return;

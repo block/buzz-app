@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import type { PluginManager } from "../../plugins/manager";
+import { createPluginManager, type PluginManager } from "../../plugins/manager";
 import type { PluginState } from "../../plugins/runtime";
 import type { PluginInfo, StorageResult } from "../../plugins/types";
 import { registerPluginDevelopmentTools, SETTLE_MS } from "./agent-tools";
@@ -66,12 +67,18 @@ function fakeManager(
       publish();
     });
   };
+  // What the manager last published, when it differs from the registry.
+  let shown: PluginInfo | null = null;
   const snapshot = () =>
     ({
       configuration: {
         status: "ready",
         externalPluginsPaused: paused,
-        catalog: { profile: "test", location: "test", plugins: [plugin] },
+        catalog: {
+          profile: "test",
+          location: "test",
+          plugins: [shown ?? plugin],
+        },
       } satisfies StorageResult,
       activation,
       busy,
@@ -80,7 +87,9 @@ function fakeManager(
     }) as ReturnType<PluginManager["snapshot"]>;
   // Like the manager: refused while another change runs, busy until it ends.
   // Actions named here outlast the manager's wait: it reports a timeout,
-  // stays busy, and the native change still lands a second later.
+  // stays busy, and the native change still lands a second later without
+  // being published, so the catalog shows the old state until the next
+  // completed change.
   const late = new Set<string>();
   const run = async (name: string, operation: () => void) => {
     if (busy) return false;
@@ -90,6 +99,7 @@ function fakeManager(
     publish();
     if (late.delete(name)) {
       setTimeout(() => {
+        shown = plugin;
         operation();
         start();
         busy = false;
@@ -102,6 +112,7 @@ function fakeManager(
     await Promise.resolve();
     try {
       operation();
+      shown = null;
       start();
       return true;
     } catch (reason) {
@@ -150,10 +161,7 @@ function fakeManager(
   return { manager, build, outcomes, calls, late, plugin: () => plugin };
 }
 
-function tools(
-  manager: ReturnType<typeof fakeManager>["manager"],
-  registered = {},
-) {
+function tools(manager: object, registered = {}) {
   const added = new Map<string, AddedTool>();
   registerPluginDevelopmentTools({
     plugins: () => manager as unknown as PluginManager,
@@ -392,4 +400,67 @@ it("turns the plugin back on when a disable lands after the manager gave up", as
   });
   expect(calls).toEqual(["disable", "enable"]);
   expect(plugin()).toMatchObject({ enabled: true, revision: "one" });
+});
+
+it("turns the plugin back on when a disable lands late in the real manager", async () => {
+  let enabled = true;
+  const stored = (): StorageResult => ({
+    status: "ready",
+    externalPluginsPaused: false,
+    catalog: {
+      profile: "test",
+      location: "test",
+      plugins: [
+        {
+          manifest: { id: "example.page", name: "Example", apiVersion: 1 },
+          source: "external",
+          enabled,
+          revision: "one",
+          previous: null,
+          reloadable: true,
+          updateSource: { root: "/work/example", path: "dist" },
+          error: null,
+        },
+      ],
+    },
+  });
+  const changePlugin = vi.fn(async (action: string, _id: string) => {
+    // Lands after the manager's 10-second wait.
+    if (action === "disable")
+      await new Promise((done) => setTimeout(done, 10_500));
+    enabled = action === "enable" || (action !== "disable" && enabled);
+    return stored();
+  });
+  const root = new Context();
+  const manager = createPluginManager(root, {
+    bundled: [],
+    storage: {
+      getCatalog: async () => stored(),
+      changePlugin,
+      recoverSettings: async () => stored(),
+      readModule: async () => "",
+      reloadPlugin: async () => stored(),
+    },
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    const call = tools(manager);
+    const result = call("plugin_reload", { id: "example.page" });
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(await result).toMatchObject({
+      application: "failed",
+      stage: "disable",
+      error: expect.stringMatching(/did not respond/),
+    });
+    expect(changePlugin.mock.calls.map(([action]) => action)).toEqual([
+      "disable",
+      "enable",
+    ]);
+    expect(enabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(manager.snapshot().configuration).toEqual(stored());
+  } finally {
+    await manager.dispose();
+    await root.fiber.dispose();
+  }
 });

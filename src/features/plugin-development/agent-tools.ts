@@ -227,15 +227,12 @@ export function registerPluginDevelopmentTools(host: PluginDevelopmentHost) {
     const failed = (stage: string, error: string, nextStep: string) =>
       JSON.stringify({ application: "failed", stage, error, nextStep });
     /** After a failed step, turns the plugin back on if it was on. A step
-     * the manager stopped waiting for can still finish, so this waits for it
-     * first; no other change can start before then. Null when it is on. */
-    const restore = async () => {
-      if (!wasEnabled) return null;
-      await idle();
-      return find(id)?.enabled
-        ? null
-        : await manage(() => plugins.change("enable", id));
-    };
+     * the manager stopped waiting for can still finish, and the manager does
+     * not publish that late result, so the catalog may still say enabled.
+     * Enabling is harmless when it is on and returns the stored catalog.
+     * Null when it is on. */
+    const restore = () =>
+      wasEnabled ? manage(() => plugins.change("enable", id)) : null;
     const alsoFailed = (error: string, again: string | null) =>
       again ? `${error} Re-enabling failed too: ${again}` : error;
 

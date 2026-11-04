@@ -210,10 +210,11 @@ writes require separate consent; no backend work belongs to this plugin PR.
 
 Relay-attested workflow messages show an automation icon and **Workflow · owned
 by …**, not a message authored by the owner. The full message byline links the
-owner profile and discloses the separate relay signing key. Compact Search,
-Inbox/activity, link previews and notification titles retain the automation label;
-opening the message provides the full disclosure. Notifications use cached names
-only and do not add profile reads.
+owner profile. Its information icon opens a short card, on pointer rest or click,
+explaining that the owner set up the workflow but did not send the message
+personally; it shows no keys. Compact Search, Inbox/activity, link previews and
+notification titles retain the automation label; opening the message shows the
+full byline. Notifications use cached names only and do not add profile reads.
 
 Attribution requires a verified kind-9 event from the selected community's
 explicit NIP-11 `self`, exactly one canonical `buzz:workflow=true` marker and one

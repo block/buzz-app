@@ -10481,6 +10481,54 @@ it("keeps a thread's unsaved edit under the thread and reopens it when its repli
   expect(again.input()).toHaveValue("Rewritten reply");
 });
 
+it("waits for a thread's replies to reopen its kept edit without holding the channel window", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  h.retarget({ threadRootId: "d".repeat(64), editMessages: [] });
+  const subscribe = vi.spyOn(h.session.channels, "subscribeWindow");
+  h.retarget({ threadRootId: root, threadSeed: undefined });
+  expect(h.input()).toHaveAccessibleName("Reply to thread");
+  h.retarget(thread);
+  expect(h.input()).toHaveValue("Rewritten reply");
+  expect(subscribe).not.toHaveBeenCalled();
+});
+
+it("leaves a kept edit closed while another composer in this window has it open", () => {
+  const root = "a".repeat(64);
+  const reply = editableMessage({ id: "b".repeat(64), threadRootId: root });
+  const thread = {
+    threadRootId: root,
+    editMessages: [reply],
+    threadSeed: reply,
+  };
+  const h = mount(thread, undefined, first.pubkey);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Rewritten reply");
+  const other = mount(thread, undefined, first.pubkey);
+  expect(other.input()).toHaveAccessibleName("Reply to thread");
+  expect(other.input()).toHaveValue("");
+  expect(h.input()).toHaveValue("Rewritten reply");
+  // An edit cancelled in one composer, or left by unmounting another, is no
+  // longer open, so the next composer reopens the kept one.
+  fireEvent.click(
+    within(h.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  fireEvent.keyDown(other.input(), { key: "ArrowUp" });
+  other.fill("Rewritten elsewhere");
+  other.unmount();
+  const again = mount(thread, undefined, first.pubkey);
+  expect(again.input()).toHaveAccessibleName("Edit message");
+  expect(again.input()).toHaveValue("Rewritten elsewhere");
+});
+
 it.each(["cancel", "submitted"])(
   "restores rich draft history and mention provenance after an edit is %s",
   async (finish) => {

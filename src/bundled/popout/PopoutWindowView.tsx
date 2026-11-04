@@ -171,9 +171,12 @@ export function PopoutWindowView({
             {composer}
           </div>
         ) : (
-          view.status === "ready" &&
           !view.detached && (
-            <p className={styles.notice}>This thread is read-only here.</p>
+            <p className={styles.notice} role="status">
+              {view.status === "ready" && !view.error
+                ? "This thread is read-only here."
+                : "Connecting to this thread…"}
+            </p>
           )
         )}
         {confirming > 0 && (

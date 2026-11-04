@@ -45,14 +45,13 @@ const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
   ...patch,
 });
 
-it("shows the thread and routes header actions to the owner", () => {
+it("shows the thread without chrome and reports its guard", () => {
   const act = vi.fn();
   render(<PopoutWindowView view={view()} act={act} />);
-  expect(screen.getByRole("heading", { name: "Design" })).toBeTruthy();
+  // The OS title bar names the thread; the window itself is just the thread.
+  expect(screen.queryByRole("heading")).toBeNull();
   expect(screen.getByText("Root message")).toBeTruthy();
   expect(screen.getByText("First reply")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Open in main window" }));
-  expect(act).toHaveBeenCalledWith("openInMain");
   // The guard is reported natively from the start: nothing is held yet.
   expect(act).toHaveBeenCalledWith("guard", "0");
   expect(screen.getByText("This thread is read-only here.")).toBeTruthy();

@@ -95,15 +95,21 @@ export function createHuddleComposerOwner(
       !(verified ? verified() : c.huddle && c.parentChannelId === parent)
     )
       throw new Error("This Huddle conversation is no longer available.");
+    // A Huddle room's roster is always in its summary; a channel thread
+    // follows the main composer and trusts the relay's readOnly flag instead.
     if (
       write &&
       (c.archived ||
         c.readOnly ||
         c.cached ||
         !session.viewer ||
-        !c.members?.includes(session.viewer))
+        (!thread && !c.members?.includes(session.viewer)))
     )
-      throw new Error("This Huddle conversation is read-only.");
+      throw new Error(
+        thread
+          ? "This thread is read-only."
+          : "This Huddle conversation is read-only.",
+      );
   }
   const send = (response: ComposerResponse) => {
     if (!closed) channel.postMessage(response);

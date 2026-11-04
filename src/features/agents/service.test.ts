@@ -14140,3 +14140,24 @@ it("preserves staged settings after native installation fails and later refreshe
   expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
   expect(service.find(sibling)).toBeUndefined();
 });
+
+it("keeps reviewed settings when native port persists the identity then rejects", async () => {
+  const { service, native } = await setup();
+  const port = native.port.getMockImplementation();
+  if (!port) throw new Error("Missing native port fixture");
+  native.port.mockImplementation(async (...args) => {
+    await port(...args);
+    native.list.mockRejectedValueOnce(new Error("Temporary list failure"));
+    throw new Error("Native installation reported failure");
+  });
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("Native installation reported failure");
+  await service.refresh();
+  expect(service.find(sibling)?.config).toEqual({ reply: "Reviewed" });
+});

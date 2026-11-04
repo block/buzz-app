@@ -1578,6 +1578,11 @@ export class AgentsService extends Service implements Agents {
   /** Memberships a re-import or add is taking back; no cleanup starts for
    * them. */
   private reclaiming = new Set<AgentKey>();
+  /** Durable reviewed settings awaiting an observed native installation. */
+  private importDrafts = new Map<
+    string,
+    { type: string; record: AgentRecord }
+  >();
   /** Memberships, imported or added, whose archive state could not be
    * checked yet, saved so Retry survives a restart until a check confirms
    * the state. */
@@ -3084,6 +3089,7 @@ export class AgentsService extends Service implements Agents {
             "This agent already has saved setup. Finish importing it from Agents, then review its Settings.",
           );
         staged = draft;
+        this.importDrafts.set(pubkey, { type, record: draft });
       }
       const agent = await this.add(
         type,
@@ -3102,15 +3108,14 @@ export class AgentsService extends Service implements Agents {
         config === undefined ? {} : { config, strict: true },
         binding,
       );
+      this.importDrafts.delete(pubkey);
       await this.unarchiveHere(agent, binding, notes);
       return { agent, notes };
     } catch (error) {
       if (staged) {
         try {
-          // Installation may have succeeded before a later write failed.
-          // Refresh with the durable reviewed record already in memory. Keep
-          // staged disk state: this process cannot safely delete shared state
-          // based on its cached copy when another app may have changed it.
+          // Refresh adopts the durable draft if installation persisted before
+          // rejecting. Keep it for a later refresh if native listing also fails.
           await this.refresh();
         } catch (recoveryError) {
           console.warn(
@@ -5128,6 +5133,14 @@ export class AgentsService extends Service implements Agents {
       // One still joining, or a Join a crash cut short, is no membership.
       const identities = this.withKeys(rows.filter((row) => !row.joining));
       this.identities = identities;
+      for (const identity of identities) {
+        if (identity.deleted) continue;
+        const draft = this.importDrafts.get(identity.pubkey);
+        if (!draft || draft.type !== identity.type) continue;
+        if (!this.records[identity.pubkey])
+          this.records = { ...this.records, [identity.pubkey]: draft.record };
+        this.importDrafts.delete(identity.pubkey);
+      }
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
       this.state = Object.freeze({ ...state, status: "ready" });

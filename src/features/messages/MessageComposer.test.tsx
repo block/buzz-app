@@ -2628,6 +2628,40 @@ it.each([attachByPaste, attachByDrop])(
   },
 );
 
+it("pastes text copied together with a picture as text, and attaches a file pasted alone", async () => {
+  const h = await mountUploadComposer();
+  // Excel, Numbers, Word and Keynote copy text, HTML and a picture together.
+  const text = "Q3 revenue\t$4.2M\nQ3 cost\t$3.1M";
+  const office: Record<string, string> = {
+    "text/plain": text,
+    "text/html":
+      "<table><tr><td>Q3 revenue</td><td>$4.2M</td></tr><tr><td>Q3 cost</td><td>$3.1M</td></tr></table>",
+  };
+  const picture = new File(["png"], "image.png", { type: "image/png" });
+  act(() => {
+    h.input().focus();
+    fireEvent.paste(h.input(), {
+      clipboardData: {
+        items: [{ kind: "file", getAsFile: () => picture }],
+        getData: (type: string) => office[type] ?? "",
+      },
+    });
+  });
+  expect(h.input()).toHaveValue(text);
+  expect(
+    within(h.form()).queryByRole("button", { name: "Remove image.png" }),
+  ).toBeNull();
+  // The lone file's upload is the first one: the text paste started none.
+  const alone = attachmentFile("alone.txt");
+  attachByPaste(h.input(), alone);
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("alone.txt");
+  expect(
+    within(h.form()).getByRole("button", { name: "Remove alone.txt" }),
+  ).toBeInTheDocument();
+  expect(h.input()).toHaveValue(text);
+});
+
 it("pauses while disabled and resumes attachment Send without Retry when re-enabled", async () => {
   const h = await mountUploadComposer();
   fireEvent.change(h.input(), { target: { value: "Keep my files" } });

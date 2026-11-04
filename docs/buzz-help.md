@@ -119,8 +119,10 @@ if that desktop app is up and running.
   pinned. A community that doesn't take pins refuses them, and Buzz says so.
   Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
-  folder and **/** a skill. Attach files by pasting or dragging them in. Typed
-  Markdown formats as you type; **Settings → Appearance → Disable formatting
+  folder and **/** a skill. Attach files by pasting or dragging them in.
+  Text copied with a picture pastes as text; a picture or file copied on its
+  own attaches where uploads are available.
+  Typed Markdown formats as you type; **Settings → Appearance → Disable formatting
   while typing** leaves it as plain characters until you send, and hides the
   formatting toolbar.
 - **Drafts.** Every message box open on a conversation shares its draft. A box

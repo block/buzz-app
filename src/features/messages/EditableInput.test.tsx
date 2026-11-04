@@ -1362,6 +1362,33 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
     expect(h.markdown()).toBe("draft");
   });
 
+  it("pastes text copied together with a picture", () => {
+    const h = mount("");
+    const text = "Q3 revenue\t$4.2M\nQ3 cost\t$3.1M";
+    act(() => {
+      h.input.focus();
+      fireEvent.keyDown(h.input, chord);
+      fireEvent.paste(h.input, {
+        clipboardData: {
+          items: [
+            {
+              kind: "file",
+              getAsFile: () =>
+                new File(["png"], "image.png", { type: "image/png" }),
+            },
+          ],
+          getData: (type: string) =>
+            type === "text/plain"
+              ? text
+              : type === "text/html"
+                ? "<table><tr><td>Q3 revenue</td><td>$4.2M</td></tr></table>"
+                : "",
+        },
+      });
+    });
+    expect(h.markdown()).toBe(text);
+  });
+
   it("takes Apple chords on Apple platforms only", () => {
     const platform = vi.spyOn(navigator, "platform", "get");
     try {

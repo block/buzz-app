@@ -724,39 +724,47 @@ it.each(["waiting", "working"])(
     }
   },
 );
-it("notes a stopped request in the response lane", async () => {
-  const local = createLocalAgentActivity();
-  const f = fixture(local);
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    act(() => {
-      local
-        .begin({
-          scope: "test",
-          channelId: "c",
-          threadRootId: root,
-          messageId: root,
-          agent: A,
-        })
-        .interruptible(async () => {});
-    });
-    expect(
-      screen.getByRole("button", { name: /View agent activity: Blossom/ }),
-    ).toBeInTheDocument();
-    // Stop retains its exact request and response-side notice.
-    await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
-    expect(
-      screen.queryByRole("button", { name: /View thread/ }),
-    ).not.toBeInTheDocument();
-    // The note keeps the incoming message column instead of the list's edge.
-    expect(
-      screen.getByText("Blossom · Stopped").closest("[data-layout]"),
-    ).toHaveAttribute("data-layout", "timeline");
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
+it.each([
+  [undefined, "timeline"],
+  ["thread", "thread"],
+] as const)(
+  "notes a stopped request in the response lane (layout %s)",
+  async (messageLayout, layout) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(local);
+    const view = render(
+      <ActivityAccessory {...f.props} messageLayout={messageLayout} />,
+    );
+    try {
+      act(() => {
+        local
+          .begin({
+            scope: "test",
+            channelId: "c",
+            threadRootId: root,
+            messageId: root,
+            agent: A,
+          })
+          .interruptible(async () => {});
+      });
+      expect(
+        screen.getByRole("button", { name: /View agent activity: Blossom/ }),
+      ).toBeInTheDocument();
+      // Stop retains its exact request and response-side notice.
+      await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
+      expect(
+        screen.queryByRole("button", { name: /View thread/ }),
+      ).not.toBeInTheDocument();
+      // The note keeps the incoming message column instead of the list's edge.
+      expect(
+        screen.getByText("Blossom · Stopped").closest("[data-layout]"),
+      ).toHaveAttribute("data-layout", layout);
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
 it("moves a stopped note below the agent's latest public reply", async () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

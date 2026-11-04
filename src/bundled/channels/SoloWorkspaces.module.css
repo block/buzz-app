@@ -407,7 +407,14 @@
 /* A plugin row action sits just before the overflow action and shows with it. */
 [data-solo-chat-action] {
   display: flex;
+  flex: 0 0 auto;
+  width: var(--session-action-size);
+  height: var(--session-action-size);
   opacity: 0;
+}
+[data-solo-chat-action] > * {
+  width: 100%;
+  height: 100%;
 }
 .organizedRow:is(
     :hover,

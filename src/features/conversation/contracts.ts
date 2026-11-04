@@ -274,10 +274,25 @@ export type MessageAction = Readonly<{
    */
   marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
 }>;
+/** A conversation shown in a host tab: a whole channel, DM or Solo chat, or
+ * one thread of it. */
+export type ConversationTabTarget = Readonly<{
+  channelId: string;
+  threadRootId?: string | undefined;
+}>;
+/** An entry in a conversation tab's menu, after the host's own actions. The
+ * host shows it while `matches` passes for that tab's target. */
+export type TabAction = Readonly<{
+  id: string;
+  title: string;
+  matches(target: ConversationTabTarget, session: RelaySession): boolean;
+  run(target: ConversationTabTarget, session: RelaySession): void;
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;
+  tabActions?: ContributionReader<TabAction>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

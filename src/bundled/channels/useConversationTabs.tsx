@@ -12,7 +12,11 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type {
+  ConversationExtensions,
+  TabAction,
+} from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import {
   panelOpening,
   type PanelOpening,
@@ -49,6 +53,10 @@ import {
 } from "./useChannelTabState";
 import styles from "./Channels.module.css";
 import tabStyles from "./ChannelTabs.module.css";
+
+const noSubscription = () => () => {};
+const noContributions = (): readonly Contribution<TabAction>[] => none;
+const none: readonly Contribution<TabAction>[] = [];
 
 /** The content-tab families whose visits follow explicit dismissal. */
 export const historyPanel = (entry: PanelOpening) =>
@@ -809,6 +817,31 @@ export function useConversationTabs({
   // A thread names its conversation as Inbox rows do, bounding a group DM's
   // names where its tab lists them all; the name opens it there.
   const resolveName = useIdentityNames(queries.names);
+  // Plugin tab actions follow the host's own in each conversation tab's menu.
+  const tabActions = extensions?.tabActions;
+  const contributedActions = useSyncExternalStore(
+    tabActions?.subscribe ?? noSubscription,
+    tabActions?.snapshot ?? noContributions,
+  );
+  function actionsFor(tab: Tab, openChannel: (() => void) | undefined) {
+    const target = {
+      channelId: tab.channelId,
+      ...(tab.kind === "thread" && { threadRootId: rootOfTab(tab) }),
+    };
+    const actions = [
+      ...(openChannel ? [{ label: "Open in channel", run: openChannel }] : []),
+      ...contributedActions.flatMap((action) => {
+        try {
+          return action.matches(target, queries)
+            ? [{ label: action.title, run: () => action.run(target, queries) }]
+            : [];
+        } catch {
+          return []; // A failing contribution hides itself, not the menu.
+        }
+      }),
+    ];
+    return actions.length ? { actions } : {};
+  }
   function parentOf(tab: Tab, target: ChannelSummary) {
     const open = openInChannel(tab, target);
     return (
@@ -847,9 +880,7 @@ export function useConversationTabs({
         move: (delta: -1 | 1) => moveBy(tab, delta),
         rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
-      ...(openChannel && {
-        actions: [{ label: "Open in channel", run: openChannel }],
-      }),
+      ...actionsFor(tab, openChannel),
       content:
         !usable || !target ? (
           <p role="status" className={styles.empty}>

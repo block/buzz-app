@@ -451,3 +451,44 @@ it("retires plugin chat menu contributions when their plugin is disabled", async
     expect(h.service.chatMenus.snapshot()).toHaveLength(0),
   );
 });
+
+it("owns tab actions through disable and validates their shape", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerTabAction({
+        id: "open-window",
+        title: "Open in new window",
+        matches: (target) => !!target.threadRootId,
+        run: () => {},
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.tabActions.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.tabActions.snapshot()[0]?.pluginId).toBe(
+    h.plugin.manifest.id,
+  );
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.tabActions.snapshot()).toHaveLength(0),
+  );
+  expect(() =>
+    h.service.registerTabAction({
+      id: "Bad Id",
+      title: "x",
+      matches: () => true,
+      run: () => {},
+    }),
+  ).toThrow(/tab action/);
+  expect(() =>
+    h.service.registerTabAction({
+      id: "ok",
+      title: "x",
+      matches: () => true,
+      run: undefined as unknown as () => void,
+    }),
+  ).toThrow(/tab action/);
+});

@@ -32,6 +32,7 @@ import type {
   LinkPreviewRenderer,
   MessageRenderer,
   MessageAction,
+  TabAction,
   ContributionReader,
   PageTabsProps,
 } from "./contracts";
@@ -82,6 +83,9 @@ export type Conversation = {
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  /** Conversation tab menu entries, after the host's own. */
+  tabActions: ContributionReader<TabAction>;
+  registerTabAction(action: TabAction): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
@@ -168,6 +172,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
+  readonly tabActions;
+  private readonly tabActionEntries;
   private readonly tabEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
@@ -224,6 +230,12 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const tabActions = createContributions<TabAction>(ctx);
+    this.tabActionEntries = tabActions;
+    this.tabActions = {
+      snapshot: tabActions.snapshot,
+      subscribe: tabActions.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
@@ -289,6 +301,18 @@ export class ConversationService extends Service implements Conversation {
     )
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
+  }
+  registerTabAction(value: TabAction) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      typeof value.matches !== "function" ||
+      typeof value.run !== "function"
+    )
+      throw new Error("A tab action needs an id, title, matcher and run");
+    this.tabActionEntries.register(this.ctx, value);
   }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);

@@ -2721,6 +2721,13 @@ card's edits and recovery stay its own; `threadId` keeps panels opened from a
 card in that thread. Writes, mark read/unread and follow remain explicit menu
 actions.
 
+`conversation.registerTabAction({ id, title, matches(target, session), run(target, session) })`
+adds an entry to a conversation tab's menu after the host's own actions (such
+as Open in channel). `target` is `{ channelId, threadRootId? }`; the entry shows
+only while `matches` passes for that tab, and disappears when the plugin is
+disabled. A matcher that throws hides the entry. The bundled Pop-out windows
+plugin uses it for **Open in new window** on thread tabs.
+
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.
 `children(open, close, isOpen)` renders that tab; `open({ channelId, threadId?, messageId? }, { keep? })`

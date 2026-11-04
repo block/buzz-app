@@ -1,4 +1,11 @@
 import { createNavigationController } from "../../features/navigation/controller";
+import type {
+  ComposerTool,
+  ConversationExtensions,
+  InlineRenderer,
+  TabAction,
+} from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import { createMemoryHistory } from "../../features/navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -83,6 +90,7 @@ async function page(
   routed = false,
   appComponent?: RegisteredPanel["component"],
   soloPreferences?: RelaySession["soloPreferences"],
+  extensions?: ConversationExtensions,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -236,6 +244,7 @@ async function page(
           createNavigationController(createMemoryHistory()).navigation
         }
         navigation={navigation}
+        extensions={extensions}
       />
     </ToastProvider>,
   );
@@ -1193,4 +1202,89 @@ it("opens another conversation's tab in its channel, but not the current channel
       context: "channel",
     }),
   );
+});
+
+it("lists a plugin's tab action for the tabs it matches, with the exact target", async () => {
+  const run = vi.fn();
+  const noTools: readonly Contribution<ComposerTool>[] = [];
+  const noInline: readonly Contribution<InlineRenderer>[] = [];
+  type Entry = Contribution<TabAction>;
+  let entries: readonly Entry[] = [
+    {
+      key: "popout:open",
+      pluginId: "popout",
+      revision: "1",
+      id: "open",
+      title: "Open in new window",
+      matches: (target) => !!target.threadRootId,
+      run,
+    },
+  ];
+  const listeners = new Set<() => void>();
+  const tabActions = {
+    snapshot: () => entries,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  const h = await page(
+    "stream",
+    {
+      open: vi.fn(async () => ({ status: "opened" as const })),
+      snapshot: () => ({ entry: { id: "visit" }, attempt: {} }),
+    } as unknown as Navigation,
+    false,
+    undefined,
+    undefined,
+    {
+      tools: { snapshot: () => noTools, subscribe: () => () => {} },
+      inline: { snapshot: () => noInline, subscribe: () => () => {} },
+      tabActions,
+    },
+  );
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side");
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+  });
+  const menu = async (name: string) => {
+    await h.user.pointer({
+      target: await screen.findByRole("tab", { name }),
+      keys: "[MouseRight]",
+    });
+    return within(await screen.findByRole("menu"));
+  };
+  // A whole conversation is not a thread: the matcher hides the action.
+  expect(
+    (await menu("Beta")).queryByRole("menuitem", {
+      name: "Open in new window",
+    }),
+  ).not.toBeInTheDocument();
+  await h.user.keyboard("{Escape}");
+  await h.user.click(
+    (await menu("Thread · Alpha")).getByRole("menuitem", {
+      name: "Open in new window",
+    }),
+  );
+  expect(run).toHaveBeenCalledWith(
+    { channelId: "alpha", threadRootId: root },
+    h.session,
+  );
+  // Disabling the plugin removes its entry from the menu.
+  act(() => {
+    entries = [];
+    for (const listener of listeners) listener();
+  });
+  expect(
+    (await menu("Thread · Alpha")).queryByRole("menuitem", {
+      name: "Open in new window",
+    }),
+  ).not.toBeInTheDocument();
 });

@@ -93,6 +93,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
       );
     },
   });
+  // Thread tabs: the tab menu beside Open in channel. Whole conversations
+  // follow in S2.
+  ctx.conversation.registerTabAction({
+    id: "open-thread-window",
+    title: "Open in new window",
+    matches: (target) => !!target.threadRootId,
+    run: (target) => {
+      if (!target.threadRootId) return;
+      void windows
+        .open({
+          channelId: target.channelId,
+          threadRootId: target.threadRootId,
+        })
+        .catch(() => {});
+    },
+  });
   ctx.effect(() => async () => {
     await windows.dispose();
   });

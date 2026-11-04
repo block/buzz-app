@@ -1889,7 +1889,9 @@ it("shows action feedback above the member list so a long roster cannot hide it"
   );
   const refusal = await screen.findByText(/blocked: you are not allowed/);
   aboveList(refusal);
-  expect(within(refusal).getByRole("button", { name: "Retry" })).toBeEnabled();
+  expect(
+    within(refusal).getByRole("button", { name: "Retry adding Morgan" }),
+  ).toBeEnabled();
   expect(within(list).queryByRole("alert")).toBeNull();
   expect(screen.getAllByRole("alert")).toHaveLength(3);
   expect(t.publish).not.toHaveBeenCalled();

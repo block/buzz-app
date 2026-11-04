@@ -999,7 +999,7 @@ it("remembers successful channel additions without learning from failed writes",
     readSearchUsage(t.session.scope).pick(typed, new Set([key])),
   ).toBeUndefined();
   t.fail("");
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Morgan is in the channel.");
   expect(readSearchUsage(t.session.scope).pick(typed, new Set([key]))).toBe(
     key,
@@ -1362,7 +1362,7 @@ it("shows the real rejection and retries without discarding the query", async ()
   await screen.findByText(/Only the owner/);
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
   t.fail("");
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Morgan is in the channel.");
 });
 it("DMs are view-only and never search outside their members", async () => {
@@ -2527,6 +2527,69 @@ it("adds a team's members not in the channel with one button", async () => {
     screen.queryByRole("button", { name: "Add team Far" }),
   ).not.toBeInTheDocument();
 });
+
+async function teamSetup() {
+  const ada = "ab".repeat(32);
+  const cy = "cd".repeat(32);
+  // useSyncExternalStore needs one stable snapshot object.
+  const snapshot = {
+    status: "ready",
+    agents: [
+      { pubkey: ada, name: "Ada" },
+      { pubkey: cy, name: "Cy" },
+    ],
+    running: [],
+    teams: [{ id: "crew", name: "Crew", instructions: "", members: [ada, cy] }],
+  };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+  } as unknown as Agents;
+  const t = await setup("stream", false, false, undefined, agents);
+  await t.user.type(screen.getByRole("searchbox"), "Crew");
+  await screen.findByRole("button", { name: "Add team Crew" });
+  return { ...t, ada, cy };
+}
+it("groups a team's refusals with one reason into one alert whose Retry adds them all", async () => {
+  const t = await teamSetup();
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  const refusals = () =>
+    screen
+      .getAllByRole("alert")
+      .map((item) => item.textContent ?? "")
+      .filter((content) => content.includes("denied"));
+  await screen.findByText(/^Ada and Cy: Invitation denied/);
+  expect(refusals()).toHaveLength(1);
+  const retry = screen.getByRole("button", { name: "Retry adding Ada and Cy" });
+  expect(retry).toHaveTextContent("Retry");
+  t.fail("");
+  await t.user.click(retry);
+  await vi.waitFor(() => expect(refusals()).toHaveLength(0));
+  const added = t.publish.mock.calls
+    .map(([event]) => event.tags.find((tag) => tag[0] === "p")?.[1])
+    .sort();
+  expect(added).toEqual([t.ada, t.ada, t.cy, t.cy].sort());
+});
+it("shows a team's refusals with different reasons as separate alerts", async () => {
+  const t = await teamSetup();
+  t.publish.mockRejectedValueOnce(new PublishRejected("Agent is archived"));
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  const refusals = () =>
+    screen
+      .getAllByRole("alert")
+      .map((item) => item.textContent ?? "")
+      .filter((content) => /^(Ada|Cy): /.test(content));
+  await vi.waitFor(() => expect(refusals()).toHaveLength(2));
+  expect(refusals()).toEqual([
+    expect.stringMatching(/^(Ada|Cy): Agent is archived/),
+    expect.stringMatching(/^(Ada|Cy): Invitation denied/),
+  ]);
+  expect(
+    screen.getAllByRole("button", { name: /^Retry adding (Ada|Cy)$/ }),
+  ).toHaveLength(2);
+});
 it("offers local agents to add by the shared name rule", async () => {
   const t = await setup();
   await act(async () => {
@@ -3021,7 +3084,7 @@ it("Solo agent search keeps the query after a rejected addition, then retries th
   expect(screen.queryByText("Fixture agent added.")).not.toBeInTheDocument();
   const original = t.publish.mock.calls[0]?.[0].id;
   t.fail("");
-  await t.user.click(screen.getByRole("button", { name: "Retry" }));
+  await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Fixture agent added.");
   expect(t.publish.mock.calls.map(([event]) => event.kind)).toEqual([
     9000, 9000,

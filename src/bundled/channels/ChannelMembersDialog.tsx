@@ -644,8 +644,13 @@ export function ChannelMembersDialog({
       .filter(([, item]) => item.error)
       .map(([key, item]) => [key, item.error] as const),
   ]);
+  // One alert per reason: a refused team add names its members together.
+  const refusals = new Map<string, string[]>();
+  for (const [key, error] of Object.entries(errors))
+    if (error) refusals.set(error, [...(refusals.get(error) ?? []), key]);
   const [notice, setNotice] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const copyFailure = copyStatus && copyStatus !== "Link copied";
   const [rosterReadError, setRosterReadError] = useState("");
   const [nameError, setNameError] = useState("");
   const [rosterReading, setRosterReading] = useState(true);
@@ -1309,6 +1314,15 @@ export function ChannelMembersDialog({
       ? [{ team, missing }]
       : [];
   });
+  // Names refused people as their rows do: up to three, then a count.
+  const listNames = (keys: readonly string[]) => {
+    const shown = keys.slice(0, 3).map((key) => label(key, teamNames.get(key)));
+    const rest = keys.length - shown.length;
+    if (rest > 0) return `${shown.join(", ")} and ${rest} more`;
+    return shown.length > 1
+      ? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`
+      : (shown[0] ?? "");
+  };
   // Suffix search scans the whole roster; redo it only when the keys change.
   const keyList = [...members, ...candidates.keys()].join(":");
   const keys = useMemo(
@@ -1408,7 +1422,7 @@ export function ChannelMembersDialog({
       const added = await Promise.allSettled(
         missing.map((key) => session.memberAdditions.add(channelId, key)),
       );
-      // A failed member shows its own error and Retry below.
+      // Failed members share one alert and Retry per reason above the list.
       if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
         setNotice(`${team.name} is in the channel.`);
     },
@@ -1952,32 +1966,50 @@ export function ChannelMembersDialog({
               {administrationError}
             </p>
           )}
-          {Object.entries(errors).map(([key, error]) => (
-            <p role="alert" key={key} className="text-body-sm text-danger">
-              {label(key)}: {error}{" "}
-              <Button
-                variant="outline"
-                disabled={busy.has(key) || !canAdd}
-                onClick={() => void add(key)}
-              >
-                {busy.has(key) ? "Retrying…" : "Retry"}
-              </Button>
-            </p>
-          ))}
-          {openingMessage && (
-            <p role="status" className="text-body-sm text-subtle">
-              Opening conversation…
-            </p>
-          )}
-          {messageError && (
-            <p role="alert" className="text-body-sm text-danger">
-              {messageError}
-            </p>
-          )}
-          {copyStatus && copyStatus !== "Link copied" && (
-            <p role="alert" className="text-body-sm text-subtle">
-              {copyStatus}
-            </p>
+          {(refusals.size > 0 ||
+            openingMessage ||
+            messageError ||
+            copyFailure) && (
+            <div className={styles.feedback}>
+              {[...refusals].map(([error, keys]) => {
+                const names = listNames(keys);
+                const retrying = keys.some((key) => busy.has(key));
+                return (
+                  <p
+                    role="alert"
+                    key={error}
+                    className="text-body-sm text-danger"
+                  >
+                    {names}: {error}{" "}
+                    <Button
+                      variant="outline"
+                      aria-label={`Retry adding ${names}`}
+                      disabled={retrying || !canAdd}
+                      onClick={() => {
+                        for (const key of keys) void add(key);
+                      }}
+                    >
+                      {retrying ? "Retrying…" : "Retry"}
+                    </Button>
+                  </p>
+                );
+              })}
+              {openingMessage && (
+                <p role="status" className="text-body-sm text-subtle">
+                  Opening conversation…
+                </p>
+              )}
+              {messageError && (
+                <p role="alert" className="text-body-sm text-danger">
+                  {messageError}
+                </p>
+              )}
+              {copyFailure && (
+                <p role="alert" className="text-body-sm text-subtle">
+                  {copyStatus}
+                </p>
+              )}
+            </div>
           )}
           <section
             ref={scrollport}

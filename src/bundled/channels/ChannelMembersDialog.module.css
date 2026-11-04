@@ -34,6 +34,12 @@
 .layout > * {
   flex-shrink: 0;
 }
+/* Action feedback above the list stacks tighter than the layout's sections. */
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .memberList {
   container: member-list / size;
   display: flex;

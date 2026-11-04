@@ -79,12 +79,26 @@ function fakeManager(
       refreshError: null,
     }) as ReturnType<PluginManager["snapshot"]>;
   // Like the manager: refused while another change runs, busy until it ends.
+  // Actions named here outlast the manager's wait: it reports a timeout,
+  // stays busy, and the native change still lands a second later.
+  const late = new Set<string>();
   const run = async (name: string, operation: () => void) => {
     if (busy) return false;
     busy = true;
     error = null;
     calls.push(name);
     publish();
+    if (late.delete(name)) {
+      setTimeout(() => {
+        operation();
+        start();
+        busy = false;
+        publish();
+      }, 1000);
+      error = "Error: Plugin storage did not respond within 10 seconds";
+      publish();
+      return false;
+    }
     await Promise.resolve();
     try {
       operation();
@@ -133,7 +147,7 @@ function fakeManager(
       }),
   };
   start();
-  return { manager, build, outcomes, calls, plugin: () => plugin };
+  return { manager, build, outcomes, calls, late, plugin: () => plugin };
 }
 
 function tools(
@@ -350,4 +364,32 @@ it("names a plugin built into Buzz as not changeable", async () => {
   await expect(call("plugin_reload", { id: "buzz.emoji" })).rejects.toThrow(
     /built into Buzz/,
   );
+});
+
+it("leaves a plugin off when the owner turns it off as reload starts", async () => {
+  const { manager, calls, plugin } = fakeManager();
+  await vi.advanceTimersByTimeAsync(0);
+  const call = tools(manager);
+  const owner = manager.change("disable", "example.page");
+  const result = await call("plugin_reload", { id: "example.page" });
+  expect(await owner).toBe(true);
+  expect(result).toMatchObject({ application: "saved", revision: "two" });
+  expect(calls).toEqual(["disable", "reload"]);
+  expect(plugin().enabled).toBe(false);
+});
+
+it("turns the plugin back on when a disable lands after the manager gave up", async () => {
+  const { manager, calls, late, plugin } = fakeManager();
+  await vi.advanceTimersByTimeAsync(0);
+  late.add("disable");
+  const call = tools(manager);
+  const result = call("plugin_reload", { id: "example.page" });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(await result).toMatchObject({
+    application: "failed",
+    stage: "disable",
+    error: expect.stringMatching(/did not respond/),
+  });
+  expect(calls).toEqual(["disable", "enable"]);
+  expect(plugin()).toMatchObject({ enabled: true, revision: "one" });
 });

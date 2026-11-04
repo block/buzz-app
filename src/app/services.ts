@@ -50,7 +50,7 @@ import { bundledPlugins } from "../bundled";
 import { bundledFederatedIdentity } from "../bundled/builderlab/oauth/first-run";
 import { nativeBuilderlab } from "../bundled/builderlab/session";
 import { conversationFeatures } from "./conversation-features";
-import { pluginDevelopment } from "../features/plugin-development";
+import { PluginDevelopmentService } from "../features/plugin-development/service";
 import { createPluginManager } from "../plugins/manager";
 import {
   createPluginInstallCore,
@@ -76,9 +76,9 @@ export function createServices() {
     : undefined;
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
-    // Its tools read the manager only when an agent calls them.
-    builtIn: [...conversationFeatures, pluginDevelopment(() => plugins)],
+    builtIn: conversationFeatures,
   });
+  new PluginDevelopmentService(ctx, () => plugins);
   const localAgents = createLocalAgents();
   const localActivity = createLocalAgentActivity();
   const navigationHost = provideNavigation(ctx);

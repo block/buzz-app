@@ -207,6 +207,10 @@ export function registerPluginDevelopmentTools(host: PluginDevelopmentHost) {
   });
 
   async function reload(id: string) {
+    // Read the plugin only once a change already running (an owner's disable
+    // in Settings) has finished, so reload never undoes it.
+    if (!(await idle()))
+      throw new Error("Another plugin change is still running. Try again.");
     const paused = catalog().externalPluginsPaused;
     const plugin = find(id);
     if (!plugin) throw missing(id);
@@ -222,24 +226,35 @@ export function registerPluginDevelopmentTools(host: PluginDevelopmentHost) {
     const plugins = host.plugins();
     const failed = (stage: string, error: string, nextStep: string) =>
       JSON.stringify({ application: "failed", stage, error, nextStep });
+    /** After a failed step, turns the plugin back on if it was on. A step
+     * the manager stopped waiting for can still finish, so this waits for it
+     * first; no other change can start before then. Null when it is on. */
+    const restore = async () => {
+      if (!wasEnabled) return null;
+      await idle();
+      return find(id)?.enabled
+        ? null
+        : await manage(() => plugins.change("enable", id));
+    };
+    const alsoFailed = (error: string, again: string | null) =>
+      again ? `${error} Re-enabling failed too: ${again}` : error;
 
     if (wasEnabled) {
       const error = await manage(() => plugins.change("disable", id));
-      if (error) return failed("disable", error, "Try again.");
+      if (error)
+        return failed(
+          "disable",
+          alsoFailed(error, await restore()),
+          "Try again.",
+        );
     }
     const refused = await manage(() => plugins.reload(id));
     if (refused) {
-      const restore = wasEnabled
-        ? await manage(() => plugins.change("enable", id))
-        : null;
+      const again = await restore();
       const nextStep = /host access changed/i.test(refused)
         ? REVIEW_ACCESS
         : "Fix the build in the plugin's folder (it needs manifest.json and plugin.js with the same manifest id), then call plugin_reload again.";
-      return failed(
-        "reload",
-        restore ? `${refused} Re-enabling failed too: ${restore}` : refused,
-        nextStep,
-      );
+      return failed("reload", alsoFailed(refused, again), nextStep);
     }
     const reloaded = find(id);
     const revision = reloaded?.revision ?? before;
@@ -253,7 +268,7 @@ export function registerPluginDevelopmentTools(host: PluginDevelopmentHost) {
           "The plugin is disabled, so it is saved but not running. Ask your owner to enable it in Settings → Plugins.",
       });
     const enableError = await manage(() => plugins.change("enable", id));
-    if (enableError)
+    if (enableError && (await restore()))
       return failed(
         "enable",
         enableError,

@@ -1544,7 +1544,7 @@ it("Use an existing key from the choice imports the key with no sign-in, no link
     viewer: owned.pubkey,
   });
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", { name: "Back up your identity?" }),
   ).toBeNull();
   expect(
     screen.queryByRole("heading", { name: "Connect to a community" }),
@@ -4597,7 +4597,7 @@ it("a link that keeps failing after a key is imported for a new account stays on
     screen.queryByRole("heading", { name: "Connect to a community" }),
   ).toBeNull();
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", { name: "Back up your identity?" }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
   expect(screen.queryByText("Signed in")).toBeNull();
@@ -5395,7 +5395,9 @@ it("importing a linked key backup status already lists discloses automatic backu
   );
   // Saving consent turns automatic backup on, so it is disclosed first.
   expect(
-    screen.getByText(/backed up to your Builderlab account automatically/),
+    screen.getByText(
+      /Your identity will be backed up to your Builderlab account automatically/,
+    ),
   ).toBeVisible();
   await user.paste(ownedNsec);
   await user.click(continueWithKey());
@@ -5403,7 +5405,7 @@ it("importing a linked key backup status already lists discloses automatic backu
     await screen.findByRole("heading", { name: "Connect to a community" }),
   ).toBeVisible();
   expect(
-    screen.queryByRole("heading", { name: "Back up your key?" }),
+    screen.queryByRole("heading", { name: "Back up your identity?" }),
   ).toBeNull();
   expect(backUp).not.toHaveBeenCalled();
   // Saved as consented, so no later prompt asks about it.
@@ -7318,10 +7320,10 @@ it("once the app opens, a key with no backup choice and only independent communi
     </Welcome>,
   );
   const prompt = await screen.findByRole("alertdialog", {
-    name: "Back up your key?",
+    name: "Back up your identity?",
   });
   expect(screen.getByText("Signed in")).toBeInTheDocument();
-  await user.click(within(prompt).getByRole("button", { name: "Back up" }));
+  await user.click(within(prompt).getByRole("button", { name: "Back it up" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(invoke).toHaveBeenCalledWith("nsec_backup_set_choice", {
     pubkey: viewer,

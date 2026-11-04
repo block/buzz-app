@@ -82,13 +82,19 @@ export function ActivityAccessory(props: ActivityProps) {
           repliedAgents={undefined}
           stoppedRequest={undefined}
           stoppedAgent={author}
+          // Visibility follows the request's scope, not the reply row's layout.
+          threadScoped={
+            props.messageLayout === "thread" || !!props.message?.threadRootId
+          }
         />
       )}
     </>
   );
 }
 /** With `stoppedAgent`, only that agent's stopped note for `message`. */
-function MessageActivity(props: ActivityProps & { stoppedAgent?: string }) {
+function MessageActivity(
+  props: ActivityProps & { stoppedAgent?: string; threadScoped?: boolean },
+) {
   const { session, channelId, message, canOpen, stoppedAgent } = props;
   const messageId = message?.id;
   const recorded = useRecordedActivityAgents(session, channelId, messageId);
@@ -163,7 +169,10 @@ function MessageActivity(props: ActivityProps & { stoppedAgent?: string }) {
       entry.state !== "stopped"
     )
       return false;
-    if (props.messageLayout !== "thread" && !message?.threadRootId) {
+    const threadScoped =
+      props.threadScoped ??
+      (props.messageLayout === "thread" || !!message?.threadRootId);
+    if (!threadScoped) {
       const local = (snapshot.local ?? []).filter(
         (work) =>
           work.agent === entry.agent &&

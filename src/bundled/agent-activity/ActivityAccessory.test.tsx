@@ -794,6 +794,63 @@ it("moves a stopped note below the agent's latest public reply", async () => {
     f.dispose();
   }
 });
+it.each(["thread", "continuation"] as const)(
+  "keeps a thread request's stopped note on a %s reply",
+  async (layout) => {
+    const local = createLocalAgentActivity();
+    const f = fixture(local);
+    const reply = {
+      ...f.props.message,
+      id: next,
+      authorId: A,
+      threadRootId: root,
+      replyParentId: root,
+      createdAt: 2,
+      content: "On it",
+    };
+    const view = render(
+      <>
+        <div data-testid="request">
+          <ActivityAccessory
+            {...f.props}
+            messageLayout="thread"
+            repliedAgents={[A]}
+          />
+        </div>
+        <div data-testid="reply">
+          <ActivityAccessory
+            {...f.props}
+            message={reply}
+            messageLayout={layout}
+            stoppedRequest={f.props.message}
+          />
+        </div>
+      </>,
+    );
+    try {
+      act(() => {
+        local
+          .begin({
+            scope: "test",
+            agent: A,
+            channelId: "c",
+            messageId: root,
+            threadRootId: root,
+            thread: true,
+          })
+          .interruptible(async () => {});
+      });
+      await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
+      expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+      expect(
+        within(screen.getByTestId("reply")).getByText("Blossom · Stopped"),
+      ).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
 it("notes only stopped requests once their work settles", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

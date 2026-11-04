@@ -189,11 +189,12 @@ fn restore_request(
         ),
         size: PhysicalSize::new(saved.width, saved.height),
     };
-    // A size more than 8% below the minimum at the fallback's scale was saved at a
-    // lower scale (scale steps are at least 11% apart) and would reopen clamped.
-    // A Windows client at the minimum is a few percent below it: tao applies the
-    // minimum to the frame, and the undecorated shadow insets come off the client.
-    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale * 0.92) as u32;
+    // A size below the minimum at the fallback's scale (in pixels, rounded as tao
+    // rounds it) was saved at a lower scale and would reopen at or below it. Windows
+    // applies the minimum to the undecorated frame and the shadow insets come off
+    // the saved client, so allow 8% there (scale steps are at least 11% apart).
+    let slack = if cfg!(windows) { 0.92 } else { 1.0 };
+    let px = |logical: Option<f64>| (logical.unwrap_or(0.0) * scale * slack).round() as u32;
     let default = (saved.width < px(config.min_width) || saved.height < px(config.min_height))
         .then(|| LogicalSize::new(config.width, config.height).to_physical(scale));
     let relocated = reachable_client(client, header_height, areas, fallback, default);
@@ -348,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_client_at_the_minimum_is_kept_but_a_lower_scale_size_is_replaced() {
+    fn minimum_allows_windows_shadow_insets_but_a_lower_scale_size_is_replaced() {
         let area = rect(0, 0, 3840, 2160);
         let offset = tauri::PhysicalPosition::new(0, 0);
         let relocated = |scale, width, height| {
@@ -360,15 +361,18 @@ mod tests {
         // tao applies the 480x400 minimum to an undecorated Windows frame. The
         // shadow insets (size frame plus padded border on the sides and bottom,
         // one scaled pixel on top on Windows 11) come off the saved client.
-        assert!(!relocated(1.0, 464, 391));
-        assert!(!relocated(1.25, 580, 489));
-        assert!(!relocated(2.0, 928, 782));
-        // A client saved at the minimum one scale step lower is still replaced,
-        // including across the smallest step, 225% to 250%.
+        for (scale, width, height) in [(1.0, 464, 391), (1.25, 580, 489), (2.0, 928, 782)] {
+            assert_eq!(relocated(scale, width, height), !cfg!(windows));
+        }
+        // macOS does not clamp a programmatic resize, so a 1x save of 900x750
+        // would open at 450x375 points on a 2x laptop. Windows clamps the frame.
+        assert_eq!(relocated(2.0, 900, 750), !cfg!(windows));
+        // A client saved at the minimum one scale step lower is replaced
+        // everywhere, including across the smallest step, 225% to 250%.
         assert!(relocated(1.25, 464, 391));
         assert!(relocated(2.5, 1044, 880));
-        // Without insets (macOS, GTK) the step is just as clear.
         assert!(relocated(2.5, 1080, 900));
+        assert!(!relocated(2.0, 960, 800));
     }
 
     #[test]

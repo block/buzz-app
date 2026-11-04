@@ -2563,6 +2563,7 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
   expect(retry).toHaveTextContent("Retry");
   t.fail("");
   await t.user.click(retry);
+  expect(screen.getByRole("searchbox")).toHaveFocus();
   await vi.waitFor(() => expect(refusals()).toHaveLength(0));
   // One combined notice, instead of each retry announcing its own.
   await screen.findByText("Ada and Cy are in the channel.");
@@ -2588,8 +2589,19 @@ it("keeps only the still-refused member in the alert after a partial retry", asy
     screen.getByRole("button", { name: "Retry adding Ada and Cy" }),
   );
   await screen.findByText(/^Cy: Invitation denied/);
-  expect(screen.queryByText(/Ada/)).not.toBeInTheDocument();
+  expect(
+    screen
+      .getAllByRole("alert")
+      .map((item) => item.textContent)
+      .filter((content) => content?.includes("denied")),
+  ).toEqual([expect.stringMatching(/^Cy: Invitation denied/)]);
   expect(screen.getByRole("button", { name: "Retry adding Cy" })).toBeEnabled();
+  // Ada's addition has landed; the group still announces nothing.
+  await vi.waitFor(() =>
+    expect(t.session.memberAdditions.snapshot()).toEqual([
+      expect.objectContaining({ pubkey: t.cy, pending: false }),
+    ]),
+  );
   expect(screen.queryByText(/are in the channel/)).not.toBeInTheDocument();
 });
 it("names three refused members and counts the rest", async () => {

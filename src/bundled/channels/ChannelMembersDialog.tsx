@@ -1416,35 +1416,21 @@ export function ChannelMembersDialog({
     [session, channelId, canAddSoloAgents, place],
   );
 
-  const addTeam = useCallback(
-    async (team: Team, missing: readonly string[]) => {
+  // Adds a team or retries a refused group; `done` is announced only once
+  // every addition lands. Failed members share one alert and Retry per reason.
+  const addAll = useCallback(
+    async (keys: readonly string[], done: string) => {
       const signal = lifetime.current?.signal;
       if (!signal) return;
       setNotice("");
       const added = await Promise.allSettled(
-        missing.map((key) => session.memberAdditions.add(channelId, key)),
+        keys.map((key) => session.memberAdditions.add(channelId, key)),
       );
-      // Failed members share one alert and Retry per reason above the list.
       if (!signal.aborted && added.every((item) => item.status === "fulfilled"))
-        setNotice(`${team.name} is in the channel.`);
+        setNotice(done);
     },
     [session, channelId],
   );
-
-  // A group retries like a team add; one refused person keeps the Add path.
-  const retryRefusals = async (keys: readonly string[]) => {
-    const [only] = keys;
-    if (only && keys.length === 1) return add(only);
-    const signal = lifetime.current?.signal;
-    if (!signal) return;
-    setNotice("");
-    const names = listNames(keys);
-    const retried = await Promise.allSettled(
-      keys.map((key) => session.memberAdditions.add(channelId, key)),
-    );
-    if (!signal.aborted && retried.every((item) => item.status === "fulfilled"))
-      setNotice(`${names} are in the ${place}.`);
-  };
 
   // Typed text highlights the first person not in the channel, so Enter adds
   // them. Rows keep their own buttons; the highlight only marks one of them.
@@ -2001,7 +1987,14 @@ export function ChannelMembersDialog({
                       variant="outline"
                       aria-label={`Retry adding ${names}`}
                       disabled={!canAdd}
-                      onClick={() => void retryRefusals(keys)}
+                      onClick={() => {
+                        // Land where Add does, so the next step is the search.
+                        input.current?.focus();
+                        const [only] = keys;
+                        void (only && keys.length === 1
+                          ? add(only)
+                          : addAll(keys, `${names} are in the ${place}.`));
+                      }}
                     >
                       Retry
                     </Button>
@@ -2217,7 +2210,12 @@ export function ChannelMembersDialog({
                         )}
                         busy={missing.some((key) => busy.has(key))}
                         disabled={rosterBusy || !!rosterError}
-                        onAdd={() => void addTeam(team, missing)}
+                        onAdd={() =>
+                          void addAll(
+                            missing,
+                            `${team.name} is in the channel.`,
+                          )
+                        }
                       />
                     ))}
                   </ul>

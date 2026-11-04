@@ -15,7 +15,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { subscribeView } from "../../shared/view-state";
 import { DecisionDialog } from "./DecisionDialog";
-import { forgetDraft } from "./drafts";
+import { editDrafts, forgetDraft } from "./drafts";
 import {
   readList,
   remove,
@@ -109,6 +109,12 @@ function ScopedPage({
   const snapshot = useCallback(() => revision(partition), [partition]);
   const savedRevision = useSyncExternalStore(subscribe, snapshot, snapshot);
   const list = readList(savedRevision);
+  const savedSources = new Set(
+    list.status === "ready" ? list.records.map(sourceKey) : [],
+  );
+  const orphanedEdits = editDrafts(partition).filter(
+    (item) => !savedSources.has(sourceKey(item)),
+  );
   const [editing, setEditing] = useState<{
     record: Decision;
     revision: string | null | undefined;
@@ -118,6 +124,7 @@ function ScopedPage({
     revision: string | null | undefined;
   }>();
   const [resetting, setResetting] = useState<string>();
+  const [discardingDraft, setDiscardingDraft] = useState<string>();
   const [error, setError] = useState("");
   const sameScope = () => {
     const connection = relay.snapshot();
@@ -129,7 +136,9 @@ function ScopedPage({
     const connection = relay.snapshot();
     return connection.status === "ready" && !connection.cached && sameScope();
   };
-  const openSource = (item: Decision) => {
+  const openSource = (
+    item: Pick<Decision, "channelId" | "messageId" | "threadRootId">,
+  ) => {
     const scope = splitPartition(partition);
     if (!scope || !sameScope()) return;
     setError("");
@@ -339,6 +348,49 @@ function ScopedPage({
               ) : null;
             })
           )}
+          {orphanedEdits.length > 0 && (
+            <section className={styles.group} aria-label="Unsaved edits">
+              <InlineHeader title={`Unsaved edits · ${orphanedEdits.length}`} />
+              <p className="text-body-sm text-subtle">
+                These decisions were removed in another window. Copy your edits
+                before discarding them.
+              </p>
+              <ul className={styles.list}>
+                {orphanedEdits.map(({ key, channelId, messageId, draft }) => (
+                  <li className={styles.row} key={key}>
+                    <div className={styles.details}>
+                      <strong className="text-label text-primary">
+                        {draft.question}
+                      </strong>
+                      <p className="text-body-sm text-subtle">
+                        Next actor: {draft.nextActor}
+                      </p>
+                      {draft.decision && (
+                        <p className="text-body-sm text-primary">
+                          Decision: {draft.decision}
+                        </p>
+                      )}
+                    </div>
+                    <div className={styles.actions}>
+                      <Button
+                        size="sm"
+                        onClick={() => openSource({ channelId, messageId })}
+                      >
+                        Open source
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setDiscardingDraft(key)}
+                      >
+                        Discard edit
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
       </div>
       {editing && (
@@ -389,6 +441,33 @@ function ScopedPage({
           <p className="text-body">
             Only decisions for this account and community are affected.
           </p>
+        </Dialog>
+      )}
+      {discardingDraft && (
+        <Dialog
+          open
+          size="compact"
+          title="Discard unsaved edit?"
+          description="This removes your unsaved changes from this window. Copy them first if you need them."
+          onOpenChange={(open) => !open && setDiscardingDraft(undefined)}
+          actions={
+            <>
+              <Button onClick={() => setDiscardingDraft(undefined)}>
+                Keep edit
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  forgetDraft(discardingDraft);
+                  setDiscardingDraft(undefined);
+                }}
+              >
+                Discard edit
+              </Button>
+            </>
+          }
+        >
+          <p className="text-body">The saved decision is already gone.</p>
         </Dialog>
       )}
     </div>

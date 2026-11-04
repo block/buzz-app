@@ -11,7 +11,6 @@ export type Draft = {
 
 const entries = new Map<string, { scope: string; draft: Draft }>();
 const subscriptions = new Map<string, () => void>();
-const purgeListeners = new Map<string, Set<() => void>>();
 let warningActive = false;
 
 const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -33,6 +32,38 @@ export function draftFor(key: string) {
   return entries.get(key)?.draft;
 }
 
+export function editDrafts(scope: string) {
+  const drafts: {
+    key: string;
+    channelId: string;
+    messageId: string;
+    draft: Draft;
+  }[] = [];
+  for (const [key, entry] of entries) {
+    if (entry.scope !== scope) continue;
+    try {
+      const pair: unknown = JSON.parse(key);
+      if (
+        Array.isArray(pair) &&
+        pair.length === 4 &&
+        pair[0] === scope &&
+        pair[1] === "edit" &&
+        typeof pair[2] === "string" &&
+        typeof pair[3] === "string"
+      )
+        drafts.push({
+          key,
+          channelId: pair[2],
+          messageId: pair[3],
+          draft: entry.draft,
+        });
+    } catch {
+      // Draft keys are internal; skip an invalid key without losing other edits.
+    }
+  }
+  return drafts;
+}
+
 export function forgetDraft(key: string, expected?: Draft) {
   const entry = entries.get(key);
   if (!entry || (expected && entry.draft !== expected)) return;
@@ -50,20 +81,6 @@ export function clearDrafts(scope: string) {
   subscriptions.get(scope)?.();
   subscriptions.delete(scope);
   updateWarning();
-  for (const listener of purgeListeners.get(scope) ?? []) listener();
-}
-
-export function onDraftPurge(scope: string, listener: () => void) {
-  let listeners = purgeListeners.get(scope);
-  if (!listeners) {
-    listeners = new Set();
-    purgeListeners.set(scope, listeners);
-  }
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (!listeners.size) purgeListeners.delete(scope);
-  };
 }
 
 /** Keep drafts only when an explicit purge can reach this window from peers. */

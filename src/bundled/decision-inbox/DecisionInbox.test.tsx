@@ -22,14 +22,15 @@ import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
   clearViewScope,
+  viewScopeLockName,
   viewRevision,
   writeView,
 } from "../../shared/view-state";
+import { installTestLocks } from "../../shared/test-locks";
 import { DecisionInboxPage } from "./DecisionInboxPage";
 import { clearDrafts, draftFor } from "./drafts";
 import { apply } from "./index";
 import { key, readList } from "./model";
-import { installTestLocks } from "./test-locks";
 
 const viewer = "a".repeat(64);
 const scope = `https://one.test:${viewer}`;
@@ -389,7 +390,7 @@ it("restores an unsaved update after navigating away from the page", async () =>
   expect(readList(viewRevision(scope, key))).toMatchObject({ records: [item] });
 });
 
-it("clears retained drafts with community data and protects them after navigation", () => {
+it("clears retained drafts with community data and protects them after navigation", async () => {
   const h = fixture();
   const Action = h.action.component;
   const props = {
@@ -413,7 +414,7 @@ it("clears retained drafts with community data and protects them after navigatio
   window.dispatchEvent(pendingUnload);
   expect(pendingUnload.defaultPrevented).toBe(true);
 
-  act(() => clearViewScope(scope));
+  await act(() => clearViewScope(scope));
   expect(draftFor(draftKey)).toBeUndefined();
   const clearedUnload = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(clearedUnload);
@@ -424,7 +425,7 @@ it("clears retained drafts with community data and protects them after navigatio
   ).toHaveValue("");
 });
 
-it("closes a mounted editor when its community is removed", () => {
+it("closes a mounted editor when its community is removed", async () => {
   const h = fixture();
   const Action = h.action.component;
   const close = vi.fn();
@@ -442,10 +443,34 @@ it("closes a mounted editor when its community is removed", () => {
   });
   fireEvent.change(input, { target: { value: "Remove with community" } });
   const draftKey = JSON.stringify([scope, "capture", "room", message.id]);
-  act(() => clearViewScope(scope));
+  await act(() => clearViewScope(scope));
   expect(close).toHaveBeenCalledOnce();
   fireEvent.change(input, { target: { value: "Cannot restore this" } });
   expect(draftFor(draftKey)).toBeUndefined();
+});
+
+it("closes an untouched editor on an explicit scope purge", async () => {
+  const h = fixture();
+  const close = vi.fn();
+  const Action = h.action.component;
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Question or decision needed",
+  });
+  await act(() => clearViewScope(scope));
+  expect(close).toHaveBeenCalledOnce();
+  fireEvent.change(input, { target: { value: "Cannot restore this" } });
+  expect(
+    draftFor(JSON.stringify([scope, "capture", "room", message.id])),
+  ).toBeUndefined();
 });
 
 it("keeps a draft when device view reads are temporarily unavailable", () => {
@@ -508,7 +533,7 @@ it("warns and drops an unsafe draft if cross-window purge is unavailable", () =>
   expect(pendingUnload.defaultPrevented).toBe(false);
 });
 
-it("keeps a retained draft after plugin UI unmount and a leave without purge", () => {
+it("keeps a retained draft after plugin UI unmount and a leave without purge", async () => {
   const h = fixture();
   const Action = h.action.component;
   const view = render(
@@ -529,7 +554,7 @@ it("keeps a retained draft after plugin UI unmount and a leave without purge", (
   act(() => h.leaveCommunity());
   act(() => writeView(scope, "other-view", true));
   expect(draftFor(draftKey)?.question).toBe("Keep when banned");
-  act(() => clearViewScope(scope));
+  await act(() => clearViewScope(scope));
   expect(draftFor(draftKey)).toBeUndefined();
 });
 
@@ -570,7 +595,7 @@ it("freezes fields while a save waits for another window", async () => {
     release = resolve;
   });
   const blocker = navigator.locks.request(
-    `buzz-decision-inbox:${scope}`,
+    viewScopeLockName(scope),
     { mode: "exclusive" },
     async () => {
       entered();
@@ -625,7 +650,7 @@ it("does not save a queued edit after its community data is purged", async () =>
     release = resolve;
   });
   const blocker = navigator.locks.request(
-    `buzz-decision-inbox:${scope}`,
+    viewScopeLockName(scope),
     { mode: "exclusive" },
     async () => {
       entered();
@@ -650,17 +675,18 @@ it("does not save a queued edit after its community data is purged", async () =>
   fireEvent.change(screen.getByRole("textbox", { name: "Next actor" }), {
     target: { value: "Morgan" },
   });
+  const purge = clearViewScope(scope);
   try {
     await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
-    act(() => clearViewScope(scope));
-    expect(close).toHaveBeenCalledOnce();
   } finally {
     release();
     await blocker;
   }
+  await act(() => purge);
+  expect(close).toHaveBeenCalledOnce();
   await act(async () => {
     await navigator.locks.request(
-      `buzz-decision-inbox:${scope}`,
+      viewScopeLockName(scope),
       { mode: "exclusive" },
       () => {},
     );
@@ -668,7 +694,7 @@ it("does not save a queued edit after its community data is purged", async () =>
   await waitFor(() => expect(viewRevision(scope, key)).toBeNull());
 });
 
-it("does not erase a newer draft when an earlier queued save finishes", async () => {
+it("cancels an unmounted queued save and retains the newer draft", async () => {
   const h = fixture();
   const Action = h.action.component;
   let entered = () => {};
@@ -680,7 +706,7 @@ it("does not erase a newer draft when an earlier queued save finishes", async ()
     release = resolve;
   });
   const blocker = navigator.locks.request(
-    `buzz-decision-inbox:${scope}`,
+    viewScopeLockName(scope),
     { mode: "exclusive" },
     async () => {
       entered();
@@ -718,16 +744,15 @@ it("does not erase a newer draft when an earlier queued save finishes", async ()
   }
   await act(async () => {
     await navigator.locks.request(
-      `buzz-decision-inbox:${scope}`,
+      viewScopeLockName(scope),
       { mode: "exclusive" },
       () => {},
     );
   });
-  await waitFor(() =>
-    expect(readList(viewRevision(scope, key))).toMatchObject({
-      records: [{ question: "First decision" }],
-    }),
-  );
+  expect(readList(viewRevision(scope, key))).toEqual({
+    status: "ready",
+    records: [],
+  });
   expect(
     draftFor(JSON.stringify([scope, "capture", "room", message.id]))?.question,
   ).toBe("Newer draft");
@@ -735,6 +760,64 @@ it("does not erase a newer draft when an earlier queued save finishes", async ()
     screen.getByRole("textbox", { name: "Question or decision needed" }),
   ).toHaveValue("Newer draft");
   expect(close).not.toHaveBeenCalled();
+});
+
+it("lets a removed decision's unsaved edit be copied or explicitly discarded", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const item = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Ship?",
+    nextActor: "Morgan",
+    decision: "",
+    stage: "decision" as const,
+    createdAt: 1,
+  };
+  writeView(scope, key, [item]);
+  const first = render(
+    <DecisionInboxPage relay={h.relay} navigator={h.navigator} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Decision Optional" }),
+    "Ship tomorrow",
+  );
+  first.unmount();
+
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  const storageKey = `buzz-view.v1:${JSON.stringify([scope, key])}`;
+  act(() => {
+    localStorage.setItem(storageKey, "[]");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: storageKey,
+        storageArea: localStorage,
+      }),
+    );
+  });
+  const edits = screen.getByRole("region", { name: "Unsaved edits" });
+  expect(within(edits).getByText("Decision: Ship tomorrow")).toBeVisible();
+  await user.click(within(edits).getByRole("button", { name: "Open source" }));
+  expect(h.navigator.open).toHaveBeenCalled();
+  await user.click(within(edits).getByRole("button", { name: "Discard edit" }));
+  await user.click(screen.getByRole("button", { name: "Keep edit" }));
+  expect(within(edits).getByText("Decision: Ship tomorrow")).toBeVisible();
+  await user.click(within(edits).getByRole("button", { name: "Discard edit" }));
+  await user.click(
+    within(
+      screen.getByRole("dialog", { name: "Discard unsaved edit?" }),
+    ).getByRole("button", {
+      name: "Discard edit",
+    }),
+  );
+  expect(
+    screen.queryByRole("region", { name: "Unsaved edits" }),
+  ).not.toBeInTheDocument();
+  const unload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(unload);
+  expect(unload.defaultPrevented).toBe(false);
 });
 
 it("keeps the capture form and explains a failed device save", async () => {

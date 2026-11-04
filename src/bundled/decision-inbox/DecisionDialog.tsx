@@ -8,6 +8,10 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import {
+  subscribeViewScopePurge,
+  viewScopePurgeRevision,
+} from "../../shared/view-state";
+import {
   capture,
   readList,
   revision,
@@ -16,13 +20,7 @@ import {
   type Decision,
   type Stage,
 } from "./model";
-import {
-  draftFor,
-  forgetDraft,
-  keepDraft,
-  onDraftPurge,
-  type Draft,
-} from "./drafts";
+import { draftFor, forgetDraft, keepDraft, type Draft } from "./drafts";
 import styles from "./DecisionInbox.module.css";
 
 const stages = [
@@ -64,6 +62,7 @@ export function DecisionDialog({
       },
   );
   const draftRef = useRef(draft);
+  const purgeRevision = useRef(viewScopePurgeRevision(scope));
   const purged = useRef(false);
   const mounted = useRef(false);
   useEffect(() => {
@@ -72,14 +71,13 @@ export function DecisionDialog({
       mounted.current = false;
     };
   }, []);
-  useEffect(
-    () =>
-      onDraftPurge(scope, () => {
-        purged.current = true;
-        close();
-      }),
-    [scope, close],
-  );
+  useEffect(() => {
+    const subscription = subscribeViewScopePurge(scope, () => {
+      purged.current = true;
+      close();
+    });
+    return subscription.stop;
+  }, [scope, close]);
   const { expected, question, nextActor, decision, stage } = draft;
   const [error, setError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -127,6 +125,13 @@ export function DecisionDialog({
   const submit = async () => {
     if (purged.current || busy || !valid || duplicate || (!record && !message))
       return;
+    if (
+      purgeRevision.current === undefined ||
+      viewScopePurgeRevision(scope) !== purgeRevision.current
+    ) {
+      setError("This community's saved data changed. Reopen this item.");
+      return;
+    }
     if (!current()) {
       setError("The account or community changed. Reopen this item there.");
       return;
@@ -159,7 +164,8 @@ export function DecisionDialog({
       scope,
       expected,
       next,
-      () => !purged.current && current(),
+      () => mounted.current && !purged.current && current(),
+      purgeRevision.current,
     );
     if (result === "saved") forgetDraft(draftKey, submittedDraft);
     if (!mounted.current || purged.current) return;

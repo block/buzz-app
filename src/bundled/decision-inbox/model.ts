@@ -1,6 +1,11 @@
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { messagePreview } from "../../features/notifications/content";
-import { replaceView, viewRevision } from "../../shared/view-state";
+import {
+  replaceView,
+  viewRevision,
+  viewScopeLockName,
+  viewScopePurgeRevision,
+} from "../../shared/view-state";
 
 export const key = "decision-inbox:v1";
 export type Stage = "decision" | "handoff" | "done";
@@ -88,7 +93,7 @@ async function writeWithLock<T extends string>(
   if (!locks?.request) return "unavailable";
   try {
     return await locks.request(
-      `buzz-decision-inbox:${scope}`,
+      viewScopeLockName(scope),
       { mode: "exclusive" },
       () => (current() ? write() : "scope-changed"),
     );
@@ -102,8 +107,11 @@ export function save(
   expected: string | null | undefined,
   record: Decision,
   current: () => boolean,
+  expectedPurge: string | null | undefined,
 ): Promise<WriteResult | "damaged" | "full"> {
   return writeWithLock(scope, current, () => {
+    if (expectedPurge === undefined) return "unavailable";
+    if (viewScopePurgeRevision(scope) !== expectedPurge) return "scope-changed";
     const list = readList(expected);
     if (list.status !== "ready")
       return list.status === "damaged" ? "damaged" : "failed";

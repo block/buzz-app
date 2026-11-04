@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { installTestLocks } from "../../shared/test-locks";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { OpenTarget } from "../navigation/targets";
@@ -23,7 +24,11 @@ const scope = usageScope({
 });
 const now = 1_800_000_000_000;
 
-afterEach(() => localStorage.clear());
+beforeEach(() => installTestLocks());
+afterEach(() => {
+  localStorage.clear();
+  Reflect.deleteProperty(navigator, "locks");
+});
 
 it("lets visits lose half their weight each week and caps how far they lift", () => {
   recordVisit(scope, "channel:old", now - 2 * HALF_LIFE_MS);
@@ -92,7 +97,7 @@ it("scores a row by the sum of its keys", () => {
   expect(usage.boost()).toBe(0);
 });
 
-it("keeps each community apart, bounds its size and ignores malformed data", () => {
+it("keeps each community apart, bounds its size and ignores malformed data", async () => {
   const other = usageScope({
     viewer,
     communityOrigin: "wss://other.example",
@@ -121,7 +126,7 @@ it("keeps each community apart, bounds its size and ignores malformed data", () 
   expect(usage.boost("channel:b")).toBeGreaterThan(0);
   expect(usage.pick("wo", new Set(["channel:workflows"]))).toBeUndefined();
   // Leaving a community clears its view state, and this with it.
-  clearViewScope(other);
+  await clearViewScope(other);
   expect(readSearchUsage(other, now).boost("channel:0")).toBe(0);
 });
 

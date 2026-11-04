@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { RelaySession } from "../relay/session";
 import { useChannelTabState } from "../../bundled/channels/useChannelTabState";
 import { readView, writeView } from "../../shared/view-state";
+import { installTestLocks } from "../../shared/test-locks";
 import { purgeCommunityDeviceState } from "./device-state";
 import { localCommunityNameKey } from "./names";
 import { repositoriesKey } from "./repositories";
@@ -49,6 +50,7 @@ const receipt = (scope: string) => `buzz-channel-setup.v2:${scope}:general`;
 const reactions = (scope: string) => `buzz.quick-reactions.v1:${scope}`;
 const follows = (scope: string) => `buzz.thread-follows.v1:${scope}`;
 
+beforeEach(() => installTestLocks());
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -56,6 +58,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   relay.calls.splice(0);
   relay.fail.clear();
+  Reflect.deleteProperty(navigator, "locks");
 });
 
 it("forgets every store partitioned to the left community and viewer, and nothing else", async () => {
@@ -129,6 +132,29 @@ it("clears the remaining stores when one is unavailable and reports each failure
     [`Couldn't clear view state for ${origin} on this device`, denied],
     [`Couldn't clear channel setups for ${origin} on this device`, denied],
   ]);
+});
+
+it("reports a view-state cleanup failure when the scope lock is unavailable", async () => {
+  const scope = `${origin}:${viewer}`;
+  writeView(scope, "draft:general", "keep until cleanup can be retried");
+  Reflect.deleteProperty(navigator, "locks");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const failures = await purgeCommunityDeviceState(origin, viewer);
+  expect(failures).toEqual([
+    {
+      store: "view state",
+      error: expect.objectContaining({
+        message: expect.stringContaining("scope lock"),
+      }),
+    },
+  ]);
+  expect(readView(scope, "draft:general", "")).toBe(
+    "keep until cleanup can be retried",
+  );
+  expect(warn).toHaveBeenCalledWith(
+    `Couldn't clear view state for ${origin} on this device`,
+    failures[0]?.error,
+  );
 });
 
 it("purges the relay's heads, read state and outbox for the exact partition, in order", async () => {

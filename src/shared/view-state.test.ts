@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { installTestLocks } from "./test-locks";
 import {
   clearView,
   clearViewScope,
@@ -10,6 +11,7 @@ import {
   viewRevision,
   subscribeView,
   subscribeViewScopePurge,
+  viewScopePurgeRevision,
   writeView,
 } from "./view-state";
 
@@ -23,9 +25,11 @@ const meaningful = (value: unknown) =>
       !!value.text.trim();
 const listDraftViews = (scope: string) =>
   enumerateDrafts(scope, meaningful).entries;
+beforeEach(() => installTestLocks());
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(navigator, "locks");
 });
 it("enumerates only this viewer's existing channel/thread composer keys, including punctuated channel IDs", () => {
   const root = "a".repeat(64);
@@ -129,7 +133,7 @@ it("counts meaningful drafts rather than empty history and never reads another s
   ).toHaveLength(500);
 });
 
-it("community scope cleanup removes only that scope and notifies its same-window draft subscribers", () => {
+it("community scope cleanup removes only that scope and notifies its same-window draft subscribers", async () => {
   const scope = 'relay:alice"quoted';
   writeView(scope, "draft:room", "Leaving draft");
   writeView(scope, "scroll:room", { offset: 42 });
@@ -137,7 +141,7 @@ it("community scope cleanup removes only that scope and notifies its same-window
   const listener = vi.fn();
   const stop = subscribeView(scope, listener);
   try {
-    clearViewScope(scope);
+    await clearViewScope(scope);
     expect(listDraftViews(scope)).toEqual([]);
     expect(readView(scope, "scroll:room", undefined)).toBeUndefined();
     expect(listDraftViews(`${scope}-other`)).toEqual([
@@ -149,7 +153,7 @@ it("community scope cleanup removes only that scope and notifies its same-window
   }
 });
 
-it("signals only an explicit scoped purge, even when storage cleanup fails", () => {
+it("signals only an explicit scoped purge, even when storage cleanup fails", async () => {
   const purged = vi.fn();
   const other = vi.fn();
   const first = subscribeViewScopePurge("scope", purged);
@@ -157,7 +161,7 @@ it("signals only an explicit scoped purge, even when storage cleanup fails", () 
   try {
     writeView("scope", "draft:room", "keep");
     expect(purged).not.toHaveBeenCalled();
-    clearViewScope("scope");
+    await clearViewScope("scope");
     expect(purged).toHaveBeenCalledOnce();
     expect(other).not.toHaveBeenCalled();
 
@@ -167,7 +171,9 @@ it("signals only an explicit scoped purge, even when storage cleanup fails", () 
       .mockImplementation(() => {
         throw new Error("storage unavailable");
       });
-    expect(() => clearViewScope("scope")).toThrow("storage unavailable");
+    await expect(clearViewScope("scope")).rejects.toThrow(
+      "storage unavailable",
+    );
     expect(purged).toHaveBeenCalledTimes(2);
     expect(other).not.toHaveBeenCalled();
     remove.mockRestore();
@@ -175,8 +181,48 @@ it("signals only an explicit scoped purge, even when storage cleanup fails", () 
     first.stop();
     second.stop();
   }
-  clearViewScope("scope");
+  await clearViewScope("scope");
   expect(purged).toHaveBeenCalledTimes(2);
+});
+
+it("reports a failed marker write without deleting saved views and still signals the purge intent", async () => {
+  writeView("scope", "decision-inbox:v1", [{ question: "keep" }]);
+  const before = viewRevision("scope", "decision-inbox:v1");
+  const listener = vi.fn();
+  const subscription = subscribeViewScopePurge("scope", listener);
+  const setItem = Storage.prototype.setItem;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    key,
+    value,
+  ) {
+    if (key.startsWith("buzz-view-scope-purge.v1:"))
+      throw new Error("marker rejected");
+    setItem.call(this, key, value);
+  });
+  try {
+    await expect(clearViewScope("scope")).rejects.toThrow("marker rejected");
+    expect(viewRevision("scope", "decision-inbox:v1")).toBe(before);
+    expect(viewScopePurgeRevision("scope")).toBeNull();
+    expect(listener).toHaveBeenCalledOnce();
+  } finally {
+    subscription.stop();
+  }
+});
+
+it("fails safely without a scope lock and keeps saved views", async () => {
+  writeView("scope", "decision-inbox:v1", [{ question: "keep" }]);
+  const before = viewRevision("scope", "decision-inbox:v1");
+  const listener = vi.fn();
+  const subscription = subscribeViewScopePurge("scope", listener);
+  Reflect.deleteProperty(navigator, "locks");
+  try {
+    await expect(clearViewScope("scope")).rejects.toThrow("scope lock");
+    expect(viewRevision("scope", "decision-inbox:v1")).toBe(before);
+    expect(listener).toHaveBeenCalledOnce();
+  } finally {
+    subscription.stop();
+  }
 });
 
 it("reports write failures and compares the exact current revision before replacing", () => {

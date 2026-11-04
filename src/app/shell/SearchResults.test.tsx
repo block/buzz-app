@@ -42,9 +42,11 @@ import {
 } from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { clearViewScope, writeView } from "../../shared/view-state";
+import { installTestLocks } from "../../shared/test-locks";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
+  installTestLocks();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -63,6 +65,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  Reflect.deleteProperty(navigator, "locks");
 });
 
 it("keeps a joined private Guest channel in recents without calling it public or unjoined", async () => {
@@ -5612,7 +5615,7 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
   } finally {
     cleanup();
     owner.dispose();
-    clearViewScope(scope);
+    await clearViewScope(scope);
   }
 });
 

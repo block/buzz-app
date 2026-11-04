@@ -1,5 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
-import { assert, afterEach, expect, it, vi } from "vitest";
+import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
+import { installTestLocks } from "../../shared/test-locks";
 import { createCommunities } from "./service";
 import { communityDestination } from "./destination";
 import { localCommunityNameKey } from "./names";
@@ -15,6 +16,7 @@ import {
 const viewer = "a".repeat(64);
 const roots: Context[] = [];
 const requests: string[] = [];
+beforeEach(() => installTestLocks());
 function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
   const storage = new Map<string, string>();
   // A string is stored verbatim so cases can pin the exact stored text.
@@ -58,6 +60,7 @@ afterEach(async () => {
   requests.length = 0;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(navigator, "locks");
 });
 it("opens an identity without touching a community and saves a local profile independently", async () => {
   const client = setup();

@@ -2,6 +2,10 @@
 const viewListeners = new Map<string, Set<() => void>>();
 const purgeListeners = new Map<string, Set<() => void>>();
 const purgeChannelName = "buzz-view-scope-purge.v1";
+const purgeRevisionKey = (scope: string) =>
+  `buzz-view-scope-purge.v1:${JSON.stringify(scope)}`;
+export const viewScopeLockName = (scope: string) => `buzz-view-scope:${scope}`;
+let purgeSequence = 0;
 let purgeChannel: BroadcastChannel | undefined;
 
 function notifyPurged(scope: string) {
@@ -55,6 +59,16 @@ export function subscribeViewScopePurge(scope: string, listener: () => void) {
       if (!listeners?.size) purgeListeners.delete(scope);
     },
   };
+}
+
+/** Durable fence for writes that began before a scope purge. Undefined means
+ * storage cannot be read and the caller must not commit a scoped write. */
+export function viewScopePurgeRevision(scope: string) {
+  try {
+    return localStorage.getItem(purgeRevisionKey(scope));
+  } catch {
+    return undefined;
+  }
 }
 
 function announcePurge(scope: string) {
@@ -223,17 +237,33 @@ export function listDraftViews(
   return { entries: drafts, limited, unavailable };
 }
 
-/** Forgets every key saved under one scope, for a community the viewer has left. */
-export function clearViewScope(scope: string) {
+/** Forgets every key saved under one scope, for a community the viewer has left.
+ * Decision Inbox writes share this lock and compare the purge revision inside it.
+ * If locking or the revision marker fails, no saved keys are removed. */
+export async function clearViewScope(scope: string) {
   try {
-    const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
-    const stale: string[] = [];
-    for (let index = 0; index < localStorage.length; index++) {
-      const key = localStorage.key(index);
-      if (key?.startsWith(prefix)) stale.push(key);
-    }
-    for (const key of stale) localStorage.removeItem(key);
-    changed(scope);
+    if (!navigator.locks?.request)
+      throw new Error("Cannot safely clear view state without a scope lock");
+    await navigator.locks.request(
+      viewScopeLockName(scope),
+      { mode: "exclusive" },
+      () => {
+        // Advance before deleting keys. A queued first write still has a null
+        // list revision, but now carries an older purge revision.
+        localStorage.setItem(
+          purgeRevisionKey(scope),
+          `${Date.now()}:${++purgeSequence}:${Math.random()}`,
+        );
+        const prefix = `buzz-view.v1:${JSON.stringify([scope]).slice(0, -1)},`;
+        const stale: string[] = [];
+        for (let index = 0; index < localStorage.length; index++) {
+          const key = localStorage.key(index);
+          if (key?.startsWith(prefix)) stale.push(key);
+        }
+        for (const key of stale) localStorage.removeItem(key);
+        changed(scope);
+      },
+    );
   } finally {
     // The community intended to purge this scope even if device storage failed.
     announcePurge(scope);

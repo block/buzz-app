@@ -92,13 +92,33 @@ test("explicit scope purge clears memory drafts across windows and in the same w
       await page.evaluate((key) => !!window.purgeTest.draftFor(key), otherKey),
     ).toBe(true);
 
+    await peer.evaluate(() => {
+      Storage.prototype.setItem = () => {
+        throw new Error("device storage rejected the marker");
+      };
+    });
     await page.evaluate(
       ({ scope, key, draft }) => {
         window.purgeTest.keepDraft(scope, key, draft);
-        window.purgeTest.clearViewScope(scope);
       },
       { scope, key, draft },
     );
+    await expect(
+      peer.evaluate((scope) => window.purgeTest.clearViewScope(scope), scope),
+    ).rejects.toThrow("device storage rejected the marker");
+    await expect
+      .poll(() => page.evaluate((key) => !!window.purgeTest.draftFor(key), key))
+      .toBe(false);
+
+    await page.evaluate(
+      ({ scope, key, draft }) => {
+        window.purgeTest.keepDraft(scope, key, draft);
+      },
+      { scope, key, draft },
+    );
+    await expect(
+      page.evaluate((scope) => window.purgeTest.clearViewScope(scope), scope),
+    ).rejects.toThrow("device storage rejected the write");
     expect(
       await page.evaluate((key) => !!window.purgeTest.draftFor(key), key),
     ).toBe(false);

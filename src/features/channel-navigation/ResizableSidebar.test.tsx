@@ -9,9 +9,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readView, writeView, clearViewScope } from "../../shared/view-state";
+import { installTestLocks } from "../../shared/test-locks";
 import { ResizableSidebar } from "./ResizableSidebar";
 
 beforeEach(() => {
+  installTestLocks();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -25,6 +27,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
+  Reflect.deleteProperty(navigator, "locks");
 });
 const storageKey = (scope: string) =>
   `buzz-view.v1:${JSON.stringify([scope, "channel-sidebar"])}`;
@@ -49,7 +52,7 @@ const resize = (key: string) =>
     key,
   });
 
-it("adopts another window's saved width while mounted and after remount without replacing its content", () => {
+it("adopts another window's saved width while mounted and after remount without replacing its content", async () => {
   const scope = "external-width";
   writeView(scope, "channel-sidebar", {
     width: 260,
@@ -79,7 +82,7 @@ it("adopts another window's saved width while mounted and after remount without 
   expect(column()).toHaveStyle({ width: "340px" });
   act(() => writeView(scope, "channel-sidebar", { width: 360, collapsed: [] }));
   expect(column()).toHaveStyle({ width: "360px" });
-  act(() => clearViewScope(scope));
+  await act(() => clearViewScope(scope));
   expect(column()).toHaveStyle({ width: "260px" });
 });
 

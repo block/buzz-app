@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../../features/relay/contracts";
-import { writeView } from "../../shared/view-state";
+import {
+  clearViewScope,
+  viewScopeLockName,
+  viewScopePurgeRevision,
+  writeView,
+} from "../../shared/view-state";
+import { installTestLocks } from "../../shared/test-locks";
 import {
   key,
   capture,
@@ -11,7 +17,6 @@ import {
   save,
   type Decision,
 } from "./model";
-import { installTestLocks } from "./test-locks";
 
 const first = `https://one.test:${"a".repeat(64)}`;
 const second = `https://one.test:${"b".repeat(64)}`;
@@ -36,7 +41,7 @@ const saveReady = (
   scope: string,
   expected: string | null | undefined,
   item: Decision,
-) => save(scope, expected, item, () => true);
+) => save(scope, expected, item, () => true, viewScopePurgeRevision(scope));
 const removeReady = (
   scope: string,
   expected: string | null | undefined,
@@ -155,7 +160,7 @@ it("serializes competing window writes before checking the saved revision", asyn
     release = resolve;
   });
   const blocker = navigator.locks.request(
-    `buzz-decision-inbox:${first}`,
+    viewScopeLockName(first),
     { mode: "exclusive" },
     async () => {
       entered();
@@ -182,6 +187,41 @@ it("serializes competing window writes before checking the saved revision", asyn
   });
 });
 
+it("rejects a queued first capture when a scope purge wins the lock", async () => {
+  let entered = () => {};
+  let release = () => {};
+  const acquired = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const blocker = navigator.locks.request(
+    viewScopeLockName(first),
+    { mode: "exclusive" },
+    async () => {
+      entered();
+      await held;
+    },
+  );
+  await acquired;
+  const expectedPurge = viewScopePurgeRevision(first);
+  const purge = clearViewScope(first);
+  const pending = save(
+    first,
+    null,
+    capture(message, "Queued decision", "Morgan"),
+    () => true,
+    expectedPurge,
+  );
+  release();
+  await blocker;
+  await purge;
+  expect(await pending).toBe("scope-changed");
+  expect(revision(first)).toBeNull();
+  expect(viewScopePurgeRevision(first)).not.toBe(expectedPurge);
+});
+
 it("rechecks account and community after waiting for the write lock", async () => {
   let entered = () => {};
   let release = () => {};
@@ -192,7 +232,7 @@ it("rechecks account and community after waiting for the write lock", async () =
     release = resolve;
   });
   const blocker = navigator.locks.request(
-    `buzz-decision-inbox:${first}`,
+    viewScopeLockName(first),
     { mode: "exclusive" },
     async () => {
       entered();
@@ -206,6 +246,7 @@ it("rechecks account and community after waiting for the write lock", async () =
     null,
     capture(message, "Question", "Morgan"),
     () => current,
+    viewScopePurgeRevision(first),
   );
   current = false;
   release();

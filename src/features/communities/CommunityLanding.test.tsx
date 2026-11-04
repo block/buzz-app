@@ -131,21 +131,30 @@ it("asks for an invite link or community URL when the pasted value is neither", 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-it("asks for the whole invite link when only its code is pasted", async () => {
-  const user = userEvent.setup();
-  vi.mocked(communityRequest).mockClear();
-  landing();
-  const input = screen.getByLabelText("Invite link or community URL");
-  await user.click(input);
-  await user.paste("v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo");
-  await user.click(screen.getByRole("button", { name: "Join" }));
-  expect(
-    await screen.findByText("Paste the whole invite link, not only its code."),
-  ).toBeVisible();
-  // The refusal replaces opening the join steps, so nothing was looked up.
-  expect(input).toBeInTheDocument();
-  expect(communityRequest).not.toHaveBeenCalled();
-});
+it.each([
+  "v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo",
+  // A sentence-ending dot copied with the code still normalizes to it.
+  "v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo.",
+])(
+  "asks for the whole invite link when only its code is pasted: %j",
+  async (code) => {
+    const user = userEvent.setup();
+    vi.mocked(communityRequest).mockClear();
+    landing();
+    const input = screen.getByLabelText("Invite link or community URL");
+    await user.click(input);
+    await user.paste(code);
+    await user.click(screen.getByRole("button", { name: "Join" }));
+    expect(
+      await screen.findByText(
+        "Paste the whole invite link, not only its code.",
+      ),
+    ).toBeVisible();
+    // The refusal replaces opening the join steps, so nothing was looked up.
+    expect(input).toBeInTheDocument();
+    expect(communityRequest).not.toHaveBeenCalled();
+  },
+);
 
 it("presents an opened invite and clears it on close", async () => {
   const user = userEvent.setup();

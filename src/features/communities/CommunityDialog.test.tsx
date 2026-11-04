@@ -423,6 +423,8 @@ it.each([
   ["not a relay", unreadable],
   ["v2.invite", bareCode],
   ["v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo", bareCode],
+  // A sentence-ending dot copied with the code still normalizes to it.
+  ["v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo.", bareCode],
 ])(
   "shows inline relay validation for %j without contacting a relay",
   async (value, message) => {

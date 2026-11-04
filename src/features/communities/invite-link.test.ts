@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { parseInviteLink, parsePastedInvite } from "./invite-link";
+import {
+  parseInviteLink,
+  parsePastedInvite,
+  pastedInviteError,
+} from "./invite-link";
 
 it.each(["", "/"])(
   "parses the join form with path %j and canonicalizes the relay",
@@ -95,9 +99,14 @@ it.each([
 
 it.each([
   "",
-  // A bare invite code is never read as a host.
+  // A bare invite code is never read as a host, however its address normalizes.
   "v2.invite",
   " v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo ",
+  "v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo.",
+  "V2.invite",
+  "v2.invite/",
+  "v2.invite:443",
+  "v2.invite:8443",
   "not a relay",
   "ws://relay.example",
   "http://relay.example",
@@ -117,3 +126,21 @@ it.each([
 ])("rejects a pasted value that is not an invite: %j", (input) => {
   expect(parsePastedInvite(input)).toBeNull();
 });
+
+it.each([
+  "v2.invite",
+  "v2.acTJgVMn-cEaz84r5g7Az40Vz_JB5nAURtFFSq1oUIo.",
+  " V2.invite/ ",
+  "v2.invite:443",
+])("asks for the whole link when only a code is pasted: %j", (input) => {
+  expect(pastedInviteError(input, "fallback")).toBe(
+    "Paste the whole invite link, not only its code.",
+  );
+});
+
+it.each(["not a relay", "v2.relay.example/x", "wss://v2.invite/x"])(
+  "keeps the fallback copy for other unreadable input: %j",
+  (input) => {
+    expect(pastedInviteError(input, "fallback")).toBe("fallback");
+  },
+);

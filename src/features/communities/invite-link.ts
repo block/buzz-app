@@ -81,16 +81,24 @@ export function parsePastedInvite(input: string): InviteLink | null {
 }
 
 /** The relay reads a `v2.` value as an invite code (buzz-core `V2_PREFIX`).
- * Followed by one base64url segment, with no further dot, port or path, it is
- * a code pasted without its link; `v2.relay.example` stays a host. */
+ * A scheme-less value whose normalized hostname is `v2.` and one base64url
+ * label is a code pasted without its link, whatever its case, final dot, port
+ * or root slash; `v2.relay.example` and `wss://v2.invite` stay addresses. */
 function isBareInviteCode(value: string) {
-  return /^v2\.[\w-]+$/.test(value);
+  try {
+    return (
+      !value.includes("://") &&
+      /^v2\.[\w-]+$/.test(new URL(enteredRelayOrigin(value)).hostname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Refusal copy for input `parsePastedInvite` cannot read: a bare invite code
  * asks for its whole link, which also names the community. */
 export function pastedInviteError(input: string, fallback: string) {
-  return isBareInviteCode(input.trim())
+  return isBareInviteCode(input)
     ? "Paste the whole invite link, not only its code."
     : fallback;
 }

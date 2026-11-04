@@ -10,7 +10,7 @@ mod macos {
         define_class, msg_send,
         rc::Retained,
         runtime::{AnyObject, ProtocolObject, Sel},
-        DefinedClass, MainThreadOnly,
+        sel, DefinedClass, MainThreadOnly,
     };
     use objc2_foundation::{
         MainThreadMarker, NSError, NSObject, NSObjectProtocol, NSString, NSURLErrorCancelled,
@@ -110,16 +110,11 @@ mod macos {
                 navigation: Option<&WKNavigation>,
                 error: &NSError,
             ) {
-                let fallback = {
-                    let mut fallback = self.ivars().fallback.borrow_mut();
-                    let failed_load = fallback.as_ref().is_some_and(|(load, _)| {
-                        navigation.is_some_and(|navigation| std::ptr::eq(&**load, navigation))
-                    });
-                    if !failed_load || !retries_over_http(error) {
-                        return;
-                    }
-                    fallback.take().map(|(_, url)| url)
-                };
+                let fallback = fallback_after(
+                    &mut self.ivars().fallback.borrow_mut(),
+                    |load| navigation.is_some_and(|navigation| std::ptr::eq(&**load, navigation)),
+                    retries_over_http(error),
+                );
                 if let Some(url) =
                     fallback.and_then(|url| NSURL::URLWithString(&NSString::from_str(&url)))
                 {
@@ -130,6 +125,22 @@ mod macos {
             }
         }
     );
+
+    /// Uses up `pending`'s http URL when its own load fails with `retryable`.
+    fn fallback_after<Load>(
+        pending: &mut Option<(Load, String)>,
+        is_failed_load: impl Fn(&Load) -> bool,
+        retryable: bool,
+    ) -> Option<String> {
+        if !retryable
+            || !pending
+                .as_ref()
+                .is_some_and(|(load, _)| is_failed_load(load))
+        {
+            return None;
+        }
+        pending.take().map(|(_, url)| url)
+    }
 
     /// A cancelled load was replaced by another, which owns what loads next.
     fn retries_over_http(error: &NSError) -> bool {
@@ -148,7 +159,21 @@ mod macos {
             fallback: RefCell::new(None),
         });
         let delegate: Retained<NavigationDelegate> = unsafe { msg_send![super(allocated), init] };
-        // WebKit asks which messages a delegate handles only when it is set.
+        // WebKit asks which messages a delegate handles only when it is set and
+        // allows every navigation whose policy message goes unanswered.
+        for selector in [
+            sel!(webView:decidePolicyForNavigationAction:decisionHandler:),
+            sel!(webView:decidePolicyForNavigationResponse:decisionHandler:),
+            sel!(webView:didCommitNavigation:),
+            sel!(webView:didFinishNavigation:),
+        ] {
+            if !delegate.respondsToSelector(selector) {
+                return Err(format!(
+                    "Browser navigation delegate does not forward {}",
+                    selector.name().to_string_lossy()
+                ));
+            }
+        }
         unsafe {
             view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         }
@@ -281,6 +306,20 @@ mod macos {
 
         fn error(domain: &NSString, code: isize) -> Retained<NSError> {
             unsafe { NSError::errorWithDomain_code_userInfo(domain, code, None) }
+        }
+
+        #[test]
+        fn only_the_failed_address_load_falls_back_once() {
+            let is_load = |id: u32| move |load: &u32| *load == id;
+            let mut pending = Some((1, "http://grugbrain.dev/".to_string()));
+            assert_eq!(fallback_after(&mut pending, is_load(2), true), None);
+            assert_eq!(fallback_after(&mut pending, is_load(1), false), None);
+            assert_eq!(
+                fallback_after(&mut pending, is_load(1), true).as_deref(),
+                Some("http://grugbrain.dev/")
+            );
+            assert_eq!(pending, None);
+            assert_eq!(fallback_after(&mut pending, is_load(1), true), None);
         }
 
         #[test]

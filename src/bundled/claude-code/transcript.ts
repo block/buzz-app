@@ -297,6 +297,37 @@ export async function workspaceProject(
   return project.length > PROJECT_NAME_LIMIT ? undefined : project;
 }
 
+/** A session file in `~/.claude/projects`. One too large to read whole is
+ * read as its `start`, which says whose conversation it is, and its last
+ * 40 MB as `text`, which has its latest turns; `cut` says it was. */
+async function readSession(spawn: Spawn, path: string, signal: AbortSignal) {
+  const read = async (process?: string) =>
+    new TextDecoder().decode(
+      await readFile(
+        spawn,
+        "~/.claude/projects",
+        path,
+        signal,
+        undefined,
+        process,
+      ),
+    );
+  try {
+    const text = await read();
+    return { start: text, text, cut: false };
+  } catch (error) {
+    signal.throwIfAborted();
+    if (!/larger than 50 MB/.test(error instanceof Error ? error.message : ""))
+      throw error;
+  }
+  const [start, end] = await Promise.all([
+    read("read-start"),
+    read("read-end"),
+  ]);
+  // Its end starts partway through a line.
+  return { start, text: end.slice(end.indexOf("\n") + 1), cut: true };
+}
+
 /** The title Claude Code generated for a session (its latest `ai-title`
  * record), or undefined before it has one. */
 export async function readSessionTitle(
@@ -309,14 +340,11 @@ export async function readSessionTitle(
   if (!project || !/^[\w-]+$/.test(sessionId)) return undefined;
   let file: string;
   try {
-    file = new TextDecoder().decode(
-      await readFile(
-        spawn,
-        "~/.claude/projects",
-        `./${project}/${sessionId}.jsonl`,
-        signal,
-      ),
-    );
+    ({ text: file } = await readSession(
+      spawn,
+      `./${project}/${sessionId}.jsonl`,
+      signal,
+    ));
   } catch (error) {
     signal.throwIfAborted();
     if (/no such file/i.test(error instanceof Error ? error.message : ""))
@@ -374,30 +402,25 @@ export async function readTranscript(
   signal.throwIfAborted();
   const turns: TranscriptTurn[] = [];
   let found = false;
+  let cut = false;
   for (const name of names) {
-    let file: string;
+    let file: Awaited<ReturnType<typeof readSession>>;
     try {
-      file = new TextDecoder().decode(
-        await readFile(
-          spawn,
-          "~/.claude/projects",
-          // Project names start with `-`; GNU base64 would read one as options.
-          `./${project}/${name}`,
-          signal,
-        ),
-      );
+      // Project names start with `-`; GNU base64 would read one as options.
+      file = await readSession(spawn, `./${project}/${name}`, signal);
     } catch (error) {
       signal.throwIfAborted();
       if (/no such file/i.test(error instanceof Error ? error.message : ""))
         continue;
       throw error;
     }
-    if (name !== saved && !startedFor(file, conversation)) continue;
+    if (name !== saved && !startedFor(file.start, conversation)) continue;
     found = true;
+    cut ||= file.cut;
     const sessionId = name.slice(0, -".jsonl".length);
     turns.push(
       ...claudeTurns(
-        file,
+        file.text,
         {
           sessionId,
           channelId: conversation.channelId,
@@ -415,7 +438,7 @@ export async function readTranscript(
   turns.sort((a, b) => a.startedAt - b.startedAt);
   return {
     turns: turns.slice(-TURN_LIMIT),
-    more: turns.length > TURN_LIMIT,
+    more: cut || turns.length > TURN_LIMIT,
     ...(failure
       ? {
           incomplete:

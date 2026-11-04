@@ -240,7 +240,8 @@ function host(files: Record<string, string>) {
   const listed = manifestProcesses(home);
   const reads: HostProcessOptions[] = [];
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
-    if (id === "list" || id === "starts") return listed(id, options);
+    if (["list", "starts", "read-start", "read-end"].includes(id))
+      return listed(id, options);
     let code = 0;
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
     if (id === "read") {
@@ -296,6 +297,34 @@ it("treats a missing session file as no transcript, not a failure", async () => 
       new AbortController().signal,
     ),
   ).resolves.toBeUndefined();
+});
+
+it("reads the latest turns of a session too large to read whole", async () => {
+  clock = 0;
+  const thread = `Session scope: thread\nChannel: dev (#channel)\nThread root: ${root}\nAgent: ${agent}`;
+  const { spawn } = host({
+    // Not the saved session, so its start must say it is this thread's.
+    "./-Users-me--buzz/large.jsonl": [
+      line(
+        "user",
+        prompt("first").replace("Scope: thread", `Scope: thread\n${thread}`),
+      ),
+      line("assistant", [{ type: "text", text: "x".repeat(55 * 1024 * 1024) }]),
+      line("user", prompt("latest")),
+      line("assistant", [{ type: "text", text: "re: latest" }]),
+    ].join("\n"),
+  });
+  const read = await readTranscript(
+    spawn,
+    "~/.buzz",
+    conversation,
+    false,
+    new AbortController().signal,
+  );
+  expect(read?.more).toBe(true);
+  expect(read?.turns.map((turn) => turn.items[0])).toEqual([
+    expect.objectContaining({ text: "latest" }),
+  ]);
 });
 
 it("merges the agent's other sessions for the thread, oldest turn first", async () => {

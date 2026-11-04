@@ -26,6 +26,24 @@
         "program": "base64",
         "args": ["-i"]
       },
+      {
+        "id": "read-start",
+        "program": "bash",
+        "args": [
+          "-c",
+          "set -o pipefail; head -c 4194304 -- \"$1\" | base64",
+          "buzz-read-start"
+        ]
+      },
+      {
+        "id": "read-end",
+        "program": "bash",
+        "args": [
+          "-c",
+          "set -o pipefail; tail -c 41943040 -- \"$1\" | base64",
+          "buzz-read-end"
+        ]
+      },
       { "id": "workspace", "program": "pwd" },
       {
         "id": "starts",

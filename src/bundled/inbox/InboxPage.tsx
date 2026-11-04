@@ -483,7 +483,9 @@ function InboxList({
           activity,
           list.channels.some(
             (channel) =>
-              channel.id === item.channelId && channel.channelType === "dm",
+              channel.id === item.channelId &&
+              (channel.channelType === "dm" ||
+                (channel.channelType === "solo" && !item.thread)),
           ),
         ),
     )

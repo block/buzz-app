@@ -70,9 +70,12 @@ function matches(index: ArchiveIndex, item: InboxItem) {
 }
 
 // The shared Inbox projection groups DMs under a channel read target,
-// including top-level messages and replies. Both renew ordinary activity.
+// including top-level messages and replies. Solo flat rows use the same
+// channel coordinate but keep individual message read targets.
 const ordinaryActivity = (item: InboxItem) =>
-  item.thread || item.target.kind === "channel";
+  item.thread ||
+  item.target.kind === "channel" ||
+  item.id === `${item.channelId}:${item.channelId}`;
 
 function renewed(archive: Archive, item: InboxItem, mentionsOnly = false) {
   const observed = new Set(archive.messageIds);

@@ -30,25 +30,31 @@ export function ProfileArchiveNotice({
     void archives.ensure();
   }, [archives]);
   const archived = snapshot.archived.includes(pubkey);
+  // A result counts only for the snapshot it was read under, so a corrected
+  // archive never keeps an earlier replacement, even when the reread fails.
   const [replacement, setReplacement] = useState<{
     of: string;
+    snapshot: string | undefined;
     key: string | undefined;
   }>();
-  // A new archive snapshot may carry a newer delta, so it rereads.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: snapshot.eventId is an explicit reread trigger.
+  const eventId = snapshot.eventId;
   useEffect(() => {
     if (!archived) return;
     const controller = new AbortController();
     void archives.replacement(pubkey, controller.signal).then(
       (key) => {
-        if (!controller.signal.aborted) setReplacement({ of: pubkey, key });
+        if (!controller.signal.aborted)
+          setReplacement({ of: pubkey, snapshot: eventId, key });
       },
       () => {},
     );
     return () => controller.abort();
-  }, [archives, archived, pubkey, snapshot.eventId]);
+  }, [archives, archived, pubkey, eventId]);
   if (!archived) return null;
-  const successor = replacement?.of === pubkey ? replacement.key : undefined;
+  const successor =
+    replacement?.of === pubkey && replacement.snapshot === eventId
+      ? replacement.key
+      : undefined;
   return (
     <p className="text-body-sm text-secondary" data-testid="profile-archived">
       {successor ? (

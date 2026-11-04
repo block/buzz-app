@@ -61,6 +61,7 @@ export function archiveHides(
 const archivedSets = new WeakMap<readonly string[], ReadonlySet<string>>();
 const empty: readonly string[] = Object.freeze([]);
 const HEX = /^[0-9a-f]{64}$/;
+const CONSENT_PATHS = new Set(["self", "owner", "admin", "relay"]);
 const MAX_BYTES = 2 * 1024 * 1024;
 
 /** Relay-scoped NIP-IA visibility, never access, membership or liveness evidence.
@@ -338,9 +339,9 @@ export function createIdentityArchives(
         uncertain ?? new Error("The relay did not confirm the change. Retry.")
       );
   }
-  /** The key named as `replaced-by` on the relay's newest archive delta for
-   * `pubkey`. Callers show it only while `state(pubkey)` is "archived": an
-   * unarchive leaves the old delta in place. Presentation only, never access. */
+  /** The key named as `replaced-by` on the relay's newest delta for `pubkey`,
+   * when that delta is a well-formed archive delta. Callers show it only while
+   * `state(pubkey)` is "archived". Presentation only, never access. */
   async function replacement(
     pubkey: string,
     signal?: AbortSignal,
@@ -348,18 +349,31 @@ export function createIdentityArchives(
     if (closed || !available || !authority || !HEX.test(pubkey))
       return undefined;
     const events = await reader.read(
-      [{ kinds: [8002], authors: [authority], "#p": [pubkey], limit: 1 }],
+      [{ kinds: [8002, 8003], authors: [authority], "#p": [pubkey], limit: 1 }],
       { ...(signal && { signal }), priority: "background", fresh: true },
     );
     const delta = events
-      .filter((event) => event.kind === 8002 && event.pubkey === authority)
+      .filter(
+        (event) =>
+          (event.kind === 8002 || event.kind === 8003) &&
+          event.pubkey === authority,
+      )
       .reduce<RelayEvent | undefined>(newer, undefined);
-    const targets = delta?.tags.filter(([name]) => name === "p") ?? [];
-    if (targets.length !== 1 || targets[0]?.[1] !== pubkey) return undefined;
-    const [tag, ...extra] =
-      delta?.tags.filter(([name]) => name === "replaced-by") ?? [];
+    if (delta?.kind !== 8002) return undefined;
+    const tags = (name: string) => delta.tags.filter(([key]) => key === name);
+    const [target, ...targets] = tags("p");
+    const [consent, ...consents] = tags("consent");
+    const [tag, ...extra] = tags("replaced-by");
     const next = tag?.[1];
-    return !extra.length && next && HEX.test(next) && next !== pubkey
+    return tags("-").length === 1 &&
+      !targets.length &&
+      target?.[1] === pubkey &&
+      !consents.length &&
+      CONSENT_PATHS.has(consent?.[1] ?? "") &&
+      !extra.length &&
+      next &&
+      HEX.test(next) &&
+      next !== pubkey
       ? next
       : undefined;
   }

@@ -2,9 +2,9 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { profileTarget } from "../../features/profiles/target";
 import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -26,32 +26,41 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-function snapshot(keys: string[]) {
+function snapshot(keys: string[], created_at?: number) {
   return signed(relayKey, {
     kind: 13535,
     content: "",
     tags: [["-"], ...keys.map((key) => ["p", key])],
+    ...(created_at && { created_at }),
   });
 }
-function delta(target: string, tags: string[][], by: Key = relayKey) {
+function delta(
+  target: string,
+  tags: string[][],
+  {
+    by = relayKey,
+    kind = 8002,
+    created_at,
+    base = [["-"], ["p", target], ["consent", "self", target]],
+  }: { by?: Key; kind?: number; created_at?: number; base?: string[][] } = {},
+) {
   return signed(by, {
-    kind: 8002,
+    kind,
     content: "",
-    tags: [
-      ["-"],
-      ["p", target],
-      ["consent", "self", target],
-      ["reason", "rotated"],
-      ...tags,
-    ],
+    tags: [...base, ["reason", "rotated"], ...tags],
+    ...(created_at && { created_at }),
   });
 }
 /** `extra` events answer every filter of their kind, whatever its authors:
- * a relay that ignores the authors filter. */
+ * a relay that ignores the authors filter. While `failing.deltas` is set,
+ * delta reads fail. */
 function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
+  const failing = { deltas: false };
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    filters.flatMap((filter) =>
-      events
+    filters.flatMap((filter) => {
+      if (failing.deltas && filter.kinds?.includes(8002))
+        throw new Error("relay unavailable");
+      const matches = events
         .filter(
           (event) =>
             (!filter.kinds || filter.kinds.includes(event.kind)) &&
@@ -62,8 +71,12 @@ function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
                   name === "p" && filter["#p"]?.includes(key ?? ""),
               )),
         )
-        .concat(extra.filter((event) => filter.kinds?.includes(event.kind))),
-    ),
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, filter.limit);
+      return matches.concat(
+        extra.filter((event) => filter.kinds?.includes(event.kind)),
+      );
+    }),
   );
   const viewer = keypair().pubkey;
   const owner = createRelaySession({
@@ -86,6 +99,7 @@ function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
     snapshot: () => ready,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -98,7 +112,7 @@ function mount(events: RelayEvent[], extra: RelayEvent[] = []) {
       context={{ channelId: "c", canOpen: () => true, open }}
     />,
   );
-  return { query, open };
+  return { query, open, failing, archives: owner.session.archives };
 }
 const people = [
   profile(old, { name: "Old Key" }),
@@ -125,7 +139,11 @@ it("says archived without a link when no trusted delta names a replacement", asy
   // Only the relay identity's deltas count, even if the relay returns others.
   mount(
     [...people, snapshot([old.pubkey])],
-    [delta(old.pubkey, [["replaced-by", successor.pubkey]], keypair())],
+    [
+      delta(old.pubkey, [["replaced-by", successor.pubkey]], {
+        by: keypair(),
+      }),
+    ],
   );
   await waitFor(() =>
     expect(screen.getByTestId("profile-archived")).toHaveTextContent(
@@ -151,4 +169,89 @@ it("shows nothing for a key that is not archived, even with an old delta", async
   expect(query.mock.calls.flatMap(([filters]) => filters)).not.toEqual(
     expect.arrayContaining([expect.objectContaining({ kinds: [8002] })]),
   );
+});
+
+describe("ignores a relay delta NIP-IA says to ignore", () => {
+  const replaced = [["replaced-by", successor.pubkey]];
+  it.each([
+    [
+      "no protected marker",
+      {
+        base: [
+          ["p", old.pubkey],
+          ["consent", "self", old.pubkey],
+        ],
+      },
+    ],
+    ["no consent", { base: [["-"], ["p", old.pubkey]] }],
+    [
+      "an unknown consent path",
+      { base: [["-"], ["p", old.pubkey], ["consent", "friend", old.pubkey]] },
+    ],
+    [
+      "two targets",
+      {
+        base: [
+          ["-"],
+          ["p", old.pubkey],
+          ["p", successor.pubkey],
+          ["consent", "self", old.pubkey],
+        ],
+      },
+    ],
+  ])("%s", async (_, options) => {
+    mount([
+      ...people,
+      snapshot([old.pubkey]),
+      delta(old.pubkey, replaced, options),
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+        "This key is archived in this community.",
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: /new key profile/ }),
+    ).toBeNull();
+  });
+  it("a newer unarchive delta", async () => {
+    mount([
+      ...people,
+      snapshot([old.pubkey]),
+      delta(old.pubkey, replaced),
+      delta(old.pubkey, [], { kind: 8003, created_at: 1_700_000_010 }),
+    ]);
+    await waitFor(() =>
+      expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+        "This key is archived in this community.",
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: /new key profile/ }),
+    ).toBeNull();
+  });
+});
+
+it("drops a replacement the next archive snapshot has not confirmed", async () => {
+  const events = [
+    ...people,
+    snapshot([old.pubkey]),
+    delta(old.pubkey, [["replaced-by", successor.pubkey]]),
+  ];
+  const { failing, archives } = mount(events);
+  await screen.findByRole("button", { name: "Open new key profile: New Key" });
+
+  // The archive was corrected, and the reread of its delta fails.
+  events.push(
+    snapshot([old.pubkey], 1_700_000_020),
+    delta(old.pubkey, [], { created_at: 1_700_000_020 }),
+  );
+  failing.deltas = true;
+  await act(() => archives.refresh());
+  await waitFor(() =>
+    expect(screen.getByTestId("profile-archived")).toHaveTextContent(
+      "This key is archived in this community.",
+    ),
+  );
+  expect(screen.queryByRole("button", { name: /new key profile/ })).toBeNull();
 });

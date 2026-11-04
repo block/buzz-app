@@ -10,6 +10,7 @@ import { ComposerChatCards } from "./ComposerChatCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
+import { TypingIndicator } from "./TypingIndicator";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { selectNewestMessage } from "./message-selection";
@@ -58,14 +59,12 @@ import {
 import { rememberAgentsPreference } from "./mention-preferences";
 import { useChosenAgent } from "../solo/default-agent";
 import { useAgentChoices } from "../agents/use-choices";
-import { ownSolo } from "../solo/labels";
 import {
   soloAgentsOnly,
   soloHasPeople,
   soloRoster,
   useSoloMembers,
 } from "../solo/people";
-import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
   PaperclipIcon,
@@ -152,6 +151,7 @@ import { TargetOpenerProvider } from "../conversation/opener";
 import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
+import { followUpMessage } from "./follow-up-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
@@ -283,7 +283,6 @@ export type MessageComposerProps = {
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
-  activityClickOpensPanel?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
@@ -488,7 +487,6 @@ function Composer({
   shown = true,
   requireMention = false,
   chatPresentation = false,
-  activityClickOpensPanel = false,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
@@ -2553,28 +2551,6 @@ function Composer({
       ) {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        const destination = session.channels
-          .list()
-          .channels.find((channel) => channel.id === channelId);
-        if (
-          queueFollowUp &&
-          (!destination || destination.archived || destination.readOnly)
-        )
-          throw new Error("This chat is no longer available for sending.");
-        if (
-          queueFollowUp &&
-          (!ownSolo(destination, session.viewer) ||
-            recipients.some(
-              (key) =>
-                archivedMention(session, key) ||
-                !session.agentChoices
-                  .snapshot()
-                  .selectable.some((agent) => agent.pubkey === key),
-            ))
-        )
-          throw new Error(
-            "This Solo chat or its recipients are no longer available.",
-          );
         return threadRootId
           ? sender.messages.reply(
               channelId,
@@ -2606,28 +2582,35 @@ function Composer({
       ) => {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        return queueFollowUp && host
-          ? followUpQueue(host).submit(
-              {
-                channelId,
-                text: content,
-                recipients,
-                beforeRelease: async () => {
-                  const channel =
-                    await session.channelWrites.refreshMembership(channelId);
-                  if (recipients.some((key) => !channel.members?.includes(key)))
-                    throw new Error(
-                      "A queued recipient is no longer a member of this chat.",
-                    );
-                },
-                publish: () => publishNow(uploaded, host),
-                onSend: (id) => {
-                  if (live.current) onSend?.(id);
-                },
-              },
-              validated,
-            )
-          : publishNow(uploaded, session);
+        if (!queueFollowUp || !host) return publishNow(uploaded, session);
+        const message = {
+          channelId,
+          text: content,
+          recipients,
+          attachments: uploaded,
+          references,
+          picks: sentPicks,
+        };
+        const send = followUpMessage(host, message);
+        return followUpQueue(host).submit(
+          {
+            ...message,
+            message,
+            beforeRelease: send.beforeRelease,
+            ready: send.ready,
+            publish: (recovery) => {
+              if (compactingNow(recipients))
+                throw new Error(
+                  "Wait for compaction to finish, or interrupt it.",
+                );
+              return send.publish(recovery);
+            },
+            onSend: (id) => {
+              if (live.current) onSend?.(id);
+            },
+          },
+          validated,
+        );
       };
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
@@ -2800,12 +2783,10 @@ function Composer({
     <div className={styles.composerContext}>
       {!cached && !submission && (
         <TypingIndicator
-          clickOpensPanel={activityClickOpensPanel}
+          audience="humans"
           session={session}
           channelId={channelId}
           threadRootId={threadRootId}
-          canOpenActivity={canOpenLink}
-          openActivity={onOpenLink}
         />
       )}
       {host && extensions?.accessories && (

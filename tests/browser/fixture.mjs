@@ -34,6 +34,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  enabledPlugins: [[], { option: true }],
   builderlab: [{}, { option: true }],
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
@@ -61,6 +62,7 @@ export const test = base.extend({
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
+  leaveRosterBeforeAck: [false, { option: true }],
   guestPermalinks: [false, { option: true }],
   lifecycleRole: ["owner", { option: true }],
   lifecycleOwnerAgent: [false, { option: true }],
@@ -109,6 +111,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      enabledPlugins,
       builderlab,
       liveSetupTimeoutMs,
       actionProfile,
@@ -134,6 +137,7 @@ export const test = base.extend({
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
+      leaveRosterBeforeAck,
       guestPermalinks,
       lifecycleRole,
       lifecycleOwnerAgent,
@@ -1095,7 +1099,16 @@ export const test = base.extend({
       if (ownSoloChannels.length > 0 && filter.ids)
         return [
           ...readEvents.get(community).values(),
-          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+          ...[...histories.entries()]
+            .filter(
+              ([key]) =>
+                key.startsWith(`${community}/`) &&
+                (!filter["#h"] ||
+                  filter["#h"].some(
+                    (channel) => key === `${community}/${channel}`,
+                  )),
+            )
+            .flatMap(([, events]) => events),
         ].filter((event) => filter.ids.includes(event.id));
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
@@ -1874,6 +1887,11 @@ export const test = base.extend({
         if (event.kind === 9008 || event.kind === 9022)
           rosterIds.splice(rosterIds.indexOf(id), 1);
         lifecycleTime++;
+        if (event.kind === 9022 && leaveRosterBeforeAck)
+          relay.publish(
+            community,
+            sign(39002, [["d", id]], "", relayKey, lifecycleTime),
+          );
         report.lifecyclePublications ??= [];
         report.lifecyclePublications.push(event);
         return;
@@ -2431,7 +2449,21 @@ export const test = base.extend({
           observer.observe(document, { childList: true, subtree: true });
         });
       await page.addInitScript(
-        ({ viewer, profilePicture, iconCongestion }) => {
+        ({ viewer, profilePicture, iconCongestion, enabledPlugins }) => {
+          // Model fresh plugin choices before seeding an existing community.
+          // Feature journeys opt in once; reloads retain later user choices.
+          if (!localStorage.getItem("buzzodz.plugins.v1"))
+            localStorage.setItem(
+              "buzzodz.plugins.v1",
+              JSON.stringify({
+                version: 3,
+                enabled: {
+                  "buzz.reminders": false,
+                  "buzz.workflows": false,
+                  ...Object.fromEntries(enabledPlugins.map((id) => [id, true])),
+                },
+              }),
+            );
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
@@ -2455,7 +2487,7 @@ export const test = base.extend({
               }),
             );
         },
-        { viewer, profilePicture, iconCongestion },
+        { viewer, profilePicture, iconCongestion, enabledPlugins },
       );
       await use({
         sign: (template) => finalizeEvent(template, userKey),

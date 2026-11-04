@@ -24,6 +24,7 @@ import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
+import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
@@ -301,6 +302,29 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   // A page that presents its own failure in place stays on screen.
   const failedPage = route.state.status === "failed" && !route.state.presented;
+  // A kept timeout keeps only a page that is drawn. If the deadline passed
+  // while the host drew its loading state instead, report it as the host's own
+  // failure, so its card and Retry show. Loading that starts later over a kept
+  // page stays a loading state.
+  const drawsLoading =
+    route.waiting || (!settings && (startup === "loading" || restoring));
+  const keptTimeout =
+    route.state.status === "failed" &&
+    route.state.presented &&
+    route.state.reason === "timeout"
+      ? route.state.attempt
+      : undefined;
+  // By attempt id: a late address update replaces the attempt object, not it.
+  const decidedTimeout = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!keptTimeout || decidedTimeout.current === keptTimeout.id) return;
+    decidedTimeout.current = keptTimeout.id;
+    if (drawsLoading)
+      services.navigationHost.complete(keptTimeout, {
+        status: "failed",
+        reason: "timeout",
+      });
+  }, [services, keptTimeout, drawsLoading]);
   const pageOwnsCompanion =
     !!workspace.page?.companion &&
     (settings
@@ -367,9 +391,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         : { scope: null }),
     });
   };
+  // As for pages, a timed-out reopen of the shown section keeps its editor.
   const settingsUnavailable =
-    (!route.state.ingress && !!route.failure) ||
-    route.state.status === "failed";
+    (!route.state.ingress && !!route.failure) || failedPage;
   const settingsBlocked = settingsUnavailable || route.waiting;
   const settingsScope =
     route.target.kind === "settings"
@@ -642,6 +666,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               relay={services.relay}
             />
             <InterruptedNotice agents={services.agents} />
+            <MediaMenuDownloadNotice />
             <CreationReview agents={services.agents} />
             <UpdateReview agents={services.agents} />
             {!settings && startup === "recovery" ? (

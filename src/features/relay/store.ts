@@ -100,8 +100,10 @@ export type ChannelStoreOptions = {
   maxHeads?: number;
   maxHistoryRows?: number;
   maxHistoryBytes?: number;
-  /** Public directory budget in pages of 500; at most the default 20,000. */
+  /** Public directory budget in whole pages; at most the default 20,000. */
   maxPublicDirectory?: number;
+  /** Public directory page size, at most the default 500. */
+  publicDirectoryPage?: number;
   now?: () => number;
   local?: Pick<Outbox, "snapshot" | "subscribe">;
   /** The session's send clock; rendered windows raise its channel watermarks. */
@@ -111,9 +113,15 @@ export type ChannelStoreOptions = {
 const EMPTY_ROWS: readonly ChannelMessage[] = Object.freeze([]);
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
+/** Channels one creator-proof filter names. Each has one creation, so a limit
+ * of twice this, the relay's maximum, leaves room for strays; a filter that
+ * reaches it proves only the channels whose creation arrived. */
+const CREATION_READ_CHANNELS = 250;
 // Public channel metadata for name search, read a page at a time up to a
 // bound; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
+/** Rosters per member-count read: one can run to hundreds of KB. */
+const MEMBER_COUNT_CHUNK = 10;
 // One exact resolution can consume the reader's full response byte budget.
 const PUBLIC_CHANNEL_RESERVE_BYTES = 8 * 1024 * 1024;
 const PUBLIC_CHANNEL_DIRECTORY = 20_000;
@@ -235,6 +243,7 @@ export function createChannelStore(
     maxHistoryRows = 2400,
     maxHistoryBytes = 8 * 1024 * 1024,
     maxPublicDirectory = PUBLIC_CHANNEL_DIRECTORY,
+    publicDirectoryPage = PUBLIC_CHANNEL_PAGE,
     now = Date.now,
     local,
     clock = new MessageClock(),
@@ -244,9 +253,12 @@ export function createChannelStore(
   if (!Number.isInteger(maxWindows) || maxWindows < 1)
     throw new Error("Invalid window capacity");
   if (
+    !Number.isInteger(publicDirectoryPage) ||
+    publicDirectoryPage < 1 ||
+    publicDirectoryPage > PUBLIC_CHANNEL_PAGE ||
     !Number.isInteger(maxPublicDirectory) ||
-    maxPublicDirectory % PUBLIC_CHANNEL_PAGE !== 0 ||
-    maxPublicDirectory < PUBLIC_CHANNEL_PAGE ||
+    maxPublicDirectory % publicDirectoryPage !== 0 ||
+    maxPublicDirectory < publicDirectoryPage ||
     maxPublicDirectory > PUBLIC_CHANNEL_DIRECTORY
   )
     throw new Error("Invalid public directory capacity");
@@ -302,6 +314,8 @@ export function createChannelStore(
   let dropped = true;
   const accessVersions = new Map<string, number>();
   const listListeners = new Set<Listener>();
+  /** Directory pages and finished reads, for browsing. */
+  const directoryListeners = new Set<Listener>();
   const windowListeners = new Map<string, Set<Listener>>();
   let intent: string | undefined = options.initialChannelId;
   let current: string | undefined;
@@ -1192,7 +1206,7 @@ export function createChannelStore(
   ) {
     if (!transport || !discovery || options.cachedOnly) return;
     const pending = new Map<string, CreationRead>();
-    const filters = events.flatMap((event) => {
+    const wanted = events.flatMap((event) => {
       const id = tag(event, "d");
       const identity = channelIdentity(event);
       if (
@@ -1210,19 +1224,27 @@ export function createChannelStore(
       const read = { version: event.id, complete: false };
       creationReads.set(id, read);
       pending.set(id, read);
-      return [
-        {
-          kinds: [9007],
-          ...(settings?.consistency
-            ? { consistency: settings.consistency }
-            : {}),
-          authors: [identity.creator],
-          "#h": [id],
-          limit: 1,
-        },
-      ];
+      return [{ id, creator: identity.creator }];
     });
-    if (!filters.length) return;
+    if (!wanted.length) return;
+    const creators = new Map(wanted.map(({ id, creator }) => [id, creator]));
+    // One filter names many channels and their creators. Discovery accepts a
+    // creation only from its own channel's creator, so a cross match is ignored.
+    const filters = [];
+    for (
+      let offset = 0;
+      offset < wanted.length;
+      offset += CREATION_READ_CHANNELS
+    ) {
+      const chunk = wanted.slice(offset, offset + CREATION_READ_CHANNELS);
+      filters.push({
+        kinds: [9007],
+        ...(settings?.consistency ? { consistency: settings.consistency } : {}),
+        authors: [...new Set(chunk.map(({ creator }) => creator))],
+        "#h": chunk.map(({ id }) => id),
+        limit: 2 * chunk.length,
+      });
+    }
     const generation = epoch;
     const controller = new AbortController();
     controllers.add(controller);
@@ -1242,13 +1264,38 @@ export function createChannelStore(
         settings?.signal?.throwIfAborted();
         if (disposed || generation !== epoch || controller.signal.aborted)
           throw new DOMException("Stale creation resolution", "AbortError");
+        const creations = receipts.filter((event) => event.kind === 9007);
+        const proved = new Set(
+          creations.flatMap((event) => {
+            const coordinates = event.tags.filter(([name]) => name === "h");
+            const id =
+              coordinates.length === 1 && coordinates[0]?.length === 2
+                ? coordinates[0][1]
+                : undefined;
+            return id && event.pubkey === creators.get(id) ? [id] : [];
+          }),
+        );
         for (const filter of filters.slice(offset, offset + 4)) {
-          const id = filter["#h"][0];
-          const read = id && pending.get(id);
-          if (id && read && creationReads.get(id) === read)
-            read.complete = true;
+          // A filter cut at its limit may have left a channel's creation out.
+          const cut =
+            creations.filter((event) =>
+              event.tags.some(
+                ([name, id]) => name === "h" && filter["#h"].includes(id ?? ""),
+              ),
+            ).length >= filter.limit;
+          for (const id of filter["#h"]) {
+            const read = pending.get(id);
+            if (
+              read &&
+              creationReads.get(id) === read &&
+              (!cut || proved.has(id))
+            )
+              read.complete = true;
+            else if (read && creationReads.get(id) === read)
+              creationReads.delete(id);
+          }
         }
-        applyDiscovery(receipts.filter((event) => event.kind === 9007));
+        applyDiscovery(creations);
       }
     })()
       .catch((error) => {
@@ -1964,8 +2011,13 @@ export function createChannelStore(
         /** Settles when the next page lands or the read ends. */
         page: Promise<void>;
         read: Promise<{ partial: boolean }>;
-        /** The finished read's open channels, newest metadata per channel. */
+        /** A refresh of a finished read, whose names it keeps meanwhile. */
+        refresh: boolean;
+        /** The finished read's open channels (the prior read's during a
+         * refresh), newest metadata per channel. */
         open?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
+        /** A first read's open channels so far, for browsing only. */
+        pages?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
       }
     | undefined;
   const noOpenDirectory: ReturnType<
@@ -1982,26 +2034,55 @@ export function createChannelStore(
     }
     return latest;
   }
+  type DirectoryChannel = ReturnType<
+    NonNullable<ChannelQueries["openDirectory"]>
+  >[number];
+  function directoryChannel(
+    id: string,
+    event: RelayEvent,
+  ): DirectoryChannel | undefined {
+    const name = openMetadata(event) && metadataName(event);
+    if (!name) return undefined;
+    const type = tag(event, "t");
+    return Object.freeze({
+      id,
+      name,
+      ...(type === "stream" || type === "forum" ? { channelType: type } : {}),
+      ...(tag(event, "about") ? { description: tag(event, "about") } : {}),
+      ...(hasTag(event, "archived", "true") ? { archived: true as const } : {}),
+    });
+  }
   function openDirectoryChannels(events: readonly RelayEvent[]) {
     return Object.freeze(
       [...latestPublicMetadata(events).entries()].flatMap(([id, event]) => {
-        const name = openMetadata(event) && metadataName(event);
-        if (!name) return [];
-        const type = tag(event, "t");
-        return [
-          Object.freeze({
-            id,
-            name,
-            ...(type === "stream" || type === "forum"
-              ? { channelType: type }
-              : {}),
-            ...(hasTag(event, "archived", "true")
-              ? { archived: true as const }
-              : {}),
-          }),
-        ];
+        const channel = directoryChannel(id, event);
+        return channel ? [channel] : [];
       }),
     );
+  }
+  /** A first read's channels, folded a page at a time: each page projects
+   * only its own events, in the order the relay sent them. */
+  function directoryPages() {
+    const latest = new Map<string, RelayEvent>();
+    const channels = new Map<string, DirectoryChannel | undefined>();
+    let folded = 0;
+    return (events: readonly RelayEvent[]) => {
+      for (const event of events.slice(folded)) {
+        const id = tag(event, "d");
+        if (!id) continue;
+        const previous = latest.get(id);
+        const next = newer(previous, event);
+        if (next === previous) continue;
+        latest.set(id, next);
+        channels.set(id, directoryChannel(id, next));
+      }
+      folded = events.length;
+      return Object.freeze(
+        [...channels.values()].filter(
+          (channel): channel is DirectoryChannel => !!channel,
+        ),
+      );
+    };
   }
   /** All open channels' metadata, newest first, through the relay's
    * `(until, before_id)` cursor. One read serves every keystroke: a caller
@@ -2021,7 +2102,7 @@ export function createChannelStore(
           {
             kinds: [39000],
             authors: [relay.relayAuthor],
-            limit: PUBLIC_CHANNEL_PAGE,
+            limit: publicDirectoryPage,
             ...(since !== undefined ? { since } : {}),
             ...cursor,
           },
@@ -2036,7 +2117,7 @@ export function createChannelStore(
           (event) => event.kind === 39000 && event.pubkey === relay.relayAuthor,
         ),
       );
-      if (page.length < PUBLIC_CHANNEL_PAGE) return { partial: false };
+      if (page.length < publicDirectoryPage) return { partial: false };
       if (events.length >= maxPublicDirectory) return { partial: true };
       landed();
       // Relay query order is time descending, then ID ascending (also at ties).
@@ -2053,24 +2134,13 @@ export function createChannelStore(
       cursor = { until: last.created_at, before_id: last.id };
     }
   }
-  async function searchPublic(
-    query: string,
-    settings?: ReadOptions & {
-      limit?: number;
-      exact?: boolean;
-      progress?: ((found: PublicChannelSearch) => void) | undefined;
-    },
-    recover = true,
-  ): Promise<PublicChannelSearch> {
-    if (disposed || !transport || !discovery || options.cachedOnly)
-      throw new Error("Relay is unavailable");
-    const needle = query.trim().toLowerCase().replace(/^#/, "");
-    if (!needle) return { channels: [], partial: false };
-    if (list.status !== "ready")
-      throw new Error("Channel list is not ready for channel search");
-    const generation = epoch;
-    // Candidates only: `resolve` below re-reads each match, so a reused page
-    // never grants access by itself.
+  /** The shared directory read for this epoch: the one in flight, a
+   * finished one still fresh, or a new full read or delta. Candidates only:
+   * a page never grants access by itself. */
+  function currentPublicDirectory(
+    relay: RelayReader & { relayAuthor: string },
+    generation: number,
+  ): NonNullable<typeof publicDirectory> {
     if (
       publicDirectory?.generation !== generation ||
       (publicDirectory.at !== undefined &&
@@ -2103,9 +2173,10 @@ export function createChannelStore(
         : undefined;
       let land = () => {};
       const next = () => new Promise<void>((settle) => (land = settle));
+      const fold = directoryPages();
       const read = (since?: number) =>
         readPublicDirectory(
-          transport,
+          relay,
           generation,
           controller.signal,
           events,
@@ -2113,11 +2184,19 @@ export function createChannelStore(
             const landed = land;
             entry.page = next();
             landed();
+            // A first read shows its channels a page at a time, so browsing
+            // starts on the first page; a refresh keeps the prior ones whole.
+            // Only browsing hears pages: name references wait for the end.
+            if (!entry.refresh) {
+              entry.pages = fold(events);
+              notify(directoryListeners);
+            }
           },
           since,
         );
       const entry: NonNullable<typeof publicDirectory> = {
         generation,
+        refresh: !!prior?.open,
         started,
         fullAt: incremental ? prior.fullAt : started,
         incremental,
@@ -2151,20 +2230,174 @@ export function createChannelStore(
           entry.at = now();
           entry.partial = partial;
           delete entry.previous;
+          delete entry.pages;
           // Name references in mounted rows read the directory through the
           // list subscription; the list itself is unchanged.
           entry.open = openDirectoryChannels(entry.events);
           notify(listListeners);
+          notify(directoryListeners);
           land();
         },
         () => {
           controllers.delete(controller);
-          if (publicDirectory === entry) publicDirectory = prior;
+          if (publicDirectory === entry) {
+            publicDirectory = prior;
+            if (entry.pages) notify(directoryListeners);
+          }
           land();
         },
       );
     }
-    const entry = publicDirectory;
+    return publicDirectory;
+  }
+  /** Read the whole open-channel directory, for browsing. Shares the search
+   * read; `openDirectory` then names its channels. Never resolves them. */
+  async function readDirectory(
+    settings?: { signal?: AbortSignal | undefined },
+    recover = true,
+  ): Promise<{ partial: boolean }> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for channel browsing");
+    const generation = epoch;
+    const signal = settings?.signal;
+    signal?.throwIfAborted();
+    const read = currentPublicDirectory(transport, generation).read;
+    const stale = new DOMException("Stale channel directory", "AbortError");
+    try {
+      const result = await (signal
+        ? Promise.race([
+            read,
+            new Promise<never>((_, reject) =>
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              }),
+            ),
+          ])
+        : read);
+      if (disposed || generation !== epoch) throw stale;
+      return result;
+    } catch (error) {
+      // An access change since this read began voids whatever it settled
+      // with. One restarts it, as searchPublic does; further changes and
+      // network failures keep the caller's retry.
+      if (
+        recover &&
+        !disposed &&
+        !signal?.aborted &&
+        generation !== epoch &&
+        revokedEpoch === epoch
+      )
+        return readDirectory(settings, false);
+      throw error;
+    }
+  }
+  /** Recent member counts, by channel, for this epoch. */
+  let memberCounts:
+    | { generation: number; counts: Map<string, { count: number; at: number }> }
+    | undefined;
+  /** How many members each open channel has, for browsing. Joined channels
+   * answer from their roster; others read the relay-signed roster, which an
+   * open channel publishes to anyone. Display only: never grants access. */
+  async function readMemberCounts(
+    channelIds: readonly string[],
+    settings?: { signal?: AbortSignal | undefined },
+  ): Promise<{
+    counts: ReadonlyMap<string, number>;
+    failed: readonly string[];
+  }> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const relay = transport;
+    const generation = epoch;
+    if (memberCounts?.generation !== generation)
+      memberCounts = { generation, counts: new Map() };
+    const { counts } = memberCounts;
+    const answer = new Map<string, number>();
+    const missing: string[] = [];
+    for (const id of new Set(channelIds)) {
+      const members = discovery.authorized(id)
+        ? discovery.get(id)?.members?.length
+        : undefined;
+      const known = counts.get(id);
+      if (members !== undefined) answer.set(id, members);
+      else if (known && now() - known.at < REFERENCE_TTL)
+        answer.set(id, known.count);
+      else missing.push(id);
+    }
+    // A roster can run to hundreds of KB, so reads stay small and run side
+    // by side. Each keeps what it found even when another fails.
+    const failed: string[] = [];
+    const chunks: string[][] = [];
+    for (let start = 0; start < missing.length; start += MEMBER_COUNT_CHUNK)
+      chunks.push(missing.slice(start, start + MEMBER_COUNT_CHUNK));
+    const read = async (ids: string[]) => {
+      const events = await relay.read(
+        [
+          {
+            kinds: [39002],
+            authors: [relay.relayAuthor],
+            "#d": ids,
+            limit: ids.length,
+          },
+        ],
+        {
+          ...(settings?.signal ? { signal: settings.signal } : {}),
+          // On screen now, so it doesn't queue behind background lookups.
+          priority: "foreground",
+          fresh: true,
+        },
+      );
+      if (settings?.signal?.aborted || disposed || generation !== epoch) return;
+      const latest = new Map<string, RelayEvent>();
+      for (const event of events) {
+        const id = tag(event, "d");
+        if (
+          event.kind === 39002 &&
+          event.pubkey === relay.relayAuthor &&
+          id &&
+          ids.includes(id)
+        )
+          latest.set(id, newer(latest.get(id), event));
+      }
+      for (const [id, event] of latest) {
+        const count = new Set(
+          event.tags.flatMap(([name, value]) =>
+            name === "p" && value ? [value] : [],
+          ),
+        ).size;
+        counts.set(id, { count, at: now() });
+        answer.set(id, count);
+      }
+    };
+    await Promise.all(
+      chunks.map((ids) => read(ids).catch(() => failed.push(...ids))),
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale member counts", "AbortError");
+    return { counts: answer, failed };
+  }
+  async function searchPublic(
+    query: string,
+    settings?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
+    recover = true,
+  ): Promise<PublicChannelSearch> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle) return { channels: [], partial: false };
+    if (list.status !== "ready")
+      throw new Error("Channel list is not ready for channel search");
+    const generation = epoch;
+    // Candidates only: `resolve` below re-reads each match, so a reused page
+    // never grants access by itself.
+    const entry = currentPublicDirectory(transport, generation);
     const signal = settings?.signal;
     const limit = settings?.limit ?? 8;
     const resolved = new Set<string>();
@@ -2622,8 +2855,10 @@ export function createChannelStore(
       warming = false;
     }
   }
-  /** Channel-link lookups. `withheld` answers are kept for a while (and
-   * shown while rechecked); failures back off. Both reset with the epoch.
+  /** Channel-link lookups. `withheld` keeps a lookup that admitted nothing (a
+   * withheld answer, or a left channel still unreadable) for a while, and its
+   * answer is shown while rechecked; failures back off. Both reset with the
+   * epoch.
    * `demand` counts mounted links per channel; a timer rechecks them when
    * their answer expires or their backoff ends. */
   const references = {
@@ -2677,8 +2912,11 @@ export function createChannelStore(
         ...(channel.members?.length ? { members: channel.members.length } : {}),
       };
     }
+    const state = currentReferences();
+    const looking = state.queue.has(id) || state.pending.has(id);
     // A public channel the viewer has left: its signed open metadata stays
-    // public even while discovery denies reading it as a member.
+    // public even while discovery denies reading it as a member, until a
+    // lookup confirms it is still open.
     const event = discovery?.metadataVersion(id);
     const name = event && openMetadata(event) && metadataName(event);
     if (event && name) {
@@ -2693,11 +2931,15 @@ export function createChannelStore(
         hidden: false,
         archived: hasTag(event, "archived", "true"),
         joined: false,
+        readable: false,
+        ...(looking ? { looking: true as const } : {}),
       };
     }
-    return currentReferences().withheld.has(id)
+    return state.withheld.has(id)
       ? { state: "withheld" }
-      : { state: "unknown" };
+      : looking
+        ? { state: "looking" }
+        : { state: "unknown" };
   }
   /** When a demanded reference may be looked up again: its withheld answer
    * expires, or its backoff ends. */
@@ -2732,8 +2974,9 @@ export function createChannelStore(
   }
   function lookUpReference(id: string) {
     if (disposed || !transport || !discovery || options.cachedOnly) return;
-    if (list.status !== "ready" || describeReference(id).state === "found")
-      return;
+    // Discovery's admission, not a found name, decides: a left channel's
+    // messages need a fresh lookup.
+    if (list.status !== "ready" || discovery.get(id)) return;
     const state = currentReferences();
     if (
       state.queue.has(id) ||
@@ -2761,8 +3004,7 @@ export function createChannelStore(
             for (const id of batch) {
               state.pending.delete(id);
               state.retryAt.delete(id);
-              if (describeReference(id).state === "found")
-                state.withheld.delete(id);
+              if (discovery?.get(id)) state.withheld.delete(id);
               else state.withheld.set(id, now());
             }
             setList(list, true);
@@ -2778,10 +3020,16 @@ export function createChannelStore(
               state.pending.delete(id);
               state.retryAt.set(id, now() + wait);
             }
+            // Arm the retry first, so a throwing listener can't skip it.
             wakeReferences();
+            // Its links stop waiting through the backoff.
+            notify(listListeners);
           },
         );
       }
+      // Their links now wait for these answers, once per batch and after the
+      // reads start. A withheld answer stays on screen while it is rechecked.
+      if (ids.some((id) => !state.withheld.has(id))) notify(listListeners);
     });
   }
   function referChannel(id: string) {
@@ -2840,12 +3088,24 @@ export function createChannelStore(
     searchPublic,
     findLabeled,
     matchPublic,
+    readDirectory,
+    readMemberCounts,
+    directoryComplete: () =>
+      publicDirectory?.generation === epoch &&
+      (publicDirectory.refresh || publicDirectory.at !== undefined),
     openDirectory: () =>
       publicDirectory?.generation === epoch
         ? (publicDirectory.open ?? noOpenDirectory)
         : noOpenDirectory,
+    browseDirectory: () =>
+      publicDirectory?.generation === epoch
+        ? (publicDirectory.pages ?? publicDirectory.open ?? noOpenDirectory)
+        : noOpenDirectory,
+    subscribeDirectory: (listener: Listener) =>
+      subscribe(directoryListeners, listener),
     describe: describeReference,
-    refer: referChannel,
+    // A cached-only store never looks a reference up, so it offers no lookup.
+    ...(options.cachedOnly ? {} : { refer: referChannel }),
     refreshRoster,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>

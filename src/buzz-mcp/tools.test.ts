@@ -139,9 +139,10 @@ it.each([false, true])(
     const protect = vi.fn<NonNullable<BuzzClient["protect"]>>(async () => {});
     const client = new Proxy({} as BuzzClient, {
       get(_target, property) {
-        // The shared session gate checks this optional hook before dispatch.
+        // The shared session gate checks these optional hooks before dispatch.
         if (property === "protect")
           return protectedSession ? protect : undefined;
+        if (property === "nativeToolGate") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -330,6 +331,28 @@ it.each(["send", "reply_in_subthread"])(
     );
     expect(client.upload).not.toHaveBeenCalled();
     expect(published).toEqual([]);
+  },
+);
+
+it.each(["agent_create", "agent_update"])(
+  "refuses protected %s pictures before reads or uploads",
+  async (tool) => {
+    const { client } = fake([]);
+    client.protect = vi.fn(async () => {});
+    client.createAgent = vi.fn();
+    client.updateAgent = vi.fn();
+    await expect(
+      callSessionTool(client, {}, tool, {
+        agent: "Child",
+        type: "codex/codex",
+        name: "Kid",
+        picture: "me.png",
+      }),
+    ).rejects.toThrow("Protected picture uploads are not supported");
+    expect(client.read).not.toHaveBeenCalled();
+    expect(client.upload).not.toHaveBeenCalled();
+    expect(client.createAgent).not.toHaveBeenCalled();
+    expect(client.updateAgent).not.toHaveBeenCalled();
   },
 );
 
@@ -3886,6 +3909,68 @@ it("validates change drafts and passes only the proposed fields", async () => {
   expect(client.updateAgent).toHaveBeenLastCalledWith({
     agent: "Child",
     instructions: "",
+  });
+});
+
+it("uploads a proposed picture as the agent once its draft is valid", async () => {
+  const { client } = fake([]);
+  const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 0]);
+  const read = client.read;
+  client.read = vi.fn(async (path: string) =>
+    path === "/tmp/me.png" || path === "kid.png" ? image : read(path),
+  );
+  const pictures: string[] = [];
+  const saved = async (input: { picture?: () => Promise<string> }) => {
+    if (input.picture) pictures.push(await input.picture());
+    return { requestId: "draft", saved: false as const };
+  };
+  client.updateAgent = vi.fn(saved);
+  client.createAgent = vi.fn(saved);
+  await expect(
+    callTool(client, {}, "agent_update", { agent: "Child", picture: "me.png" }),
+  ).rejects.toThrow("Picture proposals are unavailable");
+  expect(client.updateAgent).not.toHaveBeenCalled();
+  client.uploadPicture = vi.fn(async (_data: Uint8Array, type: string) => ({
+    url: "https://relay/media/x.png",
+    sha256: "ab",
+    size: 7,
+    type,
+  }));
+  // A text file, and a PNG signature cut short that the preparer would
+  // pass through unchanged.
+  for (const picture of ["notes.md", "short.png"])
+    for (const [name, args] of [
+      ["agent_update", { agent: "Child" }],
+      ["agent_create", { type: "codex/codex", name: "Child" }],
+    ] as const)
+      await expect(
+        callTool(client, {}, name, { ...args, picture }),
+      ).rejects.toThrow("PNG, JPEG, GIF or WebP");
+  expect(client.uploadPicture).not.toHaveBeenCalled();
+  expect(pictures).toEqual([]);
+  await callTool(client, {}, "agent_update", {
+    agent: "Child",
+    picture: "/tmp/me.png",
+  });
+  await callTool(client, {}, "agent_create", {
+    type: "codex/codex",
+    name: "Kid",
+    picture: "kid.png",
+  });
+  expect(client.uploadPicture).toHaveBeenCalledWith(image, "image/png");
+  expect(client.upload).not.toHaveBeenCalled();
+  expect(pictures).toEqual([
+    "https://relay/media/x.png",
+    "https://relay/media/x.png",
+  ]);
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Child",
+    picture: expect.any(Function),
+  });
+  expect(client.createAgent).toHaveBeenLastCalledWith({
+    type: "codex/codex",
+    name: "Kid",
+    picture: expect.any(Function),
   });
 });
 

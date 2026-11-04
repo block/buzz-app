@@ -7,12 +7,15 @@ import {
 } from "../agents/catalog-envelope.ts";
 import { CANVAS_FRAME_BYTES } from "../channel-templates/canvas-limits.ts";
 
-/** False means proven non-delivery, not merely a negative or missing OK. */
+/** False means proven non-delivery, not merely a negative or missing OK.
+ * `refusal` is the log-safe summary; `reason` is the relay's own bounded text
+ * for a proven refusal, for the client only and never for logs. */
 export class SocketRequestError extends Error {
   constructor(
     message: string,
     readonly sent: boolean,
     readonly refusal?: string,
+    readonly reason?: string,
   ) {
     super(message);
   }
@@ -131,6 +134,7 @@ export function createSocketPublications(wake: () => void) {
             "Relay publication not confirmed",
             !rejected,
             publicationRefusal(data[3]),
+            rejected ? data[3] : undefined,
           ),
         );
       }

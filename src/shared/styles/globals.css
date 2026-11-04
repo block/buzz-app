@@ -516,6 +516,18 @@
   .danger {
     @apply text-danger;
   }
+  /* Header controls keep the solid shell color beneath them and their focus
+     rings, so their ink and fills keep the pairing they were designed for. */
+  .shell-background:has(> .shell-backdrop) .shell-header > * {
+    border-radius: var(--radius-pill);
+    background: var(--bg-app);
+    box-shadow: 0 0 0 var(--space-2) var(--bg-app);
+  }
+  .shell-background:has(> .shell-backdrop)
+    .shell-body
+    hr[aria-orientation="vertical"]::after {
+    box-shadow: 0 0 0 var(--space-half) var(--bg-app);
+  }
 }
 
 /* Apply the saved scale once at the root so type, icons and spacing grow together.

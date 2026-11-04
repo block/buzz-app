@@ -1220,7 +1220,15 @@ several, later registrations paint above earlier ones whatever `z-index` they
 use inside.
 Render errors remove only the failing backdrop, silently; errors in its own
 animation frames, timers or listeners are the plugin's to catch and clean up.
-Honour `prefers-reduced-motion`, and stop painting while the document is hidden.
+Stop painting while the document is hidden, and never flash more than three
+times in any one second (WCAG 2.3.1).
+
+The host keeps the shell usable over any backdrop. While one is present, each
+header control group and the sidebar resize grip keeps a solid `bg-app` floor,
+so controls, their state fills and focus rings stay on the background they were
+designed for. Panes stay opaque. When the user prefers reduced motion or reduced
+transparency, or forced colors are active, the host does not mount backdrops at
+all, which also stops their animation; they return when the preference does.
 
 A backdrop that needs to stay clear of shell controls may read, but not style,
 these layout roles: `.shell-header` and its direct children (each a group of

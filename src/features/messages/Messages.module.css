@@ -318,7 +318,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
     prefers-reduced-motion: no-preference
   ) {
   .reactionGlyph > :not(.reactionCount) {
-    transform-origin: 50% 70%;
+    transform-origin: center;
     transition: transform var(--duration-settle) var(--easing-settle);
   }
   html:not([data-keyboard-navigation])
@@ -372,10 +372,10 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   height: 0.75rem;
   object-fit: contain;
 }
-/* Enlarge 12px artwork by 2pt without changing the capsule's layout box. */
+/* Paint 12px artwork at 14px (10.5pt), keeping the capsule's layout box. */
 .reactionGlyph [data-reaction-artwork],
 .reactionGlyph .reactionCustomEmoji {
-  scale: calc(11 / 9);
+  scale: calc(7 / 6);
 }
 .visuallyHidden {
   position: absolute;

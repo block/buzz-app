@@ -612,6 +612,9 @@ export function createCommunities(
         membership.id,
         (membershipVersions.get(membership.id) ?? 0) + 1,
       );
+      // Admission is kept either way; selecting the new community is an exit
+      // from the current one, so held work makes it a pending selection.
+      const holds = membership.id === state.selected ? [] : exitHolds();
       update(
         {
           memberships: [
@@ -619,12 +622,17 @@ export function createCommunities(
             membership,
           ],
           profile: state.profile.name ? state.profile : profile,
-          selected: membership.id,
+          selected: holds.length ? state.selected : membership.id,
           sync: enqueue(state.sync, relayAddress(membership.id), false),
         },
         true,
         !!nativeConnect && !live,
       );
+      if (holds.length) {
+        pendingSelection = { id: membership.id, holds };
+        pendingAfter = undefined;
+        for (const fn of listeners) fn();
+      }
       if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
       else acquire(membership.id);
       emitRelay();

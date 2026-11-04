@@ -32,6 +32,7 @@ import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { IconButton } from "../shared/design-system/ui/IconButton";
+import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
 import { relativeTimestamp } from "../shared/relative-timestamp";
 import { CHANNEL_ACTIVITY_KINDS } from "../features/relay/channel-activity";
@@ -462,6 +463,7 @@ export function IdentitySettings({
               identity={federatedIdentity}
               memberships={memberships}
               servers={servers}
+              holds={exitHolds ?? []}
             />
           )}
           {copyStatus && (
@@ -516,11 +518,18 @@ function OrganizationSignIns({
   identity,
   memberships,
   servers,
+  holds,
 }: {
   identity: FederatedIdentity;
   memberships: readonly Membership[];
   servers: () => Promise<readonly SessionSnapshot[]>;
+  /** Work that signing out would discard; while any exists, signing out asks. */
+  holds: readonly string[];
 }) {
+  // Signing out ends sessions; held work elsewhere (a pop-out's unsent
+  // reply) asks first, naming it.
+  const [confirmingSignOut, setConfirmingSignOut] =
+    useState<FederatedIdentity>();
   const [ids, setIds] = useState<readonly string[]>([]);
   useEffect(() => {
     let active = true;
@@ -551,9 +560,13 @@ function OrganizationSignIns({
       else next.delete(session);
       return next;
     });
-  const signOut = (session: FederatedIdentity) => {
+  const signOut = (session: FederatedIdentity, confirmed = false) => {
     const authority = session.snapshot().authority;
     if (!authority) return;
+    if (holds.length && !confirmed) {
+      setConfirmingSignOut(session);
+      return;
+    }
     report(session);
     void session.signOut().catch((error: unknown) =>
       report(session, {
@@ -625,6 +638,39 @@ function OrganizationSignIns({
         ))}
         {problems}
       </SettingsGroup>
+      {confirmingSignOut && (
+        <AlertDialog
+          title="Sign out of organization?"
+          description={
+            <>
+              Signing out also discards:
+              <ul className="mt-2 list-disc pl-5">
+                {holds.map((hold) => (
+                  <li key={hold}>{hold}</li>
+                ))}
+              </ul>
+            </>
+          }
+          onClose={() => setConfirmingSignOut(undefined)}
+          actions={
+            <>
+              <Button onClick={() => setConfirmingSignOut(undefined)}>
+                Keep working
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const session = confirmingSignOut;
+                  setConfirmingSignOut(undefined);
+                  signOut(session, true);
+                }}
+              >
+                Sign out anyway
+              </Button>
+            </>
+          }
+        />
+      )}
     </section>
   );
 }

@@ -907,3 +907,44 @@ it("reads activity again when the relay connection changes", async () => {
   // The account isn't read again for it.
   expect(fi.request).toHaveBeenCalledTimes(2);
 });
+
+it("asks before an organization sign-out discards held work, and signs out of that server once on confirmation", async () => {
+  const { block, pub, root, servers } = twoServers();
+  block.publish({ status: "signed-in", email: "will@acme.example" });
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      memberships={memberships}
+      servers={servers}
+      exitHolds={["The pop-out window for “Design” has an unsent reply."]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const signOut = async () =>
+    userEvent.click(
+      await screen.findByRole("button", {
+        name: "Sign out of app.builderlab.xyz",
+      }),
+    );
+  await signOut();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
+  const dialog = screen.getByRole("alertdialog", {
+    name: "Sign out of organization?",
+  });
+  expect(dialog).toHaveTextContent("has an unsent reply");
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Keep working" }),
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
+  await signOut();
+  await userEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Sign out anyway",
+    }),
+  );
+  expect(pub.service.signOut).toHaveBeenCalledTimes(1);
+  expect(block.service.signOut).not.toHaveBeenCalled();
+});

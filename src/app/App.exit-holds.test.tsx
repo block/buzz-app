@@ -258,3 +258,80 @@ it("names unsaved Settings edits in the same prompt and asks only once", async (
     screen.queryByRole("alertdialog", { name: "Discard changes?" }),
   ).toBeNull();
 });
+
+it("warns about both the editor and held work before a cross-community navigation, in one prompt", async () => {
+  const h = await setup();
+  await act(async () => {
+    void h.services.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const name = await within(settings).findByRole("textbox", {
+    name: "Display name",
+  });
+  await waitFor(() => expect(name).toHaveValue("Community name"));
+  await h.user.clear(name);
+  await h.user.type(name, "Unsaved name");
+  const target = {
+    version: 1 as const,
+    kind: "page" as const,
+    pluginId: "buzz.channels",
+    pageId: "channels",
+    scope: { viewer, communityOrigin: other },
+  };
+  const before = h.services.navigation.snapshot().entry.id;
+  let opening = h.services.navigation.open(target);
+  const dialog = await h.prompt();
+  expect(dialog).toHaveTextContent("has an unsent reply");
+  expect(dialog).toHaveTextContent("Your profile has unsaved changes.");
+  expect(
+    screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeNull();
+  // Keep working: route, community and the editor's text all stay.
+  await h.user.click(
+    within(dialog).getByRole("button", { name: "Keep working" }),
+  );
+  await h.noPrompt();
+  await expect(opening).resolves.toMatchObject({ status: "cancelled" });
+  expect(h.selected()).toBe(origin);
+  expect(h.services.navigation.snapshot().entry.id).toBe(before);
+  expect(name).toHaveValue("Unsaved name");
+  opening = h.services.navigation.open(target);
+  await h.user.click(
+    within(await h.prompt()).getByRole("button", { name: "Switch anyway" }),
+  );
+  await h.noPrompt();
+  await waitFor(() => expect(h.selected()).toBe(other));
+  await opening;
+  expect(
+    screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeNull();
+});
+
+it("keeps a newly joined community admitted but unselected while work is held", async () => {
+  const h = await setup();
+  const joined = "https://new.example";
+  h.services.communities.joined(
+    { id: joined, name: "New" },
+    { name: "L", picture: "" },
+  );
+  expect(h.selected()).toBe(origin);
+  expect(
+    h.services.communities.snapshot().memberships.map((m) => m.id),
+  ).toContain(joined);
+  const dialog = await h.prompt();
+  await h.user.click(
+    within(dialog).getByRole("button", { name: "Keep working" }),
+  );
+  await h.noPrompt();
+  expect(h.selected()).toBe(origin);
+  // Joining again, or selecting it, asks again and then switches.
+  h.services.communities.select(joined);
+  await h.user.click(
+    within(await h.prompt()).getByRole("button", { name: "Switch anyway" }),
+  );
+  await waitFor(() => expect(h.selected()).toBe(joined));
+});

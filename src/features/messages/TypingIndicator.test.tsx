@@ -35,6 +35,11 @@ import {
   entry,
   type Snapshot,
 } from "./typing-indicator-testing";
+// Transcript requests live in a module-level map; each test starts clean.
+afterEach(() => {
+  for (const pubkey of [agent, other])
+    claimProfileTranscript(profileActivityViewTarget(pubkey) ?? "");
+});
 
 it("shows an incoming typing preview without invented details, retaining navigation and focus return", async () => {
   const f = fixture(),

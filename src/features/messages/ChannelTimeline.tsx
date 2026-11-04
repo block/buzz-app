@@ -304,15 +304,24 @@ function Timeline({
     (navigation?.target.kind === "conversation"
       ? navigation.target.messageId
       : undefined);
-  const rows = useMemo(
-    () =>
-      activityDisplayRows(
-        chronologicalRows,
-        activity,
-        targetId ?? revealMessageId,
-      ),
-    [chronologicalRows, activity, targetId, revealMessageId],
-  );
+  // Activity updates rebuild the hidden-row filter without changing its
+  // result; keep the same rows so positioning effects keyed on them stay idle.
+  const displayedRows = useRef(chronologicalRows);
+  const rows = useMemo(() => {
+    const next = activityDisplayRows(
+      chronologicalRows,
+      activity,
+      targetId ?? revealMessageId,
+    );
+    const prior = displayedRows.current;
+    if (
+      next.length === prior.length &&
+      next.every((row, index) => row === prior[index])
+    )
+      return prior;
+    displayedRows.current = next;
+    return next;
+  }, [chronologicalRows, activity, targetId, revealMessageId]);
   const lastPublicMessage = publicMessageNeighbor(rows, rows.length, -1);
   const intent = useRef(0);
   // Keep expansion pending with scroll restoration until the saved row arrives.

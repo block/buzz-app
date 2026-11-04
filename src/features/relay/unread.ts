@@ -1960,6 +1960,13 @@ export function createUnread({
       throw new Error("A thread reply cannot advance the channel frontier");
     return event;
   }
+  /** Coordination between agents has no unread state, so no unread intent
+   * may be saved for it. */
+  function refuseAgentCoordination(messageId: string) {
+    const event = events.get(messageId);
+    if (event && agentAudience(event))
+      throw new Error("Messages between agents cannot be marked unread");
+  }
   function messageSubtree(channelId: string, messageId: string) {
     const selected = requireMessage(
       { kind: "message", channelId, messageId },
@@ -2369,6 +2376,7 @@ export function createUnread({
     async markMessageUnread(channelId, messageId) {
       const visit = visits.get(channelId) ?? 0;
       const rows = messageSubtree(channelId, messageId);
+      refuseAgentCoordination(messageId);
       const generation = epoch;
       return serialize(channelId, async () => {
         const valid = () =>
@@ -2529,6 +2537,7 @@ export function createUnread({
         return true;
       };
       if (!valid()) throw new Error("Unread target unavailable");
+      if (target.kind === "message") refuseAgentCoordination(target.messageId);
       return serialize(target.channelId, () =>
         reads.markLocalUnread(key, valid),
       );

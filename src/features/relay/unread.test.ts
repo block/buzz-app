@@ -4009,13 +4009,19 @@ it("catch-up applies to agent-audience rows, and unread intent cannot make them 
   await lease.catchUp(progress.id, root.id);
   expect(h.journal()?.state.frontiers[`thread-activity:${root.id}`]).toBe(12);
   lease.dispose();
-  // Unread intent cannot make coordination between agents unread.
-  await unread.markMessageUnread("room", progress.id);
-  await unread.markUnreadLocal({
-    kind: "message",
-    channelId: "room",
-    messageId: bottom.id,
-  });
+  // Unread intent cannot be saved for coordination between agents.
+  await expect(unread.markMessageUnread("room", progress.id)).rejects.toThrow(
+    "Messages between agents cannot be marked unread",
+  );
+  await expect(
+    unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: bottom.id,
+    }),
+  ).rejects.toThrow("Messages between agents cannot be marked unread");
+  expect(h.journal()?.localUnread).toEqual({});
+  expect(h.snapshot().manual).toBe("none");
   for (const id of [progress.id, bottom.id])
     expect(unread.attention("room", id)).toMatchObject({
       status: "ineligible",

@@ -822,6 +822,10 @@ describe("Markdown inline extensions", () => {
     ["（https://example.com）", "https://example.com/"],
     ["他说“https://example.com/a”。", "https://example.com/a"],
     [
+      "https://github。com/block/buzz-app。",
+      "https://github.com/block/buzz-app",
+    ],
+    [
       "https://zh.wikipedia.org/wiki/中文 ok",
       "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",
     ],

@@ -212,7 +212,8 @@ it("refuses creation after the calling turn ends and surfaces native failures", 
   expect(createAgent).toHaveBeenCalledOnce();
 });
 
-it("strips a proposed picture's metadata before uploading it as the agent", async () => {
+/** A PNG carrying a location in a text chunk. */
+function metadataPng() {
   const chunk = (kind: string, payload: number[] | string = []) => {
     const data =
       typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
@@ -223,7 +224,7 @@ it("strips a proposed picture's metadata before uploading it as the agent", asyn
       ...[0, 0, 0, 0],
     ];
   };
-  const png = new Uint8Array([
+  return new Uint8Array([
     137,
     80,
     78,
@@ -237,6 +238,10 @@ it("strips a proposed picture's metadata before uploading it as the agent", asyn
     ...chunk("IDAT", [1, 2]),
     ...chunk("IEND"),
   ]);
+}
+
+it("strips a proposed picture's metadata before uploading it as the agent", async () => {
+  const png = metadataPng();
   const upload = vi.fn(async (_data: string, type: string) => ({
     url: "https://relay/media/x.png",
     sha256: "ab",
@@ -277,4 +282,29 @@ it("refuses a proposed picture its preparation does not recognize", async () => 
     ),
   ).rejects.toThrow("PNG, JPEG, GIF or WebP");
   expect(upload).not.toHaveBeenCalled();
+});
+
+it("proposes no picture for a turn stopped during its upload", async () => {
+  let release = () => {};
+  const upload = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({ url: "https://relay/media/x.png", sha256: "ab", size: 1 });
+      }),
+  );
+  const controller = new AbortController();
+  const client = appClient(
+    { pubkey: "agent", upload } as unknown as AgentHandle,
+    {
+      read: vi.fn(),
+      signal: controller.signal,
+      memories: async () => ({ entries: [], partial: false }),
+    },
+  );
+  const picture = client.uploadPicture?.(metadataPng(), "image/png");
+  await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  controller.abort(new Error("Turn ended"));
+  release();
+  await expect(picture).rejects.toThrow("Turn ended");
 });

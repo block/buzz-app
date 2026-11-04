@@ -1827,9 +1827,10 @@ export class AgentsService extends Service implements Agents {
         agent,
         { agent: target, picture: upload, ...proposed },
       ) => {
-        /** `pending`: a picture still to upload, a change until its URL is
-         * known. */
+        /** `wanted`: the target; `pending`: a picture still to upload, a
+         * change until its URL is known. */
         const request = (
+          wanted: (identity: AgentIdentity) => boolean,
           picture?: string,
           pending = false,
         ): AgentUpdateRequest => {
@@ -1842,7 +1843,7 @@ export class AgentsService extends Service implements Agents {
               !identity.deleting &&
               identity.owner === agent.owner &&
               originOf(identity.relay) === binding.origin &&
-              (identity.pubkey === target || identity.name === target),
+              wanted(identity),
           );
           const [identity] = matches;
           if (!identity)
@@ -1878,9 +1879,16 @@ export class AgentsService extends Service implements Agents {
           };
         };
         // Its picture uploads only for a valid request, which is then
-        // checked again.
-        request(undefined, upload !== undefined);
-        const next = request(proposedPicture(await upload?.()));
+        // checked again for the same agent, even if renamed meanwhile.
+        const { agent: key } = request(
+          (identity) => identity.pubkey === target || identity.name === target,
+          undefined,
+          upload !== undefined,
+        );
+        const next = request(
+          (identity) => identity.pubkey === key,
+          proposedPicture(await upload?.()),
+        );
         this.updates = [...this.updates, next];
         this.notify();
         return { requestId: next.id, saved: false };

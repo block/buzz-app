@@ -140,10 +140,13 @@ export function appClient(
       if (picture === file)
         throw new Error("picture must be a PNG, JPEG, GIF or WebP image");
       check();
-      return agent.upload(
+      const upload = await agent.upload(
         toBase64(new Uint8Array(await picture.arrayBuffer())),
         picture.type,
       );
+      // A turn stopped during the upload proposes nothing.
+      check();
+      return upload;
     },
     media: (url) => {
       check();

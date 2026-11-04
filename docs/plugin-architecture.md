@@ -933,7 +933,7 @@ versions against the same saved head (below); read-only viewers keep Edit so rec
 Save and Restore disabled. Restoring does not switch tabs.
 
 **Canvas history:** Channel actions → View canvas → History lazily reads retained
-kind-40100 revisions in pages of 25, ordered by `created_at DESC, id ASC` with
+kind-40100 revisions in pages of 16 (as many full-size signed revisions as one 8 MiB read holds), ordered by `created_at DESC, id ASC` with
 `until`/`before_id` keyset cursors. The first page is writer-backed so a just-restored
 revision is visible; older pages remain replica-eligible. The current marker uses
 the editor's strong-read head, not list position. Refresh history rechecks the

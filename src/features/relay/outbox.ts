@@ -132,9 +132,18 @@ const MAX_CONFIRMED = 2048;
  * never use up the room that ordinary messages need. */
 const PENDING_MESSAGE_BYTES = 2 * 1024 * 1024;
 const PENDING_CANVAS_BYTES = 4 * 1024 * 1024;
-/** Confirmed retention plus both pending allowances. */
+const CONFIRMED_BYTES = 8 * 1024 * 1024;
+/** What signing adds to a record: `,"signed":` and the event's `,"sig":"…"`. */
+const SIGNED_RESERVE_BYTES = 160;
+/** Any journal save accepts: the `[…]` list, confirmed records with their
+ * commas, and both pending allowances, which already count their own. */
 const SAVED_BYTES =
-  8 * 1024 * 1024 + PENDING_MESSAGE_BYTES + PENDING_CANVAS_BYTES;
+  2 +
+  CONFIRMED_BYTES +
+  MAX_CONFIRMED +
+  PENDING_MESSAGE_BYTES +
+  PENDING_CANVAS_BYTES;
+8 * 1024 * 1024 + PENDING_MESSAGE_BYTES + PENDING_CANVAS_BYTES;
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
 export function createOutbox(
@@ -187,15 +196,18 @@ export function createOutbox(
   let visible: readonly OutgoingEvent[] = snapshot;
   let finalSnapshot: readonly OutgoingEvent[] | undefined;
   let finalVisible: readonly OutgoingEvent[] | undefined;
-  const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, 8 * 1024 * 1024);
+  const completed = new ByteLru<OutgoingEvent>(MAX_CONFIRMED, CONFIRMED_BYTES);
   const sizes = new WeakMap<OutgoingEvent, number>();
-  /** Serialized pending bytes, split by allowance. */
+  /** Pending bytes, split by allowance. An unsigned record is charged its
+   * signed size up front, so signing never pushes an allowance over. */
   const pendingSize = (items: readonly OutgoingEvent[]) => {
     const total = { messages: 2, canvases: 2 };
     for (const item of items) {
       let size = sizes.get(item);
       if (size === undefined) {
-        size = byteSize(item);
+        size =
+          byteSize(item) +
+          (item.signed ? 0 : byteSize(item.event) + SIGNED_RESERVE_BYTES);
         sizes.set(item, size);
       }
       total[item.event.kind === 40100 ? "canvases" : "messages"] += size + 1;
@@ -203,6 +215,8 @@ export function createOutbox(
     return total;
   };
   let pendingBytes = pendingSize([]);
+  /** Allowance use in the journal as last saved. */
+  let savedBytes = pendingBytes;
   const listeners = new Set<() => void>();
   const localListeners = new Set<() => void>();
   const dismissListeners = new Set<(item: OutgoingEvent) => void>();
@@ -332,13 +346,18 @@ export function createOutbox(
               ? pendingSize([...snapshot, addition])
               : pendingBytes;
         return profiling.measureAsync("outbox.persist", id, async () => {
+          // Only an allowance this write grows past its limit refuses it, so
+          // one full allowance never blocks writes to the other.
           if (
-            bytes.messages > PENDING_MESSAGE_BYTES ||
-            bytes.canvases > PENDING_CANVAS_BYTES
+            (bytes.messages > PENDING_MESSAGE_BYTES &&
+              bytes.messages > savedBytes.messages) ||
+            (bytes.canvases > PENDING_CANVAS_BYTES &&
+              bytes.canvases > savedBytes.canvases)
           )
             throw new Error("Outbox storage is full");
           if (action === "recover") await storage.save(records, { force: id });
           else await storage.save(records);
+          savedBytes = bytes;
           // The replacement joins visible intent only with durable retirement.
           // Other queued saves must never observe two unresolved recovery keys.
           if (addition) snapshot = Object.freeze([...snapshot, addition]);
@@ -452,6 +471,7 @@ export function createOutbox(
       )
         completed.set(item.event.id, item);
     for (const item of pending) restoredReceipts.add(item.event.id);
+    savedBytes = pendingSize(pending);
     snapshot = Object.freeze([...pending, ...snapshot]);
     notify();
   }
@@ -809,14 +829,23 @@ export function createOutbox(
       ) as unknown as string[][],
       id: getEventHash(template),
     });
-    if (active) admissionGates.set(event.id, active);
-    captureSend(event);
     const operation = Object.freeze({
       event,
       delivery: "sending" as const,
       ...(savedRecovery ? { recovery: savedRecovery } : {}),
       ...(active ? { guarded: true } : {}),
     });
+    // Refuse up front what its allowance cannot hold once signed, so a
+    // refused operation never occupies room that admitted ones need.
+    const admitted = pendingSize([...snapshot, operation]);
+    if (
+      operation.event.kind === 40100
+        ? admitted.canvases > PENDING_CANVAS_BYTES
+        : admitted.messages > PENDING_MESSAGE_BYTES
+    )
+      throw new Error("Outbox storage is full");
+    if (active) admissionGates.set(event.id, active);
+    captureSend(event);
     if (!replacing)
       profiling.measure("send.local", event.id, () => {
         snapshot = Object.freeze([...snapshot, operation]);

@@ -1153,6 +1153,113 @@ it("keeps unsent Canvas saves from using up ordinary message capacity", async ()
   const restored = setup(storage);
   await vi.waitFor(() => expect(restored.outbox.snapshot()).toHaveLength(5));
 });
+it("refuses a Canvas past its allowance, at admission, without blocking messages", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage);
+  const canvas = (channel: string) =>
+    h.outbox.send({
+      kind: 40100,
+      content: "a".repeat(LIVE_CANVAS_BYTES),
+      tags: [["h", channel]],
+    });
+  // Each is charged its signed size, so seven fit and the eighth is refused.
+  for (let i = 0; i < 7; i++) canvas(`c${i}`);
+  expect(() => canvas("c7")).toThrow("Outbox storage is full");
+  expect(h.outbox.snapshot()).toHaveLength(7);
+  // Signing the admitted canvases stays inside the allowance.
+  for (let i = 0; i < 3; i++) await h.signNext();
+  const id = h.send("still deliverable");
+  await vi.waitFor(async () => {
+    const saved = await storage.load();
+    expect(saved.filter((item) => item.signed?.kind === 40100)).toHaveLength(3);
+    expect(saved.some((item) => item.event.id === id)).toBe(true);
+  });
+  expect(h.outbox.snapshot().some((item) => item.error)).toBe(false);
+});
+it("refuses a message past its allowance without blocking a Canvas", async () => {
+  const storage = memoryStorage();
+  const h = setup(storage);
+  let refused = false;
+  for (let i = 0; i < 100 && !refused; i++)
+    try {
+      h.send("m".repeat(30 * 1024));
+    } catch (error) {
+      expect(String(error)).toMatch("Outbox storage is full");
+      refused = true;
+    }
+  expect(refused).toBe(true);
+  const id = h.outbox.send({
+    kind: 40100,
+    content: "a".repeat(LIVE_CANVAS_BYTES),
+    tags: [["h", "c"]],
+  });
+  await vi.waitFor(async () =>
+    expect((await storage.load()).some((item) => item.event.id === id)).toBe(
+      true,
+    ),
+  );
+  expect(h.outbox.snapshot().some((item) => item.error)).toBe(false);
+});
+it("restores a journal with every allowance exactly full", async () => {
+  // A signed record of exactly `size` bytes; `error` takes the odd byte.
+  const record = (
+    kind: number,
+    i: number,
+    size: number,
+    delivery: "seen" | "unknown",
+  ) => {
+    const make = (content: string, error: string) => {
+      const event = signed(viewer, {
+        kind,
+        content,
+        tags: [["h", "c"]],
+        created_at: 1700000000 + i,
+      });
+      return { event, signed: event, delivery, error };
+    };
+    const extra = size - byteSize(make("", "x"));
+    const item = make(
+      "a".repeat(Math.floor(extra / 2)),
+      "x".repeat(1 + (extra % 2)),
+    );
+    expect(byteSize(item)).toBe(size);
+    return item;
+  };
+  // Split `total` bytes over `count` records.
+  const fill = (
+    kind: number,
+    from: number,
+    count: number,
+    total: number,
+    delivery: "seen" | "unknown",
+  ) =>
+    Array.from({ length: count }, (_, i) =>
+      record(
+        kind,
+        from + i,
+        Math.floor(total / count) + (i < total % count ? 1 : 0),
+        delivery,
+      ),
+    );
+  const MiB = 1024 * 1024;
+  // Confirmed retention counts records alone; each allowance also counts
+  // its `[]` and every record's comma.
+  const journal = [
+    ...fill(9, 0, 16, 8 * MiB, "seen"),
+    ...fill(9, 100, 4, 2 * MiB - 2 - 4, "unknown"),
+    ...fill(40100, 200, 8, 4 * MiB - 2 - 8, "unknown"),
+  ];
+  expect(byteSize(journal)).toBeGreaterThan(14 * MiB);
+  const storage = memoryStorage();
+  await storage.save(journal);
+  const h = setup(storage);
+  await vi.waitFor(() => expect(h.outbox.snapshot()).toHaveLength(12));
+  // Both allowances are full: one more of either kind is refused.
+  expect(() => h.send("x")).toThrow("Outbox storage is full");
+  expect(() =>
+    h.outbox.send({ kind: 40100, content: "x", tags: [["h", "c"]] }),
+  ).toThrow("Outbox storage is full");
+});
 it("admits a live Canvas up to its own limits, persists it, and retries the same signed event", async () => {
   const storage = memoryStorage();
   const first = setup(storage);

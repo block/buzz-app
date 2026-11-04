@@ -213,8 +213,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   instead of a side panel. You can also right-click the link and choose
   **Open in browser**.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
-  fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`.
-  Wrap it as `<url>` to keep them in it.
+  fullwidth, CJK or curly-quote punctuation such as `，`, `。`, `」` or `’`. In a
+  host name, `。` works as a dot. Wrap it as `<url>` to keep them in it.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community

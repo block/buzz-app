@@ -163,6 +163,9 @@ it.each([
   ["https://example.com/a。b", "https://example.com/a"],
   ["https://github。com/block/buzz-app", "https://github。com/block/buzz-app"],
   ["https://github．com:8080/x。", "https://github．com:8080/x"],
+  ["http://localhost:3000。OK", "http://localhost:3000"],
+  ["https://[::1]。OK", "https://[::1]"],
+  ["https:///example.com/x。", "https:///example.com/x"],
   [
     "见 https://zh.wikipedia.org/wiki/中文",
     "https://zh.wikipedia.org/wiki/中文",

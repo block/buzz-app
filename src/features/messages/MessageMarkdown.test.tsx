@@ -825,6 +825,7 @@ describe("Markdown inline extensions", () => {
       "https://github。com/block/buzz-app。",
       "https://github.com/block/buzz-app",
     ],
+    ["http://localhost:3000。OK", "http://localhost:3000/"],
     [
       "https://zh.wikipedia.org/wiki/中文 ok",
       "https://zh.wikipedia.org/wiki/%E4%B8%AD%E6%96%87",

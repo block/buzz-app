@@ -478,14 +478,15 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
 // Real browser focus refusal for display:none cannot be established in jsdom.
 const regionRow = (page, id) =>
   sidebar(page).locator(`[data-solo-destination-id="${id}"]`);
+// Classify refuses a chat the roster has not loaded, so wait for its row first.
 async function regionFixture(page, app, ids = [alpha, beta]) {
   await page.goto(`${app.origin}/?solo-region-fixture`);
   await newChat(page);
-  await expect(row(page, alpha)).toBeVisible();
+  await expect(row(page, ids[0])).toBeVisible();
   await page.evaluate(async (ids) => {
     for (const id of ids) await window.fixtureSoloRegion.classify(id);
   }, ids);
-  await expect(regionRow(page, alpha)).toBeVisible();
+  await expect(regionRow(page, ids[0])).toBeVisible();
 }
 
 test("composable rows retain narrow rename and immediate keyboard/touch activation", async ({
@@ -592,4 +593,50 @@ test("removing a focused region keeps keyboard focus in the remaining region", a
     await remaining.press("Enter");
     await expect(regionRow(page, alpha)).toBeVisible();
   }
+});
+
+// Real shell scope and page fallback after roster removal require app wiring.
+// The controlled completion/failure/navigation matrix lives in SoloRegions.test.tsx.
+test.describe("plugin-owned Solo lifecycle", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  test.use({
+    channelLifecycle: true,
+    soloChannels: [id],
+    ownSoloChannels: [id],
+  });
+
+  test("deleting a plugin-owned chat keeps the shell in Solo", async ({
+    page,
+    app,
+  }) => {
+    await regionFixture(page, app, [id]);
+    const solo = page.getByRole("tab", { name: "Solo", exact: true });
+    await solo.click();
+    await expect(solo).toHaveAttribute("aria-selected", "true");
+    const row = regionRow(page, id);
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(row).toHaveAttribute("aria-current", "page");
+    await expect(composer(page)).toBeEnabled();
+    await row.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Delete chat", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "Delete Lifecycle channel?",
+    });
+    await dialog
+      .getByRole("button", { name: "Delete chat", exact: true })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(row).toHaveCount(0);
+    await expect(
+      page.getByRole("tab", { name: "Solo", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(page).toHaveURL(/solo-draft/);
+    expect(
+      app.report.lifecyclePublications.map((event) => [event.kind, event.tags]),
+    ).toEqual([[9008, [["h", id]]]]);
+    expect(app.report.unexpected).toEqual([]);
+  });
 });

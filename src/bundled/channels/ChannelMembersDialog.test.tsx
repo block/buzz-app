@@ -2528,18 +2528,16 @@ it("adds a team's members not in the channel with one button", async () => {
   ).not.toBeInTheDocument();
 });
 
-async function teamSetup() {
-  const ada = "ab".repeat(32);
-  const cy = "cd".repeat(32);
+async function teamSetup(names = ["Ada", "Cy"]) {
+  const keys = names.map((_name, index) => `${index}${index}`.repeat(32));
+  const ada = keys[0] ?? "";
+  const cy = keys[1] ?? "";
   // useSyncExternalStore needs one stable snapshot object.
   const snapshot = {
     status: "ready",
-    agents: [
-      { pubkey: ada, name: "Ada" },
-      { pubkey: cy, name: "Cy" },
-    ],
+    agents: names.map((name, index) => ({ pubkey: keys[index], name })),
     running: [],
-    teams: [{ id: "crew", name: "Crew", instructions: "", members: [ada, cy] }],
+    teams: [{ id: "crew", name: "Crew", instructions: "", members: keys }],
   };
   const agents = {
     subscribe: () => () => {},
@@ -2566,10 +2564,44 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
   t.fail("");
   await t.user.click(retry);
   await vi.waitFor(() => expect(refusals()).toHaveLength(0));
+  // One combined notice, instead of each retry announcing its own.
+  await screen.findByText("Ada and Cy are in the channel.");
   const added = t.publish.mock.calls
     .map(([event]) => event.tags.find((tag) => tag[0] === "p")?.[1])
     .sort();
   expect(added).toEqual([t.ada, t.ada, t.cy, t.cy].sort());
+});
+it("keeps only the still-refused member in the alert after a partial retry", async () => {
+  const t = await teamSetup();
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  await screen.findByText(/^Ada and Cy: Invitation denied/);
+  const base = t.publish.getMockImplementation();
+  if (!base) throw new Error("Missing publish fixture");
+  t.fail("");
+  t.publish.mockImplementation(async (event) => {
+    if (event.tags.find((tag) => tag[0] === "p")?.[1] === t.cy)
+      throw new PublishRejected("Invitation denied");
+    return base(event);
+  });
+  await t.user.click(
+    screen.getByRole("button", { name: "Retry adding Ada and Cy" }),
+  );
+  await screen.findByText(/^Cy: Invitation denied/);
+  expect(screen.queryByText(/Ada/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry adding Cy" })).toBeEnabled();
+  expect(screen.queryByText(/are in the channel/)).not.toBeInTheDocument();
+});
+it("names three refused members and counts the rest", async () => {
+  const t = await teamSetup(["Di", "Ada", "Cy", "Bo"]);
+  t.fail("Invitation denied");
+  await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
+  await screen.findByText(/^Ada, Bo, Cy, and 1 more: Invitation denied/);
+  expect(
+    screen.getByRole("button", {
+      name: "Retry adding Ada, Bo, Cy, and 1 more",
+    }),
+  ).toBeEnabled();
 });
 it("shows a team's refusals with different reasons as separate alerts", async () => {
   const t = await teamSetup();

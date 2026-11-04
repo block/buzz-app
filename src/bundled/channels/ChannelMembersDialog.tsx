@@ -636,18 +636,18 @@ export function ChannelMembersDialog({
     ...additions.filter((item) => item.pending).map((item) => item.pubkey),
     ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.pending),
   ]);
-  const errors = Object.fromEntries<string | undefined>([
-    ...additions
-      .filter((item) => item.error)
-      .map((item) => [item.pubkey, item.error] as const),
-    ...Object.entries(soloAdditions)
-      .filter(([, item]) => item.error)
-      .map(([key, item]) => [key, item.error] as const),
-  ]);
   // One alert per reason: a refused team add names its members together.
-  const refusals = new Map<string, string[]>();
-  for (const [key, error] of Object.entries(errors))
-    if (error) refusals.set(error, [...(refusals.get(error) ?? []), key]);
+  // Solo agents join directly, one at a time, so each keeps its own Retry.
+  const refusals = new Map<string, { error: string; keys: string[] }>();
+  const refuse = (group: string, error: string, key: string) => {
+    const item = refusals.get(group) ?? { error, keys: [] };
+    item.keys.push(key);
+    refusals.set(group, item);
+  };
+  for (const item of additions)
+    if (item.error) refuse(item.error, item.error, item.pubkey);
+  for (const [key, item] of Object.entries(soloAdditions))
+    if (item.error) refuse(key, item.error, key);
   const [notice, setNotice] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const copyFailure = copyStatus && copyStatus !== "Link copied";
@@ -1314,14 +1314,16 @@ export function ChannelMembersDialog({
       ? [{ team, missing }]
       : [];
   });
-  // Names refused people as their rows do: up to three, then a count.
+  // Names refused people in a stable order: up to three, then a count.
   const listNames = (keys: readonly string[]) => {
-    const shown = keys.slice(0, 3).map((key) => label(key, teamNames.get(key)));
-    const rest = keys.length - shown.length;
-    if (rest > 0) return `${shown.join(", ")} and ${rest} more`;
-    return shown.length > 1
-      ? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`
-      : (shown[0] ?? "");
+    const names = keys
+      .map((key) => label(key, teamNames.get(key)))
+      .sort((a, b) => a.localeCompare(b));
+    const shown = names.slice(0, 3);
+    const rest = names.length - shown.length;
+    return new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+      rest > 0 ? [...shown, `${rest} more`] : shown,
+    );
   };
   // Suffix search scans the whole roster; redo it only when the keys change.
   const keyList = [...members, ...candidates.keys()].join(":");
@@ -1428,6 +1430,21 @@ export function ChannelMembersDialog({
     },
     [session, channelId],
   );
+
+  // A group retries like a team add; one refused person keeps the Add path.
+  const retryRefusals = async (keys: readonly string[]) => {
+    const [only] = keys;
+    if (only && keys.length === 1) return add(only);
+    const signal = lifetime.current?.signal;
+    if (!signal) return;
+    setNotice("");
+    const names = listNames(keys);
+    const retried = await Promise.allSettled(
+      keys.map((key) => session.memberAdditions.add(channelId, key)),
+    );
+    if (!signal.aborted && retried.every((item) => item.status === "fulfilled"))
+      setNotice(`${names} are in the ${place}.`);
+  };
 
   // Typed text highlights the first person not in the channel, so Enter adds
   // them. Rows keep their own buttons; the highlight only marks one of them.
@@ -1971,25 +1988,22 @@ export function ChannelMembersDialog({
             messageError ||
             copyFailure) && (
             <div className={styles.feedback}>
-              {[...refusals].map(([error, keys]) => {
+              {[...refusals].map(([group, { error, keys }]) => {
                 const names = listNames(keys);
-                const retrying = keys.some((key) => busy.has(key));
                 return (
                   <p
                     role="alert"
-                    key={error}
+                    key={group}
                     className="text-body-sm text-danger"
                   >
                     {names}: {error}{" "}
                     <Button
                       variant="outline"
                       aria-label={`Retry adding ${names}`}
-                      disabled={retrying || !canAdd}
-                      onClick={() => {
-                        for (const key of keys) void add(key);
-                      }}
+                      disabled={!canAdd}
+                      onClick={() => void retryRefusals(keys)}
                     >
-                      {retrying ? "Retrying…" : "Retry"}
+                      Retry
                     </Button>
                   </p>
                 );

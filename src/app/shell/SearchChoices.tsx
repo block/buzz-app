@@ -6,7 +6,10 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import type { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import {
+  HashIcon,
+  type ChatCircleIcon,
+} from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
@@ -764,10 +767,10 @@ export function SearchChoices({
                                                 <span className="sr-only">{`${detailIconLabel},`}</span>{" "}
                                               </>
                                             )}
-                                            {/* Text-sized and flush, as LinkLabel shows a channel mention's icon. */}
+                                            {/* Text-sized and spaced as LinkLabel shows a channel mention's icon. */}
                                             {DetailIcon && (
                                               <DetailIcon
-                                                className={`${referenceStyles.icon} ${referenceStyles.flush}`}
+                                                className={`${referenceStyles.icon} ${DetailIcon === HashIcon ? referenceStyles.flush : referenceStyles.snug}`}
                                               />
                                             )}
                                             {detail}

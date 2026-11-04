@@ -64,6 +64,13 @@ html[data-keyboard-navigation] .link:focus-visible {
   margin-right: 0;
 }
 
+/* A hash meets the right of its box only at its bars' ends, where a lock's
+   body or a chat bubble's curve fills it, so a small gap makes the space
+   before the name look the same. */
+.icon.snug {
+  margin-right: var(--space-half);
+}
+
 button.link {
   border: 0;
   font: inherit;

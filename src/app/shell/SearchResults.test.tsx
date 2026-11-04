@@ -5195,10 +5195,11 @@ it("leads a message hit's conversation name with its type icon and words", async
         const option = screen.getByRole("option", {
           name: new RegExp(`^match in ${id}\\s*${kind}, ${name} · `),
         });
-        // The icon styled as a channel mention's in a message.
+        // The icon styled as a channel mention's in a message: a hash
+        // flush against the name, a lock or bubble a little apart.
         expect(
           option.querySelector(
-            `.${referenceStyles.icon}.${referenceStyles.flush}`,
+            `.${referenceStyles.icon}.${icon === "hash" ? referenceStyles.flush : referenceStyles.snug}`,
           ),
         ).toHaveClass(`tabler-icon-${icon}`);
         expect(within(option).getByText(`${kind},`)).toHaveClass("sr-only");

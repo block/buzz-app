@@ -157,7 +157,9 @@ export function LinkLabel({
     <Icon
       aria-hidden="true"
       className={
-        kind === "channel" ? `${styles.icon} ${styles.flush}` : styles.icon
+        kind === "channel"
+          ? `${styles.icon} ${Icon === HashIcon ? styles.flush : styles.snug}`
+          : styles.icon
       }
     />
   );

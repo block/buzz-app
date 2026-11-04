@@ -3,6 +3,7 @@
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
+import { prepareAttachment } from "../features/messages/prepare-attachment";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
   HostProcess,
@@ -30,6 +31,8 @@ export function appClient(
     check?(): void;
     signal?: AbortSignal;
     protectionContext?(): Promise<unknown>;
+    /** The runtime reviews each tool call itself before Buzz dispatches it. */
+    nativeToolGate?: boolean;
   }>,
 ): BuzzClient {
   const check = () => {
@@ -72,6 +75,7 @@ export function appClient(
             );
             check();
           },
+          ...(options.nativeToolGate ? { nativeToolGate: true as const } : {}),
         }
       : {}),
     pubkey: agent.pubkey,
@@ -126,6 +130,26 @@ export function appClient(
     upload: (data, mime) => {
       check();
       return agent.upload(toBase64(data), mime);
+    },
+    uploadPicture: async (data, mime) => {
+      check();
+      const file = new File([new Uint8Array(data)], "picture", { type: mime });
+      const picture = await prepareAttachment(
+        file,
+        options.signal ?? new AbortController().signal,
+        true,
+      );
+      // It returns a file it doesn't recognize as an image unprepared.
+      if (picture === file)
+        throw new Error("picture must be a PNG, JPEG, GIF or WebP image");
+      check();
+      const upload = await agent.upload(
+        toBase64(new Uint8Array(await picture.arrayBuffer())),
+        picture.type,
+      );
+      // A turn stopped during the upload proposes nothing.
+      check();
+      return upload;
     },
     media: (url) => {
       check();

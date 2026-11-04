@@ -94,6 +94,10 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 ## Conversations and communities
 
+- Each reaction emoji has its own capsule. Hover or focus it to see everyone
+  who reacted. Large lists scroll within the preview. With a keyboard, Tab into
+  the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
+  or removes your reaction.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
@@ -227,6 +231,9 @@ that agent in Buzz; they do not notify the external app through this connection.
   and use the Left/Right arrow keys. Double-click the handle to reset the width.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
+- **Panel dividers**: the divider between a page and its side panel (such as
+  the Inbox list and a conversation) works the same way. Each page remembers
+  its own width within the same community and identity; double-click to reset.
 
 ## Saved Solo follow-ups
 
@@ -278,6 +285,10 @@ available rather than silently discarding it.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
+  On macOS, Claude security reviews need their own sign-in: run
+  `claude setup-token` in Terminal and paste its token under **Sign in for
+  reviews** in Claude's **Edit configuration**. Until it is saved, Claude
+  reviews fail closed. It needs a Claude subscription and lasts a year.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
   opens that conversation. Working indicators describe current work,
@@ -296,6 +307,9 @@ available rather than silently discarding it.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+- **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
+  their previous state, including when no choice was saved. Enable or disable
+  them in **Manage plugins**; saved choices persist.
 - Some plugins let the person's other agents on this computer, such as Claude
   Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
   helper Buzz installs, for example

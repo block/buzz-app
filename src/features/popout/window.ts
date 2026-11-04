@@ -1,10 +1,10 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ReadingHandle } from "../relay/unread";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { ComposerReader } from "../huddle/composer-contract";
 import { createHuddleComposerOwner } from "../huddle/composer-owner";
 import { isBuzzLink } from "../navigation/buzz-links";
+import { createReadingOwner } from "./reading-bridge";
 import { createPopoutThread, type PopoutThreadView } from "./thread";
 
 export type PopoutTarget = { channelId: string; threadRootId: string };
@@ -21,14 +21,12 @@ export type PopoutView = PopoutThreadView & {
 export type PopoutAction =
   | "openLink"
   | "openInMain"
-  | "send"
   | "older"
   | "retry"
   | "retryMessage"
   | "discardMessage"
   | "guard"
   | "close"
-  | "reading"
   | "closed";
 export type PopoutControl = {
   label: string;
@@ -54,26 +52,18 @@ export const nativePopoutWindow: PopoutBridge = {
   update: (label, view) => invoke("popout_window_update", { label, view }),
   detached: () => invoke("popout_window_detached"),
 };
-
-/** Companion reading messages: bounded JSON carried by one native action. */
-export type ReadingMessage =
-  | { op: "acquire"; lease: string }
-  | { op: "view"; lease: string; ids: string[] }
-  | { op: "observe"; lease: string; ids: string[] }
-  | { op: "catchUp"; lease: string; id: string }
-  | { op: "dispose"; lease: string };
-const MAX_LEASES = 8;
 const hex = /^[0-9a-f]{64}$/;
 
 type Entry = {
+  /** Empty while native creation is pending; the entry is owned regardless. */
   label: string;
   session: RelaySession;
   scope: string;
   viewer: string;
   target: PopoutTarget;
   thread: ReturnType<typeof createPopoutThread>;
-  composer: ReturnType<typeof createHuddleComposerOwner> | undefined;
-  leases: Map<string, ReadingHandle>;
+  composer: ReturnType<typeof createHuddleComposerOwner>;
+  reading: ReturnType<typeof createReadingOwner>;
   retired: boolean;
 };
 
@@ -88,6 +78,17 @@ export function createPopoutWindows(
     agents?: import("../agents/service").Agents;
   } = {},
 ) {
+  const bridge = options.bridge ?? nativePopoutWindow;
+  const incarnation = Date.now();
+  let disposed = false;
+  // Every owned window, including ones whose native creation is still pending.
+  const entries = new Set<Entry>();
+  let updates: Promise<unknown> = Promise.resolve();
+  const chain = (work: () => Promise<unknown>) => {
+    updates = updates.catch(() => {}).then(work);
+    void updates.catch(() => {});
+    return updates;
+  };
   // Why a window closed on its own; a mounted host component claims each once.
   let notices: readonly { id: number; text: string }[] = [];
   let noticeId = 0;
@@ -96,38 +97,31 @@ export function createPopoutWindows(
     notices = [...notices, { id: ++noticeId, text }].slice(-8);
     for (const listener of noticeListeners) listener();
   };
-  const bridge = options.bridge ?? nativePopoutWindow;
-  const incarnation = Date.now();
-  let disposed = false;
-  const entries = new Map<string, Entry>();
-  let updates: Promise<unknown> = Promise.resolve();
-  const chain = (work: () => Promise<unknown>) => {
-    updates = updates.catch(() => {}).then(work);
-    void updates.catch(() => {});
-    return updates;
-  };
   const dark = () => document.documentElement.classList.contains("dark");
+  const same = (a: PopoutTarget, b: PopoutTarget) =>
+    a.channelId === b.channelId && a.threadRootId === b.threadRootId;
   function view(entry: Entry): PopoutView {
     return {
       ...entry.thread.snapshot(),
-      composer: entry.composer?.token,
+      composer: entry.thread.writable() ? entry.composer.token : undefined,
+      reading: entry.reading.token,
       dark: dark(),
     };
   }
   function sync(entry: Entry) {
-    if (entry.retired) return;
+    if (entry.retired || !entry.label) return;
     const next = view(entry);
     void chain(() => bridge.update(entry.label, next));
   }
+  /** Release owner resources; a created window is destroyed natively. */
   function retire(entry: Entry, reason?: string) {
     if (entry.retired) return;
     entry.retired = true;
-    entries.delete(entry.label);
-    for (const lease of entry.leases.values()) lease.dispose();
-    entry.leases.clear();
-    entry.composer?.dispose();
+    entries.delete(entry);
+    entry.reading.dispose();
+    entry.composer.dispose();
     entry.thread.dispose();
-    void chain(() => bridge.update(entry.label, null));
+    if (entry.label) void chain(() => bridge.update(entry.label, null));
     if (reason) notify(reason);
   }
   const current = (entry: Entry) => {
@@ -140,88 +134,8 @@ export function createPopoutWindows(
       connection.viewer === entry.viewer
     );
   };
-  function reading(entry: Entry, text: string) {
-    let message: ReadingMessage;
-    try {
-      message = JSON.parse(text);
-    } catch {
-      return;
-    }
-    if (
-      typeof message !== "object" ||
-      !message ||
-      typeof message.lease !== "string" ||
-      message.lease.length > 64
-    )
-      return;
-    const known = new Set(
-      [entry.thread.snapshot().root, ...entry.thread.snapshot().replies]
-        .filter((row) => row !== undefined)
-        .map((row) => row.id),
-    );
-    const ids = (value: unknown) =>
-      Array.isArray(value)
-        ? value
-            .filter(
-              (id): id is string => typeof id === "string" && hex.test(id),
-            )
-            .filter((id) => known.has(id))
-            .slice(0, 128)
-        : [];
-    const handle = entry.leases.get(message.lease);
-    switch (message.op) {
-      case "acquire": {
-        if (handle || !entry.thread.snapshot().reading) return;
-        if (entry.leases.size >= MAX_LEASES) {
-          const oldest = entry.leases.keys().next().value;
-          if (oldest) {
-            entry.leases.get(oldest)?.dispose();
-            entry.leases.delete(oldest);
-          }
-        }
-        try {
-          entry.leases.set(
-            message.lease,
-            entry.session.unread.reading(entry.target.channelId),
-          );
-        } catch {
-          /* Membership may disappear between commit and observation. */
-        }
-        return;
-      }
-      case "view": {
-        // Rows measured by the companion; nothing else is claimed visible.
-        const measured = new Set(ids(message.ids));
-        try {
-          handle?.view([...measured], (id, known) => known && measured.has(id));
-        } catch {
-          entry.leases.delete(message.lease);
-        }
-        return;
-      }
-      case "observe": {
-        const rows = ids(message.ids);
-        if (handle && rows.length) void handle.observe(rows).catch(() => {});
-        return;
-      }
-      case "catchUp": {
-        if (handle && typeof message.id === "string" && known.has(message.id))
-          void handle
-            .catchUp(message.id, entry.target.threadRootId)
-            .catch(() => {});
-        return;
-      }
-      case "dispose": {
-        // A disposed lease answers no later observation: delayed IPC cannot
-        // revive reading intent cancelled by blur, hide or manual unread.
-        handle?.dispose();
-        entry.leases.delete(message.lease);
-        return;
-      }
-    }
-  }
   function act(control: PopoutControl) {
-    const entry = entries.get(control.label);
+    const entry = [...entries].find((e) => e.label === control.label);
     if (!entry || control.incarnation !== incarnation) return;
     if (control.action === "closed") {
       retire(entry);
@@ -250,9 +164,6 @@ export function createPopoutWindows(
         if (text)
           entry.thread.recover(text, control.action === "discardMessage");
         return;
-      case "reading":
-        if (text) reading(entry, text);
-        return;
       default:
         return;
     }
@@ -264,25 +175,37 @@ export function createPopoutWindows(
     if (connection.status !== "ready" || !scope || !viewer)
       throw new Error("Connect to the community before opening a window.");
     if (!hex.test(target.threadRootId)) throw new Error("Invalid thread.");
-    const existing = [...entries.values()].find(
+    const existing = [...entries].find(
       (entry) =>
         entry.scope === scope &&
         entry.viewer === viewer &&
-        entry.target.channelId === target.channelId &&
-        entry.target.threadRootId === target.threadRootId,
+        same(entry.target, target),
     );
-    const entry: Entry = existing ?? {
+    if (existing) {
+      // Native focuses the window for this binding; the owner is unchanged.
+      if (existing.label)
+        await chain(() =>
+          bridge.open(
+            { ...target, scope, viewer, incarnation },
+            view(existing),
+            act,
+          ),
+        );
+      return;
+    }
+    const entry: Entry = {
       label: "",
       session,
       scope,
       viewer,
       target,
+      retired: false,
       thread: createPopoutThread(
         session,
         target.channelId,
         target.threadRootId,
         () => {
-          if (!entry.label) return;
+          if (!entry.label || entry.retired) return;
           // Revocation: the roster is known and the channel is gone or cached.
           if (
             !entry.thread.available() &&
@@ -296,38 +219,57 @@ export function createPopoutWindows(
           else sync(entry);
         },
       ),
-      composer: undefined,
-      leases: new Map(),
-      retired: false,
+      composer: undefined as unknown as Entry["composer"],
+      reading: undefined as unknown as Entry["reading"],
     };
-    if (!existing) {
-      entry.composer = createHuddleComposerOwner(
-        session,
-        target.channelId,
-        target.channelId,
-        options.extensions,
-        () => current(entry),
-        () => entry.thread.available(),
-        options.agents,
-        target.threadRootId,
-      );
+    entry.composer = createHuddleComposerOwner(
+      session,
+      target.channelId,
+      target.channelId,
+      options.extensions,
+      () => current(entry),
+      // Admission needs the verified root of this exact thread, not only a
+      // joined channel; the owner rechecks this after async preparation.
+      () => entry.thread.rootVerified(),
+      options.agents,
+      target.threadRootId,
+    );
+    entry.reading = createReadingOwner(
+      session.unread,
+      target.channelId,
+      target.threadRootId,
+      () => entry.thread.known(),
+      () => current(entry) && entry.thread.readingEnabled(),
+    );
+    // Owned before creation: a scope change or disposal during the native
+    // await retires it, and completion below then destroys the new window.
+    entries.add(entry);
+    let opened: { label: string; existing: boolean };
+    try {
+      opened = (await chain(() =>
+        bridge.open(
+          { ...target, scope, viewer, incarnation },
+          view(entry),
+          act,
+        ),
+      )) as { label: string; existing: boolean };
+    } catch (error) {
+      retire(entry);
+      throw error;
     }
-    const binding: PopoutBinding = { ...target, scope, viewer, incarnation };
-    const opened = await chain(() => bridge.open(binding, view(entry), act));
-    const { label, existing: focused } = opened as {
-      label: string;
-      existing: boolean;
-    };
-    if (existing || focused) {
-      // Native already had this target: it was focused and keeps its owner.
-      if (!existing) {
-        entry.composer?.dispose();
-        entry.thread.dispose();
-      }
+    if (entry.retired || !current(entry)) {
+      // Stale by the time native finished: destroy what it created.
+      entry.label = opened.label;
+      if (entry.retired) void chain(() => bridge.update(opened.label, null));
+      else retire(entry);
       return;
     }
-    entry.label = label;
-    entries.set(label, entry);
+    if (opened.existing) {
+      // Native already had this binding (it was focused); keep one owner.
+      retire(entry);
+      return;
+    }
+    entry.label = opened.label;
     sync(entry);
   }
   // Windows left by an earlier main renderer keep cached rows; this incarnation
@@ -341,7 +283,7 @@ export function createPopoutWindows(
     }
   });
   const stopRelay = relay.subscribe(() => {
-    for (const entry of [...entries.values()])
+    for (const entry of [...entries])
       if (!current(entry))
         retire(
           entry,
@@ -349,7 +291,7 @@ export function createPopoutWindows(
         );
   });
   const theme = new MutationObserver(() => {
-    for (const entry of entries.values()) sync(entry);
+    for (const entry of entries) sync(entry);
   });
   theme.observe(document.documentElement, {
     attributes: true,
@@ -372,16 +314,12 @@ export function createPopoutWindows(
       },
     },
     isOpen: (target: PopoutTarget) =>
-      [...entries.values()].some(
-        (entry) =>
-          entry.target.channelId === target.channelId &&
-          entry.target.threadRootId === target.threadRootId,
-      ),
+      [...entries].some((entry) => same(entry.target, target)),
     async dispose() {
       disposed = true;
       stopRelay();
       theme.disconnect();
-      for (const entry of [...entries.values()]) retire(entry);
+      for (const entry of [...entries]) retire(entry);
       await updates.catch(() => {});
     },
   };

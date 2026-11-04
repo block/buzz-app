@@ -13,21 +13,10 @@ const VIEWER = "a".repeat(64);
 
 function harness() {
   const store = createRelaySession(null);
-  const reading = vi.fn(() => ({
-    view: vi.fn(),
-    observe: vi.fn(async () => {}),
-    catchUp: vi.fn(async () => {}),
-    dispose: vi.fn(),
-  }));
   const session = {
     ...store.session,
     viewer: VIEWER,
     media: (url: string) => url,
-    unread: {
-      ...store.session.unread,
-      reading,
-      sync: () => ({ capability: "frontier-sync" as const }),
-    },
   };
   let connection = {
     session,
@@ -47,10 +36,14 @@ function harness() {
   } as unknown as RelayData;
   let act: ((control: PopoutControl) => void) | undefined;
   let incarnation = 0;
+  let gate: Promise<void> | undefined;
+  let fail: Error | undefined;
   const bridge: PopoutBridge = {
     open: vi.fn(async (binding, _view, callback) => {
       act = callback;
       incarnation = binding.incarnation;
+      if (gate) await gate;
+      if (fail) throw fail;
       return { label: "popout-1", existing: false };
     }),
     update: vi.fn(async () => {}),
@@ -63,7 +56,6 @@ function harness() {
     windows,
     bridge,
     openLink,
-    reading,
     flush,
     control: (action: PopoutControl["action"], text?: string, stale = false) =>
       act?.({
@@ -75,6 +67,16 @@ function harness() {
     changeScope() {
       connection = { ...connection, scope: "other" };
       for (const listener of listeners) listener();
+    },
+    holdOpen() {
+      let release = () => {};
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+    failOpen(error: Error) {
+      fail = error;
     },
   };
 }
@@ -127,30 +129,60 @@ it("drops actions from an earlier incarnation and retires on close", async () =>
   expect(h.bridge.update).toHaveBeenCalledWith("popout-1", null);
 });
 
-it("owns reading leases: a disposed lease answers no later observation", async () => {
+it("offers no composer until the exact root is verified", async () => {
   const h = harness();
   await h.windows.open({ channelId: "channel", threadRootId: ROOT });
-  h.control("reading", JSON.stringify({ op: "acquire", lease: "L1" }));
-  expect(h.reading).toHaveBeenCalledWith("channel");
-  const lease = h.reading.mock.results[0]?.value as {
-    observe: ReturnType<typeof vi.fn>;
-    dispose: ReturnType<typeof vi.fn>;
-  };
-  // Ids outside this window's projection are never claimed as read.
-  h.control(
-    "reading",
-    JSON.stringify({ op: "observe", lease: "L1", ids: ["c".repeat(64)] }),
+  const [, view] = (h.bridge.open as ReturnType<typeof vi.fn>).mock
+    .calls[0] as [unknown, Record<string, unknown>];
+  // Offline, the root never loads: the window opens read-only with no
+  // composer token, and nothing is claimed read for it.
+  expect(view.root).toBeUndefined();
+  expect(view.writable).toBe(false);
+  expect(view.composer).toBeUndefined();
+  expect(typeof view.reading).toBe("string");
+});
+
+it("retires a window whose scope changed while native creation was pending", async () => {
+  const h = harness();
+  const release = h.holdOpen();
+  const opening = h.windows.open({ channelId: "channel", threadRootId: ROOT });
+  await h.flush();
+  h.changeScope();
+  release();
+  await opening;
+  await h.flush();
+  expect(h.windows.isOpen({ channelId: "channel", threadRootId: ROOT })).toBe(
+    false,
   );
-  expect(lease.observe).not.toHaveBeenCalled();
-  h.control("reading", JSON.stringify({ op: "dispose", lease: "L1" }));
-  expect(lease.dispose).toHaveBeenCalledTimes(1);
-  // Delayed IPC after dispose: nothing is revived.
-  h.control(
-    "reading",
-    JSON.stringify({ op: "observe", lease: "L1", ids: [ROOT] }),
+  expect(h.bridge.update).toHaveBeenCalledWith("popout-1", null);
+});
+
+it("destroys a window created after the owner was disposed", async () => {
+  const h = harness();
+  const release = h.holdOpen();
+  const opening = h.windows.open({ channelId: "channel", threadRootId: ROOT });
+  await h.flush();
+  const disposing = h.windows.dispose();
+  release();
+  await opening;
+  await disposing;
+  expect(h.bridge.update).toHaveBeenCalledWith("popout-1", null);
+  expect(h.windows.isOpen({ channelId: "channel", threadRootId: ROOT })).toBe(
+    false,
   );
-  expect(lease.observe).not.toHaveBeenCalled();
-  h.control("reading", "not json");
+});
+
+it("releases its reader when native creation fails", async () => {
+  const h = harness();
+  h.failOpen(new Error("No window"));
+  await expect(
+    h.windows.open({ channelId: "channel", threadRootId: ROOT }),
+  ).rejects.toThrow("No window");
+  expect(h.windows.isOpen({ channelId: "channel", threadRootId: ROOT })).toBe(
+    false,
+  );
+  await h.flush();
+  expect(h.bridge.update).not.toHaveBeenCalled();
 });
 
 it("retires every window with a notice when the scope changes", async () => {

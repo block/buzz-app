@@ -1204,8 +1204,14 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if popout_window::close_requested(window, api) { return; }
+                // macOS hides main instead (below), so companions keep their owner.
+                #[cfg(not(target_os = "macos"))]
+                if window.label() == "main" && popout_window::main_closing(window.app_handle(), api) { return; }
             }
-            if matches!(event, tauri::WindowEvent::Destroyed) { popout_window::destroyed(window); }
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                popout_window::destroyed(window);
+                if window.label() == "main" { popout_window::main_destroyed(window.app_handle()); }
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
             #[cfg(target_os = "macos")]

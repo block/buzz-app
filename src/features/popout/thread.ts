@@ -12,8 +12,8 @@ export type PopoutThreadView = {
   canLoadMore: boolean;
   limited: boolean;
   loadingOlder: boolean;
-  /** Main publishes reading intent on the companion's behalf when true. */
-  reading: boolean;
+  /** Reading bridge token: main publishes reading intent for this window. */
+  reading?: string | undefined;
   composer?: string | undefined;
   version: number;
   root?: CompanionRow | undefined;
@@ -51,19 +51,32 @@ export function createPopoutThread(
     thread?.subscribe(notify),
     session.channels.subscribeList(notify),
     session.profiles.subscribe(notify),
-    session.unread.subscribeSync(notify),
   ];
   const channel = () =>
     session.channels.get?.(channelId) ??
     session.channels.list().channels.find((c) => c.id === channelId);
+  /** The channel is known and readable; says nothing about the root. */
   const available = () => {
     const c = channel();
     return !disposed && !!thread && !!c && !c.cached;
   };
+  /** The verified root of this exact thread is loaded in this channel. Replies
+   * are offered and admitted only then; a loading root keeps the window open
+   * but read-only. */
+  const rootVerified = () => {
+    const snap = thread?.snapshot();
+    return (
+      available() &&
+      snap?.status === "ready" &&
+      !snap.error &&
+      snap.root?.id === rootId &&
+      snap.root.channelId === channelId
+    );
+  };
   const writable = () => {
     const c = channel();
     return (
-      available() &&
+      rootVerified() &&
       !!c &&
       !c.archived &&
       !c.readOnly &&
@@ -73,7 +86,21 @@ export function createPopoutThread(
   };
   return {
     available,
+    rootVerified,
     writable,
+    /** Ids this window presents; the reading owner claims nothing else. */
+    known(): ReadonlySet<string> {
+      const snap = thread?.snapshot();
+      return new Set(
+        snap && available()
+          ? [snap.root, ...visible(snap.replies).slice(-MAX_REPLIES)]
+              .filter((row) => row !== undefined)
+              .map((row) => row.id)
+          : [],
+      );
+    },
+    readingEnabled: () =>
+      available() && session.unread.sync().capability === "frontier-sync",
     snapshot(): PopoutThreadView {
       const snap = thread?.snapshot();
       const profiles = session.profiles.snapshot();
@@ -93,7 +120,6 @@ export function createPopoutThread(
         canLoadMore: !!snap?.canLoadMore && !snap.limited,
         limited: !!snap?.limited || replies.length > MAX_REPLIES,
         loadingOlder: snap?.readKind === "older",
-        reading: session.unread.sync().capability === "frontier-sync",
         version,
         root: snap?.root && available() ? project(snap.root) : undefined,
         replies: available() ? replies.slice(-MAX_REPLIES).map(project) : [],

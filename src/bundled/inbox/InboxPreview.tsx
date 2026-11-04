@@ -2,10 +2,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
+  type RefObject,
 } from "react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
@@ -143,13 +146,20 @@ function InboxPreviewCard({
     setUnreadOnlyState(value);
     writeView(viewScope, unreadOnlyKey, value);
   };
+  const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
   useEffect(() => {
     // As on the page, a completed discovery revision can retire a feed attempt.
     void list.asOf;
     if (list.status !== "ready") return;
-    void session.unread.ensure();
-    void session.inboxFeed.ensure();
-  }, [session, list.status, list.asOf]);
+    // Retry after a roster failure also refreshes activity that failed meanwhile.
+    if (refreshAfterRoster) {
+      setRefreshAfterRoster(false);
+      void Promise.all([session.unread.refresh(), session.inboxFeed.refresh()]);
+    } else {
+      void session.unread.ensure();
+      void session.inboxFeed.ensure();
+    }
+  }, [session, list.status, list.asOf, refreshAfterRoster]);
   const channelOf = (channelId: string) =>
     list.channels.find((channel) => channel.id === channelId);
   // Read archives only: reopening archived conversations is the Inbox page's write.
@@ -198,14 +208,32 @@ function InboxPreviewCard({
   const checked = inbox.status === "ready" || feed.status === "ready";
   const failure = list.error ?? inbox.error ?? feed.error ?? sync.error;
   const retry = async () => {
-    if (list.status !== "ready") session.channels.ensureList();
-    else
+    if (list.status !== "ready") {
+      setRefreshAfterRoster(true);
+      session.channels.ensureList();
+    } else
       await Promise.all([
         session.unread.refresh(),
         session.inboxFeed.refresh(),
       ]);
     await session.unread.retrySync();
   };
+  const unreadOnlyControl = useRef<HTMLElement>(null);
+  const retryFocus = useRef(false);
+  const retryButton = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return;
+    // Capture ownership before removal, not after focus has fallen to body.
+    return () => {
+      retryFocus.current = document.activeElement === button;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!retryFocus.current) return;
+    retryFocus.current = false;
+    // A recovered Retry hands its focus to the card, as on the page.
+    if (failure || document.activeElement !== document.body) return;
+    unreadOnlyControl.current?.focus({ preventScroll: true });
+  }, [failure]);
   // Each conversation counts once, under its most specific kind.
   let dms = 0;
   let mentions = 0;
@@ -245,11 +273,12 @@ function InboxPreviewCard({
       summary={summary}
       unreadOnly={unreadOnly}
       onUnreadOnlyChange={setUnreadOnly}
+      unreadOnlyRef={unreadOnlyControl}
     >
       {failure && (
         <div className={styles.notice} role="alert">
           <p className="text-body">{failure}</p>
-          <Button size="sm" onClick={() => void retry()}>
+          <Button ref={retryButton} size="sm" onClick={() => void retry()}>
             Retry inbox
           </Button>
         </div>
@@ -328,12 +357,14 @@ function Card({
   summary,
   unreadOnly,
   onUnreadOnlyChange,
+  unreadOnlyRef,
   children,
 }: PagePreviewProps & {
   navigator: Navigation;
   summary?: string | undefined;
   unreadOnly?: boolean;
   onUnreadOnlyChange?: (value: boolean) => void;
+  unreadOnlyRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
   const switchId = useId();
@@ -351,6 +382,7 @@ function Card({
         </div>
         <div className={styles.toggle}>
           <Switch
+            ref={unreadOnlyRef}
             id={switchId}
             aria-label="Unread only"
             checked={!!unreadOnly}

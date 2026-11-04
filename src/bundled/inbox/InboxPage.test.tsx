@@ -1711,6 +1711,72 @@ it("shows the card's connection and read failures with their recovery", async ()
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("refreshes the card's failed activity once its roster Retry recovers", async () => {
+  const h = fixture();
+  render(previewAt(h));
+  await waitFor(() => expect(previewRows()).toHaveLength(2));
+  await waitFor(() =>
+    expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+  );
+  // Activity and then discovery fail; the roster's error is shown first.
+  h.failAux();
+  await act(async () => h.owner.session.inboxFeed.refresh());
+  h.failAux(false);
+  h.failRoster();
+  act(() => h.owner.session.channels.refreshList?.());
+  expect(await screen.findByRole("alert")).toHaveTextContent("roster offline");
+  expect(h.owner.session.inboxFeed.snapshot().error).toBe(
+    "auxiliary history unavailable",
+  );
+  const release = h.recoverRoster();
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Retry inbox" }));
+    await waitFor(() => expect(h.rosterStarted()).toBe(true));
+  } finally {
+    await act(async () => release());
+  }
+  // One Retry clears both failures, as on the page.
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(previewRows()).toHaveLength(2);
+});
+
+it.each([true, false])(
+  "hands a recovered Retry's focus to Unread only when it owned focus (%s)",
+  async (owned) => {
+    const h = fixture();
+    const user = userEvent.setup();
+    render(previewAt(h));
+    await waitFor(() => expect(previewRows()).toHaveLength(2));
+    await waitFor(() =>
+      expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
+    );
+    h.failAux();
+    await act(async () => h.owner.session.inboxFeed.refresh());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "auxiliary history unavailable",
+    );
+    h.failAux(false);
+    const retry = screen.getByRole("button", { name: "Retry inbox" });
+    const openInbox = screen.getByRole("button", { name: "Open Inbox" });
+    if (owned) {
+      retry.focus();
+      await user.keyboard("{Enter}");
+    } else {
+      // A pointer press elsewhere keeps focus where the user left it.
+      openInbox.focus();
+      fireEvent.click(retry);
+    }
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
+    expect(
+      owned ? screen.getByRole("switch", { name: "Unread only" }) : openInbox,
+    ).toHaveFocus();
+  },
+);
+
 it("retries the card's connection, activity and read-state failures", async () => {
   const h = fixture();
   const view = render(previewAt(h));
@@ -2288,6 +2354,9 @@ function fixture(
           }),
         ]),
       );
+    },
+    failRoster() {
+      rosterFailure = true;
     },
     recoverRoster() {
       rosterFailure = false;

@@ -13,7 +13,7 @@ const listeners = new Set<() => void>();
 /** Read once, since every formatted time consults it. */
 let current: ClockPreference | undefined;
 let unsaved = false;
-/** The macOS 24-hour setting, which the webview's locale does not reflect. */
+/** The system's 24-hour setting, which the webview's locale does not reflect. */
 let system: HourCycle | undefined;
 
 function read(): ClockPreference {
@@ -50,7 +50,7 @@ function notify() {
 }
 
 function refreshSystem() {
-  if (!isTauri() || !/Mac/.test(navigator.platform)) return;
+  if (!isTauri()) return;
   invoke<HourCycle | null>("system_hour_cycle").then(
     (cycle) => {
       if ((cycle ?? undefined) === system) return;

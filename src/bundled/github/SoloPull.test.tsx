@@ -170,10 +170,12 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
   const inject = vi.fn();
   apply({
     host: {},
+    effect: () => {},
     panels: { register: () => {} },
     conversation: {
       registerChatIcon: () => {},
       registerChatMenu: () => {},
+      registerMessage: () => {},
       registerLink: () => {},
     },
     relay,

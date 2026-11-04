@@ -59,6 +59,11 @@ import { presentPull } from "./attention";
 import { SubmitReview } from "./SubmitReview";
 import { PullFiles } from "./PullFiles";
 import { AuthorSettings } from "./AuthorSettings";
+import { GitHubHooks } from "./GitHubHooks";
+import { PullCard } from "./PullCard";
+import { announcedUrl } from "./relay-pull";
+import { createPullSources } from "./relay-pulls";
+import type { ChannelSummary } from "../../features/relay/contracts";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = PANEL_REFRESH_MS;
@@ -70,7 +75,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // A pull request's state is nobody's community's: one store serves every
   // session's sidebar, every link in messages, the panel and agents, so one
   // shown in several places costs one read.
-  const states = createPullStates(gh);
+  const sources = createPullSources(ctx.relay);
+  ctx.effect(() => () => sources.dispose());
+  const states = createPullStates(gh, sources);
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
@@ -123,6 +130,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
         />
       );
     },
+  });
+  ctx.panels.register({
+    id: "hooks",
+    title: "GitHub",
+    matches: () => false,
+    channelMenu: { label: "GitHub repositories", eligible: canFollow },
+    component: ({ channelContext }: PanelProps) => (
+      <GitHubHooks relay={ctx.relay} channelContext={channelContext} />
+    ),
+  });
+  ctx.conversation.registerMessage({
+    id: "pull-card",
+    title: "Pull request card",
+    matches: (message) => {
+      const state = ctx.relay.snapshot();
+      return (
+        state.status === "ready" &&
+        !!state.session.relayAuthor &&
+        (message.signerId ?? message.authorId) === state.session.relayAuthor &&
+        !!announcedUrl(message.content)
+      );
+    },
+    component: ({ message, open, canOpen }) => (
+      <PullCard
+        message={message}
+        sources={sources}
+        open={open}
+        canOpen={canOpen}
+      />
+    ),
   });
   ctx.conversation.registerLink({
     id: "pull",
@@ -220,6 +257,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   });
 };
+/** Whoever can post in the channel can ask the relay to follow a repository
+ * there. */
+function canFollow(channel: ChannelSummary, session: RelaySession) {
+  return (
+    (channel.channelType === "stream" || channel.channelType === "forum") &&
+    !channel.cached &&
+    !channel.archived &&
+    (!channel.readOnly || channel.viewerRole === "guest") &&
+    !!channel.members?.includes(session.viewer ?? "") &&
+    !!session.configArtifactWriter
+  );
+}
+
 /** A repository, issue or commit, read when the panel opens. */
 function useGitHubObject(
   reference: GitHubReference,

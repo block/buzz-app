@@ -1153,6 +1153,10 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
             serde_json::json!({"community":"invalid","event":{"kind":30078,"created_at":1,"content":"","tags":[]}}),
         ),
         (
+            "relay_seal_hook_secret",
+            serde_json::json!({"community":"invalid","relay":"","secret":""}),
+        ),
+        (
             "relay_channel_publish",
             serde_json::json!({"community":"invalid","route":"channel-lifecycle","event":{}}),
         ),

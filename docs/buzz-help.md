@@ -241,7 +241,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   opens that conversation. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
-  its speaker. Thread work appears inside its thread. Expand recorded work to
+  its speaker. Thread work appears inside its thread; the channel’s reply summary
+  still shows when an agent is working there. Expand recorded work to
   open its transcript or **Stop** the running request; before any work updates
   arrive, those controls appear on the live indicator. Stop availability depends
   on the agent type.

@@ -1,6 +1,11 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import type { MessageLinkOrigin } from "./MessageRow";
-import { useContext, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useContext,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InfoIcon, StopIcon } from "../../shared/design-system/icons";
 import { AgentsContext, useAgentsSnapshot } from "../agents/react";
@@ -25,13 +30,36 @@ export function ActivityGroupActions({
   profiles,
   open,
   canOpen,
+  returnFocus,
 }: {
+  returnFocus: RefObject<HTMLButtonElement | null>;
   session: RelaySession;
   group: ActivityPresentation;
   profiles: ReadonlyMap<string, Profile>;
   open?: ((target: string, origin?: MessageLinkOrigin) => boolean) | undefined;
   canOpen?: ((target: string) => boolean) | undefined;
 }) {
+  // Ref cleanup runs before a retired button detaches, while it still owns focus.
+  const stopRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (!node) return;
+      return () => {
+        const document = node.ownerDocument;
+        if (document.activeElement !== node) return;
+        queueMicrotask(() => {
+          const target = returnFocus.current;
+          if (
+            !node.isConnected &&
+            target?.isConnected &&
+            document.activeElement === document.body
+          ) {
+            target.focus({ preventScroll: true });
+          }
+        });
+      };
+    },
+    [returnFocus],
+  );
   const snapshot = useActivitySnapshot(session.agentActivity);
   const choices = useSyncExternalStore(
     session.agentChoices.subscribe,
@@ -104,6 +132,7 @@ export function ActivityGroupActions({
         return (
           <IconButton
             key={control.key}
+            ref={stopRef}
             size="sm"
             variant="subtle"
             aria-label={`Stop ${name}`}

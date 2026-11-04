@@ -219,19 +219,8 @@ function MessageRowContent({
     row.channelId,
     row.threadRootId ?? row.id,
   );
-  const responseAccessory = () =>
-    !!extensions?.accessories
-      ?.snapshot()
-      .some((entry) => entry.placement === "response");
-  const hasResponseAccessory = useSyncExternalStore(
-    extensions?.accessories?.subscribe ?? noSubscribe,
-    responseAccessory,
-    responseAccessory,
-  );
   const { agents: threadAgents, waiting: threadWaiting } = useThreadAgents(
-    !hasResponseAccessory &&
-      onOpenThread &&
-      (row.replyCount > 0 || (startsThreads && !row.threadRootId))
+    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
       ? session
       : undefined,
     row.channelId,

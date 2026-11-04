@@ -1,3 +1,5 @@
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../identity-names/testing";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -279,4 +281,72 @@ it("keeps the primary avatar on the activity bubble without repeating an anchore
     ]),
   );
   expect(screen.getByText("Studio assistant", { exact: true })).toBeVisible();
+});
+
+it("uses channel-qualified names for the excerpt and participant avatars", () => {
+  const primary = keypair().pubkey;
+  const helper = keypair().pubkey;
+  const owner = createRelaySession(null);
+  const profiles = new Map([
+    [primary, { name: "Honey", isAgent: true as const }],
+    [helper, { name: "Honey", isAgent: true as const }],
+  ]);
+  const names = bindNames(
+    {
+      profiles: { ...owner.session.profiles, snapshot: () => profiles },
+      agentLibrary: owner.session.agentLibrary,
+    },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
+  const channelList = {
+    status: "ready" as const,
+    channels: [
+      { id: step.channelId, name: "Team", members: [primary, helper] },
+    ],
+  };
+  const session = {
+    ...owner.session,
+    names,
+    channels: {
+      ...owner.session.channels,
+      list: () => channelList,
+    },
+  };
+  const group = activityPresentation(
+    [
+      { ...step, id: "first", authorId: primary },
+      { ...step, id: "second", authorId: helper },
+    ],
+    undefined,
+    new Set([primary, helper]),
+  ).groups[0];
+  if (!group) throw new Error("Missing group");
+  const first = names.resolve(primary, "Honey", [primary, helper]);
+  const second = names.resolve(helper, "Honey", [primary, helper]);
+  expect(first).not.toBe(second);
+  try {
+    render(
+      <ActivityGroupPreview
+        session={session}
+        group={group}
+        profiles={profiles}
+        media={() => undefined}
+        expanded={false}
+        onToggle={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: `Show activity history: ${second}: ${step.content}`,
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("img", { name: `${first}, ${second}` }),
+    ).toBeVisible();
+    expect(screen.getByText(`${second}: ${step.content}`)).toBeVisible();
+  } finally {
+    cleanup();
+    names.dispose();
+    owner.dispose();
+  }
 });

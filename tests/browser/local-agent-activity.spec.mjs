@@ -287,7 +287,8 @@ test("Stop in a message's activity ends its local work quietly", async ({
         Math.max(frame.y + frame.height, around.y + around.height) + 16 - top,
     },
   });
-  await stop.click();
+  await stop.focus();
+  await stop.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
     .toEqual([event.id]);
@@ -387,6 +388,9 @@ test("Stop in a channel response activity stops its work", async ({
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toBeFocused();
   const note = row.locator("[data-activity-stopped]");
   await expect(note).toContainText("Local tester · Stopped");
   const [bounds, noted] = await Promise.all([
@@ -447,7 +451,7 @@ test("one thread summary retains reply navigation and work on another reply", as
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
     .toBe(2);
-  await expect(summary).toBeVisible();
+  await expect(summary).toHaveAccessibleName(/Local tester (working|waiting)/);
   await expect(activity).toHaveCount(0);
   await page.evaluate(
     (id) => window.localAgentFixture.finish(id, true),

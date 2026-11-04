@@ -1647,7 +1647,31 @@ it("shows unbadged working-agent avatars and shared dots only while a known agen
     },
   } as unknown as RelaySession;
   const media = vi.fn(() => "https://proxy/brain");
-  let view = renderMessage({ session, media, onOpenThread: () => {} });
+  const emptyEntries: readonly never[] = [];
+  const empty = { snapshot: () => emptyEntries, subscribe: () => () => {} };
+  const accessories = [
+    {
+      key: "activity",
+      pluginId: "activity",
+      revision: "1",
+      id: "activity",
+      title: "Activity",
+      placement: "response" as const,
+      component: () => null,
+    },
+  ];
+  let view = renderMessage({
+    session,
+    media,
+    onOpenThread: () => {},
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => accessories, subscribe: () => () => {} },
+    },
+  });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",

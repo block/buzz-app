@@ -1,3 +1,4 @@
+import { useChannelIdentityNames } from "../identity-names/react";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { ActivityGroupActions } from "./ActivityGroupActions";
 import { useActivityTypingReplacement } from "../conversation/typing-presentation";
@@ -42,6 +43,8 @@ export function ActivityGroupPreview({
   renderHistory?: (row: ChannelMessage) => ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  const disclosure = useRef<HTMLButtonElement>(null);
+  const resolveName = useChannelIdentityNames(session, group.latest.channelId);
   useActivityFocusHandoff(container);
   const { latest: row, history, participants, hidden, working } = group;
   const live = useActivityIndicator(
@@ -67,8 +70,10 @@ export function ActivityGroupPreview({
   if (hidden && !group.retained) return null;
   const primary = history[0]?.authorId ?? row.authorId;
   const profile = profiles.get(primary);
-  const name = profile?.name ?? primary.slice(0, 10);
-  const speaker = profiles.get(row.authorId)?.name ?? row.authorId.slice(0, 10);
+  const named = (id: string) =>
+    resolveName(id, profiles.get(id)?.name ?? id.slice(0, 10));
+  const name = named(primary);
+  const speaker = named(row.authorId);
   const text = Array.from(messagePreviewText(row.content).replace(/\s+/g, " "));
   const preview =
     text.length > 280 ? `${text.slice(0, 279).join("")}…` : text.join("");
@@ -80,6 +85,7 @@ export function ActivityGroupPreview({
     >
       <div className={styles.audienceEntry}>
         <button
+          ref={disclosure}
           type="button"
           data-buzz-ui=""
           className={styles.audienceLine}
@@ -125,7 +131,7 @@ export function ActivityGroupPreview({
       name={name}
       participants={participants.map((id) => ({
         id,
-        name: profiles.get(id)?.name ?? id.slice(0, 10),
+        name: named(id),
         picture: avatarMedia(profiles.get(id)?.picture, media),
       }))}
       stackPrevious={!group.standalone}
@@ -147,6 +153,7 @@ export function ActivityGroupPreview({
               <ActivityGroupActions
                 session={session}
                 group={group}
+                returnFocus={disclosure}
                 profiles={profiles}
                 open={openActivity}
                 canOpen={canOpenActivity}

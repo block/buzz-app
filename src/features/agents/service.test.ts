@@ -14011,3 +14011,79 @@ it("keeps owned protection settings visible while the selected community reconne
   await settle();
   expect(f.run).not.toHaveBeenCalled();
 });
+
+it("saves reviewed import config before native identity installation and adopts the old instructions", async () => {
+  const { service, native, storage, session } = await setup();
+  const port = native.port.getMockImplementation();
+  if (!port) throw new Error("Missing native port fixture");
+  native.port.mockImplementation(async (...args) => {
+    expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain(
+      "Reviewed choice",
+    );
+    const result = await port(...args);
+    return { ...result, carry: { instructions: "Adopted instructions" } };
+  });
+  const { agent } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed choice" },
+    scope: session.scope,
+  });
+  expect(agent.config).toEqual({ reply: "Adopted instructions" });
+  expect(service.find(sibling)?.config).toEqual({
+    reply: "Adopted instructions",
+  });
+});
+
+it("refuses stale-community connection and does not import when reviewed settings cannot be saved", async () => {
+  const { service, native, storage } = await setup();
+  const input = {
+    source: "installed" as const,
+    pubkey: sibling,
+    type: "example/echo",
+    config: { reply: "Reviewed" },
+  };
+  await expect(
+    service.port({ ...input, scope: "another-community" }),
+  ).rejects.toThrow("community changed");
+  expect(native.port).not.toHaveBeenCalled();
+  vi.spyOn(storage, "add").mockRejectedValue(new Error("Disk full"));
+  await expect(service.port(input)).rejects.toThrow("Disk full");
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("does not overwrite settings another app saved before an inline import", async () => {
+  const { service, native, storage } = await setup();
+  const kept = JSON.stringify({
+    pubkey: sibling,
+    config: { reply: "Other app" },
+    attention: {},
+  });
+  await storage.set(`buzz.agent.v1:${sibling}`, kept);
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("already has saved setup");
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toBe(kept);
+  expect(native.port).not.toHaveBeenCalled();
+});
+
+it("reports an incomplete import when adopting settings fails after identity installation", async () => {
+  const { service, native, storage } = await setup();
+  vi.spyOn(storage, "set").mockRejectedValue(new Error("Disk full"));
+  await expect(
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+      config: { reply: "Reviewed" },
+    }),
+  ).rejects.toThrow("identity was imported");
+  expect(native.port).toHaveBeenCalledOnce();
+  expect(storage.get(`buzz.agent.v1:${sibling}`)).toContain("Reviewed");
+});

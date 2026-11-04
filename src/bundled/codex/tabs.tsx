@@ -281,6 +281,13 @@ const choices = (data?: Catalog) =>
     id: model.model,
     label: model.displayName,
     description: model.description,
+    efforts: [
+      { id: "", label: "Automatic" },
+      ...model.supportedReasoningEfforts.map((effort) => ({
+        id: effort.reasoningEffort,
+        label: effortName(effort.reasoningEffort),
+      })),
+    ],
   })) ?? [];
 const catalogModel = (model: string, data?: Catalog) => {
   if (!data) return undefined;
@@ -486,6 +493,13 @@ export function createTabs(
       <div ref={field} className="contents">
         <CreateModelChoices
           {...props}
+          effort={current.effort}
+          effortLabel={
+            current.effort ? effortName(current.effort) : "Automatic"
+          }
+          onEffortChange={(model, effort) =>
+            onChange(readConfig({ ...current, model, effort }))
+          }
           models={choices(data)}
           value={current.model}
           defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}

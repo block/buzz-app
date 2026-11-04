@@ -1075,6 +1075,7 @@ export function createTabs({
     onChange,
     disabled,
     modelAppearance,
+    showEffort = true,
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
     const [open, setOpen] = useState(false);
@@ -1138,7 +1139,7 @@ export function createTabs({
             label="Goose model"
             appearance={modelAppearance ?? "outlined"}
             // A card names its harness before the model, as Pi's does.
-            {...(modelAppearance && {
+            {...(modelAppearance === "glass-ghost" && {
               leading: <GooseLogoIcon size={18} />,
             })}
             models={choices}
@@ -1149,7 +1150,9 @@ export function createTabs({
             // A card's chip keeps its room for the model name; its menu
             // still shows and sets the level.
             effortLabel={
-              !modelAppearance && thinking.value?.levels.length
+              showEffort &&
+              modelAppearance !== "glass-ghost" &&
+              thinking.value?.levels.length
                 ? current.effort
                   ? current.effort.charAt(0).toUpperCase() +
                     current.effort.slice(1)
@@ -1165,8 +1168,10 @@ export function createTabs({
             loading={models.status === "loading"}
             onConfigure={() => setOpen(true)}
             onChange={(model) => onChange({ ...current, model, effort: "" })}
-            onEffortChange={(model, effort) =>
-              onChange({ ...current, model, effort })
+            onEffortChange={
+              showEffort
+                ? (model, effort) => onChange({ ...current, model, effort })
+                : undefined
             }
           />
         </ModelDiscoveryRecovery>

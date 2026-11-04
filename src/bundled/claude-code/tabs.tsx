@@ -372,7 +372,20 @@ export function createTabs({
     return (
       <CreateModelChoices
         {...props}
-        models={modelChoices(state.models)}
+        models={modelChoices(state.models).map((choice) => ({
+          ...choice,
+          efforts: effortsFor(choice.id, state.models).length
+            ? [
+                { id: "", label: "Automatic" },
+                ...effortsFor(choice.id, state.models),
+              ]
+            : [],
+        }))}
+        effort={current.effort}
+        effortLabel={current.effort ? effortLabel(current.effort) : "Automatic"}
+        onEffortChange={(model, effort) =>
+          onChange(readConfig({ ...current, model, effort }))
+        }
         value={current.model}
         defaultModel={providerDefaultModel(
           providerDefaults.model,

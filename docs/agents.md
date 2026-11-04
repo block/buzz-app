@@ -421,10 +421,12 @@ in its profile panel.
 In completed owned-agent panes, inactive sections unmount. Switching sections
 with an unsaved draft asks for confirmation; a confirmed discard also clears a
 pending provider choice. Pending saves keep their section mounted until they
-settle, so failures remain visible. On the Agents page, choosing another agent,
-closing the panel or opening Import asks the same way, including for an unsaved
-name; while a save is pending, the selection stays. Deleting an agent closes only
-its own panel, without asking.
+settle, so failures remain visible. On the Agents page, choosing another agent
+(from the grid, a card's menu, Create or the marketplace) or closing the panel
+asks the same way, including for an unsaved name or a staged harness change.
+While a save is pending, the selection stays and the agents grid is marked
+busy. Import opens as a dialog over the page, so the open agent and its draft
+stay. Deleting an agent closes only its own panel, without asking.
 
 A reviewed provider choice remains a host-owned draft until the form's Save
 action succeeds or the owner confirms discarding it. While it is pending, the

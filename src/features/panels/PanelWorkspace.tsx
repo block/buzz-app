@@ -30,7 +30,8 @@ type Item = {
   instance?: object;
   /** Omit for a permanent tab such as a channel's own conversation. Returns
    * false when it keeps the tab, as when asking about unsaved edits first. */
-  close?: (() => unknown) | undefined;
+  // biome-ignore lint/suspicious/noConfusingVoidType: Closers that return nothing stay valid; only false keeps the tab.
+  close?: (() => boolean | void) | undefined;
   /** Keyboard placement: one position left or right, across panes at an edge. */
   move?: ((delta: -1 | 1) => void) | undefined;
   /** A blank name restores the tab's own title. */
@@ -258,12 +259,19 @@ export function PanelWorkspace({
       const keptFocus = fallback ? document.activeElement : null;
       // Match the X button, including local detail tabs and focus recovery.
       // Commit before another native menu request can reuse this selection.
-      flushSync(() => {
+      const declined = flushSync(() => {
         closingTab.current = active.id;
-        if (active.close?.() === false) closingTab.current = undefined;
+        if (active.close?.() !== false) return false;
+        closingTab.current = undefined;
+        return true;
       });
       // Fallback closes another pane, not the editor the person is still using.
-      if (keptFocus instanceof HTMLElement && keptFocus.isConnected)
+      // A declined close may be asking first; its prompt keeps focus.
+      if (
+        !declined &&
+        keptFocus instanceof HTMLElement &&
+        keptFocus.isConnected
+      )
         keptFocus.focus({ preventScroll: true });
     };
     // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.

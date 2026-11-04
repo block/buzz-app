@@ -3824,9 +3824,13 @@ it("asks before choosing another agent discards an unsaved draft", async () => {
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("gridcell", { name: "Ada" })).toHaveFocus(),
+  );
   expect(field).toHaveValue("Unsaved reply");
 
-  await user.click(within(grid).getByText("Bo"));
+  // Discarding moves the selection, and keyboard focus with it.
+  await user.keyboard("{ArrowRight}");
   await user.click(
     within(
       await screen.findByRole("alertdialog", { name: "Discard changes?" }),
@@ -3837,6 +3841,9 @@ it("asks before choosing another agent discards an unsaved draft", async () => {
   expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveAttribute(
     "aria-selected",
     "true",
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus(),
   );
   expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
     "Bo says hi",
@@ -3949,64 +3956,44 @@ it("leaves focus in the grid when changing agents after keeping a draft over Clo
   expect(screen.getByRole("gridcell", { name: "Bo" })).toHaveFocus();
 });
 
-it("opens Import only after a draft is discarded, and deleting the open agent closes it without asking", async () => {
+it("keeps a draft open behind Import without asking, and deleting the open agent closes it without asking", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);
   const bo = agent("Bo", 2);
   const { agents, show } = setup([ada, bo], { dirtySettings: true });
   const grid = screen.getByRole("grid", { name: "Agents" });
-  const edit = async (name: string) => {
-    await user.click(within(grid).getByText(name));
-    const field = screen.getByRole("textbox", { name: "Reply" });
-    await user.clear(field);
-    await user.type(field, "Unsaved reply");
-  };
-  const importAgent = async () => {
-    await user.click(screen.getByRole("button", { name: "New agent" }));
-    await user.click(
-      await screen.findByRole("menuitem", { name: "Import an agent" }),
-    );
-    return screen.findByRole("alertdialog", { name: "Discard changes?" });
-  };
-  await edit("Ada");
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+
+  // Import is a dialog over the page, so the panel and its draft stay.
+  await user.click(screen.getByRole("button", { name: "New agent" }));
   await user.click(
-    within(await importAgent()).getByRole("button", { name: "Keep editing" }),
-  );
-  expect(
-    screen.queryByRole("dialog", { name: "Import an agent" }),
-  ).not.toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue(
-    "Unsaved reply",
-  );
-  await user.click(
-    within(await importAgent()).getByRole("button", {
-      name: "Discard changes",
-    }),
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
   );
   const importing = await screen.findByRole("dialog", {
     name: "Import an agent",
   });
-  expect(
-    screen.queryByRole("region", { name: "Agent profile" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
   await user.click(within(importing).getByRole("button", { name: "Close" }));
   await waitFor(() =>
     expect(
       screen.queryByRole("dialog", { name: "Import an agent" }),
     ).not.toBeInTheDocument(),
   );
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(field).toHaveValue("Unsaved reply");
 
-  await edit("Bo");
-  agents.remove.mockImplementationOnce(async () => show([ada]));
-  await user.click(screen.getByRole("button", { name: "Actions for Bo" }));
+  agents.remove.mockImplementationOnce(async () => show([bo]));
+  await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
   await user.click(
     await screen.findByRole("menuitem", { name: "Delete agent" }),
   );
   await user.click(
-    within(await screen.findByRole("dialog", { name: "Delete Bo?" })).getByRole(
-      "button",
-      { name: "Delete" },
-    ),
+    within(
+      await screen.findByRole("dialog", { name: "Delete Ada?" }),
+    ).getByRole("button", { name: "Delete" }),
   );
   await waitFor(() =>
     expect(
@@ -4058,6 +4045,7 @@ it("asks about an unsaved agent name and keeps the selection while it saves", as
       "aria-selected",
       "true",
     );
+    expect(grid).toHaveAttribute("aria-busy", "true");
   } finally {
     finish();
   }
@@ -4066,9 +4054,140 @@ it("asks about an unsaved agent name and keeps the selection while it saves", as
       screen.queryByRole("textbox", { name: "Agent name" }),
     ).not.toBeInTheDocument(),
   );
+  expect(grid).not.toHaveAttribute("aria-busy");
   await user.click(within(grid).getByText("Bo"));
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+});
+
+it("asks before choosing another agent drops a staged harness change", async () => {
+  const user = userEvent.setup();
+  const relay = {
+    key: "test/relay",
+    pluginId: "test",
+    revision: "1",
+    id: "relay",
+    title: "Relay",
+    icon: PlugIcon,
+    defaults: () => ({ config: { endpoint: "wss://relay.example" } }),
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: ({ settingsHost }: AgentViewProps) => (
+          <>
+            {settingsHost?.typeControl?.(false)}
+            <p>Relay settings</p>
+          </>
+        ),
+      },
+    ],
+  } as unknown as RegisteredAgentType;
+  const { agents } = setup([agent("Ada", 1), agent("Bo", 2)], {
+    more: [relay],
+    dirtySettings: true,
+  });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  await user.click(
+    screen.getByRole("button", { name: "Change harness from Echo" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "Relay" }));
+  await user.click(
+    within(
+      await screen.findByRole("dialog", { name: "Move Ada to Relay?" }),
+    ).getByRole("button", { name: "Continue" }),
+  );
+  expect(await screen.findByText("Relay settings")).toBeVisible();
+
+  // Only the staged change is unsaved; its settings tab reports nothing.
+  await user.click(within(grid).getByText("Bo"));
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Change harness from Relay" }),
+  ).toBeVisible();
+
+  await user.click(within(grid).getByText("Bo"));
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("heading", { name: "Bo" })).toBeInTheDocument();
+  expect(agents.retype).not.toHaveBeenCalled();
+  await user.click(within(grid).getByText("Ada"));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Change harness from Echo" }),
+  ).toBeVisible();
+});
+
+it("asks before Create or another card's Open settings replaces an unsaved draft", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1), agent("Bo", 2)], {
+    dirtySettings: true,
+  });
+  const grid = screen.getByRole("grid", { name: "Agents" });
+  await user.click(within(grid).getByText("Ada"));
+  const field = screen.getByRole("textbox", { name: "Reply" });
+  await user.clear(field);
+  await user.type(field, "Unsaved reply");
+
+  // The new agent is made either way; keeping the draft leaves it unopened.
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new agent" }),
+  );
+  const creating = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(creating).getByLabelText("Name"), "Nova");
+  await user.click(
+    within(creating).getByRole("button", { name: "Create agent" }),
+  );
+  await vi.waitFor(() => expect(agents.create).toHaveBeenCalled());
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Nova" })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+  expect(field).toHaveValue("Unsaved reply");
+
+  await user.click(screen.getByRole("button", { name: "Actions for Bo" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open settings" }),
+  );
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(screen.getByRole("heading", { name: "Ada" })).toBeInTheDocument();
+  expect(field).toHaveValue("Unsaved reply");
+
+  await user.click(screen.getByRole("button", { name: "Actions for Nova" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open settings" }),
+  );
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+    ).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("heading", { name: "Nova" })).toBeInTheDocument();
+  expect(screen.getByRole("gridcell", { name: "Nova" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(agents.save).not.toHaveBeenCalled();
 });
 
 it("announces the Bestie on its card without repeating it in actions", async () => {

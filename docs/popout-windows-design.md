@@ -432,3 +432,121 @@ restart, browser/mobile hosts, Linux/Windows hide-on-close, keyboard shortcut.
   voluntary switch/close is cancellable, revocation is immediate (§5.2, §5.5,
   §5.8); delayed-IPC reading observations must not revive cancelled intent
   (§5.6); S1a framed as an explicit product tradeoff (§8 Q2/Q4).
+
+## 10. S1 scope checkpoint (per `AGENTS.md` "Engineering standard")
+
+Approved by jaw 2026-11-04 (design, parity, approach B, slicing, core-only,
+platform-natural main-close). Implementation owner: jaw (accountable human
+author); Jaw-fable51-pi implements and commits as jaw's git identity with a
+`Co-authored-by` trailer. Reviewers per CODEOWNERS: `@block/buzz-oss-team`.
+
+### Required behavior (S1 — thread pop-out, desktop only)
+
+1. **Open in new window** for a thread from: thread pane header action
+   (beside the existing `parent` "Open in channel" link), conversation tab-strip
+   tab menu for thread tabs, message `⋯` on messages that have a thread.
+   Source tab/pane stays open. Browser build and non-desktop hosts hide the item.
+2. A `popout-<uuid>` native window titled from the thread's channel, showing
+   header (title, *Open in main window*), the thread rows (root + replies, same
+   shared message renderer/bylines/attachments/mentions as Huddle discussion)
+   with *Older* paging, and the real `MessageComposer` replying to the root.
+3. Opening an already-open target focuses its window instead of creating one.
+4. Main stays the only relay session, signer, outbox and read-state owner. The
+   window is natively bound to `{scope, viewer, channelId, threadRootId,
+   sessionIncarnation}`; `watch`/`action`/`media-download` are gated per label
+   and binding; stale-incarnation actions are dropped, never replayed.
+5. Drafts: thread draft key `draft:<channel>:thread:<root>`, shared with main
+   through the composer's existing conflict contract; send clears the stored
+   draft only on revision equality.
+6. *Open in main window*: show+focus main, open the thread tab there, pop-out
+   stays. Explicit close (red button, Cmd+W when the pop-out is focused) guards
+   pending attachment drafts, unresolved conflict, storage-failed text, pending
+   send/upload with a confirm dialog.
+7. Lifecycle: voluntary community switch / sign-out / Linux-Windows main Close
+   run the guards and are cancellable; revocation (membership loss, archive,
+   server-replaced session, Huddle-style plugin disable) retires immediately
+   with a main toast. macOS main close hides main; pop-outs keep working. Main
+   renderer reload: companion goes read-only, composer disabled, retire on main
+   startup with "Reopen from Buzz".
+8. Reading (S1b, same PR unless it must split): companion sends `observe(ids)`
+   with focus/visibility generation under `docs/unread.md` rules; main validates
+   against the window's projection and feeds its reading owner; delayed or
+   pre-blur observations are dropped; opening marks nothing. If split, S1a ships
+   with "pop-out does not clear unread" stated in `buzz-help.md` as an interim
+   product state (accepted by jaw 2026-11-04).
+9. Links: Buzz links → `openLink` action, handled in main (focus main);
+   `http(s)` → OS browser via `opener`.
+10. Light/dark follow main; keyboard focus order and enlarged text checked.
+
+### Non-goals (S1)
+
+Channels/DMs/Solo pop-outs and Cmd/Ctrl-click (S2); reactions, edit/delete,
+link previews/cards, read marker in the pop-out (S3); restoring pop-outs after
+restart; re-adopting pop-outs after main reload; Linux/Windows hide-on-close for
+main; keyboard shortcut to pop out; plugin API (`ctx.windows.*`); canvases,
+pages, Settings; mobile/browser hosts; window title/avatar polish (discuss
+after first native tryout, per jaw).
+
+### Existing owners and platform support reused
+
+- Native companion plumbing and validation: `src-tauri/src/huddle_window.rs`
+  (`open/update/watch/action`, `closed_notice`, size-capped `validate`),
+  `src-tauri/capabilities/huddle.json` as the capability template,
+  `media_download` label gate (`relay.rs:1958-1975`), `close_menu.rs` for Cmd+W,
+  `lib.rs` main-close handling (`:1096-1108`).
+- Composer projection: `src/features/huddle/composer-contract.ts`,
+  `composer-owner.ts`, `composer-client.ts` (add `reply`, thread draft key).
+- Thread reading: `session.thread(channelId, rootId, …)`
+  (`src/features/relay/session.ts:2483`), `ThreadPanel` `parent`/`headerActions`
+  (`ThreadPanel.tsx:81-152`), `useMessageOpening` verified-root rules.
+- Reading: `src/features/messages/use-reading.ts` (`useReading`,
+  `readingPositioned`) and `docs/unread.md` contract.
+- Window bridge and companion entry: `src/features/huddle/window.ts`,
+  `src/bundled/huddles/window-entry.tsx`, `HuddleDiscussionView.tsx`,
+  `HuddleComposer.tsx`, `huddle.html` + Vite input as the template for
+  `popout.html`.
+- Menus: `MenuItem`/`ContextMenu*` recipes; `PageTabs` `tabMenu`;
+  `MessageActionBar`. Design guide sections: menus/popovers (nested surfaces),
+  dialog (close-guard confirm), buttons.
+- Drafts: `src/shared/view-state.ts` (`replaceView`, `subscribeView`).
+
+### Expected files
+
+New: `popout.html`, `src/bundled/popout/*` or `src/features/popout/*`
+(window bridge, `ThreadView` projection, companion entry/view, tests),
+`src-tauri/src/popout_window.rs` (+ tests), `src-tauri/capabilities/popout.json`.
+Modified: `src-tauri/src/lib.rs` (register commands, close handling),
+`src-tauri/src/relay.rs` (`media_download` gate), `src-tauri/src/close_menu.rs`,
+`vite.config.ts` (second HTML input, as `huddle.html`), `src/features/huddle/composer-*.ts`
+(generalize room → target; keep Huddle behavior), `ThreadPanel.tsx`
+(header action), `PageTabs.tsx`/`ConversationTab.tsx` (tab menu item),
+`MessageActionBar.tsx`, `docs/buzz-help.md`, `docs/huddles.md` cross-ref, this doc.
+
+### Diff budget (production, excluding tests/docs)
+
+| Area | Lines |
+| --- | --- |
+| Native (`popout_window.rs`, capability, gates, Cmd+W, close handling) | 400–550 |
+| `ThreadView` projection + owner (verified root, paging, retire/incarnation) | 400–600 |
+| Composer projection generalization (`reply`, thread draft key, binding) | 150–250 |
+| Companion UI (entry, view, header, guards) | 250–300 |
+| Entry points (3 menus/actions) | ~100 |
+| Reading bridge (S1b) | 150–250 |
+| **Total** | **1,450–2,050** (≈1,300–1,800 without S1b) |
+
+Stop-and-show rule: if production diff exceeds the upper bound or a new shared
+contract beyond the ones listed becomes necessary, stop and post the smallest
+alternative before continuing.
+
+### Validation plan
+
+- Vitest: projection reducer, binding/incarnation rejection, draft-key
+  derivation, menu item presence by host; RTL for companion view and guards.
+- Native Rust tests: DTO validation caps, label/binding gating, per-label
+  download gate, two roots one channel, stale incarnation dropped.
+- Native app (macOS, name the arch/OS build in the PR): open → type → send →
+  close; focus-existing; two editors conflict; Open in main with main hidden;
+  community switch cancel/confirm; membership revocation retire; main reload
+  read-only; Cmd+W in pop-out; dark/light, narrow, enlarged text, keyboard.
+- Not claimed: Linux/Windows native runs unless executed; browser journeys add
+  nothing here and are not planned.

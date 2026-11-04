@@ -248,19 +248,13 @@ test("browser fixture call sites cannot fall back to Vite's shared default cache
     for (const [, names] of source.matchAll(
       /import\s*\{([^}]*)\}\s*from\s*"vite"/g,
     )) {
-      // The helper restores NODE_ENV after build and preview; see keepNodeEnv.
+      // The helper restores NODE_ENV after build and preview (keepNodeEnv),
+      // and gives each server its own cache and an OS-assigned port 0
+      // (bindAssignedPort).
       assert.doesNotMatch(
         names,
-        /\b(build|preview)\b/,
-        `${name} must import build and preview from vite-server.mjs`,
-      );
-      if (!/\bcreateServer\b/.test(names)) continue;
-      // This existing test owns a temporary directory through its full lifecycle.
-      assert.ok(name === "emoji.spec.mjs", name);
-      assert.match(
-        source,
-        /cacheDir[,:]/,
-        `${name} must keep its explicit cache`,
+        /\b(build|preview|createServer)\b/,
+        `${name} must import build, preview and createServer from vite-server.mjs`,
       );
     }
   }

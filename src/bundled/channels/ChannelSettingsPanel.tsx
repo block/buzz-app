@@ -66,7 +66,8 @@ export function ChannelSettingsPanel({
       aria-label="Channel settings"
       aria-busy={loading}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        // Shift+Escape is Mark all as read, not a dismissal.
+        if (event.key === "Escape" && !event.shiftKey) {
           event.stopPropagation();
           close();
         }

@@ -70,6 +70,37 @@ it("closes with Escape or its close button without swallowing other keys", async
   expect(close).toHaveBeenCalledTimes(3);
 });
 
+it("leaves Shift+Escape to Mark all as read", async () => {
+  const user = userEvent.setup();
+  const close = vi.fn();
+  const windowKeyDown = vi.fn();
+  window.addEventListener("keydown", windowKeyDown);
+  try {
+    render(
+      <ChannelSettingsPanel
+        scope="community:viewer"
+        channel={undefined}
+        close={close}
+      >
+        Diagnostics content
+      </ChannelSettingsPanel>,
+    );
+    await user.keyboard("{Shift>}{Escape}{/Shift}");
+    expect(close).not.toHaveBeenCalled();
+    expect(windowKeyDown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "Escape", shiftKey: true }),
+    );
+    windowKeyDown.mockClear();
+    await user.keyboard("{Escape}");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(windowKeyDown).not.toHaveBeenCalledWith(
+      expect.objectContaining({ key: "Escape" }),
+    );
+  } finally {
+    window.removeEventListener("keydown", windowKeyDown);
+  }
+});
+
 it("does not invent unknown metadata and still exposes diagnostics without a channel", async () => {
   const user = userEvent.setup();
   const { rerender } = render(

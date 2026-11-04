@@ -336,6 +336,16 @@ it("falls back to labelled source for a sparse wide table past the cell budget",
   expect(container.querySelector("pre")?.textContent).toBe(sparse);
   expect(container.querySelector("table")).toBeNull();
   unmount();
+  // A table inside a referenced footnote is counted too.
+  const footnote = `Note[^1]\n\n[^1]:\n    ${sparse.trimEnd().split("\n").join("\n    ")}\n`;
+  const nested = render(
+    <CanvasMarkdown content={footnote} openLink={() => false} />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "shown as Markdown source",
+  );
+  expect(nested.container.querySelector("table")).toBeNull();
+  nested.unmount();
   // A table at the budget still renders.
   const side = Math.floor(Math.sqrt(CANVAS_RENDER_CELLS)) - 1;
   const { container: within } = render(

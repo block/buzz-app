@@ -6,6 +6,9 @@ import { safeLinkUrl } from "../relay/message-content";
 import type { RelaySession } from "../relay/session";
 import { labelText } from "./label-text";
 
+/** The remark plugins `SafeMarkdown` renders with; guards parse with the same. */
+export const safeMarkdownPlugins = [remarkGfm];
+
 /**
  * A Markdown document with the link and image trust rules shared by Notes and
  * Canvas: no raw HTML, images shown as their alt text, and only Buzz or safe
@@ -23,7 +26,7 @@ export function SafeMarkdown({
 }) {
   return (
     <Markdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={safeMarkdownPlugins}
       urlTransform={(url) =>
         parseBuzzLink(url) ? url : (safeLinkUrl(url) ?? null)
       }

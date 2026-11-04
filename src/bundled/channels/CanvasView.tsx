@@ -1,8 +1,9 @@
 import { memo, type Ref } from "react";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
-import { gfmTable } from "micromark-extension-gfm-table";
-import { SafeMarkdown } from "../../features/messages/SafeMarkdown";
+import {
+  SafeMarkdown,
+  safeMarkdownPlugins,
+} from "../../features/messages/SafeMarkdown";
 import { scanMarkdown } from "../../features/relay/message-content";
 import { Button } from "../../shared/design-system/ui/Button";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
@@ -23,10 +24,18 @@ export const CANVAS_RENDER_CELLS = 10_000;
 type Node = { type: string; children?: Node[] };
 
 function tableCells(content: string) {
+  // Parse as remark-parse does under the renderer's plugins, so every table
+  // the renderer will build is counted, before any HAST or React conversion.
+  const data: Record<string, unknown[]> = {};
+  const processor = {
+    data: () => data,
+  };
+  for (const plugin of safeMarkdownPlugins)
+    (plugin as (this: typeof processor) => void).call(processor);
   const pending: Node[] = [
     fromMarkdown(content, {
-      extensions: [gfmTable()],
-      mdastExtensions: [gfmTableFromMarkdown()],
+      extensions: data.micromarkExtensions as never,
+      mdastExtensions: data.fromMarkdownExtensions as never,
     }),
   ];
   let cells = 0;

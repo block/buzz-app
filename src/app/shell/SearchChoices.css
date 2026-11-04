@@ -84,11 +84,16 @@
     transition: none;
   }
 
-  /* Inline with the detail's text, spaced as a message author's agent icon. */
+  /* A channel's type icon leads its name as in the channel header's tab and
+     PanelHeaderLabel: 1rem, the row gap, centred on the line. */
+  .search-palette-detail {
+    display: flex;
+    align-items: center;
+    gap: var(--space-row-gap);
+  }
+
   .search-palette-detail-icon {
-    display: inline-block;
-    vertical-align: -0.125em;
-    margin-inline-end: var(--space-1);
+    flex-shrink: 0;
   }
 
   .search-palette-group-empty,

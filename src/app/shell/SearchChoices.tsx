@@ -753,20 +753,25 @@ export function SearchChoices({
                                           />
                                         </span>
                                         {detail && (
-                                          <span className="block truncate text-body-sm text-subtle">
+                                          <span className="search-palette-detail text-body-sm text-subtle">
                                             {/* Read in place of the icon. jsdom (dom-accessibility-api) trims
                                                 each element's text, so the space sits outside the span;
-                                                browsers don't trim it. Shown, the space collapses at the
-                                                line's start. */}
+                                                browsers don't trim it. Between flex items, the space isn't
+                                                shown. */}
                                             {detailIconLabel && (
                                               <>
                                                 <span className="sr-only">{`${detailIconLabel},`}</span>{" "}
                                               </>
                                             )}
                                             {DetailIcon && (
-                                              <DetailIcon className="search-palette-detail-icon" />
+                                              <DetailIcon
+                                                size={16}
+                                                className="search-palette-detail-icon"
+                                              />
                                             )}
-                                            {detail}
+                                            <span className="truncate">
+                                              {detail}
+                                            </span>
                                           </span>
                                         )}
                                       </>

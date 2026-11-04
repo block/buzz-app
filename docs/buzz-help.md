@@ -165,6 +165,13 @@ that agent in Buzz; they do not notify the external app through this connection.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
+- **Join** in a View only chat or channel adds you as a viewer, with a sidebar
+  entry and normal unread tracking. Notifications follow your existing settings
+  and mention/thread rules. You appear in People as **Viewing only**; you still
+  cannot post or react. Reading without joining stays available.
+  Use **Leave chat** or **Leave channel** to remove your membership and sidebar
+  entry. Joined viewers keep reading after a switch to Private until they leave
+  or are removed in People.
 - **Long text pastes** that exceed the message limit show an error and leave
   your draft unchanged. Shorten the text, or save it as a text file and use
   **Attach files** where uploads are available.
@@ -288,6 +295,10 @@ available rather than silently discarding it.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
+  On macOS, Claude security reviews need their own sign-in: run
+  `claude setup-token` in Terminal and paste its token under **Sign in for
+  reviews** in Claude's **Edit configuration**. Until it is saved, Claude
+  reviews fail closed. It needs a Claude subscription and lasts a year.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. A turn's **Thread** or **Channel** label
   opens that conversation. Working indicators describe current work,

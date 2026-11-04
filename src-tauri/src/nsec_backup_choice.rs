@@ -134,6 +134,22 @@ pub(crate) fn read(path: &Path, config: &Config, pubkey: &str) -> Result<BackupC
     })
 }
 
+/// Consent's shared lease for a backup pass, or `None` when backup is not
+/// authorized. A managed build ignores the saved choice, so even a malformed
+/// one cannot stop backup.
+pub(crate) fn admit(
+    path: &Path,
+    config: &Config,
+    pubkey: &str,
+    managed: bool,
+) -> Result<Option<Lease>> {
+    if managed {
+        return lock(path, false).map(Some);
+    }
+    let choice = read(path, config, pubkey)?;
+    Ok(choice._lease.filter(|_| choice.automatic == Some(true)))
+}
+
 pub(crate) async fn set(
     identity: &IdentityHost,
     path: &Path,

@@ -910,6 +910,34 @@ async fn a_managed_build_enables_backup_during_a_running_pass() {
     assert_eq!(service.state.lock().unwrap().uploads.len(), 1);
 }
 
+#[tokio::test]
+async fn a_managed_build_admits_a_pass_whatever_choice_is_saved() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("choice.json");
+    let config = production();
+    let config = config.as_ref().as_ref().unwrap();
+    let (identity, key) = (IdentityHost::fixture(), pubkey([1; 32]));
+    let admit = |managed| crate::nsec_backup_choice::admit(&path, config, &key, managed);
+    let set = |automatic| {
+        crate::nsec_backup_choice::set(&identity, &path, config, &key, automatic, false)
+    };
+    // Missing, opted out, then malformed.
+    assert!(admit(false).unwrap().is_none());
+    assert!(admit(true).unwrap().is_some());
+    set(false).await.unwrap();
+    assert!(admit(false).unwrap().is_none());
+    let held = admit(true).unwrap();
+    assert!(held.is_some());
+    assert_eq!(
+        set(false).await.map(|choice| choice.automatic),
+        Err(crate::nsec_backup_choice::BUSY.into())
+    );
+    drop(held);
+    std::fs::write(&path, b"corrupt").unwrap();
+    assert!(admit(false).is_err());
+    assert!(admit(true).unwrap().is_some());
+}
+
 #[test]
 fn source_generations_and_teardown_fence_retired_work_without_another_sources_logout() {
     // No filesystem or worker is configured; exercise purpose-specific credential ownership.

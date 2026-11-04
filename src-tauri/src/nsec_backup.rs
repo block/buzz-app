@@ -610,15 +610,16 @@ impl NsecBackupHost {
             // A denied, busy or locked store is not an absent key.
             Err(_) => return Err(Stop::Failed(Failure::Storage)),
         };
-        let consent = crate::nsec_backup_choice::read(
+        // Hold consent's shared lease until this pass ends, including persisted retries.
+        let Some(_consent) = crate::nsec_backup_choice::admit(
             &self.root.as_ref().ok_or(UNAVAILABLE)?.join("choice.json"),
             config,
             &pubkey,
-        )?;
-        if !managed_build() && consent.automatic != Some(true) {
+            managed_build(),
+        )?
+        else {
             return Ok(Outcome::Waiting(Waiting::NoConsent));
-        }
-        // Hold consent's shared lease until this pass ends, including persisted retries.
+        };
         self.valid(epoch)?;
         let api = self.api(session, &config.service_url)?;
         let account = api.me().await?;

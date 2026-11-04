@@ -324,6 +324,9 @@ available rather than silently discarding it.
   macOS (inside the app's installed name, such as `Buzz Foundation.app`), with
   no setup or token. Without such a plugin there are no tools to
   offer; do not promise them.
+- The **GitHub** plugin’s pull request panel offers **Queue for merge** when
+  the target branch requires a merge queue. After confirmation, it queues the
+  displayed commit and shows **Queued for merge**; GitHub controls when it merges.
 - Some desktop plugins can upload images you provide to services they declare.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in an agent's profile shows what that agent is watching

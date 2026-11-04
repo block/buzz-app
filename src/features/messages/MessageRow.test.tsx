@@ -4211,3 +4211,50 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     cleanup();
   }
 });
+
+it("publishes attachment forwarding drag data from rendered attachments", () => {
+  const data = new Map<string, string>();
+  const drag = {
+    effectAllowed: "",
+    setData: vi.fn((type: string, value: string) => data.set(type, value)),
+  };
+  renderDom(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://relay.test/media/photo.png",
+            kind: "image",
+            dimensions: { width: 100, height: 100 },
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  try {
+    fireEvent.dragStart(
+      screen.getByRole("link", { name: "Open image attachment" }),
+      {
+        dataTransfer: drag,
+      },
+    );
+    expect(drag.effectAllowed).toBe("copy");
+    expect(
+      JSON.parse(data.get("application/x-buzz-attachment-forward") ?? "{}"),
+    ).toMatchObject({
+      type: "buzz-attachment-forward",
+      version: 1,
+      sourceMessageId: row.id,
+      sourceChannelId: row.channelId,
+      attachmentUrls: ["https://relay.test/media/photo.png"],
+    });
+  } finally {
+    cleanup();
+  }
+});

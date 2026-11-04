@@ -298,7 +298,8 @@
 .channelSection + .channelSection {
   margin-top: var(--space-4);
 }
-.channelSection[data-drop-target] {
+.channelSection[data-drop-target],
+[data-attachment-forward-target] {
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }

@@ -23,6 +23,7 @@ import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { DmTypingBadge } from "./DmTypingBadge";
+import { AttachmentForwardDropTarget } from "../../features/messages/AttachmentForwardDropTarget";
 import { usePresenceStatus } from "../../features/presence/react";
 import { UnreadBadge, ordinaryUnread, useConfirmedMute } from "./UnreadBadge";
 import { useWorkingAgents } from "./useWorkingAgents";
@@ -274,12 +275,18 @@ function ChannelSidebarItemCore({
         ) : (
           activity
         );
-        return SelectFrame && sectionKey ? (
-          <SelectFrame channelId={channel.id} sectionKey={sectionKey}>
-            {select}
-          </SelectFrame>
-        ) : (
-          select
+        const wrapped =
+          SelectFrame && sectionKey ? (
+            <SelectFrame channelId={channel.id} sectionKey={sectionKey}>
+              {select}
+            </SelectFrame>
+          ) : (
+            select
+          );
+        return (
+          <AttachmentForwardDropTarget channel={channel} session={session}>
+            {wrapped}
+          </AttachmentForwardDropTarget>
         );
       }}
       selected={selected}

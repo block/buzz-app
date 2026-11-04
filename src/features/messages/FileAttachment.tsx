@@ -7,7 +7,11 @@ import {
 } from "../../shared/design-system/icons/index";
 import { FileTypeIcon } from "./FileTypeIcon";
 import fileIconStyles from "./FileTypeIcon.module.css";
-import type { Attachment } from "../relay/contracts";
+import type { Attachment, ChannelMessage } from "../relay/contracts";
+import {
+  ATTACHMENT_FORWARD_MIME,
+  attachmentForwardPayload,
+} from "./attachment-forwarding";
 import {
   isNativeMediaSource,
   isProxySource,
@@ -15,7 +19,7 @@ import {
 } from "./attachment-source";
 import styles from "./Messages.module.css";
 import { useNativeDownload, type DownloadState } from "./use-native-download";
-import type { ReactNode } from "react";
+import type { DragEvent, HTMLAttributes, ReactNode } from "react";
 
 export function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -38,15 +42,29 @@ export function FileAttachment({
   attachment,
   source,
   onOpenLink,
+  dragSource,
 }: {
   attachment: Attachment;
   source: string | undefined;
   onOpenLink(url: string): boolean;
+  dragSource?: ChannelMessage | undefined;
 }) {
   const displayName = attachment.name ?? mimeLabel(attachment.mime) ?? "File";
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const externalSource = !!source && safeOpenUrl(source) && !proxySource;
+  const dragProps: HTMLAttributes<HTMLElement> = dragSource
+    ? {
+        draggable: true,
+        onDragStart: (event: DragEvent) => {
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData(
+            ATTACHMENT_FORWARD_MIME,
+            attachmentForwardPayload(dragSource, [attachment]),
+          );
+        },
+      }
+    : {};
   if (source && !proxySource && !externalSource)
     return (
       <UnavailableFileAttachment
@@ -111,6 +129,7 @@ export function FileAttachment({
         rel="noreferrer"
         aria-label={`Open ${displayName}`}
         title={displayName}
+        {...dragProps}
         onClick={(event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey) return;
           if (onOpenLink(source)) event.preventDefault();
@@ -126,6 +145,7 @@ export function FileAttachment({
         source={source}
         name={attachment.name ?? ""}
         displayName={displayName}
+        dragProps={dragProps}
       >
         {content}
       </NativeFileDownload>
@@ -137,6 +157,7 @@ export function FileAttachment({
       download={attachment.name ?? ""}
       aria-label={`Download ${displayName}`}
       title={displayName}
+      {...dragProps}
     >
       {content()}
     </a>
@@ -148,11 +169,13 @@ function NativeFileDownload({
   source,
   name,
   displayName,
+  dragProps,
   children,
 }: {
   source: string;
   name: string;
   displayName: string;
+  dragProps?: HTMLAttributes<HTMLElement> | undefined;
   children(state: DownloadState): ReactNode;
 }) {
   const { state, download } = useNativeDownload(source, name);
@@ -173,6 +196,7 @@ function NativeFileDownload({
         aria-disabled={state === "pending"}
         aria-busy={state === "pending"}
         title={displayName}
+        {...dragProps}
         onClick={() => void download()}
       >
         {children(state)}

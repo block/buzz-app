@@ -336,6 +336,9 @@ impl Drop for RunningCommand {
     }
 }
 fn running_command(home: &Path, connection: &str, label: &str) -> RunningCommand {
+    running_script(home, connection, label, "sleep 600 & echo \"$$ $!\"; wait")
+}
+fn running_script(home: &Path, connection: &str, label: &str, script: &str) -> RunningCommand {
     use std::process::Stdio;
     let mut host = Command::new("/bin/bash")
         .args([
@@ -346,7 +349,7 @@ fn running_command(home: &Path, connection: &str, label: &str) -> RunningCommand
             "--launch",
             "/bin/sh",
             "-c",
-            "sleep 600 & echo \"$$ $!\"; wait",
+            script,
         ])
         .env("HOME", home)
         .env("BUZZ_AGENT_CONNECTION", connection)
@@ -526,4 +529,43 @@ fn a_waiting_command_exits_when_its_host_dies() {
         "waiting copy stopped the existing owner"
     );
     assert!(!marker.exists(), "waiting command executed");
+}
+
+#[test]
+fn a_command_retains_the_lease_after_its_helper_is_terminated() {
+    use std::process::Stdio;
+    let home = tempfile::tempdir().unwrap();
+    let connection = connection(&server("terminating", &[]), "terminating", false);
+    let first = running_script(
+        home.path(),
+        &connection,
+        "agent/watch",
+        "trap '' TERM; sleep 600 & echo \"$$ $!\"; wait",
+    );
+    unsafe { libc::kill(-first.group, libc::SIGTERM) };
+    assert!(wait_until(|| !alive(first.group)));
+    assert!(alive(first.child), "command did not resist termination");
+    let marker = home.path().join("replacement-executed");
+    let mut second = Command::new(env!("CARGO_BIN_EXE_buzz-agent-command"))
+        .args(["--launch", "/usr/bin/touch", marker.to_str().unwrap()])
+        .env("HOME", home.path())
+        .env("BUZZ_AGENT_CONNECTION", &connection)
+        .env("BUZZ_ATTENTION_COMMAND", "agent/watch")
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut waiting = String::new();
+    BufReader::new(second.stderr.take().unwrap())
+        .read_line(&mut waiting)
+        .unwrap();
+    assert!(
+        waiting.contains("Waiting for another Buzz copy"),
+        "replacement started while the previous command was alive: {waiting}"
+    );
+    assert!(!marker.exists());
+    unsafe { libc::kill(-first.group, libc::SIGKILL) };
+    assert!(wait_until(|| second.try_wait().unwrap().is_some()));
+    assert!(second.wait().unwrap().success());
+    assert!(marker.exists());
 }

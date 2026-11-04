@@ -2,6 +2,7 @@
 use crate::{private_directory, Result};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::time::Duration;
 
@@ -50,6 +51,13 @@ pub(super) fn watch() -> Result<Option<File>> {
             lease.lock()?;
         }
         Err(error) => return Err(error.into()),
+    }
+    // The command keeps the same open-file-description lock if its helper is
+    // terminated before the host finishes stopping the process group.
+    let fd = lease.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error().into());
     }
     Ok(Some(lease))
 }

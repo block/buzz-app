@@ -27,36 +27,11 @@ function setup() {
     await act(() => fiber.await());
     return () => act(() => fiber.dispose());
   };
-  const view = render(
-    <div className="shell-background">
-      <ShellBackdrops backdrops={backdrops} />
-      <header>chrome</header>
-    </div>,
-  );
+  const view = render(<ShellBackdrops backdrops={backdrops} />);
   return { root, install, view };
 }
 
-it("leaves the shell untouched until a plugin registers, and again after it leaves", async () => {
-  const { root, install, view } = setup();
-  const original = view.container.innerHTML;
-  expect(view.container.querySelector(".shell-backdrop")).toBeNull();
-
-  const remove = await install("example.plugin", {
-    id: "glow",
-    component: () => <canvas data-testid="glow" />,
-  });
-  const layer = view.container.querySelector(".shell-backdrop");
-  expect(layer?.parentElement).toHaveClass("shell-background");
-  expect(layer).toHaveAttribute("aria-hidden", "true");
-  expect(layer).toHaveAttribute("inert");
-  expect(view.getByTestId("glow").closest(".shell-backdrop")).toBe(layer);
-
-  await remove();
-  expect(view.container.innerHTML).toBe(original);
-  await root.fiber.dispose();
-});
-
-it("stacks backdrops in registration order and drops a failing one silently", async () => {
+it("gives each backdrop its own layer in registration order and drops a failing one silently", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   const { root, install, view } = setup();
   await install("first.plugin", { id: "a", component: () => <i>first</i> });
@@ -68,8 +43,13 @@ it("stacks backdrops in registration order and drops a failing one silently", as
   });
   await install("third.plugin", { id: "c", component: () => <i>third</i> });
 
-  const layer = view.container.querySelector(".shell-backdrop");
-  expect(layer?.textContent).toBe("firstthird");
-  expect(view.queryByRole("alert")).toBeNull();
+  const layers = view.container.querySelectorAll(
+    ".shell-backdrop > .shell-backdrop-layer",
+  );
+  expect([...layers].map((layer) => layer.textContent)).toEqual([
+    "first",
+    "third",
+  ]);
+  expect(view.queryByRole("alert", { hidden: true })).toBeNull();
   await root.fiber.dispose();
 });

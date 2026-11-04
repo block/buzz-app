@@ -1215,7 +1215,9 @@ The component renders in a fixed, full-window layer above the shell's
 background and dot texture and below all of its content. The layer is
 `inert`, `aria-hidden` and ignores the pointer, so the backdrop cannot take
 focus, clicks or title-bar drags. Registration lasts for the plugin's Cordis
-scope. With several backdrops, later registrations paint above earlier ones.
+scope. Each backdrop gets its own full-window box and stacking context, so with
+several, later registrations paint above earlier ones whatever `z-index` they
+use inside.
 Render errors remove only the failing backdrop, silently; errors in its own
 animation frames, timers or listeners are the plugin's to catch and clean up.
 Honour `prefers-reduced-motion`, and stop painting while the document is hidden.

@@ -2,8 +2,9 @@ import { useSyncExternalStore } from "react";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import type { Backdrops } from "./service";
 
-/** Renders nothing unless a plugin registers a backdrop. Later registrations
- * paint above earlier ones; a failing one disappears without a message. */
+/** Renders nothing unless a plugin registers a backdrop. Each one gets its own
+ * stacking context, so later registrations paint above earlier ones whatever
+ * z-index they use inside; a failing one disappears without a message. */
 export function ShellBackdrops({ backdrops }: { backdrops: Backdrops }) {
   const entries = useSyncExternalStore(backdrops.subscribe, backdrops.snapshot);
   if (!entries.length) return null;
@@ -16,7 +17,11 @@ export function ShellBackdrops({ backdrops }: { backdrops: Backdrops }) {
           registry={backdrops}
           fallback={null}
         >
-          {({ component: Layer }) => <Layer />}
+          {({ component: Layer }) => (
+            <div className="shell-backdrop-layer">
+              <Layer />
+            </div>
+          )}
         </OwnedContribution>
       ))}
     </div>

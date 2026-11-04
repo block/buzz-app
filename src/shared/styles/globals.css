@@ -200,12 +200,16 @@
   .shell-background:has(> .shell-backdrop) {
     isolation: isolate;
   }
-  .shell-backdrop {
+  .shell-backdrop,
+  .shell-backdrop-layer {
     position: fixed;
     inset: 0;
-    z-index: -1;
     overflow: hidden;
     pointer-events: none;
+  }
+  /* Fixed boxes are stacking contexts: each layer's own z-index stays inside it. */
+  .shell-backdrop {
+    z-index: -1;
   }
 
   .shell-header {

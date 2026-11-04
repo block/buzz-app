@@ -144,9 +144,11 @@ fn valid_sha256(hash: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
+/// An artifact is absolute, or under the user's home written `~/…`, which the
+/// host expands when it starts the process.
 fn valid_artifact(artifact: &ProcessArtifact) -> bool {
     let path = Path::new(&artifact.path);
-    if !path.is_absolute()
+    if !(path.is_absolute() || artifact.path.starts_with("~/"))
         || artifact.path.len() > 4096
         || artifact.path.contains('\0')
         || !valid_sha256(&artifact.sha256)
@@ -486,6 +488,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("relay notes manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/typesafe/manifest.json"))
             .expect("typesafe manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
+            .expect("focus manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -2156,8 +2160,12 @@ mod tests {
             "siblings": [{"name": "runtime.js", "sha256": "b".repeat(64)}]
         });
         assert!(artifact_from_text(&artifact.to_string(), "export const x = 1".into()).is_ok());
+        let mut home = artifact.clone();
+        home["host"]["processes"][0]["artifact"]["path"] = serde_json::json!("~/agent/cli");
+        assert!(artifact_from_text(&home.to_string(), "export const x = 1".into()).is_ok());
         for (field, value) in [
             ("path", serde_json::json!("relative/agent")),
+            ("path", serde_json::json!("~agent/cli")),
             ("sha256", serde_json::json!("A".repeat(64))),
             ("sha256", serde_json::json!("a".repeat(63))),
             (

@@ -102,7 +102,7 @@ source imports are not a versioned external SDK. See
 
 ## Open a Git import from a link
 
-Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>]`
+Open `buzz://plugin-install?repository=<encoded-repository>[&ref=<encoded-ref>][&path=<encoded-folder>][&commit=<hex>]`
 to open a preview in **Settings > Plugins > Manage plugins > Add**. The repository
 accepts HTTPS, `ssh://`, `git@host:path`, `github.com/owner/repo`, or `owner/repo`.
 Omit `ref` to use the repository default. For example, on macOS:
@@ -110,7 +110,21 @@ Omit `ref` to use the repository default. For example, on macOS:
 ```sh
 open 'buzz://plugin-install?repository=https%3A%2F%2Fgithub.com%2FOWNER%2FPLUGIN.git&ref=main'
 open 'buzz://plugin-install?repository=git%40github.com%3AOWNER%2FPLUGIN.git&ref=main'
+open 'buzz://plugin-install?repository=OWNER%2FPLUGINS&path=plugins%2Fone&commit=0123456789abcdef0123456789abcdef01234567'
 ```
+
+`path` names the plugin folder inside the repository. It is relative and
+`/`-separated; absolute paths, `.` or `..` segments, empty segments, backslashes and
+control characters make the link invalid, and an empty value or `.` means the
+repository root. The review then offers only that folder instead of asking you to
+choose, and refuses a repository with no plugin there.
+
+`commit` is a full 40- or 64-digit hex commit. It pins the link the same way
+`requestInstall` pins a plugin's request: the import refuses a reference whose tip is
+any other commit, the review checks the fetched commit again, and nothing installs
+unless it matches. A link that carries `path` or `commit` locks the repository and
+reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
+`path` and `commit` may appear once; a repeated key makes the link invalid.
 
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
@@ -229,7 +243,7 @@ external source project with `pnpm exec tsc` in that directory.
 The host owns navigation, Settings, loading errors, and render error boundaries.
 Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
 is running. A selected page remounts when its revision changes; its local React
-state resets. Plugin-specific persistent data has no host API yet.
+state resets. Plugin-specific persistent data has no host API yet; bundled plugins such as Reminders and Focus keep small device-local state in namespaced `localStorage` keys.
 
 Plugins are trusted code executing in the app's JavaScript context. They are not
 sandboxed: infinite loops, global changes, and external side effects cannot be
@@ -340,6 +354,17 @@ ctx.reflect.get("sidebarSections")?.register({
 });
 ```
 
+### Solo-only sidebar
+
+`sidebarScope.restrict({ id, scope: "solo", banner })` shows only the Solo
+inventory while it is registered. The All/Solo/Team tabs and page destinations
+give way to the plugin's `banner` component, and the person's saved tab returns
+when the last restriction is removed. It returns a remover; disable, replacement
+and teardown remove it too, so a restriction can never outlive its plugin. A
+banner that throws renders nothing and leaves the sidebar usable. It changes
+only the sidebar: links, search and alert clicks still open any conversation.
+Focus is the first caller and registers its restriction only while Focus is on.
+
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
@@ -365,6 +390,21 @@ authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
 Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
+
+An installed harness plugin gets the Buzz side of each turn from
+`ctx.agents.harness`, as the bundled harnesses do it, and keeps its own
+process, sessions and saved state. `conversation(delivery, scope)` admits a
+mention or wake (undefined means the harness ignores it: not the owner's own
+or attested by them, or with no conversation to go to) and freezes where
+it goes. `systemPrompt` and `turnPrompt` give Buzz's prompts, `turnPrompt`
+showing what the session has not seen and taking plugins' notes. Its
+`cursor` is opaque: save it with the session and give it to the next
+`turnPrompt`, which keeps a mark for each thread of a channel conversation.
+`reply` posts as the agent there. `tools(agent, conversation, { read })`
+answers the Buzz tools over MCP for `ctx.host.serveMcp`, so the manifest
+declares `host.mcp`; `read` is the plugin's own file access (`host.files`),
+which uploads of local files use. The kit grants nothing `ctx.agents` and
+`ctx.host` do not already give the plugin.
 
 A plugin, bundled or installed, can add a tab to the settings of agents
 running on this device, whatever their type, with
@@ -519,10 +559,21 @@ to 200), so a plugin cannot send raw markup or unlimited text to the OS. Without
 them the banner reads `Buzz` / `New <label>`. The host applies no age limit to
 plugin submissions; the plugin decides what is still worth announcing.
 
+`notifications.gate({ id, allows(target) })` narrows which targets may alert.
+While any gate is registered, a banner, its sound and the Dock unread dot need
+every gate to allow the target; the Dock asks about each conversation as a
+`conversation` target. Pending alerts are rechecked when a gate is added or
+removed. A throwing gate is skipped. `gate` returns a remover, and disabling the
+plugin removes its gates. Gates never widen the host's own access and
+preference checks. A refused alert is dropped, not queued. Focus registers one
+only while Focus is on.
+
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
 render it as a decorative image, with the generic icon when it is absent or fails
-to load. Registration drops any other value with one console warning that names
+to load. An SVG that paints with `currentColor` is drawn as a mask in the text
+colour, so a monochrome glyph follows the theme and hover and selected states
+like the host's icons; any other image keeps its own colours. Registration drops any other value with one console warning that names
 the page; the page still registers and opens. Bundled pages keep their host icons.
 External plugins ship no separate assets, so inline the art into `plugin.js`, for
 example with a bundler `?inline` import.
@@ -1168,19 +1219,23 @@ SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access by default; the import preview says so.
 `protection: { readOnlyPaths, hiddenPaths }` adds macOS containment for the worker
-and descendants. Both arrays contain absolute existing paths. Read-only paths
-reject writes; hidden paths reject reads and writes. The host adds its application,
-plugin storage and actual Agents folder, blocks Apple Events, and refuses mutable
-development frontends or unsupported operating systems.
+and descendants. Both arrays contain paths, absolute or under the user's home
+written `~/…`. Hidden paths must exist; a read-only path may lack only its last
+component, under an existing parent other than `/`. Read-only paths reject writes,
+including creating a missing one; hidden paths reject reads and writes. The host
+adds its application, plugin storage and actual Agents folder, blocks Apple
+Events, and refuses mutable development frontends or unsupported operating
+systems.
 
 Contained launches require an app-bundled executable or an `artifact` descriptor;
-PATH-only entrypoints are refused. Artifact descriptors name an absolute executable,
-its SHA-256, and optional flat sibling files with their hashes. Native launch hashes
-while copying those declared files into a content-addressed generation beneath the
-actual shared Agents folder, then launches that copy. All contained workers are
-prevented from writing this store. Corrupt generations fail closed and are never
-repaired in place. Equivalent Windows path forms are accepted; symlinks remain
-rejected. Control characters in containment paths refuse launch.
+PATH-only entrypoints are refused. Artifact descriptors name an executable, absolute
+or under the user's home written `~/…`, its SHA-256, and optional flat sibling files
+with their hashes. Native launch hashes while copying those declared files into a
+content-addressed generation beneath the actual shared Agents folder, then launches
+that copy. All contained workers are prevented from writing this store. Corrupt
+generations fail closed and are never repaired in place. Equivalent Windows path
+forms are accepted; symlinks remain rejected. Control characters in containment
+paths refuse launch.
 
 This is approval-authority containment, covering the application, controls, private
 approval state, and declared launch files. It does not verify every dependency an

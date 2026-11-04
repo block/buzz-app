@@ -39,9 +39,9 @@ export function draftFor(key: string) {
   return entries.get(key)?.draft;
 }
 
-export function forgetDraft(key: string) {
+export function forgetDraft(key: string, expected?: Draft) {
   const entry = entries.get(key);
-  if (!entry) return;
+  if (!entry || (expected && entry.draft !== expected)) return;
   entries.delete(key);
   if (![...entries.values()].some((other) => other.scope === entry.scope)) {
     subscriptions.get(entry.scope)?.();
@@ -76,13 +76,13 @@ export function onDraftPurge(scope: string, listener: () => void) {
 export function keepDraft(scope: string, key: string, draft: Draft) {
   entries.set(key, { scope, draft });
   updateWarning();
-  if (viewRevision(scope, marker) !== marked && !writeView(scope, marker, true))
-    return false;
   if (!subscriptions.has(scope)) {
     const stop = subscribeView(scope, () => {
       if (viewRevision(scope, marker) === null) clearDrafts(scope);
     });
     subscriptions.set(scope, stop);
   }
-  return true;
+  return (
+    viewRevision(scope, marker) === marked || writeView(scope, marker, true)
+  );
 }

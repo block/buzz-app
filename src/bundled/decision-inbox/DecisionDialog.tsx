@@ -65,6 +65,13 @@ export function DecisionDialog({
   );
   const draftRef = useRef(draft);
   const purged = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(
     () =>
       onDraftPurge(scope, () => {
@@ -146,11 +153,18 @@ export function DecisionDialog({
           }
         : undefined;
     if (!next) return;
+    const submittedDraft = draftRef.current;
     setBusy(true);
-    const result = await save(scope, expected, next, current);
+    const result = await save(
+      scope,
+      expected,
+      next,
+      () => !purged.current && current(),
+    );
+    if (result === "saved") forgetDraft(draftKey, submittedDraft);
+    if (!mounted.current || purged.current) return;
     setBusy(false);
     if (result === "saved") {
-      forgetDraft(draftKey);
       close();
     } else if (result === "changed")
       setError(

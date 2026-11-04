@@ -267,7 +267,11 @@ it("frees a full list for a new capture and reports failed device removal", asyn
   const firstRecord = records[0];
   if (!firstRecord) throw new Error("Missing first record");
   expect(writeView(first, key, records)).toBe(true);
-  expect(await saveReady(first, revision(first), item)).toBe("full");
+  const fullRevision = revision(first);
+  expect(await saveReady(first, fullRevision, item)).toBe("full");
+  expect(writeView(first, key, [firstRecord])).toBe(true);
+  expect(await saveReady(first, fullRevision, item)).toBe("changed");
+  expect(writeView(first, key, records)).toBe(true);
   expect(await removeReady(first, revision(first), firstRecord)).toBe("saved");
   expect(await saveReady(first, revision(first), item)).toBe("saved");
   const before = revision(first);

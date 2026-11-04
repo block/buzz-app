@@ -15,6 +15,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { subscribeView } from "../../shared/view-state";
 import { DecisionDialog } from "./DecisionDialog";
+import { forgetDraft } from "./drafts";
 import {
   readList,
   remove,
@@ -184,6 +185,15 @@ function ScopedPage({
       removing.record,
       current,
     );
+    if (result === "saved")
+      forgetDraft(
+        JSON.stringify([
+          partition,
+          "edit",
+          removing.record.channelId,
+          removing.record.messageId,
+        ]),
+      );
     setError(
       result === "saved"
         ? ""
@@ -232,7 +242,11 @@ function ScopedPage({
               action={
                 <Button
                   disabled={!writable}
-                  onClick={() => savedRevision && setResetting(savedRevision)}
+                  onClick={() =>
+                    savedRevision !== null &&
+                    savedRevision !== undefined &&
+                    setResetting(savedRevision)
+                  }
                 >
                   Reset saved list
                 </Button>

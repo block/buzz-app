@@ -111,6 +111,9 @@ export function save(
       (item) => sourceKey(item) !== sourceKey(record),
     );
     if (!valid(record)) return "failed";
+    const latest = viewRevision(scope, key);
+    if (latest === undefined) return "failed";
+    if (latest !== expected) return "changed";
     if (records.length >= 500) return "full";
     return replaceView(scope, key, expected, [record, ...records]);
   });

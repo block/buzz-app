@@ -453,6 +453,44 @@ it("keeps a draft when its purge marker is temporarily unreadable", () => {
   ).toBe("Keep while storage fails");
 });
 
+it("clears an unsaved draft on community purge after its marker write fails", () => {
+  const h = fixture();
+  const Action = h.action.component;
+  const view = render(
+    <Action
+      message={message}
+      session={h.session}
+      close={() => {}}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  const original = Storage.prototype.setItem;
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (key.includes("decision-inbox:unsaved-draft"))
+        throw new Error("quota");
+      return original.call(this, key, value);
+    });
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "Unsaved decision" } },
+  );
+  const draftKey = JSON.stringify([scope, "capture", "room", message.id]);
+  expect(draftFor(draftKey)?.question).toBe("Unsaved decision");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Copy them before leaving",
+  );
+  view.unmount();
+  write.mockRestore();
+  act(() => clearViewScope(scope));
+  expect(draftFor(draftKey)).toBeUndefined();
+  const pendingUnload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(pendingUnload);
+  expect(pendingUnload.defaultPrevented).toBe(false);
+});
+
 it("evicts a draft whose changes were undone before closing", async () => {
   const h = fixture();
   const Action = h.action.component;
@@ -533,6 +571,130 @@ it("freezes fields while a save waits for another window", async () => {
   });
 });
 
+it("does not save a queued edit after its community data is purged", async () => {
+  const h = fixture();
+  const Action = h.action.component;
+  let entered = () => {};
+  let release = () => {};
+  const acquired = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const blocker = navigator.locks.request(
+    `buzz-decision-inbox:${scope}`,
+    { mode: "exclusive" },
+    async () => {
+      entered();
+      await held;
+    },
+  );
+  await acquired;
+  const close = vi.fn();
+  render(
+    <Action
+      message={message}
+      session={h.session}
+      close={close}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "Purge before save" } },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Next actor" }), {
+    target: { value: "Morgan" },
+  });
+  try {
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+    act(() => clearViewScope(scope));
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    release();
+    await blocker;
+  }
+  await act(async () => {
+    await navigator.locks.request(
+      `buzz-decision-inbox:${scope}`,
+      { mode: "exclusive" },
+      () => {},
+    );
+  });
+  await waitFor(() => expect(viewRevision(scope, key)).toBeNull());
+});
+
+it("does not erase a newer draft when an earlier queued save finishes", async () => {
+  const h = fixture();
+  const Action = h.action.component;
+  let entered = () => {};
+  let release = () => {};
+  const acquired = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const blocker = navigator.locks.request(
+    `buzz-decision-inbox:${scope}`,
+    { mode: "exclusive" },
+    async () => {
+      entered();
+      await held;
+    },
+  );
+  await acquired;
+  const close = vi.fn();
+  const props = {
+    message,
+    session: h.session,
+    close,
+    canOpen: () => false,
+    open: () => false,
+  };
+  const first = render(<Action {...props} />);
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "First decision" } },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Next actor" }), {
+    target: { value: "Morgan" },
+  });
+  try {
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+    first.unmount();
+    render(<Action {...props} />);
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Question or decision needed" }),
+      { target: { value: "Newer draft" } },
+    );
+  } finally {
+    release();
+    await blocker;
+  }
+  await act(async () => {
+    await navigator.locks.request(
+      `buzz-decision-inbox:${scope}`,
+      { mode: "exclusive" },
+      () => {},
+    );
+  });
+  await waitFor(() =>
+    expect(readList(viewRevision(scope, key))).toMatchObject({
+      records: [{ question: "First decision" }],
+    }),
+  );
+  expect(
+    draftFor(JSON.stringify([scope, "capture", "room", message.id]))?.question,
+  ).toBe("Newer draft");
+  expect(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+  ).toHaveValue("Newer draft");
+  expect(close).not.toHaveBeenCalled();
+});
+
 it("keeps the capture form and explains a failed device save", async () => {
   const h = fixture();
   const user = userEvent.setup();
@@ -586,6 +748,24 @@ it("shows malformed data and resets only after confirmation", async () => {
     status: "ready",
     records: [],
   });
+});
+
+it("can reset an empty serialized saved list", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  localStorage.setItem(`buzz-view.v1:${JSON.stringify([scope, key])}`, "");
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  expect(screen.getByText("Saved decisions cannot be read")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Reset saved list" }));
+  expect(
+    screen.getByRole("dialog", { name: "Reset saved decisions?" }),
+  ).toBeVisible();
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Reset list",
+    }),
+  );
+  expect(screen.getByText("No decisions saved")).toBeVisible();
 });
 
 it("does not reset data repaired in another window while confirmation is open", async () => {
@@ -698,6 +878,43 @@ it("removes a saved decision only after confirmation", async () => {
     status: "ready",
     records: [],
   });
+});
+
+it("forgets a retained edit draft when its saved decision is removed", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const item = {
+    channelId: "room",
+    messageId: message.id,
+    preview: "source",
+    question: "Decision to remove",
+    nextActor: "Morgan",
+    decision: "",
+    stage: "decision",
+    createdAt: 1,
+  };
+  writeView(scope, key, [item]);
+  const first = render(
+    <DecisionInboxPage relay={h.relay} navigator={h.navigator} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Question or decision needed" }),
+    { target: { value: "Unsaved edit" } },
+  );
+  const draftKey = JSON.stringify([scope, "edit", "room", message.id]);
+  expect(draftFor(draftKey)?.question).toBe("Unsaved edit");
+  first.unmount();
+
+  render(<DecisionInboxPage relay={h.relay} navigator={h.navigator} />);
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+  await user.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Remove decision",
+    }),
+  );
+  expect(screen.getByText("No decisions saved")).toBeVisible();
+  expect(draftFor(draftKey)).toBeUndefined();
 });
 
 it("keeps a newer saved decision when removal was opened from a stale list", async () => {

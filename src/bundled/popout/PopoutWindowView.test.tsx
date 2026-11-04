@@ -37,7 +37,7 @@ const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
   canLoadMore: false,
   limited: false,
   loadingOlder: false,
-  reading: true,
+  reading: undefined,
   version: 1,
   root: row("1".repeat(64), "Root message"),
   replies: [row("2".repeat(64), "First reply")],
@@ -79,6 +79,34 @@ it("goes read-only with a notice while the owner is away", () => {
   );
   expect(screen.getByRole("status").textContent).toMatch(/reconnecting/);
   expect(screen.queryByText("This thread is read-only here.")).toBeNull();
+});
+
+it("sends Buzz links to main and leaves web links to the OS opener", () => {
+  const act = vi.fn();
+  render(
+    <PopoutWindowView
+      view={view({
+        root: row(
+          "1".repeat(64),
+          "[Example](https://example.com) and buzz://channel/abc",
+        ),
+        replies: [],
+      })}
+      act={act}
+    />,
+  );
+  fireEvent.click(screen.getByRole("link", { name: "Example" }));
+  expect(act.mock.calls.filter((c) => c[0] === "openLink")).toEqual([]);
+  const buzz = screen
+    .getAllByRole("link")
+    .find((link) => link.getAttribute("href")?.startsWith("buzz:"));
+  if (buzz) {
+    fireEvent.click(buzz);
+    expect(act).toHaveBeenCalledWith(
+      "openLink",
+      expect.stringMatching(/^buzz:/),
+    );
+  }
 });
 
 it("offers the action only for delivered messages that have a thread", () => {

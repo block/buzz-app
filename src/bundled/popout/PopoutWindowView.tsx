@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  PopoutAction,
-  PopoutView,
-  ReadingMessage,
-} from "../../features/popout/window";
+import type { PopoutAction, PopoutView } from "../../features/popout/window";
+import { createReadingProxy } from "../../features/popout/reading-bridge";
+import { isBuzzLink } from "../../features/navigation/buzz-links";
 import { CompanionRows } from "../../features/companion/CompanionRows";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
 import { Reading } from "../../features/messages/use-reading";
@@ -13,7 +11,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
-import { createReadingProxy } from "./reading-proxy";
 import styles from "./Popout.module.css";
 
 export function PopoutWindowView({
@@ -66,15 +63,18 @@ export function PopoutWindowView({
     );
     (editor ?? log.current)?.focus({ preventScroll: true });
   };
-  const reading = useMemo(
-    () =>
-      createReadingProxy(
-        (message: ReadingMessage) => act("reading", JSON.stringify(message)),
-        () => view.reading && !view.detached,
-      ),
-    [act, view.reading, view.detached],
-  );
-  const readingSession = useMemo(() => ({ unread: reading }), [reading]);
+  const readingToken = view.detached ? undefined : view.reading;
+  const [readingSession, setReadingSession] =
+    useState<ReturnType<typeof createReadingProxy>>();
+  useEffect(() => {
+    if (!readingToken) {
+      setReadingSession(undefined);
+      return;
+    }
+    const proxy = createReadingProxy(readingToken, () => true);
+    setReadingSession(proxy);
+    return () => proxy.dispose();
+  }, [readingToken]);
   return (
     <MessageEditScope>
       <div className={styles.window} data-reading-surface="">
@@ -108,15 +108,16 @@ export function PopoutWindowView({
               el.scrollHeight - el.scrollTop - el.clientHeight < 48;
           }}
         >
-          <Reading
-            session={readingSession}
-            channelId={view.root?.channelId ?? ""}
-            latestMessageId={newest}
-            rootId={view.root?.id}
-            scroller={log}
-            settled={settled}
-            enabled={!view.detached && !!view.root}
-          />
+          {readingSession && view.root && (
+            <Reading
+              session={readingSession}
+              channelId={view.root.channelId}
+              latestMessageId={newest}
+              rootId={view.root.id}
+              scroller={log}
+              settled={settled}
+            />
+          )}
           {view.limited && (
             <p className={styles.notice}>Showing the latest 500 replies.</p>
           )}
@@ -140,7 +141,10 @@ export function PopoutWindowView({
           <CompanionRows
             rows={rows}
             writable={view.writable}
+            allowImageCopy={false}
             openLink={(url) => {
+              // Buzz targets continue in main; the OS browser takes the rest.
+              if (!isBuzzLink(url)) return false;
               act("openLink", url);
               return true;
             }}

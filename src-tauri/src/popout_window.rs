@@ -59,8 +59,9 @@ pub(crate) struct View {
     can_load_more: bool,
     limited: bool,
     loading_older: bool,
-    /// Main publishes reading intent for this window when true.
-    reading: bool,
+    /// Reading bridge token: main publishes reading intent for this window.
+    #[serde(default)]
+    reading: Option<String>,
     #[serde(default)]
     composer: Option<String>,
     version: u64,
@@ -82,7 +83,6 @@ pub(crate) struct View {
 pub(crate) enum Action {
     OpenLink,
     OpenInMain,
-    Send,
     Older,
     Retry,
     RetryMessage,
@@ -92,8 +92,6 @@ pub(crate) enum Action {
     Guard,
     /// Companion confirmed a guarded close.
     Close,
-    /// Reading observation: text is a bounded JSON lease message for main.
-    Reading,
     Closed,
 }
 #[derive(Clone, Serialize)]
@@ -154,10 +152,10 @@ fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
         || view.error.as_ref().is_some_and(|e| e.len() > 8192)
         || !matches!(view.status.as_str(), "loading" | "ready" | "error")
-        || view
-            .composer
-            .as_ref()
-            .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
+        || [&view.composer, &view.reading].iter().any(|t| {
+            t.as_ref()
+                .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
+        })
         || view.replies.len() > 500
         || view
             .root
@@ -387,7 +385,7 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
     let label = require_popout(&window)?;
     match action {
         Action::Closed => return Err("Window closure is native-owned".into()),
-        Action::Send | Action::RetryMessage | Action::DiscardMessage | Action::Reading => {
+        Action::RetryMessage | Action::DiscardMessage => {
             if text
                 .as_ref()
                 .is_none_or(|t| t.trim().is_empty() || t.len() > 65536)
@@ -469,21 +467,83 @@ pub(crate) fn close_requested<R: tauri::Runtime>(
     let Some(host) = window.try_state::<Popouts>() else {
         return false;
     };
-    let Ok(mut map) = host.0.lock() else {
-        return false;
-    };
-    let Some(session) = map.get_mut(window.label()) else {
-        return false;
-    };
-    if !session.guarded {
+    if !host.intercept_close(window.label()) {
         return false;
     }
     api.prevent_close();
-    session.view.close_requested += 1;
-    if let Some(updates) = &session.updates {
-        let _ = updates.send(session.view.clone());
+    true
+}
+impl Popouts {
+    /// A guarded window's close is intercepted: the companion is asked.
+    fn intercept_close(&self, label: &str) -> bool {
+        let Ok(mut map) = self.0.lock() else {
+            return false;
+        };
+        let Some(session) = map.get_mut(label) else {
+            return false;
+        };
+        if !session.guarded {
+            return false;
+        }
+        session.view.close_requested += 1;
+        if let Some(updates) = &session.updates {
+            let _ = updates.send(session.view.clone());
+        }
+        true
+    }
+}
+
+/// Main is closing where that destroys the owner (Linux, Windows): unguarded
+/// companions close with it; a companion holding unsaved work asks first and
+/// keeps main open until it is resolved. Returns true when main must stay.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(crate) fn main_closing<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    api: &tauri::CloseRequestApi,
+) -> bool {
+    let Some(host) = app.try_state::<Popouts>() else {
+        return false;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return false;
+    };
+    let mut guarded = Vec::new();
+    for (label, session) in map.iter_mut() {
+        if session.guarded {
+            session.view.close_requested += 1;
+            if let Some(updates) = &session.updates {
+                let _ = updates.send(session.view.clone());
+            }
+            guarded.push(label.clone());
+        } else if let Some(window) = app.get_webview_window(label) {
+            let _ = window.destroy();
+        }
+    }
+    if guarded.is_empty() {
+        return false;
+    }
+    api.prevent_close();
+    if let Some(window) = guarded
+        .first()
+        .and_then(|label| app.get_webview_window(label))
+    {
+        let _ = window.show();
+        let _ = window.set_focus();
     }
     true
+}
+
+/// Main is gone: no companion can act without its owner.
+pub(crate) fn main_destroyed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let labels: Vec<String> = app
+        .try_state::<Popouts>()
+        .and_then(|host| host.0.lock().ok().map(|map| map.keys().cloned().collect()))
+        .unwrap_or_default();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.destroy();
+        }
+    }
 }
 
 /// Cmd+W with a pop-out focused closes that window through its guard.
@@ -538,7 +598,7 @@ mod tests {
             can_load_more: false,
             limited: false,
             loading_older: false,
-            reading: true,
+            reading: None,
             composer: None,
             version: 1,
             close_requested: 0,
@@ -589,6 +649,103 @@ mod tests {
         assert!(is_popout("popout-1234"));
         assert!(!is_popout("main"));
         assert!(!is_popout("huddle"));
+    }
+    fn row(id: &str, source: &str, name: &str) -> DiscussionRow {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "authorId": "a", "channelId": "channel", "author": "Ada",
+            "picture": null, "text": "see file", "time": 1, "delivery": "seen",
+            "attachments": [{
+                "url": "https://relay.example/media/1", "kind": "file", "mime": null,
+                "size": null, "name": name, "duration": null, "voiceNote": null,
+                "waveform": null, "dimensions": null, "blurhash": null,
+                "previewUrl": null, "source": source, "previewSource": null
+            }]
+        }))
+        .unwrap()
+    }
+    fn session(binding: Binding, view: View, guarded: bool) -> Session {
+        Session {
+            binding,
+            view,
+            guarded,
+            actions: Channel::new(|_| Ok(())),
+            updates: None,
+        }
+    }
+    #[test]
+    fn commands_are_gated_by_caller_label() {
+        let app = tauri::test::mock_builder()
+            .manage(Popouts::default())
+            .build(crate::app_context())
+            .unwrap();
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        let popout =
+            tauri::WebviewWindowBuilder::new(&app, "popout-a", tauri::WebviewUrl::default())
+                .build()
+                .unwrap();
+        let huddle = tauri::WebviewWindowBuilder::new(&app, "huddle", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        assert!(require_main(&main).is_ok());
+        assert!(require_main(&popout).is_err());
+        assert_eq!(require_popout(&popout).unwrap(), "popout-a");
+        assert!(require_popout(&main).is_err());
+        assert!(require_popout(&huddle).is_err());
+    }
+    #[test]
+    fn downloads_are_isolated_to_the_calling_window_projection() {
+        let host = Popouts::default();
+        let mut a = view();
+        a.root = Some(row("r1", "https://media/a", "a.pdf"));
+        let mut b = view();
+        b.replies = vec![row("r2", "https://media/b", "b.pdf")];
+        {
+            let mut map = host.0.lock().unwrap();
+            map.insert("popout-a".into(), session(binding(), a, false));
+            map.insert("popout-b".into(), session(binding(), b, false));
+        }
+        assert!(host.permits_download("popout-a", "https://media/a", "a.pdf"));
+        assert!(!host.permits_download("popout-a", "https://media/b", "b.pdf"));
+        assert!(host.permits_download("popout-b", "https://media/b", "b.pdf"));
+        assert!(!host.permits_download("popout-b", "https://media/a", "a.pdf"));
+        assert!(!host.permits_download("popout-a", "https://media/a", "other.pdf"));
+        assert!(!host.permits_download("popout-zzz", "https://media/a", "a.pdf"));
+    }
+    #[test]
+    fn guarded_close_is_intercepted_and_asks_the_companion() {
+        let host = Popouts::default();
+        host.0
+            .lock()
+            .unwrap()
+            .insert("popout-a".into(), session(binding(), view(), true));
+        assert!(host.intercept_close("popout-a"));
+        assert_eq!(host.0.lock().unwrap()["popout-a"].view.close_requested, 1);
+        assert!(host.intercept_close("popout-a"));
+        assert_eq!(host.0.lock().unwrap()["popout-a"].view.close_requested, 2);
+        host.0.lock().unwrap().get_mut("popout-a").unwrap().guarded = false;
+        assert!(
+            !host.intercept_close("popout-a"),
+            "an unguarded close proceeds"
+        );
+        assert!(!host.intercept_close("popout-unknown"));
+    }
+    #[test]
+    fn companion_has_no_identity_relay_or_signing_authority() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/popout.json")).unwrap();
+        assert_eq!(capability["webviews"], serde_json::json!(["popout-*"]));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!([
+                "allow-popout-window-watch",
+                "allow-popout-window-action",
+                "allow-media-download",
+                "allow-clipboard-write-text",
+                { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }] }
+            ])
+        );
     }
     #[test]
     fn destruction_sends_closed_off_the_event_thread_once() {

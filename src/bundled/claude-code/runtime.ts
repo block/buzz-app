@@ -891,8 +891,13 @@ export class ClaudeRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
+    const signingAuthority = reads?.workflowAuthority();
     const [names, project] = await Promise.all([
-      readAuthorNames(reads, [event, ...unseen.slice(-CONTEXT_LIMIT)]),
+      readAuthorNames(
+        reads,
+        [event, ...unseen.slice(-CONTEXT_LIMIT)],
+        signingAuthority,
+      ),
       reading,
     ]);
     // An unread Canvas keeps the folders the chat had, not restarting it.
@@ -914,6 +919,7 @@ export class ClaudeRuntime {
       contextRoot,
       total: earlier.length + 1,
       names,
+      ...(signingAuthority ? { signingAuthority } : {}),
       ...(project?.section ? { project: project.section } : {}),
     };
   }

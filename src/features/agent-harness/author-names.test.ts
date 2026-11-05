@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { EventData } from "../relay/events";
 import type { VerifiedProfile } from "../relay/verified-profile";
 import { profileNames } from "../agents/reads";
 import { AUTHOR_NAMES_TIMEOUT_MS, readAuthorNames } from "./author-names";
@@ -9,6 +10,9 @@ afterEach(() => {
 
 const alice = "a".repeat(64);
 const bob = "b".repeat(64);
+const relay = "c".repeat(64);
+const message = (pubkey: string, tags: string[][] = []) =>
+  ({ pubkey, tags }) as unknown as EventData;
 
 const verified = {
   displayName: "Alice S",
@@ -34,11 +38,12 @@ it("gives a verified username and display name, and no self-declared username", 
   expect(profileNames(undefined, bob)).toBeUndefined();
 });
 
-it("gives no display name the directory qualified, since it would tag someone else", () => {
-  // Two verified people share the display name: the username still names her.
+it("keeps a verified display name the directory qualified, but no self-declared one", () => {
+  // Someone else shares her verified display name or username: she is still
+  // addressed by her own display name, and tagged by her username.
   expect(
     profileNames({ name: `Alice S (${alice.slice(0, 10)})`, verified }, alice),
-  ).toEqual({ username: "asmith" });
+  ).toEqual({ username: "asmith", display_name: "Alice S" });
   // A self-declared name that imitates a verified one.
   expect(
     profileNames({ name: `Alice S (${bob.slice(0, 10)})` }, bob),
@@ -51,13 +56,24 @@ it("reads each author's profile once before naming them", async () => {
     pubkey === alice ? { display_name: "Alice" } : undefined,
   );
   const name = await readAuthorNames({ profiles, authorNames }, [
-    { pubkey: alice },
-    { pubkey: bob },
-    { pubkey: alice },
+    message(alice),
+    message(bob),
+    message(alice),
   ]);
   expect(profiles).toHaveBeenCalledExactlyOnceWith([alice, bob]);
   expect(name(alice)).toEqual({ display_name: "Alice" });
   expect(name(bob)).toBeUndefined();
+});
+
+it("reads the profile of the person a relay-signed message is for", async () => {
+  const profiles = vi.fn(async () => {});
+  await readAuthorNames(
+    { profiles, authorNames: () => undefined },
+    [message(relay, [["actor", alice]]), message(bob, [["actor", alice]])],
+    relay,
+  );
+  // Only the signing authority's own messages are someone else's.
+  expect(profiles).toHaveBeenCalledExactlyOnceWith([alice, bob]);
 });
 
 it("starts the turn without names when profiles are slow or fail", async () => {
@@ -65,16 +81,16 @@ it("starts the turn without names when profiles are slow or fail", async () => {
   const authorNames = () => ({ display_name: "Alice" });
   const slow = readAuthorNames(
     { profiles: () => new Promise(() => {}), authorNames },
-    [{ pubkey: alice }],
+    [message(alice)],
   );
   await vi.advanceTimersByTimeAsync(AUTHOR_NAMES_TIMEOUT_MS);
   expect((await slow)(alice)).toEqual({ display_name: "Alice" });
   const failed = await readAuthorNames(
     { profiles: () => Promise.reject(new Error("offline")), authorNames },
-    [{ pubkey: alice }],
+    [message(alice)],
   );
   expect(failed(alice)).toEqual({ display_name: "Alice" });
-  expect((await readAuthorNames(undefined, [{ pubkey: alice }]))(alice)).toBe(
+  expect((await readAuthorNames(undefined, [message(alice)]))(alice)).toBe(
     undefined,
   );
 });

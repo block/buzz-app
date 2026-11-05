@@ -355,11 +355,14 @@ export function harnessKit(sources: Sources): HarnessKit {
         (item) =>
           item.created_at > since && (!since || item.pubkey !== agent.pubkey),
       );
+      const reads = ownerReads(sources.relay(agent.key), agent.pubkey);
+      const signingAuthority = reads?.workflowAuthority();
       const [names, project] = await Promise.all([
-        readAuthorNames(ownerReads(sources.relay(agent.key), agent.pubkey), [
-          event,
-          ...unseen.slice(-CONTEXT_LIMIT),
-        ]),
+        readAuthorNames(
+          reads,
+          [event, ...unseen.slice(-CONTEXT_LIMIT)],
+          signingAuthority,
+        ),
         reading.then((read) => read?.section),
       ]);
       const text = turnPrompt({
@@ -373,6 +376,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         context: unseen,
         total: earlier.length + 1,
         names,
+        ...(signingAuthority ? { signingAuthority } : {}),
         ...(project ? { project } : {}),
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }

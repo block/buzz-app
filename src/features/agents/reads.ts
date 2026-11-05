@@ -147,21 +147,22 @@ export function ownerReads(
 /** `pubkey`'s names for a turn's prompt. `username` only when verified: a
  * self-declared handle is no username. The display name is the verified one,
  * else their own profile's, and none when it is only a key fragment, or when
- * the directory had to qualify it because someone else holds it too. */
+ * the directory had to qualify an unverified name because someone else holds
+ * it too. A verified display name stays: its holder is tagged by username. */
 export function profileNames(
   profile: Profile | undefined,
   pubkey: string,
 ): AuthorNames | undefined {
   if (!profile) return undefined;
   const username = profile.verified?.username;
-  const display = profile.verified?.displayName ?? profile.name.trim();
-  const qualified = profile.verified
-    ? profile.name !== display
-    : display.endsWith(` (${pubkey.slice(0, 10)})`);
+  const own = profile.name.trim();
   const display_name =
-    !profile.nameIsFallback && !qualified && validVerifiedName(display)
-      ? display
-      : undefined;
+    profile.verified?.displayName ??
+    (!profile.nameIsFallback &&
+    !own.endsWith(` (${pubkey.slice(0, 10)})`) &&
+    validVerifiedName(own)
+      ? own
+      : undefined);
   if (!username && !display_name) return undefined;
   return {
     ...(username ? { username } : {}),

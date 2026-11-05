@@ -759,11 +759,14 @@ export class GooseRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
+    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
+    const signingAuthority = reads?.workflowAuthority();
     const [names, project] = await Promise.all([
-      readAuthorNames(ownerReads(this.relay(agent.key), agent.pubkey), [
-        event,
-        ...unseen.slice(-CONTEXT_LIMIT),
-      ]),
+      readAuthorNames(
+        reads,
+        [event, ...unseen.slice(-CONTEXT_LIMIT)],
+        signingAuthority,
+      ),
       reading.then((read) => read?.section),
     ]);
     return {
@@ -788,6 +791,7 @@ export class GooseRuntime {
               ...unseen.map((item) => item.created_at),
             ),
       total: earlier.length + 1,
+      ...(signingAuthority ? { signingAuthority } : {}),
       names,
       ...(project ? { project } : {}),
     };

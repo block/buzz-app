@@ -6,6 +6,7 @@ import {
   CHANNEL_LEVEL_PROMPT,
 } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
+import { messageAuthor } from "../../features/relay/fold";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
 import {
@@ -100,6 +101,9 @@ export type TurnInput = Readonly<{
   /** The names each message's record shows beside its author's pubkey, when
    * known. */
   names?: (pubkey: string) => AuthorNames | undefined;
+  /** The relay key that posts messages for others, whose context records show
+   * the person they are for, as Codex history does. */
+  signingAuthority?: string;
 }>;
 
 /** One turn: unseen thread context, routing context, then the event. Each
@@ -169,17 +173,18 @@ export function turnPrompt(input: TurnInput) {
           note: `Messages not yet shown in this session, not new requests: the latest ${CONTEXT_LIMIT} at most, ${CONTENT_LIMIT} characters each.`,
           total: input.total,
           truncated: context.length < input.context.length,
-          messages: context.map((message) =>
-            withNames(
+          messages: context.map((message) => {
+            const pubkey = messageAuthor(message, input.signingAuthority);
+            return withNames(
               {
                 id: message.id,
-                pubkey: message.pubkey,
+                pubkey,
                 created_at: message.created_at,
                 content: message.content.slice(0, CONTENT_LIMIT),
               },
-              input.names?.(message.pubkey),
-            ),
-          ),
+              input.names?.(pubkey),
+            );
+          }),
         }),
       ),
     );

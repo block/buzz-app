@@ -16,6 +16,15 @@ import {
   MenuSubmenuPopup,
 } from "../../shared/design-system/ui/Menu";
 
+const FAST_SUFFIX = " · Fast";
+
+/** Marks a low-latency model the way " · Default" marks inheritance. */
+function FastSuffix({ model }: { model: ModelChoice }) {
+  return model.fast ? (
+    <span className="buzz-select-value-suffix text-subtle">{FAST_SUFFIX}</span>
+  ) : null;
+}
+
 /** Catalogs expose IDs, not a common family field. Unknown IDs remain available. */
 export function modelFamily(model: ModelChoice): string {
   if (model.family) return model.family;
@@ -85,7 +94,7 @@ export function ModelFamilyMenu({
   const hasFamilyLogos = [...families.keys()].some((family) =>
     modelLogo(family),
   );
-  const selectedLabel = `${selected.label}${inherited ? " · Default" : ""}`;
+  const selectedLabel = `${selected.label}${selected.fast ? FAST_SUFFIX : ""}${inherited ? " · Default" : ""}`;
   const menu = (
     <MenuRoot>
       <MenuTrigger
@@ -113,6 +122,7 @@ export function ModelFamilyMenu({
               <span className={`buzz-select-value ${styles.model}`}>
                 {selected.label}
               </span>
+              {appearance !== "glass-ghost" && <FastSuffix model={selected} />}
               {inherited && appearance !== "glass-ghost" && (
                 <span className="buzz-select-value-suffix text-subtle">
                   {" · Default"}
@@ -180,6 +190,7 @@ export function ModelFamilyMenu({
                         {model.unlisted && model.description
                           ? `${model.label} · ${model.description}`
                           : model.label}
+                        <FastSuffix model={model} />
                       </MenuRadioItem>
                     ),
                   )}
@@ -239,6 +250,7 @@ function EffortMenu({
     >
       <MenuSubmenuTrigger role="menuitemradio" aria-checked={selected}>
         {model.label}
+        <FastSuffix model={model} />
         {selected && <CheckIcon size={16} aria-hidden="true" />}
       </MenuSubmenuTrigger>
       <MenuSubmenuPopup aria-label={`${model.label} thinking effort`}>

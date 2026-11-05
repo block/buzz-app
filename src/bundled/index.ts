@@ -1,5 +1,7 @@
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
+import stickersManifest from "./stickers/manifest.json";
+import * as stickers from "./stickers";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -80,6 +82,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...stickersManifest, apiVersion: 1 },
+    module: stickers,
+    enabledByDefault: false,
   },
   {
     manifest: { ...builderlabManifest, apiVersion: 1 },

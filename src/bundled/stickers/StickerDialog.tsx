@@ -18,7 +18,7 @@ import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { liftSubject } from "./lift-subject";
-import styles from "./Emoji.module.css";
+import styles from "./Stickers.module.css";
 
 /** The first image a sticker can be made from. */
 export function stickerSource(message: ChannelMessage): Attachment | undefined {

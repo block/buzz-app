@@ -3,7 +3,7 @@ import type { TargetOpener } from "../../features/conversation/contracts";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { stateIcons } from "./pull-state-view";
-import { announcedUrl, type PullRecord } from "./relay-pull";
+import { announcementUrl, type PullRecord } from "./relay-pull";
 import type { PullSources } from "./relay-pulls";
 import { keyOf } from "./pull-states";
 import styles from "./GitHub.module.css";
@@ -67,13 +67,16 @@ export function PullCard({
   nameOf(pubkey: string): string;
 }) {
   const pulls = sources.selected();
-  useEffect(() => pulls?.watch(message.channelId), [pulls, message.channelId]);
+  useEffect(
+    () => pulls?.watch(message.channelId, message.id),
+    [pulls, message.channelId, message.id],
+  );
   const rooted = useSyncExternalStore(sources.subscribe, () =>
     sources
       .selected()
       ?.byRoot(message.id, message.signerId ?? message.authorId),
   );
-  const linked = announcedUrl(message.content);
+  const linked = announcementUrl(message.content);
   const record =
     rooted && linked && keyOf(rooted.pull.url) === keyOf(linked)
       ? rooted

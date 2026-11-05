@@ -3,6 +3,9 @@
 // sync. A card is trusted when the relay signed it, or the publisher of the
 // live hook it names did. Only the relay's cards speak for a pull request
 // anywhere it is linked; a publisher's shows only on its own announcement.
+// A sync can fail for good, as when a channel holds more artifacts of these
+// types than one sync carries; then each watched announcement's cards are
+// read once instead.
 import type { VerifiedEvent } from "nostr-tools";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -22,8 +25,9 @@ import {
 export const SYNC_LINGER_MS = 60_000;
 
 export type RelayPulls = Readonly<{
-  /** Syncs `channel`'s pull requests while watched, and a while after. */
-  watch(channel: string): () => void;
+  /** Syncs `channel`'s pull requests while watched, and a while after;
+   * `root` is an announcement shown there. */
+  watch(channel: string, root?: string): () => void;
   subscribe(listener: () => void): () => void;
   /** The relay's newest record for a canonical URL. */
   byUrl(url: string): PullRecord | undefined;
@@ -38,7 +42,12 @@ type Synced = {
   stop(): void;
   readers: number;
   timer?: ReturnType<typeof setTimeout> | undefined;
+  roots: Set<string>;
+  /** Each watched root's cards and their hooks, read once the sync fails. */
+  read: Map<string, readonly VerifiedEvent[]>;
 };
+
+const READ_CARDS = 100;
 
 export function createRelayPulls(session: RelaySession): RelayPulls {
   const listeners = new Set<() => void>();
@@ -73,9 +82,10 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
     const nextUrls = new Map<string, PullRecord>();
     const nextRoots = new Map<string, PullRecord>();
     const hooks = new Map<string, Hook>();
-    const events = [...synced.values()].flatMap(
-      ({ view }) => view.snapshot().events,
-    );
+    const events = [...synced.values()].flatMap(({ view, read }) => [
+      ...view.snapshot().events,
+      ...[...read.values()].flat(),
+    ]);
     for (const event of events) {
       const hook = parseHook(event);
       const channel = event.tags.find((entry) => entry[0] === "h")?.[1];
@@ -112,6 +122,59 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
     roots = nextRoots;
     for (const listener of [...listeners]) listener();
   };
+  /** Reads the cards rooted on each watched announcement once, when the
+   * channel's sync has failed for good. */
+  const recover = (channel: string, entry: Synced) => {
+    const read = session.snapshotRead;
+    const status = entry.view.snapshot().status;
+    if (!read || (status !== "error" && status !== "unsupported")) return;
+    for (const root of entry.roots) {
+      if (entry.read.has(root)) continue;
+      entry.read.set(root, []);
+      void (async () => {
+        const cards = await read(
+          [
+            {
+              kinds: [ARTIFACT_REVISION_KIND],
+              "#h": [channel],
+              "#type": [PULL_TYPE],
+              "#root": [root],
+              artifact: "current",
+              limit: READ_CARDS,
+            },
+          ],
+          {},
+        );
+        const hooks = [
+          ...new Set(
+            cards.flatMap((event) =>
+              event.tags
+                .filter((entry) => entry[0] === "hook" && entry[1])
+                .map((entry) => entry[1] as string),
+            ),
+          ),
+        ].slice(0, READ_CARDS);
+        const found = hooks.length
+          ? await read(
+              [
+                {
+                  kinds: [ARTIFACT_REVISION_KIND],
+                  "#h": [channel],
+                  "#type": [HOOK_TYPE],
+                  "#d": hooks,
+                  artifact: "current",
+                  limit: hooks.length,
+                },
+              ],
+              {},
+            )
+          : [];
+        if (synced.get(channel) !== entry) return;
+        entry.read.set(root, [...cards, ...found] as VerifiedEvent[]);
+        rebuild();
+      })().catch(() => {});
+    }
+  };
   const release = (channel: string) => {
     const entry = synced.get(channel);
     if (!entry) return;
@@ -122,7 +185,7 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
     rebuild();
   };
   return {
-    watch(channel) {
+    watch(channel, root) {
       let entry = synced.get(channel);
       if (!entry) {
         try {
@@ -132,12 +195,25 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
             "#h": [channel],
             "#type": [PULL_TYPE, HOOK_TYPE],
           });
-          entry = { view, stop: view.subscribe(rebuild), readers: 0 };
+          const created: Synced = {
+            view,
+            stop: () => {},
+            readers: 0,
+            roots: new Set(),
+            read: new Map(),
+          };
+          created.stop = view.subscribe(() => {
+            recover(channel, created);
+            rebuild();
+          });
+          entry = created;
           synced.set(channel, entry);
         } catch {
           return () => {};
         }
       }
+      if (root) entry.roots.add(root);
+      recover(channel, entry);
       clearTimeout(entry.timer);
       entry.timer = undefined;
       entry.readers++;

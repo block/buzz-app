@@ -7,7 +7,6 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   ARTIFACT_KIND,
   deliver,
-  readHead,
   type SnapshotRead,
 } from "../../features/agents/agent-config-artifacts";
 import { ARTIFACT_REVISION_KIND } from "../../features/relay/artifact-sync";
@@ -33,6 +32,7 @@ const HISTORY_PAGE = 100;
 const HISTORY_PAGES = 5;
 const DEVICE_KEY = "buzz.github.publisher.device";
 const PENDING_KEY = "buzz.github.publisher.pending";
+const OWN_KEY = "buzz.github.publisher.own";
 
 /** `buzz.github.pull` content v1, field for field as the relay writes it. */
 export type Pull = {
@@ -368,6 +368,8 @@ function truncate(value: string, bytes: number) {
 const tag = (event: EventData, name: string) =>
   event.tags.find((entry) => entry[0] === name)?.[1];
 
+export type Op = "create" | "update" | "restore" | "move";
+
 /** The card's tags, in the relay's order. `claim` marks an announcement this
  * device is about to post, until the card is rooted on it. */
 export function cardTags(
@@ -375,7 +377,7 @@ export function cardTags(
   channel: string,
   hook: string,
   pull: Pull,
-  op: "create" | "update",
+  op: Op,
   prev: string | undefined,
   root: string | undefined,
   claim?: string,
@@ -412,6 +414,10 @@ function parsePull(event: EventData): Pull | undefined {
 const reason = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+/** The relay refused to restore or move a card back, as it may for a
+ * moderator's redaction or a channel this identity can no longer write. */
+class Unrepairable extends Error {}
+
 export type Target = Readonly<{ channel: string; hook: Hook }>;
 
 export type Deps = Readonly<{
@@ -436,7 +442,7 @@ export type Outcome = Readonly<{ again: boolean; problems: string[] }>;
  * is only ever repaired, never believed. */
 export function createCards(deps: Deps) {
   const { viewer, storage } = deps;
-  /** This device's latest accepted revision of each card, until sync has it. */
+  /** This device's latest accepted revision of each card, until a read has it. */
   const written = new Map<string, EventData>();
   const retired = new Map<string, string>();
   const busy = new Set<string>();
@@ -452,6 +458,24 @@ export function createCards(deps: Deps) {
   const pendingKey = (key: string) =>
     `${PENDING_KEY}:${deps.scope}:${key.replace("\0", ":")}`;
   const pending = (key: string) => storage.getItem(pendingKey(key)) ?? "";
+  /** This identity's latest accepted revision of each card, kept for when
+   * enough revisions bury it past the history this reads. */
+  const ownKey = (key: string) =>
+    `${OWN_KEY}:${deps.scope}:${key.replace("\0", ":")}`;
+  const stored = (key: string, d: string): EventData | undefined => {
+    try {
+      const event: unknown = JSON.parse(storage.getItem(ownKey(key)) ?? "");
+      return event &&
+        typeof event === "object" &&
+        (event as EventData).pubkey === viewer &&
+        Array.isArray((event as EventData).tags) &&
+        tag(event as EventData, "d") === d
+        ? (event as EventData)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   const hookKey = (hook: string) => {
     let key = hookKeys.get(hook);
@@ -463,22 +487,42 @@ export function createCards(deps: Deps) {
     return key;
   };
 
-  /** The newer of what sync holds and what this device last wrote. Another
-   * writer's head wins a tie: a stale choice only costs a conflict. */
-  const latest = (key: string, synced: EventData | undefined) => {
+  /** The head a read found, or what this device last wrote when the read
+   * holds an older revision of this identity's. Another writer's head is
+   * always the head: its `created_at` is whatever that writer chose. */
+  const latest = (key: string, head: EventData | undefined) => {
     const mine = written.get(key);
-    if (!mine) return synced;
-    if (!synced) return mine;
-    if (synced.id === mine.id) {
-      written.delete(key);
-      return synced;
+    if (!head || !mine || head.pubkey !== viewer || head.id === mine.id) {
+      if (head && head.id === mine?.id) written.delete(key);
+      return head;
     }
-    const newer =
-      synced.pubkey === viewer
-        ? synced.created_at > mine.created_at
-        : synced.created_at >= mine.created_at;
-    return newer ? synced : mine;
+    return head.created_at > mine.created_at ? head : mine;
   };
+
+  /** The heads of `ds` wherever they are, deletions included, from the
+   * writer's view. */
+  async function headsOf(ds: readonly string[], signal: AbortSignal) {
+    const found = new Map<string, EventData>();
+    if (!ds.length) return found;
+    const events = await deps.read(
+      [
+        {
+          kinds: [ARTIFACT_KIND],
+          "#d": [...ds],
+          artifact: "head",
+          limit: ds.length,
+        },
+      ],
+      { signal },
+    );
+    for (const event of events) {
+      const d = tag(event, "d");
+      if (d && ds.includes(d)) found.set(d, event);
+    }
+    return found;
+  }
+  const headOf = async (d: string, signal: AbortSignal) =>
+    (await headsOf([d], signal)).get(d);
 
   /** This identity's latest revision of `d`, under whatever came after it. */
   async function ownOf(
@@ -507,7 +551,7 @@ export function createCards(deps: Deps) {
       if (own) return own;
       if (events.length < HISTORY_PAGE) break;
     }
-    return written.get(key);
+    return stored(key, d);
   }
 
   async function write(
@@ -520,6 +564,13 @@ export function createCards(deps: Deps) {
     signal: AbortSignal,
     claimed?: string,
   ): Promise<"accepted" | "conflict"> {
+    const op: Op = !base
+      ? "create"
+      : tag(base, "op") === "delete"
+        ? "restore"
+        : tag(base, "h") !== target.channel
+          ? "move"
+          : "update";
     const event = await deps.writer.sign(
       {
         kind: ARTIFACT_KIND,
@@ -530,7 +581,7 @@ export function createCards(deps: Deps) {
           target.channel,
           target.hook.d,
           pull,
-          base ? "update" : "create",
+          op,
           base?.id,
           root,
           claimed,
@@ -541,12 +592,19 @@ export function createCards(deps: Deps) {
     const delivery = await deliver(deps.writer, event, signal);
     if (delivery.status === "accepted") {
       written.set(key, event);
+      storage.setItem(ownKey(key), JSON.stringify(event));
       return "accepted";
     }
     if (delivery.status === "refused" && delivery.refusal === "conflict") {
       written.delete(key);
       return "conflict";
     }
+    if (
+      delivery.status === "refused" &&
+      (delivery.refusal === "permission" || delivery.refusal === "invalid") &&
+      (op === "restore" || op === "move")
+    )
+      throw new Unrepairable(delivery.message);
     throw new Error(delivery.message);
   }
 
@@ -571,32 +629,26 @@ export function createCards(deps: Deps) {
     retry: boolean,
   ): Promise<Result> {
     const { target, d, key, read, signal } = step;
-    const fresh = isFresh(read.pull, target.hook.createdAt);
-    let head = hint;
-    if (retry && !head && !fresh && !pending(key)) return undefined;
-    if (
-      !retry ||
-      !head ||
-      head.pubkey !== viewer ||
-      tag(head, "h") !== target.channel ||
-      tag(head, "op") === "delete"
-    )
-      head = await readHead(deps.read, target.channel, d, signal);
-    if (head && tag(head, "op") === "delete")
-      return retire(
-        step,
-        `${label(step)}'s card was deleted, so it is no longer kept.`,
-      );
+    const head = retry ? hint : await headOf(d, signal);
+    // A head this identity can't read was redacted or moved out of reach.
     if (!head) {
-      if (pending(key))
+      if (pending(key) || stored(key, d))
         return retire(
           step,
           `${label(step)}'s card is gone from this channel, so it is no longer kept.`,
         );
-      return fresh ? announce(step, undefined, undefined, retry) : undefined;
+      return isFresh(read.pull, target.hook.createdAt)
+        ? announce(step, undefined, undefined, retry)
+        : undefined;
     }
+    const deleted = tag(head, "op") === "delete";
+    if (deleted && tag(head, "h") !== target.channel)
+      return retire(
+        step,
+        `${label(step)}'s card was moved and deleted, so it is no longer kept.`,
+      );
     const own =
-      head.pubkey === viewer
+      head.pubkey === viewer && !deleted && tag(head, "h") === target.channel
         ? head
         : await ownOf(target.channel, d, key, signal);
     if (!own)
@@ -648,7 +700,7 @@ export function createCards(deps: Deps) {
       if (result === "conflict") {
         if (!retry) return "again";
         if (head) return update(step, undefined, false);
-        return (await readHead(deps.read, target.channel, d, signal))
+        return (await headOf(d, signal))
           ? update(step, undefined, false)
           : retire(
               step,
@@ -676,7 +728,7 @@ export function createCards(deps: Deps) {
     try {
       result = await write(target, d, key, read.pull, base, id, signal);
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted || error instanceof Unrepairable) throw error;
       result = error instanceof Error ? error : new Error(String(error));
     }
     if (result === "accepted") {
@@ -692,28 +744,28 @@ export function createCards(deps: Deps) {
       : `${label(step)}'s announcement hasn't reached the channel yet.`;
   }
 
-  /** Keeps one pull request's card. Each card is kept by one call at a time. */
+  /** Keeps one pull request's card from its `head`, as a read just found
+   * it. Each card is kept by one call at a time. */
   async function keep(
     target: Target,
     read: Read,
-    synced: ReadonlyMap<string, EventData>,
+    d: string,
+    head: EventData | undefined,
     signal: AbortSignal,
   ): Promise<Result> {
-    const d = await pullId(
-      await hookKey(target.hook.d),
-      target.channel,
-      read.pull.url,
-    );
     const key = `${target.channel}\0${d}`;
     const problem = retired.get(key);
     if (problem) return problem;
     if (busy.has(key)) return undefined;
     busy.add(key);
+    const step = { target, d, key, read, signal };
     try {
-      return await update(
-        { target, d, key, read, signal },
-        latest(key, synced.get(key)),
-        true,
+      return await update(step, latest(key, head), true);
+    } catch (error) {
+      if (!(error instanceof Unrepairable) || signal.aborted) throw error;
+      return retire(
+        step,
+        `${label(step)}'s card was deleted or moved, and the relay won't put it back (${error.message}), so it is no longer kept.`,
       );
     } finally {
       busy.delete(key);
@@ -726,15 +778,22 @@ export function createCards(deps: Deps) {
     async round(
       target: Target,
       reads: readonly Read[],
-      synced: ReadonlyMap<string, EventData>,
       signal: AbortSignal,
     ): Promise<Outcome> {
+      const cardKey = await hookKey(target.hook.d);
+      const ds = await Promise.all(
+        reads.map((read) => pullId(cardKey, target.channel, read.pull.url)),
+      );
+      // Only this publisher can name these cards, so no one else's artifacts
+      // can crowd this read the way they can a channel-wide sync.
+      const heads = await headsOf([...new Set(ds)], signal);
       let again = false;
       const problems: string[] = [];
-      for (const read of reads) {
+      for (const [index, read] of reads.entries()) {
         signal.throwIfAborted();
+        const d = ds[index] ?? "";
         try {
-          const result = await keep(target, read, synced, signal);
+          const result = await keep(target, read, d, heads.get(d), signal);
           if (result === "again") again = true;
           else if (result) problems.push(result);
         } catch (error) {
@@ -749,8 +808,10 @@ export function createCards(deps: Deps) {
 
 /** What each hook this device publishes needs the person to know. */
 export type PublisherStatus = Readonly<{
+  /** The hook's problem, else one that stops every hook. */
   get(channel: string, hook: string): string | undefined;
   set(channel: string, hook: string, problem: string | undefined): void;
+  setAll(problem: string | undefined): void;
   /** Changes whenever any hook's status does. */
   version(): number;
   subscribe(listener: () => void): () => void;
@@ -759,16 +820,25 @@ export type PublisherStatus = Readonly<{
 export function createPublisherStatus(): PublisherStatus {
   const problems = new Map<string, string>();
   const listeners = new Set<() => void>();
+  let all: string | undefined;
   let version = 0;
+  const changed = () => {
+    version++;
+    for (const listener of [...listeners]) listener();
+  };
   return {
-    get: (channel, hook) => problems.get(`${channel}\0${hook}`),
+    get: (channel, hook) => problems.get(`${channel}\0${hook}`) ?? all,
     set(channel, hook, problem) {
       const key = `${channel}\0${hook}`;
       if (problems.get(key) === problem) return;
       if (problem) problems.set(key, problem);
       else problems.delete(key);
-      version++;
-      for (const listener of [...listeners]) listener();
+      changed();
+    },
+    setAll(problem) {
+      if (all === problem) return;
+      all = problem;
+      changed();
     },
     version: () => version,
     subscribe(listener) {
@@ -790,7 +860,6 @@ function publish(
   const lifetime = new AbortController();
   const cards = createCards(deps);
   let hookView: { key: string; view: View; stop(): void } | undefined;
-  let cardView: { key: string; view: View; stop(): void } | undefined;
   const polls = new Map<string, { target: Target; stop(): void }>();
 
   const open = (filter: object, listener: () => void) => {
@@ -806,15 +875,6 @@ function publish(
     held?.view.dispose();
   };
 
-  const heads = () => {
-    const map = new Map<string, EventData>();
-    for (const event of cardView?.view.snapshot().events ?? []) {
-      const d = tag(event, "d");
-      if (d) map.set(`${tag(event, "h")}\0${d}`, event);
-    }
-    return map;
-  };
-
   function poll(target: Target) {
     const stopped = new AbortController();
     const signal = AbortSignal.any([lifetime.signal, stopped.signal]);
@@ -824,29 +884,24 @@ function publish(
       status.set(target.channel, target.hook.d, problem);
     const tick = async () => {
       if (signal.aborted) return;
-      let next = ROOT_RETRY_MS;
-      // Only a live sync holds every card; a stale or loading one could hide
-      // the card a round would otherwise start again.
-      if (cardView?.view.snapshot().status === "live") {
-        try {
-          const [owner, name] = target.hook.repo.split("/");
-          const data = await gh(QUERY, { owner, name }, signal);
-          const outcome = await cards.round(
-            target,
-            readPulls(data, target.hook.repo),
-            heads(),
-            signal,
-          );
-          if (signal.aborted) return;
-          report(outcome.problems.join(" ") || undefined);
-          next = outcome.again ? ROOT_RETRY_MS : POLL_MS;
-          delay = POLL_MS;
-        } catch (error) {
-          if (signal.aborted) return;
-          report(`${target.hook.repo} couldn't be read: ${reason(error)}`);
-          delay = Math.min(delay * 2, MAX_BACKOFF_MS);
-          next = delay;
-        }
+      let next: number;
+      try {
+        const [owner, name] = target.hook.repo.split("/");
+        const data = await gh(QUERY, { owner, name }, signal);
+        const outcome = await cards.round(
+          target,
+          readPulls(data, target.hook.repo),
+          signal,
+        );
+        if (signal.aborted) return;
+        report(outcome.problems.join(" ") || undefined);
+        next = outcome.again ? ROOT_RETRY_MS : POLL_MS;
+        delay = POLL_MS;
+      } catch (error) {
+        if (signal.aborted) return;
+        report(`${target.hook.repo} couldn't be read: ${reason(error)}`);
+        delay = Math.min(delay * 2, MAX_BACKOFF_MS);
+        next = delay;
       }
       if (!signal.aborted) timer = setTimeout(() => void tick(), next);
     };
@@ -858,29 +913,16 @@ function publish(
     };
   }
 
-  const syncCards = (targets: Target[]) => {
-    const channels = [...new Set(targets.map((t) => t.channel))].sort();
-    const key = channels.join(",");
-    if (cardView?.key === key) return;
-    close(cardView);
-    cardView = undefined;
-    if (!channels.length) return;
-    const held = open(
-      {
-        artifact: "current",
-        kinds: [ARTIFACT_REVISION_KIND],
-        "#h": channels,
-        "#type": [PULL_TYPE],
-      },
-      () => {},
-    );
-    if (held) cardView = { key, ...held };
-  };
-
   const hooksChanged = () => {
     const snapshot = hookView?.view.snapshot();
     // A loading or reconnecting view says nothing about which hooks are gone.
     if (snapshot?.status === "loading" || snapshot?.status === "stale") return;
+    if (snapshot)
+      status.setAll(
+        snapshot.status === "live"
+          ? undefined
+          : stoppedBy(snapshot.status, snapshot.error),
+      );
     const targets: Target[] = [];
     if (snapshot?.status === "live")
       for (const event of snapshot.events) {
@@ -889,7 +931,6 @@ function publish(
         if (hook && channel && hook.publisher === deps.viewer)
           targets.push({ channel, hook });
       }
-    syncCards(targets);
     const keys = new Set<string>();
     for (const target of targets) {
       const key = `${target.channel}\0${target.hook.d}`;
@@ -938,6 +979,7 @@ function publish(
       );
       if (held) hookView = { key, ...held };
     }
+    status.setAll(ids.length && !hookView ? stoppedBy("error") : undefined);
     hooksChanged();
   };
 
@@ -949,9 +991,14 @@ function publish(
     for (const held of polls.values()) held.stop();
     polls.clear();
     close(hookView);
-    close(cardView);
+    status.setAll(undefined);
   };
 }
+
+const stoppedBy = (status: string, error?: string) =>
+  status === "unsupported"
+    ? "Publishing from this device needs a relay that keeps artifacts in sync."
+    : `Publishing from this device stopped: the channels' hooks couldn't be read${error ? ` (${error})` : ""}.`;
 
 /** The viewer's card key for one hook, from the identity the desktop app
  * holds; the browser has none, so it can't publish. */

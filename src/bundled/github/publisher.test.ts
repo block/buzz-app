@@ -276,11 +276,15 @@ const tagOf = (event: EventData | undefined, name: string) =>
   event?.tags.find((entry) => entry[0] === name)?.[1];
 
 /** A relay holding artifacts the way NIP-AR does: any channel writer may
- * write any revision whose `prev` is the head, and a `root` must name a
- * message the relay holds. */
+ * write any revision whose `prev` is the head, a deletion takes only a
+ * `restore` in its channel, and a `root` must name a message the relay
+ * holds. Channels in `hidden` are ones the reader can't read. */
 function fakeRelay() {
   const revisions = new Map<string, EventData[]>();
   const messages = new Set<string>();
+  const hidden = new Set<string>();
+  const filters: Record<string, unknown>[] = [];
+  let refuse: string | undefined;
   let ids = 0;
   const headOf = (d: string) => revisions.get(d)?.at(-1);
   const sign = (
@@ -299,40 +303,52 @@ function fakeRelay() {
     const op = tagOf(event, "op");
     if (op === "create" ? !!head : tagOf(event, "prev") !== head?.id)
       throw new PublishRejected("conflict", "conflict: not the head");
-    if (head && tagOf(head, "h") !== tagOf(event, "h"))
-      throw new PublishRejected("conflict", "conflict: moved");
+    const deleted = tagOf(head, "op") === "delete";
+    const moved = !!head && tagOf(head, "h") !== tagOf(event, "h");
+    if (head && (deleted !== (op === "restore") || moved !== (op === "move")))
+      throw new PublishRejected("invalid", `invalid: ${op} after this head`);
+    if (refuse && (op === "restore" || op === "move"))
+      throw new PublishRejected(refuse, refuse);
     const root = tagOf(event, "root");
     if (root && !messages.has(root))
       throw new PublishRejected("invalid", "invalid: root is not a message");
     revisions.set(d, [...(revisions.get(d) ?? []), event]);
   };
-  const read = async (filters: readonly ReadFilter[]) => {
+  const read = async (requested: readonly ReadFilter[]) => {
     await Promise.resolve();
-    const filter = filters[0] as Record<string, unknown>;
-    const [d] = filter["#d"] as string[];
-    const [h] = filter["#h"] as string[];
-    const all = (revisions.get(d ?? "") ?? []).filter(
-      (event) => tagOf(event, "h") === h,
-    );
+    const filter = requested[0] as Record<string, unknown>;
+    filters.push(filter);
+    const ds = filter["#d"] as string[];
     if (filter.artifact === "history") {
+      const [h] = filter["#h"] as string[];
       const offset = (filter.offset as number) ?? 0;
-      return [...all]
+      return (revisions.get(ds[0] ?? "") ?? [])
+        .filter((event) => tagOf(event, "h") === h)
         .reverse()
         .slice(offset, offset + (filter.limit as number));
     }
-    const head = headOf(d ?? "");
-    return head && tagOf(head, "h") === h ? [head] : [];
+    expect(filter.artifact).toBe("head");
+    return ds.flatMap((d) => {
+      const head = headOf(d);
+      return head && !hidden.has(tagOf(head, "h") ?? "") ? [head] : [];
+    });
   };
   return {
     revisions,
     messages,
+    hidden,
+    filters,
     headOf,
     read,
+    refuse(reason: string | undefined) {
+      refuse = reason;
+    },
     /** Another member's write on top of the head. */
     forge(
       d: string,
       change: (tags: string[][]) => string[][],
       content?: string,
+      options: { op?: string; createdAt?: number } = {},
     ) {
       const head = headOf(d);
       if (!head) throw new Error("no head");
@@ -340,14 +356,41 @@ function fakeRelay() {
         head.tags
           .filter(([name]) => name !== "prev")
           .map((entry) => [...entry]),
-      ).map((entry) => (entry[0] === "op" ? ["op", "update"] : entry));
+      ).map((entry) =>
+        entry[0] === "op" ? ["op", options.op ?? "update"] : entry,
+      );
       accept(
         sign(mallory, {
           kind: 45010,
-          created_at: head.created_at,
+          created_at: options.createdAt ?? head.created_at,
           content: content ?? head.content,
           tags: [...tags, ["prev", head.id]],
         }),
+      );
+      return headOf(d) as EventData;
+    },
+    /** Another member's deletion of the card. */
+    remove(d: string) {
+      return this.forge(
+        d,
+        (tags) =>
+          tags.filter(([name]) =>
+            ["ar", "d", "h", "type", "op", "root"].includes(name ?? ""),
+          ),
+        "",
+        { op: "delete" },
+      );
+    },
+    /** Another member's move of the card to `channel`. */
+    move(d: string, to: string) {
+      return this.forge(
+        d,
+        (tags) =>
+          tags
+            .filter(([name]) => name !== "root")
+            .map((entry) => (entry[0] === "h" ? ["h", to] : entry)),
+        undefined,
+        { op: "move" },
       );
     },
     writer(pubkey: string, before?: (event: EventData) => void) {
@@ -360,16 +403,6 @@ function fakeRelay() {
           accept(event);
         },
       };
-    },
-    /** What a live sync of the channel holds. */
-    synced() {
-      const map = new Map<string, EventData>();
-      for (const [d, list] of revisions) {
-        const head = list.at(-1);
-        if (head && tagOf(head, "op") !== "delete")
-          map.set(`${tagOf(head, "h")}\0${d}`, head);
-      }
-      return map;
     },
   };
 }
@@ -442,7 +475,7 @@ it("starts a card, announces it once and roots the card on it", async () => {
   const relay = fakeRelay();
   const me = device(relay);
   const now = read();
-  expect(await me.cards.round(target, [now], relay.synced(), live())).toEqual({
+  expect(await me.cards.round(target, [now], live())).toEqual({
     again: false,
     problems: [],
   });
@@ -457,7 +490,7 @@ it("starts a card, announces it once and roots the card on it", async () => {
     "update",
   ]);
   expect(tagOf(relay.revisions.get(d)?.[0], "announcing")).toBeTruthy();
-  await me.cards.round(target, [now], relay.synced(), live());
+  await me.cards.round(target, [now], live());
   expect(relay.revisions.get(d)).toHaveLength(2);
 });
 
@@ -465,12 +498,12 @@ it("puts its own root back when someone strips it, and never announces again", a
   const relay = fakeRelay();
   const me = device(relay);
   const now = read();
-  await me.cards.round(target, [now], relay.synced(), live());
+  await me.cards.round(target, [now], live());
   const d = await cardD();
   const root = tagOf(relay.headOf(d), "root");
   for (let minute = 0; minute < 3; minute++) {
     relay.forge(d, (tags) => tags.filter(([name]) => name !== "root"));
-    await me.cards.round(target, [now], relay.synced(), live());
+    await me.cards.round(target, [now], live());
     expect(relay.headOf(d)?.pubkey).toBe(mike);
     expect(tagOf(relay.headOf(d), "root")).toBe(root);
   }
@@ -481,7 +514,7 @@ it("keeps replies and the card on its own announcement when someone points the r
   const relay = fakeRelay();
   const me = device(relay);
   const now = read();
-  await me.cards.round(target, [now], relay.synced(), live());
+  await me.cards.round(target, [now], live());
   const d = await cardD();
   const root = tagOf(relay.headOf(d), "root");
   relay.messages.add("x".repeat(64));
@@ -494,7 +527,7 @@ it("keeps replies and the card on its own announcement when someone points the r
     serialize({ ...now.pull, state: "closed" }),
   );
   const merged = with_(now, { state: "merged" }, { merged: "dan" });
-  await me.cards.round(target, [merged], relay.synced(), live());
+  await me.cards.round(target, [merged], live());
   expect(me.replies).toEqual([[root, "Merged by dan"]]);
   expect(tagOf(relay.headOf(d), "root")).toBe(root);
   expect(relay.headOf(d)?.pubkey).toBe(mike);
@@ -517,65 +550,145 @@ it("never announces for a card someone else holds, and says so", async () => {
     }),
   );
   const me = device(relay);
-  const outcome = await me.cards.round(
-    target,
-    [read()],
-    relay.synced(),
-    live(),
-  );
+  const outcome = await me.cards.round(target, [read()], live());
   expect(outcome.problems).toEqual([
     "#7's card is in use by someone else, so it is not kept.",
   ]);
   expect(me.sent).toEqual([]);
 });
 
-it("retires a card that moved to another channel or was deleted, without restoring it", async () => {
+it("restores its card when someone deletes it, on its own root, as the relay does", async () => {
   const relay = fakeRelay();
-  const d = await cardD();
-  await relay.writer(mike).publish(
-    await relay.writer(mike).sign({
-      kind: 45010,
-      created_at: 1,
-      content: "{}",
-      tags: [
-        ["d", d],
-        ["h", "elsewhere"],
-        ["op", "create"],
-      ],
-    }),
-  );
   const me = device(relay);
-  const moved = await me.cards.round(target, [read()], relay.synced(), live());
-  expect(moved.problems[0]).toMatch(/card ID is taken/);
-  expect(me.sent).toEqual([]);
+  const now = read();
+  await me.cards.round(target, [now], live());
+  const d = await cardD();
+  const root = tagOf(relay.headOf(d), "root");
+  const deletion = relay.remove(d);
+  const merged = with_(now, { state: "merged" }, { merged: "dan" });
+  expect(await me.cards.round(target, [merged], live())).toEqual({
+    again: false,
+    problems: [],
+  });
+  const head = relay.headOf(d);
+  expect(head?.pubkey).toBe(mike);
+  expect(tagOf(head, "op")).toBe("restore");
+  expect(tagOf(head, "prev")).toBe(deletion.id);
+  expect(tagOf(head, "root")).toBe(root);
+  expect(tagOf(head, "h")).toBe(channel);
+  expect(JSON.parse(head?.content ?? "{}").state).toBe("merged");
+  expect(me.replies).toEqual([[root, "Merged by dan"]]);
+  expect(me.sent).toHaveLength(1);
+});
+
+it("moves its card back when someone moves it to another channel", async () => {
+  const relay = fakeRelay();
+  const me = device(relay);
+  const now = read();
+  await me.cards.round(target, [now], live());
+  const d = await cardD();
+  const root = tagOf(relay.headOf(d), "root");
+  const moved = relay.move(d, "elsewhere");
+  await me.cards.round(target, [now], live());
+  const head = relay.headOf(d);
+  expect(head?.pubkey).toBe(mike);
+  expect(tagOf(head, "op")).toBe("move");
+  expect(tagOf(head, "prev")).toBe(moved.id);
+  expect(tagOf(head, "h")).toBe(channel);
+  expect(tagOf(head, "root")).toBe(root);
+  expect(me.sent).toHaveLength(1);
+});
+
+it("retires a card only when the relay won't put it back or it is out of reach", async () => {
+  const relay = fakeRelay();
+  const me = device(relay);
+  const now = read();
+  await me.cards.round(target, [now], live());
+  const d = await cardD();
+  relay.remove(d);
+  relay.refuse("blocked: the revision was redacted");
+  const refused = await me.cards.round(target, [now], live());
+  expect(refused.problems).toEqual([
+    "#7's card was deleted or moved, and the relay won't put it back (blocked: the revision was redacted), so it is no longer kept.",
+  ]);
+  expect(tagOf(relay.headOf(d), "op")).toBe("delete");
+  relay.refuse(undefined);
+  expect((await me.cards.round(target, [now], live())).problems).toEqual(
+    refused.problems,
+  );
+  expect(tagOf(relay.headOf(d), "op")).toBe("delete");
 
   const other = fakeRelay();
   const you = device(other);
-  await you.cards.round(target, [read()], other.synced(), live());
-  const head = other.headOf(d);
-  other.revisions.set(d, [
-    ...(other.revisions.get(d) ?? []),
-    {
-      ...(head as EventData),
-      id: "f".repeat(64),
-      tags: [
-        ["d", d],
-        ["h", channel],
-        ["op", "delete"],
-      ],
-    },
+  await you.cards.round(target, [now], live());
+  other.move(d, "private");
+  other.hidden.add("private");
+  expect((await you.cards.round(target, [now], live())).problems).toEqual([
+    "#7's card is gone from this channel, so it is no longer kept.",
   ]);
-  const deleted = await you.cards.round(
-    target,
-    [with_(read(), { state: "merged" })],
-    other.synced(),
-    live(),
+  expect(you.sent).toHaveLength(1);
+});
+
+it("repairs another writer's revision however far back it dates itself", async () => {
+  const relay = fakeRelay();
+  const me = device(relay);
+  const now = read();
+  await me.cards.round(target, [now], live());
+  const d = await cardD();
+  const mine = relay.headOf(d) as EventData;
+  relay.forge(
+    d,
+    (tags) => tags.filter(([name]) => name !== "root"),
+    serialize({ ...now.pull, title: "Forged" }),
+    { createdAt: mine.created_at - 1 },
   );
-  expect(deleted.problems).toEqual([
-    "#7's card was deleted, so it is no longer kept.",
-  ]);
-  expect(tagOf(other.headOf(d), "op")).toBe("delete");
-  expect(you.replies).toEqual([]);
+  await me.cards.round(target, [now], live());
+  expect(relay.headOf(d)?.pubkey).toBe(mike);
+  expect(tagOf(relay.headOf(d), "root")).toBe(tagOf(mine, "root"));
+  expect(JSON.parse(relay.headOf(d)?.content ?? "{}").title).toBe(
+    "Add the card",
+  );
+});
+
+it("keeps its card from the revision it stored when others bury it deep in history", async () => {
+  const relay = fakeRelay();
+  const storage = memoryStorage();
+  const me = device(relay, { storage });
+  const now = read();
+  await me.cards.round(target, [now], live());
+  const d = await cardD();
+  const root = tagOf(relay.headOf(d), "root");
+  for (let count = 0; count < 501; count++)
+    relay.forge(d, (tags) => tags, serialize({ ...now.pull, title: "Spam" }));
+  const restarted = device(relay, { storage });
+  expect(await restarted.cards.round(target, [now], live())).toEqual({
+    again: false,
+    problems: [],
+  });
+  expect(relay.headOf(d)?.pubkey).toBe(mike);
+  expect(tagOf(relay.headOf(d), "root")).toBe(root);
+  expect(restarted.sent).toEqual([]);
+
+  const forgetful = device(relay);
+  for (let count = 0; count < 501; count++)
+    relay.forge(d, (tags) => tags, serialize({ ...now.pull, title: "Spam" }));
+  expect((await forgetful.cards.round(target, [now], live())).problems).toEqual(
+    ["#7's card is in use by someone else, so it is not kept."],
+  );
+});
+
+it("reads only the heads of the cards a round names, however many artifacts the channel holds", async () => {
+  const relay = fakeRelay();
+  const me = device(relay);
+  const eight = read({ url: `${url.slice(0, -1)}8`, number: 8 });
+  await me.cards.round(target, [read(), eight], live());
+  const heads = relay.filters.filter((filter) => filter.artifact === "head");
+  expect(heads[0]).toEqual({
+    kinds: [45010],
+    "#d": [await cardD(), await cardD(eight.pull)],
+    artifact: "head",
+    limit: 2,
+  });
 });
 
 it("keeps rooting the one announcement it posted until the relay holds it, across restarts", async () => {
@@ -584,23 +697,19 @@ it("keeps rooting the one announcement it posted until the relay holds it, acros
   const first = device(relay, { storage, land: false });
   const now = read();
   for (let attempt = 1; attempt < ROOT_ATTEMPTS; attempt++)
-    expect(
-      (await first.cards.round(target, [now], relay.synced(), live())).again,
-    ).toBe(true);
-  const late = await first.cards.round(target, [now], relay.synced(), live());
+    expect((await first.cards.round(target, [now], live())).again).toBe(true);
+  const late = await first.cards.round(target, [now], live());
   expect(late).toEqual({
     again: false,
     problems: ["#7's announcement hasn't reached the channel yet."],
   });
-  await first.cards.round(target, [now], relay.synced(), live());
+  await first.cards.round(target, [now], live());
   expect(first.sent).toHaveLength(1);
   const id = first.messages.send.mock.results[0]?.value as string;
 
   const restarted = device(relay, { storage });
   relay.messages.add(id);
-  expect(
-    await restarted.cards.round(target, [now], relay.synced(), live()),
-  ).toEqual({
+  expect(await restarted.cards.round(target, [now], live())).toEqual({
     again: false,
     problems: [],
   });
@@ -614,49 +723,54 @@ it("announces once when two devices or two polls race for a new pull request", a
   const desktop = device(relay);
   const now = read();
   await Promise.all([
-    laptop.cards.round(target, [now], new Map(), live()),
-    desktop.cards.round(target, [now], new Map(), live()),
-    laptop.cards.round(target, [now], new Map(), live()),
+    laptop.cards.round(target, [now], live()),
+    desktop.cards.round(target, [now], live()),
+    laptop.cards.round(target, [now], live()),
   ]);
   expect(laptop.sent.length + desktop.sent.length).toBe(1);
-  await laptop.cards.round(target, [now], relay.synced(), live());
-  await desktop.cards.round(target, [now], relay.synced(), live());
+  await laptop.cards.round(target, [now], live());
+  await desktop.cards.round(target, [now], live());
   expect(laptop.sent.length + desktop.sent.length).toBe(1);
   expect(tagOf(relay.headOf(await cardD()), "root")).toBeTruthy();
 });
 
 it("drops what it wrote after a conflict and reads the head again", async () => {
   const relay = fakeRelay();
-  const me = device(relay);
+  let race = false;
+  const me = device(relay, {
+    before: (event) => {
+      if (!race) return;
+      race = false;
+      relay.forge(
+        tagOf(event, "d") ?? "",
+        (tags) => tags,
+        serialize({ ...now.pull, title: "Forged" }),
+      );
+    },
+  });
   const now = read();
-  await me.cards.round(target, [now], relay.synced(), live());
+  await me.cards.round(target, [now], live());
   const d = await cardD();
-  const stale = relay.synced();
-  relay.forge(d, (tags) => tags, serialize({ ...now.pull, title: "Forged" }));
+  race = true;
   const changed = with_(now, { title: "Renamed" });
-  await me.cards.round(target, [changed], stale, live());
+  await me.cards.round(target, [changed], live());
+  expect(race).toBe(false);
   expect(relay.headOf(d)?.pubkey).toBe(mike);
   expect(JSON.parse(relay.headOf(d)?.content ?? "{}").title).toBe("Renamed");
-
-  relay.forge(d, (tags) => tags, serialize({ ...now.pull, title: "Forged" }));
-  await me.cards.round(target, [changed], relay.synced(), live());
-  expect(relay.headOf(d)?.pubkey).toBe(mike);
-  expect(JSON.parse(relay.headOf(d)?.content ?? "{}").title).toBe("Renamed");
+  expect(relay.revisions.get(d)?.at(-2)?.pubkey).toBe(mallory);
 });
 
 it("posts nothing once its poll stops", async () => {
   const relay = fakeRelay();
   const stop = new AbortController();
   const me = device(relay, { before: () => stop.abort() });
-  await expect(
-    me.cards.round(target, [read()], relay.synced(), stop.signal),
-  ).rejects.toThrow();
+  await expect(me.cards.round(target, [read()], stop.signal)).rejects.toThrow();
   expect(me.sent).toEqual([]);
 
   const again = fakeRelay();
   const you = device(again);
   const now = read();
-  await you.cards.round(target, [now], again.synced(), live());
+  await you.cards.round(target, [now], live());
   const halt = new AbortController();
   const late = device(again, {
     storage: you.storage,
@@ -666,7 +780,6 @@ it("posts nothing once its poll stops", async () => {
     late.cards.round(
       target,
       [with_(now, { state: "merged" }, { merged: "dan" })],
-      again.synced(),
       halt.signal,
     ),
   ).rejects.toThrow();
@@ -682,12 +795,7 @@ it("keeps every other pull request when one fails", async () => {
       if (tagOf(event, "d") === failing) throw new Error("socket closed");
     },
   });
-  const outcome = await me.cards.round(
-    target,
-    [read(), eight],
-    relay.synced(),
-    live(),
-  );
+  const outcome = await me.cards.round(target, [read(), eight], live());
   expect(outcome.problems).toEqual(["#7: socket closed"]);
   expect(relay.headOf(await cardD(eight.pull))?.pubkey).toBe(mike);
   expect(me.sent).toEqual([announcement(eight.pull)]);
@@ -703,6 +811,7 @@ function fakeView(events: EventData[] = []) {
     state: { status: "live", events } as {
       status: string;
       events: EventData[];
+      error?: string;
     },
     snapshot: () => view.state,
     subscribe: (listener: () => void) => {
@@ -710,7 +819,9 @@ function fakeView(events: EventData[] = []) {
       return () => listeners.delete(listener);
     },
     dispose: vi.fn(),
-    set(state: Partial<{ status: string; events: EventData[] }>) {
+    set(
+      state: Partial<{ status: string; events: EventData[]; error: string }>,
+    ) {
       view.state = { ...view.state, ...state };
       for (const listener of [...listeners]) listener();
     },
@@ -735,7 +846,6 @@ function runner(channels = [channel]) {
     ],
   };
   const hooks = fakeView([hookEvent]);
-  const cardsView = fakeView();
   const filters: Record<string, unknown>[] = [];
   const sent: string[] = [];
   const replies: string[] = [];
@@ -768,9 +878,7 @@ function runner(channels = [channel]) {
     artifacts: {
       sync(filter: Record<string, unknown>) {
         filters.push(filter);
-        return (filter["#type"] as string[])[0] === "buzz.github.hook"
-          ? hooks
-          : cardsView;
+        return hooks;
       },
     },
   } as unknown as RelaySession;
@@ -802,7 +910,6 @@ function runner(channels = [channel]) {
   return {
     relay,
     hooks,
-    cardsView,
     hookEvent,
     filters,
     sent,
@@ -820,12 +927,14 @@ function runner(channels = [channel]) {
 it("keeps a hook's cards from this device: card, announcement, root, then replies", async () => {
   vi.useFakeTimers();
   const run = runner();
-  expect(run.filters[1]).toEqual({
-    artifact: "current",
-    kinds: [45010],
-    "#h": [channel],
-    "#type": ["buzz.github.pull"],
-  });
+  expect(run.filters).toEqual([
+    {
+      artifact: "current",
+      kinds: [45010],
+      "#h": [channel],
+      "#type": ["buzz.github.hook"],
+    },
+  ]);
   await vi.waitFor(() => expect(run.sent).toHaveLength(1));
   const d = await cardD();
   await vi.waitFor(() =>
@@ -836,7 +945,6 @@ it("keeps a hook's cards from this device: card, announcement, root, then replie
     { owner: "block", name: "buzz-app" },
     expect.anything(),
   );
-  run.cardsView.set({ events: [...run.relay.synced().values()] });
   run.answer(node({ state: "MERGED", mergedBy: { login: "dan" } }));
   await vi.advanceTimersByTimeAsync(POLL_MS);
   await vi.waitFor(() => expect(run.replies).toEqual(["Merged by dan"]));
@@ -845,14 +953,9 @@ it("keeps a hook's cards from this device: card, announcement, root, then replie
   run.stop();
 });
 
-it("polls only while the card sync is live, and keeps polls through a reloading hook view", async () => {
+it("keeps polls through a reloading hook view, and says when the hook view fails", async () => {
   vi.useFakeTimers();
   const run = runner();
-  run.cardsView.set({ status: "stale" });
-  await vi.advanceTimersByTimeAsync(POLL_MS);
-  expect(run.gh).not.toHaveBeenCalled();
-  run.cardsView.set({ status: "live" });
-  await vi.advanceTimersByTimeAsync(5_000);
   await vi.waitFor(() => expect(run.gh).toHaveBeenCalled());
   const [first] = run.signals;
 
@@ -863,7 +966,23 @@ it("polls only while the card sync is live, and keeps polls through a reloading 
     events: [{ ...run.hookEvent, id: "2".repeat(64) }],
   });
   expect(first?.aborted).toBe(true);
+  expect(run.status.get(channel, "hook-d")).toBeUndefined();
+
+  const calls = run.gh.mock.calls.length;
+  run.hooks.set({
+    status: "error",
+    error: "error: sync set exceeds max_events",
+  });
+  expect(run.signals.at(-1)?.aborted).toBe(true);
+  expect(run.status.get(channel, "hook-d")).toBe(
+    "Publishing from this device stopped: the channels' hooks couldn't be read (error: sync set exceeds max_events).",
+  );
+  await vi.advanceTimersByTimeAsync(POLL_MS);
+  expect(run.gh.mock.calls.length).toBe(calls);
+  run.hooks.set({ status: "unsupported", events: [] });
+  expect(run.status.get(channel, "hook-d")).toMatch(/needs a relay/);
   run.hooks.set({ status: "live", events: [] });
+  expect(run.status.get(channel, "hook-d")).toBeUndefined();
   run.stop();
 });
 

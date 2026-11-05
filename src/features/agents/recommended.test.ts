@@ -65,6 +65,9 @@ it("parses candidates in order, several per harness, and rejects anything else",
     backup,
   ]);
   expect(parseRecommended("  ")).toEqual([]);
+  // Claude Code takes a candidate too, without a provider.
+  const claude = { ...CODEX, harness: "claude-code", label: "Model D" };
+  expect(parseRecommended(JSON.stringify([claude]))).toEqual([claude]);
   for (const invalid of [
     "[]",
     "{}",
@@ -74,6 +77,7 @@ it("parses candidates in order, several per harness, and rejects anything else",
     JSON.stringify([{ ...GOOSE, harness: "pi" }]),
     JSON.stringify([{ ...CODEX, label: "" }]),
     JSON.stringify([{ ...CODEX, extra: "x" }]),
+    JSON.stringify([{ ...CODEX, harness: "claude-code", provider: "p" }]),
   ])
     expect(() => parseRecommended(invalid)).toThrow(/BUZZ_RECOMMENDED_AGENT/);
 });
@@ -293,7 +297,7 @@ it("names the candidate and field a build rejects, never their values", () => {
     [[GOOSE, "secret-text"], "BUZZ_RECOMMENDED_AGENT[1] must be an object."],
     [
       [GOOSE, { ...CODEX, harness: "secret-harness" }],
-      "BUZZ_RECOMMENDED_AGENT[1].harness must be goose or codex.",
+      "BUZZ_RECOMMENDED_AGENT[1].harness must be goose, codex or claude-code.",
     ],
     [
       [{ ...GOOSE, model: " secret-model " }],

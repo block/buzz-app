@@ -88,12 +88,12 @@ builds.
 Packagers can offer a recommended agent setup, which picks a harness, model and
 thinking level for new agents and keeps them current. `BUZZ_RECOMMENDED_AGENT`
 is a JSON array of candidates, best first; a harness may have several. Each
-one has `harness` (`codex` or `goose`), `model`, `effort`, `label` (the model's
+one has `harness` (`goose`, `codex` or `claude-code`), `model`, `effort`, `label` (the model's
 display name) and, for goose only, `provider`. For example, with placeholder
 values:
 
 ```sh
-BUZZ_RECOMMENDED_AGENT='[{"harness":"codex","model":"model-a","effort":"high","label":"Model A"},{"harness":"goose","provider":"example","model":"model-b","effort":"high","label":"Model B"}]' bin/pnpm tauri build
+BUZZ_RECOMMENDED_AGENT='[{"harness":"goose","provider":"example","model":"model-b","effort":"high","label":"Model B"},{"harness":"codex","model":"model-a","effort":"high","label":"Model A"},{"harness":"claude-code","model":"model-c","effort":"high","label":"Model C"}]' bin/pnpm tauri build
 ```
 
 The frontend reads it from repository-root `.env.local` or the process
@@ -108,14 +108,16 @@ With it set:
 - **Create agent** gains an **AI settings** row: **Automatic (Recommended)**,
   the default, or **Manual**. Automatic uses the first candidate whose harness
   is installed here and ready and whose model it lists now (Codex: installed,
-  signed in, model in its catalog; goose: provider set up, model in its live
-  list with the candidate's thinking level), and shows it as **Uses** with the
-  model and thinking level, plus a one-line note when a harness ahead of it
-  isn't set up. Each check may take up to 8 seconds; one that fails or takes
-  longer skips that candidate. Codex is not offered on Windows. When nothing
-  is ready, Automatic says so and Create waits for **Manual**. **Manual**
-  opens the Harness, Provider (goose only), Model and Thinking rows in place,
-  starting from what Automatic picked, and works while the check runs.
+  signed in, model in its catalog; Claude Code: installed, signed in, model or
+  the model an alias stands for in its catalog, with the candidate's thinking
+  level; goose: provider set up, model in its live list with the candidate's
+  thinking level), and shows it as **Uses** with the model and thinking level,
+  plus a one-line note when a harness ahead of it isn't set up. Each check may
+  take up to 8 seconds; one that fails or takes longer skips that candidate.
+  Codex and Claude Code are not offered on Windows. When nothing is ready,
+  Automatic says so and Create waits for **Manual**. **Manual** opens the
+  Harness, Provider (goose only), Model and Thinking rows in place, starting
+  from what Automatic picked, and works while the check runs.
 - When a hosted agent type such as Builderlab is registered, a **Runs on** row
   above it chooses **This computer** or the hosted type, which shows **Coming
   soon** while its provider reports it unavailable. A hosted type's Automatic
@@ -137,14 +139,16 @@ With it set:
   provider or thinking change, on the agent's card or in Settings, takes it
   off Recommended.
 
-The mark stays in this computer's agent state and is never written to the
-agent's synced `buzz.agent.settings` (kind 45010), because older app versions
-reject a settings key they don't know. Synced settings carry the agent's model,
-provider and thinking level blank or not at all. A synced revision that names
-any of them, such as one restored from History, takes the agent off
-Recommended on this computer, and its next Settings save there drops the mark.
-Until then, a later synced revision with blank model settings would put it
-back on Recommended. Which harness an agent runs on is the `runtime` tag of
+On a config channel, the mark syncs with the agent's settings: its
+`buzz.agent.settings` revision (kind 45010) carries `"preset": "recommended"`
+beside `settings`, not inside it, and leaves it out otherwise. Versions without
+this feature ignore it there and keep it when they edit (NIP-AP "Editing"), so
+their strict settings check never rejects it. The synced revision decides on
+every device: one without the mark takes the agent off Recommended, and one
+that names a model, provider or thinking level keeps it off even with the
+mark. Synced settings carry the agent's own model settings blank or not at all
+while it is on Recommended. Without a config channel, the mark is kept in the
+agent's local settings. Which harness an agent runs on is the `runtime` tag of
 its kind 30177 record.
 
 ## Builderlab URL build input

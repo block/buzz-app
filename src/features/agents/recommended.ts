@@ -8,7 +8,7 @@
 // The build config parses candidates too, so this module imports nothing.
 
 export type RecommendedCandidate = Readonly<{
-  /** The agent type's id: `codex` or `goose`. */
+  /** The agent type's id: `codex`, `goose` or `claude-code`. */
   harness: string;
   /** goose's provider; Codex takes none. */
   provider?: string;
@@ -23,6 +23,7 @@ export const PRESET = "recommended";
 const HARNESSES: Readonly<Record<string, boolean>> = {
   codex: false,
   goose: true,
+  "claude-code": false,
 };
 
 const filled = (value: unknown): value is string =>
@@ -60,7 +61,7 @@ export function parseRecommended(
         ? HARNESSES[harness]
         : undefined;
     if (needsProvider === undefined)
-      throw invalid(`${at}.harness must be goose or codex.`);
+      throw invalid(`${at}.harness must be goose, codex or claude-code.`);
     const [unknown] = Object.keys(rest);
     if (unknown !== undefined)
       throw invalid(`${at} has an unknown field, "${unknown}".`);
@@ -99,9 +100,8 @@ export const candidatesFor = (harness: string) =>
   recommendedCandidates().filter((candidate) => candidate.harness === harness);
 
 /** Whether a config is on Recommended: marked, with no model settings of its
- * own. The mark is this device's only, never in synced settings, which older
- * versions would reject with an unknown key; so a model choice synced in,
- * as from History, takes the agent off it. */
+ * own. A model choice synced in, as from History or an older version that
+ * kept the mark, takes the agent off it. */
 export function onRecommended(config: unknown) {
   if (typeof config !== "object" || config === null) return false;
   const saved = config as Record<string, unknown>;
@@ -249,7 +249,7 @@ export const recommendedNote = (pick: RecommendedPick<Harness>) => {
 };
 
 /** The first candidate this computer can run now: its harness is installed
- * here (Codex is not on Windows), follows Recommended, and says, within
+ * here (Codex and Claude Code are not on Windows), follows Recommended, and says, within
  * `CHECK_MS`, that it is ready and offers the candidate's model. Undefined
  * when none is. */
 export async function pickRecommended<T extends Harness>(

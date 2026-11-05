@@ -10,6 +10,12 @@ import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
+import {
+  followRecommended,
+  onRecommended,
+  recommendedRun,
+} from "../../features/agents/recommended";
+import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
@@ -39,7 +45,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       })),
     complete: (model, prompt, signal) => setup.review(model, prompt, signal),
   });
-  const providerDefaults = new ClaudeDefaults(agents.storage);
+  // A candidate needs Claude signed in and its model and level listed.
+  const recommended = recommendedRun(TYPE_ID, (candidate) =>
+    setup.offers(candidate),
+  );
+  const providerDefaults = new ClaudeDefaults(agents.storage, recommended);
+  /** What an agent on Recommended runs on, found before its first run. */
+  const follow = async (agent: AgentHandle | undefined) => {
+    const saved = agents
+      .snapshot()
+      .running.find((item) => item.key === agent?.key)?.config;
+    if (!onRecommended(saved)) return;
+    const finding = recommended.find();
+    if (recommended.current() === undefined) await finding;
+  };
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
     (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
@@ -110,6 +129,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     setup,
     defaults: providerDefaults,
     runtime,
+    recommended,
   });
   agents.register<Config>({
     id: TYPE_ID,
@@ -130,8 +150,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : undefined,
     exportShared: (saved) => ({
       runtime: "claude",
-      model: config(saved).model,
+      model: followRecommended(saved, config(saved), recommended.current())
+        .model,
     }),
+    recommends: (candidate) => setup.offers(candidate),
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -157,7 +179,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         },
       ];
     },
-    summary: (agent) => config(agent.config).model || "Claude",
+    summary: (agent) =>
+      followRecommended(
+        agent.config,
+        config(agent.config),
+        recommended.current(),
+      ).model || "Claude",
     ...(spawn &&
       readFile && {
         usage: (agent, { since, signal }) =>
@@ -224,10 +251,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     // A mention during the first download waits for it, within its deadline.
-    ...claudeRun(runtime, (signal, agent) =>
-      agent?.protection
+    ...claudeRun(runtime, async (signal, agent) => {
+      await (agent?.protection
         ? setup.protectedInstalled(signal)
-        : setup.installed(signal),
-    ),
+        : setup.installed(signal));
+      await follow(agent);
+    }),
   });
 };

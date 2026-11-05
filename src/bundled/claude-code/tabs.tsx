@@ -1,9 +1,22 @@
+import { AISettings, runsOnLine } from "../../features/agents/AISettings";
+import {
+  candidatesFor,
+  followRecommended,
+  offRecommended,
+  onRecommended,
+  type RecommendedRun,
+  recommendedRun,
+  withRecommended,
+} from "../../features/agents/recommended";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ArrowsClockwiseIcon } from "../../shared/design-system/icons";
+import {
+  ArrowsClockwiseIcon,
+  ClaudeLogoIcon,
+} from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
@@ -324,11 +337,27 @@ export function createTabs({
   setup,
   defaults,
   runtime,
+  recommended = recommendedRun("claude-code", (candidate) =>
+    setup.offers(candidate),
+  ),
 }: Readonly<{
   setup: ClaudeSetup;
   defaults: ClaudeDefaults;
   runtime: ClaudeRuntime;
+  /** What agents on Recommended run on; the plugin shares its runtime's. */
+  recommended?: RecommendedRun;
 }>) {
+  /** What an agent on Recommended runs on, found once it is shown on it. */
+  function useRecommended(on: boolean) {
+    const resolved = useSyncExternalStore(
+      recommended.subscribe,
+      recommended.current,
+    );
+    useEffect(() => {
+      if (on) void recommended.find();
+    }, [on]);
+    return resolved;
+  }
   function useSetupCatalog() {
     const state = useSyncExternalStore(
       setup.subscribe,
@@ -355,7 +384,11 @@ export function createTabs({
     onChange,
     ...props
   }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
+    // A pick here takes the agent off Recommended, from what it runs on.
+    const resolved = useRecommended(onRecommended(config));
+    const current = offRecommended(
+      followRecommended(config, readConfig(config), resolved),
+    );
     const state = useSetupCatalog();
     const providerDefaults = useSyncExternalStore(
       defaults.subscribe,
@@ -369,6 +402,14 @@ export function createTabs({
       );
     if (state.status.state !== "ready" || state.running)
       return <ClaudeSignIn setup={setup} disabled={props.disabled} />;
+    if (props.layout === "rows")
+      return (
+        <ModelRows
+          config={current}
+          disabled={props.disabled}
+          onChange={onChange}
+        />
+      );
     return (
       <CreateModelChoices
         {...props}
@@ -402,6 +443,90 @@ export function createTabs({
           });
         }}
       />
+    );
+  }
+
+  /** The Model and Thinking rows, in Settings and in Create agent's Manual. */
+  function ModelRows({
+    config,
+    disabled,
+    onChange,
+  }: Readonly<{
+    config: Config;
+    disabled: boolean;
+    onChange(config: Config): void;
+  }>) {
+    const state = useSetupCatalog();
+    const providerDefaults = useSyncExternalStore(
+      defaults.subscribe,
+      defaults.snapshot,
+      defaults.snapshot,
+    );
+    const efforts = effortsFor(
+      config.model || providerDefaults.model,
+      state.models,
+    );
+    const effortOptions = [
+      { value: "", label: "Automatic · Default" },
+      // A saved level the model does not list; without Claude's list, it may.
+      ...(config.effort && !efforts.some((level) => level.id === config.effort)
+        ? [
+            {
+              value: config.effort,
+              label: state.models.length
+                ? `${effortLabel(config.effort)} (unavailable)`
+                : effortLabel(config.effort),
+            },
+          ]
+        : []),
+      ...efforts.map(({ id, label }) => ({ value: id, label })),
+    ];
+    return (
+      <>
+        <ModelPicker
+          allowCustomModel
+          models={modelChoices(state.models)}
+          value={config.model}
+          defaultModel={providerDefaultModel(
+            providerDefaults.model,
+            state.models,
+          )}
+          defaultLabel={providerDefaultLabel(
+            providerDefaults.model,
+            state.models,
+          )}
+          defaultDescription="Following the provider's model default"
+          loading={state.modelsChecking}
+          disabled={disabled}
+          onChange={(model) => {
+            // An effort the new model does not list goes back to the default;
+            // without Claude's list, the effort is kept.
+            const next = effortsFor(
+              model || providerDefaults.model,
+              state.models,
+            );
+            onChange({
+              ...config,
+              model,
+              effort:
+                state.models.length === 0 ||
+                next.some((level) => level.id === config.effort)
+                  ? config.effort
+                  : "",
+            });
+          }}
+        />
+        <Select
+          label="Thinking"
+          valueLabel={config.effort ? undefined : "Automatic"}
+          valueSuffix={config.effort ? undefined : " · Default"}
+          variant="preference"
+          value={config.effort}
+          disabled={disabled}
+          groups={[{ label: "", options: effortOptions }]}
+          onValueChange={(effort) => onChange({ ...config, effort })}
+        />
+      </>
     );
   }
 
@@ -937,12 +1062,6 @@ export function createTabs({
   }: AgentViewProps<Config>) {
     const form = useId();
     const saved = readConfig(agent.config);
-    const setupState = useSetupCatalog();
-    const providerDefaults = useSyncExternalStore(
-      defaults.subscribe,
-      defaults.snapshot,
-      defaults.snapshot,
-    );
     const [draft, setDraft] = useState(saved);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
@@ -956,77 +1075,31 @@ export function createTabs({
       setSaving(true);
       setError("");
       try {
-        await save({
+        const next = {
           ...draft,
           workspace: draft.workspace.trim() || "~/.buzz",
-        });
+        };
+        // A Custom agent's save drops a mark left from before, which a later
+        // blank synced model would otherwise turn back on.
+        await save(onRecommended(next) ? next : offRecommended(next));
       } catch (reason) {
         setError(message(reason));
       } finally {
         setSaving(false);
       }
     };
-    const efforts = effortsFor(
-      draft.model || providerDefaults.model,
-      setupState.models,
-    );
-    const effortOptions = [
-      { value: "", label: "Automatic · Default" },
-      // A saved level the model does not list; without Claude's list, it may.
-      ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
-        ? [
-            {
-              value: draft.effort,
-              label: setupState.models.length
-                ? `${effortLabel(draft.effort)} (unavailable)`
-                : effortLabel(draft.effort),
-            },
-          ]
-        : []),
-      ...efforts.map(({ id, label }) => ({ value: id, label })),
-    ];
-    const modelControl = (
+    // Inert in a build that recommends nothing for Claude.
+    const following =
+      onRecommended(draft) && candidatesFor("claude-code").length > 0;
+    const resolved = useRecommended(following);
+    const manual = (
       <>
-        <ModelPicker
-          allowCustomModel
-          models={modelChoices(setupState.models)}
-          value={draft.model}
-          defaultModel={providerDefaultModel(
-            providerDefaults.model,
-            setupState.models,
-          )}
-          defaultLabel={providerDefaultLabel(
-            providerDefaults.model,
-            setupState.models,
-          )}
-          defaultDescription="Following the provider's model default"
-          loading={setupState.modelsChecking}
-          onChange={(model) => {
-            // An effort the new model does not list goes back to the default;
-            // without Claude's list, the effort is kept.
-            const next = effortsFor(
-              model || providerDefaults.model,
-              setupState.models,
-            );
-            setDraft({
-              ...draft,
-              model,
-              effort:
-                setupState.models.length === 0 ||
-                next.some((level) => level.id === draft.effort)
-                  ? draft.effort
-                  : "",
-            });
-          }}
-        />
-        <Select
-          label="Thinking"
-          valueLabel={draft.effort ? undefined : "Automatic"}
-          valueSuffix={draft.effort ? undefined : " · Default"}
-          variant="preference"
-          value={draft.effort}
-          groups={[{ label: "", options: effortOptions }]}
-          onValueChange={(effort) => setDraft({ ...draft, effort })}
+        {settingsHost?.typeControl?.(configChanged)}
+        <ModelRows
+          config={draft}
+          disabled={saving}
+          // A manual choice, even of the default, is never Recommended.
+          onChange={(next) => setDraft(offRecommended(next))}
         />
       </>
     );
@@ -1052,8 +1125,32 @@ export function createTabs({
         {settingsSection !== "runtime" && (
           <>
             <SettingsGroup>
-              {settingsHost?.typeControl?.(configChanged)}
-              {modelControl}
+              {settingsHost?.runsOn}
+              {candidatesFor("claude-code").length ? (
+                <AISettings
+                  automatic={following}
+                  disabled={saving}
+                  short
+                  summary={runsOnLine(
+                    { title: "Claude", icon: ClaudeLogoIcon },
+                    resolved,
+                  )}
+                  onChange={(on) =>
+                    // Manual starts from the recommendation it ran on.
+                    setDraft(
+                      on
+                        ? readConfig(withRecommended(draft))
+                        : offRecommended(
+                            followRecommended(draft, draft, resolved),
+                          ),
+                    )
+                  }
+                >
+                  {manual}
+                </AISettings>
+              ) : (
+                manual
+              )}
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}

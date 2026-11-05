@@ -383,6 +383,20 @@ export class ClaudeSetup {
       }
     }
   }
+  /** Whether Claude is installed and signed in here and lists `model`, by
+   * its name or the model an alias stands for, on `effort` when it takes one. */
+  async offers({ model, effort }: Readonly<{ model: string; effort: string }>) {
+    if (this.state.status?.state !== "ready") await this.check();
+    if (this.state.status?.state !== "ready") return false;
+    const listed = (await this.catalog()).find(
+      (item) => item.value === model || item.resolvedModel === model,
+    );
+    return (
+      !!listed &&
+      (!listed.supportsEffort ||
+        !!listed.supportedEffortLevels?.includes(effort))
+    );
+  }
   /** The catalog for a surface that opens without the model picker: found
    * once, and looked for again only after a discovery that listed nothing. */
   catalog() {

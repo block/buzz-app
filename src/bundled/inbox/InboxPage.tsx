@@ -935,59 +935,40 @@ function InboxList({
           </Button>
         </div>
       )}
-      {activity === "reactions" ? (
-        <>
+      <div ref={workspace} className={styles.workspace}>
+        <div className={styles.listPane}>
           {toolbar}
-          <ReactionHistory session={session} open={openReaction} />
-        </>
-      ) : (
-        <div ref={workspace} className={styles.workspace}>
-          <div className={styles.listPane}>
-            {toolbar}
-            {showReactions && (
-              <ReactionHistoryControls
-                history={reactionHistory}
-                showError={reactionHistory.error !== failure}
-              />
-            )}
-            <div
-              ref={scroller}
-              className={styles.scroll}
-              onScroll={(event) => {
-                // Saved as it moves, so any teardown keeps the last offset.
-                // Rows arriving above a covered list can still anchor it,
-                // which saves only the offset.
-                const list = event.currentTarget;
-                selections.set(session, {
-                  ...selections.get(session),
-                  scrollTop: list.scrollTop,
-                  ...(!covered(list) && {
-                    selectedShown: selectedInView(list),
-                  }),
-                });
-              }}
-            >
-              {inbox.freshness === "stale" && !failure && (
-                <div className={styles.notice} role="status">
-                  <span className="text-body text-subtle">
-                    Showing retained activity.
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={pending}
-                    onClick={() => refresh()}
-                  >
-                    Refresh
-                  </Button>
-                </div>
+          {activity === "reactions" ? (
+            <ReactionHistory session={session} open={openReaction} />
+          ) : (
+            <>
+              {showReactions && (
+                <ReactionHistoryControls
+                  history={reactionHistory}
+                  showError={reactionHistory.error !== failure}
+                />
               )}
-              {(inbox.status === "idle" || feed.status === "idle") &&
-                !loading &&
-                !failure && (
+              <div
+                ref={scroller}
+                className={styles.scroll}
+                onScroll={(event) => {
+                  // Saved as it moves, so any teardown keeps the last offset.
+                  // Rows arriving above a covered list can still anchor it,
+                  // which saves only the offset.
+                  const list = event.currentTarget;
+                  selections.set(session, {
+                    ...selections.get(session),
+                    scrollTop: list.scrollTop,
+                    ...(!covered(list) && {
+                      selectedShown: selectedInView(list),
+                    }),
+                  });
+                }}
+              >
+                {inbox.freshness === "stale" && !failure && (
                   <div className={styles.notice} role="status">
                     <span className="text-body text-subtle">
-                      Check recent activity.
+                      Showing retained activity.
                     </span>
                     <Button
                       size="sm"
@@ -999,206 +980,224 @@ function InboxList({
                     </Button>
                   </div>
                 )}
-              {!entries.length &&
-                !reactionHistory.loading &&
-                !reactionHistory.error &&
-                (inbox.status === "ready" || feed.status === "ready") &&
-                !loading &&
-                !failure && (
-                  <div className={styles.empty} role="status">
-                    <EmptyState
-                      icon={caughtUp ? <CheckIcon /> : <BellIcon />}
-                      title={
-                        caughtUp
-                          ? "All caught up"
-                          : unreadOnly
-                            ? "No unread activity in this view"
-                            : "No recent activity in this view"
-                      }
-                      description={
-                        caughtUp
-                          ? "New replies, mentions and DMs show up here."
-                          : "Mentions, direct messages, and replies in threads you participate in appear here."
-                      }
-                      action={
-                        filtered ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setFilter(
-                                caughtUp
-                                  ? { attention: "all" }
-                                  : {
-                                      activity: "all",
-                                      sender: "everyone",
-                                      attention: "all",
-                                    },
-                              );
-                              focusToolbar();
-                            }}
-                          >
-                            {caughtUp ? "Show all" : "Clear filters"}
-                          </Button>
-                        ) : undefined
-                      }
-                    />
-                  </div>
-                )}
-              <ul
-                ref={listRef}
-                className={styles.list}
-                aria-label="Activity"
-                aria-busy={pending}
-              >
-                {entries.map((entry) => {
-                  if (entry.kind === "reaction") {
-                    const row = entry.item;
+                {(inbox.status === "idle" || feed.status === "idle") &&
+                  !loading &&
+                  !failure && (
+                    <div className={styles.notice} role="status">
+                      <span className="text-body text-subtle">
+                        Check recent activity.
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        loading={pending}
+                        onClick={() => refresh()}
+                      >
+                        Refresh
+                      </Button>
+                    </div>
+                  )}
+                {!entries.length &&
+                  !reactionHistory.loading &&
+                  !reactionHistory.error &&
+                  (inbox.status === "ready" || feed.status === "ready") &&
+                  !loading &&
+                  !failure && (
+                    <div className={styles.empty} role="status">
+                      <EmptyState
+                        icon={caughtUp ? <CheckIcon /> : <BellIcon />}
+                        title={
+                          caughtUp
+                            ? "All caught up"
+                            : unreadOnly
+                              ? "No unread activity in this view"
+                              : "No recent activity in this view"
+                        }
+                        description={
+                          caughtUp
+                            ? "New replies, mentions and DMs show up here."
+                            : "Mentions, direct messages, and replies in threads you participate in appear here."
+                        }
+                        action={
+                          filtered ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setFilter(
+                                  caughtUp
+                                    ? { attention: "all" }
+                                    : {
+                                        activity: "all",
+                                        sender: "everyone",
+                                        attention: "all",
+                                      },
+                                );
+                                focusToolbar();
+                              }}
+                            >
+                              {caughtUp ? "Show all" : "Clear filters"}
+                            </Button>
+                          ) : undefined
+                        }
+                      />
+                    </div>
+                  )}
+                <ul
+                  ref={listRef}
+                  className={styles.list}
+                  aria-label="Activity"
+                  aria-busy={pending}
+                >
+                  {entries.map((entry) => {
+                    if (entry.kind === "reaction") {
+                      const row = entry.item;
+                      return (
+                        <li
+                          key={`reaction:${row.id}`}
+                          className={styles.row}
+                          data-reaction-row={row.id}
+                        >
+                          <ReactionRow
+                            row={row}
+                            session={session}
+                            channel={list.channels.find(
+                              (channel) => channel.id === row.channelId,
+                            )}
+                            open={openReaction}
+                            onError={reactionHistory.setError}
+                          />
+                        </li>
+                      );
+                    }
+                    const item = entry.item;
+                    const channel = list.channels.find(
+                      (candidate) => candidate.id === item.channelId,
+                    );
+                    const identity = rowIdentity(item, channel, profiles, name);
+                    const { sender, context } = identity;
+                    const unread = hasUnread(item);
+                    const readable = unread && canRead;
                     return (
                       <li
-                        key={`reaction:${row.id}`}
+                        key={item.id}
+                        data-inbox-row={item.id}
                         className={styles.row}
-                        data-reaction-row={row.id}
+                        data-unread={unread || undefined}
+                        data-action={readable || undefined}
+                        data-selected={selectedId === item.id || undefined}
                       >
-                        <ReactionRow
-                          row={row}
-                          session={session}
-                          channel={list.channels.find(
-                            (channel) => channel.id === row.channelId,
-                          )}
-                          open={openReaction}
-                          onError={reactionHistory.setError}
-                        />
-                      </li>
-                    );
-                  }
-                  const item = entry.item;
-                  const channel = list.channels.find(
-                    (candidate) => candidate.id === item.channelId,
-                  );
-                  const identity = rowIdentity(item, channel, profiles, name);
-                  const { sender, context } = identity;
-                  const unread = hasUnread(item);
-                  const readable = unread && canRead;
-                  return (
-                    <li
-                      key={item.id}
-                      data-inbox-row={item.id}
-                      className={styles.row}
-                      data-unread={unread || undefined}
-                      data-action={readable || undefined}
-                      data-selected={selectedId === item.id || undefined}
-                    >
-                      <ContextMenuRoot
-                        open={menu?.id === item.id}
-                        onOpenChange={(open) =>
-                          setMenu(open ? { id: item.id } : undefined)
-                        }
-                      >
-                        <ContextMenuTrigger
-                          render={<div className={styles.rowSurface} />}
-                          onKeyDown={(event) => {
-                            if (
-                              event.key === "ContextMenu" ||
-                              (event.shiftKey && event.key === "F10")
-                            ) {
-                              event.preventDefault();
-                              setMenu({
-                                id: item.id,
-                                anchor: event.target as HTMLElement,
-                              });
-                            }
-                          }}
-                        >
-                          <InboxRowButton
-                            item={item}
-                            identity={identity}
-                            media={session.media}
-                            feed={feed}
-                            time={relativeTimestamp(item.createdAt)}
-                            previewId={`${previewId}-${item.id}`}
-                            disabled={pending}
-                            selected={selectedId === item.id}
-                            onClick={() => {
-                              if (busy.current) return;
-                              // The selected row reveals its current message in
-                              // its captured tab, even after regrouping would
-                              // open a whole conversation as a thread.
-                              const reselect =
-                                selectedId === item.id &&
-                                opened &&
-                                !opened.threadId !==
-                                  !tabTarget(item, channel).threadId
-                                  ? opened
-                                  : undefined;
-                              if (
-                                reselect
-                                  ? !openTab(reselect)
-                                  : !openRow(item, channel)
-                              )
-                                void navigator.open({
-                                  version: 1,
-                                  kind: "conversation",
-                                  scope,
-                                  channelId: item.channelId,
-                                  messageId: item.messageId,
-                                  ...(item.rootId && {
-                                    threadRootId: item.rootId,
-                                  }),
-                                });
-                              // The selected row is the same visit, even when its
-                              // current representative changed after reading.
-                              if (selectedId === item.id) return;
-                              cancelRetry();
-                              setSelectedTarget(targetOf(item));
-                              if (unread && canRead) mutate(item, false);
-                            }}
-                          />
-                          {readable && (
-                            <span className={styles.rowAction}>
-                              <IconButton
-                                size="sm"
-                                variant="ghost"
-                                disabled={pending}
-                                aria-label={`Mark as read ${sender} in ${context}`}
-                                title="Mark as read"
-                                onClick={() => markRead(item)}
-                                icon={
-                                  <CheckIcon size={16} aria-hidden="true" />
-                                }
-                              />
-                            </span>
-                          )}
-                        </ContextMenuTrigger>
-                        <MenuPopup
-                          size="compact"
-                          aria-label={`Actions for ${sender} in ${context}`}
-                          anchor={
-                            menu?.id === item.id ? menu.anchor : undefined
+                        <ContextMenuRoot
+                          open={menu?.id === item.id}
+                          onOpenChange={(open) =>
+                            setMenu(open ? { id: item.id } : undefined)
                           }
                         >
-                          <MenuItem
-                            disabled={pending || !unread || !canRead}
-                            onClick={() => markRead(item)}
+                          <ContextMenuTrigger
+                            render={<div className={styles.rowSurface} />}
+                            onKeyDown={(event) => {
+                              if (
+                                event.key === "ContextMenu" ||
+                                (event.shiftKey && event.key === "F10")
+                              ) {
+                                event.preventDefault();
+                                setMenu({
+                                  id: item.id,
+                                  anchor: event.target as HTMLElement,
+                                });
+                              }
+                            }}
                           >
-                            Mark as read
-                          </MenuItem>
-                          <MenuItem
-                            disabled={pending || unread || !canRead}
-                            onClick={() => mutate(item, true)}
+                            <InboxRowButton
+                              item={item}
+                              identity={identity}
+                              media={session.media}
+                              feed={feed}
+                              time={relativeTimestamp(item.createdAt)}
+                              previewId={`${previewId}-${item.id}`}
+                              disabled={pending}
+                              selected={selectedId === item.id}
+                              onClick={() => {
+                                if (busy.current) return;
+                                // The selected row reveals its current message in
+                                // its captured tab, even after regrouping would
+                                // open a whole conversation as a thread.
+                                const reselect =
+                                  selectedId === item.id &&
+                                  opened &&
+                                  !opened.threadId !==
+                                    !tabTarget(item, channel).threadId
+                                    ? opened
+                                    : undefined;
+                                if (
+                                  reselect
+                                    ? !openTab(reselect)
+                                    : !openRow(item, channel)
+                                )
+                                  void navigator.open({
+                                    version: 1,
+                                    kind: "conversation",
+                                    scope,
+                                    channelId: item.channelId,
+                                    messageId: item.messageId,
+                                    ...(item.rootId && {
+                                      threadRootId: item.rootId,
+                                    }),
+                                  });
+                                // The selected row is the same visit, even when its
+                                // current representative changed after reading.
+                                if (selectedId === item.id) return;
+                                cancelRetry();
+                                setSelectedTarget(targetOf(item));
+                                if (unread && canRead) mutate(item, false);
+                              }}
+                            />
+                            {readable && (
+                              <span className={styles.rowAction}>
+                                <IconButton
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={pending}
+                                  aria-label={`Mark as read ${sender} in ${context}`}
+                                  title="Mark as read"
+                                  onClick={() => markRead(item)}
+                                  icon={
+                                    <CheckIcon size={16} aria-hidden="true" />
+                                  }
+                                />
+                              </span>
+                            )}
+                          </ContextMenuTrigger>
+                          <MenuPopup
+                            size="compact"
+                            aria-label={`Actions for ${sender} in ${context}`}
+                            anchor={
+                              menu?.id === item.id ? menu.anchor : undefined
+                            }
                           >
-                            Mark unread
-                          </MenuItem>
-                        </MenuPopup>
-                      </ContextMenuRoot>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </div>
+                            <MenuItem
+                              disabled={pending || !unread || !canRead}
+                              onClick={() => markRead(item)}
+                            >
+                              Mark as read
+                            </MenuItem>
+                            <MenuItem
+                              disabled={pending || unread || !canRead}
+                              onClick={() => mutate(item, true)}
+                            >
+                              Mark unread
+                            </MenuItem>
+                          </MenuPopup>
+                        </ContextMenuRoot>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

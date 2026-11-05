@@ -4514,7 +4514,8 @@ it("moves through the Activity type tabs with arrows, Home and End, then tabs ou
   const focusable = () => tab().filter((item) => item.tabIndex === 0);
   expect(focusable()).toHaveLength(1);
   expect(focusable()[0]).toHaveAttribute("aria-selected", "true");
-  const [all, , , last] = tab();
+  const [all] = tab();
+  const last = tab().at(-1);
   if (!all || !last) throw new Error("Missing Activity type tabs");
   act(() => all.focus());
   await user.keyboard("{ArrowRight}");
@@ -4522,7 +4523,10 @@ it("moves through the Activity type tabs with arrows, Home and End, then tabs ou
   await user.keyboard("{ArrowLeft}");
   expect(all).toHaveFocus();
   await user.keyboard("{End}");
-  expect(last).toHaveFocus();
+  expect(tab().at(-1)).toHaveFocus();
+  expect(activityType()).toBe("Reactions");
+  expect(fromTrigger()).toBeDisabled();
+  expect(unreadToggle()).toBeDisabled();
   await user.keyboard("{Home}");
   expect(all).toHaveFocus();
   expect(focusable()).toEqual([all]);

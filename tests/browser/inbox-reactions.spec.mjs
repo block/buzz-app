@@ -32,7 +32,7 @@ test("reaction history opens the original message from Inbox", async ({
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 950 });
       await page.evaluate((theme) => {
-        document.documentElement.classList.toggle("dark", theme === "dark");
+        document.documentElement.dataset.colorMode = theme;
         document.documentElement.style.fontSize = "20px";
       }, theme);
       await expect(row).toBeInViewport();

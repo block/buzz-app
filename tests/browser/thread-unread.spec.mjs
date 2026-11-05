@@ -1235,4 +1235,82 @@ test.describe("top-level mention activity", () => {
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   });
+
+  // Browser-only: the reveal's fractional scroll position and the visibility
+  // read depend on real layout.
+  test("opening a mention above the bottom from Activity reads it there", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    // Leave Alpha, its window loaded, so its new messages arrive unseen.
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    const mention = app.append(
+      "primary",
+      "alpha",
+      "Can you sign off on Alpha?",
+      true,
+      false,
+      undefined,
+      undefined,
+      [["p", app.viewer]],
+    );
+    // Enough later messages that revealing the mention cannot reach the
+    // bottom, whose catch-up would read it anyway.
+    for (let index = 0; index < 40; index++)
+      app.append("primary", "alpha", `Later update ${index}`, true, false);
+    await openPage(page, "Inbox");
+    const row = page
+      .getByRole("region", { name: "Inbox", exact: true })
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem")
+      .filter({ hasText: "Can you sign off on Alpha?" });
+    await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
+    await openPage(page, "Messages");
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    await alpha.hover();
+    const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+    const mentions = popover.getByRole("region", { name: "Mentions" });
+    await mentions
+      .getByRole("button", {
+        name: /^Open unread mention from .+: Can you sign off on Alpha\?$/,
+      })
+      .click();
+    const message = page.locator(
+      `[data-channel-timeline] [data-message-id="${mention.id}"]`,
+    );
+    await expect(message).toBeInViewport();
+    await expect(message).toBeFocused();
+    expect(
+      await page
+        .getByRole("region", { name: "Channel message history" })
+        .evaluate(
+          (element) =>
+            element.scrollHeight - element.clientHeight - element.scrollTop,
+        ),
+      "the reveal stops above the bottom",
+    ).toBeGreaterThan(1);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id) =>
+            window.fixtureRelay.snapshot().session.unread.attention("alpha", id)
+              .unread,
+          mention.id,
+        ),
+      )
+      .toBe(false);
+    // Alpha's unread threads keep Activity open; the mention has left it.
+    await alpha.hover();
+    await expect(
+      popover.getByRole("region", { name: "Unread threads" }),
+    ).toBeVisible();
+    await expect(mentions).toHaveCount(0);
+    await openPage(page, "Inbox");
+    await expect(row).toBeVisible();
+    await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  });
 });

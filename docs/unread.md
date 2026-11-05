@@ -51,9 +51,11 @@ content does not qualify. Pane motion completion restarts observation after
 unchanged rows enter the viewport. Another pane, a dialog, background window,
 preload, and mounted virtualizer overscan do not qualify.
 
-Away from the bottom, observations mark individual fully visible messages. At the
-physical bottom, 300 ms visibility of the newest message's bottom edge also earns
-catch-up (including a message taller than the viewport):
+Away from the bottom, observations mark individual fully visible messages, to
+within a pixel: a reveal's whole-pixel scroll can leave a row a fraction of a
+pixel past the edge. At the physical bottom, 300 ms visibility of the newest
+message's bottom edge also earns catch-up (including a message taller than the
+viewport):
 
 - `activity:<channel>` uses the newest retained verified event timestamp at dwell
   completion, including replies newer than the visible top-level head. It reads

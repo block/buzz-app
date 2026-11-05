@@ -118,6 +118,8 @@ export function useReading({
       for (const observed of observing) observed.dispose();
       observing.clear();
     }
+    // Within a pixel: scroll offsets snap to whole pixels but rows sit at
+    // fractional ones, so an exact reveal can leave its row a sliver past an edge.
     function shown(row: HTMLElement, viewport: DOMRect) {
       const bounds = row.getBoundingClientRect();
       return (
@@ -125,10 +127,10 @@ export function useReading({
         row.dataset.huddleRow === undefined &&
         bounds.height > 0 &&
         bounds.width > 0 &&
-        bounds.top >= Math.max(viewport.top, 0) &&
-        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
-        bounds.left >= Math.max(viewport.left, 0) &&
-        bounds.right <= Math.min(viewport.right, window.innerWidth)
+        bounds.top >= Math.max(viewport.top, 0) - 1 &&
+        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) + 1 &&
+        bounds.left >= Math.max(viewport.left, 0) - 1 &&
+        bounds.right <= Math.min(viewport.right, window.innerWidth) + 1
       );
     }
     function visibleIds() {

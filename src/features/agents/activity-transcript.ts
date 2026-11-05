@@ -207,6 +207,22 @@ function promptThread(sections: PromptSection[]) {
   return /^Scope: (?:channel|dm)$/m.test(context) ? null : undefined;
 }
 
+/** Older harnesses supplied thread scope only in the captured ACP prompt. */
+export function activityPromptThread(payload: unknown) {
+  const request = object(payload);
+  if (!PROMPT_METHODS.has(str(request?.method))) return undefined;
+  const prompt = object(request?.params)?.prompt;
+  if (!Array.isArray(prompt)) return undefined;
+  return promptThread(
+    promptSections(
+      prompt
+        .map((block) => str(object(block)?.text))
+        .filter(Boolean)
+        .join("\n"),
+    ),
+  );
+}
+
 const display = (value: unknown) =>
   value === undefined || value === null
     ? ""

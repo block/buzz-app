@@ -194,12 +194,16 @@ function MessageActivity(
         agent: entry.agent,
         channelId,
       }).turns;
-      if (turns.length && turns.every((turn) => !!turn.threadRootId))
-        return false;
       if (
-        !turns.length &&
-        entry.turns.length &&
-        entry.turns.every((turn) => !!turn.threadRootId)
+        entry.turns.length
+          ? entry.turns.every(
+              (turn) =>
+                !!turn.threadRootId ||
+                turns.some(
+                  (raw) => raw.turnId === turn.turnId && !!raw.threadRootId,
+                ),
+            )
+          : turns.length && turns.every((turn) => !!turn.threadRootId)
       )
         return false;
     }

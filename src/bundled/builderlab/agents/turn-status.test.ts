@@ -25,7 +25,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function fixture() {
+async function fixture(
+  start: "turn_started" | "turn_liveness" | "resolve" = "turn_started",
+) {
   vi.useFakeTimers();
   vi.setSystemTime(1800000000000);
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
@@ -106,17 +108,18 @@ async function fixture() {
     seq: number,
     payload: unknown = {},
     turnId = "task",
+    pubkey = agent,
   ) =>
     activity.receive(
       {
         id: (++serial).toString(16).padStart(64, "0"),
-        agent,
+        agent: pubkey,
         createdAt: Date.now() / 1000,
         plaintext: JSON.stringify({
           kind,
           seq,
           turnId,
-          sessionId: "session",
+          sessionId: start === "resolve" ? null : "session",
           channelId: "channel",
           timestamp: new Date().toISOString(),
           payload,
@@ -124,7 +127,11 @@ async function fixture() {
       },
       generation,
     );
-  send("turn_started", 1, { triggeringEventIds: [request] });
+  send(start === "turn_liveness" ? "turn_liveness" : "turn_started", 1, {
+    triggeringEventIds: [request],
+  });
+  if (start === "resolve")
+    send("session_resolved", 2, { sessionId: "session" });
   return {
     activity,
     session,
@@ -191,6 +198,66 @@ it.each([
   },
 );
 
+it.each(["turn_liveness", "resolve"] as const)(
+  "recovers a %s turn without inventing message attribution",
+  async (start) => {
+    const f = await fixture(start);
+    try {
+      f.result.resolve(response({ task: "failed" }));
+      await vi.advanceTimersByTimeAsync(31000);
+      await vi.waitFor(() =>
+        expect(f.activity.queries.snapshot().turns[0]?.outcome).toBe("error"),
+      );
+      expect(f.work()).toBe(start === "turn_liveness" ? undefined : "error");
+    } finally {
+      f.dispose();
+    }
+  },
+);
+
+it("refreshes the owned agent inventory when another agent appears", async () => {
+  const f = await fixture();
+  try {
+    f.result.resolve(response({}));
+    await vi.advanceTimersByTimeAsync(31000);
+    await f.started.promise;
+    const newcomer = "ef".repeat(32);
+    f.hostRequest.mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        status: 1,
+        agents: [
+          {
+            agent_id: "new",
+            agent_name: "New helper",
+            agent_pubkey: newcomer,
+            status: 2,
+          },
+        ],
+      }),
+    });
+    f.hostRequest.mockResolvedValueOnce(response({ newTask: "failed" }));
+    f.send(
+      "turn_started",
+      1,
+      { triggeringEventIds: [request] },
+      "newTask",
+      newcomer,
+    );
+    await vi.advanceTimersByTimeAsync(31000);
+    await vi.waitFor(() =>
+      expect(
+        f.activity.queries
+          .snapshot()
+          .turns.find((turn) => turn.turnId === "newTask")?.outcome,
+      ).toBe("error"),
+    );
+  } finally {
+    f.dispose();
+  }
+});
+
 it("batches at most 64 exact tasks per read and does not reread them on every activity tick", async () => {
   const f = await fixture();
   try {
@@ -227,6 +294,21 @@ it("leaves missing status unknown and reads it again after reconnect", async () 
     await vi.advanceTimersByTimeAsync(31000);
     await f.started.promise;
     expect(f.work()).toBe("unknown");
+    f.hostRequest.mockResolvedValueOnce({
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        status: 1,
+        agents: [
+          {
+            agent_id: "agent",
+            agent_name: "Helper",
+            agent_pubkey: agent,
+            status: 2,
+          },
+        ],
+      }),
+    });
     f.hostRequest.mockResolvedValueOnce(response({ task: "failed" }));
     f.activity.state({ status: "retrying", routes: [] });
     f.activity.state(connected);

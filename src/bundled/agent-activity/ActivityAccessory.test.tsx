@@ -248,31 +248,53 @@ it.each([
     }
   },
 );
-it("keeps thread activity out of the channel timeline after raw records are evicted", () => {
-  const f = fixture();
-  const view = render(<ActivityAccessory {...f.props} />);
-  try {
-    f.send(A, "thread", 1, "turn_started", {
-      triggeringEventIds: [root],
-      threadRootEventId: root,
-    });
-    expect(
-      screen.queryByRole("button", { name: /View agent activity/ }),
-    ).not.toBeInTheDocument();
-    for (let seq = 1; seq <= 201; seq++)
-      f.send(B, "unrelated", seq, "acp_read");
-    expect(
-      screen.queryByRole("button", { name: /View agent activity/ }),
-    ).not.toBeInTheDocument();
-    view.rerender(<ActivityAccessory {...f.props} messageLayout="thread" />);
-    expect(
-      screen.getByRole("button", { name: /View agent activity: Blossom/ }),
-    ).toBeInTheDocument();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
+it.each(["payload", "prompt"])(
+  "keeps %s thread scope through partial and full raw-record eviction",
+  (scope) => {
+    const f = fixture();
+    const view = render(<ActivityAccessory {...f.props} />);
+    try {
+      f.send(A, "thread", 1, "turn_started", {
+        triggeringEventIds: [root],
+        ...(scope === "payload" ? { threadRootEventId: root } : {}),
+      });
+      f.send(A, "thread", 2, "acp_write", {
+        method: "session/prompt",
+        params: {
+          prompt: [
+            {
+              type: "text",
+              text: `<context>\nScope: thread\nThread root: ${root}\n</context>`,
+            },
+          ],
+        },
+      });
+      expect(
+        screen.queryByRole("button", { name: /View agent activity/ }),
+      ).not.toBeInTheDocument();
+      for (let seq = 1; seq <= 150; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      f.send(A, "thread", 3, "acp_read");
+      for (let seq = 151; seq <= 201; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      expect(
+        screen.queryByRole("button", { name: /View agent activity/ }),
+      ).not.toBeInTheDocument();
+      for (let seq = 202; seq <= 402; seq++)
+        f.send(B, "unrelated", seq, "acp_read");
+      expect(
+        screen.queryByRole("button", { name: /View agent activity/ }),
+      ).not.toBeInTheDocument();
+      view.rerender(<ActivityAccessory {...f.props} messageLayout="thread" />);
+      expect(
+        screen.getByRole("button", { name: /View agent activity: Blossom/ }),
+      ).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      f.dispose();
+    }
+  },
+);
 it("keeps namesakes as separate exact identities", () => {
   const f = fixture();
   f.profiles.set(B, { name: "Blossom", isAgent: true as const });

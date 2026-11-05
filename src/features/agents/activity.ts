@@ -1,4 +1,5 @@
 import type { LocalAgentSource, LocalWork } from "./local-activity";
+import { activityPromptThread } from "./activity-transcript";
 import type { EventData } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import type { LiveSnapshot } from "../relay/live";
@@ -293,6 +294,14 @@ export function createAgentActivity(
     if (!previous && timestamp <= evidenceFloor) return;
     const payload = object(item.payload);
     const root = payload?.threadRootEventId;
+    const legacyRoot =
+      item.kind === "acp_write" && !previous?.threadRootId
+        ? activityPromptThread(payload)
+        : undefined;
+    const sessionId =
+      item.kind === "session_resolved" && text(payload?.sessionId)
+        ? payload.sessionId
+        : item.sessionId;
     const triggers =
       item.kind === "turn_started"
         ? payload?.triggeringEventIds
@@ -320,9 +329,11 @@ export function createAgentActivity(
         ? { threadRootId: root }
         : previous?.threadRootId
           ? { threadRootId: previous.threadRootId }
-          : {}),
-      ...(text(item.sessionId)
-        ? { sessionId: item.sessionId }
+          : typeof legacyRoot === "string"
+            ? { threadRootId: legacyRoot }
+            : {}),
+      ...(text(sessionId)
+        ? { sessionId }
         : previous?.sessionId
           ? { sessionId: previous.sessionId }
           : {}),

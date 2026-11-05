@@ -350,22 +350,14 @@ export function createAgentClient(
   return {
     /** Reads only terminal outcomes for exact tasks in the owner's agent session. */
     async turnStatus(
-      agent: Pick<RemoteAgent, "id">,
-      place: Readonly<{
-        community: string;
-        channelId: string;
-        sessionId: string;
-      }>,
+      sessionId: string,
       taskIds: readonly string[],
       signal: AbortSignal,
     ) {
       const result = await readRequest(
         "get-agent-turn-status",
         {
-          agent_id: agent.id,
-          community: new URL(place.community).host,
-          channel_id: place.channelId,
-          session_id: place.sessionId,
+          session_id: sessionId,
           task_ids: taskIds,
         },
         signal,

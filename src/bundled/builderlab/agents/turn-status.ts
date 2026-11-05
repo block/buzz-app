@@ -39,12 +39,10 @@ export function startTurnStatusRecovery({
     attempted.clear();
     current = next;
     credential = account;
-    if (!next || !connection.origin) return;
+    if (!next) return;
     const activity = next.agentActivity;
-    const community = connection.origin;
     let running = false;
     let halted = false;
-    let listed: Awaited<ReturnType<AgentClient["list"]>> | undefined;
     async function run() {
       if (disposed || current !== next || credential !== account) return;
       if (activity.snapshot().status !== "listening") {
@@ -72,7 +70,6 @@ export function startTurnStatusRecovery({
               turn.state === "unknown" &&
               turn.sessionId &&
               turn.channelId &&
-              turn.triggeringEventIds?.length &&
               !attempted.has(`${turn.agent}:${turn.turnId}`),
           );
           const first = unknown[0];
@@ -87,17 +84,11 @@ export function startTurnStatusRecovery({
             .slice(0, 64);
           for (const turn of group)
             attempted.add(`${turn.agent}:${turn.turnId}`);
-          listed ??= await client.list(active.signal);
-          const agent = listed.find((agent) => agent.pubkey === first.agent);
-          if (!agent) continue;
+          const listed = await client.list(active.signal);
+          if (!listed.some((agent) => agent.pubkey === first.agent)) continue;
           const outcomes = await client
             .turnStatus(
-              agent,
-              {
-                community,
-                channelId: first.channelId,
-                sessionId: first.sessionId,
-              },
+              first.sessionId,
               group.map((turn) => turn.turnId),
               active.signal,
             )

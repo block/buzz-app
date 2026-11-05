@@ -4,6 +4,7 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
 import type { AgentAttention } from "../features/agents/service";
+import type { AgentPlugins } from "../plugins/requests";
 
 export type BuzzEvent = Readonly<{
   id: string;
@@ -79,6 +80,8 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   protect?(action: ProtectionAction): Promise<void>;
+  /** The runtime reviews each tool call itself before Buzz dispatches it. */
+  readonly nativeToolGate?: true;
   readonly pubkey: string;
   /** The agent's membership key in this client's community: its pubkey in
    * its home community, which is the only one a standalone client has. */
@@ -86,7 +89,12 @@ export interface BuzzClient {
   /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
   agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: Readonly<{
+      type: string;
+      name: string;
+      /** Uploads the picture once the request is valid: its URL. */
+      picture?: () => Promise<string>;
+    }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   updateAgent?(
     input: Readonly<{
@@ -94,8 +102,13 @@ export interface BuzzClient {
       name?: string;
       type?: string;
       instructions?: string;
+      /** Uploads the picture once the request is valid: its URL. */
+      picture?: () => Promise<string>;
     }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins, where the host has them: read directly, changed
+   * by owner-confirmed request. */
+  plugins?: AgentPlugins;
   /** Wakes the agent in another of its conversations here, `from` this one. */
   handoff?(
     handoff: Readonly<{
@@ -123,6 +136,9 @@ export interface BuzzClient {
   publish(event: Template): Promise<BuzzEvent>;
   /** Uploads a file; `mime` is a hint, and the community decides the type. */
   upload(data: Uint8Array, mime: string): Promise<Upload>;
+  /** Uploads an image for an avatar, without its metadata, as the owner's
+   * own avatar upload prepares it. Only where the host can prepare images. */
+  uploadPicture?(data: Uint8Array, mime: string): Promise<Upload>;
   /** Saves a community media blob of any type, by its URL or
    * `sha256[.ext]`, to a local file. */
   media(url: string): Promise<Media>;

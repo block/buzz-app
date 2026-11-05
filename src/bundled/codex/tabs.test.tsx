@@ -83,14 +83,15 @@ function fixture({
   configured?: { model?: string; model_reasoning_effort?: string };
 } = {}) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
-  // Buzz's copy, as its launcher answers: `codex login` runs until it ends.
+  const items = new Map<string, unknown[]>();
+  // Buzz's copy, as its launcher answers: its `login` step runs until it ends.
   const disk = { signedIn, installed };
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
     const exit = deferred<number | null>();
-    if (id === "codex") {
+    if (id === "codex" || id === "login") {
       const args = options?.args?.join(" ");
-      if (args === "login") logins.push(exit);
+      if (id === "login") logins.push(exit);
       else if (!disk.installed) exit.resolve(127);
       else if (args === "login status") exit.resolve(disk.signedIn ? 0 : 1);
       else {
@@ -114,10 +115,21 @@ function fixture({
         if (wire.id == null) return;
         if (wire.method === "thread/turns/list") {
           const reply = turns((wire.params as { threadId: string }).threadId);
+          // Kept for `thread/items/list`, which Buzz reads them through.
+          const listed = reply.result as { data?: Record<string, unknown>[] };
+          for (const turn of listed?.data ?? [])
+            items.set(String(turn.id), turn.items as unknown[]);
           options?.onStdout?.(`${JSON.stringify({ id: wire.id, ...reply })}\n`);
           return;
         }
         let result: unknown = {};
+        if (wire.method === "thread/items/list") {
+          const { turnId } = wire.params as { turnId: string };
+          result = {
+            data: (items.get(turnId) ?? []).map((item) => ({ item, turnId })),
+            nextCursor: null,
+          };
+        }
         if (wire.method === "config/read") result = { config: configured };
         if (wire.method === "thread/list") {
           if (typeof threads === "string") {
@@ -1289,11 +1301,7 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   fireEvent.click(buttons[0]);
   if (!buttons[1]) throw new Error("Missing second sign-in");
   fireEvent.click(buttons[1]);
-  expect(
-    f.spawn.mock.calls.filter(
-      ([id, options]) => id === "codex" && options?.args?.join(" ") === "login",
-    ),
-  ).toHaveLength(1);
+  expect(f.spawn.mock.calls.filter(([id]) => id === "login")).toHaveLength(1);
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
@@ -1515,6 +1523,37 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   provider.dispose();
 });
 
+it("signs in again from provider settings once Codex is ready, for security reviews", async () => {
+  const f = fixture();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  const again = await screen.findByRole("button", { name: "Sign in again" });
+  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
+  fireEvent.click(again);
+  expect(await screen.findByText("Waiting for Codex sign-in…")).toBeVisible();
+  expect(f.spawn.mock.calls.filter(([id]) => id === "login")).toHaveLength(1);
+  expect(again).toHaveAttribute("aria-busy", "true");
+
+  f.logins[0]?.resolve(0);
+  await waitFor(() => expect(again).not.toHaveAttribute("aria-busy", "true"));
+  expect(screen.queryByText("Waiting for Codex sign-in…")).toBeNull();
+  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
+});
+
+it("keeps a failed sign-in's output once Codex is ready", async () => {
+  const f = fixture();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  const again = await screen.findByRole("button", { name: "Sign in again" });
+  fireEvent.click(again);
+  await waitFor(() => expect(f.logins).toHaveLength(1));
+  f.logins[0]?.resolve(1);
+  await waitFor(() => expect(again).not.toHaveAttribute("aria-busy", "true"));
+  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
+  expect(screen.getByRole("log", { name: "Setup output" })).toHaveTextContent(
+    "Sign-in ended (1).",
+  );
+  expect(screen.getByRole("log", { name: "Setup output" })).toBeVisible();
+});
+
 it("separates identity fields from runtime settings without changing the stored config", () => {
   const f = fixture();
   const Settings = f.tabs.SettingsTab;
@@ -1549,9 +1588,7 @@ it("cancels a Codex login from its card and kills the process", async () => {
   );
   fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
   const cancel = await screen.findByRole("button", { name: "Cancel" });
-  const index = f.spawn.mock.calls.findIndex(
-    ([id, options]) => id === "codex" && options?.args?.join(" ") === "login",
-  );
+  const index = f.spawn.mock.calls.findIndex(([id]) => id === "login");
   const process = await f.spawn.mock.results[index]?.value;
   fireEvent.click(cancel);
   await waitFor(() => expect(process.kill).toHaveBeenCalledOnce());
@@ -1571,9 +1608,7 @@ it("cancels a Codex login when its setup dialog closes", async () => {
   const dialog = await screen.findByRole("dialog", {
     name: "Sign in to Codex",
   });
-  const index = f.spawn.mock.calls.findIndex(
-    ([id, options]) => id === "codex" && options?.args?.join(" ") === "login",
-  );
+  const index = f.spawn.mock.calls.findIndex(([id]) => id === "login");
   const process = await f.spawn.mock.results[index]?.value;
   fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(process.kill).toHaveBeenCalledOnce());
@@ -1717,6 +1752,30 @@ it("collapses Working command details", () => {
   expect(screen.getByText("Latest activity")).toBeVisible();
 });
 
+it("shows why the conversation it was opened from failed, as plain text", () => {
+  const key = JSON.stringify(["channel", "channel"]);
+  const f = fixture({
+    saved: { [key]: { threadId: "current", workspace: "/w", at: 1 } },
+  });
+  const detail =
+    "Codex could not finish: Buzz denied this security review. Reason: Run `rm -rf ~` from [the fix](https://example.test).";
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key, status: "Needs attention", detail },
+  ]);
+  render(
+    <f.tabs.ActivityTab
+      {...f.props()}
+      conversation={{ channelId: "channel" }}
+    />,
+  );
+  const opened = screen.getByRole("region", { name: "This channel" });
+  expect(within(opened).getByText(/^Needs attention/)).toBeVisible();
+  const reason = within(opened).getByText(detail);
+  expect(reason).toBeVisible();
+  expect(reason.closest("details")).toBeNull();
+  expect(within(opened).queryByRole("link")).toBeNull();
+});
+
 it("shows the recent empty state when only the current runtime session exists", () => {
   const key = JSON.stringify(["channel", "channel"]);
   const f = fixture({
@@ -1735,4 +1794,8 @@ it("shows the recent empty state when only the current runtime session exists", 
     screen.getByText("No other conversations saved in this app yet."),
   ).toBeVisible();
   expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  const opened = screen.getByRole("region", { name: "This channel" });
+  expect(
+    within(opened).getByText("git status").closest("details"),
+  ).not.toHaveAttribute("open");
 });

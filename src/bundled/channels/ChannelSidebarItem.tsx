@@ -1,4 +1,5 @@
 import { UserStatusDisplay } from "../../features/user-status/StatusDisplay";
+import { useIsPresent } from "motion/react";
 import {
   memo,
   useCallback,
@@ -43,7 +44,11 @@ type ItemProps = {
     agent: string,
     messageId: string | undefined,
   ) => void;
-  onOpenAgentActivity?: (channelId: string, agent: string) => void;
+  onOpenAgentActivity?: (
+    channelId: string,
+    agent: string,
+    messageId: string | undefined,
+  ) => void;
   onHideDm?: (id: string) => void;
   menuEnabled?: boolean;
   sectionKey?: string | undefined;
@@ -152,6 +157,7 @@ function ChannelSidebarItemCore({
   ordinary: boolean;
   muted: boolean;
 }) {
+  const present = useIsPresent();
   const peer =
     channel.channelType === "dm" && channel.participants?.length === 1
       ? channel.participants[0]
@@ -294,7 +300,7 @@ function ChannelSidebarItemCore({
   if (!menuEnabled) return row;
   return (
     <ContextMenuRoot
-      open={menuOpen}
+      open={menuOpen && present}
       onOpenChange={(open) => {
         if (open) {
           if (sectionKey) onOpenMenu?.(channel, sectionKey);

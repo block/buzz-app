@@ -8,7 +8,10 @@ import {
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
-import { profileActivityViewTarget } from "../../features/profiles/target";
+import {
+  openProfileTranscript,
+  profileActivityViewTarget,
+} from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -94,7 +97,7 @@ import {
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
-import { PanelFrame } from "../../features/panels/PanelFrame";
+import { COMPANION_SPLIT, PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
@@ -212,7 +215,7 @@ export function ChannelsPage({
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" && !session.cached ? (
-        <PanelFrame companion={companion}>
+        <PanelFrame scope={session.scope} companion={companion}>
           {session.status === "disconnected" ? (
             <div className={styles.connect}>
               <div className={styles.connectIcon}>
@@ -1360,11 +1363,26 @@ function ChannelWorkspace({
     }
     const activityAgent = handoff?.activityAgent.current;
     if (activityAgent && activityAgent.channelId === currentId) {
+      const { transcript } = activityAgent;
       const target = profileActivityViewTarget(activityAgent.agent);
       const panel = target && panels.resolve(target);
       if (target && panel) {
         panelTrigger.current = activityAgent.trigger;
-        open({ channelId: activityAgent.channelId, panel, target }, true);
+        const show = (next: string) => {
+          open(
+            {
+              channelId: activityAgent.channelId,
+              ...(transcript?.rootId && { rootId: transcript.rootId }),
+              panel,
+              target: next,
+            },
+            true,
+          );
+          return true;
+        };
+        // Only a known conversation asks for its transcript.
+        if (transcript) openProfileTranscript(target, show);
+        else show(target);
       }
       handoff.activityAgent.current = undefined;
     }
@@ -1698,7 +1716,14 @@ function ChannelWorkspace({
         tab.id === selectedTab &&
         tab.channelId === currentId,
     );
-  const split = usePanelSplit();
+  // While the companion is in the dock it keeps its width and bounds from
+  // other pages; threads alone keep their own split.
+  const split = usePanelSplit(
+    scope,
+    companion ? COMPANION_SPLIT.name : "channels",
+    companion ? COMPANION_SPLIT.defaultWidth : undefined,
+    companion ? COMPANION_SPLIT.min : undefined,
+  );
   // A routed thread can mount behind a collapsed pane, where it cannot take
   // focus, or already be selected, so its pane does not move focus. Once its
   // tab shows, hand it focus nothing else took.
@@ -1883,7 +1908,9 @@ function ChannelWorkspace({
             joinable={
               !current.archived &&
               (current.channelType === "stream" ||
-                current.channelType === "forum")
+                current.channelType === "forum" ||
+                (current.channelType === "solo" &&
+                  current.joinRole === "guest"))
             }
             onJoin={() => setJoiningChannel(current.id)}
             onHeightChange={setJoinNoticeHeight}
@@ -1956,6 +1983,7 @@ function ChannelWorkspace({
     <div
       data-channel-workspace={currentId ?? ""}
       data-reading-thread={readingThread ? "" : undefined}
+      data-companion={companion ? "" : undefined}
       ref={split.ref}
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}
@@ -2052,8 +2080,18 @@ function ChannelWorkspace({
                     signal: navigation?.signal,
                   }));
               }}
-              onFailed={(channelId, message) => {
-                notify(message, "error");
+              onFailed={(channelId, message, retry) => {
+                notify(
+                  message,
+                  "error",
+                  retry
+                    ? {
+                        label: "Retry restoring message",
+                        onClick: () => void retry(),
+                        timeout: Infinity,
+                      }
+                    : undefined,
+                );
                 // A failure behind Settings must not navigate away from it.
                 if (
                   showing.current === channelId &&

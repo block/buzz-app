@@ -3,7 +3,10 @@ import type { LocalAgentSource } from "../agents/local-activity";
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
-import { addChannelMember } from "../channel-members/members";
+import {
+  addChannelMember,
+  addChannelMembersAtOnce,
+} from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../repos/git";
 import { repoDestinations } from "../repos/destinations";
@@ -749,7 +752,9 @@ export function createRelaySession(
         }
       : {}),
   };
-  const searchProfiles = createProfileSearch(verified);
+  const searchProfiles = createProfileSearch(verified, Date.now, () =>
+    profiles.queries.verifiedAuthority?.(),
+  );
   /** Directory reads bypass shared profile admission. Retry one access
    * invalidation here, where caller/cache/connection lifetimes are known. */
   function directoryRead<T>(
@@ -2072,17 +2077,15 @@ export function createRelaySession(
       }
     },
   });
+  // A Solo chat admits people under its share rule; agents join by mention.
+  const solo = (channelId: string) =>
+    (
+      session.channels.list().channels.find((item) => item.id === channelId) ??
+      session.channels.get?.(channelId)
+    )?.channelType === "solo";
   const memberAdditions = createMemberAdditions(
     lifetime.signal,
     async (channelId, pubkey, intent): Promise<void> => {
-      // A Solo chat admits people under its share rule; agents join by mention.
-      const solo =
-        (
-          session.channels
-            .list()
-            .channels.find((item) => item.id === channelId) ??
-          session.channels.get?.(channelId)
-        )?.channelType === "solo";
       await addChannelMember(
         session,
         channelId,
@@ -2090,10 +2093,20 @@ export function createRelaySession(
         lifetime.signal,
         intent,
         writes?.local,
-        solo,
+        solo(channelId),
       );
     },
     writes?.local,
+    (channelId, pubkeys, intents) =>
+      addChannelMembersAtOnce(
+        session,
+        channelId,
+        pubkeys,
+        intents,
+        lifetime.signal,
+        solo(channelId),
+        writes?.local,
+      ),
   );
   const recoverable = (
     subscribe: (listener: () => void) => () => void,
@@ -2154,6 +2167,7 @@ export function createRelaySession(
     liveWasConnected = connected;
   });
   const session = Object.freeze({
+    artifactIncremental: transport?.artifactIncremental,
     memberAdditions,
     presence,
     viewer: transport?.viewer,

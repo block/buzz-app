@@ -262,6 +262,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Message density**: **Settings → Appearance → Message density → Compact**
+  shows conversations as a flat, left-aligned list without bubbles, across the
+  window's full width, to fit more on screen. Text size stays with **Interface
+  size**. The choice applies on this device only.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

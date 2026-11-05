@@ -33,6 +33,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
 import { usePresenceStatus } from "../presence/react";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
+import { useMessageDensity } from "../../shared/theme/message-density";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
@@ -215,6 +216,8 @@ function MessageRowContent({
   agentPubkeys,
 }: MessageContentProps) {
   const [avatarFocused, setAvatarFocused] = useState(false);
+  // Compact is a flat list: everyone's rows start at the left, with no own surface.
+  const flat = useMessageDensity() === "compact";
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const reactions = row.reactions;
@@ -356,7 +359,11 @@ function MessageRowContent({
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
   // Own-message surface colours apply to a bubble, never to a shown thread root.
   const ownBubble =
-    !shownRow && !row.workflowOwnerId && !!viewer && row.authorId === viewer;
+    !flat &&
+    !shownRow &&
+    !row.workflowOwnerId &&
+    !!viewer &&
+    row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -918,7 +925,10 @@ function MessageRowContent({
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
-          alignViewer && !row.workflowOwnerId && row.authorId === viewer
+          !flat &&
+          alignViewer &&
+          !row.workflowOwnerId &&
+          row.authorId === viewer
             ? ""
             : undefined
         }
@@ -939,9 +949,11 @@ function MessageRowContent({
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
-            {!renderMessage && (!stackNext || avatarFocused) && (
-              <div className={styles.messageAvatar}>{avatar}</div>
-            )}
+            {/* Bubbles end a group with its avatar; a flat list starts with it. */}
+            {!renderMessage &&
+              (!(flat ? stackPrevious : stackNext) || avatarFocused) && (
+                <div className={styles.messageAvatar}>{avatar}</div>
+              )}
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
@@ -1432,6 +1444,7 @@ export const MessageRow = memo(function AudienceMessageRow(
 
 function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
+  const flat = useMessageDensity() === "compact";
   const references = props.references ?? session;
   const [open, setOpen] = useState(false);
   const activity = props.recordedActivity;
@@ -1522,6 +1535,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           data-stack-previous={props.stackPrevious || undefined}
           data-stack-next={props.stackNext || undefined}
           data-viewer-message={
+            !flat &&
             (props.alignViewer ?? true) &&
             !row.workflowOwnerId &&
             row.authorId === (props.viewer ?? session?.viewer)

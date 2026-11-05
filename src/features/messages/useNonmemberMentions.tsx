@@ -90,7 +90,7 @@ export function useNonmemberMentions(
         description={pending && describe(pending.people, canAdd)}
         preventClose={!!pending?.busy}
         // The expected continuation, not header Close, answers Enter.
-        initialFocus={action}
+        initialFocus={canAdd ? action : undefined}
         finalFocus={() => {
           restoreFocus();
           return false;
@@ -99,7 +99,6 @@ export function useNonmemberMentions(
           <>
             <Button
               type="button"
-              ref={canAdd ? undefined : action}
               disabled={pending?.busy}
               onClick={() =>
                 pending?.finish(pending.people.map((person) => person.pubkey))
@@ -112,7 +111,8 @@ export function useNonmemberMentions(
                 type="button"
                 ref={action}
                 variant="prominent"
-                disabled={pending?.busy}
+                // Loading, not disabled, so focus survives a failed invite.
+                loading={!!pending?.busy}
                 onClick={() => void add()}
               >
                 {pending?.busy ? "Inviting…" : "Invite"}

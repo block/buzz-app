@@ -53,6 +53,7 @@ import {
   type ReactNode,
   type ReactElement,
   type RefObject,
+  type SyntheticEvent,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
@@ -426,8 +427,20 @@ function MessageRowContent({
   useEffect(() => {
     if (openAction && !opened) setOpenAction(undefined);
   }, [openAction, opened]);
-  const keepAlive = reporting !== undefined || !!opened;
-  // The dialog, pending submit and notice live in this row; eviction loses them.
+  // Media events from any attachment player, plugin ones included, reach the
+  // attachment list through React.
+  const [mediaPlaying, setMediaPlaying] = useState(false);
+  const trackMedia = (event: SyntheticEvent<HTMLElement>) =>
+    setMediaPlaying(
+      [
+        ...event.currentTarget.querySelectorAll<HTMLMediaElement>(
+          "audio, video",
+        ),
+      ].some((element) => !element.paused),
+    );
+  const keepAlive = reporting !== undefined || !!opened || mediaPlaying;
+  // The dialog, pending submit, notice and playing media live in this row;
+  // eviction loses them.
   useEffect(() => {
     const release = keepAlive ? keepMounted?.(row.id) : undefined;
     // Dialog focus restoration runs in a microtask after unmount; releasing a
@@ -1238,6 +1251,9 @@ function MessageRowContent({
                 <div
                   className={styles.messageAttachments}
                   data-message-attachments
+                  onPlay={trackMedia}
+                  onPause={trackMedia}
+                  onEnded={trackMedia}
                 >
                   {attachmentGroups.map((group) => {
                     const images =

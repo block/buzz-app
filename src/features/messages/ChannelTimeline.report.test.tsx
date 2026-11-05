@@ -24,6 +24,8 @@ import {
   scriptedTransport,
   signed,
 } from "../relay/testing";
+import type { ConversationExtensions } from "../conversation/contracts";
+import { VoiceNoteCard } from "../../bundled/voice-notes/VoiceNoteCard";
 import { ThreadPanel } from "./ThreadPanel";
 import { ChannelTimeline } from "./ChannelTimeline";
 
@@ -86,6 +88,8 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
 });
 afterEach(() => {
   cleanup();
@@ -101,12 +105,17 @@ function mount(
   targetEvent = target,
   initial = [targetEvent, neighbor],
   threadRoot?: string,
+  options: {
+    media?: (url: string) => string;
+    extensions?: ConversationExtensions;
+  } = {},
 ) {
   let live: LiveCallbacks | undefined;
   const owner = createRelaySession(
     {
       ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
       ...(threadRoot ? { query: async () => initial } : {}),
+      ...(options.media ? { media: options.media } : {}),
       writer: { sign: async (template) => signed(viewer, template), publish },
       subscribe(callbacks) {
         live = callbacks;
@@ -137,6 +146,7 @@ function mount(
             queries={owner.session}
             window={owner.session.channels.window("c")}
             onOpenLink={() => false}
+            extensions={options.extensions}
           />
         )}
       </ToastProvider>
@@ -351,6 +361,94 @@ it("closing the image viewer before the report notice ends keeps the row pinned 
   await user.click(screen.getByRole("button", { name: /dismiss/i }));
   await waitFor(() => expect(h.row()).toBeNull());
   expect(h.neighborRow()).not.toBeNull();
+});
+
+// Inline audio plays only from the relay proxy; other sources are file cards.
+const proxied = (url: string) =>
+  `/api/relay/primary/media?url=${encodeURIComponent(url)}`;
+// Readers must return stable snapshots, or useSyncExternalStore loops.
+const empty: never[] = [];
+const none = { snapshot: () => empty, subscribe: () => () => {} };
+const voiceNote = [
+  {
+    key: "voice-notes:player",
+    pluginId: "voice-notes",
+    revision: "1",
+    id: "player",
+    title: "Voice note",
+    matches: (attachment: { name?: string }) =>
+      !!attachment.name?.endsWith(".m4a"),
+    component: ({ source }: { source: string }) => (
+      <VoiceNoteCard source={source} duration={120} />
+    ),
+  },
+];
+const voiceNotes: ConversationExtensions = {
+  tools: none,
+  inline: none,
+  attachments: { snapshot: () => voiceNote, subscribe: () => () => {} },
+};
+
+it.each([
+  ["a plain audio attachment", "a.mp3", "audio/mpeg", "Play a.mp3", "pause"],
+  ["a voice note", "voice.m4a", "audio/mp4", "Play voice note", "pause"],
+  ["an inline video", "a.mp4", "video/mp4", "Open video fullscreen", "ended"],
+] as const)(
+  "keeps a row mounted while %s plays, then lets it go when playback stops",
+  async (_, file, mime, control, stop) => {
+    const playing = message(other, "c", "Listen", 1, [
+      ["imeta", `url https://relay.test/media/${file}`, `m ${mime}`],
+    ]);
+    const h = mount(async () => {}, playing, [playing, neighbor], undefined, {
+      media: proxied,
+      extensions: voiceNotes,
+    });
+    const row = h.row();
+    const player = row?.querySelector<HTMLMediaElement>("audio, video");
+    if (!row || !player) throw new Error("Missing media row");
+    within(row).getByRole("button", { name: control });
+    // jsdom has no playback; report what a browser reports while playing.
+    let paused = false;
+    Object.defineProperty(player, "paused", { get: () => paused });
+    fireEvent.play(player);
+    h.evict();
+    expect(h.row()).toBe(row);
+    expect(player.isConnected).toBe(true);
+    paused = true;
+    fireEvent[stop](player);
+    await waitFor(() => expect(h.row()).toBeNull());
+    expect(h.neighborRow()).not.toBeNull();
+  },
+);
+
+it("keeps a row mounted while another of its players still plays", async () => {
+  const both = message(other, "c", "Listen", 1, [
+    ["imeta", "url https://relay.test/media/a.mp3", "m audio/mpeg"],
+    ["imeta", "url https://relay.test/media/a.mp4", "m video/mp4"],
+  ]);
+  const h = mount(async () => {}, both, [both, neighbor], undefined, {
+    media: proxied,
+  });
+  const row = h.row();
+  const audio = row?.querySelector("audio");
+  const video = row?.querySelector("video");
+  if (!row || !audio || !video) throw new Error("Missing media row");
+  const playing = new Set<HTMLMediaElement>([audio, video]);
+  for (const player of playing)
+    Object.defineProperty(player, "paused", {
+      get: () => !playing.has(player),
+    });
+  fireEvent.play(audio);
+  fireEvent.play(video);
+  playing.delete(audio);
+  fireEvent.pause(audio);
+  // A released pin lets go a task later; wait it out before evicting.
+  await act(() => new Promise((resolve) => setTimeout(resolve)));
+  h.evict();
+  expect(h.row()).toBe(row);
+  playing.delete(video);
+  fireEvent.pause(video);
+  await waitFor(() => expect(h.row()).toBeNull());
 });
 
 it.each([

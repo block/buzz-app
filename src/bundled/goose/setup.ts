@@ -17,10 +17,8 @@ import {
   type Choice,
   type GooseHost,
 } from "./goose";
-import {
-  type ConfigValue,
-  valuesOf,
-} from "../../features/agent-harness/acp/session";
+import { values } from "../../features/agent-harness/acp/options";
+import type { ConfigValue } from "../../features/agent-harness/acp/session";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -504,7 +502,7 @@ export class GooseSetup {
               );
               found.set(model, {
                 current: option?.currentValue ?? "",
-                levels: valuesOf(option?.options),
+                levels: values(option?.options).map(({ value }) => value),
               });
             } catch (error) {
               // One model goose cannot move to does not cost the others.

@@ -12,6 +12,8 @@ import {
   LinkIcon,
   UsersIcon,
 } from "../../shared/design-system/icons";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -99,6 +101,8 @@ export function HuddleLauncher(props: Props) {
   const parent = list.channels.find(
     (channel) => channel.id === context.channelId,
   );
+  const [confirming, setConfirming] = useState(false);
+  const cancel = useRef<HTMLButtonElement>(null);
   const active = ["connecting", "connected", "leaving"].includes(call.phase);
   const here =
     call.phase === "connected" &&
@@ -143,6 +147,8 @@ export function HuddleLauncher(props: Props) {
     );
   // Keep active/incoming calls visible; idle Solo calls live in Chat actions.
   if (parent?.channelType === "solo" && !active && !joinable) return null;
+  // The header button is easy to hit by accident, so a new call asks first.
+  const close = () => setConfirming(false);
   return (
     <span className={joinable ? styles.activeLauncher : undefined}>
       <IconButton
@@ -152,8 +158,32 @@ export function HuddleLauncher(props: Props) {
         style={joinable ? { color: "var(--status-online)" } : undefined}
         aria-label={label}
         title={label}
-        onClick={activate}
+        onClick={active || joinable ? activate : () => setConfirming(true)}
       />
+      {confirming && (
+        <AlertDialog
+          title="Start a huddle?"
+          description="Your microphone will turn on, and others in this conversation can join."
+          initialFocus={cancel}
+          onClose={close}
+          actions={
+            <>
+              <Button ref={cancel} onClick={close}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  close();
+                  activate();
+                }}
+              >
+                Start huddle
+              </Button>
+            </>
+          }
+        />
+      )}
     </span>
   );
 }

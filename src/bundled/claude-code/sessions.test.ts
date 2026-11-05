@@ -1313,7 +1313,6 @@ it("settles a failed remote save and permits the next delivery", async () => {
   let fail = true;
   store.set = (key, value) => {
     if (fail && !value.pending) {
-      fail = false;
       return Promise.reject(new Error("disk unavailable"));
     }
     return write(key, value);
@@ -1325,6 +1324,7 @@ it("settles a failed remote save and permits the next delivery", async () => {
       error: "disk unavailable",
     });
     expect(f.pool.active("room")).toBe(false);
+    fail = false;
     await expect(f.pool.deliver("room", "two", 2)).resolves.toEqual({
       ok: true,
     });

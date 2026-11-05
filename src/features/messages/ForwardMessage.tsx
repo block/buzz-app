@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -18,6 +19,10 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { canMessageAgent } from "../agents/choices";
 import { RecipientPicker } from "../direct-messages/RecipientPicker";
 import type { Recipient } from "../direct-messages/usePeople";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+} from "../profiles/useVerifiedNames";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import type { ChannelMessage } from "../relay/contracts";
@@ -276,6 +281,27 @@ function ForwardMessageDialog({
   const [people, setPeople] = useState<Recipient[]>(() =>
     recovered ? [recovered.person] : [],
   );
+  // Recipients keep the facts they were chosen with; their labels follow the
+  // current verification and otherwise the current profile name.
+  const verified = useVerifiedNames(session, people);
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+  );
+  const named = useMemo(
+    () =>
+      withVerifiedNames(
+        people.map((person) => {
+          const current = profiles.get(person.pubkey);
+          return current && !current.verified
+            ? { ...person, name: current.name }
+            : person;
+        }),
+        verified,
+        profiles,
+      ),
+    [people, verified, profiles],
+  );
   const [note, setNote] = useState(() => recovered?.note ?? "");
   const restored = useRef(recovered?.id);
   // The outbox can finish loading after the dialog mounts.
@@ -443,6 +469,7 @@ function ForwardMessageDialog({
             session={session}
             scope={scope}
             selected={people}
+            labels={named}
             disabled={locked}
             maxRecipients={1}
             appearance="field"

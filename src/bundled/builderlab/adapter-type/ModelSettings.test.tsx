@@ -447,7 +447,7 @@ it("replaces a previous account's catalog error with mismatch guidance and recov
     instructions: "Saved instructions.",
   });
   const user = userEvent.setup();
-  const field = screen.getByRole("textbox", { name: "Instructions" });
+  let field = screen.getByRole("textbox", { name: "Instructions" });
   await user.type(field, " Draft");
   h.offline(true);
   act(() => h.session.signOut());
@@ -466,6 +466,7 @@ it("replaces a previous account's catalog error with mismatch guidance and recov
   expect(
     screen.queryByRole("button", { name: /Retry|Refresh|Save/ }),
   ).toBeNull();
+  field = screen.getByRole("textbox", { name: "Instructions" });
   expect(field).toBeDisabled();
   expect(field).toHaveValue("Saved instructions. Draft");
   await user.type(field, " Ignored");
@@ -478,6 +479,7 @@ it("replaces a previous account's catalog error with mismatch guidance and recov
   await waitFor(() =>
     expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
   );
+  field = screen.getByRole("textbox", { name: "Instructions" });
   expect(field).toBeEnabled();
   expect(field).toHaveValue("Saved instructions. Draft");
   expect(screen.queryByRole("alert")).toBeNull();
@@ -524,10 +526,17 @@ it.each(["save", "catalog"])(
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("button", { name: /Retry|Refresh/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    expect(field).toBeDisabled();
-    expect(field).toHaveValue("Saved instructions. Draft");
+    expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
     expect(h.request).toHaveBeenCalledTimes(before);
     expect(signIn).not.toHaveBeenCalled();
+    h.offline(false);
+    await act(() => h.session.signIn());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
+    );
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+      "Saved instructions. Draft",
+    );
   },
 );
 
@@ -577,7 +586,9 @@ it("retries a failed catalog request without saving the draft", async () => {
     expect(screen.getByRole("button", { name: /^Model:/ })).toBeEnabled(),
   );
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(field).toHaveValue("Saved instructions. Draft");
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "Saved instructions. Draft",
+  );
   expect(
     h.request.mock.calls.filter(([request]) =>
       request.url.endsWith("/update-agent"),

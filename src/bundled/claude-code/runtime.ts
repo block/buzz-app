@@ -697,7 +697,9 @@ export class ClaudeRuntime {
     const key = this.controlKey(agent, place);
     if (await this.inspect?.(agent.key)) {
       if (action === "interrupt") {
-        this.controls.interrupt(`${agent.key}/${key}`);
+        const control = `${agent.key}/${key}`;
+        const compacting = this.controls.compacting(control);
+        if (this.controls.interrupt(control) && !compacting) return;
         for (const pending of this.opening.values())
           if (pending.agent === agent.key && pending.conversation === key)
             pending.abort.abort(new Error("Claude was stopped"));

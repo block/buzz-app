@@ -352,8 +352,10 @@ it("resumes a saved target before its first post-restart compaction and gives Ne
     expect(saved?.sessionId).toBeTruthy();
     await f.restart();
     await f.runtime.session(f.agent, { channelId: "room" }, "compact");
+    f.output.length = 0;
     await f.deliver("read-path-request");
-    expect(f.readRemote).toHaveBeenCalledWith("proof.bin", {
+    await vi.waitFor(() => expect(f.output.join("")).toContain("mcp_response"));
+    expect(f.readRemote, f.output.join("")).toHaveBeenCalledWith("proof.bin", {
       cwd: f.directory,
     });
     expect(f.handle.publish).toHaveBeenCalledWith(
@@ -543,6 +545,37 @@ it("clears remote turn ownership after a failed durable save", async () => {
     await f.runtime.session(f.agent, { channelId: "room" }, "new");
     await f.deliver();
     expect(f.sessions).toHaveLength(2);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it("cancels a remote New action while the prior target cleanup waits", async () => {
+  const f = await remoteFixture();
+  await f.deliver();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const cleaning = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  f.control.dispose = async () => {
+    entered();
+    await gate;
+  };
+  const reset = f.runtime.session(f.agent, { channelId: "room" }, "new");
+  const cancelled = expect(reset).rejects.toThrow("interrupted");
+  try {
+    await cleaning;
+    await f.runtime.session(f.agent, { channelId: "room" }, "interrupt");
+  } finally {
+    release();
+  }
+  try {
+    await cancelled;
+    expect(f.sessions).toHaveLength(1);
   } finally {
     await f.cleanup();
   }

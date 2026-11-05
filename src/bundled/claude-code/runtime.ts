@@ -442,9 +442,12 @@ export class ClaudeRuntime {
   /** The models the agent's next turn can run on, with their effort levels.
    * Without a pick it uses its own: the configured one, or else the one its
    * sessions report. `default` duplicates a listed model, so it is not offered. */
-  async models(agent: AgentKey): Promise<Models> {
+  async models(agent: AgentKey, raw?: unknown): Promise<Models> {
     if (await this.inspect?.(agent)) {
-      const current = this.agents.get(agent)?.config.model ?? "";
+      const current = this.resolveConfig(
+        raw ?? this.agents.get(agent)?.config,
+        true,
+      ).model;
       return {
         current,
         models: current ? [{ id: current, label: current, efforts: [] }] : [],

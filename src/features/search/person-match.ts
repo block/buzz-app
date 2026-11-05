@@ -119,10 +119,12 @@ export type PersonMatch = {
 };
 
 // Folding is the cost of matching, and the same names meet a new query on
-// every keystroke, so folded names stay folded. Long names are not kept.
+// every keystroke, so folded names stay folded. Long names are not kept,
+// raw or folded: combining marks can fold a long relay name to a short one.
 const foldedNames = new Map<string, readonly string[]>();
 const foldedLimit = 65536;
 const foldedChars = (name: string) => {
+  if (name.length > 128) return foldChars(name);
   let chars = foldedNames.get(name);
   if (!chars) {
     chars = foldChars(name);

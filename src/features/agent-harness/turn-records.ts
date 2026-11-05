@@ -7,21 +7,41 @@ import type { EventData } from "../relay/events";
 export const quoted = (value: unknown) =>
   JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 
-/** A message with its author's name beside its pubkey, so an agent can read
- * who wrote it and write the same name to tag them. A protection plugin checks
- * the name with the rest of the text; it is not part of the signed event. */
-export function withAuthor<T extends { id: string; pubkey: string }>(
+/** The names a message's record shows for its author. `pubkey` stays the
+ * author's identity; these are for reading and tagging them. */
+export type AuthorNames = Readonly<{
+  /** The author's verified username, when the community verified one: what
+   * an agent writes after `@` to tag them. */
+  username?: string;
+  /** The author's display name, for addressing them in prose. */
+  display_name?: string;
+}>;
+
+/** A message with its author's names beside its pubkey. A protection plugin
+ * checks them with the rest of the text; they are not part of the signed
+ * event. */
+export function withNames<T extends { id: string; pubkey: string }>(
   message: T,
-  author: string | undefined,
+  names: AuthorNames | undefined,
 ) {
-  if (!author) return message;
+  const { username, display_name } = names ?? {};
+  if (!username && !display_name) return message;
   const { id, pubkey, ...rest } = message;
-  return { id, pubkey, author, ...rest };
+  return {
+    id,
+    pubkey,
+    ...(username ? { username } : {}),
+    ...(display_name ? { display_name } : {}),
+    ...rest,
+  };
 }
 
 /** The event a turn is for, then what it asks of the agent. */
-export const eventBody = (event: EventData, request: string, author?: string) =>
-  `${quoted(withAuthor(event, author))}\nRequest: ${quoted(request)}`;
+export const eventBody = (
+  event: EventData,
+  request: string,
+  names?: AuthorNames,
+) => `${quoted(withNames(event, names))}\nRequest: ${quoted(request)}`;
 
 /** Who sent the event in an `eventBody`, and its request; undefined for any
  * other text. */

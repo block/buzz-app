@@ -2357,11 +2357,12 @@ function pubkey(value: string) {
   throw new Error(`Not a pubkey: ${value}`);
 }
 
-/** How strongly each kind of name claims a person for `@`: lower wins. Every
- * name the relay verified outranks every name a person gave themselves. */
+/** How strongly each kind of name claims a person for `@`: lower wins. A
+ * verified username comes first, and every name the relay verified outranks
+ * every name a person gave themselves. */
 const NAME_WEIGHT = {
-  verifiedDisplayName: 0,
-  verifiedUsername: 1,
+  verifiedUsername: 0,
+  verifiedDisplayName: 1,
   verifiedFullName: 2,
   displayName: 3,
   name: 4,

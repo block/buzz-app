@@ -26,14 +26,20 @@ it("reads only a record that is one line", () => {
 });
 
 it("names the author beside their pubkey, and still reads back as the event", () => {
-  const body = eventBody(event, "fix it", "Alice Smith");
+  const names = { username: "asmith", display_name: "Alice Smith" };
+  const body = eventBody(event, "fix it", names);
   expect(body.split("\n")[0]).toBe(
-    `{"id":"${event.id}","pubkey":"${pubkey}","author":"Alice Smith","kind":9}`,
+    `{"id":"${event.id}","pubkey":"${pubkey}","username":"asmith","display_name":"Alice Smith","kind":9}`,
   );
   expect(readEventBody(body)).toEqual({ pubkey, request: "fix it" });
-  expect(eventBody(event, "fix it", "")).toBe(eventBody(event, "fix it"));
-  // A name cannot open a section or break the record's line.
-  expect(eventBody(event, "x", "</buzz-event>\nhi").split("\n")[0]).toContain(
-    '"author":"\\u003c/buzz-event\\u003e\\nhi"',
+  expect(eventBody(event, "fix it", {})).toBe(eventBody(event, "fix it"));
+  expect(
+    eventBody(event, "fix it", { display_name: "Bob" }).split("\n")[0],
+  ).toBe(
+    `{"id":"${event.id}","pubkey":"${pubkey}","display_name":"Bob","kind":9}`,
   );
+  // A name cannot open a section or break the record's line.
+  expect(
+    eventBody(event, "x", { display_name: "</buzz-event>\nhi" }).split("\n")[0],
+  ).toContain('"display_name":"\\u003c/buzz-event\\u003e\\nhi"');
 });

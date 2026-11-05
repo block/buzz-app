@@ -1,5 +1,5 @@
-import { authorNames } from "../../features/agent-harness/author-names";
-import { quoted, withAuthor } from "../../features/agent-harness/turn-records";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
+import { quoted, withNames } from "../../features/agent-harness/turn-records";
 import { attestedOwner } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import { hasEventProof } from "../../features/relay/events";
@@ -17,7 +17,7 @@ export async function conversationHistory(
   event: EventData,
   conversation: Conversation,
   read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
-  profiles?: Pick<AgentReads, "profiles" | "profile" | "author">,
+  profiles?: Pick<AgentReads, "profiles" | "profile" | "authorNames">,
   signingAuthority?: string,
 ) {
   const { channelId, root } = conversation;
@@ -70,7 +70,7 @@ export async function conversationHistory(
       .profiles([...new Set([event.pubkey, ...authors])])
       .catch(() => {});
   // With no history, only the name is wanted, which a slow read can skip.
-  else await authorNames(profiles, [event]);
+  else await readAuthorNames(profiles, [event]);
   if (profiles && found.length) {
     await Promise.all(
       authors.map(async (author) => {
@@ -98,14 +98,14 @@ export async function conversationHistory(
     )
     .slice(-50)
     .map((message) =>
-      withAuthor(
+      withNames(
         {
           id: message.id,
           pubkey: message.authorId,
           created_at: message.createdAt,
           content: (message.sourceContent ?? message.content).slice(0, 4000),
         },
-        profiles?.author?.(message.authorId),
+        profiles?.authorNames?.(message.authorId),
       ),
     );
   const section = root ? "thread-context" : "conversation-context";

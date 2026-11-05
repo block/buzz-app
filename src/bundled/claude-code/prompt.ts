@@ -13,9 +13,10 @@ import {
   wakeSection,
 } from "../../features/agent-harness/plugin-wake";
 import {
+  type AuthorNames,
   eventBody,
   quoted,
-  withAuthor,
+  withNames,
 } from "../../features/agent-harness/turn-records";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
@@ -96,9 +97,9 @@ export type TurnInput = Readonly<{
   project?: string;
   /** A plugin's wake, whose turn has its section in place of the event's. */
   wake?: ConversationWake;
-  /** The name each message's record shows beside its author's pubkey, when
-   * known: the name the agent writes after `@` to tag them. */
-  author?: (pubkey: string) => string | undefined;
+  /** The names each message's record shows beside its author's pubkey, when
+   * known. */
+  names?: (pubkey: string) => AuthorNames | undefined;
 }>;
 
 /** One turn: unseen thread context, routing context, then the event. Each
@@ -169,14 +170,14 @@ export function turnPrompt(input: TurnInput) {
           total: input.total,
           truncated: context.length < input.context.length,
           messages: context.map((message) =>
-            withAuthor(
+            withNames(
               {
                 id: message.id,
                 pubkey: message.pubkey,
                 created_at: message.created_at,
                 content: message.content.slice(0, CONTENT_LIMIT),
               },
-              input.author?.(message.pubkey),
+              input.names?.(message.pubkey),
             ),
           ),
         }),
@@ -194,7 +195,7 @@ export function turnPrompt(input: TurnInput) {
       ? wakeSection(input.wake)
       : section(
           EVENT,
-          eventBody(event, event.content, input.author?.(event.pubkey)),
+          eventBody(event, event.content, input.names?.(event.pubkey)),
         ),
   );
   return parts.join("\n\n");

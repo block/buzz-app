@@ -2990,7 +2990,15 @@ it("gives a fresh wake the thread's earlier messages of its same second, and non
 it("names each message's author beside their pubkey", async () => {
   const f = fixture();
   f.snapshot.session.profiles.snapshot.mockReturnValue(
-    new Map([[owner, { name: "Sal" }]]),
+    new Map([
+      [
+        owner,
+        {
+          name: "Sal M",
+          verified: { displayName: "Sal M", username: "sal" },
+        } as Profile,
+      ],
+    ]),
   );
   const delivery = f.delivery("@Codex look");
   if (!("event" in delivery.trigger)) throw new Error("Expected a mention");
@@ -3013,11 +3021,15 @@ it("names each message's author beside their pubkey", async () => {
     /<thread-context>\n([\s\S]*?)\n<\/thread-context>/,
   )?.[1];
   expect(JSON.parse(history ?? "{}").messages).toMatchObject([
-    { pubkey: owner, author: "Sal", content: "EARLIER" },
+    {
+      pubkey: owner,
+      username: "sal",
+      display_name: "Sal M",
+      content: "EARLIER",
+    },
   ]);
-  expect(text).toContain(`"pubkey":"${owner}","author":"Sal"`);
   expect(text.match(/<buzz-event[^>]*>\n([^\n]*)/)?.[1] ?? "").toContain(
-    `"author":"Sal"`,
+    `"pubkey":"${owner}","username":"sal","display_name":"Sal M"`,
   );
 });
 it("sets no deadline of its own on a turn", async () => {

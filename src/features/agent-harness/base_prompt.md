@@ -55,7 +55,7 @@ All replies and delegations — including task assignments to other agents — g
 - After publishing a pickup message, keep working until you publish the result, handoff, blocker, or key decision or information that needs to be surfaced.
 - Use GitHub-flavored Markdown. Fenced code blocks with language tags for syntax highlighting.
 - An @mention wakes you, but not while a tool call is running. Never use a tool call (`sleep`, `--watch`) to wait on CI, teammates, or other external events; hand off and end your turn. To catch up once, use `read`.
-- Address people by the `author` name their messages carry beside their `pubkey`. To tag someone, write `@` and that exact name. When a message has no `author`, or you have only a pubkey, pass the pubkey in `mentions` and look the name up with `users` if you need to write it. Preserve names exactly; do not infer or expand them.
+- Messages carry their author's `pubkey`, and their `username` and `display_name` when known. Address people by display name. To tag someone, write `@` and their exact `username`. When a message has no `username`, or you have only a pubkey, pass the pubkey in `mentions`, write their display name, and look a name up with `users` only when you need it. Preserve names exactly; do not infer or expand them.
 - Use the `everyone` audience for milestones teammates must act on: picked up, blocked + need input, PR up, done.
 - Praise in public; correct in the work, not the person.
 

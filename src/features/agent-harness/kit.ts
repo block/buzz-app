@@ -33,7 +33,7 @@ import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
 import { wakeAnchor, wakeLands } from "./plugin-wake";
-import { authorNames } from "./author-names";
+import { readAuthorNames } from "./author-names";
 import { ownerCanvas, readProject } from "./project";
 
 /** Whether each thread is its own conversation, or the whole channel is one. */
@@ -355,8 +355,8 @@ export function harnessKit(sources: Sources): HarnessKit {
         (item) =>
           item.created_at > since && (!since || item.pubkey !== agent.pubkey),
       );
-      const [author, project] = await Promise.all([
-        authorNames(ownerReads(sources.relay(agent.key), agent.pubkey), [
+      const [names, project] = await Promise.all([
+        readAuthorNames(ownerReads(sources.relay(agent.key), agent.pubkey), [
           event,
           ...unseen.slice(-CONTEXT_LIMIT),
         ]),
@@ -372,7 +372,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         ...(thread ? { thread } : {}),
         context: unseen,
         total: earlier.length + 1,
-        author,
+        names,
         ...(project ? { project } : {}),
         ...(wake
           ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }

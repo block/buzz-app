@@ -1,11 +1,10 @@
 import { PROFILE_CACHE_BASE } from "./budget";
 import { ReadError } from "./errors";
 import type { Profile } from "./contracts";
-import { newer, type EventData, type RelayEvent } from "./events";
+import { newer, type RelayEvent } from "./events";
 import { foldProfiles } from "./profiles";
 import type { RelayReader } from "./reader";
 import {
-  VERIFIED_PROFILE_KIND,
   verifiedProfileSubject,
   type VerifiedProfileAuthority,
 } from "./verified-profile";
@@ -51,7 +50,8 @@ export const PROFILE_SEARCH_HEADS_MS = 30_000;
  * person's current verified head, and none when they have none. Those
  * answers are kept, a page at a time, for {@link verifiedHeads}. A person it
  * found who has no kind:0 is returned as their head, so the result has one
- * event per person; {@link searchedProfiles} reads it. */
+ * event per person; {@link searchedProfiles} reads it. The NIP-50 fallback
+ * returns kind:0 only. */
 export function createProfileSearch(
   fallback: RelayReader,
   now: () => number = Date.now,
@@ -154,7 +154,7 @@ export function createProfileSearch(
         fallbackUntil = now() + PROFILE_SEARCH_RETRY_MS;
       }
     }
-    return reader.read(
+    const events = await reader.read(
       [
         {
           kinds: [0],
@@ -166,23 +166,25 @@ export function createProfileSearch(
       ],
       { signal, priority, fresh: true },
     );
+    return events.filter((event) => event.kind === 0);
   }
   return Object.assign(searchProfiles, { verifiedHeads });
 }
 export type ProfileSearch = ReturnType<typeof createProfileSearch>;
 
 /** The people a {@link createProfileSearch} page found, by pubkey: each
- * kind:0 profile, and for a person found only by their verified head, the
- * nameless profile an empty kind:0 gives. Their verified name comes from that
- * head, which the search keeps for `useVerifiedNames`. Takes only that
- * search's result: it already checked each head's authority. */
+ * kind:0 profile, and for a person found only by a verified head that
+ * `authority` signed, the nameless profile an empty kind:0 gives. Their
+ * verified name comes from that head, which the search keeps for
+ * `useVerifiedNames`. Any other event names nobody. */
 export function searchedProfiles(
-  events: readonly EventData[],
+  events: readonly RelayEvent[],
+  authority: VerifiedProfileAuthority | undefined,
 ): Map<string, Profile> {
   const profiles = foldProfiles(events);
+  if (!authority) return profiles;
   for (const event of events) {
-    if (event.kind !== VERIFIED_PROFILE_KIND) continue;
-    const subject = event.tags.find(([name]) => name === "d")?.[1];
+    const subject = verifiedProfileSubject(event, authority);
     if (subject && !profiles.has(subject))
       profiles.set(
         subject,

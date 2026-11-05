@@ -183,6 +183,44 @@ describe("people with a verified profile and no kind:0", () => {
     }
   });
 
+  it("names nobody from a head on the NIP-50 path, whoever signed it", async () => {
+    const relay = keypair(),
+      named = keypair();
+    // A relay without the name endpoint, answering with heads it should not.
+    const forged = [
+      verifiedHead(keypair(), keypair().pubkey, "Gabi Forged"),
+      signed(keypair(), {
+        kind: 30382,
+        created_at: 1_000_000,
+        content: "",
+        tags: [["d", "not-a-key"]],
+      }),
+      verifiedHead(relay, keypair().pubkey, "Gabi Unasked"),
+    ];
+    const owner = createRelaySession({
+      viewer: keypair().pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async () => [profile(named, { name: "Gabi Zandi" }), ...forged],
+      verifiedProfiles: {
+        pubkey: relay.pubkey,
+        multipleIssuers: false,
+        searchable: true,
+      },
+    });
+    try {
+      const result = await searchMembers(
+        owner.session,
+        "gabi",
+        1,
+        new AbortController().signal,
+      );
+      expect(result.people.map(({ pubkey }) => pubkey)).toEqual([named.pubkey]);
+    } finally {
+      owner.dispose();
+    }
+  });
+
   it("offers a pasted key whose owner has no kind:0", async () => {
     const t = setup(true);
     try {

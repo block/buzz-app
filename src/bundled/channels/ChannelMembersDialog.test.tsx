@@ -1122,44 +1122,59 @@ it("keeps relay-only matches after shared-ranked names without duplicating rows"
   ]);
 });
 
-it("finds a verified person who has no kind:0 by their verified name", async () => {
-  const relay = keypair(),
-    gabi = keypair();
-  const head = signed(relay, {
-    kind: 30382,
-    created_at: 1_000_000,
-    content: "",
-    tags: [
-      ["d", gabi.pubkey],
-      ["p", gabi.pubkey],
-      ["active", "true"],
-      ["display_name", "glilienfeld"],
-      ["username", "glilienfeld"],
-      ["full_name", "Gabi Lilienfeld"],
-      ["issuer_label", "Example"],
-      ["verified_at", "1000000"],
-    ],
-  });
-  const t = await setup("stream", false, false, undefined, undefined, {
-    relay,
-    searchProfiles: async () => [eventDto(head)],
-    verifiedProfiles: {
-      pubkey: relay.pubkey,
-      multipleIssuers: false,
-      searchable: true,
-    },
-  });
-  await t.user.type(screen.getByRole("searchbox"), "gabi");
-  await screen.findByRole("button", { name: /^Add glilienfeld/ });
-  await t.user.click(screen.getByRole("button", { name: /^Add glilienfeld/ }));
-  await vi.waitFor(() =>
-    expect(
-      t.publish.mock.calls.some(([event]) =>
-        event.tags.some((tag) => tag[0] === "p" && tag[1] === gabi.pubkey),
-      ),
-    ).toBe(true),
-  );
-});
+it.each(["name", "npub"] as const)(
+  "finds a verified person who has no kind:0 by their verified %s and adds them",
+  async (by) => {
+    const relay = keypair(),
+      gabi = keypair();
+    const head = signed(relay, {
+      kind: 30382,
+      created_at: 1_000_000,
+      content: "",
+      tags: [
+        ["d", gabi.pubkey],
+        ["p", gabi.pubkey],
+        ["active", "true"],
+        ["display_name", "glilienfeld"],
+        ["username", "glilienfeld"],
+        ["full_name", "Gabi Lilienfeld"],
+        ["issuer_label", "Example"],
+        ["verified_at", "1000000"],
+      ],
+    });
+    const t = await setup("stream", false, false, undefined, undefined, {
+      relay,
+      searchProfiles: async () => [eventDto(head)],
+      verifiedProfiles: {
+        pubkey: relay.pubkey,
+        multipleIssuers: false,
+        searchable: true,
+      },
+    });
+    // A pasted key reads no kind:0; the verified name comes from a head read.
+    const query = t.query.getMockImplementation();
+    if (!query) throw new Error("Missing query fixture");
+    t.query.mockImplementation(async (filters) =>
+      filters.some((filter) => filter.kinds?.includes(30382))
+        ? [eventDto(head)]
+        : query(filters),
+    );
+    await t.user.type(
+      screen.getByRole("searchbox"),
+      by === "name" ? "gabi" : npubEncode(gabi.pubkey),
+    );
+    await t.user.click(
+      await screen.findByRole("button", { name: /^Add glilienfeld/ }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        t.publish.mock.calls.some(([event]) =>
+          event.tags.some((tag) => tag[0] === "p" && tag[1] === gabi.pubkey),
+        ),
+      ).toBe(true),
+    );
+  },
+);
 
 it("starts every invitation group at four and expands only the selected group", async () => {
   const t = await setup();

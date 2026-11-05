@@ -264,6 +264,7 @@ const openEdits = new Map<
 >();
 const discardKeptNotice =
   "Your unsaved edit of another message can't be opened here. Choose Edit again to discard it.";
+const editAttachmentNotice = "Finish editing before attaching new files.";
 
 type AcceptedDraft = {
   next: MentionDraft;
@@ -1890,7 +1891,7 @@ function Composer({
     )
       return;
     if (editing.target) {
-      refuseAttachment("Finish editing before attaching new files.");
+      refuseAttachment(editAttachmentNotice);
       return;
     }
     if (!canAttach) {
@@ -1940,7 +1941,7 @@ function Composer({
     if (live.current) attachFiles(files);
   });
   // Send waits while they are read, as it does for a failed file, so a paste
-  // stays one message. An edit's Save does not: its pictures cannot attach.
+  // stays one message. An edit reads none, so its Save never waits.
   const [pictureReads, setPictureReads] = useState(0);
   const attachmentsBlocked = attachments.blocked || pictureReads > 0;
   const outbox = session.outbox;
@@ -4409,8 +4410,12 @@ function Composer({
             const files = pastedFiles(event.clipboardData);
             if (!files.length) {
               // The editor pastes the text; pictures only in its HTML follow.
+              // An edit cannot take them, and a read could finish after it
+              // closes, in the draft it returns to, so it refuses them unread.
               const images = pastedInlineImages(event.clipboardData);
-              if (images.length) {
+              if (images.length && editing.target)
+                refuseAttachment(editAttachmentNotice);
+              else if (images.length) {
                 setPictureReads((count) => count + 1);
                 void fetchPastedImages(images)
                   .then(attachLate)

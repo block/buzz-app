@@ -2674,8 +2674,9 @@ it("pastes text copied together with a picture as text, and attaches a file past
 /** Pastes a TextEdit copy of two paragraphs around a picture as WebKit hands
  * it to the page: the picture is a blob: URL in the HTML and U+FFFC in the
  * text, with no file item. The composer and its editor read the HTML once. Its
- * fetch waits for `picture()`, which reads a PNG unless given another result. */
-function pasteTextEditCopy(input: HTMLElement) {
+ * fetch waits for `picture()`, which reads a PNG unless given another result.
+ * With `fetched: false` the paste need not fetch; the caller checks `fetch`. */
+function pasteTextEditCopy(input: HTMLElement, { fetched = true } = {}) {
   const src = "blob:http://127.0.0.1:4873/ba90c5a8-7c1e-4d0b-9f2a-3e6d8b1c5f40";
   const read = deferred<Blob>();
   const fetch = vi.fn(
@@ -2701,7 +2702,7 @@ function pasteTextEditCopy(input: HTMLElement) {
   expect(getData.mock.calls.filter(([type]) => type === "text/html")).toEqual([
     ["text/html"],
   ]);
-  expect(fetch).toHaveBeenCalledExactlyOnceWith(src);
+  if (fetched) expect(fetch).toHaveBeenCalledExactlyOnceWith(src);
   return (result: Blob | Error = new Blob(["png"], { type: "image/png" })) =>
     act(async () =>
       result instanceof Error ? read.reject(result) : read.resolve(result),
@@ -2787,16 +2788,17 @@ it("pastes rich text into a message edit and says its pictures cannot attach the
   fireEvent.keyDown(h.input(), { key: "ArrowUp" });
   expect(h.input()).toHaveAccessibleName("Edit message");
   await userEvent.clear(h.input());
-  const picture = pasteTextEditCopy(h.input());
+  pasteTextEditCopy(h.input(), { fetched: false });
   expect(h.input()).toHaveValue(textEditText);
-  const save = within(h.form()).getByRole("button", { name: "Save changes" });
-  // Its pictures cannot attach to an edit, so Save does not wait for them.
-  expect(save).toBeEnabled();
-  await picture();
+  // Its pictures cannot attach to an edit, so they are refused unread and
+  // Save does not wait for them.
   expect(
     await screen.findByText("Finish editing before attaching new files."),
   ).toBeInTheDocument();
-  expect(save).toBeEnabled();
+  expect(
+    within(h.form()).getByRole("button", { name: "Save changes" }),
+  ).toBeEnabled();
+  expect(fetch).not.toHaveBeenCalled();
   expect(h.uploadCalls).toHaveLength(0);
   expect(
     within(h.form()).queryByRole("button", { name: "Remove Attachment.png" }),
@@ -2804,6 +2806,62 @@ it("pastes rich text into a message edit and says its pictures cannot attach the
   expect(h.input()).toHaveAccessibleName("Edit message");
   expect(h.input()).toHaveValue(textEditText);
 });
+
+it.each([["Save changes"], ["Cancel edit"]])(
+  "attaches nothing to the draft when %s closes an edit before its pasted picture is read",
+  async (close) => {
+    const h = await mountUploadComposer({ editable: true });
+    const viewer = h.owner.session.viewer;
+    if (!viewer) throw new Error("Expected upload viewer");
+    const row = editableMessage({ authorId: viewer });
+    // The outbox takes the edit at once, which closes it.
+    const edit = vi.fn(() => "e".repeat(64));
+    const session = {
+      ...h.owner.session,
+      messages: { ...h.owner.session.messages, edit },
+    };
+    let editScope: ReturnType<typeof useMessageEditScope> | undefined;
+    function Probe() {
+      editScope = useMessageEditScope();
+      return null;
+    }
+    h.rerender(
+      <MessageEditScope>
+        <Probe />
+        <MessageComposer
+          session={session}
+          scope={h.scope}
+          channelId="channel"
+          channelName="General"
+          editMessages={[row]}
+        />
+      </MessageEditScope>,
+    );
+    fireEvent.change(h.input(), { target: { value: "Keep my draft" } });
+    act(() => void editScope?.current?.(row));
+    expect(h.input()).toHaveAccessibleName("Edit message");
+    await userEvent.clear(h.input());
+    const picture = pasteTextEditCopy(h.input(), { fetched: false });
+    fireEvent.click(within(h.form()).getByRole("button", { name: close }));
+    await waitFor(() =>
+      expect(h.input()).toHaveAccessibleName("Message #General"),
+    );
+    expect(edit).toHaveBeenCalledTimes(close === "Save changes" ? 1 : 0);
+    expect(h.input()).toHaveValue("Keep my draft");
+    expect(h.send()).toBeEnabled();
+    // The read the edit's paste would have started finishes now.
+    await picture();
+    await act(async () => {});
+    expect(h.uploadCalls).toHaveLength(0);
+    expect(
+      within(h.form()).queryByRole("button", { name: "Remove Attachment.png" }),
+    ).toBeNull();
+    expect(h.input()).toHaveValue("Keep my draft");
+    expect(h.send()).toBeEnabled();
+    // Nothing was read, so nothing else can arrive.
+    expect(fetch).not.toHaveBeenCalled();
+  },
+);
 
 it("pauses while disabled and resumes attachment Send without Retry when re-enabled", async () => {
   const h = await mountUploadComposer();

@@ -297,8 +297,9 @@ usage is unavailable. Settings and model discovery do not create targets.
 Claude uses the same contract with its stream-json process. Its tools and hooks
 use that process connection. Files come from the target. Each conversation
 keeps its execution key, workspace, and Claude session across app restarts.
-**Start a new session** selects a new execution key. A failed resume keeps the
-saved session and requires this explicit reset. The target must supply Claude
+**Start a new session** selects a new execution key. An established session
+requires this reset when Claude cannot restore it. A session with no recorded
+submission can retry on the same target. The target must supply Claude
 Code 2.1.169 or later and its own authentication. No local credentials go to the
 target. Local Claude retains its device defaults. Remote Claude uses explicit
 agent settings or the target defaults. Model discovery does not allocate a

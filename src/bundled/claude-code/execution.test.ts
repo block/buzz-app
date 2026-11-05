@@ -102,7 +102,7 @@ createInterface({input:process.stdin}).on('line', (line) => {
     writeFileSync(session+'.saved','saved');
     send({type:'system',subtype:'init',session_id:'session-1',model:'haiku'});
     if (wire.message.content === 'hold' || wire.message.content.includes('hold-request') || (wire.message.content === '/compact' && existsSync('hold-compact'))) return;
-    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:wire.message.content.includes('read-path-request')?'send':'read',arguments:{path:'proof.bin'}}}}});
+    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:wire.message.content.includes('read-path-request')?'send':'read',arguments:{path:'proof.bin',audience:'everyone'}}}}});
   } else if (wire.type === 'control_response') {
     if (wire.response.request_id === 'tool') {
       process.stderr.write(JSON.stringify(wire.response.response));

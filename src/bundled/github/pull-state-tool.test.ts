@@ -4,7 +4,11 @@ import type { AddedTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { GitHubError, type GitHubCli } from "./gh";
 import { addPullStateTool } from "./pull-state-tool";
-import { createPullStates, PULL_REFRESH_MS } from "./pull-states";
+import {
+  createPullStates,
+  PULL_REFRESH_MS,
+  type PullSource,
+} from "./pull-states";
 
 const url = "https://github.com/block/buzz-app/pull/7";
 
@@ -12,9 +16,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function setup(gh: GitHubCli) {
+function setup(gh: GitHubCli | undefined, relay?: PullSource) {
   const tools: AddedTool[] = [];
-  const states = createPullStates(gh);
+  const states = createPullStates(gh, relay);
   addPullStateTool({ addTool: (tool) => tools.push(tool) }, states);
   const tool = tools[0] as AddedTool;
   return {
@@ -210,4 +214,28 @@ it("gives what the panel shows with details, from the panel's read when it has o
   // Without details, the answer is what links show.
   expect(JSON.parse(String(await call({ url })))).not.toHaveProperty("details");
   unwatch();
+});
+
+it("answers from the relay's record, saying so, without reading GitHub", async () => {
+  const gh = vi.fn(async () => answer) as unknown as GitHubCli &
+    ReturnType<typeof vi.fn>;
+  const relay: PullSource = {
+    get: () => ({
+      state: "open",
+      checks: "pending",
+      source: "relay",
+      head: "c0ffee",
+      settled: false,
+      failed: [],
+    }),
+    subscribe: () => () => {},
+  };
+  const { call } = setup(gh, relay);
+  expect(JSON.parse(String(await call({ url })))).toMatchObject({
+    state: "open",
+    checks: "pending",
+    head: "c0ffee",
+    source: "relay",
+  });
+  expect(gh).not.toHaveBeenCalled();
 });

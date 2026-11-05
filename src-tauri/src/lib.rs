@@ -88,11 +88,12 @@ use relay::{
     file_download, media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
     relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
-    relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
-    relay_http_cancel, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
-    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
-    relay_upload_chunk, relay_verify_signatures, relay_workflow_runs,
+    relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_github_card_key,
+    relay_http, relay_http_cancel, relay_kit_decode, relay_kit_prepare, relay_kit_sign,
+    relay_project_git, relay_project_git_cancel, relay_publish_read_state, relay_seal_hook_secret,
+    relay_sign, relay_sign_read_state, relay_sign_reminder, relay_sign_sidebar, relay_upload,
+    relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_verify_signatures,
+    relay_workflow_runs,
 };
 use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
@@ -704,6 +705,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_kit_sign,
         relay_kit_prepare,
         relay_kit_decode,
+        relay_seal_hook_secret,
+        relay_github_card_key,
         relay_direct_message,
         relay_decode_sidebar,
         relay_sign_sidebar,

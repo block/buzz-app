@@ -84,6 +84,7 @@ export function requestWork(
       snapshot.turns,
     );
     if (!selected.turnIds.size) return [];
+    if (snapshot.turnsTrimmed) selected.uncertain = true;
     const turns = snapshot.turns.filter(
       (turn) =>
         turn.agent === agent &&

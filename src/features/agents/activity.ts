@@ -23,6 +23,8 @@ type RawRecord = ObserverFrame &
 export type ActivityTurn = Readonly<{
   agent: string;
   turnId: string;
+  sessionId?: string;
+  threadRootId?: string;
   channelId: string | null;
   timestamp: number;
   state: "working" | "unknown" | "ended";
@@ -57,6 +59,8 @@ type Snapshot = Readonly<{
   local?: readonly LocalWork[];
   typing: readonly TypingEntry[];
   trimmed: number;
+  /** Unlike raw-record trimming, losing a turn can lose request completeness. */
+  turnsTrimmed?: boolean;
 }>;
 type Turn = Omit<ActivityTurn, "state" | "requests"> & {
   requests?: ActivityTurn["requests"];
@@ -99,6 +103,7 @@ export function createAgentActivity(
     bytes = 0,
     trimmed = 0,
     evidenceFloor = 0;
+  let turnsTrimmed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   const turns = new Map<string, Turn>();
   const typing = new Map<string, Typing>();
@@ -179,6 +184,8 @@ export function createAgentActivity(
         Object.freeze({
           agent: turn.agent,
           turnId: turn.turnId,
+          ...(turn.sessionId ? { sessionId: turn.sessionId } : {}),
+          ...(turn.threadRootId ? { threadRootId: turn.threadRootId } : {}),
           channelId: turn.channelId,
           timestamp: turn.timestamp,
           ...(turn.outcome ? { outcome: turn.outcome } : {}),
@@ -235,6 +242,7 @@ export function createAgentActivity(
       local: Object.freeze(localWork),
       typing: Object.freeze(typers),
       trimmed,
+      turnsTrimmed,
     });
     for (const listener of listeners) notify(listener);
     if (workingChanged)
@@ -245,6 +253,7 @@ export function createAgentActivity(
     bytes = 0;
     trimmed = 0;
     evidenceFloor = 0;
+    turnsTrimmed = false;
     turns.clear();
     typing.clear();
     liveAgents.clear();
@@ -282,9 +291,11 @@ export function createAgentActivity(
     )
       return;
     if (!previous && timestamp <= evidenceFloor) return;
+    const payload = object(item.payload);
+    const root = payload?.threadRootEventId;
     const triggers =
       item.kind === "turn_started"
-        ? object(item.payload)?.triggeringEventIds
+        ? payload?.triggeringEventIds
         : previous?.triggeringEventIds;
     const triggeringEventIds =
       Array.isArray(triggers) &&
@@ -305,12 +316,22 @@ export function createAgentActivity(
         : {}),
       agent,
       turnId: item.turnId,
+      ...(typeof root === "string" && /^[0-9a-f]{64}$/.test(root)
+        ? { threadRootId: root }
+        : previous?.threadRootId
+          ? { threadRootId: previous.threadRootId }
+          : {}),
+      ...(text(item.sessionId)
+        ? { sessionId: item.sessionId }
+        : previous?.sessionId
+          ? { sessionId: previous.sessionId }
+          : {}),
       channelId: item.channelId,
       // Completion may precede liveness on a rolled-back producer clock. Keep
       // the highest observed time so eventual eviction cannot weaken the fence.
       timestamp: Math.max(timestamp, previous?.timestamp ?? timestamp),
       ended: ends.has(item.kind),
-      outcome: terminalOutcome(item.kind, object(item.payload)?.outcome),
+      outcome: terminalOutcome(item.kind, payload?.outcome),
       epoch,
     };
     associate(turn);
@@ -323,6 +344,7 @@ export function createAgentActivity(
         turns.delete(oldest[0]);
         // Forgetting a tombstone must not let older evidence resurrect that turn.
         evidenceFloor = Math.max(evidenceFloor, oldest[1].timestamp);
+        turnsTrimmed = true;
         trimmed++;
       }
     }
@@ -398,6 +420,27 @@ export function createAgentActivity(
   return {
     queries: Object.freeze({
       snapshot: () => snapshot,
+      /** Owner-authorized status readback for an exact retained remote task.
+       * Never invent raw telemetry or replace an already received terminal. */
+      reconcile(turn: ActivityTurn, outcome: "ended" | "error" | "stopped") {
+        if (closed || !leases || !turn.channelId || !canAccess(turn.channelId))
+          return;
+        const current = turns.get(`${turn.agent}:${turn.turnId}`);
+        if (
+          !current ||
+          current.ended ||
+          !turn.sessionId ||
+          current.sessionId !== turn.sessionId ||
+          current.channelId !== turn.channelId
+        )
+          return;
+        turns.set(`${turn.agent}:${turn.turnId}`, {
+          ...current,
+          ended: true,
+          outcome,
+        });
+        publish();
+      },
       /** Display-only local acknowledgement, scoped to this session and access. */
       dismissError(agent: string, channelId: string, messageId: string) {
         if (!local || closed || !canAccess(channelId)) return false;

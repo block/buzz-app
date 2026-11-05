@@ -1261,8 +1261,19 @@ Remote completion outcomes distinguish success, failure (`failed` or
 `terminated`), and stopped execution (`cancelled`). Stopped execution does not
 establish who cancelled it. The bounded turn states retain exact trigger IDs and
 outcomes independently of raw tool records, so raw-buffer trimming cannot turn
-a received terminal result into unknown. Missed terminal frames still require
-server status readback; silence and reconnect alone cannot establish an outcome.
+a received terminal result into unknown. Evicting an entire lifecycle turn still
+leaves aggregate request completion uncertain.
+
+While signed in to Builderlab, a stale or reconnected live feed reads terminal
+outcomes for its retained exact tasks through the owner-only
+`/v3/beekeeper/get-agent-turn-status` endpoint. Reads group up to 64 tasks in one
+agent/session/channel and use the existing bounded read retries, with no new
+timer. Missing or nonterminal tasks stay unknown until new evidence arrives or
+the next reconnect allows another read. Account changes, community changes,
+disable/reset and disposal cancel outstanding recovery. A late readback cannot
+replace an already received terminal result. This recovers missed terminal
+frames for retained turns, not history after reload; it does not archive raw
+activity. An older server without the endpoint leaves those tasks unknown.
 
 ### Activity updates in the conversation
 

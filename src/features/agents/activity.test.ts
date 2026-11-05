@@ -61,6 +61,33 @@ function fixture(findMessage?: Parameters<typeof createAgentActivity>[4]) {
   };
 }
 afterEach(() => vi.useRealTimers());
+it("does not settle an aggregate after its other linked lifecycle turn was evicted", () => {
+  const f = fixture();
+  const request = "1".repeat(64);
+  f.send(
+    f.item("turn_started", "older", {
+      timestamp: new Date(Date.now() - 10000).toISOString(),
+      payload: { triggeringEventIds: [request] },
+    }),
+  );
+  f.send(
+    f.item("turn_started", "retained", {
+      payload: { triggeringEventIds: [request] },
+    }),
+  );
+  f.send(f.item("turn_completed", "retained", { seq: 2 }));
+  for (let i = 0; i < ACTIVITY_TURN_LIMIT - 1; i++)
+    f.send(f.item("turn_liveness", `unrelated-${i}`));
+  expect(f.snapshot().turns.some((turn) => turn.turnId === "older")).toBe(
+    false,
+  );
+  expect(f.snapshot().turnsTrimmed).toBe(true);
+  const work = requestWork(f.snapshot(), "a", request);
+  expect(work[0]?.state).toBe("unknown");
+  f.activity.clear();
+  expect(f.snapshot().turnsTrimmed).toBe(false);
+  f.activity.dispose();
+});
 it.each([
   [undefined, "ended"],
   ["completed", "ended"],

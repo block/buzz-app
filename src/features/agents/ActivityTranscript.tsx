@@ -204,11 +204,13 @@ function Turn({
         ? "Stopped"
         : turn.outcome === "unknown"
           ? "Status unknown"
-          : state === "working"
-            ? "Working"
-            : turn.endedAt
-              ? "Completed"
-              : "Status unknown";
+          : turn.outcome === "ended"
+            ? "Completed"
+            : state === "working"
+              ? "Working"
+              : turn.endedAt
+                ? "Completed"
+                : "Status unknown";
   const { channelId, threadRootId } = turn;
   // An unknown thread is not opened as its channel.
   const open =

@@ -196,6 +196,12 @@ function MessageActivity(
       }).turns;
       if (turns.length && turns.every((turn) => !!turn.threadRootId))
         return false;
+      if (
+        !turns.length &&
+        entry.turns.length &&
+        entry.turns.every((turn) => !!turn.threadRootId)
+      )
+        return false;
     }
     return true;
   };

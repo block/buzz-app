@@ -451,6 +451,90 @@ it("keeps a row mounted while another of its players still plays", async () => {
   await waitFor(() => expect(h.row()).toBeNull());
 });
 
+it("lets a playing row go when its audio fails", async () => {
+  const failing = message(other, "c", "Listen", 1, [
+    ["imeta", "url https://relay.test/media/a.mp3", "m audio/mpeg"],
+  ]);
+  const h = mount(async () => {}, failing, [failing, neighbor], undefined, {
+    media: proxied,
+  });
+  const row = h.row();
+  const audio = row?.querySelector("audio");
+  if (!row || !audio) throw new Error("Missing media row");
+  // A failed element can still report paused false.
+  Object.defineProperty(audio, "paused", { get: () => false });
+  fireEvent.play(audio);
+  Object.defineProperty(audio, "error", { get: () => ({ code: 2 }) });
+  fireEvent.error(audio);
+  within(row).getByText("Audio unavailable");
+  h.evict();
+  await waitFor(() => expect(h.row()).toBeNull());
+  expect(h.neighborRow()).not.toBeNull();
+});
+
+const claimer = [
+  {
+    key: "cards:claimer",
+    pluginId: "cards",
+    revision: "1",
+    id: "claimer",
+    title: "Claimed card",
+    matches: (message: { content: string }) => message.content === "Claimed",
+    ownsAttachment: () => true,
+    component: () => <p>Claimed card</p>,
+  },
+];
+const cards: ConversationExtensions = {
+  tools: none,
+  inline: none,
+  messages: { snapshot: () => claimer, subscribe: () => () => {} },
+};
+
+// An edit listing no attachments keeps the original's, so only a claim can
+// unmount the whole list.
+it.each([
+  ["is edited out", "Listen", "url https://relay.test/media/b.pdf"],
+  [
+    "is claimed, emptying the list",
+    "Claimed",
+    "url https://relay.test/media/a.mp3",
+  ],
+] as const)(
+  "lets a playing row go when its player %s",
+  async (_, content, url) => {
+    const playing = message(other, "c", "Listen", 1, [
+      ["imeta", "url https://relay.test/media/a.mp3", "m audio/mpeg"],
+    ]);
+    const h = mount(async () => {}, playing, [playing, neighbor], undefined, {
+      media: proxied,
+      extensions: cards,
+    });
+    const row = h.row();
+    const audio = row?.querySelector("audio");
+    if (!row || !audio) throw new Error("Missing media row");
+    Object.defineProperty(audio, "paused", { get: () => false });
+    fireEvent.play(audio);
+    h.evict();
+    expect(h.row()).toBe(row);
+    // React no longer dispatches events for the removed player.
+    h.receive(
+      signed(other, {
+        kind: 40003,
+        content,
+        created_at: 3,
+        tags: [
+          ["h", "c"],
+          ["e", playing.id],
+          ["imeta", url],
+        ],
+      }),
+    );
+    expect(audio.isConnected).toBe(false);
+    await waitFor(() => expect(h.row()).toBeNull());
+    expect(h.neighborRow()).not.toBeNull();
+  },
+);
+
 it.each([
   ["channel", "draft"],
   ["channel", "pending"],

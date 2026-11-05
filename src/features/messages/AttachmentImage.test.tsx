@@ -23,7 +23,7 @@ function mount(
   owner: RelaySession,
   url = source,
   metadata?: typeof dimensions,
-  small?: string,
+  thumbnail?: string,
 ) {
   return render(
     <AttachmentImage
@@ -34,7 +34,7 @@ function mount(
         ...(metadata ? { dimensions: metadata } : {}),
       }}
       source={url}
-      small={small}
+      thumbnail={thumbnail}
     />,
   );
 }
@@ -250,19 +250,18 @@ it("falls back to the blurhash placeholder when the thumbnail fails", () => {
         blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
       }}
       source={relaySource}
-      small={relayThumbnail}
+      thumbnail={relayThumbnail}
     />,
   );
   expect(view.container.querySelector("canvas")).not.toBeNull();
   fireEvent.error(thumbnailOf(view) as HTMLImageElement);
-  expect(thumbnailOf(view)).toBeNull();
+  expect(thumbnailOf(view)).toHaveStyle({ visibility: "hidden" });
   expect(view.container.querySelector("canvas")).not.toBeNull();
   expect(view.queryByRole("status")).toBeNull();
 });
 
 it("requests no thumbnail for third-party images", () => {
-  // The transport maps third-party URLs to themselves.
-  const view = mount(session(), source, undefined, source);
+  const view = mount(session(), source);
   expect(thumbnailOf(view)).toBeNull();
   expect(view.container.querySelectorAll("img")).toHaveLength(1);
 });

@@ -27,7 +27,7 @@ export function AttachmentImage({
   attachment,
   session,
   source,
-  small,
+  thumbnail,
   cached = false,
   compact = false,
   overlayCount = 0,
@@ -40,8 +40,8 @@ export function AttachmentImage({
   attachment: Attachment;
   session?: RelaySession | undefined;
   source: string | undefined;
-  /** The host's small display URL; equal to `source` when it has no thumbnail. */
-  small?: string | undefined;
+  /** Relay-derived small preview; undefined when the source has none. */
+  thumbnail?: string | undefined;
   cached?: boolean;
   /** Square thumbnail geometry for a condensed image group. */
   compact?: boolean;
@@ -79,7 +79,6 @@ export function AttachmentImage({
     },
     [source, session],
   );
-  const thumbnail = small !== source ? small : undefined;
   const decodedDimensions =
     decoded.source === source && decoded.session === session
       ? decoded.dimensions
@@ -159,7 +158,7 @@ export function AttachmentImage({
         <span className={styles.attachmentImagePixels}>
           {source && (
             <ImagePixels
-              key={JSON.stringify([source, thumbnail, attachment.blurhash])}
+              key={JSON.stringify([source, attachment.blurhash])}
               session={session}
               source={source}
               thumbnail={thumbnail}
@@ -223,7 +222,7 @@ function ImagePixels({
     () => !!session && hasDecodedImage(session, source),
   );
   const [ready, setReady] = useState(false);
-  const [thumbnailState, setThumbnailState] = useState<"loaded" | "failed">();
+  const [thumbnailLoaded, setThumbnailLoaded] = useState(false);
   const hash = validatedBlurhash(blurhash);
   useLayoutEffect(() => {
     if (!retained) return;
@@ -317,15 +316,14 @@ function ImagePixels({
           aria-hidden="true"
         />
       )}
-      {thumbnail && !ready && thumbnailState !== "failed" && (
+      {thumbnail && !ready && (
         <img
           src={thumbnail}
           alt=""
           loading="lazy"
           data-thumbnail=""
-          style={{ visibility: thumbnailState ? "visible" : "hidden" }}
-          onLoad={() => setThumbnailState("loaded")}
-          onError={() => setThumbnailState("failed")}
+          style={{ visibility: thumbnailLoaded ? "visible" : "hidden" }}
+          onLoad={() => setThumbnailLoaded(true)}
         />
       )}
       <img

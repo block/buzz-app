@@ -1206,6 +1206,10 @@ function MessageRowContent({
                         );
                       }
                       if (attachment.kind === "image") {
+                        // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
+                        const small = media(url, "small");
+                        // Third-party URLs map to themselves: no thumbnail.
+                        const thumbnail = small !== source ? small : undefined;
                         const image = (
                           <AttachmentImage
                             onOpenLink={
@@ -1217,8 +1221,7 @@ function MessageRowContent({
                             session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
-                            // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
-                            small={media(url, "small")}
+                            thumbnail={thumbnail}
                             cached={cached}
                             compact={group.length >= 4}
                             overlayCount={

@@ -433,18 +433,23 @@ function MessageRowContent({
   const attachmentList = useRef<HTMLDivElement>(null);
   const [mediaPlaying, setMediaPlaying] = useState(false);
   const trackMedia = () => setMediaPlaying(playingIn(attachmentList.current));
-  // React drops the pause a player fires once removed (edited out, claimed by
-  // a message renderer, swapped by its plugin's boundary, or gone with the
-  // whole list), so while one plays, recheck whenever the row's tree changes.
-  useEffect(() => {
-    const element = rowRef.current;
-    if (!mediaPlaying || !element) return;
+  // React drops the pause a player fires once removed. While one plays,
+  // recheck when the list's tree changes: a player edited out, claimed by a
+  // message renderer or swapped by its plugin's boundary. Whatever unmounts
+  // the list itself (a claim of its last group, an agents row folding) clears
+  // the flag. A stable ref, so re-renders never detach it.
+  const observeAttachments = useCallback((list: HTMLDivElement) => {
+    attachmentList.current = list;
     const observer = new MutationObserver(() =>
-      setMediaPlaying(playingIn(attachmentList.current)),
+      setMediaPlaying((playing) => playing && playingIn(list)),
     );
-    observer.observe(element, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [mediaPlaying]);
+    observer.observe(list, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      attachmentList.current = null;
+      setMediaPlaying(false);
+    };
+  }, []);
   const keepAlive = reporting !== undefined || !!opened || mediaPlaying;
   // The dialog, pending submit, notice and playing media live in this row;
   // eviction loses them.
@@ -1258,7 +1263,7 @@ function MessageRowContent({
                 <div
                   className={styles.messageAttachments}
                   data-message-attachments
-                  ref={attachmentList}
+                  ref={observeAttachments}
                   onPlay={trackMedia}
                   onPause={trackMedia}
                   onEnded={trackMedia}

@@ -392,6 +392,13 @@ const voiceNotes: ConversationExtensions = {
 it.each([
   ["a plain audio attachment", "a.mp3", "audio/mpeg", "Play a.mp3", "pause"],
   ["a voice note", "voice.m4a", "audio/mp4", "Play voice note", "pause"],
+  [
+    "a voice note (reloaded)",
+    "voice.m4a",
+    "audio/mp4",
+    "Play voice note",
+    "emptied",
+  ],
   ["an inline video", "a.mp4", "video/mp4", "Open video fullscreen", "ended"],
 ] as const)(
   "keeps a row mounted while %s plays, then lets it go when playback stops",
@@ -411,6 +418,8 @@ it.each([
     let paused = false;
     Object.defineProperty(player, "paused", { get: () => paused });
     fireEvent.play(player);
+    // A browser delivers the play's mutation records before playback stops.
+    await act(async () => {});
     h.evict();
     expect(h.row()).toBe(row);
     expect(player.isConnected).toBe(true);
@@ -451,12 +460,13 @@ it("keeps a row mounted while another of its players still plays", async () => {
   await waitFor(() => expect(h.row()).toBeNull());
 });
 
-it("lets a playing row go when its audio fails", async () => {
+it("lets a playing row go when its voice note fails", async () => {
   const failing = message(other, "c", "Listen", 1, [
-    ["imeta", "url https://relay.test/media/a.mp3", "m audio/mpeg"],
+    ["imeta", "url https://relay.test/media/voice.m4a", "m audio/mp4"],
   ]);
   const h = mount(async () => {}, failing, [failing, neighbor], undefined, {
     media: proxied,
+    extensions: voiceNotes,
   });
   const row = h.row();
   const audio = row?.querySelector("audio");
@@ -464,9 +474,12 @@ it("lets a playing row go when its audio fails", async () => {
   // A failed element can still report paused false.
   Object.defineProperty(audio, "paused", { get: () => false });
   fireEvent.play(audio);
-  Object.defineProperty(audio, "error", { get: () => ({ code: 2 }) });
+  // A decode error is not retried.
+  Object.defineProperty(audio, "error", { get: () => ({ code: 3 }) });
   fireEvent.error(audio);
-  within(row).getByText("Audio unavailable");
+  within(row).getByText("Audio unavailable. Retry playback.");
+  // The card keeps its failed player, so no removal releases the row.
+  expect(audio.isConnected).toBe(true);
   h.evict();
   await waitFor(() => expect(h.row()).toBeNull());
   expect(h.neighborRow()).not.toBeNull();
@@ -534,6 +547,42 @@ it.each([
     expect(h.neighborRow()).not.toBeNull();
   },
 );
+
+it("lets a playing agents row go when it collapses", async () => {
+  const root = message(viewer, "c", "Request", 1);
+  const step = message(other, "c", "Listen", 3, [
+    ["audience", "agents"],
+    ["imeta", "url https://relay.test/media/a.mp3", "m audio/mpeg"],
+  ]);
+  const h = mount(async () => {}, step, [root, neighbor, step], undefined, {
+    media: proxied,
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Show activity history/ }),
+  );
+  // The group's toggle takes focus, and a focused group stays mounted.
+  act(() => (document.activeElement as HTMLElement).blur());
+  const row = h.row();
+  if (!row) throw new Error("Missing agents row");
+  const line = within(row).getByRole("button", { name: /Listen/ });
+  fireEvent.click(line);
+  const audio = await waitFor(() => {
+    const player = row.querySelector("audio");
+    if (!player) throw new Error("Missing player");
+    return player;
+  });
+  let paused = false;
+  Object.defineProperty(audio, "paused", { get: () => paused });
+  fireEvent.play(audio);
+  fireEvent.click(line);
+  await waitFor(() => expect(audio.isConnected).toBe(false));
+  // A browser pauses the detached player, but React drops its pause.
+  paused = true;
+  fireEvent.pause(audio);
+  h.evict();
+  await waitFor(() => expect(h.row()).toBeNull());
+  expect(h.neighborRow()).not.toBeNull();
+});
 
 it.each([
   ["channel", "draft"],

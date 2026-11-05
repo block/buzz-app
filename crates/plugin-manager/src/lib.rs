@@ -862,9 +862,13 @@ impl Manager {
         managed::effective(
             &self.home,
             std::env::var_os(managed::PATH_ENV),
-            managed::PACKAGED,
+            !managed::PACKAGED_URL.is_empty(),
             catalog,
         )
+    }
+    /// Keeps a policy fetched from [`managed::PACKAGED_URL`] if Buzz can use it.
+    pub fn store_packaged_policy(&self, bytes: &[u8]) -> Result<bool> {
+        managed::store_packaged(&self.home, bytes)
     }
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root).map_err(err)?;

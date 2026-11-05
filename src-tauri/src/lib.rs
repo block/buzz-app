@@ -67,6 +67,7 @@ mod mouse_nav;
 
 mod notifications;
 mod os_idle;
+mod packaged_plugins;
 mod repositories_folder;
 mod window_controls;
 mod window_state;
@@ -917,6 +918,9 @@ pub fn run() {
                 }
             }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            if let Ok(manager) = &app.state::<PluginManager>().0 {
+                packaged_plugins::spawn(manager.clone());
+            }
             deep_links::setup(app.handle());
             app.manage(relay::Spools::new(
                 app.path()

@@ -11,16 +11,16 @@ use std::{
     collections::HashSet,
     ffi::OsString,
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 pub const FILE_NAME: &str = "managed-plugins.json";
 pub const PATH_ENV: &str = "BUZZ_MANAGED_PLUGINS";
-/// The packager's policy, used only when no file is present.
-pub const PACKAGED: &str = env!("BUZZ_BUILD_MANAGED_PLUGINS");
-pub const PACKAGED_LABEL: &str = "built into this Buzz build";
-const MAX_BYTES: u64 = 256 * 1024;
+/// Where the packager publishes its policy; the desktop keeps the last usable copy.
+pub const PACKAGED_URL: &str = env!("BUZZ_BUILD_MANAGED_PLUGINS_URL");
+pub const PACKAGED_FILE_NAME: &str = "packaged-managed-plugins.json";
+pub const MAX_BYTES: u64 = 256 * 1024;
 const MAX_PLUGINS: usize = 64;
 const MAX_PROBLEMS: usize = 16;
 const MAX_SOURCE_CHARS: usize = 80;
@@ -110,30 +110,17 @@ pub fn status(path: Result<PathBuf>, catalog: &Catalog) -> Managed {
         }
     };
     let shown = path.display().to_string();
-    match read(&path) {
-        Ok(Some(text)) => evaluate(shown, &text, catalog),
-        Ok(None) => Managed::Absent,
-        Err(reason) => Managed::Invalid {
-            path: shown,
-            reason,
-        },
-    }
-}
-
-/// The file's status, or the packaged policy when the file is absent and
-/// `BUZZ_MANAGED_PLUGINS` does not name one.
-pub fn effective(home: &Path, env: Option<OsString>, packaged: &str, catalog: &Catalog) -> Managed {
-    let explicit = env.as_ref().is_some_and(|value| !value.is_empty());
-    match status(path(home, env), catalog) {
-        Managed::Absent if !explicit && !packaged.is_empty() => {
-            evaluate(PACKAGED_LABEL.into(), packaged, catalog)
+    let text = match read(&path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Managed::Absent,
+        Err(reason) => {
+            return Managed::Invalid {
+                path: shown,
+                reason,
+            }
         }
-        managed => managed,
-    }
-}
-
-fn evaluate(shown: String, text: &str, catalog: &Catalog) -> Managed {
-    match parse(text) {
+    };
+    match parse(&text) {
         Ok(policy) => Managed::Ready {
             path: shown,
             source: policy.source,
@@ -152,6 +139,38 @@ fn evaluate(shown: String, text: &str, catalog: &Catalog) -> Managed {
             reason,
         },
     }
+}
+
+/// The file's status, or the last fetched packaged policy when the file is absent
+/// and `BUZZ_MANAGED_PLUGINS` does not name one.
+pub fn effective(home: &Path, env: Option<OsString>, packaged: bool, catalog: &Catalog) -> Managed {
+    let explicit = env.as_ref().is_some_and(|value| !value.is_empty());
+    match status(path(home, env), catalog) {
+        Managed::Absent if !explicit && packaged => {
+            status(Ok(home.join(PACKAGED_FILE_NAME)), catalog)
+        }
+        managed => managed,
+    }
+}
+
+/// Keeps `bytes` as the packaged policy if Buzz can use it; otherwise the last
+/// good copy stays. Returns whether the stored copy changed.
+pub fn store_packaged(home: &Path, bytes: &[u8]) -> Result<bool> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err("Managed plugin policy exceeds 256 KiB".into());
+    }
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| "Managed plugin policy must be UTF-8".to_owned())?;
+    parse(text)?;
+    let path = home.join(PACKAGED_FILE_NAME);
+    if fs::read(&path).is_ok_and(|current| current == bytes) {
+        return Ok(false);
+    }
+    fs::create_dir_all(home).map_err(err)?;
+    let mut file = tempfile::NamedTempFile::new_in(home).map_err(err)?;
+    file.write_all(bytes).map_err(err)?;
+    file.persist(&path).map_err(|e| err(e.error))?;
+    Ok(true)
 }
 
 fn read(path: &Path) -> Result<Option<String>> {
@@ -840,58 +859,72 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_the_packaged_policy_only_without_a_file() {
+    fn falls_back_to_the_stored_packaged_policy_only_without_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join(FILE_NAME);
+        let stored = dir.path().join(PACKAGED_FILE_NAME);
         let empty = catalog(vec![]);
-        let packaged = policy(&[entry("acme.packaged")]);
-        assert_eq!(effective(dir.path(), None, "", &empty), Managed::Absent);
+        assert_eq!(effective(dir.path(), None, true, &empty), Managed::Absent);
 
-        let Managed::Ready { path, plugins, .. } = effective(dir.path(), None, &packaged, &empty)
-        else {
+        fs::write(&stored, policy(&[entry("acme.packaged")])).unwrap();
+        assert_eq!(effective(dir.path(), None, false, &empty), Managed::Absent);
+        let Managed::Ready { path, plugins, .. } = effective(dir.path(), None, true, &empty) else {
             panic!("expected the packaged policy");
         };
-        assert_eq!(path, PACKAGED_LABEL);
+        assert_eq!(path, stored.display().to_string());
         assert_eq!(plugins[0].plugin.id, "acme.packaged");
         assert_eq!(plugins[0].state, ManagedState::Missing);
         assert_eq!(
-            effective(dir.path(), Some("".into()), &packaged, &empty),
-            effective(dir.path(), None, &packaged, &empty)
+            effective(dir.path(), Some("".into()), true, &empty),
+            effective(dir.path(), None, true, &empty)
         );
 
-        assert!(matches!(
-            effective(dir.path(), None, "{", &empty),
-            Managed::Invalid { path, .. } if path == PACKAGED_LABEL
-        ));
-
         fs::write(&file, policy(&[entry("acme.file")])).unwrap();
-        let Managed::Ready { plugins, .. } = effective(dir.path(), None, &packaged, &empty) else {
+        let Managed::Ready { plugins, .. } = effective(dir.path(), None, true, &empty) else {
             panic!("expected the file");
         };
         assert_eq!(plugins[0].plugin.id, "acme.file");
         fs::write(&file, "{").unwrap();
         assert!(matches!(
-            effective(dir.path(), None, &packaged, &empty),
-            Managed::Invalid { path, .. } if path != PACKAGED_LABEL
+            effective(dir.path(), None, true, &empty),
+            Managed::Invalid { path, .. } if path == file.display().to_string()
         ));
 
         #[cfg(unix)]
         {
             let missing = dir.path().join("missing.json");
             assert_eq!(
-                effective(dir.path(), Some(missing.into()), &packaged, &empty),
+                effective(dir.path(), Some(missing.into()), true, &empty),
                 Managed::Absent
             );
         }
     }
 
     #[test]
-    fn packaged_policy_is_usable() {
-        if PACKAGED.is_empty() {
-            return;
+    fn stores_only_usable_packaged_policies() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("app");
+        let stored = home.join(PACKAGED_FILE_NAME);
+        let good = policy(&[entry("acme.one")]);
+        assert_eq!(store_packaged(&home, good.as_bytes()), Ok(true));
+        assert_eq!(fs::read_to_string(&stored).unwrap(), good);
+        assert_eq!(store_packaged(&home, good.as_bytes()), Ok(false));
+
+        let oversized = format!("{good}{}", " ".repeat(MAX_BYTES as usize));
+        for bad in [
+            b"{".as_slice(),
+            br#"{"version":2,"source":"Acme IT","plugins":[]}"#,
+            &[0xff, 0xfe],
+            oversized.as_bytes(),
+        ] {
+            assert!(store_packaged(&home, bad).is_err());
+            assert_eq!(fs::read_to_string(&stored).unwrap(), good);
         }
-        let policy = parse(PACKAGED).expect("BUZZ_BUILD_MANAGED_PLUGINS is not a usable policy");
-        assert!(policy.problems.is_empty(), "{:?}", policy.problems);
+
+        let next = policy(&[entry("acme.two")]);
+        assert_eq!(store_packaged(&home, next.as_bytes()), Ok(true));
+        assert_eq!(fs::read_to_string(&stored).unwrap(), next);
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 1);
     }
 
     #[test]

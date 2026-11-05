@@ -10,28 +10,32 @@ mod federated_identity_config;
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
 const BUILDERLAB_API_BASE_PATH_KEY: &str = "BUZZ_BUILDERLAB_API_BASE_PATH";
-const MANAGED_PLUGINS_KEY: &str = "BUZZ_BUILD_MANAGED_PLUGINS";
-const MANAGED_PLUGINS_MAX_BYTES: usize = 256 * 1024;
+const MANAGED_PLUGINS_URL_KEY: &str = "BUZZ_BUILD_MANAGED_PLUGINS_URL";
+const MANAGED_PLUGINS_URL_MAX_CHARS: usize = 2048;
 
-/// Compact JSON for `rustc-env`; the plugin manager validates the policy itself.
-fn packaged_managed_plugins(local: &Path, process: Option<String>) -> Result<String, &'static str> {
-    let values = build_env::load(local, &[MANAGED_PLUGINS_KEY], |_| process.clone())?;
+fn packaged_managed_plugins_url(
+    local: &Path,
+    process: Option<String>,
+) -> Result<String, &'static str> {
+    let values = build_env::load(local, &[MANAGED_PLUGINS_URL_KEY], |_| process.clone())?;
     let raw = values
-        .get(MANAGED_PLUGINS_KEY)
-        .map(String::as_str)
+        .get(MANAGED_PLUGINS_URL_KEY)
+        .map(|value| value.trim())
         .unwrap_or("");
-    if raw.trim().is_empty() {
+    if raw.is_empty() {
         return Ok(String::new());
     }
-    if raw.len() > MANAGED_PLUGINS_MAX_BYTES {
-        return Err("BUZZ_BUILD_MANAGED_PLUGINS exceeds 256 KiB");
+    let url = url::Url::parse(raw).map_err(|_| "BUZZ_BUILD_MANAGED_PLUGINS_URL is not a URL")?;
+    if url.scheme() != "https"
+        || url.host_str().is_none_or(str::is_empty)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.as_str().len() > MANAGED_PLUGINS_URL_MAX_CHARS
+    {
+        return Err("BUZZ_BUILD_MANAGED_PLUGINS_URL must be an https URL without credentials or a fragment, at most 2048 characters");
     }
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(value @ serde_json::Value::Object(_)) => {
-            Ok(serde_json::to_string(&value).expect("JSON value"))
-        }
-        _ => Err("BUZZ_BUILD_MANAGED_PLUGINS must be a managed plugin policy JSON object"),
-    }
+    Ok(url.into())
 }
 
 fn builderlab_target(
@@ -108,7 +112,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", local.display());
     println!("cargo:rerun-if-env-changed={BUILDERLAB_URL_KEY}");
     println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_DOMAIN_KEY}");
-    println!("cargo:rerun-if-env-changed={MANAGED_PLUGINS_KEY}");
+    println!("cargo:rerun-if-env-changed={MANAGED_PLUGINS_URL_KEY}");
     println!(
         "cargo:rerun-if-changed={}",
         root.join("crates/build_env.rs").display()
@@ -156,9 +160,9 @@ fn main() {
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
     println!("cargo:rustc-env={BUILDERLAB_API_BASE_PATH_KEY}={api_base_path}");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_APPS_DOMAIN={apps_domain}");
-    let managed = packaged_managed_plugins(&local, process(MANAGED_PLUGINS_KEY))
-        .expect("Invalid packaged managed plugin policy");
-    println!("cargo:rustc-env={MANAGED_PLUGINS_KEY}={managed}");
+    let managed = packaged_managed_plugins_url(&local, process(MANAGED_PLUGINS_URL_KEY))
+        .expect("Invalid packaged managed plugin policy URL");
+    println!("cargo:rustc-env={MANAGED_PLUGINS_URL_KEY}={managed}");
 }
 
 #[cfg(test)]
@@ -166,33 +170,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn packaged_managed_plugins_compacts_an_object_and_rejects_anything_else() {
+    fn packaged_managed_plugins_url_accepts_only_plain_https() {
         let directory = tempfile::tempdir().unwrap();
         let local = directory.path().join(".env.local");
-        assert_eq!(packaged_managed_plugins(&local, None).unwrap(), "");
+        assert_eq!(packaged_managed_plugins_url(&local, None).unwrap(), "");
         assert_eq!(
-            packaged_managed_plugins(&local, Some(" \n".into())).unwrap(),
+            packaged_managed_plugins_url(&local, Some(" \n".into())).unwrap(),
             ""
         );
         assert_eq!(
-            packaged_managed_plugins(&local, Some("{\n  \"version\": 1\n}".into())).unwrap(),
-            r#"{"version":1}"#
+            packaged_managed_plugins_url(
+                &local,
+                Some(" https://plugins.example/policy.json?v=1 ".into())
+            )
+            .unwrap(),
+            "https://plugins.example/policy.json?v=1"
         );
-        for raw in ["{", "[]", "1", "\"text\""] {
-            assert!(packaged_managed_plugins(&local, Some(raw.into())).is_err());
+        for raw in [
+            "plugins.example/policy.json",
+            "http://plugins.example/policy.json",
+            "file:///etc/policy.json",
+            "https://user:secret@plugins.example/policy.json",
+            "https://plugins.example/policy.json#latest",
+        ] {
+            assert!(
+                packaged_managed_plugins_url(&local, Some(raw.into())).is_err(),
+                "{raw}"
+            );
         }
-        assert!(packaged_managed_plugins(
+        assert!(packaged_managed_plugins_url(
             &local,
-            Some(format!(
-                "{{\"x\":\"{}\"}}",
-                "a".repeat(MANAGED_PLUGINS_MAX_BYTES)
-            ))
+            Some(format!("https://plugins.example/{}", "a".repeat(2048)))
         )
         .is_err());
-        std::fs::write(&local, "BUZZ_BUILD_MANAGED_PLUGINS='{\"version\":1}'\n").unwrap();
+        std::fs::write(
+            &local,
+            "BUZZ_BUILD_MANAGED_PLUGINS_URL=https://plugins.example/policy.json\n",
+        )
+        .unwrap();
         assert_eq!(
-            packaged_managed_plugins(&local, None).unwrap(),
-            r#"{"version":1}"#
+            packaged_managed_plugins_url(&local, None).unwrap(),
+            "https://plugins.example/policy.json"
         );
     }
 

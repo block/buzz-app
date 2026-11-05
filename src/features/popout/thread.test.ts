@@ -6,6 +6,8 @@ import type { ThreadSnapshot } from "../relay/threads";
 import { createHuddleComposerOwner } from "../huddle/composer-owner";
 import { createHuddleComposerClient } from "../huddle/composer-client";
 import { createPopoutThread } from "./thread";
+import type { LiveCallbacks } from "../relay/live";
+import { keypair, message, roster, scriptedTransport } from "../relay/testing";
 
 const clean: (() => void)[] = [];
 afterEach(() => {
@@ -13,6 +15,41 @@ afterEach(() => {
 });
 const ROOT = "b".repeat(64);
 const VIEWER = "a".repeat(64);
+
+it("loads a seeded session thread on opening before offering replies", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const store = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  clean.push(store.dispose);
+  const root = message(viewer, "channel", "Root", 1);
+  live.receive([roster(relay, "channel", [viewer.pubkey]), root]);
+  const changed = vi.fn();
+  const thread = createPopoutThread(store.session, "channel", root.id, changed);
+  clean.push(thread.dispose);
+
+  // Seeded rows alone are not a completed thread read. Hold the actual relay
+  // request to prove the reply gate stays closed until its verified fold.
+  expect(thread.snapshot().root?.id).toBe(root.id);
+  expect(thread.writable()).toBe(false);
+  await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+  expect(thread.snapshot().status).toBe("loading");
+  const read = wire.next();
+  expect(read.filters[0]?.ids).toEqual([root.id]);
+  expect(read.filters[0]?.["#h"]).toEqual(["channel"]);
+  read.respond([root]);
+  await vi.waitFor(() => expect(thread.snapshot().status).toBe("ready"));
+  expect(thread.rootVerified()).toBe(true);
+  expect(thread.writable()).toBe(true);
+  expect(changed).toHaveBeenCalled();
+});
 
 /** A verified thread root in a stream whose summary carries no roster: the
  * common shape of a channel summary ("absent means unknown"). */

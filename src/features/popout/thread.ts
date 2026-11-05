@@ -48,6 +48,10 @@ export function createPopoutThread(
   let thread: ThreadView | undefined;
   try {
     thread = session.thread(channelId, rootId);
+    // A session thread may contain seeded rows while still idle. Start its
+    // verified read before subscribing: refresh publishes loading synchronously,
+    // while the caller is still constructing this window's owner.
+    void thread.refresh().catch(() => {});
   } catch (cause) {
     error =
       cause instanceof Error ? cause.message : "Couldn’t open this thread.";

@@ -154,8 +154,8 @@ it("bounds opening frames by encoded size and forgets them with session media", 
 });
 
 it("bounds decoded images by size and owner and forgets them with session media", () => {
-  // 16 MiB decoded each; the 128 MiB budget holds eight.
-  const image = (side = 2048) =>
+  // 64 MiB decoded each, the largest retained; the 512 MiB budget holds eight.
+  const image = (side = 4096) =>
     ({ naturalWidth: side, naturalHeight: side }) as HTMLImageElement;
   const owner = {};
   createMediaPreparation().dispose();

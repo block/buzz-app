@@ -84,7 +84,9 @@ export function rememberOpeningFrame(
  * and WebKit refetches custom-scheme images for every element. Only the
  * retaining owner (session) can claim one. Bounded by decoded size; disposing
  * session media forgets them and refuses retention that began before. */
-const DECODED_IMAGE_BUDGET = 128 * 1024 * 1024;
+const DECODED_IMAGE_BUDGET = 512 * 1024 * 1024;
+// 16 MP; a larger original would push out many smaller ones.
+const DECODED_IMAGE_LIMIT = 64 * 1024 * 1024;
 const decodedImages = new Map<
   string,
   { owner: WeakRef<object>; image: HTMLImageElement; bytes: number }
@@ -119,11 +121,7 @@ export function retainDecodedImage(
   capture: number,
 ) {
   const bytes = image.naturalWidth * image.naturalHeight * 4;
-  if (
-    capture !== decodedImageScope ||
-    !bytes ||
-    bytes > DECODED_IMAGE_BUDGET / 2
-  )
+  if (capture !== decodedImageScope || !bytes || bytes > DECODED_IMAGE_LIMIT)
     return;
   forgetDecodedImage(source);
   decodedImages.set(source, { owner: new WeakRef(owner), image, bytes });

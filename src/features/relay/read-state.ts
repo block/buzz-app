@@ -615,8 +615,7 @@ export function createReadState({
       clearTimeout(timer);
       timer = undefined;
     }
-    // A missing capacity basis means this flush reads a snapshot first.
-    const signal = budget(!snapshotSizes && snapshotted());
+    let signal = budget(false);
     const sign = host.sign;
     const task = queue(async () => {
       try {
@@ -628,6 +627,9 @@ export function createReadState({
           attemptedRevision = journal.revision;
           // A restart or gap leaves no capacity basis: take one before any send.
           if (!snapshotSizes && snapshotted() && reader.readStateSnapshot) {
+            // Decided here, not at the call: a gap while this flush waited
+            // can drop the basis. The lock only uses its signal to acquire.
+            signal = budget(true);
             const generation = epoch;
             const observed = await reader.readStateSnapshot({
               signal,

@@ -1606,7 +1606,22 @@ describe("publication fences", () => {
       query: async () => f.reader.read(),
       readStateSnapshot: snapshots,
     });
-    const owner = snapshotted(f, [])({ reader: relay.reader });
+    // A publisher lock that holds the flush until the test opens it.
+    let entered!: () => void;
+    let open!: () => void;
+    const entry = new Promise<void>((resolve) => (entered = resolve));
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const owner = snapshotted(
+      f,
+      [],
+    )({
+      reader: relay.reader,
+      lock: async (_signal, work) => {
+        entered();
+        await gate;
+        return work();
+      },
+    });
     await owner.ready;
     const refreshed = owner.refresh();
     await vi.advanceTimersByTimeAsync(25_000);
@@ -1615,10 +1630,13 @@ describe("publication fences", () => {
       status: "reconciled",
       completeness: "snapshot",
     });
-    // A gap drops the capacity basis, so the next send reads a snapshot first.
-    owner.stale();
+    // A gap while the send waits for the lock drops the capacity basis it
+    // started with, so it reads a snapshot first.
     await owner.read("room", T, () => true);
     const flushed = owner.flush();
+    await entry;
+    owner.stale();
+    open();
     await vi.advanceTimersByTimeAsync(25_000);
     await flushed;
     expect(snapshots).toHaveBeenCalledTimes(2);

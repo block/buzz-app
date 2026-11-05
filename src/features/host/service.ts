@@ -155,7 +155,7 @@ export type McpApproval = Readonly<{
   viewer: string;
   agent: string;
   community: string;
-  scopes: readonly ("read" | "post")[];
+  scopes: readonly ("read" | "post" | "create")[];
 }>;
 export type McpPairing = Readonly<{
   id: string;

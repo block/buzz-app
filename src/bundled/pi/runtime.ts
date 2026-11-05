@@ -27,6 +27,7 @@ import {
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
@@ -1314,7 +1315,15 @@ export class PiRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const project = (await reading)?.section;
+    const signingAuthority = reads?.workflowAuthority();
+    const [names, project] = await Promise.all([
+      readAuthorNames(
+        reads,
+        [event, ...unseen.slice(-CONTEXT_LIMIT)],
+        signingAuthority,
+      ),
+      reading.then((read) => read?.section),
+    ]);
     return {
       event,
       scope,
@@ -1327,6 +1336,8 @@ export class PiRuntime {
       ...(thread ? { thread } : {}),
       context: unseen,
       total: earlier.length + 1,
+      names,
+      ...(signingAuthority ? { signingAuthority } : {}),
       ...(project ? { project } : {}),
     };
   }

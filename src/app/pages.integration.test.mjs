@@ -137,12 +137,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const inbox = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.inbox");
-    assert.equal(inbox.title, "Inbox");
+    assert.equal(inbox.title, "Activity");
     assert.equal(inbox.layout, "workspace");
     assert.equal(inbox.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(inbox.component)),
-      /Choose a community to see your inbox/,
+      /Choose a community to see your activity/,
     );
     const unread = services.relay.snapshot().session.unread;
     await services.plugins.change("disable", "buzz.inbox");
@@ -179,6 +179,33 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .find((card) => card.key === "buzz.channels/templates")?.group,
       "App",
     );
+    // The GitHub plugin keeps rendering and tools while its panel declines URLs.
+    const { setOpenGitHubLinksInBuzz } = await vite.ssrLoadModule(
+      "/src/bundled/github/link-preference.ts",
+    );
+    const githubTargets = [
+      "https://github.com/block/buzz-app",
+      "https://github.com/block/buzz-app/pull/7",
+      "https://github.com/block/buzz-app/issues/7",
+      "https://github.com/block/buzz-app/commit/abcdef1",
+    ];
+    assert.equal(services.settingsCards.has("buzz.github/links"), false);
+    const githubSettings = services.settingsCards
+      .snapshot()
+      .filter((card) => card.pluginId === "buzz.github");
+    assert.equal(githubSettings.length, 1);
+    assert.equal(githubSettings[0].key, "buzz.github/authors");
+    assert.equal(githubSettings[0].title, "GitHub");
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
+    const githubLinks = services.conversation.links.snapshot();
+    setOpenGitHubLinksInBuzz(false);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target), undefined);
+    assert.deepEqual(services.conversation.links.snapshot(), githubLinks);
+    setOpenGitHubLinksInBuzz(true);
+    for (const target of githubTargets)
+      assert.equal(services.panels.resolve(target)?.pluginId, "buzz.github");
     // Conversation presentation is host-owned in Appearance, not a second plugin page.
     assert.equal(services.settingsCards.has("buzz.channels/messages"), false);
     const pairingCard = services.settingsCards

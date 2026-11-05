@@ -433,6 +433,10 @@
     display: flex;
     margin-inline-start: auto;
   }
+  /* The hint fits the small capsule's text line instead of growing the topbar. */
+  .shell-search-shortcut .buzz-keyboard-shortcut {
+    padding-block: 0;
+  }
   @container (width < 10rem) {
     .shell-search-shortcut {
       display: none;

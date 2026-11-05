@@ -35,14 +35,22 @@ function callbackPage(status) {
       .replace("<!-- {{script}} -->", `<script>${script}</script>`)
       .replace(
         "<!-- {{pageBrand}} -->",
-        `<div class="brand" role="img" aria-label="Builderlab">${readFileSync(
-          new URL("../public/builderlab-mark.svg", import.meta.url),
-        ).toString()}</div>`,
+        read("brand.html")
+          .toString()
+          .replace(
+            "{{mark}}",
+            readFileSync(
+              new URL("../public/builderlab-mark.svg", import.meta.url),
+            ).toString(),
+          )
+          .replace("{{label}}", ""),
       )
       .replace("<!-- {{cardBrand}} -->", "")
       .replace(
         "<!-- {{artwork}} -->",
-        `<div class="artwork" aria-hidden="true"><img src="data:image/webp;base64,${read("cubes.webp").toString("base64")}" alt=""></div>`,
+        read("artwork.html")
+          .toString()
+          .replace("{{artwork}}", read("cubes.webp").toString("base64")),
       )
       .replace("<!-- {{closeHint}} -->", read("close-hint.html").toString())
       .replaceAll("{{provider}}", "Builderlab")

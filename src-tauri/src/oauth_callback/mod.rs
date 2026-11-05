@@ -430,7 +430,7 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
             base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
         (
             format!("<script>{script}</script>"),
-            format!("<div class=\"artwork\" aria-hidden=\"true\"><img src=\"data:image/webp;base64,{artwork}\" alt=\"\"></div>"),
+            include_str!("artwork.html").replace("{{artwork}}", &artwork),
         )
     } else {
         (String::new(), String::new())
@@ -442,8 +442,10 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
         include_str!("../../../public/buzz-mark.svg")
     };
     let label = if builderlab { "" } else { "<span>Buzz</span>" };
-    let brand =
-        format!("<div class=\"brand\" role=\"img\" aria-label=\"{provider}\">{mark}{label}</div>");
+    let brand = include_str!("brand.html")
+        .replace("{{provider}}", provider)
+        .replace("{{mark}}", mark)
+        .replace("{{label}}", label);
     // Replace whole HTML comments so the template remains valid on its own.
     let body = include_str!("page.html")
         .replace(

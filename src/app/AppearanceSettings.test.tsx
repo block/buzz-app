@@ -13,6 +13,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { Context } from "@deepseek-ai/cordis";
+import { SettingsCardsService } from "../features/settings/service";
 
 import {
   setThreadPlacementPreference,
@@ -521,3 +523,56 @@ it.each([
     ).toBe(shown);
   },
 );
+
+it("shows Appearance cards between Interface and Conversations until their plugin stops", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const cards = new SettingsCardsService(root);
+  const scope = root.extend({
+    pluginOwner: { id: "example", revision: "one" },
+  });
+  let active: (() => boolean) | undefined;
+  const fiber = scope.plugin((ctx) => {
+    ctx.settingsCards.register({
+      id: "theme",
+      title: "Theme",
+      section: "appearance",
+      component: (props) => {
+        active = props.active;
+        return <p>Theme controls</p>;
+      },
+    });
+    ctx.settingsCards.register({
+      id: "elsewhere",
+      title: "Elsewhere",
+      group: "App",
+      component: () => <p>Elsewhere controls</p>,
+    });
+  });
+  await fiber.await();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  render(<AppearanceSettings appearance={appearance} cards={cards} />);
+
+  const headings = screen
+    .getAllByRole("heading")
+    .map((heading) => heading.textContent);
+  expect(headings.indexOf("Theme")).toBeGreaterThan(
+    headings.indexOf("Interface"),
+  );
+  expect(headings.indexOf("Theme")).toBeLessThan(
+    headings.indexOf("Conversations"),
+  );
+  expect(screen.getByText("Theme controls")).toBeInTheDocument();
+  expect(screen.queryByText("Elsewhere controls")).toBeNull();
+  expect(active?.()).toBe(true);
+
+  await act(() => fiber.dispose());
+  expect(screen.queryByText("Theme controls")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Theme" })).toBeNull();
+  expect(active?.()).toBe(false);
+  await root.fiber.dispose();
+});

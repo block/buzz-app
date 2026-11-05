@@ -31,6 +31,7 @@ const cards = [
   card("example/groups"),
   card("other/groups"),
   card("example/membership", { section: "administration" }),
+  card("example/theme", { section: "appearance" }),
   card("example/hosted", { group: "Communities" }),
   card("block.builderlab/login", {
     group: "Plugins",

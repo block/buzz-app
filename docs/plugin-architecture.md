@@ -896,6 +896,11 @@ labelled navigation group instead; the existing `"App"` group appears as **Buzz*
 Adding `personal: true` also lists a community card under **Personal space**, for
 cards such as Pair mobile that collect their own community address; it cannot be
 combined with `group` or `section`.
+Adding `section: "appearance"` shows the card inside **Buzz → Appearance**,
+after the Interface group, under an `InlineHeader` with its title, rather than as
+its own destination. Such a card supplies its group's controls, such as a
+`SettingsGroup` of preference rows, without a content `Header`, and cannot be
+combined with `group` or `personal`.
 Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
 Cards receive `active()` and use ordinary

@@ -19,6 +19,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { Appearance } from "../shared/theme/service";
+import type { SettingsCards } from "../features/settings/service";
+import { OwnedContribution } from "../plugins/OwnedContribution";
 
 import {
   setThreadPlacementPreference,
@@ -36,16 +38,26 @@ import {
 import { macWebKit } from "../features/messages/mac-webkit";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 
+const none: ReturnType<SettingsCards["snapshot"]> = [];
+const noCards: SettingsCards["snapshot"] = () => none;
+const noSubscription: SettingsCards["subscribe"] = () => () => {};
+
 export function AppearanceSettings({
   appearance,
   active = true,
+  cards,
   autocorrectAvailable = macWebKit(),
 }: {
   appearance: Appearance;
   active?: boolean;
+  cards?: SettingsCards | undefined;
   /** Only Mac WebKit applies the composer's autocorrect attribute. */
   autocorrectAvailable?: boolean;
 }) {
+  const contributed = useSyncExternalStore(
+    cards?.subscribe ?? noSubscription,
+    cards?.snapshot ?? noCards,
+  ).filter((card) => card.section === "appearance");
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const { placement, unsaved } = useThreadPlacementPreference();
@@ -235,6 +247,18 @@ export function AppearanceSettings({
           />
         </SettingsGroup>
       </div>
+      {cards &&
+        contributed.map((card) => (
+          <div key={card.key} className="mt-section-gap">
+            <InlineHeader title={card.title} />
+            <OwnedContribution entry={card} registry={cards}>
+              {(entry, live) => {
+                const Card = entry.component;
+                return <Card active={live} />;
+              }}
+            </OwnedContribution>
+          </div>
+        ))}
       <div className="mt-section-gap">
         <InlineHeader title="Conversations" />
         <SettingsGroup>

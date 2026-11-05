@@ -123,3 +123,43 @@ it("refuses a Personal-space card that also claims a group or section", () => {
     "Settings cards need an id, title and component",
   );
 });
+
+it("accepts an Appearance card and refuses unknown or conflicting sections", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const cards = new SettingsCardsService(root);
+  const card = { id: "theme", title: "Theme", component: () => null };
+  const fiber = root
+    .extend({ pluginOwner: { id: "example", revision: "one" } })
+    .plugin((ctx) => {
+      expect(() =>
+        ctx.settingsCards.register({
+          ...card,
+          section: "elsewhere" as "appearance",
+        }),
+      ).toThrow("Settings cards need an id, title and component");
+      expect(() =>
+        ctx.settingsCards.register({
+          ...card,
+          section: "appearance",
+          group: "App",
+        }),
+      ).toThrow("Settings cards need an id, title and component");
+      expect(() =>
+        ctx.settingsCards.register({
+          ...card,
+          section: "appearance",
+          personal: true,
+        }),
+      ).toThrow("Settings cards need an id, title and component");
+      ctx.settingsCards.register({ ...card, section: "appearance" });
+    });
+  await fiber.await();
+  expect(cards.snapshot().map((entry) => entry.section)).toEqual([
+    "appearance",
+  ]);
+  await root.fiber.dispose();
+});

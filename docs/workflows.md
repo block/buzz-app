@@ -21,7 +21,19 @@ See the [capability contract](../src/features/workflows/types.ts).
   selected. Each active trigger has a separate clear icon.
   Owner and Status use inline radios;
   Trigger and Channels use inline checkboxes. Popups have no Clear action.
-  My workflows matches the current viewer's saved workflow ownership.
+  My workflows is the default and matches the current viewer's saved workflow
+  ownership. All channel workflows includes other owners in participating channels;
+  the Owner trigger names whichever option is selected. When only My workflows
+  hides other owners' workflows, the empty state says so and offers All channel
+  workflows.
+  Rows and their details show the owner's current identity name, with an abbreviated
+  public-key fallback while a profile is unavailable or nameless, including through
+  the active naming policy. Fallbacks lengthen their suffix to stay distinct across
+  visible owners. Visible owners hydrate together in background profile
+  batches of up to 500 identities. Narrow rows reflow their artwork, text, and
+  independent controls as text grows. Ownership and management
+  permissions remain tied to the signing identity, including agent-owned workflows.
+  Clearing the owner filter or Clear all shows all channel workflows.
   Enabled and Disabled match saved configuration (omitted means enabled), not
   confirmed runtime activity; unreadable configurations are excluded from both.
   Trigger filters use the same saved-type interpretation as the workflow rows:
@@ -198,10 +210,11 @@ writes require separate consent; no backend work belongs to this plugin PR.
 
 Relay-attested workflow messages show an automation icon and **Workflow · owned
 by …**, not a message authored by the owner. The full message byline links the
-owner profile and discloses the separate relay signing key. Compact Search,
-Inbox/activity, link previews and notification titles retain the automation label;
-opening the message provides the full disclosure. Notifications use cached names
-only and do not add profile reads.
+owner profile. Its information icon opens a short card, on pointer rest or click,
+explaining that the owner set up the workflow but did not send the message
+personally; it shows no keys. Compact Search, Inbox/activity, link previews and
+notification titles retain the automation label; opening the message shows the
+full byline. Notifications use cached names only and do not add profile reads.
 
 Attribution requires a verified kind-9 event from the selected community's
 explicit NIP-11 `self`, exactly one canonical `buzz:workflow=true` marker and one
@@ -214,7 +227,8 @@ The owner tag identifies the identity that scheduled the workflow, not the autho
 of every rendered word. Templates can include trigger-controlled values; those
 values do not acquire the owner's prompt authority.
 
-Claude Code and Codex also use this proof to authorize delegated workflow mentions.
+Claude Code, Codex, Pi and Goose also use this proof to authorize delegated
+workflow mentions. Agent types that plugins bring do not.
 The receiving agent's ready community session must supply the explicit relay
 authority. The workflow owner must be that agent's owner, or an agent whose
 admitted kind-0 profile cryptographically proves the same owner through NIP-OA.
@@ -239,8 +253,8 @@ promoted to `self`, and no new trusted storage is introduced. Signer-based searc
 and Inbox sender filters and relay-reported participant
 summaries are unchanged by workflow presentation. Channel/thread rows retain the
 effective-author attribution and owner edit/delete behavior added separately in
-#661; when that author differs from the signer, the row carries a separate signing
-key so the disclosure still identifies the actual relay. Thread and media views
+#661; when that author differs from the signer, the row keeps the signing key
+for row identity only and does not display it. Thread and media views
 request workflow-owner profiles through the existing background profile directory.
 The workflow proof controls the automation label and the delegated-mention gate
 above; it does not control main's effective message-author policy. With explicit

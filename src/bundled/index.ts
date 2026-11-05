@@ -24,6 +24,8 @@ import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import agentsManifest from "./agents/manifest.json";
 import * as agents from "./agents";
+import watchingManifest from "./watching/manifest.json";
+import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
 import codexManifest from "./codex/manifest.json";
@@ -42,6 +44,8 @@ import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
+import focusManifest from "./focus/manifest.json";
+import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
@@ -51,14 +55,14 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import hostedManifest from "./hosted-communities/manifest.json";
-import * as hosted from "./hosted-communities";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
 import typesafeManifest from "./typesafe/manifest.json";
 import * as typesafe from "./typesafe";
+import pluginDevelopmentManifest from "./plugin-development/manifest.json";
+import * as pluginDevelopment from "./plugin-development";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -162,7 +166,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...remindersManifest, apiVersion: 1 },
     module: reminders,
-    enabledByDefault: true,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...focusManifest, apiVersion: 1 },
+    module: focus,
+    enabledByDefault: false,
   },
   {
     manifest: { ...reposManifest, apiVersion: 1 },
@@ -172,6 +181,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...agentsManifest, apiVersion: 1 },
     module: agents,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...watchingManifest, apiVersion: 1 },
+    module: watching,
     enabledByDefault: true,
   },
   {
@@ -197,12 +211,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },
     module: workflows,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...hostedManifest, apiVersion: 1 },
-    module: hosted,
-    enabledByDefault: true,
+    enabledByDefault: false,
   },
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
@@ -217,6 +226,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...typesafeManifest, apiVersion: 1 },
     module: typesafe,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...pluginDevelopmentManifest, apiVersion: 1 },
+    module: pluginDevelopment,
     enabledByDefault: true,
   },
 ];

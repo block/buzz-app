@@ -10,6 +10,14 @@ required, including when older preferences saved it disabled. Navigation removes
 disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
+A page or Settings section already on screen is not replaced when a later
+attempt on the same visit (a retry, a same-target open, a reopen after sign-in)
+reaches the host's own deadline without an answer: it stays, and may still
+update its address and answer late. A failure the page reports itself (a timeout
+included), lost access, a removed page and a rejected incoming link
+still show the host's failure, as does that timeout when it passes while the
+host shows its loading state in place of the page. Loading that starts later over
+a kept page shows the loading state, not the failure.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
 Settings sections are destinations presented as a modal over the last workspace.
 The host retains that workspace presentation while Settings is current, without
@@ -65,11 +73,12 @@ semantic tokens, UI authoring rules and the local component reference.
   a shared Popover containing NavigationItem rows with their existing context menus;
   this richer picker retains community actions as well as switching. Arrow keys,
   Home and End move focus. Join and Create community appear at the bottom; creation
-  opens the registered Hosted communities settings flow. Dialogs return focus to
+  opens the registered Builderlab settings flow. Dialogs return focus to
   the surviving community trigger.
   Switching pages preserves the desktop sidebar’s current visibility. The manual
   collapse toggle remains available across destinations.
-  The conversation sidebar retains its saved width and resize behavior.
+  The conversation sidebar and page-contributed sidebars share one saved
+  per-community width and resize behavior.
   Settings opens in the shared expanded Dialog with an integrated sidebar; the
   workspace remains mounted underneath. Its portal fills the shell's workspace
   frame (navigation, main content and companion panels); the popup centers inside
@@ -254,7 +263,12 @@ avatar. Search, sidebar and history controls use unfilled ghost icon buttons wit
 Their hover fills remain translucent over the colored backdrop.
 Pressed fills are slightly stronger; icons keep full opacity. Plugin launchers
 use the shared glass style.
-Bestie is available in the Messages sidebar when its plugin is enabled.
+Bestie is available in the Messages sidebar when its plugin is enabled. An
+account-saved Bestie decorates that row with the agent's identity and promotes
+its exact one-to-one DM there. Search Buzz shows the same agent identity with
+**Bestie** as supporting text and matches either name. See
+[`solo/README.md`](solo/README.md) and the bundled Bestie README for selection,
+DM promotion and hosted-setup fallback ownership.
 `ProfileButton.tsx` uses the selected community's profile when connected and
 local defaults in Personal space. Its anchored account menu groups profile and
 status controls above Appearance, Plugins and Settings. The avatar inside the
@@ -435,6 +449,13 @@ Windows/Linux consume held-key repeats without closing further tabs or the windo
 Window buttons and Alt+F4 always retain their window-only behavior. The bottom
 terminal drawer keeps its existing Cmd/Ctrl+J/Hide behavior. Browser-build
 shortcuts are unchanged.
+Shift+Escape asks "Mark everything as read?" in the shared `AlertDialog` (Cancel has
+initial focus; focus returns to the element that had it) and then runs the community
+menu's Mark all as read action and toasts. `MarkAllReadShortcut` registers it as a host
+shortcut only while the selected community's session is connected, and it is
+unavailable without `frontier-sync` or when no channel shows unread. It works while
+typing and yields to terminals and open dialogs. On a narrow layout, Escape that closes
+the navigation drawer is consumed, so it never also marks anything read.
 Feature-local details such as harness logs remain tied to their owning profile;
 closing that profile or losing authorization also removes its log tab.
 Right-click any channel tab and choose **Close all tabs** to close this channel's
@@ -477,9 +498,14 @@ immediately; the shared navigation selection background identifies the active ta
 Joined header separators meet the vertical dividers. The sidebar resize grip stays
 visible throughout a drag while its tooltip stays hidden. Desktop main/secondary
 dividers share that grip and support dragging, arrow keys (Shift for larger
-steps), Home/End, and double-click to reset. Each page retains its chosen split
-while the panel closes and reopens; widths clamp to the available space. Narrow
-overlay layouts hide this divider and keep their normal responsive sizing.
+steps), Home/End, and double-click to reset. Each page saves its chosen split on
+this device, per community and viewer workspace like the sidebar width, so it
+survives the panel closing, page switches, and restarts. While a companion is
+open, the right column keeps the companion's one width, default, and minimum on
+every page, including Messages; otherwise Messages keeps its own thread-panel
+width. Reset clears the saved width. Widths clamp to the
+available space. Narrow overlay layouts hide this divider and keep their normal
+responsive sizing.
 
 Pointer-opened secondary panels fade and slide in over 180ms with the shared
 strong ease-out curve. Desktop panels travel 12px on entry and close immediately,

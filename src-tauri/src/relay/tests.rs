@@ -241,6 +241,7 @@ async fn native_http_signs_exact_bytes_and_never_follows_redirects() {
     let body = r#"[{"kinds":[0],"limit":5}]"#;
     let result = send(
         &IdentityHost::fixture(),
+        None,
         url.clone(),
         "POST",
         Some(body.into()),
@@ -292,6 +293,7 @@ async fn memory_response_limit_rejects_before_generic_transport_budget() {
     let (url, task) = fixture_server(response);
     let result = send(
         &IdentityHost::fixture(),
+        None,
         url,
         "POST",
         Some("[]".into()),
@@ -327,6 +329,7 @@ fn managed_agent_deletion_is_owner_only_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -407,6 +410,7 @@ async fn catalog_signing_admits_maximum_escaped_content_through_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -515,12 +519,14 @@ fn isolated_agent_ipc_probe() {
     }
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     use tauri::Manager;
+    // The probe owns the spool dir, so it is removed when the probe returns
+    // or panics.
+    let spools = tempfile::tempdir().unwrap();
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .manage(Uploads::default())
-        .manage(Spools::new(Ok(
-            std::env::temp_dir().join(format!("buzz-spool-ipc-{}", uuid::Uuid::new_v4()))
-        )))
+        .manage(Spools::new(Ok(spools.path().to_owned())))
         .manage(crate::archive::ArchiveHost::default())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
@@ -533,6 +539,7 @@ fn isolated_agent_ipc_probe() {
             .join("agents/identities.json")),
         Err("unused".into()),
         false,
+        crate::federated_identity::agent::AgentTokens::unconfigured(),
     ));
     let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
         .build()
@@ -695,6 +702,8 @@ fn isolated_agent_ipc_probe() {
     verify(&event);
 
     let repository = format!("https://relay.test/git/{}/plugins", "a".repeat(64));
+    app.state::<FederatedIdentity>()
+        .discovered("wss://relay.test", false);
     let token = invoke(
         "relay_git_authorization",
         serde_json::json!({"community": "https://relay.test", "repository": repository}),
@@ -872,6 +881,7 @@ fn managed_agent_registration_signs_as_owner_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1007,6 +1017,7 @@ async fn workflow_get_is_authenticated_without_payload_and_never_redirects() {
     url.set_query(Some("limit=20"));
     let response = send(
         &IdentityHost::fixture(),
+        None,
         url.clone(),
         "GET",
         None,
@@ -1117,6 +1128,7 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1176,6 +1188,7 @@ fn channel_commands_sign_archive_and_unarchive_and_reject_malformed_tags_through
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1233,6 +1246,7 @@ fn creation_rejects_truncated_tags_through_existing_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -1796,6 +1810,7 @@ fn media_proxy_only_reaches_relay_blobs() {
         format!("https://relay.test/media/{hash}"),
         format!("https://relay.test/media/{hash}.png"),
         format!("https://relay.test:8443/media/{hash}.thumb.jpg"),
+        format!("https://relay.test/media/{hash}.thumb.webp"),
     ] {
         assert!(media_url(&target).is_some(), "{target}");
     }
@@ -1808,6 +1823,7 @@ fn media_proxy_only_reaches_relay_blobs() {
         format!("https://relay.test/media/{hash}#"),
         format!("https://relay.test/media/{hash}.png#buzz-anim=https%3A%2F%2Frelay.test%2Fmedia%2F{hash}.png"),
         format!("https://relay.test/media/{hash}.tar.gz"),
+        format!("https://relay.test/media/{hash}.thumb.png"),
         format!("https://relay.test/upload/{hash}"),
         format!("https://relay.test/media/{}", "A".repeat(64)),
         format!("https://relay.test/media/{hash}/../../query"),
@@ -2179,6 +2195,7 @@ async fn media_proxy_signs_a_fresh_get_and_forwards_only_the_range() {
     let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
     let response = fetch_media(
         &IdentityHost::fixture(),
+        None,
         url.clone(),
         Some("bytes=0-3".into()),
     )
@@ -2271,14 +2288,15 @@ async fn tiny_media_reads_share_one_signed_block_fetch() {
     let host = IdentityHost::fixture();
     // AVFoundation's opening reads, two of them racing from separate players.
     let (header, atom) = tokio::join!(
-        media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX),
-        media_blocks::read(&host, &url, 32, 39, WHOLE_VIDEO_MAX),
+        media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX),
+        media_blocks::read(&host, None, &url, 32, 39, WHOLE_VIDEO_MAX),
     );
     let (header, atom) = (header.unwrap(), atom.unwrap());
     assert_eq!(header.body(), &blob[0..8]);
     assert_eq!(atom.body(), &blob[32..40]);
     let tail = media_blocks::read(
         &host,
+        None,
         &url,
         2990,
         2990 + 4 * 1024 * 1024 - 1,
@@ -2308,7 +2326,7 @@ async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
         .join(&format!("/media/{}.mp4", "d".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let across = media_blocks::read(&host, &url, block - 4, block + 3, WHOLE_VIDEO_MAX)
+    let across = media_blocks::read(&host, None, &url, block - 4, block + 3, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(across.body(), &blob[block as usize - 4..block as usize + 4]);
@@ -2317,7 +2335,7 @@ async fn media_reads_span_blocks_and_stop_at_the_blob_end() {
         format!("bytes {}-{}/{}", block - 4, block + 3, block + 100)
     );
     assert_eq!(
-        media_blocks::read(&host, &url, block + 100, block + 200, WHOLE_VIDEO_MAX)
+        media_blocks::read(&host, None, &url, block + 100, block + 200, WHOLE_VIDEO_MAX)
             .await
             .unwrap_err(),
         416
@@ -2340,12 +2358,12 @@ async fn failed_media_blocks_are_fetched_again() {
         .unwrap();
     let host = IdentityHost::fixture();
     assert_eq!(
-        media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+        media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
             .await
             .unwrap_err(),
         503
     );
-    let retried = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let retried = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(retried.body(), &blob[..8]);
@@ -2406,7 +2424,7 @@ async fn range_ignoring_upstreams_keep_the_whole_response_fallback() {
             .unwrap();
         let host = IdentityHost::fixture();
         for _ in 0..2 {
-            let response = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+            let response = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
                 .await
                 .unwrap();
             assert_eq!(response.status(), 200);
@@ -2499,8 +2517,8 @@ async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
     let limit = WHOLE_VIDEO_MAX;
     // Two players open the video at once; they share one spool.
     let (header, tail) = tokio::join!(
-        media_blocks::read(&host, &url, 0, 7, limit),
-        media_blocks::read(&host, &url, length - 8, length + 100, limit),
+        media_blocks::read(&host, None, &url, 0, 7, limit),
+        media_blocks::read(&host, None, &url, length - 8, length + 100, limit),
     );
     let (header, tail) = (header.unwrap(), tail.unwrap());
     assert_eq!(header.status(), 206);
@@ -2518,7 +2536,7 @@ async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
         format!("bytes {}-{}/{length}", length - 8, length - 1)
     );
     // A seek across blocks reads the same file.
-    let seek = media_blocks::read(&host, &url, 2 * block - 4, 2 * block + 3, limit)
+    let seek = media_blocks::read(&host, None, &url, 2 * block - 4, 2 * block + 3, limit)
         .await
         .unwrap();
     assert_eq!(
@@ -2526,7 +2544,7 @@ async fn range_ignoring_videos_are_spooled_and_answered_as_exact_ranges() {
         &blob[2 * block as usize - 4..2 * block as usize + 4]
     );
     assert_eq!(
-        media_blocks::read(&host, &url, length, length + 8, limit)
+        media_blocks::read(&host, None, &url, length, length + 8, limit)
             .await
             .unwrap_err(),
         416
@@ -2553,7 +2571,7 @@ async fn whole_videos_follow_the_configured_limit_boundary() {
         let url = base
             .join(&format!("/media/{}.mp4", name.repeat(64)))
             .unwrap();
-        let read = media_blocks::read(&host, &url, length - 4, length - 1, limit).await;
+        let read = media_blocks::read(&host, None, &url, length - 4, length - 1, limit).await;
         match expected {
             Ok(()) => {
                 let read = read.unwrap();
@@ -2567,7 +2585,7 @@ async fn whole_videos_follow_the_configured_limit_boundary() {
                 assert_eq!(read.unwrap_err(), status, "{name}");
                 // A rejected video is fetched again, never answered from a spool.
                 assert_eq!(
-                    media_blocks::read(&host, &url, 0, 7, limit)
+                    media_blocks::read(&host, None, &url, 0, 7, limit)
                         .await
                         .unwrap_err(),
                     status
@@ -2591,7 +2609,7 @@ async fn truncated_whole_videos_fail_and_are_fetched_again() {
     let host = IdentityHost::fixture();
     for _ in 0..2 {
         assert_eq!(
-            media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX)
+            media_blocks::read(&host, None, &url, length - 4, length - 1, WHOLE_VIDEO_MAX)
                 .await
                 .unwrap_err(),
             502
@@ -2613,7 +2631,7 @@ async fn abandoned_whole_video_downloads_stop_and_delete_their_file() {
         .join(&format!("/media/{}.mp4", "8".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let first = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let first = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(first.body(), &blob[..8]);
@@ -2667,7 +2685,7 @@ async fn a_third_live_video_evicts_the_oldest_download_and_its_file() {
             .unwrap();
         let host = host.clone();
         tokio::spawn(async move {
-            media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await
+            media_blocks::read(&host, None, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await
         })
     };
     let first = load("a");
@@ -2741,9 +2759,9 @@ async fn concurrent_opens_of_one_new_video_evict_only_one_player() {
     let host = std::sync::Arc::new(IdentityHost::fixture());
     let load = |url: &Url, start: u64, end: u64| {
         let (host, url) = (host.clone(), url.clone());
-        tokio::spawn(
-            async move { media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await },
-        )
+        tokio::spawn(async move {
+            media_blocks::read(&host, None, &url, start, end, WHOLE_VIDEO_MAX).await
+        })
     };
     let first = load(&urls[0], length - 4, length - 1);
     spool_files_reach(1).await;
@@ -2808,7 +2826,9 @@ async fn a_closed_player_waiting_for_an_unknown_length_stops_the_download() {
     let host = std::sync::Arc::new(IdentityHost::fixture());
     let read = {
         let (host, url) = (host.clone(), url.clone());
-        tokio::spawn(async move { media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX).await })
+        tokio::spawn(
+            async move { media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX).await },
+        )
     };
     spool_files_reach(1).await;
     // The player's connection closes, dropping the read it waits on.
@@ -2829,12 +2849,12 @@ async fn a_closed_player_waiting_on_a_seek_stops_the_download() {
         .join(&format!("/media/{}.mp4", "a".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let first = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let first = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(first.body(), &blob[..8]);
     // A seek near the end waits for bytes; then the player closes.
-    let seek = media_blocks::read(&host, &url, length - 8, length - 1, WHOLE_VIDEO_MAX);
+    let seek = media_blocks::read(&host, None, &url, length - 8, length - 1, WHOLE_VIDEO_MAX);
     assert!(tokio::time::timeout(Duration::from_millis(500), seek)
         .await
         .is_err());
@@ -2853,7 +2873,7 @@ async fn a_waiting_read_keeps_a_slow_download_alive() {
         .join(&format!("/media/{}.mp4", "b".repeat(64)))
         .unwrap();
     let host = IdentityHost::fixture();
-    let read = media_blocks::read(&host, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await;
+    let read = media_blocks::read(&host, None, &url, length - 4, length - 1, WHOLE_VIDEO_MAX).await;
     assert_eq!(read.unwrap().body(), &blob[length as usize - 4..]);
     assert_eq!(hangups.load(std::sync::atomic::Ordering::SeqCst), 0);
     spool_files_deleted().await;
@@ -2905,13 +2925,13 @@ async fn invalid_partial_media_blocks_are_rejected_and_retried() {
     let host = IdentityHost::fixture();
     for status in expected.iter() {
         assert_eq!(
-            media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+            media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
                 .await
                 .unwrap_err(),
             *status
         );
     }
-    let read = media_blocks::read(&host, &url, 0, 7, WHOLE_VIDEO_MAX)
+    let read = media_blocks::read(&host, None, &url, 0, 7, WHOLE_VIDEO_MAX)
         .await
         .unwrap();
     assert_eq!(read.status(), 206);
@@ -2919,7 +2939,7 @@ async fn invalid_partial_media_blocks_are_rejected_and_retried() {
     assert_eq!(read.headers()["content-range"], "bytes 0-7/3000");
     // Rejections were never cached; the valid block now is.
     assert_eq!(
-        media_blocks::read(&host, &url, 2992, 2999, WHOLE_VIDEO_MAX)
+        media_blocks::read(&host, None, &url, 2992, 2999, WHOLE_VIDEO_MAX)
             .await
             .unwrap()
             .body(),
@@ -2938,7 +2958,7 @@ async fn media_proxy_passes_relay_denials_through_without_a_body() {
     );
     let url = base.join(&format!("/media/{}", "b".repeat(64))).unwrap();
     assert_eq!(
-        fetch_media(&IdentityHost::fixture(), url, None)
+        fetch_media(&IdentityHost::fixture(), None, url, None)
             .await
             .unwrap_err(),
         401
@@ -2958,18 +2978,34 @@ async fn upload(
     let path = directory.path().join("source");
     std::fs::write(&path, bytes).unwrap();
     let hash = upload_spool::hash_file(&path)?;
-    upload_file(host, url, kind, path, hash, progress).await
+    upload_file(host, None, url, kind, path, hash, progress).await
+}
+
+fn upload_descriptor(bytes: &[u8]) -> serde_json::Value {
+    let hash = format!("{:x}", Sha256::digest(bytes));
+    serde_json::json!({
+        "url": format!("/media/{hash}"),
+        "type": "application/octet-stream",
+        "sha256": hash,
+        "size": bytes.len(),
+    })
+}
+
+fn upload_reply(status: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 #[tokio::test]
 async fn upload_signs_the_exact_bytes_it_sends() {
-    let (base, task) = fixture_server(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
-    );
-    let url = base.join("/upload").unwrap();
     // ASCII: the fixture server compares lengths on decoded text.
     let body = b"PNG fixture bytes".to_vec();
     let hash = format!("{:x}", Sha256::digest(&body));
+    let descriptor = upload_descriptor(&body).to_string();
+    let (base, task) = fixture_server(upload_reply("201 Created", &descriptor));
+    let url = base.join("/upload").unwrap();
     let result = upload(
         &IdentityHost::fixture(),
         url.clone(),
@@ -2979,7 +3015,10 @@ async fn upload_signs_the_exact_bytes_it_sends() {
     )
     .await
     .unwrap();
-    assert_eq!((result.status, result.body.as_str()), (200, "{}"));
+    assert_eq!(
+        (result.status, result.body.as_str()),
+        (201, descriptor.as_str())
+    );
     let (headers, sent) = task.join().unwrap();
     assert_eq!(sent.as_bytes(), body);
     assert!(headers.starts_with("PUT /upload "));
@@ -3001,10 +3040,68 @@ async fn upload_signs_the_exact_bytes_it_sends() {
 }
 
 #[tokio::test]
+async fn upload_rejects_descriptors_for_different_bytes() {
+    let body = b"abc";
+    let descriptor = upload_descriptor(body);
+    let mut wrong_size = descriptor.clone();
+    wrong_size["size"] = serde_json::json!(4);
+    let mut string_size = descriptor.clone();
+    string_size["size"] = serde_json::json!("3");
+    let mut missing_hash = descriptor.clone();
+    missing_hash.as_object_mut().unwrap().remove("sha256");
+    let mut missing_size = descriptor;
+    missing_size.as_object_mut().unwrap().remove("size");
+    for response in [
+        upload_descriptor(b"xyz").to_string(),
+        wrong_size.to_string(),
+        string_size.to_string(),
+        missing_hash.to_string(),
+        missing_size.to_string(),
+        "null".into(),
+        "not JSON".into(),
+    ] {
+        let (base, task) = fixture_server(upload_reply("200 OK", &response));
+        let result = upload(
+            &IdentityHost::fixture(),
+            base.join("/upload").unwrap(),
+            None,
+            body.to_vec(),
+            None,
+        )
+        .await;
+        assert_eq!(task.join().unwrap().1.as_bytes(), body);
+        assert!(result.is_err(), "accepted upload response: {response}");
+    }
+}
+
+#[tokio::test]
+async fn upload_preserves_relay_failure_responses() {
+    for (status, code) in [("401 Unauthorized", 401), ("413 Content Too Large", 413)] {
+        let body = r#"{"code":"denied"}"#;
+        let (base, task) = fixture_server(upload_reply(status, body));
+        let result = upload(
+            &IdentityHost::fixture(),
+            base.join("/upload").unwrap(),
+            None,
+            b"abc".to_vec(),
+            None,
+        )
+        .await
+        .unwrap();
+        task.join().unwrap();
+        assert_eq!((result.status, result.body.as_str()), (code, body));
+        assert_eq!(result.headers["content-type"], "application/json");
+    }
+}
+
+#[tokio::test]
 async fn upload_reports_bytes_handed_to_the_connection() {
-    let (base, task) = fixture_server(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".into(),
-    );
+    // Four 64 KiB chunks, ASCII for the fixture server's text comparison.
+    let body = vec![b'a'; 3 * UPLOAD_CHUNK + 1];
+    let (base, task) = fixture_server(upload_reply(
+        "200 OK",
+        &upload_descriptor(&body).to_string(),
+    ));
     let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reports.clone();
     let channel = tauri::ipc::Channel::new(move |message| {
@@ -3016,8 +3113,6 @@ async fn upload_reports_bytes_handed_to_the_connection() {
             .push(serde_json::from_str::<serde_json::Value>(&json).unwrap());
         Ok(())
     });
-    // Four 64 KiB chunks, ASCII for the fixture server's text comparison.
-    let body = vec![b'a'; 3 * UPLOAD_CHUNK + 1];
     let result = upload(
         &IdentityHost::fixture(),
         base.join("/upload").unwrap(),
@@ -3308,7 +3403,7 @@ fn canvas_content_is_bounded_in_utf8_bytes() {
     let mut event = EventTemplate {
         kind: 40100,
         created_at: 100,
-        content: "é".repeat(12 * 1024),
+        content: "é".repeat(LIVE_CANVAS_BYTES / 2),
         tags: vec![vec![
             "h".into(),
             "11111111-1111-4111-8111-111111111111".into(),
@@ -3320,10 +3415,93 @@ fn canvas_content_is_bounded_in_utf8_bytes() {
 }
 
 #[test]
+fn canvas_limits_mirror_the_shared_policy() {
+    let policy = include_str!("../../../src/features/channel-templates/canvas-limits.ts");
+    assert_eq!(LIVE_CANVAS_BYTES, 256 * 1024);
+    assert!(policy.contains("export const LIVE_CANVAS_BYTES = 256 * 1024;"));
+    assert_eq!(CANVAS_MAX_EVENT_BYTES, 512 * 1024 - 16);
+    assert!(policy.contains("export const CANVAS_FRAME_BYTES = 512 * 1024;"));
+    assert!(policy.contains("export const CANVAS_MAX_EVENT_BYTES = CANVAS_FRAME_BYTES - 16;"));
+    let model = include_str!("../../../src/features/channel-templates/model.ts");
+    assert!(model.contains("export const TEMPLATE_CANVAS_BYTES = 24 * 1024;"));
+    // The agent signer keeps its own copy.
+    assert_eq!(buzz_agent_controller::LIVE_CANVAS_BYTES, LIVE_CANVAS_BYTES);
+    assert_eq!(
+        buzz_agent_controller::CANVAS_MAX_EVENT_BYTES,
+        CANVAS_MAX_EVENT_BYTES
+    );
+}
+
+#[tokio::test]
+async fn canvas_signing_through_ipc_bounds_content_and_the_complete_event() {
+    use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
+    let app = mock_builder()
+        .manage(IdentityHost::fixture())
+        .invoke_handler(crate::commands())
+        .build(crate::app_context())
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+        .build()
+        .unwrap();
+    let sign = |content: String| {
+        let event = EventTemplate {
+            kind: 40100,
+            created_at: 1_700_000_000,
+            content,
+            tags: vec![vec![
+                "h".into(),
+                "11111111-1111-4111-8111-111111111111".into(),
+            ]],
+        };
+        get_ipc_response(
+            &view,
+            tauri::webview::InvokeRequest {
+                cmd: "relay_sign".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: view.url().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "community": "https://relay.test", "event": event
+                })),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.into(),
+            },
+        )
+        .map(|body| body.deserialize::<serde_json::Value>().unwrap())
+    };
+    let size = |event: &serde_json::Value| serde_json::to_vec(event).unwrap().len();
+    let largest = sign("x".repeat(LIVE_CANVAS_BYTES)).unwrap();
+    assert_eq!(
+        largest["content"].as_str().unwrap().len(),
+        LIVE_CANVAS_BYTES
+    );
+    assert!(sign("x".repeat(LIVE_CANVAS_BYTES + 1)).is_err());
+
+    // Quotes escape to two bytes, so in-limit content can make a complete
+    // event exactly at, then one byte over, the relay's bound.
+    let overhead = size(&sign(String::new()).unwrap());
+    let quotes = CANVAS_MAX_EVENT_BYTES - overhead - LIVE_CANVAS_BYTES;
+    let escaped = |extra: usize| {
+        format!(
+            "{}{}",
+            "\"".repeat(quotes + extra),
+            "x".repeat(LIVE_CANVAS_BYTES - quotes - extra)
+        )
+    };
+    let boundary = sign(escaped(0)).unwrap();
+    assert_eq!(size(&boundary), CANVAS_MAX_EVENT_BYTES);
+    assert_eq!(
+        sign(escaped(1)).unwrap_err(),
+        serde_json::json!("Relay event is too large")
+    );
+}
+
+#[test]
 fn member_commands_sign_through_production_ipc() {
     use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
     let app = mock_builder()
         .manage(IdentityHost::fixture())
+        .manage(FederatedIdentity::new().unwrap())
         .invoke_handler(crate::commands())
         .build(crate::app_context())
         .unwrap();
@@ -3375,9 +3553,25 @@ fn member_commands_sign_through_production_ipc() {
     }
 }
 
-#[test]
-fn git_authorization_covers_only_this_communitys_repositories() {
+#[tokio::test]
+async fn git_authorization_covers_only_this_communitys_repositories() {
     let owner = "a".repeat(64);
+    let host = IdentityHost::fixture();
+    let repository = format!("https://relay.test/git/{owner}/plugins");
+    let token = git_authorization(
+        &host,
+        &git_repository("https://relay.test", &repository).unwrap(),
+    )
+    .await
+    .unwrap();
+    let auth: serde_json::Value = serde_json::from_slice(&STANDARD.decode(token).unwrap()).unwrap();
+    verify(&auth);
+    assert_eq!(auth["pubkey"], host.viewer().await.unwrap());
+    assert_eq!(auth["kind"], 27235);
+    assert_eq!(
+        auth["tags"],
+        serde_json::json!([["u", repository], ["method", "GET"]])
+    );
     for repository in [
         format!("https://relay.test/git/{owner}/plugins"),
         format!("https://relay.test/git/{owner}/plugins.git"),
@@ -3437,10 +3631,10 @@ async fn spool_processing_cleans_after_upstream_and_conversion_failures() {
         drop(listener);
         let result = process_spool(
             &IdentityHost::fixture(),
+            None,
             url,
             spool,
-            None,
-            preparation,
+            (None, preparation),
             None,
             &mut cancel,
         )
@@ -3467,10 +3661,10 @@ async fn cancelled_spool_processing_never_starts_upstream_and_cleans() {
     uploads.cancel("cancel");
     assert!(process_spool(
         &IdentityHost::fixture(),
+        None,
         Url::parse("https://relay.test/upload").unwrap(),
         spool,
-        None,
-        None,
+        (None, None),
         None,
         &mut cancel
     )
@@ -3541,10 +3735,9 @@ async fn converted_spool_streams_signed_output_then_removes_both_files() {
                     .parse()
                     .unwrap();
                 if bytes.len() == end + 4 + size {
+                    let descriptor = upload_descriptor(&bytes[end + 4..]).to_string();
                     socket
-                        .write_all(
-                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-                        )
+                        .write_all(upload_reply("200 OK", &descriptor).as_bytes())
                         .unwrap();
                     return (header, bytes[end + 4..].to_vec());
                 }
@@ -3553,10 +3746,10 @@ async fn converted_spool_streams_signed_output_then_removes_both_files() {
     });
     let response = process_spool(
         &IdentityHost::fixture(),
+        None,
         url,
         spool,
-        None,
-        Some("video:avi"),
+        (None, Some("video:avi")),
         None,
         &mut cancel,
     )
@@ -3569,6 +3762,7 @@ async fn converted_spool_streams_signed_output_then_removes_both_files() {
     assert!(header.lines().any(|line| line == "content-type: video/mp4"));
     let hash = format!("{:x}", Sha256::digest(&body));
     assert_eq!(tag(&blossom_event(&header), "x"), [hash.as_str()]);
+    assert_eq!(response.body, upload_descriptor(&body).to_string());
     assert!(!path.exists());
 }
 
@@ -3604,7 +3798,7 @@ async fn running_upstream_cancellation_closes_request_and_cleans_spool() {
         socket.read(&mut block).unwrap()
     });
     let host = IdentityHost::fixture();
-    let work = process_spool(&host, url, spool, None, None, None, &mut cancel);
+    let work = process_spool(&host, None, url, spool, (None, None), None, &mut cancel);
     tokio::pin!(work);
     tokio::select! {
         _ = ready => uploads.cancel("running"),
@@ -3733,7 +3927,7 @@ async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() 
         ));
         let url = base.join(&format!("/media/{}", "a".repeat(64))).unwrap();
         let response =
-            fetch_media_bounded(&IdentityHost::fixture(), url.clone(), None, limit).await;
+            fetch_media_bounded(&IdentityHost::fixture(), None, url.clone(), None, limit).await;
         assert_eq!(
             response.as_ref().map(|_| ()).map_err(|status| *status),
             expected
@@ -3858,5 +4052,300 @@ fn media_cors_allows_only_the_window_origin() {
             origin,
             "{page}"
         );
+    }
+}
+
+/// Each native HTTP transport sends exactly the issued assertion to a
+/// community that requires NIP-FI, discovered through its real `/info`,
+/// and nothing to one that does not.
+mod federated_header {
+    use super::*;
+    use crate::federated_identity::testing::{community, reply};
+
+    async fn http(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![reply("200 OK", "[]")]);
+        let response = send(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/query").unwrap(),
+            "POST",
+            Some("[]".into()),
+            true,
+            1024,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status, 200);
+        let head = &server.heads().await[0];
+        assert!(
+            head.lines()
+                .any(|line| line.eq_ignore_ascii_case("user-agent: Buzz")),
+            "{head}"
+        );
+        community.assert_carried(head);
+    }
+    #[tokio::test]
+    async fn http_attaches_for_required_discovery() {
+        http(true).await;
+    }
+    #[tokio::test]
+    async fn http_omits_for_ordinary_discovery() {
+        http(false).await;
+    }
+
+    async fn uploads(required: bool) {
+        let community = community(required).await;
+        let bytes = b"PNG fixture bytes";
+        let server = community.serve(vec![reply("200 OK", &upload_descriptor(bytes).to_string())]);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source");
+        std::fs::write(&path, bytes).unwrap();
+        let hash = upload_spool::hash_file(&path).unwrap();
+        let response = upload_file(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/upload").unwrap(),
+            Some("image/png"),
+            path,
+            hash,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status, 200);
+        community.assert_carried(&server.heads().await[0]);
+    }
+    #[tokio::test]
+    async fn upload_attaches_for_required_discovery() {
+        uploads(true).await;
+    }
+    #[tokio::test]
+    async fn upload_omits_for_ordinary_discovery() {
+        uploads(false).await;
+    }
+
+    /// Signed out, a send and an upload to an advertising relay go without a
+    /// token; an enforcing relay's missing-evidence 401 becomes the sign-in
+    /// reason, and a 403 stays an ordinary response.
+    #[tokio::test]
+    async fn http_without_session_turns_missing_evidence_refusal_into_sign_in() {
+        let community = community(true).await;
+        community.fi.sign_out_for_test();
+        let server = community.serve(vec![
+            reply("401 Unauthorized", "authentication required\n"),
+            reply("401 Unauthorized", "authentication required\n"),
+            reply("403 Forbidden", "{}"),
+        ]);
+        let refused = send(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/query").unwrap(),
+            "POST",
+            Some("[]".into()),
+            true,
+            1024,
+        )
+        .await;
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("Federated sign-in is required")
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source");
+        std::fs::write(&path, b"PNG fixture bytes").unwrap();
+        let hash = upload_spool::hash_file(&path).unwrap();
+        let uploaded = upload_file(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/upload").unwrap(),
+            Some("image/png"),
+            path,
+            hash,
+            None,
+        )
+        .await;
+        assert_eq!(
+            uploaded.err().as_deref(),
+            Some("Federated sign-in is required")
+        );
+        let forbidden = send(
+            &community.host,
+            Some(&community.fi),
+            community.origin.join("/query").unwrap(),
+            "POST",
+            Some("[]".into()),
+            true,
+            1024,
+        )
+        .await
+        .unwrap();
+        assert_eq!(forbidden.status, 403);
+        for head in server.heads().await {
+            community.assert_uncarried(&head);
+        }
+    }
+
+    fn media_reply() -> String {
+        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!".into()
+    }
+    fn media_url(community: &crate::federated_identity::testing::Community) -> Url {
+        community
+            .origin
+            .join(&format!("/media/{}.png", "a".repeat(64)))
+            .unwrap()
+    }
+    async fn download(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![media_reply()]);
+        let response = fetch_media(
+            &community.host,
+            Some(&community.fi),
+            media_url(&community),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), 200);
+        community.assert_carried(&server.heads().await[0]);
+    }
+    #[tokio::test]
+    async fn media_download_attaches_for_required_discovery() {
+        download(true).await;
+    }
+    #[tokio::test]
+    async fn media_download_omits_for_ordinary_discovery() {
+        download(false).await;
+    }
+
+    async fn stream_block(required: bool) {
+        let community = community(required).await;
+        let server = community.serve(vec![media_reply()]);
+        let _ = media_blocks::read(
+            &community.host,
+            Some(&community.fi),
+            &media_url(&community),
+            0,
+            3,
+            MAX_MEDIA as u64,
+        )
+        .await;
+        community.assert_carried(&server.heads().await[0]);
+    }
+    #[tokio::test]
+    async fn media_stream_attaches_for_required_discovery() {
+        stream_block(true).await;
+    }
+    #[tokio::test]
+    async fn media_stream_omits_for_ordinary_discovery() {
+        stream_block(false).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelled_native_reads_close_their_connection_and_writes_refuse_an_id() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = Url::parse(&format!("http://{}/query", listener.local_addr().unwrap())).unwrap();
+    let (connections, accepted) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            if connections.send(stream).is_err() {
+                break;
+            }
+        }
+    });
+    let id = "22222222-2222-4222-8222-222222222222";
+    let read = tokio::spawn(async move {
+        let host = IdentityHost::fixture();
+        let request = send(
+            &host,
+            None,
+            url,
+            "POST",
+            Some("[]".into()),
+            true,
+            MAX_RESPONSE,
+        );
+        cancellable(Some(id), "POST", "/query", request).await
+    });
+    let mut stream = accepted.recv_timeout(Duration::from_secs(5)).unwrap();
+    relay_http_cancel(id.into()).unwrap();
+    assert_eq!(read.await.unwrap().unwrap().status, CANCELLED_READ);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut buffer = [0; 4096];
+    let closed = loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break true,
+            Ok(_) => continue,
+            Err(error) => break error.kind() == std::io::ErrorKind::ConnectionReset,
+        }
+    };
+    assert!(closed, "a cancelled read kept its relay connection open");
+
+    // A cancel that overtakes its read IPC still wins.
+    let early = "33333333-3333-4333-8333-333333333333";
+    relay_http_cancel(early.into()).unwrap();
+    let response = cancellable(Some(early), "POST", "/profiles/search", async {
+        unreachable!("an already cancelled read must not be sent")
+    })
+    .await
+    .unwrap();
+    assert_eq!(response.status, CANCELLED_READ);
+
+    // A dispatched write may already have reached the relay.
+    let Err(error) = cancellable(Some(id), "POST", "/events", async {
+        unreachable!("a write with a cancel id must not be sent")
+    })
+    .await
+    else {
+        panic!("a write accepted a cancel id");
+    };
+    assert!(error.to_string().contains("cannot be cancelled"));
+}
+
+#[tokio::test]
+async fn native_signature_checks_reject_tampered_and_malformed_claims() {
+    let secp = secp256k1::Secp256k1::new();
+    let keys = secp256k1::Keypair::from_secret_key(
+        &secp,
+        &secp256k1::SecretKey::from_byte_array([7; 32]).unwrap(),
+    );
+    let digest = [9u8; 32];
+    let claim = |id: [u8; 32], sig: &str| SignatureClaim {
+        id: id.iter().map(|b| format!("{b:02x}")).collect(),
+        pubkey: keys.x_only_public_key().0.to_string(),
+        sig: sig.into(),
+    };
+    let sig = secp.sign_schnorr_no_aux_rand(&digest, &keys).to_string();
+    let checked = relay_verify_signatures(vec![
+        claim(digest, &sig),
+        claim([8; 32], &sig),
+        claim(digest, &"0".repeat(128)),
+        claim(digest, "zz"),
+    ])
+    .await
+    .unwrap();
+    assert_eq!(checked, [true, false, false, false]);
+}
+
+#[tokio::test]
+async fn finished_native_reads_release_their_cancel_slot() {
+    // More completed reads than the registry holds, some failing: each frees its id.
+    for read in 0..100 {
+        let id = format!("{read:08}-4444-4444-8444-444444444444");
+        let result = cancellable(Some(&id), "POST", "/query", async move {
+            if read % 2 == 0 {
+                Ok(cancelled_read())
+            } else {
+                Err("relay down".into())
+            }
+        })
+        .await;
+        match result {
+            Ok(_) => assert_eq!(read % 2, 0),
+            Err(error) => assert_eq!(error.to_string(), "relay down"),
+        }
     }
 }

@@ -20,6 +20,19 @@ import type { RelaySession } from "../relay/session";
 import { useChannelList } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
+import type {
+  RegisteredSidebarSection,
+  SidebarSections,
+} from "./sidebar-sections-service";
+import {
+  sidebarRow,
+  sidebarRowSortModes,
+  sortSidebarRows,
+  type SidebarRows,
+  type RegisteredSidebarRows,
+} from "./sidebar-rows-service";
+import { useSidebarRowUnread } from "./useSidebarRowUnread";
+import type { SidebarSortMode } from "../relay/sidebar-sort";
 import type { SidebarFrame } from "./SidebarFrame";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -37,7 +50,8 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { useRecoveryShown } from "../relay/RecoveryNotice";
+import { useRecoveryOwns } from "../relay/RecoveryNotice";
+import { rosterRecovering } from "../relay/live-recovery";
 import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
@@ -50,6 +64,8 @@ import {
 import { ChannelReadMenuItem } from "../../bundled/channels/ChannelReadMenuItem";
 import { ChannelCopyLinkMenuItem } from "../../bundled/channels/ChannelCopyLinkMenuItem";
 import { ChannelSidebarItem } from "../../bundled/channels/ChannelSidebarItem";
+import { ChannelSidebarRows } from "./ChannelSidebarRows";
+import { activeChannelRows } from "./active-channel-rows";
 import type { UnreadDmPreview } from "../../bundled/channels/SidebarUnread";
 import {
   ChannelSidebarDnd,
@@ -67,9 +83,17 @@ import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
 import {
   sidebarSections,
+  contributedSidebarSectionKey,
   isChannelSectionKey,
   isChannelDropSectionKey,
+  orderContributedSidebarSections,
 } from "../../bundled/channels/sidebar-sections";
+import { activityTranscript } from "../../bundled/channels/working-agents";
+import { SidebarContributionSection } from "./SidebarContributionSection";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../conversation/ContributionBoundary";
 import {
   CreateChannelDialog,
   type CreateChannelInput,
@@ -83,6 +107,16 @@ import {
 import { splitPartition } from "../relay/partition";
 import styles from "../../bundled/channels/Channels.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useBestieConversation } from "../../app/shell/bestie-context";
+
+/** The sidebar entry selected by a destination, excluding nested message state. */
+export function sidebarEntryLocation(target: OpenTarget) {
+  return target.kind === "conversation"
+    ? `conversation:${target.channelId}`
+    : target.kind === "page"
+      ? `page:${target.pluginId}/${target.pageId}:${JSON.stringify(target.route?.params ?? null)}`
+      : target.kind;
+}
 
 type Inventory = {
   sidebar: ReturnType<typeof useSidebarView>;
@@ -92,6 +126,19 @@ type Inventory = {
   content: ReactNode;
   after: ReactNode;
   dialogs: ReactNode;
+};
+
+const noSubscription = () => () => {};
+const emptyContributions: readonly RegisteredSidebarSection[] = [];
+const noSidebarSections = () => emptyContributions;
+const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
+const noSidebarRows = () => emptyRowContributions;
+const noPendingPlugins = () => true;
+const emptySidebarSections: SidebarSections = {
+  version: 1,
+  snapshot: noSidebarSections,
+  subscribe: noSubscription,
+  register: () => {},
 };
 
 /** Channel data, actions and notices; the primary sidebar owns their framing. */
@@ -106,6 +153,8 @@ export function ChannelInventory({
   connectionError,
   scope,
   viewer,
+  sidebarSections: contributedSections,
+  sidebarRows: contributedRows,
   render,
 }: {
   relay: RelayData;
@@ -119,12 +168,42 @@ export function ChannelInventory({
   connectionError?: string | undefined;
   scope: string;
   viewer?: string | undefined;
+  sidebarSections?: SidebarSections | undefined;
+  sidebarRows?: SidebarRows | undefined;
   render(inventory: Inventory): ReactNode;
 }) {
+  const contributions = useSyncExternalStore(
+    contributedSections?.subscribe ?? noSubscription,
+    contributedSections?.snapshot ?? noSidebarSections,
+    contributedSections?.snapshot ?? noSidebarSections,
+  );
+  const rowContributions = useSyncExternalStore(
+    contributedRows?.subscribe ?? noSubscription,
+    contributedRows?.snapshot ?? noSidebarRows,
+    contributedRows?.snapshot ?? noSidebarRows,
+  );
+  const rowSortModes = useMemo(
+    () => sidebarRowSortModes(rowContributions),
+    [rowContributions],
+  );
+  const pluginsSettled = useSyncExternalStore(
+    contributedRows?.subscribe ?? noSubscription,
+    contributedRows?.settled ?? noPendingPlugins,
+    contributedRows?.settled ?? noPendingPlugins,
+  );
   const list = useChannelList(queries.channels);
-  const recoveryShown = useRecoveryShown(queries.recovery);
+  const rosterRecovers = useRecoveryOwns(queries, (live) =>
+    rosterRecovering(live.roster),
+  );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
-  const startup = useSidebarStartup(queries, list, preferences);
+  const sortModesReady =
+    pluginsSettled ||
+    Object.values(preferences.data?.sort ?? {}).every(
+      (mode) =>
+        !mode.startsWith("plugin:") ||
+        rowSortModes.some((available) => available.id === mode),
+    );
+  const startup = useSidebarStartup(queries, list, preferences, sortModesReady);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
   useEffect(() => {
     if (list.activityStatus !== "error") setActivityErrorDismissed(false);
@@ -134,20 +213,38 @@ export function ChannelInventory({
   const readAction = useChannelReadAction();
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
+  const pluginHiddenRows = useRef(new Map<string, object>());
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
   );
   const hiddenDms = useHiddenDms(scope, queries, list);
+  const promotedDm = useBestieConversation(queries);
+  // Promotion is presentation, not hiding. Clear an earlier local removal so
+  // releasing this destination restores the ordinary DM row.
+  const showDm = hiddenDms.show;
+  useEffect(() => {
+    if (promotedDm) showDm([promotedDm]);
+  }, [promotedDm, showDm]);
   const lifecycle = queries.channelLifecycle;
   const dmVisibility = useSyncExternalStore(
     lifecycle.subscribe,
     lifecycle.snapshot,
     lifecycle.snapshot,
   );
+  const visibilityRequest = useRef<AbortController | undefined>(undefined);
+  // Roster commits join an in-flight refresh; only unmount or a new lifecycle
+  // cancels it, so live discovery cannot restart its retry budget.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new lifecycle retires the previous refresh signal.
+  useEffect(() => {
+    const request = new AbortController();
+    visibilityRequest.current = request;
+    return () => request.abort();
+  }, [lifecycle]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
   useEffect(() => {
-    if (list.status === "ready") void lifecycle.refreshVisibility();
+    if (list.status === "ready")
+      void lifecycle.refreshVisibility(visibilityRequest.current?.signal);
   }, [lifecycle, list.asOf, list.status]);
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
@@ -164,11 +261,7 @@ export function ChannelInventory({
       (target.scope.viewer !== viewer ||
         target.scope.communityOrigin !== scope.slice(0, -(viewer.length + 1)))
       ? undefined
-      : target.kind === "conversation"
-        ? `conversation:${target.channelId}`
-        : target.kind === "page"
-          ? `page:${target.pluginId}/${target.pageId}:${JSON.stringify(target.route?.params ?? null)}`
-          : target.kind,
+      : sidebarEntryLocation(target),
   );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
@@ -204,16 +297,23 @@ export function ChannelInventory({
     target.pluginId === "buzz.channels" &&
     target.route?.params === "new-message";
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
-  const sidebarChannels = channels.filter(
-    (channel) =>
-      !channel.huddle &&
-      !channel.metadataPending &&
-      inTeamInventory(channel) &&
-      (!preparingDm ||
-        preparingDm.existing.has(channel.id) ||
-        channel.channelType !== "dm" ||
-        channel.members?.length !== preparingDm.members.size ||
-        !channel.members.every((member) => preparingDm.members.has(member))),
+  const sidebarChannels = useMemo(
+    () =>
+      channels.filter(
+        (channel) =>
+          channel.id !== promotedDm &&
+          !channel.huddle &&
+          !channel.metadataPending &&
+          inTeamInventory(channel) &&
+          (!preparingDm ||
+            preparingDm.existing.has(channel.id) ||
+            channel.channelType !== "dm" ||
+            channel.members?.length !== preparingDm.members.size ||
+            !channel.members.every((member) =>
+              preparingDm.members.has(member),
+            )),
+      ),
+    [channels, preparingDm, promotedDm],
   );
   const current = channels.find(
     (channel) =>
@@ -222,13 +322,16 @@ export function ChannelInventory({
   );
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
-  const removedDmFocus = useRef<
+  const removedRowFocus = useRef<
     { channelId: string; target: HTMLElement } | undefined
   >(undefined);
   const pendingCreate = useRef<ChannelSummary | undefined>(undefined);
+  const [creatingSection, setCreatingSection] = useState(false);
+  const createSectionTrigger = useRef<HTMLButtonElement>(null);
   const [creatingFor, setCreatingFor] = useState<{
     channel: ChannelSummary;
     surface?: ChannelMenuSurface;
+    position?: "first";
   }>();
 
   const createOrigin = creatingFor?.surface?.signal;
@@ -289,11 +392,7 @@ export function ChannelInventory({
       trigger.focus({ preventScroll: true });
       return;
     }
-    const rows = [
-      ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
-        "[data-channel-id]",
-      ) ?? []),
-    ];
+    const rows = activeChannelRows(sidebar.list.current);
     const row =
       rows.find(
         (row) => row.dataset.channelId === id && row.getClientRects().length,
@@ -328,8 +427,8 @@ export function ChannelInventory({
     ) => {
       if (!viewer || relay.snapshot().session !== queries) return;
       const trigger =
-        sidebar.list.current?.querySelector<HTMLElement>(
-          `[data-channel-id="${CSS.escape(channelId)}"]`,
+        activeChannelRows(sidebar.list.current).find(
+          (row) => row.dataset.channelId === channelId,
         ) ?? null;
       const result = navigator.open({
         version: 1,
@@ -388,15 +487,21 @@ export function ChannelInventory({
     [queries, openActivityMessage],
   );
   const openAgentActivity = useCallback(
-    (channelId: string, agent: string) => {
+    (channelId: string, agent: string, messageId: string | undefined) => {
       if (!viewer || relay.snapshot().session !== queries) return;
+      const transcript = activityTranscript(
+        queries.channels,
+        channelId,
+        messageId,
+      );
       const intent = {
         channelId,
         agent,
         trigger:
-          sidebar.list.current?.querySelector<HTMLElement>(
-            `[data-channel-id="${CSS.escape(channelId)}"]`,
+          activeChannelRows(sidebar.list.current).find(
+            (row) => row.dataset.channelId === channelId,
           ) ?? null,
+        ...(transcript && { transcript }),
       };
       if (handoff) handoff.activityAgent.current = intent;
       void navigator
@@ -426,15 +531,80 @@ export function ChannelInventory({
         sidebar.toggle(key, true),
       );
   };
-  const sections = startup.ready
-    ? sidebarSections(
-        sidebarChannels,
-        preferences.data,
-        new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
-      )
-    : [];
+  const sections = useMemo(
+    () =>
+      startup.ready
+        ? sidebarSections(
+            sidebarChannels,
+            preferences.data,
+            new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
+          )
+        : [],
+    [
+      startup.ready,
+      sidebarChannels,
+      preferences.data,
+      hiddenDms.hiddenIds,
+      dmVisibility.hidden,
+    ],
+  );
+  const sectionSort = useCallback(
+    (key: string): SidebarSortMode => {
+      const saved =
+        preferences.data?.sort?.[
+          key.startsWith("group:") ? `section:${key.slice(6)}` : key
+        ];
+      return saved &&
+        (saved === "recent" || rowSortModes.some((mode) => mode.id === saved))
+        ? saved
+        : "alpha";
+    },
+    [preferences.data, rowSortModes],
+  );
+  const rowUnread = useSidebarRowUnread(
+    queries.unread,
+    JSON.stringify(
+      sections.flatMap((section) =>
+        rowSortModes.some((mode) => mode.id === sectionSort(section.key))
+          ? section.rows.map((channel) => channel.id)
+          : [],
+      ),
+    ),
+  );
+  const sortedSections = useMemo(
+    () =>
+      rowSortModes.length
+        ? sections.map((section) => {
+            const mode = rowSortModes.find(
+              (mode) => mode.id === sectionSort(section.key),
+            );
+            if (!mode) return section;
+            const candidates = section.rows.map((channel) => ({
+              channel,
+              data: sidebarRow(
+                channel,
+                section.key,
+                rowUnread.get(channel.id) ??
+                  queries.unread.snapshot({
+                    kind: "channel",
+                    channelId: channel.id,
+                  }),
+              ),
+            }));
+            const sorted = sortSidebarRows(
+              candidates,
+              mode,
+              ({ data }) => data,
+            );
+            return sorted === candidates
+              ? section
+              : { ...section, rows: sorted.map(({ channel }) => channel) };
+          })
+        : sections,
+    [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
+  );
   const filteredSections = useSidebarFilters(
-    sections,
+    sortedSections,
     Object.fromEntries(
       Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
         key.startsWith("section:") ? `group:${key.slice(8)}` : key,
@@ -453,6 +623,9 @@ export function ChannelInventory({
     ),
     list.activityStatus === "ready",
   );
+  const firstChannelSection = filteredSections.find(({ key }) =>
+    isChannelSectionKey(key),
+  )?.key;
   // Menu dismissal may run before a moved row mounts at its new placement.
   // Only an actual filter exclusion should return focus to a section summary.
   const hiddenRowSections = useRef(new Map<string, string>());
@@ -533,12 +706,45 @@ export function ChannelInventory({
   // Group drags land on the placement drop targets, so they need both writers.
   const orderWritable = placementWritable && preferences.sectionOrderWritable;
   const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  // Saved order uses the same section keys as collapse and drag.
+  const orderedContributions = orderContributedSidebarSections(
+    contributions.map((entry) => ({
+      key: contributedSidebarSectionKey(entry.key),
+      entry,
+    })),
+    sidebar.contributionOrder,
+  ).map(({ entry }) => entry);
+  const reorderContributions = (sectionKey: string, overKey: string) => {
+    const ids = orderedContributions.map(({ key }) =>
+      contributedSidebarSectionKey(key),
+    );
+    const from = ids.indexOf(sectionKey);
+    const to = ids.indexOf(overKey);
+    if (from < 0 || to < 0) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, sectionKey);
+    const activeKeys = new Set(ids);
+    const seenSavedKeys = new Set<string>();
+    const order: string[] = [];
+    let nextActive = 0;
+    for (const savedKey of sidebar.contributionOrder) {
+      if (!activeKeys.has(savedKey)) {
+        order.push(savedKey);
+        continue;
+      }
+      if (seenSavedKeys.has(savedKey)) continue;
+      seenSavedKeys.add(savedKey);
+      order.push(ids[nextActive++] ?? savedKey);
+    }
+    order.push(...ids.slice(nextActive));
+    sidebar.setContributionOrder(order);
+  };
   const moveGroup = (sectionId: string, to: number) => {
     const ids = groupIds.filter((id) => id !== sectionId);
     ids.splice(to, 0, sectionId);
     void preferences.reorderSections(sectionId, ids).catch(() => {});
   };
-  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+  const setSectionSort = (key: string, mode: SidebarSortMode) => {
     void preferences
       .setSort(
         key.startsWith("group:") ? `section:${key.slice(6)}` : key,
@@ -647,6 +853,7 @@ export function ChannelInventory({
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem
+              disabled={!preferences.sectionCreationWritable}
               onClick={() => {
                 if (surface) {
                   surface.close(() => false);
@@ -654,6 +861,7 @@ export function ChannelInventory({
                     if (
                       mounted.current &&
                       !surface.signal?.aborted &&
+                      queries.sidebarPreferences.sectionCreationWritable &&
                       relay.snapshot().session === queries
                     )
                       setCreatingFor({ channel, surface });
@@ -748,15 +956,11 @@ export function ChannelInventory({
               surface.focus();
               return;
             }
-            const trigger = sidebar.list.current?.querySelector<HTMLElement>(
-              `[data-channel-id="${CSS.escape(channel.id)}"]`,
+            const trigger = activeChannelRows(sidebar.list.current).find(
+              (row) => row.dataset.channelId === channel.id,
             );
             const section = trigger?.closest("[data-sidebar-section]");
-            const rows = [
-              ...(section?.querySelectorAll<HTMLElement>(
-                "button[data-channel-id]",
-              ) ?? []),
-            ];
+            const rows = activeChannelRows(section);
             const index = rows.indexOf(trigger as HTMLButtonElement);
             const survivingSummary = [
               ...(sidebar.list.current?.querySelectorAll<HTMLElement>(
@@ -765,7 +969,7 @@ export function ChannelInventory({
             ].find((summary) => !section?.contains(summary));
             const target =
               rows[index + 1] ?? rows[index - 1] ?? survivingSummary;
-            removedDmFocus.current = target
+            removedRowFocus.current = target
               ? { channelId: channel.id, target }
               : undefined;
             hiddenDms.hide(channel.id);
@@ -788,7 +992,7 @@ export function ChannelInventory({
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       readAction.reset();
-      removedDmFocus.current = undefined;
+      removedRowFocus.current = undefined;
       openMenu(channel, sectionKey, anchor);
     },
     [openMenu, readAction.reset],
@@ -797,6 +1001,33 @@ export function ChannelInventory({
     readAction.reset();
     closeMenu();
   }, [closeMenu, readAction.reset]);
+  const currentRowMenu = useRef(rowMenu);
+  // Hidden-state callbacks run in child layout effects, before parent effects.
+  currentRowMenu.current = rowMenu;
+  const setRowHidden = useCallback(
+    (id: string, hidden: boolean) => {
+      const registration = {};
+      if (hidden) {
+        pluginHiddenRows.current.set(id, registration);
+        const menu = currentRowMenu.current;
+        if (menu?.channelId === id) {
+          const target = sidebar.list.current?.querySelector<HTMLElement>(
+            `[data-sidebar-section="${CSS.escape(menu.sectionKey)}"] details > summary`,
+          );
+          removedRowFocus.current = target
+            ? { channelId: id, target }
+            : undefined;
+          closeRowMenu();
+        }
+      } else pluginHiddenRows.current.delete(id);
+      return () => {
+        // An exiting placement must not clear the live placement's registration.
+        if (pluginHiddenRows.current.get(id) === registration)
+          pluginHiddenRows.current.delete(id);
+      };
+    },
+    [closeRowMenu, sidebar.list],
+  );
   const muteRecovery = handoff?.muteRecovery;
   useLayoutEffect(() => {
     if (!muteRecovery) return;
@@ -815,8 +1046,8 @@ export function ChannelInventory({
   const rowFocusTarget = useCallback(
     (channelId: string) => {
       const list = sidebar.list.current;
-      const row = list?.querySelector<HTMLElement>(
-        `[data-channel-id="${CSS.escape(channelId)}"]`,
+      const row = activeChannelRows(list).find(
+        (candidate) => candidate.dataset.channelId === channelId,
       );
       if (row) return row;
       const sectionKey = hiddenRowSections.current.get(channelId);
@@ -832,8 +1063,8 @@ export function ChannelInventory({
     (channelId: string) =>
       pendingCreate.current
         ? false
-        : removedDmFocus.current?.channelId === channelId
-          ? removedDmFocus.current.target
+        : removedRowFocus.current?.channelId === channelId
+          ? removedRowFocus.current.target
           : (rowFocusTarget(channelId) ?? false),
     [rowFocusTarget],
   );
@@ -841,11 +1072,9 @@ export function ChannelInventory({
     if (!rowFocus) return;
     (
       rowFocusTarget(rowFocus) ??
-      [
-        ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
-          "[data-channel-id]",
-        ) ?? []),
-      ].find((row) => row.getClientRects().length) ??
+      activeChannelRows(sidebar.list.current).find(
+        (row) => row.getClientRects().length,
+      ) ??
       sidebar.list.current
         ?.closest("aside")
         ?.querySelector<HTMLButtonElement>("button")
@@ -894,6 +1123,11 @@ export function ChannelInventory({
     menuActions?.publish((channel, surface) => {
       if (cached || channel.cached || relay.snapshot().session !== queries)
         return [];
+      // A not-joined preview has no sidebar row to place, mute or mark read.
+      if (channel.readOnly && channel.viewerRole !== "guest")
+        return [
+          <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />,
+        ];
       const placement = sections.find((section) =>
         section.rows.some((row) => row.id === channel.id),
       );
@@ -910,15 +1144,20 @@ export function ChannelInventory({
     if (!lifecycleCallbacks) return;
     const dialogId = lifecycleDialog?.channel.id;
     if (!dialogId) lifecycleNeighbors.current = undefined;
-    const at = sections.findIndex((section) =>
+    const at = filteredSections.findIndex((section) =>
       section.rows.some((row) => row.id === dialogId),
     );
-    const placement = sections[at];
+    const placement = filteredSections[at];
     if (dialogId && placement) {
       const shown = (section: typeof placement) =>
         sidebar.collapsed.includes(section.key)
           ? []
-          : section.rows.map((row) => row.id);
+          : section.rows
+              .filter(
+                (row) =>
+                  row.id === dialogId || !pluginHiddenRows.current.has(row.id),
+              )
+              .map((row) => row.id);
       const own = shown(placement);
       const index = Math.max(own.indexOf(dialogId), 0);
       lifecycleNeighbors.current = {
@@ -926,8 +1165,8 @@ export function ChannelInventory({
         ids: [
           ...own.slice(index + 1),
           ...own.slice(0, index).reverse(),
-          ...sections.slice(at + 1).flatMap(shown),
-          ...sections.slice(0, at).flatMap(shown).reverse(),
+          ...filteredSections.slice(at + 1).flatMap(shown),
+          ...filteredSections.slice(0, at).flatMap(shown).reverse(),
         ],
       };
     }
@@ -953,7 +1192,9 @@ export function ChannelInventory({
               return;
             }
             // Its neighbor takes its place, so the sidebar stays where it is.
-            const listed = sections.flatMap((section) => section.rows);
+            const listed = filteredSections
+              .flatMap((section) => section.rows)
+              .filter((row) => !pluginHiddenRows.current.has(row.id));
             const next =
               (lifecycleNeighbors.current?.id === id
                 ? lifecycleNeighbors.current.ids
@@ -1030,22 +1271,38 @@ export function ChannelInventory({
             </Button>
           </ToastNotice>
         ))}
-        {!cached &&
-          dmVisibility.status === "error" &&
-          !dmVisibility.transient && (
-            <div role="alert">
-              Hidden conversations could not be refreshed.{" "}
-              <Button onClick={() => void lifecycle.refreshVisibility()}>
-                Retry hidden conversations
-              </Button>
-            </div>
-          )}
+        {!cached && dmVisibility.status === "error" && (
+          <div role="alert">
+            Hidden conversations could not be refreshed.{" "}
+            <Button
+              onClick={() =>
+                void lifecycle.refreshVisibility(
+                  visibilityRequest.current?.signal,
+                )
+              }
+            >
+              Retry hidden conversations
+            </Button>
+          </div>
+        )}
       </>
     ),
     content: (
       <>
         <ChannelSidebarDnd
           writable={placementWritable}
+          onCreateSection={(channelId) => {
+            const channel = sidebarChannels.find(({ id }) => id === channelId);
+            // Finish releasing the pointer before giving the modal its focus.
+            requestAnimationFrame(() => {
+              if (
+                mounted.current &&
+                channel &&
+                queries.sidebarPreferences.sectionCreationWritable
+              )
+                setCreatingFor({ channel, position: "first" });
+            });
+          }}
           onMove={(channelId, sectionKey) =>
             sectionKey === "starred"
               ? setChannelStar(channelId, true)
@@ -1057,22 +1314,38 @@ export function ChannelInventory({
                 )
           }
           onReorder={(sectionKey, overKey) =>
-            moveGroup(
-              sectionKey.slice("group:".length),
-              groupIds.indexOf(overKey.slice("group:".length)),
-            )
+            sectionKey.startsWith("plugin:")
+              ? reorderContributions(sectionKey, overKey)
+              : moveGroup(
+                  sectionKey.slice("group:".length),
+                  groupIds.indexOf(overKey.slice("group:".length)),
+                )
           }
           overlay={(id, group) => {
             if (group) {
               const section = sections.find(({ key }) => key === id);
-              return section ? (
+              const contribution = section
+                ? undefined
+                : orderedContributions.find(
+                    ({ key }) => contributedSidebarSectionKey(key) === id,
+                  );
+              const title = section?.title ?? contribution?.title;
+              if (!title) return null;
+              return (
                 <div className={styles.channelDragOverlay}>
-                  {section.icon && (
+                  {section?.icon ? (
                     <SidebarGroupIcon icon={section.icon} session={queries} />
-                  )}
-                  <span>{section.title}</span>
+                  ) : contribution?.icon ? (
+                    <ContributionBoundary
+                      key={contributionKey(contribution)}
+                      fallback={null}
+                    >
+                      {contribution.icon}
+                    </ContributionBoundary>
+                  ) : null}
+                  <span>{title}</span>
                 </div>
-              ) : null;
+              );
             }
             const channel = sidebarChannels.find(
               (channel) => channel.id === id,
@@ -1090,6 +1363,10 @@ export function ChannelInventory({
           {filteredSections.map((section) => (
             <DroppableSidebarSection
               key={section.key}
+              createSectionTarget={
+                section.key === firstChannelSection &&
+                preferences.sectionCreationWritable
+              }
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
               disabled={
                 !placementWritable || !isChannelDropSectionKey(section.key)
@@ -1194,6 +1471,19 @@ export function ChannelInventory({
                     }
                   : undefined
               }
+              createSection={
+                section.key === "channels"
+                  ? {
+                      available: preferences.sectionCreationWritable,
+                      open: (trigger) => {
+                        createSectionTrigger.current = trigger;
+                        requestAnimationFrame(() => {
+                          if (mounted.current) setCreatingSection(true);
+                        });
+                      },
+                    }
+                  : undefined
+              }
               newMessage={
                 section.key === "dms"
                   ? () => {
@@ -1218,79 +1508,125 @@ export function ChannelInventory({
               sort={
                 preferences.sortWritable
                   ? {
-                      value:
-                        preferences.data?.sort?.[
-                          section.key.startsWith("group:")
-                            ? `section:${section.key.slice(6)}`
-                            : section.key
-                        ] ?? "alpha",
+                      value: sectionSort(section.key),
+                      modes: rowSortModes,
                       change: (mode) => setSectionSort(section.key, mode),
                     }
                   : undefined
               }
             >
-              {section.rows.map((channel) => {
-                const selected =
-                  current?.id === channel.id ? current.id : undefined;
-                // Every row offers Copy link; build items only for the open
-                // menu. useChannelRowMenu closes a menu left with none.
-                const menuOpen =
-                  rowMenu?.channelId === channel.id &&
-                  rowMenu.sectionKey === section.key;
-                return (
-                  <ChannelSidebarItem
-                    profile={
-                      channel.channelType === "dm" &&
-                      channel.participants?.length === 1
-                        ? dmProfiles.get(channel.participants[0] ?? "")
-                        : undefined
-                    }
-                    key={channel.id}
-                    channel={channel}
-                    session={queries}
-                    working={workingChannels.has(channel.id)}
-                    selected={composingMessage ? undefined : selected}
-                    onSelect={select}
-                    onOpenThread={openActivityThread}
-                    onOpenWorkingAgent={openWorkingAgent}
-                    onOpenAgentActivity={openAgentActivity}
-                    menuEnabled
-                    sectionKey={section.key}
-                    selectFrame={
-                      channel.channelType !== "dm" &&
-                      isChannelDropSectionKey(section.key)
-                        ? DraggableChannel
-                        : undefined
-                    }
-                    onOpenMenu={openRowMenu}
-                    menuOpen={menuOpen}
-                    menuAnchor={menuOpen ? rowMenu.anchor : undefined}
-                    menuContent={
-                      menuOpen ? (
-                        <>
-                          {rowActions(channel, section.key)}
-                          {readWrite?.pending && <p role="status">Saving…</p>}
-                          {readWrite?.error && (
-                            <p role="alert">{readWrite.error}</p>
-                          )}
-                        </>
-                      ) : undefined
-                    }
-                    onCloseMenu={closeRowMenu}
-                    onMenuClosed={rowMenuClosed}
-                    menuFinalFocus={rowMenuFinalFocus}
-                  />
-                );
-              })}
+              <ChannelSidebarRows
+                open={!sidebar.collapsed.includes(section.key)}
+              >
+                {section.rows.map((channel) => {
+                  const selected =
+                    current?.id === channel.id ? current.id : undefined;
+                  // Every row offers Copy link; build items only for the open
+                  // menu. useChannelRowMenu closes a menu left with none.
+                  const menuOpen =
+                    rowMenu?.channelId === channel.id &&
+                    rowMenu.sectionKey === section.key;
+                  return (
+                    <ChannelSidebarItem
+                      profile={
+                        channel.channelType === "dm" &&
+                        channel.participants?.length === 1
+                          ? dmProfiles.get(channel.participants[0] ?? "")
+                          : undefined
+                      }
+                      key={channel.id}
+                      channel={channel}
+                      rowContributions={rowContributions}
+                      onHiddenChange={setRowHidden}
+                      session={queries}
+                      working={workingChannels.has(channel.id)}
+                      selected={composingMessage ? undefined : selected}
+                      onSelect={select}
+                      onOpenThread={openActivityThread}
+                      onOpenWorkingAgent={openWorkingAgent}
+                      onOpenAgentActivity={openAgentActivity}
+                      menuEnabled
+                      sectionKey={section.key}
+                      selectFrame={
+                        channel.channelType !== "dm" &&
+                        isChannelDropSectionKey(section.key)
+                          ? DraggableChannel
+                          : undefined
+                      }
+                      onOpenMenu={openRowMenu}
+                      menuOpen={menuOpen}
+                      menuAnchor={menuOpen ? rowMenu.anchor : undefined}
+                      menuContent={
+                        menuOpen ? (
+                          <>
+                            {rowActions(channel, section.key)}
+                            {readWrite?.pending && <p role="status">Saving…</p>}
+                            {readWrite?.error && (
+                              <p role="alert">{readWrite.error}</p>
+                            )}
+                          </>
+                        ) : undefined
+                      }
+                      onCloseMenu={closeRowMenu}
+                      onMenuClosed={rowMenuClosed}
+                      menuFinalFocus={rowMenuFinalFocus}
+                    />
+                  );
+                })}
+              </ChannelSidebarRows>
             </DroppableSidebarSection>
           ))}
+          {orderedContributions.map((entry, index) => {
+            const sectionKey = contributedSidebarSectionKey(entry.key);
+            const previousKey = orderedContributions[index - 1]?.key;
+            const nextKey = orderedContributions[index + 1]?.key;
+            const reorderable = contributions.length > 1;
+            return (
+              <SidebarContributionSection
+                key={entry.key}
+                entry={entry}
+                registry={contributedSections ?? emptySidebarSections}
+                navigator={navigator}
+                target={target}
+                open={!sidebar.collapsed.includes(sectionKey)}
+                onToggle={(open) => sidebar.toggle(sectionKey, open)}
+                groupIndex={index}
+                reorderable={reorderable}
+                onRowsCommitted={sidebar.retryReveal}
+                move={
+                  reorderable
+                    ? {
+                        ...(previousKey
+                          ? {
+                              up: () =>
+                                reorderContributions(
+                                  sectionKey,
+                                  contributedSidebarSectionKey(previousKey),
+                                ),
+                            }
+                          : {}),
+                        ...(nextKey
+                          ? {
+                              down: () =>
+                                reorderContributions(
+                                  sectionKey,
+                                  contributedSidebarSectionKey(nextKey),
+                                ),
+                            }
+                          : {}),
+                      }
+                    : undefined
+                }
+              />
+            );
+          })}
         </ChannelSidebarDnd>
         {!startup.ready && (
           <p className={styles.empty} role="status">
             Loading your sidebar…
           </p>
         )}
-        {list.status === "error" && !recoveryShown && (
+        {list.status === "error" && !rosterRecovers && (
           <p role="alert" className={styles.empty}>
             {list.error}
           </p>
@@ -1489,10 +1825,27 @@ export function ChannelInventory({
     ),
     dialogs: (
       <>
+        {creatingSection && (
+          <CreateSidebarSection
+            writable={preferences.sectionCreationWritable}
+            refreshing={preferences.status === "loading"}
+            retry={preferences.reload}
+            finalFocus={createSectionTrigger}
+            close={() => setCreatingSection(false)}
+            create={async (section) => {
+              if (!queries.sidebarPreferences.sectionCreationWritable)
+                return false;
+              await preferences.createSection(section);
+              sidebar.toggle(`group:${section.id}`, true);
+              setCreatingSection(false);
+              return true;
+            }}
+          />
+        )}
         {creatingFor && !creatingFor.surface?.signal?.aborted && (
           <CreateSidebarSection
             channelName={creatingFor.channel.name}
-            writable={preferences.writable}
+            writable={preferences.sectionCreationWritable}
             refreshing={preferences.status === "loading"}
             retry={preferences.reload}
             create={(section) => {
@@ -1500,13 +1853,18 @@ export function ChannelInventory({
               // the live gate before handing its draft to the optimistic store.
               if (
                 creatingFor.surface?.signal?.aborted ||
-                !queries.sidebarPreferences.writable
+                !queries.sidebarPreferences.sectionCreationWritable
               )
                 return false;
               moveChannel(
                 creatingFor.channel.id,
                 () =>
-                  preferences.createAndAssign(creatingFor.channel.id, section),
+                  preferences.createAndAssign(creatingFor.channel.id, {
+                    ...section,
+                    ...(creatingFor.position
+                      ? { position: creatingFor.position }
+                      : {}),
+                  }),
                 creatingFor.surface,
               );
               setCreatingFor(undefined);

@@ -1,10 +1,19 @@
+import { createPortal } from "react-dom";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -15,6 +24,9 @@ import { createServices, type AppServices } from "../services";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { AppShell } from "./AppShell";
 import { createAppearance } from "../../shared/theme/service";
+import { Context } from "@deepseek-ai/cordis";
+import { BackdropsService } from "../../features/backdrops/service";
+import { ShellBackdrops } from "../../features/backdrops/ShellBackdrops";
 
 const testAppearance = createAppearance(window);
 
@@ -229,6 +241,56 @@ it("does not make a non-primary plugin page's sidebar collapsible", () => {
   ).not.toBeInTheDocument();
 });
 
+it("renders the default shell unchanged until a plugin registers a backdrop, and again after", async () => {
+  const current = createServices();
+  services = current;
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const backdrops = new BackdropsService(root);
+  const shell = (backdrop?: ReactNode) => (
+    <ToastProvider>
+      <AppShell
+        pages={[]}
+        selected="buzz.channels/channels"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+        backdrop={backdrop}
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const view = render(shell());
+  const baseline = view.container.innerHTML;
+  view.rerender(shell(<ShellBackdrops backdrops={backdrops} />));
+  expect(view.container.innerHTML).toBe(baseline);
+
+  const fiber = root
+    .extend({ pluginOwner: { id: "example.plugin", revision: "one" } })
+    .plugin((ctx) =>
+      ctx.backdrops?.register({
+        id: "glow",
+        component: () => <canvas data-testid="glow" />,
+      }),
+    );
+  await act(() => fiber.await());
+  const layer = screen.getByTestId("glow").closest(".shell-backdrop");
+  expect(layer?.parentElement).toHaveClass("shell-background");
+  expect(layer).toHaveAttribute("aria-hidden", "true");
+  expect(layer).toHaveAttribute("inert");
+
+  await act(() => fiber.dispose());
+  expect(view.container.innerHTML).toBe(baseline);
+  await root.fiber.dispose();
+});
+
 it("keeps built-in sidebar controls available before page contributions load", () => {
   const current = createServices();
   services = current;
@@ -365,7 +427,13 @@ it("keeps narrow contributed sidebars in the existing Escape-dismissed navigatio
   expect(nav).toHaveAttribute("aria-hidden", "false");
   const action = screen.getByRole("button", { name: "Sidebar action" });
   action.focus();
+  // Closing the drawer consumes Escape, so a window-level Escape shortcut
+  // (mark as read) does not also fire.
+  const reachedWindow = vi.fn((event: KeyboardEvent) => event.defaultPrevented);
+  window.addEventListener("keydown", reachedWindow);
   await userEvent.keyboard("{Escape}");
+  window.removeEventListener("keydown", reachedWindow);
+  expect(reachedWindow).toHaveReturnedWith(true);
   expect(nav).toHaveAttribute("aria-hidden", "true");
   expect(screen.getByRole("button", { name: "Show navigation" })).toHaveFocus();
 
@@ -587,6 +655,124 @@ it("routes compact header pages through the labelled overflow with main focus ha
   expect(document.getElementById("main-content")).toHaveFocus();
 });
 
+it("previews a sidebar page on hover only, away from its selected page and header placements", async () => {
+  const current = createServices();
+  services = current;
+  let hover = true;
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media,
+    matches: hover && media.includes("(hover: hover)"),
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const user = userEvent.setup();
+  const onSelect = vi.fn();
+  const page = (
+    id: string,
+    preview: RegisteredPage["preview"],
+    placement?: RegisteredPage["placement"],
+  ): RegisteredPage => ({
+    id,
+    key: `example/${id}`,
+    pluginId: "example",
+    revision: "1",
+    title: id,
+    component: () => null,
+    primary: true,
+    ...(preview ? { preview } : {}),
+    ...(placement ? { placement } : {}),
+  });
+  const pages = [
+    page("Home", undefined),
+    page("Inbox", ({ close }) => (
+      <button type="button" onClick={close}>
+        Recent item
+      </button>
+    )),
+    page("Broken", () => {
+      throw new Error("broken preview");
+    }),
+    page("Notes", () => <span>Topbar preview</span>, "topbar"),
+  ];
+  const shell = (selected: string) => (
+    <ToastProvider>
+      <AppShell
+        pages={pages}
+        selected={selected}
+        navigationAttempt=""
+        onSelect={onSelect}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const view = render(shell("example/Home"));
+    const nav = screen.getByRole("navigation", { name: "Pages" });
+    const inbox = within(nav).getByRole("button", { name: "Inbox" });
+    // The card replaces the native title tooltip; header pages get no preview.
+    expect(inbox).toHaveAttribute("aria-haspopup", "dialog");
+    expect(inbox).not.toHaveAttribute("title");
+    expect(screen.getByRole("tab", { name: "Notes" })).not.toHaveAttribute(
+      "aria-haspopup",
+    );
+    await user.hover(inbox);
+    const card = await screen.findByRole("dialog", { name: "Inbox" });
+    expect(inbox).toHaveAttribute("data-popup-preview");
+    // Content closes the card, for example after opening a conversation, and
+    // focus is not pulled back to the row.
+    await user.click(within(card).getByRole("button", { name: "Recent item" }));
+    await waitFor(() => expect(card).not.toBeInTheDocument());
+    expect(inbox).not.toHaveFocus();
+
+    // A throwing preview renders nothing and leaves navigation usable.
+    const broken = within(nav).getByRole("button", { name: "Broken" });
+    await user.hover(broken);
+    expect(
+      await screen.findByRole("dialog", { name: "Broken" }),
+    ).toBeEmptyDOMElement();
+    await user.click(broken);
+    expect(onSelect).toHaveBeenLastCalledWith("example/Broken");
+    await user.unhover(broken);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
+    // Pressing the row selects its page instead of opening the card.
+    fireEvent.click(inbox);
+    expect(onSelect).toHaveBeenLastCalledWith("example/Inbox");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // A selected page shows no preview of itself.
+    view.rerender(shell("example/Inbox"));
+    expect(
+      within(nav).getByRole("button", { name: "Inbox" }),
+    ).not.toHaveAttribute("aria-haspopup");
+    expect(within(nav).getByRole("button", { name: "Inbox" })).toHaveAttribute(
+      "title",
+      "Inbox",
+    );
+    view.unmount();
+
+    // Devices without hover never get one.
+    hover = false;
+    render(shell("example/Home"));
+    expect(
+      within(screen.getByRole("navigation", { name: "Pages" })).getByRole(
+        "button",
+        { name: "Inbox" },
+      ),
+    ).not.toHaveAttribute("aria-haspopup");
+  } finally {
+    error.mockRestore();
+  }
+});
+
 it("falls back from a failed toolbar image and isolates toolbar badge errors", () => {
   const current = createServices();
   services = current;
@@ -633,6 +819,52 @@ it("falls back from a failed toolbar image and isolates toolbar badge errors", (
   } finally {
     error.mockRestore();
   }
+});
+
+it("describes a toolbar page button with its badge", () => {
+  const current = createServices();
+  services = current;
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[
+          {
+            id: "inbox",
+            key: "example/inbox",
+            pluginId: "example",
+            revision: "one",
+            title: "Inbox",
+            primary: true,
+            placement: "toolbar",
+            component: () => null,
+            badge: () => (
+              <span role="img" aria-label="3 unread conversations">
+                3
+              </span>
+            ),
+          },
+        ]}
+        selected="example/inbox"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>,
+  );
+  const button = screen.getByRole("button", { name: "Inbox" });
+  // jsdom's accname reads the described wrapper's text ("3"); Chromium and
+  // Playwright's accname use the labelled image: "3 unread conversations".
+  const description = document.getElementById(
+    button.getAttribute("aria-describedby") ?? "",
+  );
+  expect(description).toContainElement(
+    screen.getByRole("img", { name: "3 unread conversations" }),
+  );
 });
 
 it("uses chrome tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
@@ -870,5 +1102,68 @@ it.each([false, true])(
     expect(
       within(nav).queryByRole("tab", { selected: true }),
     ).not.toBeInTheDocument();
+  },
+);
+
+it.each([true, false])(
+  "opens New with Mod+N without navigating (sidebar placement: %s)",
+  async (creationInSidebar) => {
+    const current = createServices();
+    services = current;
+    const select = vi.fn();
+    const create = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <AppShell
+          pages={[]}
+          selected="buzz.channels/channels"
+          navigationAttempt="same-conversation"
+          onSelect={select}
+          tone="default"
+          communities={current.communities}
+          accountActions={current.accountActions}
+          appearance={testAppearance}
+          searchServices={current}
+          creationInSidebar={creationInSidebar}
+          sidebar={(_, action) => (
+            <aside aria-label="Sidebar">
+              {creationInSidebar
+                ? action
+                : "Contributed sidebar without children"}
+            </aside>
+          )}
+          creationAction={(open, onOpenChange, container) => (
+            <MenuRoot open={open} onOpenChange={onOpenChange}>
+              {container &&
+                createPortal(
+                  <MenuTrigger render={<button type="button">New</button>} />,
+                  container,
+                )}
+              <MenuPopup>
+                <MenuItem onClick={create}>New chat</MenuItem>
+              </MenuPopup>
+            </MenuRoot>
+          )}
+        >
+          Current conversation
+        </AppShell>
+      </ToastProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+    expect(
+      await screen.findByRole("menuitem", { name: "New chat" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Hide sidebar" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(select).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menuitem", { name: "New chat" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
+    expect(create).toHaveBeenCalledOnce();
   },
 );

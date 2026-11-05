@@ -4,10 +4,12 @@
 // of the device, community and storage comes through its RunnerHost, so the
 // desktop app and a standalone host run agents with the same code.
 import { bytesToHex } from "nostr-tools/utils";
+import type { ProtectionAction } from "../agent-protection/service";
 import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  AgentCreationInput,
   AgentUpdateInput,
   AgentHandoff,
   RegisteredAgentType,
@@ -24,18 +26,19 @@ import { wake, wakePrompt } from "../agent-harness/wakes";
 import {
   type PluginTrigger,
   type ConversationWake,
+  unframed,
   wakeAnchor,
   wakeLands,
 } from "../agent-harness/plugin-wake";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
-import { LIVE_REPLAY_LIMIT } from "../relay/live";
+import { CHANNEL_KINDS, LIVE_REPLAY_LIMIT } from "../relay/live";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   addressedTo,
   CHAT_KINDS,
-  tagsAgent,
   watchMatches,
   type AttentionObject,
   type AttentionValue,
@@ -64,16 +67,24 @@ import {
 } from "./classifier";
 import type { Decisions } from "../decisions/service";
 import type { EventWatch } from "./attention";
-import type { AgentEventTemplate, AgentsNative, Membership } from "./native";
+import {
+  type AgentEventTemplate,
+  type AgentsNative,
+  type Membership,
+  unconfirmedAgentEvent,
+} from "./native";
 import type { AgentKey } from "./membership";
 import { setAttention, type AgentRecord, type TimerProgress } from "./store";
 import type { Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
+  admitted,
   CATCH_UP_PAGES,
-  delivered,
-  HEARD_LIMIT,
+  finished,
+  heardOf,
+  inStream,
   oldestFirst,
+  POLL_OVERLAP,
   readWindow,
   streamKey,
   streamsOf,
@@ -82,6 +93,7 @@ import {
   type Stream,
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
+import type { DeviceSettings } from "../../shared/device-settings";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
  * so watches can never fill the room mentions need, as in Janet. */
@@ -124,6 +136,10 @@ const WAITING_LIMIT = 512;
 const WAITING_BYTES = 4 * 1024 * 1024;
 /** How long a failed catch-up waits before it is tried again. */
 const CATCH_UP_RETRY_MS = 30_000;
+/** How often a stream live does not cover is read again, and how many
+ * seconds that read stays behind now, for events the relay stores late. */
+const CATCH_UP_POLL_MS = 30_000;
+const CATCH_UP_POLL_LAG = 10;
 
 /** Classifier calls in flight per agent. */
 const CLASSIFY_LIMIT = 32;
@@ -222,16 +238,12 @@ function conversationWake(
 }
 const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
-/** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
- * watch; others have none. */
-const streamOf = (key: AgentKey, { watch, slug, event }: WatchTrigger) =>
-  watch.kinds.length === 1 && watch.kinds[0] === 9
-    ? streamKey(
-        key,
-        slug,
-        watch.channels === "all" ? undefined : channelOf(event),
-      )
-    : undefined;
+/** The key of the catch-up stream that `trigger`'s event is in. */
+const streamOf = (
+  key: AgentKey,
+  { watch, slug, event }: Pick<WatchTrigger, "watch" | "slug" | "event">,
+) =>
+  streamKey(key, slug, watch.channels === "all" ? undefined : channelOf(event));
 /** Classifier calls a trigger's job makes before it queues. */
 const classifications = (trigger: Trigger) =>
   trigger.type === "watch" && trigger.watch.classifier
@@ -261,6 +273,7 @@ type Runner = {
   readonly scope: string;
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
+  protectionRevision: number;
   controller: AbortController;
   /** Events waiting to run in each lane, mentions first; due timers are found
    * when a run starts instead. */
@@ -275,7 +288,7 @@ type Runner = {
   /** Watch jobs released from `waiting`, oldest first, going into the queue
    * as it has room. */
   readonly later: Job[];
-  /** Events seen, and events it wrote (so reactions to them reach no watch). */
+  /** Events seen. */
   readonly seen: Set<string>;
   /** Events seen in each channel, as many as a reconnect replays of it, so
    * other channels' traffic cannot push out one a replay sends again. Only the
@@ -287,7 +300,6 @@ type Runner = {
   /** A missed event catch-up is still giving out, with delivered and rejected
    * matches retained while its other watches wait. */
   fanning?: { id: string; done: ReadonlySet<string> };
-  readonly wrote: Set<string>;
   /** Turns still counted as working, which a change of type waits out. */
   working: number;
   /** Its typing pulses, one per conversation it is working in. */
@@ -339,7 +351,7 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read" | "readRemote">;
+  readonly session: Pick<RelaySession, "read" | "readRemote" | "live">;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -352,8 +364,26 @@ type Pass = {
   epoch: number;
   controller: AbortController;
   done?: boolean;
+  /** When it was done, so a stream live does not cover is read again. */
+  doneAt?: number;
   failedAt?: number;
 };
+
+/** Since when live events have covered `stream`, or undefined when they do
+ * not: it names one channel, whose route is live, and live hears all of its
+ * kinds. A tick moves only such a stream's checkpoint, once it was read up to
+ * then; any other is read again, or an event live never heard could be
+ * passed over. */
+const coveredSince = (stream: Stream, live: ReadonlyMap<string, number>) =>
+  stream.channel !== undefined &&
+  stream.kinds.every((kind) => CHANNEL_KINDS.includes(kind))
+    ? live.get(stream.channel)
+    : undefined;
+
+/** How much of its last window each stream reads again: one live does not
+ * cover could still get an event the relay stores late. */
+const overlapOf = (live: ReadonlyMap<string, number>) => (stream: Stream) =>
+  coveredSince(stream, live) === undefined ? POLL_OVERLAP : 0;
 
 const seconds = () => Math.floor(Date.now() / 1000);
 const message = (error: unknown) =>
@@ -365,6 +395,7 @@ export type RunnerMember = Readonly<{
   pubkey: string;
   relay: string;
   type: string;
+  protectionRevision?: number | undefined;
   /** The partition its community's activity is kept under. */
   scope: string;
 }>;
@@ -388,6 +419,12 @@ export type RunnerHost = {
   starting?(agent: Agent, channelId: string): Promise<void> | undefined;
   /** Its community, while live. */
   community(agent: Agent): LiveCommunity | undefined;
+  /** Arms saved composer follow-ups behind these exact interrupted requests. */
+  resumeFollowUps?(agent: Agent, turns: Readonly<Record<string, string>>): void;
+  abandonFollowUps?(
+    agent: Agent,
+    turns: Readonly<Record<string, string>>,
+  ): void;
   /** Every saved record, whose watches' catch-up progress is kept. */
   records(): readonly AgentRecord[];
   /** Catch-up progress, as saved. */
@@ -408,6 +445,10 @@ export type RunnerHost = {
   scope(agent: Agent): string | undefined;
   /** Its saved record, without defaults. */
   saved(key: AgentKey): AgentRecord | undefined;
+  /** Whether a plugin that shows Attention is on; Attention runs only then. */
+  attentionShown(): boolean;
+  /** Whether plugins have finished starting. */
+  pluginsSettled(): boolean;
   /** Its record as its attention handle reads it; throws once it is gone. */
   record(key: AgentKey): AgentRecord;
   /** Changes its record after the changes sent before it, from the newest
@@ -428,22 +469,27 @@ export type RunnerHost = {
   /** The team sections of its prompt; empty without a team. */
   team(key: AgentKey): string;
   /** What its next run starts with, from this device's storage only. */
-  start(agent: Agent): Start<unknown>;
+  start(agent: Agent): Start<unknown> | Promise<Start<unknown>>;
+  protection?(agent: Agent): AgentHandle["protection"];
   agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
   createAgent(
     agent: Agent,
-    input: Readonly<{ type: string; name: string }>,
+    input: AgentCreationInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   updateAgent(
     agent: Agent,
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins as the agent's handle offers them. */
+  plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
+  /** Buzz settings on this device, where there are any. */
+  settings?(): DeviceSettings | undefined;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -469,6 +515,11 @@ export type RunnerHost = {
     | undefined;
   /** This device's view of each agent's work. */
   activity: LocalAgentActivity;
+  /** The event's channel as the agent's community lists it now. */
+  channel(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): ChannelSummary | undefined;
   /** Whether a mention in `channel` continues the agent's owner's Solo chat,
    * so its turn answers, and shows typing, at channel top level. */
   soloChat(
@@ -477,7 +528,7 @@ export type RunnerHost = {
     signal: AbortSignal,
   ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
-  remembered(key: AgentKey, slug: string, body: string): void;
+  remembered(key: AgentKey, slug: string, body: string | null): void;
   woke?(
     key: AgentKey,
     object: AttentionObject,
@@ -516,19 +567,39 @@ export class AgentRunners {
   }
 
   private readonly runners = new Map<string, Runner>();
+  /** Holds newly joined memberships while their global provider/policy changes. */
+  private readonly transitions = new Set<string>();
   /** Each agent's last claim or release, which its next waits for. */
   private readonly custody = new Map<string, Promise<void>>();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
-  /** Catch-up progress of each kind 9 watch stream, as saved. */
+  /** Catch-up progress of each watch stream, as saved. */
   private checkpoints: Readonly<Record<string, Checkpoint>>;
   /** By agent, its catch-up running or last run. */
   private passes = new Map<string, Pass>();
+  /** By community, for its connect, when each channel's route was first seen
+   * live since it last was not. A route that comes back covers only what is
+   * sent after that, not what it missed while down. */
+  private liveSince = new WeakMap<
+    LiveCommunity,
+    { epoch: number; channels: Map<string, number> }
+  >();
   /** Streams seen off (their watch disabled or the agent's attention off)
    * since the host started. One turned on starts from then, so it wakes
    * nothing from the time it was off; across a restart, its saved
    * checkpoint, moved while it was off, does the same. */
   private quiet = new Set<string>();
+  /** Whether startup is over for Attention: plugins have finished starting,
+   * or Attention has been shown, since this copy started. */
+  private settled = false;
+  /** Whether Attention is still waiting for startup, so neither its checkpoints
+   * nor the live events it would hear can be decided yet. */
+  private starting() {
+    this.settled ||= this.host.attentionShown() || this.host.pluginsSettled();
+    return !this.settled;
+  }
+  /** Whether live events are held until startup ends. */
+  private heldForStartup = false;
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
    * again or forgotten, as saved. */
@@ -575,7 +646,13 @@ export class AgentRunners {
   /** Gives each of `keys` again the turns it was left working on, once
    * its community is connected. */
   resumeInterrupted(keys: readonly AgentKey[]) {
-    for (const key of keys) this.resuming.add(key);
+    for (const key of keys) {
+      this.resuming.add(key);
+      const agent = this.host.agent(key);
+      const turns = this.left[key];
+      if (agent && turns && this.runners.get(key)?.type?.resumes)
+        this.host.resumeFollowUps?.(agent, turns);
+    }
     for (const runner of this.runners.values()) this.resumeTurns(runner);
   }
   /** Forgets the turns the app left `keys` working on last time. */
@@ -583,6 +660,8 @@ export class AgentRunners {
     for (const key of keys) {
       const { [key]: turns, ...rest } = this.left;
       if (!turns || !this.runs(key)) continue;
+      const agent = this.host.agent(key);
+      if (agent) this.host.abandonFollowUps?.(agent, turns);
       this.unmark(key, Object.keys(turns));
       this.left = rest;
     }
@@ -590,7 +669,8 @@ export class AgentRunners {
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
    * replaced type aborts its run. Turning attention off voids the watch work
-   * it queued, even if it is turned on again before that work would run. */
+   * it queued or held, even if it is turned on again before that work would
+   * run. */
   reconcile(
     identities: readonly RunnerMember[],
     types: ReadonlyMap<string, RegisteredAgentType>,
@@ -603,12 +683,20 @@ export class AgentRunners {
     for (const identity of identities) {
       const type = types.get(identity.type);
       const runner = this.runners.get(identity.key);
-      if (runner && this.host.saved(identity.key)?.attentionEnabled !== true) {
+      const off = this.host.saved(identity.key)?.attentionEnabled !== true;
+      if (runner && (off || !this.host.attentionShown())) {
         runner.epoch++;
         this.dropWatchWork(runner);
+        // A startup hold keeps its events until Attention is shown, but not
+        // past the switch being turned off.
+        if (off) runner.held.clear();
       }
       if (!runner) this.runners.set(identity.key, this.runner(identity, type));
-      else if (runner.type !== type) {
+      else if (
+        runner.type !== type ||
+        runner.protectionRevision !== (identity.protectionRevision ?? 0)
+      ) {
+        runner.protectionRevision = identity.protectionRevision ?? 0;
         runner.controller.abort();
         runner.controller = new AbortController();
         runner.type = type;
@@ -686,7 +774,8 @@ export class AgentRunners {
     if (!runner || !this.runs(key)) return false;
     runner.notes.set(channelId, [
       ...(runner.notes.get(channelId) ?? []),
-      { text, root },
+      // A plugin's note cannot pose as the turn's event or steer section.
+      { text: unframed(text), root },
     ]);
     return true;
   }
@@ -763,8 +852,13 @@ export class AgentRunners {
       throw new Error(
         "This agent is not running in this copy of Buzz. Change its provider in the Buzz app that runs it.",
       );
-    if (held.some((other) => other.transitioning))
+    const pubkey = runner.member.pubkey;
+    if (
+      this.transitions.has(pubkey) ||
+      held.some((other) => other.transitioning)
+    )
       throw new Error(`${name}'s provider is already changing`);
+    this.transitions.add(pubkey);
     for (const other of held) other.transitioning = true;
     try {
       if (!(await this.claimForRetype(runner)))
@@ -774,7 +868,9 @@ export class AgentRunners {
       if (working()) throw answering();
       return await change();
     } finally {
-      for (const other of held) {
+      this.transitions.delete(pubkey);
+      for (const other of this.runners.values()) {
+        if (other.member.pubkey !== pubkey) continue;
         other.transitioning = false;
         void this.drain(other);
       }
@@ -787,7 +883,7 @@ export class AgentRunners {
   }
 
   private runner(
-    { key, pubkey, relay, scope }: RunnerMember,
+    { key, pubkey, relay, scope, protectionRevision }: RunnerMember,
     type: RegisteredAgentType | undefined,
   ): Runner {
     return {
@@ -795,6 +891,7 @@ export class AgentRunners {
       member: { pubkey, relay },
       scope,
       type,
+      protectionRevision: protectionRevision ?? 0,
       controller: new AbortController(),
       queues: { mention: [], watch: [] },
       running: false,
@@ -808,10 +905,9 @@ export class AgentRunners {
       seen: new Set(),
       seenIn: new Map(),
       backlog: [],
-      wrote: new Set(),
       working: 0,
       typing: new Map(),
-      transitioning: false,
+      transitioning: this.transitions.has(pubkey),
       held: new Map(),
       notes: new Map(),
       mayHold: true,
@@ -872,7 +968,7 @@ export class AgentRunners {
           continue;
         }
         this.markSeen(runner, event.id, channel);
-        if (this.isOwn(runner, agent, event)) continue;
+        if (this.isOwn(agent, event)) continue;
         // A replay waits for room rather than take the drops a burst of
         // live traffic would.
         runner.backlog.push({
@@ -893,12 +989,9 @@ export class AgentRunners {
       (!!channel && !!runner.seenIn.get(channel)?.has(id))
     );
   }
-  /** An agent never hears itself; its own events keep reactions to them from
-   * its watches. */
-  private isOwn(runner: Runner, agent: Agent, event: RelayEvent) {
-    if (event.pubkey !== agent.pubkey) return false;
-    bounded(runner.wrote, event.id);
-    return true;
+  /** An agent never hears itself. */
+  private isOwn(agent: Agent, event: RelayEvent) {
+    return event.pubkey === agent.pubkey;
   }
   private markSeen(runner: Runner, id: string, channel: string | undefined) {
     bounded(runner.seen, id);
@@ -1025,7 +1118,7 @@ export class AgentRunners {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (this.hasSeen(runner, event.id, channel)) return;
     this.markSeen(runner, event.id, channel);
-    if (this.isOwn(runner, agent, event)) return;
+    if (this.isOwn(agent, event)) return;
     this.deliver(runner, agent, event, channelId);
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
@@ -1035,14 +1128,9 @@ export class AgentRunners {
     event: RelayEvent,
     done?: ReadonlySet<string>,
   ) {
-    if (event.kind !== 9) return;
-    const channel = channelOf(event);
     let changed = false;
     for (const stream of streamsOf(agent))
-      if (
-        (!done || done.has(stream.slug)) &&
-        (stream.channel === undefined || stream.channel === channel)
-      )
+      if ((!done || done.has(stream.slug)) && inStream(stream, event))
         changed = this.heardIn(stream.key, event) || changed;
     if (changed) this.saveCheckpoints();
   }
@@ -1051,54 +1139,94 @@ export class AgentRunners {
   private heardIn(key: string, event: RelayEvent) {
     const checkpoint = this.checkpoints[key];
     if (!checkpoint || !undelivered(checkpoint, event)) return false;
-    const heard = [
-      ...(checkpoint.heard ?? []),
-      { created_at: event.created_at, id: event.id },
-    ];
     this.checkpoints = {
       ...this.checkpoints,
-      [key]: { ...checkpoint, heard: heard.slice(-HEARD_LIMIT) },
+      [key]: heardOf(checkpoint, [...(checkpoint.heard ?? []), event]),
     };
     return true;
   }
-  /** Sets a stream's checkpoint, keeping what it heard live past it. */
+  /** Sets a stream's checkpoint, keeping what it heard live past it as well
+   * as what the checkpoint itself lists as heard. */
   private setCheckpoint(key: string, checkpoint: Checkpoint) {
-    const heard = this.checkpoints[key]?.heard?.filter((event) =>
-      undelivered({ ...checkpoint, heard: [] }, event),
-    );
+    // Kept below a window's cursor too: one read with an overlap lists there
+    // what it gave, which a restart before it is done must not give again.
     this.checkpoints = {
       ...this.checkpoints,
-      [key]: heard?.length ? { ...checkpoint, heard } : checkpoint,
+      [key]: heardOf(checkpoint, [
+        ...(this.checkpoints[key]?.heard ?? []),
+        ...(checkpoint.heard ?? []),
+      ]),
     };
   }
   /** Keeps each agent's catch-up going: on start, and after each connect, its
-   * kind 9 watches read the events they missed from their saved checkpoints,
-   * up to the connect. From then on live events cover them, so while the
-   * connection stays up a `tick` moves their checkpoints to now; a quit or a
-   * drop leaves the checkpoint where the next catch-up starts. */
+   * event watches read the events they missed from their saved checkpoints,
+   * up to the connect. From then on live events cover a stream whose channel
+   * is live, of kinds live hears, so while the connection stays up a `tick`
+   * moves its checkpoint to now; a quit or a drop leaves the checkpoint where
+   * the next catch-up starts. Any other stream, and one whose checkpoint is
+   * still before the connect or before its route came back, is read again,
+   * up to a little before now. */
   catchUp(tick: boolean) {
     const now = seconds();
     let changed = false;
+    const observed = new Set<LiveCommunity>();
+    /** The community's live channels, each with when it was first seen live. */
+    const liveOf = (community: LiveCommunity) => {
+      const { epoch } = community.connection;
+      let seen = this.liveSince.get(community);
+      if (seen?.epoch !== epoch) {
+        seen = { epoch, channels: new Map() };
+        this.liveSince.set(community, seen);
+      }
+      if (!observed.has(community)) {
+        observed.add(community);
+        const live = new Set(
+          community.session.live
+            .snapshot()
+            .routes.flatMap((route) =>
+              route.status === "live" && route.channelId
+                ? [route.channelId]
+                : [],
+            ),
+        );
+        for (const id of seen.channels.keys())
+          if (!live.has(id)) seen.channels.delete(id);
+        for (const id of live)
+          if (!seen.channels.has(id)) seen.channels.set(id, now);
+      }
+      return seen.channels;
+    };
     const move = (key: string, checkpoint: Checkpoint) => {
       this.setCheckpoint(key, checkpoint);
       changed = true;
     };
+    // Until plugins finish starting or Attention is shown, every checkpoint
+    // stays put, so the first catch-up still reads what the app missed while
+    // closed, and live events stay held. After that, no plugin showing
+    // Attention is like turning it off.
+    const shown = this.host.attentionShown();
+    const held = this.starting();
     for (const runner of this.runners.values()) {
       this.resumeTurns(runner);
       const agent = this.host.agent(runner.key);
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
-      for (const stream of agent ? streamsOf(agent) : []) {
+      for (const stream of agent && !held ? streamsOf(agent) : []) {
+        const checkpoint = this.checkpoints[stream.key];
         if (!on || !stream.enabled) {
           // Saved too, so one turned on after a restart starts from about
-          // when this copy last saw it off.
+          // when this copy last saw it off, or from when Attention is shown.
           this.quiet.add(stream.key);
-          if ((this.checkpoints[stream.key]?.through ?? 0) < now)
-            move(stream.key, { through: now });
+          if (
+            (checkpoint?.through ?? 0) < now ||
+            (!shown && !checkpoint?.hidden)
+          )
+            move(stream.key, { through: now, ...(!shown && { hidden: true }) });
         } else if (
           this.quiet.delete(stream.key) ||
-          !this.checkpoints[stream.key]
+          !checkpoint ||
+          checkpoint.hidden
         )
           // A stream new to catch-up, as every one is on an upgrade, starts
           // now: an earlier `since` does not replay older events.
@@ -1107,6 +1235,10 @@ export class AgentRunners {
       }
       const pass = this.passes.get(runner.key);
       const since = community?.connection.since;
+      // Seen on every call, so a route that drops and comes back between
+      // ticks is not taken as live all along.
+      const live =
+        community && since !== undefined ? liveOf(community) : undefined;
       if (!agent || !community || since === undefined || !reading.length) {
         pass?.controller.abort();
         this.passes.delete(runner.key);
@@ -1119,12 +1251,56 @@ export class AgentRunners {
         pass.epoch === community.connection.epoch &&
         !(pass.failedAt && Date.now() - pass.failedAt >= CATCH_UP_RETRY_MS)
       ) {
-        if (pass.done && tick)
-          for (const { key } of reading) {
-            const checkpoint = this.checkpoints[key];
+        if (!pass.done) continue;
+        const channels = live ?? new Map<string, number>();
+        // Read up to the connect, and to when live began to cover it.
+        const due = (stream: Stream) =>
+          Math.max(since, coveredSince(stream, channels) ?? since);
+        // How far it was read: one read with an overlap keeps its
+        // checkpoint behind that.
+        const through = (stream: Stream) => {
+          const checkpoint = this.checkpoints[stream.key];
+          return checkpoint?.read ?? checkpoint?.through ?? 0;
+        };
+        const ticks = (stream: Stream) =>
+          coveredSince(stream, channels) !== undefined &&
+          through(stream) >= due(stream);
+        if (tick)
+          for (const stream of reading.filter(ticks)) {
+            const checkpoint = this.checkpoints[stream.key];
             if (checkpoint && !checkpoint.upper && checkpoint.through < now)
-              move(key, { through: now });
+              move(stream.key, { through: now });
           }
+        const behind = reading.filter(
+          (stream) => through(stream) < due(stream),
+        );
+        const polled = reading.filter((stream) => !ticks(stream));
+        if (
+          !behind.length &&
+          !(
+            polled.length && Date.now() - (pass.doneAt ?? 0) >= CATCH_UP_POLL_MS
+          )
+        )
+          continue;
+        const next: Pass = { ...pass, controller: new AbortController() };
+        delete next.done;
+        delete next.doneAt;
+        this.passes.set(runner.key, next);
+        // Only one behind holds its live events back, to go on in order.
+        this.setCatching(runner, new Set(behind.map(({ slug }) => slug)));
+        void this.readMissed(
+          runner,
+          next,
+          polled,
+          // One behind reads up to when live began to cover it; any other
+          // stays behind now, for events the relay stores late.
+          (stream) =>
+            Math.max(
+              now - CATCH_UP_POLL_LAG,
+              behind.includes(stream) ? due(stream) : since,
+            ),
+          overlapOf(channels),
+        );
         continue;
       }
       pass?.controller.abort();
@@ -1136,7 +1312,25 @@ export class AgentRunners {
       };
       this.passes.set(runner.key, next);
       this.setCatching(runner, new Set(reading.map(({ slug }) => slug)));
-      void this.readMissed(runner, next, reading, since);
+      const channels = live ?? new Map<string, number>();
+      void this.readMissed(
+        runner,
+        next,
+        reading,
+        // A stream live does not cover is read as a poll reads it: an edit
+        // starts a new pass, and edits more often than the poll would
+        // otherwise keep it from being read.
+        (stream) =>
+          coveredSince(stream, channels) === undefined
+            ? Math.max(since, now - CATCH_UP_POLL_LAG)
+            : since,
+        overlapOf(channels),
+      );
+    }
+    // Once each catch-up is under way, so they are heard after what it reads.
+    if (!held && this.heldForStartup) {
+      this.heldForStartup = false;
+      this.releaseHeld(() => true);
     }
     if (changed) this.saveCheckpoints();
   }
@@ -1161,7 +1355,11 @@ export class AgentRunners {
     const { [runner.key]: _, ...rest } = this.left;
     this.left = rest;
     const ids = Object.keys(left);
-    if (!runner.type.resumes) return this.unmark(runner.key, ids);
+    if (!runner.type.resumes) {
+      this.host.abandonFollowUps?.(agent, left);
+      return this.unmark(runner.key, ids);
+    }
+    this.host.resumeFollowUps?.(agent, left);
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     void community.session
       .readRemote([{ ids, limit: ids.length }], {
@@ -1189,10 +1387,11 @@ export class AgentRunners {
             });
             if (queued) kept.add(event.id);
           }
-          this.unmark(
-            runner.key,
-            ids.filter((id) => !kept.has(id)),
+          const forgotten = Object.fromEntries(
+            Object.entries(left).filter(([id]) => !kept.has(id)),
           );
+          this.host.abandonFollowUps?.(agent, forgotten);
+          this.unmark(runner.key, Object.keys(forgotten));
         },
         (error) => {
           this.left = { ...this.left, [runner.key]: left };
@@ -1230,15 +1429,18 @@ export class AgentRunners {
       console.warn("Agent turns in progress were not saved", error);
     }
   }
-  /** Reads each stream's missed events through `upper`, a window at a time,
+  /** Reads each stream's missed events through `upper`, or its own `upper`
+   * when that is a function, a window at a time,
    * and delivers them oldest first, in batches, saving its checkpoint after
-   * each. A watch's streams are read one after another; once all of them are
-   * read, its live events that waited go on. */
+   * each. A stream with an `overlap` keeps that many seconds below its
+   * window open for its next read. A watch's streams are read one after
+   * another; once all of them are read, its live events that waited go on. */
   private async readMissed(
     runner: Runner,
     pass: Pass,
     streams: readonly Stream[],
-    upper: number,
+    upper: number | ((stream: Stream) => number),
+    overlap: (stream: Stream) => number,
   ) {
     const signal = AbortSignal.any([
       pass.controller.signal,
@@ -1268,7 +1470,7 @@ export class AgentRunners {
             const window = await readWindow(
               stream,
               this.checkpoints[stream.key],
-              upper,
+              typeof upper === "number" ? upper : upper(stream),
               read,
             );
             if (!window) break;
@@ -1277,7 +1479,9 @@ export class AgentRunners {
                 `Agent ${name()} skipped the oldest events ${slug} missed: catch-up reads at most ${CATCH_UP_PAGES} pages`,
               );
             progress(stream.key, window.checkpoint);
-            const events = window.events.filter((event) => event.kind === 9);
+            const events = window.events.filter((event) =>
+              inStream(stream, event),
+            );
             let skipped = window.skipped;
             for (let index = 0; index < events.length; ) {
               const taken = await this.caughtUp(
@@ -1291,16 +1495,31 @@ export class AgentRunners {
               if (!taken) return;
               skipped = false;
               index += taken;
-              const last = events[index - 1] as RelayEvent;
-              progress(stream.key, delivered(window.upper, last));
+              progress(
+                stream.key,
+                admitted(
+                  window,
+                  events.slice(0, index),
+                  this.checkpoints[stream.key]?.heard,
+                  overlap(stream),
+                ),
+              );
             }
-            progress(stream.key, delivered(window.upper));
+            progress(
+              stream.key,
+              finished(
+                window,
+                this.checkpoints[stream.key]?.heard,
+                overlap(stream),
+              ),
+            );
           }
         const catching = new Set(runner.catching);
         catching.delete(slug);
         this.setCatching(runner, catching);
       }
       pass.done = true;
+      pass.doneAt = Date.now();
     } catch (error) {
       if (signal.aborted) return;
       pass.failedAt = Date.now();
@@ -1380,8 +1599,7 @@ export class AgentRunners {
       const listened = event.created_at >= pass.community.connection.start;
       const triggers = heard.triggers.filter((trigger) =>
         trigger.type === "watch"
-          ? !fanning?.done.has(trigger.slug) &&
-            this.missed(runner, trigger, listened)
+          ? !fanning?.done.has(trigger.slug) && this.missed(runner, trigger)
           : !fanning && listened,
       );
       if (heard.held) {
@@ -1430,7 +1648,6 @@ export class AgentRunners {
       const channel = channelOf(event);
       if (this.hasSeen(runner, event.id, channel)) continue;
       this.markSeen(runner, event.id, channel);
-      this.isOwn(runner, agent, event);
     }
     this.give(runner, agent, mentions, watches, slug, skipped);
     return taken;
@@ -1479,8 +1696,9 @@ export class AgentRunners {
     // does not give it to these again.
     let changed = false;
     for (const [trigger] of watches.values()) {
-      const stream = streamOf(runner.key, trigger as WatchTrigger);
-      if (stream) changed = this.heardIn(stream, event) || changed;
+      changed =
+        this.heardIn(streamOf(runner.key, trigger as WatchTrigger), event) ||
+        changed;
     }
     if (changed) this.saveCheckpoints();
     const done = runner.fanning?.id === event.id ? runner.fanning.done : [];
@@ -1523,13 +1741,10 @@ export class AgentRunners {
     }
   }
   /** Whether a catch-up event read for one watch is also one `trigger`'s
-   * watch missed. One with its own stream missed it while it is past that
-   * stream's checkpoint, so a watch added or widened since wakes for nothing
-   * older; one with none has replay only, from when the app listened. */
-  private missed(runner: Runner, trigger: WatchTrigger, listened: boolean) {
-    const stream = streamOf(runner.key, trigger);
-    if (!stream) return listened;
-    const checkpoint = this.checkpoints[stream];
+   * watch missed: it is past that watch's stream's checkpoint, so a watch
+   * added or widened since wakes for nothing older. */
+  private missed(runner: Runner, trigger: WatchTrigger) {
+    const checkpoint = this.checkpoints[streamOf(runner.key, trigger)];
     return !!checkpoint && undelivered(checkpoint, trigger.event);
   }
   /** Saves the checkpoints of watches that still exist. Unsaved, catch-up
@@ -1809,7 +2024,10 @@ export class AgentRunners {
           }
         : { classifier, ...input };
     if (!live()) return undefined;
-    const { pass, result } = await classify(decisions, facts);
+    const { pass, result } = await classify(decisions, {
+      ...facts,
+      community: agent.relay,
+    });
     return pass ? result : undefined;
   }
   /** What `event` wakes now, and whether other matching watches still wait
@@ -1822,14 +2040,6 @@ export class AgentRunners {
   ): Heard {
     if (this.stopped[runner.key]?.[event.id] !== undefined)
       return { triggers: [] };
-    const wrote = (id: string) => runner.wrote.has(id);
-    // Another of the owner's agents wakes it only by naming it, wherever: were a
-    // watch enough, two agents replying to each other would never stop. The
-    // claimed owner only narrows this; the type verifies it before answering.
-    if (event.tags.some((tag) => tag[0] === "auth" && tag[1] === agent.owner))
-      return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
-        ? { triggers: [{ type: "mention", event }] }
-        : { triggers: [] };
     // A one-to-one DM is always addressed to the other member, whoever else it
     // names, so no mention is needed. Only new messages: an edit is not a new
     // turn, and a reaction is not conversation. A group DM still needs the
@@ -1840,17 +2050,35 @@ export class AgentRunners {
       this.host.dm(agent, event)
     )
       return { triggers: [{ type: "mention", event }] };
-    // Addressed events never reach a watch. Only conversation starts a run: not
-    // an encrypted DM (kind 4) it cannot read yet, nor a reaction to its message.
-    if (addressedTo(event, agent.pubkey, wrote))
+    // Addressed events never reach a watch. Only conversation starts a run, not
+    // an encrypted DM (kind 4) it cannot read yet. A reaction to its message is
+    // not addressed, so a watch can still hear it.
+    if (addressedTo(event, agent.pubkey))
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
-    if (!agent.attentionEnabled) return { triggers: [] };
+    // An agent whose Attention waits for startup holds what it would hear.
+    const waiting =
+      !agent.attentionEnabled &&
+      this.host.saved(runner.key)?.attentionEnabled === true &&
+      this.starting();
+    if (!agent.attentionEnabled && !waiting) return { triggers: [] };
     const matches = this.watches(runner, agent).filter(
       ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
     );
     if (!matches.length) return { triggers: [] };
+    if (waiting) {
+      // Not for a stream last seen hidden: Attention was off then, so showing
+      // it wakes nothing from before.
+      const hidden = (match: (typeof matches)[number]) => {
+        const key = streamOf(agent.key, { ...match, event });
+        return !!key && !!this.checkpoints[key]?.hidden;
+      };
+      const discarded = matches.filter(hidden).map(({ slug }) => slug);
+      if (discarded.length === matches.length) return { triggers: [] };
+      this.heldForStartup = true;
+      return { triggers: [], held: true, discarded };
+    }
     const member = this.host.member(agent, event);
     if (member === undefined) return { triggers: [], held: true };
     if (!member) return { triggers: [] };
@@ -2085,13 +2313,55 @@ export class AgentRunners {
     const channelId =
       job.channelId ?? event.tags.find(([key]) => key === "h")?.[1];
     if (!scope || !channelId) return;
-    job.work = this.host.activity.begin({
-      scope,
-      agent: runner.member.pubkey,
-      channelId,
-      messageId: event.id,
-      threadRootId: threadReference(event)?.rootId ?? event.id,
-    });
+    const threadRootId = threadReference(event)?.rootId;
+    const channel = this.host.channel(agent, event);
+    const soloChat =
+      channel?.channelType === "solo" &&
+      !channel.cached &&
+      !channel.pending &&
+      !channel.metadataPending;
+    const conversationName = channel?.name?.trim();
+    job.work = this.host.activity.begin(
+      {
+        scope,
+        agent: runner.member.pubkey,
+        channelId,
+        messageId: event.id,
+        threadRootId: threadRootId ?? event.id,
+        ...(threadRootId ? { thread: true } : {}),
+        ...(soloChat ? { soloChat: true } : {}),
+        ...(soloChat && conversationName ? { conversationName } : {}),
+      },
+      // Retry queues the same mention again. It was seen when first heard,
+      // so it is not marked again; its run saves it as working as any does.
+      () =>
+        void this.enqueue(runner, {
+          trigger: { type: "mention", event },
+          ...(job.channelId ? { channelId: job.channelId } : {}),
+        }),
+    );
+    if (
+      !soloChat &&
+      channel?.channelType === "solo" &&
+      channel.pending &&
+      !channel.cached &&
+      !channel.metadataPending
+    ) {
+      const starting = this.host.starting?.(agent, channelId);
+      if (starting)
+        void starting.then(
+          () => {
+            const confirmed = this.host.channel(agent, event);
+            if (
+              confirmed?.channelType === "solo" &&
+              !confirmed.cached &&
+              !confirmed.metadataPending
+            )
+              job.work?.confirmSolo(confirmed.name ?? undefined);
+          },
+          () => {},
+        );
+    }
   }
 
   // Mentions run one at a time, in arrival order. Beside them, attention work
@@ -2127,11 +2397,16 @@ export class AgentRunners {
       // Every copy of the app on this machine hears the same events; only the
       // one holding the agent runs them. Asked on every wake too, so a copy
       // takes over within a tick of the holder quitting or letting go.
-      if (!(await this.claim(runner))) {
+      const held = await this.claim(runner);
+      if (!held) {
         this.host.activity.clear(runner.scope, runner.member.pubkey);
         runner.activityClaimed = false;
-        this.dropMentions(runner);
-        runner.queues.watch.length = 0;
+        // Only confirmed custody elsewhere discards this copy's work. An
+        // uncertain claim stays closed and retries the same queues on a wake.
+        if (held === false) {
+          this.dropMentions(runner);
+          runner.queues.watch.length = 0;
+        }
         break;
       }
       // Retype may have reserved this idle runner while claim was pending.
@@ -2196,7 +2471,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle = this.handleFor(runner, agent, true);
+    const handle = this.handleFor(runner, agent, true, job.work);
     const anchor = conversationWake(job.trigger, "");
     const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
@@ -2228,8 +2503,16 @@ export class AgentRunners {
       return run(delivery);
     };
     const completion = Promise.resolve().then(async () => {
+      if (agent.protection) {
+        if (!type.protection || !handle.protection)
+          throw new Error(
+            type.protectionUnavailable ??
+              "This runtime does not support the agent's protection policy",
+          );
+        handle.protection.assertAvailable();
+      }
       const pick = await pickFor(job.trigger, agent, type);
-      const start = this.host.start(agent);
+      const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
@@ -2384,77 +2667,131 @@ export class AgentRunners {
   }
 
   /** The agent as `run` holds it. */
-  private handleFor(runner: Runner, agent: Agent, run = false): AgentHandle {
+  private handleFor(
+    runner: Runner,
+    agent: Agent,
+    run = false,
+    work?: ReturnType<LocalAgentActivity["begin"]>,
+  ): AgentHandle {
     // Taken now, as a type change replaces the controller.
     const lifetime = runner.controller.signal;
-    return Object.freeze({
-      key: agent.key,
-      pubkey: agent.pubkey,
-      name: agent.name,
-      owner: agent.owner,
-      // What acts as the agent stops with it: a turn still working once it
-      // is deleted, removed from this community or retyped can't.
-      publish: async (event: AgentEventTemplate, check?: () => void) => {
-        lifetime.throwIfAborted();
-        return this.publish(runner, event, lifetime, check);
-      },
-      query: async (filters: readonly object[]) => {
-        lifetime.throwIfAborted();
-        return this.require().query(agent, filters);
-      },
-      searchProfiles: async (query: string, limit: number) => {
-        lifetime.throwIfAborted();
-        return this.require().searchProfiles(agent, query, limit);
-      },
-      upload: async (data: string, mime: string) => {
-        lifetime.throwIfAborted();
-        return this.require().upload(agent, data, mime);
-      },
-      media: async (url: string) => {
-        lifetime.throwIfAborted();
-        return this.require().media(agent, url);
-      },
-      gitAuth: async (owner: string, repo: string) => {
-        lifetime.throwIfAborted();
-        return this.require().gitAuth(agent, owner, repo);
-      },
-      remember: async (slug: string, body: string, after: number) => {
-        lifetime.throwIfAborted();
-        const event = await this.require().remember(agent, slug, body, after);
-        this.host.remembered(agent.key, slug, body);
-        return event;
-      },
-      agentTypes: () => this.host.agentTypes(),
-      // Drafts outlive the run's handover deadline, as a turn still working may
-      // submit one, but not the agent or its type.
-      createAgent: async (input: Readonly<{ type: string; name: string }>) => {
-        lifetime.throwIfAborted();
-        return this.host.createAgent(agent, input);
-      },
-      updateAgent: async (input: AgentUpdateInput) => {
-        lifetime.throwIfAborted();
-        return this.host.updateAgent(agent, input);
-      },
-      // Only a run hands off: a plugin's wake through `Agents.handle` would
-      // read as the agent's own.
-      ...(run && {
-        handoff: (handoff: AgentHandoff) => {
-          lifetime.throwIfAborted();
-          this.host.handoff(agent, handoff);
+    const protection = this.host.protection?.(agent);
+    const settings = run ? this.host.settings?.() : undefined;
+    const handle = guarded(
+      {
+        protection: protection && {
+          ...protection,
+          check: (action: ProtectionAction, signal: AbortSignal) =>
+            protection.check(action, AbortSignal.any([lifetime, signal])),
         },
-      }),
-      templates: () => this.host.templates(agent),
-      tabs: () => this.host.tabs(agent),
-      notes: (channelId: string, root?: string) => {
-        const pending = runner.notes.get(channelId) ?? [];
-        const matches = (note: { root: string | undefined }) =>
-          root === undefined || note.root === root;
-        const notes = pending.filter(matches);
-        const kept = pending.filter((note) => !matches(note));
-        if (kept.length) runner.notes.set(channelId, kept);
-        else runner.notes.delete(channelId);
-        return notes.map((note) => note.text);
+        key: agent.key,
+        pubkey: agent.pubkey,
+        name: agent.name,
+        owner: agent.owner,
+        // What acts as the agent stops with it: a turn still working once it
+        // is deleted, removed from this community or retyped can't.
+        publish: async (event: AgentEventTemplate, check?: () => void) => {
+          lifetime.throwIfAborted();
+          const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
+          const ownReply =
+            event.kind === 9 && !!work && destination === work.channelId;
+          const sent = ownReply ? work.sending() : undefined;
+          try {
+            const published = await this.publish(
+              runner,
+              event,
+              lifetime,
+              check,
+            );
+            if (ownReply) {
+              const channel = this.host.channel(agent, published);
+              if (
+                channel?.channelType === "solo" &&
+                !channel.cached &&
+                !channel.pending &&
+                !channel.metadataPending
+              )
+                work.confirmSolo(channel.name ?? undefined);
+              work.reply(published.id);
+            }
+            return published;
+          } catch (error) {
+            const uncertain = ownReply && unconfirmedAgentEvent(error);
+            if (uncertain) work.reply(uncertain);
+            throw error;
+          } finally {
+            sent?.();
+          }
+        },
+        query: async (filters: readonly object[]) => {
+          lifetime.throwIfAborted();
+          return this.require().query(agent, filters);
+        },
+        searchProfiles: async (query: string, limit: number) => {
+          lifetime.throwIfAborted();
+          return this.require().searchProfiles(agent, query, limit);
+        },
+        upload: async (data: string, mime: string) => {
+          lifetime.throwIfAborted();
+          return this.require().upload(agent, data, mime);
+        },
+        media: async (url: string) => {
+          lifetime.throwIfAborted();
+          return this.require().media(agent, url);
+        },
+        gitAuth: async (owner: string, repo: string) => {
+          lifetime.throwIfAborted();
+          return this.require().gitAuth(agent, owner, repo);
+        },
+        remember: async (slug: string, body: string | null, after: number) => {
+          lifetime.throwIfAborted();
+          const event = await this.require().remember(agent, slug, body, after);
+          this.host.remembered(agent.key, slug, body);
+          return event;
+        },
+        agentTypes: () => this.host.agentTypes(),
+        // Drafts outlive the run's handover deadline, as a turn still working may
+        // submit one, but not the agent or its type.
+        createAgent: async (input: AgentCreationInput) => {
+          lifetime.throwIfAborted();
+          return this.host.createAgent(agent, input);
+        },
+        updateAgent: async (input: AgentUpdateInput) => {
+          lifetime.throwIfAborted();
+          return this.host.updateAgent(agent, input);
+        },
+        // Only a run hands off or manages plugins: through `Agents.handle` a
+        // plugin's call would read as the agent's own.
+        ...(run && {
+          plugins: this.host.plugins?.(agent),
+          handoff: (handoff: AgentHandoff) => {
+            lifetime.throwIfAborted();
+            this.host.handoff(agent, handoff);
+          },
+        }),
+        templates: () => this.host.templates(agent),
+        tabs: () => this.host.tabs(agent),
+        // Only a run's: a plugin acting through the agent doesn't get them.
+        ...(settings && { settings }),
+        notes: (channelId: string, root?: string) => {
+          const pending = runner.notes.get(channelId) ?? [];
+          const matches = (note: { root: string | undefined }) =>
+            root === undefined || note.root === root;
+          const notes = pending.filter(matches);
+          const kept = pending.filter((note) => !matches(note));
+          if (kept.length) runner.notes.set(channelId, kept);
+          else runner.notes.delete(channelId);
+          return notes.map((note) => note.text);
+        },
+        attention: this.attention(agent.key, lifetime),
       },
+      () => lifetime.throwIfAborted(),
+    );
+    return Object.freeze({
+      ...handle,
+      // Compensation for an undelivered request can settle after retirement.
+      // It only returns local notes to this runner; acting as the agent stays
+      // guarded by the old lifetime above.
       restoreNotes: (
         channelId: string,
         notes: readonly string[],
@@ -2466,7 +2803,6 @@ export class AgentRunners {
             ...(runner.notes.get(channelId) ?? []),
           ]);
       },
-      attention: this.attention(agent.key, lifetime),
     });
   }
 
@@ -2604,13 +2940,13 @@ export class AgentRunners {
           (await this.host.custody?.claim(runner.member.pubkey)) ?? false,
         );
       } catch (error) {
-        this.claimed(runner, true);
-        // Answering twice beats not answering at all.
+        this.claimed(runner, false);
+        // Uncertain custody must not admit a stale protection policy.
         console.warn(
           `Agent ${this.host.agent(runner.key)?.name} was not claimed`,
           error,
         );
-        return true;
+        return undefined;
       }
     });
   }
@@ -2685,7 +3021,8 @@ export class AgentRunners {
     const record = () => this.host.record(key);
     return guarded(
       {
-        enabled: () => record().attentionEnabled === true,
+        enabled: () =>
+          record().attentionEnabled === true && this.host.attentionShown(),
         classifier: () => this.host.classifier(),
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);
@@ -2798,9 +3135,7 @@ export class AgentRunners {
       lifetime.throwIfAborted();
     }
     check?.();
-    const signed = await this.require().publish(runner.member, event);
-    bounded(runner.wrote, signed.id);
-    return signed;
+    return this.require().publish(runner.member, event);
   }
 }
 
@@ -2815,7 +3150,15 @@ function guarded<T extends object>(target: T, live: () => void): T {
         key,
         typeof value !== "function"
           ? value && typeof value === "object"
-            ? guarded(value, live)
+            ? Array.isArray(value)
+              ? Object.freeze(
+                  value.map((item) =>
+                    item && typeof item === "object"
+                      ? guarded(item, live)
+                      : item,
+                  ),
+                )
+              : guarded(value, live)
             : value
           : value.constructor === AsyncFunction
             ? async (...args: unknown[]) => {

@@ -1,11 +1,17 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getPublicKey } from "nostr-tools";
+import { createServer } from "vite";
 import { expect, it } from "vitest";
+import { relayBrokerPlugin } from "./relay-broker.mjs";
 
 it("loads the broker's Vite config without native-compatibility warnings", () => {
   // A fresh Node process exercises real config imports, not Vitest's resolver.
-  // Loading config creates the plugin but never invokes configureServer, so it
-  // cannot read the Keychain, open a server, or contact a relay.
+  // Loading and resolving config never invoke configureServer, so they cannot
+  // read the Keychain, open a server, or contact a relay.
   const result = spawnSync(
     process.execPath,
     [
@@ -16,7 +22,7 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
           import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
           import { tmpdir } from 'node:os';
           import { join } from 'node:path';
-          import { loadConfigFromFile } from 'vite';
+          import { loadConfigFromFile, resolveConfig } from 'vite';
           const configFile = join(process.cwd(), 'vite.config.ts');
           // Load the real config with isolated .env files, never personal settings.
           const directory = mkdtempSync(join(tmpdir(), 'buzz-vite-config-'));
@@ -28,6 +34,26 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
             );
             assert(loaded?.config.plugins.some(p => p?.name === 'buzz-relay-broker'));
             assert.equal(loaded.config.define['import.meta.env.VITE_BUZZ_LIVE'], '"1"');
+            // Inline server options are how Vite applies CLI --host overrides.
+            // Resolve the real config without opening any listener or reading credentials.
+            for (const host of [undefined, false, 'localhost', '127.0.0.1', '::1']) {
+              await resolveConfig({ configFile, server: { host } }, 'serve');
+            }
+            const unsafeHosts = [true, '0.0.0.0', '::', '', '192.0.2.1', 'dev.example'];
+            for (const host of unsafeHosts) {
+              await assert.rejects(
+                resolveConfig({ configFile, server: { host } }, 'serve'),
+                /requires a loopback-only Vite listener/,
+              );
+            }
+            // Unpinned fixture servers and packaged builds do not load a signer.
+            process.env.BUZZ_DEV_VIEWER = '';
+            const fixture = await resolveConfig({ configFile, server: { host: true } }, 'serve');
+            assert(!fixture.plugins.some(p => p.name === 'buzz-relay-broker'));
+            assert.equal(fixture.server.host, true);
+            process.env.BUZZ_DEV_VIEWER = 'a'.repeat(64);
+            const packaged = await resolveConfig({ configFile, server: { host: true } }, 'build');
+            assert(!packaged.plugins.some(p => p.name === 'buzz-relay-broker'));
             for (const command of ['serve', 'build']) {
               for (const setting of [undefined, '', '0', '1', 'true', 'invalid']) {
                 if (setting === undefined) delete process.env.BUZZ_DEV_NOTIFICATIONS;
@@ -139,9 +165,35 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
             }
             delete process.env.BUZZ_DATABRICKS_HOST;
+            // A fresh checkout uses production for both dev and packaged frontends.
+            // Explicit empty values retain the deployment opt-out.
+            for (const local of ['', 'BUZZ_BUILDERLAB_URL=']) {
+              writeFileSync('.env.local', local);
+              delete process.env.BUZZ_BUILDERLAB_URL;
+              for (const command of ['serve', 'build']) {
+                const result = await loadConfigFromFile(
+                  { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+                );
+                assert.equal(
+                  result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'],
+                  JSON.stringify(local ? '' : 'https://app.builderlab.xyz'),
+                );
+              }
+            }
             // Desktop shares .env.local/process inputs with the native build.
-            // An explicit empty process value clears the frontend URL too.
-            writeFileSync('.env.local', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            // Mode-specific values cannot point the renderer at another same-origin path.
+            writeFileSync('.env.local', String.fromCharCode(0xfeff) + 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/');
+            writeFileSync('.env.development', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/staging');
+            writeFileSync('.env.production', 'BUZZ_BUILDERLAB_URL=https://app.builderlab.xyz/staging');
+            for (const [command, mode] of [['serve', 'development'], ['build', 'production']]) {
+              delete process.env.BUZZ_BUILDERLAB_URL;
+              const result = await loadConfigFromFile({ command, mode }, configFile);
+              assert.equal(
+                result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'],
+                JSON.stringify('https://app.builderlab.xyz/'),
+              );
+            }
+            // Process input still overrides the shared local value, including empty.
             for (const [command, override, expected] of [
               ['serve', undefined, 'https://app.builderlab.xyz/'],
               ['build', 'https://login.example:8443/deployment/', 'https://login.example:8443/deployment/'],
@@ -154,6 +206,46 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
               );
               assert.equal(result.config.define['import.meta.env.VITE_BUZZ_BUILDERLAB_URL'], JSON.stringify(expected));
             }
+            // The first-run account seed reaches only a dev server, and a
+            // malformed value fails at configuration time without being echoed.
+            for (const command of ['serve', 'build']) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = 'unlinked';
+              const seeded = await loadConfigFromFile(
+                { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+              );
+              assert.equal(
+                seeded.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+                JSON.stringify(command === 'serve' ? 'unlinked' : ''),
+              );
+            }
+            // A backup kind resolves against the failure table, and backups
+            // and a recovery key decode, through the native loader.
+            const failingSeed = JSON.stringify({
+              backup: 'unreachable',
+              known: ['design.example.com'],
+              backups: ['npub1424242424242424242424242424242424242424242424242424qamrcaj'],
+              recovery: 'nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw',
+            });
+            process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = failingSeed;
+            const failing = await loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile);
+            assert.equal(
+              failing.config.define['import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT'],
+              JSON.stringify(failingSeed),
+            );
+            for (const seed of [
+              '{"npub":"s3cret"}',
+              '{"backup":"s3cret"}',
+              '{"backups":["s3cret"]}',
+              '{"recovery":"nsec1s3cret"}',
+              '{"known":["http://s3cret.example"]}',
+            ]) {
+              process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT = seed;
+              await assert.rejects(
+                loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+                (error) => /BUZZ_DEV_FIRST_RUN_ACCOUNT must be/.test(error.message) && !error.message.includes('s3cret'),
+              );
+            }
+            delete process.env.BUZZ_DEV_FIRST_RUN_ACCOUNT;
             // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
             process.env.BUZZ_DEV_OPEN_RELAY = '1';
             process.env.BUZZ_RELAY_URL = '';
@@ -196,3 +288,50 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
   expect(result.status, result.stderr).toBe(0);
   expect(result.stderr).not.toContain("configLoader: 'native'");
 }, 35_000);
+
+it("refuses exposed Vite servers before reading identity and serves the broker on loopback", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "buzz-broker-listener-"));
+  const key = new Uint8Array(32).fill(1);
+  let identityReads = 0;
+  const options = (host) => ({
+    root: directory,
+    configFile: false,
+    logLevel: "silent",
+    optimizeDeps: { noDiscovery: true, include: [] },
+    server: { host, port: 0, watch: null, hmr: false },
+    plugins: [
+      relayBrokerPlugin({
+        archiveFile: ":memory:",
+        identity: () => {
+          identityReads++;
+          return key.slice();
+        },
+      }),
+    ],
+  });
+  try {
+    // Real Vite server construction, without listen(), is safe even pre-fix.
+    // A rejected config must never reach the broker's credential loader.
+    await expect(async () => {
+      const server = await createServer(options(true));
+      await server.close();
+    }).rejects.toThrow("requires a loopback-only Vite listener");
+    expect(identityReads).toBe(0);
+    const server = await createServer(options("127.0.0.1"));
+    try {
+      expect(identityReads).toBe(1);
+      await server.listen();
+      const address = server.httpServer.address();
+      expect(address.address).toBe("127.0.0.1");
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/relay/identity`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ viewer: getPublicKey(key) });
+    } finally {
+      await server.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

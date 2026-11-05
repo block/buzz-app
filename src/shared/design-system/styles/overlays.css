@@ -317,6 +317,12 @@
     min-height: 0;
     overflow: hidden;
   }
+  /* Stable lists need a usable control before the whole dialog scrolls. */
+  :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]:where(
+    [data-height^="stable"]:not([data-size="expanded"])
+  ) > .buzz-dialog-body {
+    min-height: calc(2 * var(--dialog-padding) + var(--size-control));
+  }
   /* Without footer actions, the popup already supplies the bottom gutter. */
   :is(.buzz-dialog, .buzz-dialog-step)[data-body-layout="flex"]
   > .buzz-dialog-body:last-child {
@@ -408,6 +414,15 @@
   }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
+  }
+  /* A hint over a top-layer surface keeps Base UI's geometry, not popover UA chrome. */
+  .buzz-tooltip-positioner[popover] {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
   }
   .buzz-tooltip {
     @apply text-caption;
@@ -596,6 +611,30 @@ html[data-keyboard-navigation]
   overflow-wrap: anywhere;
 }
 @layer components {
+  .buzz-toast:has(.buzz-toast-open) {
+    position: relative;
+    isolation: isolate;
+  }
+  .buzz-toast-open {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    border-radius: inherit;
+    background: none;
+    cursor: pointer;
+  }
+  .buzz-toast-open:hover {
+    box-shadow: inset 0 0 0 1px var(--border-prominent);
+  }
+  html[data-keyboard-navigation] .buzz-toast-open:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+  .buzz-toast:has(.buzz-toast-open)
+    :is(.buzz-toast-dismiss, .buzz-toast-actions > *) {
+    position: relative;
+    z-index: 1;
+  }
   .buzz-toast-heading {
     display: flex;
     align-items: start;

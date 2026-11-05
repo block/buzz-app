@@ -4,7 +4,7 @@ stubAvatarBrowserApis();
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createRef } from "react";
+import { createRef, useSyncExternalStore } from "react";
 import { Context } from "@deepseek-ai/cordis";
 import userEvent from "@testing-library/user-event";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -133,6 +133,15 @@ function fixture() {
     agentActivity: { snapshot: () => activity, subscribe },
     directMessages: { people: async () => ({ people: [] }) },
     channelLifecycle: { snapshot: () => visibility, subscribe },
+    unread: {
+      snapshot: () => ({ manual: "none", observedCount: 0 }),
+      activity: () => ({ items: [] }),
+      subscribe: (_target: unknown, listener: () => void) =>
+        subscribe(listener),
+      subscribeActivity: (_id: string, listener: () => void) =>
+        subscribe(listener),
+    },
+    sidebarPreferences: { snapshot: () => ({ status: "ready" }), subscribe },
     typing: { snapshot: () => publicTyping, subscribe },
     thread: () => ({
       snapshot: () => thread,
@@ -332,7 +341,7 @@ it.each(["live", "reconnect", "clear-cache"] as const)(
         screen.getByRole("button", { name: "Mention a member" }),
       );
       expect(
-        await screen.findByRole("button", { name: `GLM ${agent.pubkey}` }),
+        await screen.findByRole("button", { name: /^GLM\s*Agent/ }),
       ).toBeVisible();
 
       const oldRosterReads = rosterReads;
@@ -369,11 +378,11 @@ it.each(["live", "reconnect", "clear-cache"] as const)(
           view.container.querySelector('[data-message-id="message"]'),
         ).toHaveTextContent("Luna");
         expect(
-          screen.getByRole("button", { name: `Luna ${agent.pubkey}` }),
+          screen.getByRole("button", { name: /^Luna\s*Agent/ }),
         ).toBeVisible();
       });
       expect(
-        screen.queryByRole("button", { name: `GLM ${agent.pubkey}` }),
+        screen.queryByRole("button", { name: /^GLM\s*Agent/ }),
       ).not.toBeInTheDocument();
     } finally {
       owner.dispose();
@@ -385,8 +394,12 @@ it.each(["live", "reconnect", "clear-cache"] as const)(
 it("uses channel scope in link previews and activity, and participant scope in sidebar DMs", async () => {
   const f = fixture();
   function Sidebar() {
+    const list = useSyncExternalStore(
+      f.session.channels.subscribeList,
+      f.session.channels.list,
+    );
     const labels = useChannelLabels(
-      f.session.channels.list().channels,
+      list.channels,
       f.session.profiles,
       f.session.names,
     );

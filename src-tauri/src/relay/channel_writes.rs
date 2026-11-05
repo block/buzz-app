@@ -1,4 +1,5 @@
 use super::*;
+use crate::federated_identity::FederatedIdentity;
 use serde_json::Value;
 
 pub(super) fn uuid(value: &str) -> bool {
@@ -19,7 +20,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=13).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -47,6 +48,12 @@ fn details(event: &EventTemplate) -> bool {
         index += 1;
     }
     // NIP-CL: trailing `t` tags replace the label set; one `["t", ""]` clears it.
+    if let Some(role) = tag(event, index, "join_role") {
+        if !matches!(role, "member" | "guest") {
+            return false;
+        }
+        index += 1;
+    }
     let labels = &event.tags[index..];
     let labels_valid = details_labels(labels);
     uuid(id)
@@ -83,8 +90,14 @@ fn lifecycle(event: &EventTemplate) -> bool {
     {
         return false;
     }
+    // The narrow 9002 flips one relay-enforced flag: archive, or auto-join
+    // for community owners/admins. Generic metadata edits take the details route.
     tag(event, 0, "h").is_some_and(uuid)
-        && (event.kind != 9002 || matches!(tag(event, 1, "archived"), Some("true" | "false")))
+        && (event.kind != 9002
+            || matches!(
+                tag(event, 1, "archived").or_else(|| tag(event, 1, "auto_join")),
+                Some("true" | "false")
+            ))
 }
 fn archive(event: &EventTemplate) -> bool {
     if !matches!(event.kind, 9035 | 9036)
@@ -170,6 +183,7 @@ pub(crate) async fn relay_channel_sign(
 #[tauri::command]
 pub(crate) async fn relay_channel_publish(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     route: String,
     event: Value,
@@ -181,7 +195,16 @@ pub(crate) async fn relay_channel_publish(
     if body.len() > MAX_BODY {
         return Err("Invalid relay request body".into());
     }
-    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -263,6 +286,7 @@ pub(crate) async fn relay_kit_decode(
 #[tauri::command]
 pub(crate) async fn relay_direct_message(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     pubkeys: Vec<String>,
 ) -> Result<String> {
@@ -295,7 +319,16 @@ pub(crate) async fn relay_direct_message(
         })
         .await?;
     let body = serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
-    let response = send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await?;
+    let response = send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await?;
     if response.status != 200 {
         return Err("The direct message could not be opened. Try again.".into());
     }
@@ -453,12 +486,17 @@ mod boundary_tests {
         }
     }
     #[test]
-    fn lifecycle_accepts_only_exact_archive_values() {
+    fn lifecycle_accepts_only_exact_archive_and_auto_join_values() {
+        for flag in ["archived", "auto_join"] {
+            lifecycle_accepts_only_exact_flag_values(flag);
+        }
+    }
+    fn lifecycle_accepts_only_exact_flag_values(flag: &str) {
         let event = serde_json::json!({
             "kind": 9002,
             "created_at": 1700000010,
             "content": "",
-            "tags": [["h", uuid::Uuid::nil().to_string()], ["archived", "false"]]
+            "tags": [["h", uuid::Uuid::nil().to_string()], [flag, "false"]]
         });
         for value in ["true", "false"] {
             let mut command = event.clone();
@@ -483,23 +521,30 @@ mod boundary_tests {
         }
         for tags in [
             serde_json::json!([["h", uuid::Uuid::nil().to_string()]]),
-            serde_json::json!([["h", uuid::Uuid::nil().to_string()], ["archived"]]),
+            serde_json::json!([["h", uuid::Uuid::nil().to_string()], [flag]]),
             serde_json::json!([
                 ["h", uuid::Uuid::nil().to_string()],
-                ["archived", "false", "extra"]
+                [flag, "false", "extra"]
+            ]),
+            serde_json::json!([
+                ["h", uuid::Uuid::nil().to_string()],
+                [flag, "false"],
+                [flag, "true"]
             ]),
             serde_json::json!([
                 ["h", uuid::Uuid::nil().to_string()],
                 ["archived", "false"],
-                ["archived", "true"]
+                ["auto_join", "true"]
             ]),
             serde_json::json!([
                 ["h", uuid::Uuid::nil().to_string()],
-                ["archived", "false"],
+                [flag, "false"],
                 ["name", "injected"]
             ]),
-            serde_json::json!([["archived", "false"], ["h", uuid::Uuid::nil().to_string()]]),
-            serde_json::json!([["h", "not-a-channel"], ["archived", "false"]]),
+            serde_json::json!([[flag, "false"], ["h", uuid::Uuid::nil().to_string()]]),
+            serde_json::json!([["h", "not-a-channel"], [flag, "false"]]),
+            serde_json::json!([["h", uuid::Uuid::nil().to_string()], ["autojoin", "true"]]),
+            serde_json::json!([["h", uuid::Uuid::nil().to_string()], ["auto-join", "true"]]),
         ] {
             let mut command = event.clone();
             command["tags"] = tags;
@@ -510,14 +555,19 @@ mod boundary_tests {
     #[test]
     fn commands_reject_cross_route_and_foreign_signatures() {
         let host = IdentityHost::fixture();
-        for (value, tampered) in [("true", "false"), ("false", "true")] {
+        for (flag, value, tampered) in [
+            ("archived", "true", "false"),
+            ("archived", "false", "true"),
+            ("auto_join", "true", "false"),
+            ("auto_join", "false", "true"),
+        ] {
             let template = EventTemplate {
                 kind: 9002,
                 created_at: 1700000010,
                 content: String::new(),
                 tags: vec![
                     vec!["h".into(), uuid::Uuid::new_v4().to_string()],
-                    vec!["archived".into(), value.into()],
+                    vec![flag.into(), value.into()],
                 ],
             };
             let event = tauri::async_runtime::block_on(host.sign(template)).unwrap();
@@ -565,6 +615,41 @@ mod boundary_tests {
                 altered["tags"][1][1] = Value::String("Tampered".into());
                 assert!(validate("channel-details", &altered, altered["pubkey"].as_str()).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn details_admit_only_member_and_guest_admission_defaults() {
+        let host = IdentityHost::fixture();
+        for role in ["member", "guest"] {
+            let event =
+                serde_json::to_value(details_event(vec![vec!["join_role".into(), role.into()]]))
+                    .unwrap();
+            let parsed = validate("channel-details", &event, None).unwrap();
+            assert!(validate("channel-lifecycle", &event, None).is_err());
+            let signed = tauri::async_runtime::block_on(host.sign(parsed)).unwrap();
+            assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_ok());
+        }
+        for extra in [
+            vec![vec!["join_role", "owner"]],
+            vec![vec!["join_role", "admin"]],
+            vec![vec!["join_role", "bot"]],
+            vec![vec!["join_role", ""]],
+            vec![vec!["join_role"]],
+            vec![vec!["join_role", "guest", "extra"]],
+            vec![vec!["join_role", "member"], vec!["join_role", "guest"]],
+            vec![vec!["join_role", "guest"], vec!["ttl", "60"]],
+        ] {
+            let template = details_event(
+                extra
+                    .iter()
+                    .map(|tag| tag.iter().map(|s| (*s).into()).collect())
+                    .collect(),
+            );
+            let event = serde_json::to_value(&template).unwrap();
+            assert!(validate("channel-details", &event, None).is_err());
+            let signed = tauri::async_runtime::block_on(host.sign(template)).unwrap();
+            assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_err());
         }
     }
 
@@ -824,6 +909,7 @@ mod member_administration_tests {
         .unwrap();
         let app = mock_builder()
             .manage(IdentityHost::fixture())
+            .manage(FederatedIdentity::new().unwrap())
             .invoke_handler(crate::commands())
             .build(crate::app_context())
             .unwrap();

@@ -3,9 +3,11 @@ import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
+import { isBatchAddition } from "../channel-members/members";
 import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
+import type { EventData } from "./events";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -453,6 +455,8 @@ export function createChannelWrites(
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const original = await refreshMembership(id);
+    // Solo agents must be able to reply even with a saved Guest admission default.
+    const roleTags = original.channelType === "solo" ? [["role", "bot"]] : [];
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const unique = [...new Set(keys)].filter(
@@ -486,21 +490,23 @@ export function createChannelWrites(
       if (!current?.members || current.archived)
         throw new Error("Channel membership is unavailable.");
       if (current.members.includes(key)) continue;
-      const previous = (receipts ?? outbox)
-        ?.snapshot()
-        .find(
-          (item) =>
-            item.event.kind === 9000 &&
-            !item.acknowledged &&
-            !["accepted", "seen"].includes(item.delivery) &&
-            item.event.tags.some(
-              ([name, value]) => name === "h" && value === id,
-            ) &&
-            item.event.tags.some(
-              ([name, value]) => name === "p" && value === key,
-            ) &&
-            !item.event.tags.some(([name]) => name === "role"),
+      const previous = (receipts ?? outbox)?.snapshot().find((item) => {
+        const roles = item.event.tags.filter(([name]) => name === "role");
+        return (
+          item.event.kind === 9000 &&
+          !item.acknowledged &&
+          !isBatchAddition(item) &&
+          !["accepted", "seen"].includes(item.delivery) &&
+          item.event.tags.some(
+            ([name, value]) => name === "h" && value === id,
+          ) &&
+          item.event.tags.some(
+            ([name, value]) => name === "p" && value === key,
+          ) &&
+          roles.length === roleTags.length &&
+          roles.every((tag) => tag.length === 2 && tag[1] === "bot")
         );
+      });
       if (previous && Date.now() / 1000 - previous.event.created_at >= 15 * 60)
         throw new Error(
           `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
@@ -511,10 +517,7 @@ export function createChannelWrites(
           {
             kind: 9000,
             content: "",
-            tags: [
-              ["h", id],
-              ["p", key],
-            ],
+            tags: [["h", id], ["p", key], ...roleTags],
           },
           undefined,
           active,
@@ -646,6 +649,8 @@ export function createChannelWrites(
       ttlSeconds?: number,
       named = false,
       members: readonly string[] = [],
+      active?: () => boolean,
+      labels: readonly string[] = [],
     ) {
       writer();
       identifier(id);
@@ -660,21 +665,27 @@ export function createChannelWrites(
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid chat duration.");
-      return writer().send({
-        kind: 9007,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", title],
-          ["visibility", "private"],
-          ["channel_type", "stream"],
-          ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
-          ...channelLabelTags(
-            named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
-          ),
-          ...[...new Set(members)].map((key) => ["p", key]),
-        ],
-      });
+      return writer().send(
+        {
+          kind: 9007,
+          content: "",
+          tags: [
+            ["h", id],
+            ["name", title],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+            ...channelLabelTags([
+              SOLO_LABEL,
+              ...(named ? [SOLO_NAMED_LABEL] : []),
+              ...labels,
+            ]),
+            ...[...new Set(members)].map((key) => ["p", key]),
+          ],
+        },
+        undefined,
+        active,
+      );
     },
     /** Starts a Solo chat whose create names its `members`. It lists at once
      * as pending; `ready` settles once the relay OKs the create, which adds the
@@ -690,13 +701,26 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
+      options?: { labels?: readonly string[]; active?: () => boolean },
     ) {
-      const create = api.create(id, title, ttlSeconds, named, members);
+      const create = api.create(
+        id,
+        title,
+        ttlSeconds,
+        named,
+        members,
+        options?.active,
+        options?.labels,
+      );
       channels.start?.({
         id,
         name: title,
         members,
-        labels: named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
+        labels: [
+          SOLO_LABEL,
+          ...(named ? [SOLO_NAMED_LABEL] : []),
+          ...(options?.labels ?? []),
+        ],
         ttlSeconds,
       });
       // The relay adds the members in the create, so the chat takes events
@@ -750,6 +774,25 @@ export function createChannelWrites(
           .some((item) => item.event.id === id && item.delivery === "failed") ??
         false
       );
+    },
+    /** Outbox fences local delivery and expiry; this read bypasses cached absence. */
+    async additionRecorded(event: EventData, caller: AbortSignal) {
+      const active = AbortSignal.any([signal, caller]);
+      active.throwIfAborted();
+      const events = await reader.read(
+        [
+          {
+            kinds: [9000],
+            ids: [event.id],
+            authors: [event.pubkey],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
+        { signal: active, fresh: true, priority: "foreground" },
+      );
+      active.throwIfAborted();
+      return events.some((recorded) => recorded.id === event.id);
     },
     async discardFailed(id: string) {
       const source = writer();

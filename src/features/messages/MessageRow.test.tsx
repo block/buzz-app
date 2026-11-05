@@ -2,7 +2,6 @@
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 stubAvatarBrowserApis();
@@ -16,6 +15,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { messageCopyText } from "./message-copy";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
@@ -33,6 +33,7 @@ import {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { setClockPreference } from "../../shared/clock-preference";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -188,6 +189,107 @@ it("tells link handlers the thread a reply was opened from", () => {
     expect(open).toHaveBeenCalledWith(profileTarget(authorId), {
       rootId: "thread",
     });
+  } finally {
+    cleanup();
+  }
+});
+
+it.each([
+  { agentEnvelope: false, scheme: "nostr:npub1" },
+  { agentEnvelope: true, scheme: "buzz:agent-profile:" },
+])(
+  "opens the author's profile from the byline name: %j",
+  ({ agentEnvelope, scheme }) => {
+    const authorId = "ab".repeat(32);
+    const open = vi.fn(() => true);
+    try {
+      renderMessage({
+        row: {
+          ...row,
+          authorId,
+          ...(agentEnvelope ? { agentEnvelope: true as const } : {}),
+        },
+        profile: { name: "Mic" },
+        onOpenLink: open,
+        canOpenLink: () => true,
+      });
+      const name = screen.getByRole("button", { name: "Mic" });
+      // Text with a role, so a selection can start on it; the avatar stays
+      // the group's only tab stop.
+      expect(name.tagName).toBe("SPAN");
+      expect(name).toHaveAttribute("tabindex", "-1");
+      expect(name).not.toHaveAttribute("data-profile-target");
+      fireEvent.click(name);
+      // Focused first, so closing the profile can return here.
+      expect(name).toHaveFocus();
+      const target = profileTarget(authorId, { agent: agentEnvelope });
+      expect(target?.startsWith(scheme)).toBe(true);
+      expect(open).toHaveBeenCalledExactlyOnceWith(target, { rootId: "root" });
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it("treats a click that selected the name as a selection, and opens from Enter or Space", () => {
+  const open = vi.fn(() => true);
+  try {
+    renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Mic" },
+      onOpenLink: open,
+      canOpenLink: () => true,
+    });
+    const name = screen.getByRole("button", { name: "Mic" });
+    const selection = document.getSelection();
+    if (!selection) throw new Error("jsdom selection missing");
+    // A double-click or drag leaves the name selected when the click lands.
+    selection.selectAllChildren(name);
+    fireEvent.click(name);
+    expect(open).not.toHaveBeenCalled();
+    selection.removeAllRanges();
+    fireEvent.click(name);
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(name, { key: "a" });
+    expect(open).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(name, { key: "Enter" });
+    // Space must not also scroll the timeline: the default is cancelled.
+    expect(fireEvent.keyDown(name, { key: " " })).toBe(false);
+    expect(open).toHaveBeenCalledTimes(3);
+  } finally {
+    cleanup();
+  }
+});
+
+it("keeps the byline name plain where profiles cannot open or the byline is screen-reader only", () => {
+  const props = {
+    row: { ...row, authorId: "ab".repeat(32) },
+    profile: { name: "Mic" },
+    canOpenLink: () => true,
+  };
+  try {
+    const { rerender } = renderMessage({
+      ...props,
+      canOpenLink: () => false,
+    });
+    expect(screen.getByText("Mic").closest('[role="button"]')).toBeNull();
+    rerender(
+      <MessageRow
+        {...props}
+        media={() => undefined}
+        onOpenLink={() => true}
+        day={false}
+        retry={undefined}
+        stackPrevious
+      />,
+    );
+    // The continuation still has its avatar, but its byline is text only.
+    expect(
+      screen.getByRole("button", { name: "View Mic profile" }),
+    ).toBeInTheDocument();
+    const name = screen.getByText("Mic");
+    expect(name.closest(".sr-only")).toBeInTheDocument();
+    expect(name.closest('[role="button"]')).toBeNull();
   } finally {
     cleanup();
   }
@@ -908,6 +1010,65 @@ it("renders proxy audio attachments with an inline player", () => {
   expect(html).not.toContain("Download file");
 });
 
+it("lets a plugin draw an image it claims, apart from the gallery", () => {
+  const card = {
+    id: "card",
+    title: "Card",
+    key: "test.plugin/card",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      attachment.name === "Ada.agent.png",
+    component: ({ source }: { source: string }) => (
+      <span>card from {source}</span>
+    ),
+  };
+  const cards = [card];
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { url: "https://image.test/one.png", kind: "image" },
+          {
+            url: "https://image.test/ada.png",
+            kind: "image",
+            name: "Ada.agent.png",
+          },
+          { url: "https://image.test/two.png", kind: "image" },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      extensions={{
+        tools: { snapshot: () => [], subscribe: () => () => {} },
+        inline: { snapshot: () => [], subscribe: () => () => {} },
+        attachments: { snapshot: () => cards, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(html).toContain(
+    "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
+  );
+  // The images around it stay pictures, each in its own group.
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(
+    [...container.querySelectorAll("[data-message-attachments] > *")].map(
+      (group) =>
+        group.querySelector('[role="group"]')?.getAttribute("aria-label") ??
+        group.textContent,
+    ),
+  ).toEqual([
+    "1 image",
+    "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
+    "1 image",
+  ]);
+});
+
 it("renders external audio sources as open file cards", () => {
   const html = renderToStaticMarkup(
     <MessageRow
@@ -1206,7 +1367,11 @@ it.each(["peer", "own"] as const)(
     const operations: never[] = [];
     const session = {
       viewer: author === "own" ? row.authorId : "viewer",
-      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      channels: {
+        list: () => snapshot,
+        subscribeList: () => () => {},
+        window: () => ({ rows: [row] }),
+      },
       messages: { report: vi.fn(async () => {}) },
       profiles: { subscribe: () => () => {}, event: () => undefined },
       outbox: {
@@ -1216,6 +1381,8 @@ it.each(["peer", "own"] as const)(
         snapshot: () => operations,
       },
       unread: {
+        revision: () => 0,
+        sync: () => ({ capability: "unsupported" }),
         subscribe: () => () => {},
         subscribeSync: () => () => {},
         snapshot: () => undefined,
@@ -1249,11 +1416,18 @@ it.each(["peer", "own"] as const)(
               "Mark unread",
               "Copy message",
               "Send to channel",
+              "Copy link",
               "Delete message",
               "Follow thread",
               "Report",
             ]
-          : ["Mark unread", "Copy message", "Follow thread", "Report"],
+          : [
+              "Mark unread",
+              "Copy message",
+              "Copy link",
+              "Follow thread",
+              "Report",
+            ],
       );
     } finally {
       cleanup();
@@ -1294,7 +1468,7 @@ it.each(["sending", "failed"] as const)(
       await screen.findByRole("menu");
       expect(
         screen.getAllByRole("menuitem").map((item) => item.textContent),
-      ).toEqual(["Copy message"]);
+      ).toEqual(["Copy message", "Copy link"]);
       expect(screen.queryByRole("separator")).toBeNull();
     } finally {
       cleanup();
@@ -1318,6 +1492,32 @@ function renderMessage(
     />,
   );
 }
+
+it.each([
+  { channelType: "solo", visible: false },
+  { channelType: "stream", visible: true },
+] as const)(
+  "Hide in Solo chats keeps only the accessible date in Solo (%o)",
+  ({ channelType, visible }) => {
+    setClockPreference({ messageTimestamps: "hide-solo" });
+    const list = {
+      channels: [{ id: row.channelId, channelType }],
+      status: "ready",
+    };
+    const references = {
+      channels: { list: () => list, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const view = renderMessage({ references });
+    try {
+      const time = view.container.querySelector("time");
+      expect(time?.querySelector(".sr-only")).toHaveTextContent(/19(69|70)/);
+      expect(!!time?.querySelector('[aria-hidden="true"]')).toBe(visible);
+    } finally {
+      view.unmount();
+      setClockPreference({ messageTimestamps: "show" });
+    }
+  },
+);
 
 it.each([true, false])(
   "offers thread starts only where the conversation starts threads (startsThreads=%s)",
@@ -1378,13 +1578,20 @@ it.each([true, false])(
   },
 );
 
-it.each([
-  { startsThreads: true, replyCount: 0, thread: true },
-  { startsThreads: false, replyCount: 0, thread: false },
-  { startsThreads: false, replyCount: 23, thread: true },
-])(
+it.each(
+  [
+    { startsThreads: true, replyCount: 0, thread: true },
+    { startsThreads: false, replyCount: 0, thread: false },
+    { startsThreads: false, replyCount: 23, thread: true },
+  ].flatMap((scenario) =>
+    (["message", "response"] as const).map((placement) => ({
+      ...scenario,
+      placement,
+    })),
+  ),
+)(
   "gives message accessories a thread only where the row has one to open (%o)",
-  ({ startsThreads, replyCount, thread }) => {
+  ({ startsThreads, replyCount, thread, placement }) => {
     const subscribe = () => () => {};
     const channels = { channels: [], status: "ready" };
     const noTyping: never[] = [];
@@ -1409,7 +1616,7 @@ it.each([
         pluginId: "test",
         revision: "1",
         title: "Agent activity",
-        placement: "message" as const,
+        placement,
         decoratesMessageSummary: true,
         component: ({
           renderMessageSummary,
@@ -1431,6 +1638,7 @@ it.each([
       row: { ...row, replyCount },
       session,
       scope: "test",
+      viewer: row.authorId,
       onOpenThread: () => {},
       startsThreads,
       extensions: {
@@ -1442,11 +1650,140 @@ it.each([
       },
     });
     try {
-      expect(seen).toHaveBeenLastCalledWith(thread, thread);
-      expect(screen.getByText("Brain working")).toBeInTheDocument();
-      expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
+      expect(seen).toHaveBeenLastCalledWith(
+        placement === "message" && thread,
         thread,
       );
+      expect(
+        !!screen.getByText("Brain working").closest("[data-viewer-message]"),
+      ).toBe(placement === "message");
+      expect(screen.getByText("Brain working")).toBeInTheDocument();
+      expect(!!screen.queryByRole("button", { name: /^View thread/ })).toBe(
+        placement === "message" ? thread : replyCount > 0,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("forwards replied agents and the stopped request to response accessories", () => {
+  const subscribe = () => () => {};
+  const channels = { channels: [], status: "ready" };
+  const noTyping: never[] = [];
+  const catalog = { entries: [] };
+  const profiles = new Map();
+  const library = { identities: [] };
+  const session = {
+    channels: { list: () => channels, subscribeList: subscribe },
+    messages: {},
+    emoji: { snapshot: () => catalog, subscribe },
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    typing: { snapshot: () => noTyping, subscribe },
+  } as unknown as RelaySession;
+  const seen = vi.fn();
+  const noEntries: never[] = [];
+  const empty = { snapshot: () => noEntries, subscribe };
+  const entries = [
+    {
+      id: "activity",
+      key: "test:activity",
+      pluginId: "test",
+      revision: "1",
+      title: "Agent activity",
+      placement: "response" as const,
+      component: (
+        props: import("../conversation/contracts").ComposerAccessoryProps,
+      ) => {
+        seen(props.repliedAgents, props.stoppedRequest);
+        return null;
+      },
+    },
+  ];
+  const agent = "a".repeat(64);
+  const repliedAgents = [agent];
+  const request = { ...row, id: "request" };
+  const view = renderMessage({
+    session,
+    scope: "test",
+    repliedAgents,
+    stoppedRequest: request,
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => entries, subscribe },
+    },
+  });
+  try {
+    expect(seen).toHaveBeenLastCalledWith(repliedAgents, request);
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each(
+  (["message", "response"] as const).flatMap((placement) => [
+    { placement, threadRootId: undefined, rootId: "root" },
+    { placement, threadRootId: "parent", rootId: "parent" },
+  ]),
+)(
+  "opens message accessory targets in the row's own thread (%o)",
+  ({ placement, threadRootId, rootId }) => {
+    const subscribe = () => () => {};
+    const channels = { channels: [], status: "ready" };
+    const noTyping: never[] = [];
+    const catalog = { entries: [] };
+    const profiles = new Map();
+    const library = { identities: [] };
+    const session = {
+      channels: { list: () => channels, subscribeList: subscribe },
+      messages: {},
+      emoji: { snapshot: () => catalog, subscribe },
+      profiles: { snapshot: () => profiles, subscribe },
+      agentChoices: { snapshot: () => library, subscribe },
+      typing: { snapshot: () => noTyping, subscribe },
+    } as unknown as RelaySession;
+    const noEntries: never[] = [];
+    const empty = { snapshot: () => noEntries, subscribe };
+    const target = `buzz:profile?agent=${"a".repeat(64)}&tab=activity`;
+    const entries = [
+      {
+        id: "activity",
+        key: "test:activity",
+        pluginId: "test",
+        revision: "1",
+        title: "Agent activity",
+        placement,
+        component: ({
+          open,
+        }: import("../conversation/contracts").ComposerAccessoryProps) => (
+          <button type="button" onClick={() => open(target)}>
+            View activity
+          </button>
+        ),
+      },
+    ];
+    const onOpenLink = vi.fn(() => true);
+    const view = renderMessage({
+      row: { ...row, threadRootId },
+      session,
+      scope: "test",
+      onOpenLink,
+      extensions: {
+        inline: empty,
+        links: empty,
+        messages: empty,
+        tools: empty,
+        accessories: { snapshot: () => entries, subscribe },
+      },
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "View activity" }));
+      // The transcript belongs to this message's conversation, not the view's.
+      expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(target, { rootId });
     } finally {
       view.unmount();
     }
@@ -1470,10 +1807,36 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
     const links = screen.getAllByRole("link", {
       name: "Open image attachment",
     });
-    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(media.mock.calls).toEqual([
+      ["https://safe.test/a.png"],
+      ["https://safe.test/a.png", "small"],
+    ]);
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
     expect(view.container.innerHTML).not.toContain("unsafe.test");
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([
+  ["jpg", "small:.jpg"],
+  ["png", ".thumb.webp"],
+  ["gif", ".thumb.webp"],
+])("passes a %s image attachment its relay thumbnail", (extension, suffix) => {
+  const hash = "a".repeat(64);
+  const url = `https://relay.test/media/${hash}.${extension}`;
+  const view = renderMessage({
+    row: { ...row, attachments: [{ url, kind: "image" }] },
+    media: (value, size) => (size ? `small:${value}` : value),
+  });
+  try {
+    expect(view.container.querySelector("img[data-thumbnail]")).toHaveAttribute(
+      "src",
+      suffix.startsWith("small:")
+        ? `small:${url}`
+        : `https://relay.test/media/${hash}${suffix}`,
+    );
   } finally {
     view.unmount();
   }
@@ -1567,7 +1930,31 @@ it("shows unbadged working-agent avatars and shared dots only while a known agen
     },
   } as unknown as RelaySession;
   const media = vi.fn(() => "https://proxy/brain");
-  let view = renderMessage({ session, media, onOpenThread: () => {} });
+  const emptyEntries: readonly never[] = [];
+  const empty = { snapshot: () => emptyEntries, subscribe: () => () => {} };
+  const accessories = [
+    {
+      key: "activity",
+      pluginId: "activity",
+      revision: "1",
+      id: "activity",
+      title: "Activity",
+      placement: "response" as const,
+      component: () => null,
+    },
+  ];
+  let view = renderMessage({
+    session,
+    media,
+    onOpenThread: () => {},
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => accessories, subscribe: () => () => {} },
+    },
+  });
   try {
     const working = screen.getByRole("button", {
       name: "View thread: 23 replies. Brain working",
@@ -1884,7 +2271,7 @@ it("keeps audio and video players between their original image runs", () => {
 });
 
 it.each([true, false])(
-  "uses the shared small avatar without shrinking profile controls (clickable=%s)",
+  "uses smaller shared avatars without shrinking thread profile controls (clickable=%s)",
   (clickable) => {
     const props = {
       row: { ...row, authorId: "a".repeat(64) },
@@ -1899,7 +2286,7 @@ it.each([true, false])(
     const view = renderDom(<MessageRow {...props} compactAvatar />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      "small",
+      "tiny",
     );
     if (clickable) {
       expect(
@@ -1909,7 +2296,7 @@ it.each([true, false])(
     view.rerender(<MessageRow {...props} />);
     expect(view.container.querySelector(".buzz-avatar")).toHaveAttribute(
       "data-size",
-      clickable ? "fill" : "default",
+      "small",
     );
     view.unmount();
   },
@@ -2109,25 +2496,37 @@ it("dismisses an unsubmitted report when its retained row is suspended", async (
   }
 });
 
-it("presents automation, links the owner and discloses the separate relay signer", async () => {
-  const ownerId = "ab".repeat(32),
-    signer = "cd".repeat(32);
+function renderWorkflowMessage(open = vi.fn(() => true)) {
+  const ownerId = "ab".repeat(32);
+  renderMessage({
+    row: {
+      ...row,
+      authorId: ownerId,
+      signerId: "cd".repeat(32),
+      workflowOwnerId: ownerId,
+    },
+    viewer: ownerId,
+    profile: { name: "Wes" },
+    participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
+    onOpenLink: open,
+    canOpenLink: () => true,
+  });
+  return {
+    ownerId,
+    trigger: screen.getByRole("button", { name: "Workflow message details" }),
+  };
+}
+
+it("presents automation, links the owner and explains the message without keys", async () => {
   const open = vi.fn(() => true);
+  const user = userEvent.setup();
   try {
-    renderMessage({
-      row: {
-        ...row,
-        authorId: ownerId,
-        signerId: signer,
-        workflowOwnerId: ownerId,
-      },
-      viewer: ownerId,
-      profile: { name: "Wes" },
-      participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
-      onOpenLink: open,
-      canOpenLink: () => true,
-    });
-    expect(screen.getByText("Workflow")).toBeTruthy();
+    const { ownerId, trigger } = renderWorkflowMessage(open);
+    // The automation label stays plain; only the owner opens a profile.
+    expect(
+      screen.getByText("Workflow").closest('button, [role="button"]'),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Wes" })).toBeNull();
     expect(document.querySelector("[data-viewer-message]")).toBeNull();
     expect(document.querySelector("[data-own]")).toBeNull();
     fireEvent.click(
@@ -2136,23 +2535,75 @@ it("presents automation, links the owner and discloses the separate relay signer
     expect(open).toHaveBeenCalledWith(profileTarget(ownerId), {
       rootId: "root",
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Workflow message details" }),
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const card = await screen.findByRole("dialog", {
+      name: "Workflow message",
+    });
+    // The byline beside the trigger already names the owner; the card only
+    // says what a workflow message is, without keys or relay identity.
+    expect(card).toHaveAccessibleDescription(
+      "Sent automatically by a workflow. Its owner set it up but didn’t send this message personally.",
     );
-    expect(
-      await screen.findByText(/the owner did not sign this message/),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("Signed by the relay").nextElementSibling,
-    ).toHaveTextContent(npubEncode(signer));
-    expect(
-      screen.getByText("Owner public key").nextElementSibling,
-    ).toHaveTextContent(npubEncode(ownerId));
+    expect(card).not.toHaveTextContent(/npub1|Wes/);
     expect(
       screen.queryByRole("button", { name: "View Relay profile" }),
     ).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(trigger).toHaveFocus();
+    // fireEvent moves no pointer, so no hover rest timer can open the card.
+    fireEvent.click(trigger);
+    expect(
+      screen.getByRole("dialog", { name: "Workflow message" }),
+    ).toBeInTheDocument();
   } finally {
     cleanup();
+  }
+});
+
+it("opens workflow message details once the pointer rests, without a competing hint", async () => {
+  // Base UI's PATIENT_CLICK_THRESHOLD: a click this soon after a hover open
+  // keeps the popover open.
+  const BASE_UI_PATIENT_CLICK_MS = 500;
+  vi.useFakeTimers();
+  try {
+    const { trigger } = renderWorkflowMessage();
+    const focused = document.activeElement;
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    screen.getByRole("dialog", { name: "Workflow message" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    // A hover heads-up leaves focus where the reader had it.
+    expect(document.activeElement).toBe(focused);
+    // Clicking the trigger that just opened it keeps it open.
+    fireEvent.click(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(
+      screen.getByRole("dialog", { name: "Workflow message" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Past Base UI's patient-click window, a click toggles a hover-opened
+    // card closed, as with every openOnHover="preview" popover.
+    fireEvent.mouseLeave(trigger);
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    screen.getByRole("dialog", { name: "Workflow message" });
+    await act(() => vi.advanceTimersByTimeAsync(BASE_UI_PATIENT_CLICK_MS));
+    fireEvent.click(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    cleanup();
+    vi.useRealTimers();
   }
 });
 
@@ -2651,6 +3102,56 @@ it("keeps the timestamp seek action beside a detached session card", () => {
   }
 });
 
+it("identifies the author on each activity summary in a message group", () => {
+  const props = {
+    row: { ...row, audience: "agents" as const },
+    profile: { name: "Activity author" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  try {
+    const { rerender } = renderDom(<MessageRow {...props} stackNext />);
+    expect(screen.getByTitle("Activity author")).toBeVisible();
+    rerender(<MessageRow {...props} stackPrevious />);
+    expect(screen.getByTitle("Activity author")).toBeVisible();
+  } finally {
+    cleanup();
+  }
+});
+
+it.each([280, 281])(
+  "caps activity previews at 280 characters (%s input)",
+  (length) => {
+    const content = "🙂".repeat(length);
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, audience: "agents", content }}
+          profile={{ name: "author" }}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const preview = length === 280 ? content : `${"🙂".repeat(279)}…`;
+      const trigger = screen.getByRole("button", {
+        name: `author: ${preview}`,
+      });
+      expect(trigger).toHaveTextContent(preview);
+      fireEvent.click(trigger);
+      expect(screen.getByText(content)).toBeVisible();
+      expect(trigger).not.toHaveTextContent(preview);
+      fireEvent.click(trigger);
+      expect(trigger).toHaveTextContent(preview);
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it("shows a message for agents as one line from its author to whom it addresses", () => {
   const agent = keypair();
   const rivet = "b".repeat(64);
@@ -2694,43 +3195,18 @@ it("shows a message for agents as one line from its author to whom it addresses"
       name: "Morgarita to Rivet: **run** the suite…",
     });
     expect(line).toHaveAttribute("aria-expanded", "false");
-    const timestamp = line.parentElement?.querySelector("time");
-    const timestampSlot = timestamp?.parentElement;
-    expect(timestamp).toBeVisible();
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     // Reveal focuses the scroll anchor with tabIndex -1; on the button, that
     // would take the only toggle out of the Tab order.
     expect(line).not.toHaveAttribute("data-message-id");
     expect(line.parentElement).toHaveAttribute("data-message-id");
     expect(screen.queryByText(/Then report back/)).toBeNull();
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     fireEvent.pointerEnter(line);
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     fireEvent.click(line);
     expect(line).toHaveAttribute("aria-expanded", "true");
-    // Expanding preserves the timestamp node and its trailing slot, rather
-    // than remounting it above the body and moving it to the opposite edge.
-    expect(
-      line.parentElement?.querySelectorAll("time:not(.sr-only)"),
-    ).toHaveLength(1);
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
-    expect(timestamp?.parentElement).toBe(timestampSlot);
-    expect(line.parentElement?.lastElementChild).toBe(timestampSlot);
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "View Morgarita profile" }),
     ).toBeNull();
@@ -2739,13 +3215,9 @@ it("shows a message for agents as one line from its author to whom it addresses"
     expect(expanded?.querySelector('[class*="messageBubble"]')).toBeNull();
     expect(expanded?.querySelector("[data-own]")).toBeNull();
 
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     fireEvent.pointerEnter(expanded ?? line);
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
     // Base UI binds the trigger to its panel. One stable message anchor stays
     // outside the animated content, including while that content is retiring.
     const panelId = line.getAttribute("aria-controls");
@@ -2764,9 +3236,7 @@ it("shows a message for agents as one line from its author to whom it addresses"
     // Anywhere in the open box folds it back.
     fireEvent.click(screen.getByText(/Then report back/));
     expect(line).toHaveAttribute("aria-expanded", "false");
-    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
-      timestamp,
-    );
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBeNull();
   } finally {
     cleanup();
   }
@@ -3187,7 +3657,7 @@ it.each([0, 23])(
       });
       expect(summary).toHaveTextContent("1 failed");
       expect(summary).not.toHaveTextContent("View thread");
-      if (replyCount) expect(summary).toHaveTextContent("23 replies");
+      if (replyCount) expect(summary).not.toHaveTextContent("23 replies");
       expect(
         summary.querySelector('[data-thread-working] [data-state="working"]'),
       ).not.toBeNull();
@@ -3760,5 +4230,166 @@ it("shows no agent mark or owner for a person", () => {
     expect(event).not.toHaveBeenCalled();
   } finally {
     view.unmount();
+  }
+});
+
+it("marks an edited body after its last line, and leaves an unedited one unmarked", () => {
+  const render = (content: string, edited: boolean) =>
+    renderDom(
+      <MessageRow
+        row={{ ...row, content, ...(edited ? { edited: true as const } : {}) }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  try {
+    render("First\n\nHi how are ya.", true);
+    const inline = screen.getByText("(edited)");
+    expect(inline.parentElement?.tagName).toBe("P");
+    expect(inline.parentElement).toHaveTextContent("Hi how are ya. (edited)");
+    expect(inline.parentElement?.nextElementSibling).toBeNull();
+    cleanup();
+
+    render("Intro\n\n```\ncode\n```", true);
+    const block = screen.getByText("(edited)");
+    expect(block.previousElementSibling?.tagName).toBe("PRE");
+    expect(block.closest("pre, p")).toBeNull();
+    cleanup();
+
+    render("See the note.[^1]\n\n[^1]: Footnote text.", true);
+    expect(screen.getByText("(edited)").previousElementSibling?.tagName).toBe(
+      "SECTION",
+    );
+    cleanup();
+
+    render("Read [the doc][d].\n\n[d]: https://example.com", true);
+    expect(screen.getByText("(edited)").parentElement?.tagName).toBe("P");
+    cleanup();
+
+    render("- one\n- two", true);
+    const item = screen.getByText("(edited)").parentElement;
+    expect(item?.tagName).toBe("LI");
+    expect(item).toHaveTextContent("two (edited)");
+    cleanup();
+
+    render("> quoted line", true);
+    const quoted = screen.getByText("(edited)").parentElement;
+    expect(quoted?.tagName).toBe("P");
+    expect(quoted?.parentElement?.tagName).toBe("BLOCKQUOTE");
+    cleanup();
+
+    // The unboxed table styling selects `table:first-child + .edited:last-child`.
+    render("| Day | Room |\n| --- | --- |\n| Thu | 4B |", true);
+    const afterTable = screen.getByText("(edited)");
+    expect(afterTable.previousElementSibling?.tagName).toBe("TABLE");
+    expect(afterTable.parentElement?.firstElementChild?.tagName).toBe("TABLE");
+    expect(afterTable.nextElementSibling).toBeNull();
+    cleanup();
+
+    render("🎉", true);
+    expect(screen.getByText("(edited)").parentElement).toHaveAttribute(
+      "data-single-emoji",
+    );
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "",
+          edited: true,
+          attachments: [
+            { url: "https://example.com/notes.txt", kind: "file" as const },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").previousElementSibling).toHaveAttribute(
+      "data-message-attachments",
+    );
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "+changed",
+          edited: true,
+          diff: { filePath: "a.ts", truncated: false },
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(screen.getByText("(edited)").closest("pre")).toBeNull();
+    cleanup();
+
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Done", edited: true, audience: "agents" }}
+        profile={{ name: "Morgarita" }}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: "Morgarita: Done (edited)",
+    });
+    expect(within(line).getByText("(edited)")).toBeInTheDocument();
+    fireEvent.click(line);
+    expect(screen.getAllByText("(edited)")).toHaveLength(1);
+    expect(line).not.toContainElement(screen.getByText("(edited)"));
+    cleanup();
+
+    const none: never[] = [];
+    const cards = [
+      {
+        id: "card",
+        title: "Card",
+        key: "fixture.card:card",
+        pluginId: "fixture.card",
+        revision: "one",
+        matches: () => true,
+        component: () => <p>Plugin card</p>,
+      },
+    ];
+    renderDom(
+      <MessageRow
+        row={{ ...row, content: "Card body", edited: true }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          messages: { snapshot: () => cards, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    // Inside the card's bubble, so above any reactions it holds.
+    expect(screen.getByText("(edited)").parentElement).toBe(
+      screen.getByText("Plugin card").closest("[data-message-action-anchor]"),
+    );
+    cleanup();
+
+    render("Hi how are ya.", false);
+    expect(screen.queryByText("(edited)")).toBeNull();
+  } finally {
+    cleanup();
   }
 });

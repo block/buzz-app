@@ -5,6 +5,15 @@ import type { ReadTransport } from "./transport";
 import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
 import type { ProfileSearch } from "./profile-search";
+import type { ProfileQueries } from "./profile-directory";
+import { newer, type RelayEvent } from "./events";
+import {
+  verifiedProfile,
+  verifiedProfileFilter,
+  verifiedProfileSubject,
+  type VerifiedProfile,
+  type VerifiedProfileAuthority,
+} from "./verified-profile";
 
 /** The longest text the community people search accepts. */
 export const PEOPLE_SEARCH_MAX_LENGTH = 100;
@@ -19,6 +28,10 @@ export function createDirectMessages(
   lifetime: AbortSignal,
   directoryReader: RelayReader,
   searchProfiles: ProfileSearch,
+  verifiedAuthority: () => VerifiedProfileAuthority | undefined,
+  /** The shared profile cache. A first message reads its 1:1 partner's
+   * agent flag from it, and the people directory stays outside it. */
+  profiles?: Pick<ProfileQueries, "ensure">,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
   const opened = new Set<(id: string) => void>();
@@ -67,15 +80,64 @@ export function createDirectMessages(
       return {
         people: [...foldProfiles(events)]
           .filter(([pubkey]) => pubkey !== transport?.viewer)
-          .map(([pubkey, { name, username, picture, isAgent }]) => ({
-            pubkey,
-            name,
-            ...(username ? { username } : {}),
-            ...(picture ? { picture } : {}),
-            ...(isAgent ? { isAgent } : {}),
-          })),
+          .map(
+            ([pubkey, { name, username, picture, isAgent, ownerPubkey }]) => ({
+              pubkey,
+              name,
+              ...(username ? { username } : {}),
+              ...(picture ? { picture } : {}),
+              ...(isAgent ? { isAgent } : {}),
+              ...(ownerPubkey ? { ownerPubkey } : {}),
+            }),
+          ),
         hasMore: events.length >= limit,
       };
+    },
+    /** One bounded read of the community's verified names for a search page,
+     * with the authority that checked them. Like `people`, it stays out of the
+     * shared profile views. Undefined when nothing was checked: the community
+     * advertises no authority, or it changed during the read. */
+    async verified(
+      pubkeys: readonly string[],
+      signal: AbortSignal,
+    ): Promise<
+      | {
+          authority: VerifiedProfileAuthority;
+          profiles: ReadonlyMap<string, VerifiedProfile>;
+        }
+      | undefined
+    > {
+      const authority = verifiedAuthority();
+      if (!authority) return undefined;
+      if (!pubkeys.length) return { authority, profiles: new Map() };
+      // People a search just answered for need no read.
+      const answered = searchProfiles.verifiedHeads(pubkeys, authority);
+      const unasked = pubkeys.filter((pubkey) => !answered.has(pubkey));
+      const active = AbortSignal.any([lifetime, signal]);
+      const events = unasked.length
+        ? await directoryReader.read(
+            [verifiedProfileFilter(authority.pubkey, unasked)],
+            { signal: active, priority: "background" },
+          )
+        : [];
+      active.throwIfAborted();
+      if (verifiedAuthority() !== authority) return undefined;
+      // The newest head per subject decides, so a newer malformed one hides
+      // an older name, as in the shared directory.
+      const heads = new Map<string, RelayEvent>();
+      for (const event of [...answered.values(), ...events]) {
+        if (!event) continue;
+        const subject = verifiedProfileSubject(event, authority);
+        if (subject && pubkeys.includes(subject))
+          heads.set(subject, newer(heads.get(subject), event));
+      }
+      const profiles = new Map(
+        [...heads].flatMap(([subject, event]) => {
+          const profile = verifiedProfile(event, authority, true);
+          return profile ? [[subject, profile] as const] : [];
+        }),
+      );
+      return { authority, profiles };
     },
     async open(pubkeys: readonly string[], signal: AbortSignal) {
       if (!available || !transport?.openDirectMessage)
@@ -111,6 +173,14 @@ export function createDirectMessages(
         throw new Error(
           "The conversation’s participants could not be confirmed. Try again.",
         );
+      // A 1:1 DM's agent partner is woken only by a `p` tag, which `send`
+      // adds from the shared profile cache. The people directory leaves that
+      // cache empty, so load the partner before the first message is sent.
+      // A failed read still opens the DM: it only loses the wake tag, as
+      // before this read existed.
+      if (pubkeys.length === 1)
+        await profiles?.ensure(pubkeys, "foreground").catch(() => {});
+      active.throwIfAborted();
       for (const listener of [...opened]) listener(id);
       return id;
     },

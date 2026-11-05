@@ -3,17 +3,21 @@
 import {
   useEffect,
   useId,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { errorText } from "../../buzz-mcp/rpc";
+import { isRetryableRead, retryRead } from "../../features/relay/read-retry";
+import { PiStopped } from "./pi";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { ModelPicker } from "../../features/agents/ModelPicker";
 import {
+  ConversationName,
   OpenedConversation,
   useOpenedSession,
   useOpenTranscript,
@@ -35,6 +39,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { effortLabel } from "../claude-code/runtime";
@@ -80,7 +85,7 @@ const providerIcon = (id: string | undefined) => {
 };
 const CONVERSATION_LIMIT = 30;
 const label = ({ channelId, name, root }: Place) =>
-  `${name ? `#${name}` : channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
+  `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
@@ -113,7 +118,12 @@ function useRead<T>(
         ? {}
         : { value: prior.value, scope };
     setState((prior) => ({ status: "loading", ...kept(prior) }));
-    read(abort.signal).then(
+    retryRead(
+      read,
+      abort.signal,
+      // The next request starts another host.
+      (error) => error instanceof PiStopped || isRetryableRead(error),
+    ).then(
       (value) => {
         if (!abort.signal.aborted) setState({ status: "ready", value, scope });
       },
@@ -186,7 +196,15 @@ export function createTabs({
   runtime,
 }: Readonly<{
   setup: PiSetup;
-  runtime: Pick<PiRuntime, "places" | "working" | "transcript" | "subscribe">;
+  runtime: Pick<
+    PiRuntime,
+    | "places"
+    | "working"
+    | "transcript"
+    | "subscribe"
+    | "channelLabel"
+    | "subscribeChannels"
+  >;
 }>) {
   /** The provider, its key and its model, and a test that they answer. As
    * `rows` of the agent's settings, only the provider and model: the rest is
@@ -632,10 +650,12 @@ export function createTabs({
     agent,
     place,
     working,
+    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     place: Place;
     working: boolean;
+    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
     const [read, refresh] = useRead(
       (signal) => runtime.transcript(agent.key, place, working, signal),
@@ -663,6 +683,7 @@ export function createTabs({
           <ActivityTranscript
             transcript={read.value}
             agentName={agent.name}
+            openConversation={openConversation}
             state={() => (working ? "working" : undefined)}
             before={
               read.value.more && (
@@ -689,9 +710,13 @@ export function createTabs({
   function ActivityTab({
     agent,
     conversation,
+    initialTranscript,
+    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
+    initialTranscript?: AgentViewProps<Config>["initialTranscript"];
+    openConversation?: AgentViewProps<Config>["openConversation"];
   }) {
     const working = useSyncExternalStore(
       (listener) => runtime.subscribe(listener),
@@ -703,7 +728,21 @@ export function createTabs({
       `${agent.key}\u0000${working.join()}`,
       agent.key,
     );
-    const places = listing.value;
+    // The channels' names and kinds are the community's now, not Pi's
+    // history's: a channel made private shows its lock here as it does in
+    // the sidebar, without reading Pi again.
+    const [, relabel] = useReducer((count: number) => count + 1, 0);
+    useEffect(() => runtime.subscribeChannels(agent.key, relabel), [agent.key]);
+    const places = listing.value?.map((place) => ({
+      ...place,
+      ...runtime.channelLabel(agent.key, place.channelId),
+    }));
+    // Pi lists its conversations only after the tab shows, so its transcript
+    // would open late, under whatever the reader turned to meanwhile. The
+    // request is settled without opening it.
+    const opening = initialTranscript?.opening;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+    useEffect(() => initialTranscript?.done(), [opening]);
     if (!places)
       return listing.status === "error" ? (
         <div className="grid gap-2">
@@ -727,6 +766,7 @@ export function createTabs({
         conversation={conversation}
         places={places}
         working={working}
+        openConversation={openConversation}
       />
     );
   }
@@ -736,12 +776,15 @@ export function createTabs({
     conversation,
     places,
     working,
+    openConversation,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     places: readonly Place[];
     working: readonly number[];
+    openConversation: AgentViewProps<Config>["openConversation"];
   }) {
+    useClockFormat();
     const { session: here } = useOpenedSession(
       places,
       conversation,
@@ -773,14 +816,16 @@ export function createTabs({
                   <li key={place.key} className={activityStyles.entry}>
                     <div className={activityStyles.row}>
                       <span className={activityStyles.copy}>
-                        <span
-                          className="block truncate text-label-sm"
+                        <ConversationName
+                          session={place}
                           title={label(place)}
-                        >
-                          {label(place)}
-                        </span>
+                          className="text-label-sm"
+                        />
                         <span className="block text-body-sm text-subtle">
                           {[
+                            place.root
+                              ? `Thread ${place.root.slice(0, 8)}`
+                              : "Channel",
                             status(place),
                             formatItemTimestamp(place.at / 1000, {
                               withTime: true,
@@ -817,9 +862,11 @@ export function createTabs({
             onBack={back}
           >
             <TranscriptView
+              key={open.key}
               agent={agent}
               place={open}
               working={working.includes(open.conversation)}
+              openConversation={openConversation}
             />
           </PanelSubview>
         )}

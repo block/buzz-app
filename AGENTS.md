@@ -32,6 +32,13 @@ feature-owned behavior. For changes to shared tokens, recipes, or components,
 also read [Maintaining the design system](src/shared/design-system/MAINTAINING_DESIGN_SYSTEM.md)
 and the [local agent guide](src/shared/design-system/AGENTS.md).
 
+New addressable dialogs, content tabs and changes to their history behavior must follow the
+[navigation history and dismissal contract](docs/navigation-history.md): Back/Forward
+preserves a return path; explicit Close retires it. Preserve lifecycle guards
+and cover the contract when changing behavior. Transient confirmations, menus and
+popovers are nested surfaces: they dismiss only themselves and do not create
+addressable history visits.
+
 - In the scope checkpoint, name the existing component/recipe to reuse and the
   guide sections governing the change. Read its implementation and current uses
   before introducing a replacement or variant.
@@ -66,12 +73,23 @@ scripts/bootstrap-worktree.sh /absolute/path/to/source/checkout
 
 Do not start development before bootstrap completes. The script copies the
 git-ignored `.env.local` without overwriting an existing target, then uses that
-worktree's Hermit proxy to run `bin/pnpm install --frozen-lockfile`. Do not copy
+worktree's Hermit proxies to run `bin/rustup toolchain install` and
+`bin/pnpm install --frozen-lockfile`. Do not copy
 other ignored paths: Keychain credentials and pnpm's package cache are
 machine-shared, while dependencies and build output are regenerated. Git hooks
 need no per-worktree setup; see [Git hooks](docs/contributing.md#git-hooks).
 
 ## Engineering standard
+
+When changing a shipped plugin to default-off, follow the
+[plugin-defaults decision](docs/plugin-defaults.md): apply it to fresh installs
+and preserve existing installs' effective states, including implicit defaults.
+
+When changing user-facing Buzz behavior, update [the agent help guide](docs/buzz-help.md)
+if the change affects how someone uses or understands the app. Keep it concise,
+describe implemented behavior, and distinguish optional or platform-dependent
+features. The `buzz_help` tool bundles this file with the app; it is not fetched
+from the repository at runtime.
 
 Before editing, state the intended outcome and non-goals. Read the owning code,
 callers, and relevant design docs; preserve documented product decisions and
@@ -127,6 +145,23 @@ Minimal does not mean happy-path-only. Handle relevant boundary inputs, failures
 recovery, and lifecycle transitions; consider concurrency, persistence, security,
 and performance where the change affects them. Do not add machinery for
 hypothetical requirements.
+
+Design every relay-facing path for the whole fleet running it at once. A relay
+rollout, restart, or network blip makes every client reconnect, renew, and catch
+up in the same few seconds, so relay reads per client times clients is the real
+load. Before adding or changing a connect, reconnect, renewal, poll, or catch-up
+path:
+
+- State its relay reads per client, and reconnect from a cursor rather than
+  rebuilding state. One replay filter per channel meant ~306 filters per
+  reconnect for a 300-channel client
+  ([block/buzz-app#2308](https://github.com/block/buzz-app/pull/2308)). Skip a
+  repair read only when the replay proves continuity and the client can
+  reconcile every projection it touched; otherwise keep the repair, bounded.
+- Jitter its start, and back off on failure with a cap.
+- Prefer an event-driven refresh with a long backstop over a short poll. A
+  60-second full channel-list read became a 15-minute one
+  ([block/buzz-app#2215](https://github.com/block/buzz-app/pull/2215)).
 
 Validate the affected user contract, not just isolated helpers. Add regression
 coverage for changed behavior and relevant failure paths; exercise real integration

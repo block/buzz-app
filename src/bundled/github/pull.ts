@@ -42,6 +42,9 @@ export type PullChecklist = Readonly<{
   authored: boolean;
   /** The viewer may merge past branch rules. */
   canBypass: boolean;
+  /** The target branch requires GitHub’s merge queue. */
+  queueRequired: boolean;
+  queued: boolean;
   methods: readonly MergeMethod[];
   method: MergeMethod;
   canEnableAutoMerge: boolean;
@@ -56,16 +59,18 @@ export type PullView = Readonly<{
   checklist: PullChecklist;
 }>;
 
-const PULL_QUERY = `query($owner:String!,$name:String!,$number:Int!){
-  repository(owner:$owner,name:$name){
-    viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
-    pullRequest(number:$number){
-      id title state isDraft body bodyHTML createdAt updatedAt mergedAt
+/** What the panel reads of a pull request's repository, beside the pull
+ * request, in the store's query. */
+export const PANEL_REPOSITORY_FIELDS =
+  "viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed";
+/** What the panel reads of the pull request itself. */
+export const PANEL_PULL_FIELDS = `id title body bodyHTML createdAt updatedAt mergedAt
       author{login avatarUrl} mergedBy{login}
-      baseRefName headRefName headRefOid
+      baseRefName headRefName
       headRepository{nameWithOwner} headRepositoryOwner{login} baseRepository{nameWithOwner}
       additions deletions changedFiles
-      mergeStateStatus reviewDecision viewerDidAuthor viewerCanUpdate viewerCanUpdateBranch viewerCanMergeAsAdmin
+      reviewDecision viewerDidAuthor viewerCanUpdate viewerCanUpdateBranch viewerCanMergeAsAdmin
+      isMergeQueueEnabled isInMergeQueue
       viewerCanEnableAutoMerge viewerCanDisableAutoMerge
       autoMergeRequest{mergeMethod enabledBy{login}}
       reviewRequests(first:20){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login}}}}
@@ -73,13 +78,10 @@ const PULL_QUERY = `query($owner:String!,$name:String!,$number:Int!){
       reviewThreads(last:100){totalCount nodes{isResolved}}
       commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){totalCount nodes{__typename
         ... on CheckRun{name status conclusion detailsUrl title}
-        ... on StatusContext{context state description targetUrl}}}}}}}
-    }
-  }
-}`;
+        ... on StatusContext{context state description targetUrl}}}}}}}`;
 
 type Login = { login?: string } | null | undefined;
-type PullData = {
+export type PullData = {
   repository: {
     viewerDefaultMergeMethod?: MergeMethod;
     mergeCommitAllowed?: boolean;
@@ -108,6 +110,8 @@ type PullData = {
       changedFiles?: number;
       mergeStateStatus?: string;
       reviewDecision?: PullChecklist["review"]["decision"];
+      isMergeQueueEnabled?: boolean;
+      isInMergeQueue?: boolean;
       viewerDidAuthor?: boolean;
       viewerCanUpdate?: boolean;
       viewerCanUpdateBranch?: boolean;
@@ -153,19 +157,6 @@ const userUrl = (name: string | undefined) =>
     : undefined;
 const time = (value: string | null | undefined) =>
   value && Number.isFinite(Date.parse(value)) ? value : undefined;
-
-export async function loadPull(
-  gh: GitHubCli,
-  reference: GitHubReference,
-  signal?: AbortSignal,
-): Promise<PullView> {
-  const [owner, name] = reference.repository.split("/");
-  const number = Number(reference.url.split("/").at(-1));
-  return parsePull(
-    await gh<PullData>(PULL_QUERY, { owner, name, number }, signal),
-    reference,
-  );
-}
 
 export function parsePull(
   data: PullData,
@@ -296,6 +287,8 @@ export function parsePull(
       canUpdateBranch: !!pull.viewerCanUpdateBranch,
       authored: !!pull.viewerDidAuthor,
       canBypass: !!pull.viewerCanMergeAsAdmin,
+      queueRequired: !!pull.isMergeQueueEnabled,
+      queued: !!pull.isInMergeQueue,
       methods,
       method:
         preferred && methods.includes(preferred)
@@ -317,6 +310,7 @@ export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
 
 export type PullAction =
   | { type: "merge"; method: MergeMethod }
+  | { type: "enqueue" }
   | { type: "review"; event: ReviewEvent; body: string }
   | { type: "auto-merge"; method: MergeMethod }
   | { type: "cancel-auto-merge" }
@@ -331,6 +325,8 @@ function mutationOf(
   const id = { pullRequestId: pull.id };
   const head = { ...id, expectedHeadOid: pull.head };
   switch (action.type) {
+    case "enqueue":
+      return ["enqueuePullRequest", head];
     case "merge":
       return ["mergePullRequest", { ...head, mergeMethod: action.method }];
     case "auto-merge":

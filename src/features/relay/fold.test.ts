@@ -17,10 +17,44 @@ import {
 
 const relay = keypair(),
   alice = keypair(),
-  bob = keypair();
+  bob = keypair(),
+  carol = keypair(),
+  dave = keypair();
 const channel = "chan-1";
 
 describe("message fold", () => {
+  it("reads the id of a plugin request from the signed tag", () => {
+    const content = "Requested: install Browser — Check the staging site";
+    const id = "5d1f0b8e-8c2a-4a39-9a54-0f6a4e7e6c11";
+    const [row] = foldMessages(channel, relay.pubkey, [
+      signed(alice, {
+        kind: 9,
+        content,
+        tags: [
+          ["h", channel],
+          ["plugin-request", id],
+        ],
+      }),
+    ]);
+    expect(row).toMatchObject({ content, pluginRequest: { id } });
+    for (const tags of [
+      [["h", channel]],
+      [
+        ["h", channel],
+        ["plugin-request", ""],
+      ],
+      [
+        ["h", channel],
+        ["plugin-request", "not an id!"],
+      ],
+    ]) {
+      const [plain] = foldMessages(channel, relay.pubkey, [
+        signed(alice, { kind: 9, content, tags }),
+      ]);
+      expect(plain?.pluginRequest).toBeUndefined();
+    }
+  });
+
   it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {
     const content =
       "@@ -1 +1 @@\n-![old](https://example.com/old.png)\n+<script>alert(1)</script>  \n";
@@ -348,6 +382,105 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
+  it("layers pending replies on their root's summary and leads participants with their authors", () => {
+    const root = message(alice, channel, "root", 10);
+    const reply = (key: typeof bob, at: number, channelId = channel) =>
+      message(key, channelId, "re", at, [["e", root.id, "", "reply"]]);
+    const first = reply(bob, 11),
+      second = reply(alice, 12),
+      elsewhere = reply(bob, 14, "elsewhere");
+    const count = (body: Record<string, unknown>) =>
+      summary(relay, channel, root.id, body);
+    const fold = (
+      events: Parameters<typeof foldMessages>[2],
+      pending: readonly string[] = [first.id, second.id, elsewhere.id],
+      options: Parameters<typeof foldMessages>[3] = {},
+    ) =>
+      foldMessages(channel, relay.pubkey, [root, ...events], {
+        pendingReplies: new Set(pending),
+        ...options,
+      }).map((row) => [row.replyCount, row.participants]);
+    expect(fold([first])).toEqual([[1, [bob.pubkey]]]);
+    expect(
+      fold([
+        first,
+        count({ descendant_count: 3, participants: [carol.pubkey] }),
+      ]),
+    ).toEqual([[4, [bob.pubkey, carol.pubkey]]]);
+    expect(
+      fold([
+        first,
+        second,
+        count({ descendant_count: 1, participants: [bob.pubkey] }),
+      ]),
+    ).toEqual([[3, [bob.pubkey, alice.pubkey]]]);
+    // Replies the summary counted stand only through the summary.
+    expect(
+      fold(
+        [first, count({ descendant_count: 3, participants: [carol.pubkey] })],
+        [],
+      ),
+    ).toEqual([[3, [carol.pubkey]]]);
+    expect(fold([first], [])).toEqual([[0, []]]);
+    expect(fold([first], [first.id], { includeReplies: true })).toEqual([
+      [0, []],
+      [0, []],
+    ]);
+    const remove = signed(bob, {
+      kind: 5,
+      content: "",
+      created_at: 13,
+      tags: [["e", first.id]],
+    });
+    expect(fold([first, second, remove])).toEqual([[1, [alice.pubkey]]]);
+    expect(fold([elsewhere])).toEqual([[0, []]]);
+    // A new replier stays within the three visible avatars.
+    expect(
+      fold([
+        first,
+        count({
+          descendant_count: 3,
+          participants: [alice.pubkey, carol.pubkey, dave.pubkey],
+        }),
+      ]),
+    ).toEqual([[4, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
+    // So does a returning replier the summary lists after the visible three.
+    expect(
+      fold([
+        first,
+        count({
+          descendant_count: 4,
+          participants: [alice.pubkey, carol.pubkey, dave.pubkey, bob.pubkey],
+        }),
+      ]),
+    ).toEqual([[5, [bob.pubkey, alice.pubkey, carol.pubkey, dave.pubkey]]]);
+    // The relay lists a relay-signed workflow reply by its signer; the client
+    // shows its author but adds no second identity next to that signer.
+    const workflow = signed(relay, {
+      kind: 9,
+      content: "re",
+      created_at: 15,
+      tags: [
+        ["p", bob.pubkey],
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    const relaySigned = { signingAuthority: relay.pubkey };
+    expect(fold([workflow], [workflow.id], relaySigned)).toEqual([
+      [1, [bob.pubkey]],
+    ]);
+    expect(
+      fold(
+        [
+          workflow,
+          count({ descendant_count: 1, participants: [relay.pubkey] }),
+        ],
+        [workflow.id],
+        relaySigned,
+      ),
+    ).toEqual([[2, [relay.pubkey]]]);
+  });
   it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
     const nested = message(
       alice,
@@ -727,6 +860,7 @@ describe("discovery", () => {
         name: "Alpha",
         description: "",
         visibility: undefined,
+        joinRole: "member",
         members: [alice.pubkey, bob.pubkey].sort(),
       },
       { id: "zeta", name: "zeta".slice(0, 8), members: [alice.pubkey] },

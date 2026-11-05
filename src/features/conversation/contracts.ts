@@ -30,6 +30,23 @@ export type ComposerToolProps = Readonly<{
   /** Read-only: who the draft mentions, in draft order. The tool re-renders when
    * this changes; the array keeps its identity while only the prose changes. */
   recipients: readonly Readonly<{ pubkey: string; name: string }>[];
+  /** Solo, alone with agents: who hears the message. Inline mentions decide
+   * when there are any; otherwise the toolbar's agents stand in. `only`
+   * replaces those stand-ins with a non-empty list and `toggle` adds or
+   * removes one, never the last; they also follow each send. While inline
+   * mentions decide, `toggle` adds or removes that mention instead. Absent
+   * elsewhere, where mentions alone decide. */
+  audience?:
+    | Readonly<{
+        recipients: readonly Readonly<{ pubkey: string; name: string }>[];
+        /** True while inline mentions in the text decide, so picks only change the stand-ins. */
+        named: boolean;
+        only(
+          recipients: readonly Readonly<{ pubkey: string; name: string }>[],
+        ): void;
+        toggle(recipient: Readonly<{ pubkey: string; name: string }>): void;
+      }>
+    | undefined;
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.
@@ -74,6 +91,8 @@ export type AttachmentRenderer = Readonly<{
   id: string;
   title: string;
   matches(attachment: Attachment): boolean;
+  /** Claim strength when several renderers match an attachment; see `MatchOrder`. */
+  order?: MatchOrder<Attachment> | undefined;
   component: ComponentType<AttachmentRendererProps>;
 }>;
 export type ReactionToolProps = Readonly<{
@@ -149,6 +168,16 @@ export type ComposerAccessoryProps = Readonly<{
   threadRootId?: string | undefined;
   /** Present only for message-placed accessories; the exact triggering row. */
   message?: ChannelMessage;
+  /** Agents already represented by subsequent content in this request's visible run. */
+  representedAgents?: readonly string[] | undefined;
+  /** Agents with a later public reply to this request; their stopped notes
+   * follow that reply instead of this message. */
+  repliedAgents?: readonly string[] | undefined;
+  /** The request this row is its author's latest public reply to; that
+   * author's stopped note follows this row. */
+  stoppedRequest?: ChannelMessage | undefined;
+  /** Host geometry for response-side accessories. */
+  messageLayout?: "timeline" | "thread" | "continuation" | undefined;
   /** A single selected decorator may wrap the host summary with its preview.
    * Render without activity when idle; the host owns reply counts/navigation. */
   renderMessageSummary?:
@@ -161,12 +190,15 @@ export type ComposerAccessoryProps = Readonly<{
   onFocusedRemoval?: (() => void) | undefined;
   /** Presentation only; the host re-resolves targets. No editor or access grant. */
   canOpen(target: string): boolean;
-  /** False after contribution removal or the originating composer retires. */
+  /** False after contribution removal or the originating composer retires.
+   * A message-placed accessory's target opens in that message's thread, like
+   * a link in its body. */
   open(target: string): boolean;
 }>;
 export type ComposerAccessory = Readonly<{
-  /** Defaults to the composer. Message accessories render beside reactions. */
-  placement?: "composer" | "message";
+  /** Defaults to the composer. Message accessories sit beside reactions;
+   * response accessories occupy an incoming row after the triggering message. */
+  placement?: "composer" | "message" | "response";
   /** Opt into decorating the message summary; only the first ordered owner wins. */
   decoratesMessageSummary?: boolean;
   id: string;
@@ -239,17 +271,47 @@ export type CompletionQuery = Readonly<{
   end: number;
   query: string;
 }>;
+/** A name the provider cannot decide on yet. The host may hold it as a chip
+ * with no recipient and ask `resolve` for the recipient the terminator would
+ * have selected once the provider's evidence is complete; null returns the
+ * name to prose. `resolve` is headless: the provider has unmounted by then. */
+export type CompletionPending = Readonly<{
+  name: string;
+  resolve(signal: AbortSignal): Promise<CompletionResolution>;
+}>;
+/** The recipient; null for prose; or, when only longer known names kept the
+ * name from selecting over the complete choice set, those names, each
+ * resolvable under the same rule. The host may extend the chip over the words
+ * typed after it when they complete one of them, and ask that one. */
+export type CompletionResolution =
+  | Readonly<{ pubkey: string; name: string }>
+  | Readonly<{ continued: readonly CompletionPending[] }>
+  | null;
 export type CompletionEdit =
-  | Readonly<{ text: string; mention?: never; mentions?: never }>
+  | Readonly<{
+      text: string;
+      mention?: never;
+      mentions?: never;
+      pending?: never;
+    }>
   | Readonly<{
       mention: Readonly<{ pubkey: string; name: string }>;
       text?: never;
       mentions?: never;
+      pending?: never;
     }>
   | Readonly<{
       mentions: readonly Readonly<{ pubkey: string; name: string }>[];
       text?: never;
       mention?: never;
+      pending?: never;
+    }>
+  /** Host-only: the terminator typed over an undecided name. Never a suggestion's edit. */
+  | Readonly<{
+      pending: CompletionPending;
+      text?: never;
+      mention?: never;
+      mentions?: never;
     }>;
 export type CompletionSuggestion = Readonly<{
   id: string;
@@ -257,6 +319,11 @@ export type CompletionSuggestion = Readonly<{
   detail?: string;
   /** Decorative presentation only; the host owns option semantics and interaction. */
   preview?: import("react").ReactNode;
+  /**
+   * An agent, not a person. The host marks the name and announces "Agent" only
+   * for its bundled people providers (mentions, channels); others are ignored.
+   */
+  agent?: boolean;
   edit: CompletionEdit;
   /** Keep an installed identity in place after eligibility is revoked. */
   disabled?: string | undefined;
@@ -267,6 +334,9 @@ export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];
   /** Provider-verified unique exact match across its uncapped candidate set. */
   spaceId?: string | undefined;
+  /** No `spaceId` yet only because evidence is still arriving; the terminator
+   * may hold the query as a pending mention instead of typing a literal. */
+  spacePending?: CompletionPending | undefined;
   status?: string;
   /** Optional explicit recovery. A new query or disposal revokes this action. */
   retry?: () => void;

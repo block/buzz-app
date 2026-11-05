@@ -1,7 +1,10 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
-    artifact_from_parts, err, hash, icon_revision, Catalog, GitSource, InstallSource, Manager,
-    Manifest, Release, ReloadSource, Result, BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    access::{AccessRules, Transport},
+    artifact_from_parts, err, hash, icon_revision,
+    managed::{valid_commit, valid_reference},
+    Catalog, GitSource, InstallSource, Manager, Manifest, Release, ReloadSource, Result, BASE64,
+    LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use base64::Engine as _;
 use nostr::event::Event;
@@ -570,6 +573,11 @@ pub fn repository_url(input: &str) -> Result<String> {
         || url.query().is_some()
         || url.fragment().is_some()
         || url.path().trim_matches('/').is_empty()
+        || expanded.split_once("://").is_some_and(|(_, rest)| {
+            rest.split(['/', '?', '#'])
+                .next()
+                .is_some_and(|a| a.contains('%'))
+        })
         || expanded
             .chars()
             .any(|c| c.is_whitespace() || c.is_control())
@@ -578,7 +586,10 @@ pub fn repository_url(input: &str) -> Result<String> {
             "Use an HTTPS or SSH repository URL without a password, query or fragment".into(),
         );
     }
-    if url.host_str() == Some("github.com") && url.path().trim_matches('/').split('/').count() != 2
+    let host = url.host_str().unwrap_or_default().trim_end_matches('.');
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    if host.eq_ignore_ascii_case("github.com")
+        && url.path().trim_matches('/').split('/').count() != 2
     {
         return Err("Use the GitHub repository URL, not a tree/file URL. Enter the branch or tag separately, then select a plugin folder.".into());
     }
@@ -588,15 +599,21 @@ pub fn repository_url(input: &str) -> Result<String> {
 struct Git {
     scratch: tempfile::TempDir,
     deadline: Instant,
+    ssh_auth_sock: Option<PathBuf>,
     /// Repository URL and its NIP-98 token. Git sends the header only to that URL prefix.
     authorization: Option<(String, String)>,
+    federated_header: Option<String>,
+    retired: Option<Box<dyn Fn() -> bool + Send>>,
 }
 impl Git {
     fn new() -> Result<Self> {
         Ok(Self {
             scratch: tempfile::tempdir().map_err(err)?,
             deadline: Instant::now() + Duration::from_secs(60),
+            ssh_auth_sock: None,
             authorization: None,
+            federated_header: None,
+            retired: None,
         })
     }
     fn command(&self) -> Command {
@@ -608,6 +625,9 @@ impl Git {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
+        }
+        if let Some(socket) = &self.ssh_auth_sock {
+            command.env("SSH_AUTH_SOCK", socket);
         }
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         command
@@ -634,21 +654,25 @@ impl Git {
         if let Some((url, token)) = &self.authorization {
             // Environment, not argv: other processes cannot read the token from `ps`.
             // No redirects, so the header never follows the request to another URL.
-            for (index, (key, value)) in [
+            let mut settings = vec![
                 (
                     format!("http.{url}.extraHeader"),
                     format!("Authorization: Nostr {token}"),
                 ),
                 ("http.followRedirects".into(), "false".into()),
-            ]
-            .into_iter()
-            .enumerate()
-            {
+            ];
+            if let Some(header) = &self.federated_header {
+                settings.push((
+                    format!("http.{url}.extraHeader"),
+                    format!("Nostr-Federated-Identity: {header}"),
+                ));
+            }
+            command.env("GIT_CONFIG_COUNT", settings.len().to_string());
+            for (index, (key, value)) in settings.into_iter().enumerate() {
                 command
                     .env(format!("GIT_CONFIG_KEY_{index}"), key)
                     .env(format!("GIT_CONFIG_VALUE_{index}"), value);
             }
-            command.env("GIT_CONFIG_COUNT", "2");
         }
         command
     }
@@ -658,6 +682,12 @@ impl Git {
         self.run_command(command, limit)
     }
     fn run_command(&self, mut command: Command, limit: u64) -> Result<Vec<u8>> {
+        if self.retired.as_ref().is_some_and(|retired| retired()) {
+            return Err("Repository authorization retired".into());
+        }
+        if Instant::now() >= self.deadline {
+            return Err("Repository import exceeded 60 seconds".into());
+        }
         let output = tempfile::tempfile().map_err(err)?;
         let errors = tempfile::tempfile().map_err(err)?;
         command
@@ -669,10 +699,19 @@ impl Git {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
+        if self.retired.as_ref().is_some_and(|retired| retired()) {
+            return Err("Repository authorization retired".into());
+        }
+        if Instant::now() >= self.deadline {
+            return Err("Repository import exceeded 60 seconds".into());
+        }
         let mut child = command
             .spawn()
             .map_err(|e| format!("Could not start Git: {e}. Install Git to load repositories."))?;
         let result = (|| loop {
+            if self.retired.as_ref().is_some_and(|retired| retired()) {
+                return Err("Repository authorization retired".into());
+            }
             if Instant::now() >= self.deadline {
                 return Err("Repository import exceeded 60 seconds".into());
             }
@@ -686,6 +725,9 @@ impl Git {
             }
             if let Some(status) = child.try_wait().map_err(err)? {
                 if !status.success() {
+                    if self.federated_header.is_some() {
+                        return Err("Git could not read the protected repository".into());
+                    }
                     let text = read_output(errors, 4096)?;
                     return Err(format!(
                         "Git could not read this repository: {}",
@@ -713,11 +755,17 @@ impl Git {
         }
         result
     }
-    fn read_plugins(&self, source: String) -> Result<PreparedImport> {
+    fn read_plugins(&self, source: String, pinned: Option<&str>) -> Result<PreparedImport> {
         let commit = String::from_utf8(self.run(&["-C", "repository", "rev-parse", "HEAD"], 1024)?)
             .map_err(err)?
             .trim()
             .to_string();
+        if pinned.is_some_and(|pinned| !commit.eq_ignore_ascii_case(pinned)) {
+            return Err(format!(
+                "The repository reference is at commit {commit}, not the required commit {}. The reference has moved; ask whoever manages this recommendation to update it.",
+                pinned.unwrap_or_default()
+            ));
+        }
         let tree = self.run(
             &["-C", "repository", "ls-tree", "-rz", "--full-tree", "HEAD"],
             2 * 1024 * 1024,
@@ -865,21 +913,51 @@ impl Git {
     }
 }
 
+/// A full commit ID that a Git import must resolve to. A distinct type keeps it from being
+/// confused with the adjacent authorization strings.
+#[derive(Clone, Copy, Debug)]
+pub struct RequiredCommit<'a>(&'a str);
+impl<'a> RequiredCommit<'a> {
+    pub fn parse(commit: &'a str) -> Result<Self> {
+        if valid_commit(commit) {
+            Ok(Self(commit))
+        } else {
+            Err("Required commit must be a full 40 or 64 digit hexadecimal object ID".into())
+        }
+    }
+}
+
 /// `authorization` is a NIP-98 token that the caller signed for exactly this repository URL.
 pub fn prepare_git(
     repository: &str,
     reference: &str,
     authorization: Option<&str>,
 ) -> Result<PreparedImport> {
+    prepare_git_authorized(
+        repository,
+        reference,
+        None,
+        authorization,
+        None,
+        None,
+        &crate::access::built_in(),
+    )
+}
+/// Native FI remains native: headers are scoped to this repository through environment config.
+/// `required` refuses a reference that no longer resolves to exactly that commit, and is the
+/// only case where the installed commit is recorded in the saved source.
+pub fn prepare_git_authorized(
+    repository: &str,
+    reference: &str,
+    required: Option<RequiredCommit<'_>>,
+    authorization: Option<&str>,
+    federated_header: Option<&str>,
+    retired: Option<Box<dyn Fn() -> bool + Send>>,
+    access: &AccessRules,
+) -> Result<PreparedImport> {
     let url = repository_url(repository)?;
     let reference = reference.trim();
-    if !reference.is_empty()
-        && (reference.starts_with('-')
-            || reference.len() > 200
-            || !reference
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c)))
-    {
+    if !reference.is_empty() && !valid_reference(reference) {
         return Err("Enter a branch or tag name using letters, digits, dots, underscores, slashes or hyphens".into());
     }
     let mut git = Git::new()?;
@@ -894,6 +972,34 @@ pub fn prepare_git(
         }
         git.authorization = Some((url.clone(), token.into()));
     }
+    if let Some(header) = federated_header {
+        if authorization.is_none()
+            || header.len() > 8192
+            || !header.starts_with("Bearer ")
+            || header.chars().any(|c| c.is_control())
+        {
+            return Err("Invalid federated repository authorization".into());
+        }
+        git.federated_header = Some(header.into());
+    }
+    git.retired = retired;
+    // Without a home directory `~/` sockets cannot be found, so no rule applies.
+    let transport = match dirs::home_dir() {
+        Some(home) => access.resolve(&url, authorization.is_some(), &home)?,
+        None => Transport {
+            clone_url: url.clone(),
+            ssh_auth_sock: None,
+            rule: None,
+        },
+    };
+    if let Some(rule) = &transport.rule {
+        eprintln!(
+            "Repository access rule {rule}: reading {url} as {} with agent socket {}",
+            transport.clone_url,
+            agent_label(&transport)
+        );
+    }
+    git.ssh_auth_sock = transport.ssh_auth_sock.clone();
     let mut args = vec![
         "clone",
         "--depth=1",
@@ -905,15 +1011,47 @@ pub fn prepare_git(
     if !reference.is_empty() {
         args.extend(["--branch", reference]);
     }
-    args.extend(["--", &url, "repository"]);
-    git.run(&args, LIMIT)?;
-    let mut prepared = git.read_plugins(url.clone())?;
-    prepared.git_source = Some(GitSource {
-        repository: url,
+    args.extend(["--", &transport.clone_url, "repository"]);
+    git.run(&args, LIMIT)
+        .map_err(|error| match &transport.rule {
+            Some(rule) => format!(
+                "{error} (repository access rule {rule}, agent socket {})",
+                agent_label(&transport)
+            ),
+            None => error,
+        })?;
+    let mut prepared = git.read_plugins(url.clone(), required.map(|required| required.0))?;
+    if git.retired.as_ref().is_some_and(|retired| retired()) {
+        return Err("Repository authorization retired".into());
+    }
+    prepared.git_source = Some(git_source(
+        url,
+        reference,
+        required,
+        prepared.preview.commit.as_deref(),
+    ));
+    Ok(prepared)
+}
+/// Only a pinned import records its commit: an unpinned source stays readable by older
+/// Buzz versions, which reject unknown registry fields.
+fn git_source(
+    repository: String,
+    reference: &str,
+    required: Option<RequiredCommit<'_>>,
+    read: Option<&str>,
+) -> GitSource {
+    GitSource {
+        repository,
         reference: reference.into(),
         path: ".".into(),
-    });
-    Ok(prepared)
+        commit: required.and(read).map(str::to_owned),
+    }
+}
+fn agent_label(transport: &Transport) -> String {
+    transport
+        .ssh_auth_sock
+        .as_ref()
+        .map_or("inherited".into(), |socket| socket.display().to_string())
 }
 fn read_output(mut file: File, limit: u64) -> Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
@@ -1223,7 +1361,7 @@ mod tests {
         for prepared in [
             prepare_folder(&repo).unwrap(),
             prepare_upload(upload).unwrap(),
-            git.read_plugins("fixture".into()).unwrap(),
+            git.read_plugins("fixture".into(), None).unwrap(),
         ] {
             assert_eq!(prepared.preview.candidates.len(), 3);
             assert_eq!(prepared.preview.warnings.len(), 3);
@@ -1352,6 +1490,7 @@ mod tests {
             repository: "https://example.com/plugins".into(),
             reference: "release/one".into(),
             path: ".".into(),
+            commit: None,
         });
         let next = git.install(&manager, &git.preview.token, "dist").unwrap();
         let next = next
@@ -1365,6 +1504,7 @@ mod tests {
             repository: "https://example.com/plugins".into(),
             reference: "release/one".into(),
             path: "dist".into(),
+            commit: None,
         }));
         assert_eq!(next.update_source, git_source);
         let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
@@ -1407,6 +1547,45 @@ mod tests {
             .unwrap();
         assert!(updated.previous.is_some());
         assert_eq!(updated.update_source, git_source);
+    }
+    #[test]
+    fn git_sources_record_the_installed_commit_and_still_read_without_one() {
+        let legacy = serde_json::json!({
+            "repository": "https://example.com/plugins",
+            "reference": "main",
+            "path": "dist"
+        });
+        let parsed: InstallSource = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(matches!(
+            &parsed,
+            InstallSource::Git(GitSource { commit: None, .. })
+        ));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), legacy);
+
+        let commit = "a".repeat(40);
+        let root = tempfile::tempdir().unwrap();
+        plugin(root.path(), "dist", "example.pinned");
+        let mut git = prepare_folder(root.path()).unwrap();
+        git.folder_root = None;
+        git.git_source = Some(GitSource {
+            repository: "https://example.com/plugins".into(),
+            reference: "main".into(),
+            path: ".".into(),
+            commit: Some(commit.clone()),
+        });
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let catalog = git.install(&manager, &git.preview.token, "dist").unwrap();
+        let installed = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.pinned")
+            .unwrap();
+        let Some(InstallSource::Git(source)) = &installed.update_source else {
+            panic!("expected a Git source");
+        };
+        assert_eq!(source.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(source.path, "dist");
     }
     #[test]
     fn folder_skips_hidden_descendants_but_accepts_a_hidden_selection() {
@@ -1467,7 +1646,7 @@ mod tests {
         )
         .unwrap();
         let folder = prepare_folder(&repo).unwrap();
-        let committed = git.read_plugins("fixture".into()).unwrap();
+        let committed = git.read_plugins("fixture".into(), None).unwrap();
         for prepared in [folder, committed] {
             assert_eq!(prepared.preview.candidates.len(), 1);
             assert_eq!(prepared.preview.warnings.len(), 3);
@@ -1588,6 +1767,10 @@ mod tests {
             "https://me:secret@example.com/repo",
             "https://example.com/repo?token=secret",
             "https://github.com/block/repo/tree/main/plugins",
+            "https://www.github.com/block/repo/tree/main/plugins",
+            "https://github.com./block/repo/tree/main/plugins",
+            "https://git%68ub.com/block/repo",
+            "ssh://git@exa%6dple.com/team/repo",
             "--upload-pack=bad",
             "ssh://-oProxyCommand=bad/repo",
             "-oProxyCommand=bad@github.com:owner/repo.git",
@@ -1601,6 +1784,107 @@ mod tests {
             assert!(repository_url(input).is_err(), "{input}");
         }
         assert!(prepare_git("block/plugins", "--upload-pack=bad", None).is_err());
+    }
+    #[test]
+    fn required_commits_are_validated_before_any_git_work() {
+        for valid in ["a".repeat(40), "A".repeat(40), "0123456789abcdef".repeat(4)] {
+            assert!(RequiredCommit::parse(&valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "",
+            "main",
+            "abc123",
+            &"a".repeat(39),
+            &"a".repeat(41),
+            &"a".repeat(63),
+            &"a".repeat(65),
+            &"g".repeat(40),
+            " ".repeat(40).as_str(),
+        ] {
+            let error = RequiredCommit::parse(invalid).err().unwrap();
+            assert!(error.contains("40 or 64 digit"), "{invalid:?}");
+        }
+    }
+    #[test]
+    fn only_pinned_imports_record_the_installed_commit() {
+        let head = "a".repeat(40);
+        let url = "https://github.com/acme/plugins".to_owned();
+        let pinned = git_source(
+            url.clone(),
+            "v1",
+            Some(RequiredCommit::parse(&head).unwrap()),
+            Some(&head),
+        );
+        assert_eq!(pinned.commit.as_deref(), Some(head.as_str()));
+        let unpinned = git_source(url, "v1", None, Some(&head));
+        assert_eq!(unpinned.commit, None);
+        assert!(!serde_json::to_string(&unpinned).unwrap().contains("commit"));
+    }
+    #[test]
+    fn pins_match_full_object_ids_of_either_hash_length() {
+        let commit = |git: &Git| {
+            git.run(&["-C", "repository", "add", "."], LIMIT).unwrap();
+            git.run(
+                &[
+                    "-C",
+                    "repository",
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    "fixture",
+                ],
+                LIMIT,
+            )
+            .unwrap();
+        };
+        for (format, length) in [("sha1", 40), ("sha256", 64)] {
+            let git = Git::new().unwrap();
+            git.run(
+                &[
+                    "init",
+                    "--template=",
+                    &format!("--object-format={format}"),
+                    "repository",
+                ],
+                LIMIT,
+            )
+            .unwrap();
+            plugin(
+                &git.scratch.path().join("repository"),
+                "dist",
+                "example.one",
+            );
+            commit(&git);
+            let head = git
+                .read_plugins("fixture".into(), None)
+                .unwrap()
+                .preview
+                .commit
+                .unwrap();
+            assert_eq!(head.len(), length, "{format}");
+            assert!(git.read_plugins("fixture".into(), Some(&head)).is_ok());
+            assert!(git
+                .read_plugins("fixture".into(), Some(&head.to_uppercase()))
+                .is_ok());
+            let other = if length == 40 { 64 } else { 40 };
+            let lookalike = if length == 64 {
+                head[..40].to_owned()
+            } else {
+                format!("{head}{}", "0".repeat(24))
+            };
+            for wrong in [lookalike, "0".repeat(other)] {
+                let refused = git.read_plugins("fixture".into(), Some(&wrong));
+                assert!(
+                    refused.err().unwrap().contains("not the required commit"),
+                    "{format} {wrong}"
+                );
+            }
+        }
     }
     #[test]
     fn git_reads_committed_blobs_without_checkout_filters_symlinks_or_scripts() {
@@ -1651,7 +1935,16 @@ mod tests {
             "uncommitted change",
         )
         .unwrap();
-        let prepared = git.read_plugins("fixture".into()).unwrap();
+        let prepared = git.read_plugins("fixture".into(), None).unwrap();
+        let head = prepared.preview.commit.clone().unwrap();
+        assert!(git
+            .read_plugins("fixture".into(), Some(&head.to_uppercase()))
+            .is_ok());
+        let refused = git
+            .read_plugins("fixture".into(), Some(&"0".repeat(40)))
+            .err()
+            .unwrap();
+        assert!(refused.contains(&head) && refused.contains("not the required commit"));
         assert_eq!(prepared.preview.candidates.len(), 2);
         assert!(prepared
             .preview
@@ -1937,6 +2230,7 @@ mod tests {
         let mut git = Git::new().unwrap();
         let repository = format!("{base}/git/{}/plugin", "a".repeat(64));
         git.authorization = Some((repository.clone(), "dG9rZW4=".into()));
+        git.federated_header = Some("Bearer fixture-assertion".into());
         for url in [
             repository,
             format!("{base}/git/{}/plugin-other", "a".repeat(64)),
@@ -1947,7 +2241,7 @@ mod tests {
                     LIMIT,
                 )
                 .unwrap_err();
-            assert!(error.contains("error: 302"), "{error}");
+            assert_eq!(error, "Git could not read the protected repository");
         }
         let seen = requests.join().unwrap();
         let authorization = |head: &Vec<String>| {
@@ -1956,6 +2250,13 @@ mod tests {
         };
         assert!(seen[0][0].contains("/plugin/info/refs"), "{:?}", seen[0]);
         assert!(authorization(&seen[0]));
+        assert_eq!(
+            seen[0]
+                .iter()
+                .filter(|line| *line == "Nostr-Federated-Identity: Bearer fixture-assertion")
+                .count(),
+            1
+        );
         // A sibling whose name shares the prefix is a different repository.
         assert!(
             seen[1][0].contains("/plugin-other/info/refs"),
@@ -1963,6 +2264,9 @@ mod tests {
             seen[1]
         );
         assert!(!authorization(&seen[1]));
+        assert!(!seen[1]
+            .iter()
+            .any(|line| line.starts_with("Nostr-Federated-Identity:")));
     }
     #[test]
     fn rejects_malformed_authorization_before_running_git() {
@@ -1972,6 +2276,109 @@ mod tests {
                 .unwrap();
             assert_eq!(error, "Invalid repository authorization");
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn access_rule_socket_reaches_git() {
+        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        let socket = home.path().join("team.sock");
+        let _agent = UnixListener::bind(&socket).unwrap();
+        fs::write(
+            home.path().join(crate::access::FILE_NAME),
+            r#"{"version": 1, "rules": [{"host": "git.example.com", "pathPrefix": "/team/", "sshUser": "git", "sshAgentSocket": "~/team.sock"}]}"#,
+        )
+        .unwrap();
+        let transport = crate::access::load(home.path(), None)
+            .resolve(
+                "ssh://git@git.example.com/team/plugin.git",
+                false,
+                home.path(),
+            )
+            .unwrap();
+        let mut git = Git::new().unwrap();
+        git.ssh_auth_sock = transport.ssh_auth_sock;
+
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let executable = bin.join("git");
+        fs::write(&executable, "#!/bin/sh\n/usr/bin/printenv SSH_AUTH_SOCK\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut command = git.command();
+        command.env("PATH", &bin);
+        let output = git.run_command(command, 1024).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap().trim(),
+            socket.to_str().unwrap()
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn failed_reads_name_the_access_rule() {
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        let socket = home.path().join("team.sock");
+        let _agent = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        fs::write(
+            home.path().join(crate::access::FILE_NAME),
+            format!(
+                r#"{{"version": 1, "rules": [{{"host": "git.invalid", "pathPrefix": "/team/", "sshUser": "git", "sshAgentSocket": "{}"}}]}}"#,
+                socket.display()
+            ),
+        )
+        .unwrap();
+        let access = crate::access::load(home.path(), None);
+        let error = match prepare_git_authorized(
+            "https://git.invalid/team/plugin.git",
+            "",
+            None,
+            None,
+            None,
+            None,
+            &access,
+        ) {
+            Ok(_) => panic!("git.invalid cannot be read"),
+            Err(error) => error,
+        };
+        // Only the suffix: the failure text itself depends on how far Git got before it
+        // removed its partial clone.
+        assert!(
+            error.ends_with(&format!(
+                " (repository access rule git.invalid/team/, agent socket {})",
+                socket.display()
+            )),
+            "{error}"
+        );
+        let direct = match prepare_git_authorized(
+            "https://git.invalid/other/plugin.git",
+            "",
+            None,
+            None,
+            None,
+            None,
+            &access,
+        ) {
+            Ok(_) => panic!("git.invalid cannot be read"),
+            Err(error) => error,
+        };
+        assert!(!direct.contains("repository access rule"), "{direct}");
+        // Relay authorization is an HTTP header, so an authorized source is never moved to SSH.
+        let authorized = match prepare_git_authorized(
+            "https://git.invalid/team/plugin.git",
+            "",
+            None,
+            Some("dG9rZW4="),
+            None,
+            None,
+            &access,
+        ) {
+            Ok(_) => panic!("git.invalid cannot be read"),
+            Err(error) => error,
+        };
+        assert!(
+            !authorized.contains("repository access rule"),
+            "{authorized}"
+        );
     }
     #[test]
     fn git_deadline_and_output_limits_fail() {

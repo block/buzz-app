@@ -1,5 +1,5 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, settlePanelMotion } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test("channel settings owns its responsive side panel and returns keyboard focus", async ({
@@ -103,7 +103,9 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await expect(panel).toHaveCount(0);
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await expect(panel).toBeVisible();
+  await settlePanelMotion(page);
   await close.click();
+  await expect(panel).toHaveCount(0);
   await page.setViewportSize({ width: 600, height: 800 });
   await openChannelDetails(page);
   await expect(
@@ -115,7 +117,9 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   expect(narrow.x).toBeGreaterThanOrEqual(0);
   expect(narrow.x + narrow.width).toBeLessThanOrEqual(600);
   expect(narrow.y + narrow.height).toBeLessThanOrEqual(800);
+  await settlePanelMotion(page);
   await close.click();
+  await expect(panel).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
   await openChannelDetails(page);
@@ -133,4 +137,89 @@ test("channel settings owns its responsive side panel and returns keyboard focus
     page.getByRole("region", { name: "New message", exact: true }),
   ).toBeVisible();
   await expect(panel).toHaveCount(0);
+});
+
+test.describe("description links", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const runbook = "https://example.test/r2-runbook";
+  test.use({
+    productionBroker: true,
+    channelLifecycle: true,
+    channelNames: { [id]: "R2 ops" },
+  });
+  // Browser-only: whether a click reaches a link or the row's Edit action is
+  // layout hit-testing. Role and empty-value permutations stay in Vitest.
+  test("an owner's description links open their targets, not the editor", async ({
+    page,
+    context,
+    app,
+  }) => {
+    await context.route(runbook, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>Runbook</title>",
+      }),
+    );
+    app.setChannelMetadata(id, [
+      ["name", "R2 ops"],
+      ["t", "stream"],
+      ["public"],
+      ["about", `R2 runbook: ${runbook} · see #Beta`],
+    ]);
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page.locator(`button[data-channel-id="${id}"]`).click();
+    await openChannelDetails(page);
+    const panel = page.getByRole("complementary", {
+      name: "Channel settings",
+      exact: true,
+    });
+    const edit = panel.getByRole("button", {
+      name: "Edit description",
+      exact: true,
+    });
+    const editor = page.getByRole("dialog", {
+      name: "Edit channel details",
+      exact: true,
+    });
+    // Permissions have loaded, so a click that reached Edit would open it.
+    await expect(edit).toBeEnabled();
+    // The label is now the only pointer target for editing.
+    expect((await edit.boundingBox()).height).toBeGreaterThanOrEqual(24);
+    // Its target overhangs the label's line box, so the value sits where
+    // Members' does. The dt can't show this: the margins collapse through it.
+    // Measure inside each row's top border, which only later rows have.
+    const valueOffset = (name) =>
+      panel.getByRole("button", { name, exact: true }).evaluate((button) => {
+        const row = button.closest("dt").parentElement;
+        return (
+          row.querySelector("dd").getBoundingClientRect().top -
+          row.getBoundingClientRect().top -
+          row.clientTop
+        );
+      });
+    expect(await valueOffset("Edit description")).toBeCloseTo(
+      await valueOffset("View members"),
+      0,
+    );
+    const opened = page.waitForEvent("popup");
+    await panel.getByRole("link", { name: runbook, exact: true }).click();
+    const external = await opened;
+    expect(external.url()).toBe(runbook);
+    await external.close();
+    await expect(editor).toHaveCount(0);
+    await edit.click();
+    await expect(
+      editor.getByRole("textbox", { name: "Description", exact: true }),
+    ).toBeFocused();
+    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await panel.getByRole("link", { name: "#Beta", exact: true }).click();
+    await expect(
+      page
+        .getByRole("article", { name: "Conversation" })
+        .getByRole("tab", { name: "Beta", exact: true }),
+    ).toBeVisible();
+    await expect(editor).toHaveCount(0);
+  });
 });

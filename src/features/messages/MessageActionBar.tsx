@@ -16,6 +16,7 @@ import {
   CopyIcon,
   DotsThreeIcon,
   LinkIcon,
+  ForwardIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -33,6 +34,7 @@ import {
   useFloatingActionBar,
   useMessageActionBarReady,
 } from "./useFloatingActionBar";
+import { writeClipboardText } from "../../shared/clipboard";
 
 const AfterMenuClose = createContext<
   ((action: () => void) => void) | undefined
@@ -47,6 +49,7 @@ type Props = {
   menuTriggerRef?: Ref<HTMLButtonElement>;
   onSendToChannel?: (() => void) | undefined;
   onReply?: (() => void) | undefined;
+  onForward?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
   link?: string | undefined;
   copyText(): string;
@@ -89,6 +92,7 @@ function MessageActionBarControls({
   children,
   onSendToChannel,
   onReply,
+  onForward,
   replyDisabled,
   link,
   copyText,
@@ -130,7 +134,7 @@ function MessageActionBarControls({
     setCopying(true);
     setNotice(undefined);
     try {
-      await navigator.clipboard.writeText(text());
+      await writeClipboardText(text());
       setNotice({ text: `${label} copied`, error: false });
     } catch {
       setNotice({
@@ -212,17 +216,30 @@ function MessageActionBarControls({
             Reply
           </MenuItem>
         )}
-        {children && (
+        <MenuItem
+          disabled={!link || copying}
+          onClick={() => {
+            if (link) void copy(() => link, "Link");
+          }}
+        >
+          <MenuIcon>
+            <LinkIcon />
+          </MenuIcon>
+          Copy link
+        </MenuItem>
+        {onForward && (
           <MenuItem
-            disabled={!link || copying}
+            disabled={!link}
+            title={!link ? "Message link unavailable" : undefined}
             onClick={() => {
-              if (link) void copy(() => link, "Link");
+              setHandingOffFocus(true);
+              afterClose.current = onForward;
             }}
           >
             <MenuIcon>
-              <LinkIcon />
+              <ForwardIcon />
             </MenuIcon>
-            Copy link
+            Forward message
           </MenuItem>
         )}
         {overflowItems}
@@ -292,6 +309,7 @@ function MessageActionBarControls({
           {/* biome-ignore lint/a11y/useSemanticElements: This groups message actions, not form fields. */}
           <div
             className={styles.messageActions}
+            data-message-actions=""
             ref={barRef}
             popover={floating ? "manual" : undefined}
             role="group"
@@ -315,9 +333,9 @@ function MessageActionBarControls({
               />
             )}
             <IconButton
-              hint={link ? "familiar" : "helpful"}
+              hint="familiar"
               aria-label="Copy link"
-              title={link ? "Copy link" : "Message link unavailable"}
+              title="Copy link"
               size="sm"
               disabled={!link || copying}
               icon={<LinkIcon />}
@@ -325,6 +343,20 @@ function MessageActionBarControls({
                 if (link) void copy(() => link, "Link");
               }}
             />
+            {onForward && (
+              <IconButton
+                hint={link ? "familiar" : "helpful"}
+                aria-label="Forward message"
+                title={link ? "Forward message" : "Message link unavailable"}
+                size="sm"
+                disabled={!link}
+                icon={<ForwardIcon />}
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onForward();
+                }}
+              />
+            )}
             <MenuRoot
               open={open}
               onOpenChange={(next, details) => {

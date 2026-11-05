@@ -5,9 +5,11 @@
 // a harness that loads tools on demand shows only once the agent needs them.
 import type { ClassifierOutcome } from "../agents/service";
 import type { EventData } from "../relay/events";
+import { unframed } from "./plugin-wake";
 
+// Every body is text a turn takes as data, and none is the turn's event.
 const section = (tag: string, body: string, attributes = "") =>
-  `<${tag}${attributes}>\n${body.trim()}\n</${tag}>`;
+  `<${tag}${attributes}>\n${unframed(body.trim())}\n</${tag}>`;
 
 /** Janet's end-of-turn review, added to every turn of an agent with attention. */
 export const ATTENTION_REVIEW = section(
@@ -21,10 +23,10 @@ export const ATTENTION_NONE = section(
   "You have no Interests, so there is nothing to review. If this turn gave you an ongoing responsibility within your authority, you may create an Interest for it with the attention tools.",
 );
 
-/** Said at the end of every turn while the owner has attention off. */
+/** Said at the end of every turn while attention is off on this device. */
 export const ATTENTION_OFF = section(
   "attention",
-  "Your owner has attention off: the attention tools refuse calls, and no watch or timer wakes you. Other tools still work.",
+  "Attention is off on this device: the attention tools refuse calls, and no watch or timer wakes you. Other tools still work.",
 );
 
 /** Janet's rule for an Interest that links where it came from. */

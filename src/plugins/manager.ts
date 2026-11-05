@@ -5,6 +5,8 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { PluginManifest, PluginModule } from "./api";
 import { createModuleLoader } from "./modules";
 import { withTimeout } from "./timeout";
+import { createPluginRequests } from "./requests";
+import { providePluginManagement } from "./review-access";
 import type {
   StorageResult,
   ConfigurationState,
@@ -67,6 +69,7 @@ export function createPluginManager(
     error: null,
   }));
   const builtInIds = new Set(builtIn.map(({ manifest }) => manifest.id));
+  let configuration: ConfigurationState = { status: "loading" };
   const runtime = new PluginRuntime(
     ctx,
     createModuleLoader(
@@ -78,8 +81,13 @@ export function createPluginManager(
       ),
       storage.readModule,
     ),
+    undefined,
+    // Reading, or retrying a read that failed: recovery the user must act on
+    // is settled.
+    () =>
+      configuration.status === "loading" ||
+      (configuration.status === "recovery" && !configuration.canReset),
   );
-  let configuration: ConfigurationState = { status: "loading" };
   let busy = false;
   let catalogPending = false;
   let error: string | null = null;
@@ -201,9 +209,21 @@ export function createPluginManager(
       else void pending.then(finish, finish);
     }
   }
+  const change = (action: ManagementAction, id: string) =>
+    update(() => storage.changePlugin(action, id));
+  const requests = createPluginRequests({
+    catalog: () =>
+      configuration.status === "ready" ? configuration.catalog : undefined,
+    imports: storage.imports,
+    change,
+    error: () => error,
+    managed: () =>
+      configuration.status === "ready" ? configuration.managed : undefined,
+  });
+  ctx.provide("pluginRequests", requests);
   runtime.reconcile(desiredPlugins());
   void refresh();
-  return {
+  const manager = {
     snapshot: () => snapshot,
     startup: () => configuration.status,
     subscribe(listener: () => void) {
@@ -219,8 +239,8 @@ export function createPluginManager(
           throw new Error("Plugin imports require the desktop app");
         return storage.imports.install(token, path);
       }),
-    change: (action: ManagementAction, id: string) =>
-      update(() => storage.changePlugin(action, id)),
+    change,
+    requests,
     reload: (id: string) => update(() => storage.reloadPlugin(id), 120_000),
     retryPlugin: (id: string) => {
       if (closed || busy) return false;
@@ -245,5 +265,7 @@ export function createPluginManager(
       await runtime.dispose();
     },
   };
+  providePluginManagement(ctx, manager);
+  return manager;
 }
 export type PluginManager = ReturnType<typeof createPluginManager>;

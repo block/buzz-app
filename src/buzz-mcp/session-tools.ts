@@ -14,7 +14,20 @@ import {
   isAttentionTool,
 } from "./attention";
 import type { BuzzClient, Context } from "./client";
-import { callTool, type Reply, TOOLS, type Tool } from "./tools";
+import { callPluginTool, isPluginTool, PLUGIN_TOOLS } from "./plugins";
+import { callSettingsTool, isSettingsTool, SETTINGS_TOOLS } from "./settings";
+import {
+  callSoloWorkerTool,
+  isSoloWorkerTool,
+  SOLO_WORKER_TOOLS,
+} from "./solo-worker";
+import {
+  callTool,
+  captureToolBody,
+  type Reply,
+  TOOLS,
+  type Tool,
+} from "./tools";
 
 /** A tool a plugin adds to every agent session in the app, listed after
  * the Buzz tools under the same server and loaded on search. Its name should
@@ -33,6 +46,15 @@ export type AddedTool = Readonly<{
 }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
 
+/** The Buzz tools that post a message, and so take `final`. Each harness
+ * strips its own prefix from a tool's name before asking. */
+export const MESSAGE_TOOLS = ["send", "reply_in_subthread"] as const;
+export const isMessageTool = (name: unknown) =>
+  (MESSAGE_TOOLS as readonly unknown[]).includes(name);
+/** Whether a call posts a message marked final, which can end the turn. */
+export const isFinalMessage = (name: unknown, args: unknown) =>
+  isMessageTool(name) && (args as { final?: unknown } | null)?.final === true;
+
 export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
 
 /** What every session of an agent in the app gets. It never changes with
@@ -40,7 +62,13 @@ export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
  * never needs replacing when attention is turned on or off: the attention
  * tools refuse calls while it is off, and `turnNote` says which it is. */
 export const BUZZ_SESSION: BuzzSession = Object.freeze({
-  tools: [...TOOLS, ...ATTENTION_TOOLS],
+  tools: [
+    ...TOOLS,
+    ...ATTENTION_TOOLS,
+    ...SOLO_WORKER_TOOLS,
+    ...PLUGIN_TOOLS,
+    ...SETTINGS_TOOLS,
+  ],
 });
 
 const listed = ({ name, description, inputSchema }: AddedTool): Listed => ({
@@ -62,6 +90,9 @@ export const sessionTools = (
 ): readonly SessionTool[] => [
   ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
   ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
@@ -71,7 +102,7 @@ export function sessionHint(added: readonly AddedTool[] = []) {
   const plugins = added.length
     ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work)${plugins}.`;
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it
@@ -111,15 +142,73 @@ export async function callSessionTool(
   added: readonly AddedTool[] = [],
 ): Promise<Reply> {
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
+  // Hold the reviewed destination and arguments while the checker waits.
+  if (client.protect) {
+    context = structuredClone(context);
+    args = structuredClone(args);
+  }
+  const session = JSON.stringify(context);
+  // A natively gated call was reviewed with these exact arguments; it is
+  // reviewed again only when a captured file changes what it sends.
+  const reviewed = client.nativeToolGate && JSON.stringify(args);
+  // Plugin tools own their argument semantics, even when shadowing a builtin.
+  if (client.protect && !added.some((tool) => tool.name === name))
+    await captureToolBody(client, name, args).catch((error) =>
+      checkedToolError(client, session, error),
+    );
+  if (JSON.stringify(args) !== reviewed)
+    await client.protect?.({
+      kind: "tool",
+      session,
+      content: { title: name, arguments: args },
+      ...(typeof args.command === "string" ? { command: args.command } : {}),
+    });
+  let reply: Reply;
+  try {
+    reply = await dispatchSessionTool(client, context, name, args, added);
+  } catch (error) {
+    return checkedToolError(client, session, error);
+  }
+  await client.protect?.({ kind: "tool-result", session, content: reply });
+  return reply;
+}
+
+/** File capture and dispatch errors cross the same tool-result boundary. */
+async function checkedToolError(
+  client: BuzzClient,
+  session: string,
+  error: unknown,
+): Promise<never> {
+  await client.protect?.({
+    kind: "tool-result",
+    session,
+    content: { error: error instanceof Error ? error.message : String(error) },
+  });
+  throw error;
+}
+async function dispatchSessionTool(
+  client: BuzzClient,
+  context: Context,
+  name: string,
+  args: Record<string, unknown>,
+  added: readonly AddedTool[],
+): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
-  if (tool) return tool.call(client, context, args);
+  if (tool) {
+    // A plugin's tool doesn't get the agent's device settings.
+    const { settings: _, ...plugin } = client;
+    return tool.call(plugin, context, args);
+  }
+  if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
+  if (isPluginTool(name)) return callPluginTool(client, context, name, args);
+  if (isSettingsTool(name)) return callSettingsTool(client, name, args);
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;
   if (!attention) throw new Error(`No tool ${name}`);
   // The owner can turn attention off while the session runs.
   if (!attention.enabled())
     throw new Error(
-      `Attention is off for you: your owner turned it off, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
+      `Attention is off for you on this device, so these tools do nothing now.\n(classifier: ${attention.classifier()})`,
     );
   return callAttentionTool(attention, name, args);
 }

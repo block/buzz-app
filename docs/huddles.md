@@ -93,6 +93,9 @@ activation when the relay says it is inaccessible or ended; the generic admissio
 response does not reveal whether it was archived. Incoming lifecycle discovery runs while a conversation header is visible. A green
 headphone offers Join for a recent remote Huddle, and clears on end, expiry, or
 conversation/community changes. Microphone capture still requires an explicit click.
+If the native authorization assertion expires during a call, audio ends and requires
+an explicit rejoin; the next join gets fresh authorization and repeats NIP-42. Huddles
+do not reconnect automatically.
 
 ## Audio settings
 
@@ -150,7 +153,7 @@ The chat button between microphone and Leave opens a panel beside the avatar
 cloud as a flush region with a subtle divider, without separate rounded corners,
 shadow or a close button. The same chat button closes it. The shared tabs separate **Thread** from **Live transcript**. Thread uses
 the full regular rich-text composer, attachments, emoji, and mentions, with Enter
-to send and Shift+Enter for a new line. The detached window sends typed requests
+to send and Shift+Enter for a new line by default (the composer's send-key setting applies). The detached window sends typed requests
 through a per-room capability to the main app, which retains upload preparation,
 membership checks, signing, and outbox admission. GIF discovery and search also
 run through this owner, using its community and the enabled emoji contribution;
@@ -276,6 +279,11 @@ metadata in the local cache. Strong exact-channel resolution awaits creation
 proof from the writer, even after an earlier replica lookup found no receipt.
 Proof-read failures reject that resolution so invitation recovery can use its
 existing bounded retries; newer accepted metadata remains the proof source.
+
+Background proof reads combine up to 250 channels and their creators per filter.
+If a response reaches its limit, channels without an exact receipt from their
+own creator remain eligible for a later refresh. Cross-author and ambiguous
+channel matches consume response space but do not complete those proof reads.
 
 Rooms without that evidence, including legacy Huddles whose creation events did
 not include their room ID, retain ordinary channel access. For presentation only,

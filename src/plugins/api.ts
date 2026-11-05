@@ -8,6 +8,8 @@ export type PluginManifest = Readonly<{
   name: string;
   apiVersion: 1;
   description?: string;
+  /** Support Git update notices. The user's saved choice overrides this default. */
+  updates?: Readonly<{ defaultEnabled: boolean }>;
   /** Author-supplied browsing metadata. It never grants host capabilities. */
   discovery?: Readonly<{
     /** Stable category slug. Hosts may group unrecognized values under Other. */
@@ -17,6 +19,10 @@ export type PluginManifest = Readonly<{
     tags?: readonly string[];
   }>;
   host?: Readonly<{
+    /** Observe and influence native hook events for these agent type keys. */
+    agentHooks?: readonly string[];
+    /** Offer execution targets for these native agent type keys. */
+    agentExecution?: readonly string[];
     commands?: readonly Readonly<{
       id: string;
       program: string;
@@ -27,6 +33,14 @@ export type PluginManifest = Readonly<{
       maxOutputBytes?: number;
     }>[];
     networkOrigins?: readonly string[];
+    /** Separate authority access; ordinary HTTPS grants never authorize a session. */
+    federatedIdentity?: Readonly<{
+      authority: string;
+      operations: readonly Readonly<{
+        method: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
+        path: string;
+      }>[];
+    }>;
     /** Programs the plugin may start with `host.spawn`; the caller's
      * arguments follow the declared ones. */
     processes?: readonly Readonly<{
@@ -35,6 +49,13 @@ export type PluginManifest = Readonly<{
       args?: readonly string[];
       /** Run the copy the app ships, never one on PATH. */
       bundled?: boolean;
+      /** Run an installed executable only when its bytes and declared sibling
+       * files match this descriptor. Mutually exclusive with `bundled`. */
+      artifact?: Readonly<{
+        path: string;
+        sha256: string;
+        siblings?: readonly Readonly<{ name: string; sha256: string }>[];
+      }>;
     }>[];
     /** The plugin may serve MCP with `host.serveMcp`, including tools for
      * commands bound to an Attention source run. */
@@ -42,6 +63,8 @@ export type PluginManifest = Readonly<{
     /** The plugin may read files with `host.readFile` and resolve directories
      * with `host.resolveDirectory`, with the user's own access. */
     files?: boolean;
+    /** Pathless temporary saves in host-selected private storage; no read access. */
+    managedFiles?: boolean;
   }>;
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.
@@ -56,6 +79,17 @@ export type PluginModule = {
 declare module "@deepseek-ai/cordis" {
   interface Context {
     react: typeof React;
-    readonly pluginOwner?: Readonly<{ id: string; revision: string }>;
+    readonly pluginOwner?: Readonly<{
+      id: string;
+      revision: string;
+      agentHooks?: readonly string[];
+      agentExecution?: readonly string[];
+    }>;
   }
 }
+
+export type {
+  FederatedIdentity,
+  SessionSnapshot,
+  AuthenticatedRequest,
+} from "../features/federated-identity/service";

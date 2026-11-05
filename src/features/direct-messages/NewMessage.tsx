@@ -1,4 +1,5 @@
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import { canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
@@ -17,14 +18,23 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { attachmentMessage } from "../relay/attachments";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { DraftMentionRoster } from "../messages/draft-mention-roster";
+import {
+  clearAttachmentDraft,
+  type AttachmentDraft,
+} from "../messages/attachment-draft";
 import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+} from "../profiles/useVerifiedNames";
 import { RecipientPicker } from "./RecipientPicker";
 import type { Recipient } from "./usePeople";
 import styles from "./NewMessage.module.css";
@@ -37,6 +47,7 @@ type Pending = {
   channelId: string;
   recipients: string;
   draft: MentionDraft;
+  attachments: readonly (readonly string[])[];
 };
 const keyFor = (people: readonly Recipient[]) =>
   people
@@ -95,6 +106,7 @@ function savedLegacy(scope: string, viewer?: string) {
       channelId: value.channelId,
       recipients: value.recipients,
       draft: mentionDraft(value.draft),
+      attachments: [],
       people: savedRecipients(scope, viewer),
     };
 }
@@ -112,6 +124,7 @@ function recovered(operations: readonly OutgoingEvent[], viewer?: string) {
     channelId,
     recipients: keyFor(people),
     draft: mentionDraft(value.draft),
+    attachments: item.event.tags.filter(([name]) => name === "imeta"),
     people,
   };
 }
@@ -144,7 +157,33 @@ export function NewMessage({
   const [recipients, setRecipients] = useState(() =>
     savedRecipients(scope, session.viewer),
   );
-  const recipientNames = recipients.map((person) => person.name).join(", ");
+  // Recipients keep the facts they were chosen with; their labels follow the
+  // current verification and otherwise the current profile name, falling back
+  // to those facts.
+  const verified = useVerifiedNames(session, recipients);
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+  );
+  const named = useMemo(
+    () =>
+      withVerifiedNames(
+        recipients.map((person) => {
+          const current = profiles.get(person.pubkey);
+          return current && !current.verified
+            ? { ...person, name: current.name }
+            : person;
+        }),
+        verified,
+        profiles,
+      ),
+    [recipients, verified, profiles],
+  );
+  const recipientNames = named.map((person) => person.name).join(", ");
+  const roster = useMemo(() => ({ recipients }), [recipients]);
+  // Text still in the To field may be a recipient not chosen yet, so Send
+  // waits for it to become one or be cleared.
+  const [typed, setTyped] = useState(false);
   const [legacy, setLegacy] = useState(() =>
     savedLegacy(scope, session.viewer),
   );
@@ -157,8 +196,9 @@ export function NewMessage({
     setComposerFocus((request) => request + 1);
   }, []);
   const retiring = useRef<string | undefined>(undefined);
-  const [busy, setBusy] = useState<"sending" | undefined>();
+  const [busy, setBusy] = useState<"uploading" | "sending" | undefined>();
   const [error, setError] = useState("");
+  const [uploadFailed, setUploadFailed] = useState(false);
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
   const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
@@ -178,12 +218,13 @@ export function NewMessage({
     pending && session.directMessages.delivery(pending.id) === "failed";
   const locked = !ready || !!busy || (!!pending && !failed);
   const retire = useCallback(() => {
+    clearAttachmentDraft(session, `${scope}:${draftKey}`);
     retiring.current = undefined;
     prepared.current = undefined;
     setRecipients([]);
     setRestoredDraft(mentionDraft(""));
     setDraftRevision((revision) => revision + 1);
-  }, []);
+  }, [session, scope]);
   useLayoutEffect(() => {
     const confirmed = pending && session.directMessages.delivery(pending.id);
     if (pending) {
@@ -243,7 +284,7 @@ export function NewMessage({
     const controlled = new Set(
       session.agentChoices
         .snapshot()
-        .identities.filter((agent) => agent.managed)
+        .identities.filter(canMessageAgent)
         .map((agent) => agent.pubkey),
     );
     if (
@@ -255,7 +296,7 @@ export function NewMessage({
       )
     )
       throw new Error(
-        "A selected agent is no longer available. Remove it or wait for agent controls to reconnect.",
+        "A selected agent is no longer available. Remove it or refresh its details and try again.",
       );
   }
   function change(people: Recipient[]) {
@@ -264,30 +305,55 @@ export function NewMessage({
     setRecipients(people);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
+    setUploadFailed(false);
   }
-  async function send(draft: MentionDraft) {
+  async function send(draft: MentionDraft, files?: AttachmentDraft) {
     const content = composerMarkdown(draft);
     if (
       attempt.current ||
       !ready ||
       !recipients.length ||
-      !content.trim() ||
+      (!content.trim() && !files?.snapshot().length && !pending) ||
       !session.directMessages.available
     )
       return;
     const controller = new AbortController();
     attempt.current = controller;
-    setBusy("sending");
+    setBusy(
+      files?.snapshot().some((file) => !file.uploaded)
+        ? "uploading"
+        : "sending",
+    );
     setError("");
+    setUploadFailed(false);
     const key = keyFor(recipients);
     let current: Pending | undefined = pending;
+    let preparingFiles = !!files;
     try {
+      // Confirmation-only retries must retain the exact durable event.
+      const uploaded = files
+        ? await files.prepareForSend(controller.signal)
+        : [];
+      controller.signal.throwIfAborted();
+      preparingFiles = false;
+      setBusy("sending");
+      // Compare the complete published metadata; messages.send still validates
+      // every upload against the actual community origin.
+      const attachments = attachmentMessage(
+        "",
+        uploaded,
+        uploaded[0]?.url,
+      ).tags;
       if (current && session.directMessages.delivery(current.id) === "failed")
         validateAgents();
       if (
         current &&
         (current.recipients !== key ||
-          JSON.stringify(current.draft) !== JSON.stringify(draft))
+          JSON.stringify(current.draft) !==
+            JSON.stringify(mentionDraft(draft)) ||
+          (files &&
+            JSON.stringify(current.attachments) !==
+              JSON.stringify(attachments)))
       ) {
         if (session.directMessages.delivery(current.id) !== "failed")
           throw new Error(
@@ -317,7 +383,7 @@ export function NewMessage({
           id,
           content,
           draft.recipients.map((person) => person.pubkey),
-          [],
+          uploaded,
           {
             key: recoveryKey,
             value: JSON.stringify({
@@ -326,7 +392,13 @@ export function NewMessage({
             }),
           },
         );
-        current = { id: messageId, channelId: id, recipients: key, draft };
+        current = {
+          id: messageId,
+          channelId: id,
+          recipients: key,
+          draft,
+          attachments,
+        };
       }
       await session.directMessages.delivered(
         current.id,
@@ -350,7 +422,8 @@ export function NewMessage({
       retire();
       onStarted(current.channelId, current.id);
     } catch (reason) {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted && preparingFiles) setUploadFailed(true);
+      else if (!controller.signal.aborted)
         setError(
           reason instanceof Error
             ? reason.message
@@ -392,14 +465,20 @@ export function NewMessage({
     return match;
   }, [channels, recipients, session.viewer]);
   return (
-    <section className={styles.page} aria-label="New message">
+    <section
+      className={styles.page}
+      aria-label="New message"
+      data-attachment-drop-zone
+    >
       <RecipientPicker
         session={session}
         scope={scope}
         selected={recipients}
+        labels={named}
         disabled={locked}
         onChange={change}
         onComplete={focusComposer}
+        onTyped={setTyped}
       />
       <div className={styles.blank} data-new-message-body="">
         {existing ? (
@@ -421,7 +500,7 @@ export function NewMessage({
               animateEntrance
               size="hero-large"
               max={5}
-              items={recipients.map((person) => ({
+              items={named.map((person) => ({
                 id: person.pubkey,
                 name: person.name,
                 src: avatarMedia(person.picture, session.media),
@@ -432,7 +511,16 @@ export function NewMessage({
         ) : null}
       </div>
       <div className={styles.feedback}>
-        {busy && <p role="status">Sending message…</p>}
+        {busy && (
+          <p role="status">
+            {busy === "uploading" ? "Uploading files…" : "Sending message…"}
+          </p>
+        )}
+        {uploadFailed && (
+          <p role="status">
+            A file couldn’t upload. Retry or remove it, then send again.
+          </p>
+        )}
         {!session.directMessages.available && (
           <p role="status">
             Starting direct messages is unavailable on this connection.
@@ -461,7 +549,7 @@ export function NewMessage({
           </div>
         )}
       </div>
-      <DraftMentionRoster.Provider value={recipients}>
+      <DraftMentionRoster.Provider value={roster}>
         <MessageComposer
           key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
           session={session}
@@ -475,14 +563,17 @@ export function NewMessage({
           disabled={!recipients.length}
           submission={{
             draftKey,
+            attachments: true,
+            allowAttachmentOnly: true,
             recoveredDraft: restoredDraft,
             locked,
             disabled:
               !ready ||
               !!busy ||
               !recipients.length ||
+              typed ||
               !session.directMessages.available,
-            submit: (draft) => void send(draft),
+            submit: (draft, files) => void send(draft, files),
           }}
         />
       </DraftMentionRoster.Provider>

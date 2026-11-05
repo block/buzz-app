@@ -1,6 +1,7 @@
+import { pauseClock } from "./clock.mjs";
 import { test, expect } from "./fixture.mjs";
 import { generateSecretKey, verifyEvent } from "nostr-tools";
-import { newChat, openPage } from "./navigation.mjs";
+import { newChat, openPage, sendOnlyTo } from "./navigation.mjs";
 
 const id = "33333333-3333-4333-8333-333333333333";
 const destination = "55555555-5555-4555-8555-555555555555";
@@ -117,7 +118,13 @@ test.describe("Berd-style Solo project organization", () => {
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
     await page.getByRole("menuitem", { name: "New workspace" }).click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
+    // Wait until the exiting menus are gone and the dialog's initial focus has
+    // settled on the field. The modal hides the menus from role queries.
+    await expect(page.locator('[role="menu"]')).toHaveCount(0);
+    const field = dialog.getByRole("textbox", { name: "Workspace name" });
+    await expect(field).toBeFocused();
+    await field.fill("Work");
+    await expect(field).toHaveValue("Work");
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).not.toBeVisible();
     await expect(sidebar.getByText("Saving workspace…")).not.toBeVisible();
@@ -182,26 +189,24 @@ test.describe("Berd-style Solo project organization", () => {
     ).toBeVisible();
     app.soloAgentMessage(id, "Agent follow-up fixture");
     const [agent] = app.soloAgents;
-    const tag = page.getByRole("button", {
-      name: `Remove mention ${agent.name} ${agent.pubkey}`,
-      exact: true,
-    });
-    await expect(tag).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Mention a member", exact: true })
-      .click();
-    await page
-      .getByRole("dialog", { name: "Mention a member or agent" })
-      .getByRole("button", {
-        name: `${agent.name} ${agent.pubkey}`,
-        exact: true,
-      })
-      .click();
-    await expect(tag).toBeVisible();
     const composer = page.getByRole("textbox", {
       name: "Message your agents",
       exact: true,
     });
+    // Agents-only Solo chats address agents from the composer's pill, not the
+    // text.
+    await expect(composer).toHaveText("");
+    const pill = page.getByRole("button", {
+      name: /Change agents$|^Choose agent$/,
+    });
+    // An existing chat starts addressed to one of its agents.
+    await expect(pill).toHaveAccessibleName(/^Sending to .+\. Change agents$/);
+    await sendOnlyTo(page, pill, agent);
+    const tag = page.getByRole("button", {
+      name: `Sending to ${agent.name}. Change agents`,
+      exact: true,
+    });
+    await expect(tag).toBeVisible();
     const agentMessage = page.getByText("Agent follow-up fixture", {
       exact: true,
     });
@@ -281,7 +286,13 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
   await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
   await page.getByRole("menuitem", { name: "New workspace" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
+  // Wait until the exiting menus are gone and the dialog's initial focus has
+  // settled on the field. The modal hides the menus from role queries.
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  const field = dialog.getByRole("textbox", { name: "Workspace name" });
+  await expect(field).toBeFocused();
+  await field.fill("Work");
+  await expect(field).toHaveValue("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(inProject("Alpha")).toBeVisible();
   const work = (await published(1))[id];
@@ -306,16 +317,15 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
   await expect(inProject("Alpha")).toHaveCount(0);
 });
 
-// App wiring proof: grants and the normal link publication preserve Solo placement,
-// identity/history and navigation, with a held signed grant readback barrier.
-test("Share grants access and posts a link without promoting or moving the Solo chat", async ({
+// App wiring proof: access readback precedes link publication while Solo
+// placement, identity, history, navigation and keyboard focus stay intact.
+test("Share opens View only and posts a link without promoting or moving the Solo chat", async ({
   page,
   app,
 }) => {
   await page.clock.install();
-  const person = app.serveProfile(generateSecretKey(), { name: "Aria" });
-  const grants = [];
   const evidence = [];
+  const grants = [];
   let signalReadback;
   const requestedReadback = new Promise((resolve) => {
     signalReadback = resolve;
@@ -325,235 +335,154 @@ test("Share grants access and posts a link without promoting or moving the Solo 
     releaseReadback = resolve;
   });
   let readbackHeld = false;
-  let rosterTime = Math.floor(Date.now() / 1000);
   await page.route("**/api/relay/**/query", async (route) => {
     const filters = route.request().postDataJSON();
     if (
+      !readbackHeld &&
+      app.report.detailsPublications?.length &&
       filters.some(
-        (filter) => filter.kinds?.includes(0) && filter.search === "Aria",
+        (filter) =>
+          filter.kinds?.includes(39000) &&
+          filter["#d"]?.includes(id) &&
+          filter.consistency === "strong",
       )
     ) {
-      return route.fulfill({ json: [person] });
+      readbackHeld = true;
+      evidence.push("access", "readback-requested");
+      signalReadback();
+      await heldReadback;
+      evidence.push("readback-released");
     }
-    const response = await route.fetch();
-    const events = await response.json();
-    if (filters.some((filter) => filter.kinds?.includes(39002))) {
-      if (
-        !readbackHeld &&
-        grants.length &&
-        filters.some(
-          (filter) =>
-            filter.kinds?.includes(39002) &&
-            filter["#d"]?.includes(id) &&
-            filter.consistency === "strong",
-        ) &&
-        events.some(
-          (event) =>
-            event.kind === 39002 &&
-            event.tags.some(([key, value]) => key === "d" && value === id),
-        )
-      ) {
-        readbackHeld = true;
-        evidence.push("readback-requested");
-        signalReadback();
-        await heldReadback;
-        evidence.push("readback-released");
-      }
-      return route.fulfill({
-        json: events.map((event) => {
-          const room =
-            event.kind === 39002 &&
-            event.tags.find(([key]) => key === "d")?.[1];
-          // Aria is a Team member, so sharing to Team grants her chat access.
-          if (room === destination)
-            return app.signRelay({
-              kind: 39002,
-              content: "",
-              created_at: event.created_at,
-              tags: [...event.tags, ["p", person.pubkey, "", "member"]],
-            });
-          if (room !== id) return event;
-          return app.signRelay({
-            kind: 39002,
-            content: "",
-            created_at: ++rosterTime,
-            tags: [
-              ...event.tags,
-              ...grants.map((grant) => [
-                "p",
-                grant.tags.find(([key]) => key === "p")[1],
-                "",
-                "member",
-              ]),
-            ],
-          });
-        }),
-      });
-    }
-    return route.fulfill({ response });
+    // Gate the app's request itself; never fetch a parallel copy of it.
+    await route.continue();
   });
   await page.route("**/api/relay/**/publish", async (route) => {
     const event = route.request().postDataJSON();
     if (event.kind === 9) evidence.push("link");
-    if (event.kind !== 9000) return route.continue();
-    expect(verifyEvent(event)).toBe(true);
-    expect(event.pubkey).toBe(app.viewer);
-    grants.push(event);
-    evidence.push("grant");
-    await route.fulfill({ json: { accepted: true, event_id: event.id } });
+    if (event.kind === 9000) grants.push(event);
+    await route.continue();
   });
   await page.goto(app.origin);
   await newChat(page);
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+  const row = page.locator(`[data-solo-channel-id="${id}"]`);
   await row.click();
-  await expect(
-    page.getByText(`primary ${id} message 0`, { exact: false }),
-  ).toBeVisible();
+  const history = page.getByText(`primary ${id} message 0`, { exact: false });
+  await expect(history).toBeVisible();
   await row.click({ button: "right" });
   await page
     .getByRole("menuitem", { name: "Share access", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Share access" });
+  const dialog = page.getByRole("dialog", {
+    name: "Share access",
+    exact: true,
+  });
   const search = dialog.getByRole("searchbox", {
     name: "Search people and channels",
   });
-  // Text entry starts after the menu-to-dialog transition.
-  await dialog.evaluate(async (element) => {
-    await Promise.all(
-      element.getAnimations().map((animation) => animation.finished),
-    );
-  });
+  await expect(search).toBeFocused();
   await search.fill("Team");
-  await dialog
-    .getByRole("button", { name: "Select #Team", exact: true })
-    .click();
-  const primary = dialog.getByRole("button", {
-    name: "Share",
+  const share = dialog.getByRole("button", {
+    name: "Share #Team",
     exact: true,
   });
-  const copy = dialog.getByRole("button", { name: "Copy link", exact: true });
-  // Copy link leads Share. At a narrow width with enlarged text
-  // the footer actions wrap; real flex wrapping, Tab order and hit testing are
-  // invisible to mounted DOM tests.
+  await expect(share).toBeEnabled();
   await page.setViewportSize({ width: 390, height: 850 });
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
   );
-  const actions = dialog.locator(".buzz-dialog-actions");
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(390);
+  await expect(page.locator("html")).toHaveCSS("font-size", "32px");
+  // Let the resized, enlarged-text layout finish before testing focus reveal.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  await share.focus();
+  await expect(share).toBeInViewport({ ratio: 1 });
   await expect
     .poll(() =>
-      actions.evaluate((footer) => {
-        const widest = Math.max(
-          ...[...footer.querySelectorAll("button")].map(
-            (button) => button.getBoundingClientRect().width,
-          ),
-        );
-        // Include the shared focus-ring inset around an oversized action.
-        const style = getComputedStyle(footer);
-        const inset =
-          parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-        return (
-          footer.scrollWidth - Math.max(footer.clientWidth, widest + inset)
+      share.evaluate((element) => {
+        const r = element.getBoundingClientRect();
+        return element.contains(
+          document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
         );
       }),
     )
-    .toBeLessThanOrEqual(1);
-  await expect
-    .poll(async () => {
-      const copied = await copy.boundingBox();
-      const shared = await primary.boundingBox();
-      return shared.y >= copied.y + copied.height;
-    })
     .toBe(true);
-  // Focus the preceding body control, then traverse every wrapped action.
-  await search.focus();
-  for (const action of [copy, primary]) {
-    for (
-      let step = 0;
-      !(await action.evaluate((el) => el === document.activeElement));
-      step++
-    ) {
-      expect(step).toBeLessThan(12);
-      await page.keyboard.press("Tab");
-      await expect
-        .poll(() =>
-          page.evaluate(() =>
-            document.activeElement?.hasAttribute("data-base-ui-focus-guard"),
-          ),
-        )
-        .toBe(false);
-    }
-    await expect(action).toBeInViewport({ ratio: 1 });
-    await expect
-      .poll(() =>
-        action.evaluate((element) => {
-          const r = element.getBoundingClientRect();
-          return element.contains(
-            document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
-          );
-        }),
-      )
-      .toBe(true);
-  }
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
-  );
-  await page.setViewportSize({ width: 1280, height: 850 });
-  const hint = page.getByRole("tooltip").filter({
-    hasText: "Sharing grants access and posts a link in the selected channel.",
+  await page.keyboard.press("Enter");
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Share this chat?",
   });
-  await primary.hover();
-  await expect(hint).toBeVisible();
-  await page.mouse.move(0, 0);
-  await expect(hint).not.toBeVisible();
-  await copy.focus();
+  await expect(confirmation).toContainText(
+    "This changes the chat from Private to View only and posts its link in #Team.",
+  );
+  await expect(confirmation).toContainText("Everyone in this community");
+  await expect(
+    confirmation.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  const primary = confirmation.getByRole("button", {
+    name: "Share",
+    exact: true,
+  });
   await page.keyboard.press("Tab");
   await expect(primary).toBeFocused();
-  await expect(hint).toBeVisible();
-  await expect(primary).toHaveAccessibleDescription(
-    "Sharing grants access and posts a link in the selected channel.",
-  );
-  // Tooltip dismissal consumes only its own Escape, not the enclosing modal.
-  await page.keyboard.press("Escape");
-  await expect(hint).not.toBeVisible();
-  await expect(dialog).toBeVisible();
-  // Hold the page clock so the held readback cannot reach its read deadline.
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
+  await expect(primary).toBeInViewport({ ratio: 1 });
+  await pauseClock(page, 100);
   try {
     await page.keyboard.press("Enter");
     await requestedReadback;
     await expect(dialog).toBeVisible();
     await expect(primary).toHaveAttribute("aria-busy", "true");
     await expect(
-      dialog.getByRole("button", { name: "Close", exact: true }),
+      confirmation.getByRole("button", { name: "Close", exact: true }),
     ).toBeDisabled();
-    expect(evidence).toEqual(["grant", "readback-requested"]);
+    await page.keyboard.press("Escape");
+    await expect(confirmation).toBeVisible();
+    await expect(dialog).toBeVisible();
+    expect(evidence).toEqual(["access", "readback-requested"]);
     expect(
       app.report.publications.filter(({ event }) => event.kind === 9),
     ).toHaveLength(0);
     releaseReadback();
     await page.clock.resume();
     await expect(dialog).not.toBeVisible();
-    // The dialog closes once the link is queued; the Outbox then posts it.
     await expect
-      .poll(() => evidence)
-      .toEqual(["grant", "readback-requested", "readback-released", "link"]);
+      .poll(() =>
+        app.report.publications.filter(({ event }) => event.kind === 9),
+      )
+      .toHaveLength(1);
+    expect(evidence).toEqual([
+      "access",
+      "readback-requested",
+      "readback-released",
+      "link",
+    ]);
   } finally {
     releaseReadback();
     await page.clock.resume();
   }
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+  );
+  await page.setViewportSize({ width: 1280, height: 850 });
   await expect(row).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Alpha", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText(`primary ${id} message 0`, { exact: false }),
-  ).toBeVisible();
-  expect(grants).toHaveLength(1);
-  expect(grants[0].tags).toContainEqual(["h", id]);
-  expect(grants[0].tags).toContainEqual(["p", person.pubkey]);
-  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  await expect(history).toBeVisible();
+  expect(grants).toHaveLength(0);
+  const changes = app.report.detailsPublications;
+  expect(changes).toHaveLength(1);
+  expect(verifyEvent(changes[0])).toBe(true);
+  expect(changes[0].pubkey).toBe(app.viewer);
+  expect(changes[0].tags).toContainEqual(["h", id]);
+  expect(changes[0].tags).toContainEqual(["visibility", "open"]);
+  expect(changes[0].tags).toContainEqual(["join_role", "guest"]);
+  expect(changes[0].tags.filter(([key]) => key === "p")).toHaveLength(0);
+  expect(app.report.detailsPublications).toHaveLength(1);
   expect(
     (app.report.sidebarPublications ?? []).filter((entry) =>
       entry.coordinate.startsWith("buzz-me-kit"),
@@ -564,6 +493,29 @@ test("Share grants access and posts a link without promoting or moving the Solo 
   expect(links[0].event.tags).toContainEqual(["h", destination]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   expect(links[0].event.content).toBe(`[Chat: Alpha](buzz://channel/${id})`);
+  // Reopen the same app surface immediately after sharing, without reloading
+  // the page. The new access edit must use the confirmed View only snapshot.
+  await row.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Share access", exact: true })
+    .click();
+  const access = dialog.getByRole("combobox", { name: "General access" });
+  await expect(access).toBeEnabled();
+  await expect(access).toHaveText("View only");
+  await access.click();
+  await page.getByRole("option", { name: "Private", exact: true }).click();
+  await page
+    .getByRole("alertdialog", { name: "Change general access?" })
+    .getByRole("button", { name: "Change access", exact: true })
+    .click();
+  await expect(access).toHaveText("Private");
+  await expect(access).toBeEnabled();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  expect(app.report.detailsPublications).toHaveLength(2);
+  expect(app.report.detailsPublications.at(-1).tags).toContainEqual([
+    "visibility",
+    "private",
+  ]);
 });
 
 // App composition boundary: signed metadata switches Messages discoverability
@@ -571,7 +523,7 @@ test("Share grants access and posts a link without promoting or moving the Solo 
 test("explicit conversion moves the same conversation from Solo to Messages and keeps history", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   await page.goto(app.origin);
   await newChat(page);
   const sidebar = page.getByRole("navigation", {
@@ -591,15 +543,15 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
     name: "Convert to channel",
     exact: true,
   });
-  await expect(
-    dialog.getByRole("radio", { name: "Private", exact: true }),
-  ).toBeChecked();
-  const publicChoice = dialog.getByRole("radio", {
+  const access = dialog.getByRole("combobox", { name: "General access" });
+  await expect(access).toHaveText("Private");
+  await access.click();
+  const publicChoice = page.getByRole("option", {
     name: "Public",
     exact: true,
   });
   await expect(publicChoice).toHaveAccessibleDescription(
-    "Everyone in this community will be able to view this channel’s full history.",
+    "Anyone in the community can participate.",
   );
   const convert = dialog.getByRole("button", {
     name: "Convert to channel",
@@ -607,7 +559,92 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
   });
   await expect(convert).toBeEnabled();
   await publicChoice.click();
-  await expect(publicChoice).toBeChecked();
+  await expect(access).toHaveText("Public");
+  const disclosure =
+    "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.";
+  await expect(dialog).toHaveAccessibleDescription(disclosure);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(row).toBeFocused();
+  for (const { mode, width, scale } of [
+    { mode: "dark", width: 1440, scale: 1 },
+    { mode: "light", width: 1440, scale: 1 },
+    { mode: "dark", width: 390, scale: 1.5 },
+    { mode: "light", width: 390, scale: 1.5 },
+  ]) {
+    await page.setViewportSize({ width, height: width === 390 ? 720 : 950 });
+    await page.evaluate(
+      ({ mode, scale }) => {
+        localStorage.setItem("buzz-appearance.v1", mode);
+        localStorage.setItem("buzz-font-scale.v1", String(scale));
+        localStorage.setItem("buzz-accent.v1", "cobalt");
+      },
+      { mode, scale },
+    );
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(page.locator("html")).toHaveCSS(
+      "--buzz-text-scale",
+      String(scale),
+    );
+    await page
+      .getByRole("button", { name: "Chat actions", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "Convert to channel", exact: true })
+      .click();
+    await expect(access).toBeEnabled();
+    await expect(access).toHaveText("Private");
+    await access.click();
+    await page.getByRole("option", { name: "View only", exact: true }).click();
+    await expect(dialog).toHaveAccessibleDescription(disclosure);
+    await access.scrollIntoViewIfNeeded();
+    await expect(access).toBeInViewport({ ratio: 1 });
+    await access.click({ trial: true });
+    await expect
+      .poll(() =>
+        dialog.evaluate((surface) => {
+          const header = surface
+            .querySelector(".buzz-dialog-header")
+            .getBoundingClientRect();
+          const control = surface
+            .querySelector('[role="combobox"]')
+            .getBoundingClientRect();
+          const footer = surface
+            .querySelector(".buzz-dialog-actions")
+            .getBoundingClientRect();
+          return header.bottom <= control.top && control.bottom <= footer.top;
+        }),
+      )
+      .toBe(true);
+    await dialog
+      .getByText(disclosure, { exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(dialog.getByText(disclosure, { exact: true })).toBeInViewport({
+      ratio: 1,
+    });
+    await expect(convert).toBeInViewport({ ratio: 1 });
+    if (testInfo.project.name === "chromium")
+      await dialog.screenshot({
+        path: testInfo.outputPath(
+          `SOLO_CONVERSION_DISCLOSURE_${mode}_${width}.png`,
+        ),
+      });
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Chat actions", exact: true }),
+    ).toBeFocused();
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.evaluate(() => localStorage.setItem("buzz-font-scale.v1", "1"));
+  await page.reload();
+  await page.getByRole("button", { name: "Chat actions", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Convert to channel", exact: true })
+    .click();
+  await expect(access).toBeEnabled();
+  await access.click();
+  await publicChoice.click();
+  await expect(dialog).toHaveAccessibleDescription(disclosure);
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
   await convert.click();
   await expect(dialog).not.toBeVisible();
@@ -665,10 +702,18 @@ test("explicit conversion moves the same conversation from Solo to Messages and 
 
 // Browser-only: native modal focus handoff to a replacement Messages header.
 // The held metadata/completion ordering matrix lives in the mounted page test.
-test("Messages conversion restores focus after its chat header is replaced", async ({
+test("View-only Solo conversion preserves access and restores focus after its chat header is replaced", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
+  app.setChannelMetadata(id, [
+    ["name", "Alpha"],
+    ["t", "stream"],
+    ["t", "buzz.solo"],
+    ["P", app.viewer],
+    ["public"],
+    ["join_role", "guest"],
+  ]);
   await page.goto(app.origin);
   await expect
     .poll(() =>
@@ -689,19 +734,129 @@ test("Messages conversion restores focus after its chat header is replaced", asy
     exact: true,
   });
   const convert = page.getByRole("menuitem", { name: "Convert to channel" });
-  await trigger.click();
-  await convert.click();
   const dialog = page.getByRole("dialog", { name: "Convert to channel" });
-  await expect(
-    dialog.getByRole("button", { name: "Convert to channel" }),
-  ).toBeEnabled();
-  await dialog.getByRole("button", { name: "Cancel" }).click();
-  expect(app.report.detailsPublications ?? []).toHaveLength(0);
-  await expect(trigger).toBeFocused();
+  for (const { mode, width, scale } of [
+    { mode: "dark", width: 1440, scale: 1 },
+    { mode: "light", width: 1440, scale: 1 },
+    { mode: "dark", width: 390, scale: 1.5 },
+    { mode: "light", width: 390, scale: 1.5 },
+  ]) {
+    await page.setViewportSize({ width, height: width === 390 ? 720 : 950 });
+    await page.evaluate(
+      ({ mode, scale }) => {
+        localStorage.setItem("buzz-appearance.v1", mode);
+        localStorage.setItem("buzz-font-scale.v1", String(scale));
+      },
+      { mode, scale },
+    );
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    await expect(page.locator("html")).toHaveCSS(
+      "--buzz-text-scale",
+      String(scale),
+    );
+    await trigger.click();
+    await convert.click();
+    await expect(
+      dialog.getByRole("button", { name: "Convert to channel" }),
+    ).toBeEnabled();
+    const access = dialog.getByRole("combobox", { name: "General access" });
+    await expect(access).toHaveText("View only");
+    await access.click();
+    await page.getByRole("option", { name: "Private", exact: true }).click();
+    const retainedWarning =
+      "People who joined while it was View only are members and keep reading until you remove them in People.";
+    await expect(dialog).toHaveAccessibleDescription(retainedWarning);
+    await access.scrollIntoViewIfNeeded();
+    await access.click({ trial: true });
+    await expect(
+      dialog.getByText(retainedWarning, { exact: true }),
+    ).toBeInViewport({ ratio: 1 });
+    await expect(
+      dialog.getByRole("button", { name: "Convert to channel", exact: true }),
+    ).toBeInViewport({ ratio: 1 });
+    if (testInfo.project.name === "chromium")
+      await dialog.screenshot({
+        path: testInfo.outputPath(
+          `SOLO_CONVERSION_PRIVATE_WARNING_${mode}_${width}.png`,
+        ),
+      });
+    await access.click();
+    await page.getByRole("option", { name: "View only", exact: true }).click();
+    await expect(dialog).not.toHaveAccessibleDescription(retainedWarning);
+    const viewOnly = page.getByRole("option", {
+      name: "View only",
+      exact: true,
+    });
+    if (mode === "dark" && width === 1440) {
+      await access.click();
+      await page.getByRole("option", { name: "Public", exact: true }).click();
+      await access.click();
+      const privateOption = page.getByRole("option", {
+        name: "Private",
+        exact: true,
+      });
+      await privateOption.click();
+      await expect(page.getByRole("listbox")).not.toBeVisible();
+      await expect(access).toBeFocused();
+      await access.press("Enter");
+      // Popup focus settles asynchronously, particularly when reopened in WebKit.
+      await expect(privateOption).toBeFocused();
+      await page.keyboard.press("Home");
+      await expect(privateOption).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await expect(viewOnly).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(access).toHaveText("View only");
+    }
+    await access.click();
+    await expect(page.getByRole("option")).toHaveCount(3);
+    for (const name of ["Private", "View only", "Public"]) {
+      const option = page.getByRole("option", { name, exact: true });
+      await option.scrollIntoViewIfNeeded();
+      await option.click({ trial: true });
+      await expect(option).toBeInViewport();
+    }
+    await viewOnly.scrollIntoViewIfNeeded();
+    const popup = page.locator(".buzz-select-popup");
+    await expect(popup).toHaveCSS("filter", "blur(0px)");
+    await expect(popup).toHaveCSS("opacity", "1");
+    if (testInfo.project.name === "chromium") {
+      const boxes = await Promise.all([
+        dialog.boundingBox(),
+        popup.boundingBox(),
+      ]);
+      expect(boxes.every(Boolean)).toBe(true);
+      const left = Math.min(...boxes.map((box) => box.x));
+      const top = Math.min(...boxes.map((box) => box.y));
+      await page.screenshot({
+        clip: {
+          x: left,
+          y: top,
+          width: Math.max(...boxes.map((box) => box.x + box.width)) - left,
+          height: Math.max(...boxes.map((box) => box.y + box.height)) - top,
+        },
+        path: testInfo.outputPath(
+          `SOLO_CONVERSION_ACCESS_${mode}_${width}.png`,
+        ),
+      });
+    }
+    await page.keyboard.press("Escape");
+    await expect(access).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    expect(app.report.detailsPublications ?? []).toHaveLength(0);
+    await expect(trigger).toBeFocused();
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await page.evaluate(() => localStorage.setItem("buzz-font-scale.v1", "1"));
+  await page.reload();
   await trigger.press("Enter");
   await convert.click();
   const confirm = dialog.getByRole("button", { name: "Convert to channel" });
   await expect(confirm).toBeEnabled();
+  await expect(
+    dialog.getByRole("combobox", { name: "General access" }),
+  ).toHaveText("View only");
   await confirm.focus();
   await confirm.press("Enter");
   await expect(dialog).not.toBeVisible();
@@ -1006,7 +1161,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
 // Native caret placement after focus handoffs and popup picks needs a browser.
 test.describe("Solo composer caret", () => {
   test.use({ soloAgentNames: ["Owned Honey", "Owned Brain"] });
-  test("a returning draft resumes at its end and picked agents join the leading tags", async ({
+  test("a returning draft resumes at its end and picking agents leaves the text alone", async ({
     page,
     app,
   }) => {
@@ -1019,19 +1174,20 @@ test.describe("Solo composer caret", () => {
     const caret = () =>
       composer.evaluate((el) => [el.value, el.selectionStart, el.selectionEnd]);
     const [honey, brain] = app.soloAgents;
+    // Agents-only Solo chats address agents from the composer's pill.
+    const pill = page.getByRole("button", {
+      name: /Change agents$|^Choose agent$/,
+    });
     const pick = async (agent) => {
-      await page
-        .getByRole("button", { name: "Mention a member", exact: true })
-        .click();
-      await page
-        .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", {
-          name: `${agent.name} ${agent.pubkey}`,
-          exact: true,
-        })
-        .click();
+      await sendOnlyTo(page, pill, agent);
+      await expect(pill).toHaveAccessibleName(
+        `Sending to ${agent.name}. Change agents`,
+      );
     };
-    await expect(composer).toHaveText(`@${honey.name} `);
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${honey.name}. Change agents`,
+    );
+    await expect(composer).toHaveText("");
     await page.keyboard.insertText("first");
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
@@ -1040,30 +1196,78 @@ test.describe("Solo composer caret", () => {
     await expect(composer).toHaveText("");
     await composer.click();
     await page.keyboard.insertText("alpha draft");
-    // Returning focuses the restored draft at its end, not before its tag.
+    // Returning focuses the restored draft at its end.
     await newChat(page);
-    await expect.poll(caret).toEqual([`@${honey.name} first`, 18, 18]);
+    await expect.poll(caret).toEqual(["first", 5, 5]);
 
-    // The picker files the agent after the leading tag; typing continues
+    // Picking an agent changes the pill, not the text; typing continues
     // where the caret was.
     await pick(brain);
-    const tagged = `@${honey.name} @${brain.name} first`;
-    await expect.poll(caret).toEqual([tagged, tagged.length, tagged.length]);
+    await expect.poll(caret).toEqual(["first", 5, 5]);
+    await expect(composer).toBeFocused();
     await page.keyboard.insertText(" again");
-    await expect(composer).toHaveText(`${tagged} again`);
+    await expect(composer).toHaveText("first again");
 
-    // Untagged prose gets its tag in front, even from a blurred composer.
+    // A blurred composer's prose is left alone too.
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(composer).toHaveText("alpha draft");
     await composer.blur();
     await pick(honey);
-    const alpha = `@${honey.name} alpha draft`;
-    await expect.poll(caret).toEqual([alpha, alpha.length, alpha.length]);
-    // Undo removes the tag and returns to the prose caret, not the front.
-    await page.keyboard.press("ControlOrMeta+z");
-    await expect.poll(caret).toEqual(["alpha draft", 11, 11]);
-    await page.keyboard.insertText("!");
-    await expect(composer).toHaveText("alpha draft!");
+    await expect(composer).toHaveText("alpha draft");
+  });
+
+  test("menu picks that edit typed tags keep keyboard focus in the menu, and Tab leaves it", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const [honey, brain] = app.soloAgents;
+    await composer.click();
+    await page.keyboard.type(`@${honey.name}`);
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText("hello");
+    await expect(composer).toHaveText(`@${honey.name} hello`);
+    await page.getByRole("button", { name: /Change agents$/ }).click();
+    const menu = page.getByRole("dialog", {
+      name: "Mention a member or agent",
+    });
+    const search = menu.getByRole("searchbox");
+    await expect(search).toBeFocused();
+    await page.keyboard.insertText(brain.name);
+    await page.keyboard.press("Enter");
+    // The tag joins the text while focus and typing stay in the search.
+    await expect(composer).toHaveText(`@${honey.name} @${brain.name} hello`);
+    await expect(search).toBeFocused();
+    await page.keyboard.insertText("x");
+    await expect(search).toHaveValue(`${brain.name}x`);
+    await expect(composer).toHaveText(`@${honey.name} @${brain.name} hello`);
+    // Tab out closes the menu and leaves focus where Tab put it.
+    await search.focus();
+    const outside = () =>
+      page.evaluate(() => {
+        const active = document.activeElement;
+        return active?.closest('[role="dialog"]')
+          ? ""
+          : (active?.getAttribute("aria-label") ?? "");
+      });
+    for (let i = 0; i < 20 && !(await outside()); i++)
+      await page.keyboard.press("Tab");
+    const destination = await outside();
+    expect(destination).not.toBe("");
+    await expect(menu).toBeHidden();
+    // Base UI settles final focus a frame or two after the popup hides.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    expect(await outside()).toBe(destination);
   });
 });
 
@@ -1095,16 +1299,11 @@ test.describe("Solo send focus", () => {
       .getByRole("button", { name: "Alpha", exact: true })
       .click();
     const [agent] = app.soloAgents;
-    await page
-      .getByRole("button", { name: "Mention a member", exact: true })
-      .click();
-    await page
-      .getByRole("dialog", { name: "Mention a member or agent" })
-      .getByRole("button", {
-        name: `${agent.name} ${agent.pubkey}`,
-        exact: true,
-      })
-      .click();
+    await sendOnlyTo(
+      page,
+      page.getByRole("button", { name: /Change agents$|^Choose agent$/ }),
+      agent,
+    );
     const composer = page.getByRole("textbox", {
       name: "Message your agents",
       exact: true,

@@ -4,6 +4,10 @@
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
 import type {
+  ProtectedSpawn,
+  ReviewPrompt,
+} from "../../features/agent-protection/models";
+import type {
   AgentProviderSnapshot,
   Models,
 } from "../../features/agents/service";
@@ -13,6 +17,10 @@ import {
   type Choice,
   type GooseHost,
 } from "./goose";
+import {
+  type ConfigValue,
+  valuesOf,
+} from "../../features/agent-harness/acp/session";
 
 export type ConfigKey = Readonly<{
   name: string;
@@ -58,7 +66,7 @@ type ConfigOptions = {
   configOptions?: {
     category?: string | null;
     currentValue?: string;
-    options?: { value: string }[];
+    options?: ConfigValue[];
   }[];
 };
 
@@ -86,6 +94,43 @@ type Entry = {
 const PREFIXES: Readonly<Record<string, readonly string[]>> = {
   databricks: ["databricks-", "goose-"],
 };
+
+const MODEL_FILTER = "DATABRICKS_MODEL_FILTER";
+
+/** Which Databricks models are listed, from goose's `DATABRICKS_MODEL_FILTER`
+ * (its environment, else its config): comma-separated patterns, each matched
+ * against a whole model ID, case-sensitively, with `*` for any characters and
+ * `?` for one. A model matching any pattern is listed; without patterns every
+ * model is. It only hides models: Databricks still decides access. */
+export function modelFilter(value: unknown): (id: string) => boolean {
+  const patterns = String(value ?? "")
+    .split(",")
+    .map((pattern) => pattern.trim())
+    .filter(Boolean);
+  if (!patterns.length) return () => true;
+  const glob = (pattern: string) =>
+    pattern
+      .replace(/[\\^$.+()[\]{}|/]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+  const matcher = new RegExp(`^(?:${patterns.map(glob).join("|")})$`, "s");
+  return (id) => matcher.test(id);
+}
+
+/** Providers Goose reviews refuse: contained agents can write Copilot's sign-in
+ * cache, which sets its API address, and, going by their source, the settings
+ * the `codex` and `cursor-agent` command-line agents run on. */
+export const REVIEW_REFUSED: ReadonlySet<string> = new Set([
+  "github_copilot",
+  "codex",
+  "cursor-agent",
+]);
+const refused = (provider = "") =>
+  new Error(
+    provider
+      ? `Goose reviews cannot use ${provider}, whose settings contained agents may be able to change`
+      : "Goose has no default provider and model to review with",
+  );
 
 const TEST_PROMPT = "Reply with exactly: OK";
 const TEST_TIMEOUT_MS = 60_000;
@@ -289,6 +334,66 @@ export class GooseSetup {
     return this.listing;
   }
 
+  review(
+    model: { provider?: string; id: string },
+    prompt: ReviewPrompt,
+    signal: AbortSignal,
+    spawn?: ProtectedSpawn,
+  ) {
+    signal.throwIfAborted();
+    const host = this.host;
+    if (!spawn || !host)
+      throw new Error("Protected Goose review worker is unavailable");
+    if (REVIEW_REFUSED.has(model.provider ?? "")) throw refused(model.provider);
+    return (async () => {
+      const cwd = await host.resolveDirectory("~");
+      signal.throwIfAborted();
+      const goose = await GooseProcess.start(
+        (_id, options) => spawn(options ?? {}),
+        { cwd, protected: true, signal },
+      );
+      const cancel = () => void goose.kill();
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        // goose's defaults, read in this worker, name an unnamed provider.
+        const defaults = model.provider
+          ? {}
+          : ((await goose.request(
+              "_goose/unstable/defaults/read",
+              {},
+              REQUEST_TIMEOUT_MS,
+            )) as { providerId?: string | null; modelId?: string | null });
+        const provider = model.provider || defaults.providerId || "";
+        const id = model.provider ? model.id : model.id || defaults.modelId;
+        if (REVIEW_REFUSED.has(provider)) throw refused(provider);
+        if (!provider || (!id && !model.provider)) throw refused();
+        signal.throwIfAborted();
+        const result = (await goose.request(
+          "_buzz/security/review",
+          {
+            provider,
+            id,
+            // Goose's native review takes text only and rejects other fields,
+            // so the schema can only be stated in the trusted instructions.
+            prompt: {
+              system: prompt.outputSchema
+                ? `${prompt.system}\n\nReply with only JSON that matches this JSON Schema, and no other text:\n${JSON.stringify(prompt.outputSchema)}`
+                : prompt.system,
+              input: prompt.input,
+            },
+          },
+          65_000,
+        )) as { text: string; model: { provider: string; id: string } };
+        signal.throwIfAborted();
+        return result;
+      } finally {
+        signal.removeEventListener("abort", cancel);
+        await goose.kill();
+        await goose.exited;
+      }
+    })();
+  }
+
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
    * configured providers use live discovery for both Databricks versions.
    * A provider not set up offers none: its catalog's would not run. */
@@ -314,12 +419,27 @@ export class GooseSetup {
     let models = this.live.get(id);
     if (!models) {
       models = this.with(async (goose) => {
-        const { models } = (await goose.request(
-          "_goose/unstable/providers/supported-models/list",
-          { providerId: id },
-          REQUEST_TIMEOUT_MS,
-        )) as { models: string[] };
-        return models.map((model) => ({ id: model, label: model }));
+        const [{ models }, filter] = (await Promise.all([
+          goose.request(
+            "_goose/unstable/providers/supported-models/list",
+            { providerId: id },
+            REQUEST_TIMEOUT_MS,
+          ),
+          id.startsWith("databricks")
+            ? goose.request(
+                "_goose/unstable/config/read",
+                {
+                  key: MODEL_FILTER,
+                  isSecret: false,
+                },
+                REQUEST_TIMEOUT_MS,
+              )
+            : undefined,
+        ])) as [{ models: string[] }, { value?: unknown } | undefined];
+        const listed = modelFilter(filter?.value);
+        return models
+          .filter(listed)
+          .map((model) => ({ id: model, label: model }));
       });
       models.catch(() => this.live.delete(id));
       this.live.set(id, models);
@@ -384,7 +504,7 @@ export class GooseSetup {
               );
               found.set(model, {
                 current: option?.currentValue ?? "",
-                levels: (option?.options ?? []).map(({ value }) => value),
+                levels: valuesOf(option?.options),
               });
             } catch (error) {
               // One model goose cannot move to does not cost the others.

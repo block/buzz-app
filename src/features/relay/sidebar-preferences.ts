@@ -1,4 +1,9 @@
-import { projectSidebarRecord } from "./sidebar-registers.ts";
+import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
+export type { SidebarSortMode } from "./sidebar-sort.ts";
+import {
+  projectSidebarRecord,
+  projectSidebarSort,
+} from "./sidebar-registers.ts";
 import type { ReadFilter } from "./events.ts";
 import type { RelayEvent } from "./events.ts";
 import type { RelayReader } from "./reader.ts";
@@ -35,8 +40,9 @@ export function isSidebarPreferencesBatch(
           filter["#d"][0] as (typeof SIDEBAR_COORDINATES)[number],
         ) &&
         filter.limit === 1 &&
+        (filter.consistency === undefined || filter.consistency === "strong") &&
         Object.keys(filter).every((key) =>
-          ["kinds", "authors", "#d", "limit"].includes(key),
+          ["kinds", "authors", "#d", "limit", "consistency"].includes(key),
         ),
     )
   );
@@ -73,7 +79,6 @@ export type SidebarFilterMutator = (
   signal: AbortSignal,
   activeWindowSeconds?: number | null,
 ) => Promise<SidebarFilterSettings>;
-export type SidebarSortMode = "alpha" | "recent";
 export type SidebarSortMutator = (
   group: string,
   mode: SidebarSortMode,
@@ -93,9 +98,10 @@ export type SidebarPreferences = SidebarGroups &
     activeWindowSeconds?: Readonly<Record<string, number>>;
   }>;
 export type SidebarAssignmentIntent = Readonly<{
-  channelId: string;
+  /** Omit only when creating an empty section. */
+  channelId?: string;
   sectionId?: string;
-  createSection?: Readonly<{ id: string; name: string }>;
+  createSection?: Readonly<{ id: string; name: string; position?: "first" }>;
 }>;
 export type SidebarAssignmentMutator = (
   intent: SidebarAssignmentIntent,
@@ -113,7 +119,7 @@ export type SidebarSectionOrderMutator = (
   sectionIds: readonly string[],
   signal: AbortSignal,
 ) => Promise<SidebarGroups>;
-/** Adds an empty section; only Solo groups support this today. */
+/** Adds an empty section without assigning a conversation. */
 export type SidebarSectionCreationMutator = (
   section: Readonly<{ id: string; name: string }>,
   signal: AbortSignal,
@@ -215,19 +221,17 @@ export function projectSidebarPreferences(
     }
   }
   if (sort !== undefined) {
-    const data = projectSidebarRecord("channel-sort", object(sort));
+    const data = object(sort);
     if (data.version !== 1) throw new Error("Unsupported sidebar sort");
-    const entries = Object.entries(object(data.groups));
-    if (entries.length > 104) throw new Error("Sidebar sort budget exceeded");
+    const entries = Object.entries(projectSidebarSort(data));
     const fixed = new Set(["starred", "channels", "forums", "dms"]);
     const liveSections = new Set(
       (sortSectionIds ?? []).map((id) => `section:${id}`),
     );
     result.sort = Object.fromEntries(
       entries
-        .filter(
-          (entry): entry is [string, SidebarSortMode] =>
-            entry[1] === "alpha" || entry[1] === "recent",
+        .filter((entry): entry is [string, SidebarSortMode] =>
+          isSidebarSortMode(entry[1]),
         )
         .map(([key, mode]) => [text(key, 264), mode] as const)
         .filter(
@@ -322,6 +326,7 @@ export async function readSidebarPreferences(
   viewer: string,
   decode: SidebarDecoder,
   signal: AbortSignal,
+  consistency?: "strong",
 ): Promise<SidebarPreferences> {
   let events: readonly RelayEvent[];
   try {
@@ -331,8 +336,13 @@ export async function readSidebarPreferences(
         authors: [viewer],
         "#d": [coordinate],
         limit: 1,
+        ...(consistency ? { consistency } : {}),
       })),
-      { signal, priority: "foreground" },
+      {
+        signal,
+        priority: "foreground",
+        ...(consistency ? { fresh: true } : {}),
+      },
     );
     signal.throwIfAborted();
   } catch (error) {

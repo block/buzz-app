@@ -8,6 +8,7 @@ import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -39,8 +40,10 @@ import type {
 import { MentionPicker } from "../../bundled/mentions/MentionPicker";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
+import { attachmentDraft } from "../messages/attachment-draft";
 import { NewMessage } from "./NewMessage";
 import { OutboxStatus } from "../../bundled/channels/OutboxStatus";
+import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { createRelayProfiler } from "../relay/profiling";
 import { readView, writeView } from "../../shared/view-state";
 
@@ -49,8 +52,10 @@ composerDOMFixture();
 const viewer = keypair(),
   other = keypair(),
   another = keypair(),
+  third = keypair(),
   relay = keypair();
 const channel = "11111111-1111-4111-8111-111111111111";
+const group = "33333333-3333-4333-8333-333333333333";
 
 const emptyPanels: never[] = [];
 const scope = `https://relay.example:${viewer.pubkey}`;
@@ -121,22 +126,32 @@ function setup(
   const events = [
     profile(other, { name: "Avery", ...metadata }),
     profile(another, { name: "Zoe" }),
+    // Relay-signed DM metadata carries the NIP-29 `hidden` and `private` tags.
     signed(relay, {
       kind: 39000,
       tags: [
         ["d", channel],
+        ["hidden", ""],
         ["t", "dm"],
+        ["private", ""],
       ],
       content: JSON.stringify({ name: "Avery", channel_type: "dm" }),
     }),
     roster(relay, channel, [viewer.pubkey, other.pubkey]),
   ];
   const query = vi.fn(async (filters: readonly ReadFilter[]) => {
-    if (filters.some((filter) => filter.kinds?.includes(9)))
+    const history = filters.find((filter) => filter.kinds?.includes(9));
+    if (history) {
+      const id = history["#h"]?.[0] ?? channel;
       return [
-        ...events.filter((event) => event.kind === 9),
-        bounds(relay, channel, "head", { has_more: false, next_cursor: null }),
+        ...events.filter(
+          (event) =>
+            event.kind === 9 &&
+            event.tags.some(([name, value]) => name === "h" && value === id),
+        ),
+        bounds(relay, id, "head", { has_more: false, next_cursor: null }),
       ];
+    }
     return events.filter((event) =>
       filters.some(
         (filter) =>
@@ -166,6 +181,7 @@ function setup(
   const create = () => {
     const owner = createRelaySession(
       {
+        scope: "https://relay.example",
         viewer: viewer.pubkey,
         relayAuthor: relay.pubkey,
         media: () => undefined,
@@ -404,7 +420,11 @@ it("removing a failed operation in Diagnostics unlocks the preserved draft on re
   await waitFor(() => expect(outbox.snapshot()[0]?.delivery).toBe("failed"));
   page.unmount();
   const diagnostics = render(
-    <OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />,
+    <OutboxStatus
+      outbox={outbox}
+      profiling={createRelayProfiler()}
+      memberAdditions={owner.session.memberAdditions}
+    />,
   );
   await t.user.click(
     screen.getByRole("button", { name: "Remove from outbox" }),
@@ -635,12 +655,12 @@ it.each(["picker", "completion"])(
     const first = await choices();
     expect(
       first.getByRole(choiceRole, {
-        name: new RegExp(`Avery.*${other.pubkey}`),
+        name: /^Avery/,
       }),
     ).toBeVisible();
     await t.user.click(
       first.getByRole(choiceRole, {
-        name: new RegExp(`Zoe.*${another.pubkey}`),
+        name: /^Zoe/,
       }),
     );
     expect(composer()).toHaveTextContent("@Zoe");
@@ -652,11 +672,11 @@ it.each(["picker", "completion"])(
     const second = await choices();
     expect(
       second.getByRole(choiceRole, {
-        name: new RegExp(`Avery.*${other.pubkey}`),
+        name: /^Avery/,
       }),
     ).toBeVisible();
     expect(
-      second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
+      second.queryByRole(choiceRole, { name: /^Zoe/ }),
     ).not.toBeInTheDocument();
     // Dismiss the suggestions without replacing the existing mention in jsdom.
     await t.user.keyboard("{Escape}");
@@ -672,7 +692,7 @@ it.each(["picker", "completion"])(
     const last = await choices();
     await t.user.click(
       last.getByRole(choiceRole, {
-        name: new RegExp(`Avery.*${other.pubkey}`),
+        name: /^Avery/,
       }),
     );
     await t.user.click(send());
@@ -767,6 +787,252 @@ it("loads matching DM history inline and keeps the draft while recipients change
     ).toContain("Earlier conversation"),
   );
   expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+});
+
+/** A group DM with Avery and Zoe, plus one earlier message in each DM. */
+function groupHistory(t: ReturnType<typeof setup>) {
+  t.events.unshift(
+    profile(third, { name: "Kai" }),
+    signed(relay, {
+      kind: 39000,
+      tags: [
+        ["d", group],
+        ["hidden", ""],
+        ["t", "dm"],
+        ["private", ""],
+      ],
+      content: JSON.stringify({ name: "Avery, Zoe", channel_type: "dm" }),
+    }),
+    roster(relay, group, [viewer.pubkey, other.pubkey, another.pubkey]),
+    message(other, channel, "Earlier conversation", 1_700_000_001),
+    message(another, group, "Group history", 1_700_000_002),
+  );
+}
+/** The DM whose timeline the page shows; rows stay virtual in jsdom. */
+const previewed = () =>
+  screen
+    .queryByRole("region", { name: "Channel message history" })
+    ?.getAttribute("data-channel-timeline");
+async function showsHistory(
+  owner: ReturnType<ReturnType<typeof setup>["create"]>,
+  id: string,
+  content: string,
+) {
+  await waitFor(() => expect(previewed()).toBe(id));
+  expect(
+    owner.session.channels.window(id).rows.map((row) => row.content),
+  ).toContain(content);
+}
+async function addRecipient(t: ReturnType<typeof setup>, name: string) {
+  await t.user.click(
+    screen.getByRole("combobox", { name: "Message recipients" }),
+  );
+  await t.user.click(await screen.findByRole("option", { name }));
+}
+
+it("previews locally and relay-hidden DMs without restoring them until Send", async () => {
+  const t = setup();
+  groupHistory(t);
+  t.events.unshift(
+    signed(relay, {
+      kind: 30622,
+      tags: [
+        ["d", viewer.pubkey],
+        ["p", viewer.pubkey],
+        ["h", group],
+      ],
+      content: "",
+    }),
+  );
+  const owner = t.create();
+  // The sidebar's owner of local hides, mounted beside the page as in Messages.
+  let sidebar: ReturnType<typeof useHiddenDms> | undefined;
+  function Sidebar() {
+    sidebar = useHiddenDms(
+      scope,
+      owner.session,
+      useChannelList(owner.session.channels),
+    );
+    return null;
+  }
+  render(<Sidebar />);
+  await owner.session.channelLifecycle.refreshVisibility();
+  expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([group]);
+  await waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  act(() => sidebar?.hide(channel));
+  // Settle the hide's own history baseline before anything previews the DM.
+  await waitFor(() =>
+    expect(readView(scope, "hidden-dms", [])).toEqual([
+      expect.objectContaining({ id: channel, knownIds: expect.any(Array) }),
+    ]),
+  );
+  t.mount(owner);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await showsHistory(owner, channel, "Earlier conversation");
+  await addRecipient(t, "Zoe");
+  await showsHistory(owner, group, "Group history");
+  await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
+  await showsHistory(owner, channel, "Earlier conversation");
+  // Neither preview restored its row or opened the DM.
+  expect(sidebar?.hiddenIds).toEqual(new Set([channel]));
+  expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([group]);
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+  // Send keeps the existing confirmed open, which restores the row.
+  await t.user.type(screen.getByRole("textbox"), "Back again");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.openDirectMessage).toHaveBeenCalledOnce();
+  expect(t.openDirectMessage.mock.calls[0]?.[0]).toEqual([other.pubkey]);
+  expect(sidebar?.hiddenIds).toEqual(new Set());
+});
+
+it("previews only the DM whose participants exactly match, in any order", async () => {
+  const t = setup();
+  groupHistory(t);
+  const owner = t.create();
+  const view = t.mount(owner);
+  const introduces = (name: string) =>
+    view.container.querySelector(`[data-new-message-body] [title="${name}"]`);
+  // Zoe alone is a subset of the group and has no 1:1 DM.
+  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  expect(previewed()).toBeUndefined();
+  expect(introduces("Zoe")).toBeInTheDocument();
+  await addRecipient(t, "Avery");
+  await showsHistory(owner, group, "Group history");
+  // A superset leaves the group as soon as it is chosen.
+  await addRecipient(t, "Kai");
+  expect(previewed()).toBeUndefined();
+  expect(introduces("Kai")).toBeInTheDocument();
+  await t.user.click(screen.getByRole("button", { name: "Remove Kai" }));
+  await showsHistory(owner, group, "Group history");
+  // Avery alone, also a subset of the group, matches the separate 1:1 DM.
+  await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
+  expect(previewed()).not.toBe(group);
+  await showsHistory(owner, channel, "Earlier conversation");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("never shows a previous match's history that finishes loading after an edit", async () => {
+  const t = setup();
+  groupHistory(t);
+  const read = t.query.getMockImplementation();
+  assert.exists(read);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  let answered = false;
+  t.query.mockImplementation(async (filters) => {
+    if (
+      !filters.some(
+        (filter) => filter.kinds?.includes(9) && filter["#h"]?.includes(group),
+      )
+    )
+      return read(filters);
+    started = true;
+    await held;
+    try {
+      return await read(filters);
+    } finally {
+      answered = true;
+    }
+  });
+  const owner = t.create();
+  t.mount(owner);
+  try {
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await showsHistory(owner, channel, "Earlier conversation");
+    await addRecipient(t, "Zoe");
+    await waitFor(() => expect(started).toBe(true));
+    // The new match loads in place of the 1:1 timeline, never beside it.
+    expect(previewed()).toBeUndefined();
+    expect(screen.getByText("Loading messages…")).toBeVisible();
+    await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
+    await showsHistory(owner, channel, "Earlier conversation");
+  } finally {
+    release();
+  }
+  await waitFor(() => expect(answered).toBe(true));
+  // Let the store apply or retire the late page before checking the page.
+  await act(async () => {});
+  expect(previewed()).toBe(channel);
+  expect(screen.queryByText("Loading messages…")).not.toBeInTheDocument();
+  // Matching the group again shows its own history.
+  await addRecipient(t, "Zoe");
+  await showsHistory(owner, group, "Group history");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});
+
+it("matches the recipients chosen by the time the DM roster loads", async () => {
+  const t = setup();
+  groupHistory(t);
+  const read = t.query.getMockImplementation();
+  assert.exists(read);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  t.query.mockImplementation(async (filters) => {
+    if (
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(39002) && filter["#p"] && !filter["#d"],
+      )
+    ) {
+      started = true;
+      await held;
+    }
+    return read(filters);
+  });
+  const owner = t.create();
+  t.mount(owner);
+  try {
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await addRecipient(t, "Zoe");
+    await waitFor(() => expect(started).toBe(true));
+    expect(owner.session.channels.list().status).not.toBe("ready");
+    expect(previewed()).toBeUndefined();
+    await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
+  } finally {
+    release();
+  }
+  await showsHistory(owner, channel, "Earlier conversation");
+  await addRecipient(t, "Zoe");
+  await showsHistory(owner, group, "Group history");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});
+
+it("still previews history when this connection cannot start DMs", async () => {
+  const t = setup();
+  t.events.unshift(
+    message(other, channel, "Earlier conversation", 1_700_000_001),
+  );
+  const live = t.create();
+  const owner = {
+    ...live,
+    session: {
+      ...live.session,
+      directMessages: { ...live.session.directMessages, available: false },
+    },
+  };
+  t.mount(owner);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await showsHistory(owner, channel, "Earlier conversation");
+  expect(
+    screen.getByText(
+      "Starting direct messages is unavailable on this connection.",
+    ),
+  ).toBeVisible();
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  expect(send()).toBeDisabled();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
 });
 
 it.each([40003, 5])(
@@ -895,3 +1161,203 @@ it.each([false, true])(
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
+
+const photo = {
+  name: "photo.png",
+  url: `https://relay.example/media/${"f".repeat(64)}.png`,
+  type: "image/png",
+  size: 5,
+  sha256: "f".repeat(64),
+};
+function attachable(t: ReturnType<typeof setup>) {
+  const live = t.create();
+  const uploadForNewChat = vi.fn(async () => photo);
+  const owner = {
+    ...live,
+    session: {
+      ...live.session,
+      attachments: {
+        prepare: async (file: File) => file,
+        upload: vi.fn(),
+        uploadForNewChat,
+      },
+    },
+  };
+  const view = t.mount(owner);
+  const attach = () =>
+    t.user.upload(
+      screen.getByLabelText("Choose attachments"),
+      new File(["photo"], "photo.png", { type: "image/png" }),
+    );
+  return {
+    owner,
+    get files() {
+      return attachmentDraft(
+        owner.session,
+        `${scope}:direct-message:new-draft`,
+        channel,
+        true,
+      );
+    },
+    view,
+    uploadForNewChat,
+    attach,
+  };
+}
+
+it.each(["", "See attached"])(
+  "sends a photo with caption %j and clears files on delivery",
+  async (caption) => {
+    const t = setup();
+    const f = attachable(t);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    if (caption) await t.user.type(screen.getByRole("textbox"), caption);
+    await f.attach();
+    await waitFor(() => expect(f.files.snapshot()[0]?.status).toBe("ready"));
+    expect(t.openDirectMessage).not.toHaveBeenCalled();
+    expect(send()).toBeEnabled();
+    await t.user.click(send());
+    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    const event = t.publish.mock.calls[0]?.[0];
+    expect(event?.content).toContain(`![photo.png](<${photo.url}>)`);
+    if (caption) expect(event?.content).toContain(caption);
+    expect(event?.tags).toContainEqual(
+      expect.arrayContaining(["imeta", `x ${photo.sha256}`]),
+    );
+    expect(f.files.snapshot()).toEqual([]);
+    f.view.unmount();
+    t.mount(f.owner);
+    await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
+    expect(
+      screen.queryByRole("button", { name: "Remove photo.png" }),
+    ).not.toBeInTheDocument();
+    expect(send()).toBeDisabled();
+  },
+);
+
+it("waits for uploads before opening a DM and reports failure only on the chip", async () => {
+  const t = setup();
+  const f = attachable(t);
+  let rejectUpload = (_reason: Error) => {};
+  f.uploadForNewChat.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectUpload = reject;
+      }),
+  );
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await f.attach();
+  await waitFor(() => expect(f.uploadForNewChat).toHaveBeenCalledOnce());
+  try {
+    await t.user.click(send());
+    expect(await screen.findByText("Uploading files…")).toBeVisible();
+    expect(t.openDirectMessage).not.toHaveBeenCalled();
+  } finally {
+    await act(async () =>
+      rejectUpload(new Error("Upload failed. Retry or remove this file.")),
+    );
+  }
+  expect(
+    await screen.findByRole("button", { name: "Retry photo.png" }),
+  ).toBeEnabled();
+  expect(
+    await screen.findByText(
+      "A file couldn’t upload. Retry or remove it, then send again.",
+    ),
+  ).toHaveAttribute("role", "status");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(send()).toBeDisabled();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.click(screen.getByRole("button", { name: "Retry photo.png" }));
+  await waitFor(() => expect(f.files.snapshot()[0]?.status).toBe("ready"));
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+});
+
+it.each(["remove", "replace", "rename", "unchanged"])(
+  "uses the visible files after a failed send: %s",
+  async (change) => {
+    const t = setup();
+    t.publish.mockRejectedValueOnce(new PublishRejected("Not sent"));
+    const f = attachable(t);
+    await t.compose();
+    await f.attach();
+    await t.user.click(send());
+    await screen.findByRole("alert");
+    expect(f.files.snapshot()).toHaveLength(1);
+    const original = t.publish.mock.calls[0]?.[0];
+    if (change !== "unchanged") {
+      await t.user.click(
+        screen.getByRole("button", { name: "Remove photo.png" }),
+      );
+      if (change === "replace") {
+        f.uploadForNewChat.mockResolvedValue({
+          ...photo,
+          sha256: "e".repeat(64),
+          url: `https://relay.example/media/${"e".repeat(64)}.png`,
+        });
+        await f.attach();
+      } else if (change === "rename") {
+        f.uploadForNewChat.mockResolvedValue({ ...photo, name: "renamed.png" });
+        await t.user.upload(
+          screen.getByLabelText("Choose attachments"),
+          new File(["photo"], "renamed.png", { type: "image/png" }),
+        );
+      }
+    }
+    await t.user.click(send());
+    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    const retried = t.publish.mock.calls[1]?.[0];
+    if (change === "unchanged") expect(retried).toEqual(original);
+    else {
+      expect(retried?.id).not.toBe(original?.id);
+      if (change === "rename") {
+        expect(retried?.content).toContain(`![renamed.png](<${photo.url}>)`);
+        expect(retried?.tags).toContainEqual(
+          expect.arrayContaining(["imeta", "filename renamed.png"]),
+        );
+      } else expect(retried?.content).not.toContain(photo.url);
+      expect(retried?.tags.filter(([name]) => name === "imeta")).toHaveLength(
+        change === "remove" ? 0 : 1,
+      );
+    }
+  },
+);
+
+it("confirms a photo-only uncertain send after session restart without files or a replacement event", async () => {
+  const t = setup();
+  t.publish.mockRejectedValueOnce(new Error("Receipt lost"));
+  const f = attachable(t);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await f.attach();
+  await t.user.click(send());
+  await screen.findByRole("alert");
+  const original = t.publish.mock.calls[0]?.[0];
+  f.view.unmount();
+  f.owner.dispose();
+  t.mount(t.create());
+  await t.user.click(await screen.findByRole("button", { name: "Retry send" }));
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.publish.mock.calls[1]?.[0]).toEqual(original);
+});
+
+it("drops files on the recipient header into the new DM composer", async () => {
+  const t = setup();
+  const f = attachable(t);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  const header = screen.getByRole("combobox");
+  const dataTransfer = {
+    types: ["Files"],
+    files: [new File(["photo"], "photo.png", { type: "image/png" })],
+    dropEffect: "uninitialized",
+  };
+  fireEvent.dragEnter(header, { dataTransfer });
+  const overlay = await screen.findByText("Drop files into this conversation");
+  expect(overlay.parentElement?.parentElement).toBe(
+    screen.getByRole("region", { name: "New message" }),
+  );
+  fireEvent.drop(header, { dataTransfer });
+  await waitFor(() => expect(f.files.snapshot()[0]?.status).toBe("ready"));
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});

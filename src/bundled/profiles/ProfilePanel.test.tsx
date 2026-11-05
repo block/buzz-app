@@ -3,28 +3,53 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { useEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { bindNames } from "../../features/identity-names/service";
 import {
+  openProfileTranscript,
   profileTarget,
   profileActivityViewTarget,
+  profileHistoryTarget,
 } from "../../features/profiles/target";
 import { ProfilePanel } from "./ProfilePanel";
+import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
+import type { Navigation } from "../../features/navigation/controller";
 import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 
 import { agentDirectory } from "../../features/identity-names/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
-import { keypair, profile } from "../../features/relay/testing";
+import { keypair, profile, signed } from "../../features/relay/testing";
 
-const key = "a".repeat(64);
+const key = "a".repeat(64),
+  viewer = "b".repeat(64),
+  threadRoot = "c".repeat(64);
 afterEach(cleanup);
+
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
 it("updates a mounted profile from the shared name view without replacing its identity", async () => {
   let name = "Local name";
   let notify = () => {};
@@ -349,12 +374,27 @@ it("exposes thinking through the named profile avatar across tabs", async () => 
 function renderAgentActivity(
   tabs: { title: string; role?: string }[],
   rootId?: string,
+  transcript: "opened" | "shown again" | false = false,
+  navigation?: Navigation,
+  channelType?: "solo" | "dm" | "stream",
 ) {
   const owner = createRelaySession(null);
+  // The originating channel, as the community lists it.
+  const listed = channelType && {
+    ...owner.session.channels.list(),
+    channels: [{ id: "originating-channel", name: "Originating", channelType }],
+  };
+  const session = listed
+    ? {
+        ...owner.session,
+        channels: { ...owner.session.channels, list: () => listed },
+      }
+    : owner.session;
   const snapshot = {
     status: "ready" as const,
     generation: 1,
-    session: owner.session,
+    session,
+    ...(navigation && { scope: `https://relay.test:${viewer}`, viewer }),
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
@@ -363,6 +403,7 @@ function renderAgentActivity(
     disconnect() {},
     clearCache: async () => {},
   };
+  const offered = vi.fn();
   const type = {
     key: "test/echo",
     title: "Echo",
@@ -370,21 +411,57 @@ function renderAgentActivity(
       id: title.toLowerCase(),
       title,
       role,
-      component: ({
+      component: function Echo({
         conversation,
+        initialTranscript,
+        openConversation,
       }: {
         conversation?: { channelId: string; rootId?: string };
-      }) => (
-        <>
-          <p>Echo {title.toLowerCase()}</p>
-          {conversation && (
-            <p>
-              Opened from {conversation.channelId}/
-              {conversation.rootId ?? "channel"}
-            </p>
-          )}
-        </>
-      ),
+        initialTranscript?: TranscriptRequest;
+        openConversation?: (channelId: string, threadRootId?: string) => void;
+      }) {
+        // Like a type's Activity tab: it acts on the request as it shows.
+        const [first] = useState(!!initialTranscript);
+        // Like a settings section, it can hold an unsaved change.
+        const [dirty, setDirty] = useState(false);
+        useAgentSaveState(dirty, false, role === "settings");
+        // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
+        useEffect(() => {
+          if (!initialTranscript) return;
+          offered(initialTranscript.opening);
+          initialTranscript.done();
+        }, [initialTranscript?.opening]);
+        return (
+          <>
+            <p>Echo {title.toLowerCase()}</p>
+            {role === "settings" && (
+              <button type="button" onClick={() => setDirty(true)}>
+                Make a change
+              </button>
+            )}
+            {first && <p>Transcript first</p>}
+            {conversation && (
+              <p>
+                Opened from {conversation.channelId}/
+                {conversation.rootId ?? "channel"}
+              </p>
+            )}
+            {openConversation && (
+              <>
+                <button type="button" onClick={() => openConversation("c")}>
+                  Open channel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openConversation("c", threadRoot)}
+                >
+                  Open thread
+                </button>
+              </>
+            )}
+          </>
+        );
+      },
     })),
   } as unknown as RegisteredAgentType;
   const agent = {
@@ -405,12 +482,19 @@ function renderAgentActivity(
     find: (pubkey: string) => (pubkey === key ? agent : undefined),
     memberships: () => [],
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
-  render(
+  let target = profileActivityViewTarget(key) ?? "";
+  // Like Working now: the opener asks as it opens the target.
+  if (transcript === "opened") openProfileTranscript(target, () => true);
+  const panel = (mount: number) => (
     <ProfilePanel
+      key={mount}
       relay={relay}
       agents={agents}
-      target={profileActivityViewTarget(key) ?? ""}
+      target={target}
       context={{
         channelId: "originating-channel",
         ...(rootId && { rootId }),
@@ -418,13 +502,62 @@ function renderAgentActivity(
         open: vi.fn(() => true),
       }}
       close={() => {}}
-    />,
+      {...(navigation && { navigation })}
+    />
   );
-  return () => {
-    cleanup();
-    owner.dispose();
-  };
+  let mounts = 0;
+  const view = render(panel(mounts));
+  return Object.assign(
+    () => {
+      cleanup();
+      owner.dispose();
+    },
+    {
+      target,
+      offered,
+      navigate: (next: string) => {
+        target = next;
+        view.rerender(panel(mounts));
+      },
+      /** Remounts the retained profile, as on returning to its channel. */
+      remount: () => view.rerender(panel(++mounts)),
+    },
+  );
 }
+
+it.each([false, "opened"] as const)(
+  "keeps an Activity profile mounted across version addresses (transcript %s)",
+  (transcript) => {
+    const dispose = renderAgentActivity(
+      [
+        { title: "Settings", role: "settings" },
+        { title: "Activity", role: "activity" },
+      ],
+      "thread-root",
+      transcript,
+    );
+    try {
+      const activity = screen.getByText("Echo activity");
+      const pane = activity.closest('[role="tabpanel"]') as HTMLElement;
+      pane.scrollTop = 636;
+      for (const target of [
+        profileHistoryTarget(dispose.target),
+        profileHistoryTarget(dispose.target, {
+          side: "instructions",
+          id: "b".repeat(64),
+        }),
+        dispose.target,
+      ]) {
+        dispose.navigate(target);
+        expect(screen.getByText("Echo activity")).toBe(activity);
+        expect(pane.scrollTop).toBe(636);
+        expect(!!screen.queryByText("Transcript first")).toBe(!!transcript);
+      }
+    } finally {
+      dispose();
+    }
+  },
+);
 
 it("opens an agent's activity on its type's Activity tab, the profile's only one", async () => {
   const dispose = renderAgentActivity(
@@ -454,6 +587,202 @@ it("opens an agent's activity on its type's Activity tab, the profile's only one
   }
 });
 
+it.each([
+  ["solo", "channel"],
+  ["dm", "channel"],
+  ["stream", "thread-root"],
+] as const)(
+  "gives the Activity tab a %s's message as its %s, as agents keep it",
+  (channelType, place) => {
+    const dispose = renderAgentActivity(
+      [{ title: "Activity", role: "activity" }],
+      "thread-root",
+      false,
+      undefined,
+      channelType,
+    );
+    try {
+      expect(
+        screen.getByText(`Opened from originating-channel/${place}`),
+      ).toBeVisible();
+    } finally {
+      dispose();
+    }
+  },
+);
+
+it("lets the Activity tab open a turn's channel or thread in this community, only with navigation", () => {
+  const navigate = vi.fn(async () => ({ status: "opened" as const }));
+  const tabs = [{ title: "Activity", role: "activity" }];
+  const dispose = renderAgentActivity(tabs, undefined, false, {
+    open: navigate,
+  } as unknown as Navigation);
+  const scope = { viewer, communityOrigin: "https://relay.test" };
+  try {
+    act(() => screen.getByRole("button", { name: "Open thread" }).click());
+    // A thread opens at its root message, which names the thread.
+    expect(navigate).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "c",
+      messageId: threadRoot,
+      threadRootId: threadRoot,
+    });
+    act(() => screen.getByRole("button", { name: "Open channel" }).click());
+    expect(navigate).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "c",
+    });
+  } finally {
+    dispose();
+  }
+  const without = renderAgentActivity(tabs);
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open thread" })).toBeNull();
+  } finally {
+    without();
+  }
+});
+
+it("asks the Activity tab for its transcript only when the opener knows the conversation", () => {
+  const tabs = [{ title: "Activity", role: "activity" }];
+  // Work in several threads opens the plain destination, never a transcript.
+  let dispose = renderAgentActivity(tabs);
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+  dispose = renderAgentActivity(tabs, "thread-root", "opened");
+  try {
+    expect(screen.getByText("Transcript first")).toBeVisible();
+  } finally {
+    dispose();
+  }
+  // Its retained tab remounting, as on returning to the channel, asks nothing.
+  dispose = renderAgentActivity(tabs, "thread-root", "shown again");
+  try {
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks for the transcript once, not again on returning from another section", async () => {
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+    "opened",
+  );
+  try {
+    expect(screen.getByText("Transcript first")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("keeps a new opening for a profile on another section to itself, so a remount does not reopen it", async () => {
+  const sections = [
+    { title: "Settings", role: "settings" },
+    { title: "Activity", role: "activity" },
+  ];
+  const user = userEvent.setup();
+  let dispose = renderAgentActivity(sections, "thread-root", "shown again");
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    // Working now opens the retained profile again while it shows Identity.
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    dispose.remount();
+    expect(screen.getByText("Echo activity")).toBeVisible();
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+  dispose = renderAgentActivity(sections, "thread-root", "shown again");
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    // Not remounted, the profile shows Activity for the opening itself.
+    expect(
+      screen.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    expect(screen.getByText("Transcript first")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("tab", { name: "Activity" }));
+    expect(screen.queryByText("Transcript first")).toBeNull();
+  } finally {
+    dispose();
+  }
+});
+
+it("keeps an unsaved change until the reader chooses to leave it for a transcript", async () => {
+  const dispose = renderAgentActivity(
+    [
+      { title: "Settings", role: "settings" },
+      { title: "Activity", role: "activity" },
+    ],
+    "thread-root",
+  );
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("tab", { name: "Identity" }));
+    await user.click(screen.getByRole("button", { name: "Make a change" }));
+    act(() => void openProfileTranscript(dispose.target, () => true));
+    // The section guard asks first, as choosing the Activity tab does.
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    expect(screen.getByText("Echo settings")).toBeVisible();
+    expect(dispose.offered).not.toHaveBeenCalled();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Discard changes" }),
+    );
+    expect(
+      screen.getByRole("tab", { name: "Activity", selected: true }),
+    ).toBeVisible();
+    expect(dispose.offered).toHaveBeenCalledOnce();
+  } finally {
+    dispose();
+  }
+});
+
+it("asks an Activity tab already open for the transcript, rather than opening another", () => {
+  const dispose = renderAgentActivity(
+    [{ title: "Activity", role: "activity" }],
+    "thread-root",
+  );
+  try {
+    expect(dispose.offered).not.toHaveBeenCalled();
+    const opened: string[] = [];
+    act(
+      () =>
+        void openProfileTranscript(dispose.target, (next) => {
+          opened.push(next);
+          return true;
+        }),
+    );
+    // The opener reaches the same Activity destination this tab shows.
+    expect(opened).toEqual([profileActivityViewTarget(key)]);
+    expect(dispose.offered).toHaveBeenCalledOnce();
+  } finally {
+    dispose();
+  }
+});
+
 it("opens an agent's activity on its type's first tab when the type has no Activity tab", () => {
   const dispose = renderAgentActivity([
     { title: "Settings", role: "settings" },
@@ -467,5 +796,206 @@ it("opens an agent's activity on its type's first tab when the type has no Activ
     expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
   } finally {
     dispose();
+  }
+});
+
+it("links an owned agent whose type's plugin is off to Manage plugins", async () => {
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const agent = {
+    key,
+    pubkey: key,
+    name: "Lou",
+    type: "test/off",
+    place: "here",
+    config: {},
+    attention: {},
+  } as unknown as Agent;
+  const types: RegisteredAgentType[] = [];
+  const agentsSnapshot = { agents: [agent], teams: [] };
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => agentsSnapshot,
+    types: () => types,
+    find: (pubkey: string) => (pubkey === key ? agent : undefined),
+    memberships: () => [],
+    configHistory: () => undefined,
+    addedTabs: () => [],
+  } as unknown as Agents;
+  const navigation = {
+    snapshot: () => ({
+      entry: { id: "profile", target: { version: 1, kind: "home" } },
+    }),
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  try {
+    render(
+      <ProfilePanel
+        relay={relay}
+        agents={agents}
+        navigation={navigation}
+        target={profileTarget(key) ?? ""}
+        close={() => {}}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Manage plugins" }));
+    expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+    });
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("shows historical verification time and issuer, discloses cache, and hides disabled marks", async () => {
+  const { eventDto } = await import("../../features/relay/events");
+  const person = keypair();
+  const relayKey = keypair();
+  let live!: LiveCallbacks;
+  let sink:
+    | import("../../features/relay/verified-profile").VerifiedProfileSink
+    | undefined;
+  // Kind-0 reads wait on the test; the first fails while the projection succeeds.
+  const profileReads: ReturnType<typeof deferred>[] = [];
+  const owner = createRelaySession({
+    viewer: person.pubkey,
+    relayAuthor: relayKey.pubkey,
+    scope: "wss://relay.example.test",
+    query: async (filters) => {
+      if (filters.some((filter) => filter.kinds?.includes(0))) {
+        const read = deferred();
+        profileReads.push(read);
+        if (profileReads.length === 1)
+          read.reject(new Error("profile read rejected"));
+        await read.promise;
+      }
+      return [];
+    },
+    media: () => undefined,
+    verifiedProfiles: { pubkey: relayKey.pubkey, multipleIssuers: false },
+    readVerifiedProfileAuthority: async () => null,
+    subscribe(callbacks) {
+      live = callbacks;
+      return {
+        update() {},
+        retry() {},
+        dispose() {},
+        syncVerifiedProfiles(_filter, next) {
+          sink = next;
+          return () => {};
+        },
+      };
+    },
+  });
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  try {
+    render(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(person.pubkey) ?? ""}
+        close={() => {}}
+      />,
+    );
+    await waitFor(() => expect(sink).toBeDefined());
+    act(() => {
+      sink?.event(
+        eventDto(
+          signed(relayKey, {
+            kind: 30382,
+            created_at: 1_000_000,
+            content: "",
+            tags: [
+              ["d", person.pubkey],
+              ["p", person.pubkey],
+              ["active", "true"],
+              ["display_name", "Alice"],
+              ["username", "alice"],
+              ["issuer_label", "Example"],
+              ["verified_at", "1000000"],
+              ["full_name", "Alice Example"],
+            ],
+          }),
+        ),
+      );
+      sink?.eose();
+    });
+    expect(await screen.findByRole("heading", { name: "Alice" })).toBeVisible();
+    expect(screen.getByText(/Name verified by Example.*@alice/)).toBeVisible();
+    expect(screen.getByText("Alice Example")).toBeVisible();
+    expect(
+      screen.getByText("Alice Example").closest("p")?.querySelector("svg"),
+    ).not.toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Info" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load this profile.",
+    );
+    const retryButton = screen.getByRole("button", { name: "Retry profile" });
+    // A pending retry keeps its focused control and announces the read.
+    await user.click(retryButton);
+    await waitFor(() => expect(profileReads).toHaveLength(2));
+    expect(retryButton).toHaveFocus();
+    expect(retryButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("Loading profile…")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    await act(async () => profileReads[1]?.reject(new Error("still rejected")));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load this profile.",
+    );
+    expect(retryButton).toHaveFocus();
+    expect(retryButton).not.toHaveAttribute("aria-busy");
+    // Success removes Retry and hands its focus to the profile region.
+    await user.click(retryButton);
+    await waitFor(() => expect(profileReads).toHaveLength(3));
+    await act(async () => profileReads[2]?.resolve());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry profile" })).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Profile details" }),
+    ).toHaveFocus();
+    expect(screen.getByText("Name verified by Example")).toBeVisible();
+    expect(screen.getByText(/Last verified/)).toHaveTextContent(/1970/);
+    expect(screen.getByText(/current issuer endorsement/)).toBeVisible();
+    act(() => live.state({ status: "connecting", routes: [] }));
+    expect(await screen.findByText(/Cached verification/)).toBeVisible();
+    expect(
+      screen.getByText("Alice Example").closest("p")?.querySelector("svg"),
+    ).toBeNull();
+    expect(screen.getByText(/Cached evidence/)).toBeVisible();
+    await act(async () => live.state({ status: "connected", routes: [] }));
+    await waitFor(() =>
+      expect(screen.queryByText("Name verified by Example")).toBeNull(),
+    );
+    expect(screen.queryByText("Alice Example")).toBeNull();
+    expect(screen.queryByText(/Cached verification/)).toBeNull();
+  } finally {
+    for (const read of profileReads) read.resolve();
+    cleanup();
+    owner.dispose();
   }
 });

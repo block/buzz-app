@@ -6,12 +6,13 @@ import { usePanelTabTitle } from "../../features/panels/PanelWorkspace";
 import { FileTextIcon } from "../../shared/design-system/icons";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { CanvasEditor } from "./CanvasEditor";
 
 function eligible(channel: ChannelSummary, session: RelaySession) {
   return (
     !channel.cached &&
-    !channel.readOnly &&
+    (!channel.readOnly || channel.viewerRole === "guest") &&
     !!channel.members?.includes(session.viewer ?? "")
   );
 }
@@ -23,10 +24,14 @@ export function registerCanvas(ctx: Context) {
   function Panel({ channelContext }: PanelProps) {
     usePanelTabTitle("Canvas", tabIcon);
     const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
-    const archived = useListedChannel(
+    const readOnly = useListedChannel(
       state.status === "ready" ? state.session.channels : undefined,
       channelContext?.channelId,
-      (channel) => !!channel?.archived,
+      (channel) =>
+        !channel ||
+        !!channel.archived ||
+        !!channel.readOnly ||
+        !!channel.cached,
     );
     if (
       !channelContext ||
@@ -38,14 +43,25 @@ export function registerCanvas(ctx: Context) {
           Canvas is unavailable while the connection recovers.
         </p>
       );
+    const { origin, viewer } = state;
+    const openLink = (url: string) => {
+      const target =
+        origin &&
+        viewer &&
+        buzzLinkTarget(url, { viewer, communityOrigin: origin });
+      if (!target) return false;
+      void ctx.navigation.open(target);
+      return true;
+    };
     return (
       <CanvasEditor
         key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
-        readOnly={archived}
+        readOnly={readOnly}
         canvas={state.session.canvas}
         profiles={state.session.profiles}
         scope={state.scope}
         channelId={channelContext.channelId}
+        openLink={openLink}
       />
     );
   }

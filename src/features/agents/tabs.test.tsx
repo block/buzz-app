@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { CommunityReader, Membership } from "../communities/service";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Agent, Agents, RegisteredAgentType } from "./service";
+import type { Agent, Agents } from "./service";
 import { agentSections } from "./tabs";
 
 afterEach(cleanup);
@@ -45,63 +44,50 @@ const agent: Agent = {
   },
 } as Agent;
 
-it("puts the device runtime control in Settings without a separate Attention tab", () => {
+it("leaves the device Attention switch out of Settings", () => {
   const agents = {
     save: async () => {},
     subscribe: () => () => {},
     memberships: () => [],
     configHistory: () => undefined,
+    addedTabs: () => [],
+    registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
   const sections = agentSections({
     agents,
     agent,
     type: undefined,
     memories: undefined,
+    settingsHost: { typeControl: () => <p>Provider</p> },
   });
   expect(sections.some((tab) => tab.value === "agent:attention")).toBe(false);
   const section = sections.find((tab) => tab.value === "agent:settings");
   render(<div>{section?.render()}</div>);
-  expect(
-    screen.getByRole("switch", { name: "Attention on this device" }),
-  ).toBeInTheDocument();
-  expect(screen.queryByText("Triage.")).not.toBeInTheDocument();
+  expect(screen.getByText("Provider")).toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });
 
-it("supplies the local control once to provider Settings", () => {
+it("adds no Settings tab when the host has nothing to set", () => {
   const sections = agentSections({
     agents: {
       save: async () => {},
       subscribe: () => () => {},
       memberships: () => [],
       configHistory: () => undefined,
+      addedTabs: () => [],
+      registerTab: () => {},
+      controlAttention: () => {},
     } as unknown as Agents,
     agent,
-    type: {
-      tabs: [
-        {
-          id: "settings",
-          title: "Settings",
-          role: "settings",
-          component: ({
-            settingsContent,
-          }: {
-            settingsContent: React.ReactNode;
-          }) => <div>{settingsContent}</div>,
-        },
-      ],
-    } as unknown as RegisteredAgentType,
+    type: undefined,
     memories: undefined,
+    settingsHost: {},
   });
-  expect(sections.filter((tab) => tab.value === "agent:settings")).toHaveLength(
-    1,
-  );
-  render(sections.find((tab) => tab.value === "agent:settings")?.render());
-  expect(
-    screen.getAllByRole("switch", { name: "Attention on this device" }),
-  ).toHaveLength(1);
+  expect(sections.map((tab) => tab.value)).toEqual(["agent:memory"]);
 });
 
-it("shows each synced side's History as its own named section", () => {
+it("moves both synced histories into a collapsed Settings disclosure", async () => {
   const side = (name: "settings" | "instructions") => ({
     side: name,
     expected: { channel: "c", d: name, type: `buzz.agent.${name}` },
@@ -120,106 +106,125 @@ it("shows each synced side's History as its own named section", () => {
     classifier: () => "available",
     save: async () => {},
     configHistory: () => history,
+    addedTabs: () => [],
+    registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
-  const section = agentSections({
+  const sections = agentSections({
     agents,
     agent,
     type: undefined,
     memories: undefined,
-  }).find((tab) => tab.value === "agent:history");
+  });
+  expect(sections.some((tab) => tab.value === "agent:history")).toBe(false);
+  const section = sections.find((tab) => tab.value === "agent:settings");
   render(<div>{section?.render()}</div>);
+  const disclosure = screen.getByRole("button", { name: "Previous versions" });
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
   expect(
-    screen.getByRole("region", { name: "Settings history" }),
-  ).toBeInTheDocument();
+    screen.queryByRole("region", { name: "Settings" }),
+  ).not.toBeInTheDocument();
+  expect(await screen.findByText("0 versions")).toBeInTheDocument();
+  await userEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("region", { name: "Settings" })).toBeInTheDocument();
   expect(
-    screen.getByRole("region", { name: "Instructions history" }),
+    screen.getByRole("region", { name: "Instructions" }),
   ).toBeInTheDocument();
 });
 
-it("shows Settings Attention scope for the agent relay and follows community updates", async () => {
-  const user = userEvent.setup();
-  let memberships: Membership[] = [
-    { id: "https://other.example", name: "Other" },
-    {
-      id: "https://relay.example",
-      name: "Studio",
-      icon: "https://images.example/studio.png",
-    },
-  ];
-  let known = { memberships };
-  const listeners = new Set<() => void>();
-  const communities = {
-    snapshot: () => known,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  } as CommunityReader;
-  const save = vi.fn(async () => {});
+it("adds plugin tabs to each agent shown unless their `when` says otherwise, alongside Settings and Memory", () => {
+  const tab = (id: string, when?: (agent: Agent) => boolean) => ({
+    id,
+    key: `buzz.example/${id}`,
+    pluginId: "buzz.example",
+    revision: "1",
+    title: id,
+    component: ({ agent }: { agent: Agent }) => (
+      <p>
+        {id} {agent.name}
+      </p>
+    ),
+    ...(when && { when }),
+  });
   const agents = {
-    save,
+    save: async () => {},
     subscribe: () => () => {},
-    memberships: () => [
-      { key: agent.key, origin: agent.relay, connected: true },
-      { key: "other", origin: "https://other.example", connected: false },
+    memberships: () => [],
+    configHistory: () => ({
+      read: async () => [],
+      sides: [],
+      revise: async () => ({ ok: true }),
+    }),
+    addedTabs: () => [
+      tab("every"),
+      tab("local", (shown) => shown.place === "here"),
     ],
-    configHistory: () => undefined,
+    registerTab: () => {},
+    controlAttention: () => {},
   } as unknown as Agents;
-  const section = agentSections({
-    agents,
-    agent,
-    type: undefined,
-    memories: undefined,
-    communities,
-  }).find((tab) => tab.value === "agent:settings");
-  const view = render(section?.render());
-  const trigger = screen.getByRole("button", {
-    name: "Attention scope: Studio",
-  });
-  expect(trigger.querySelector("img")).toHaveAttribute(
-    "src",
-    "https://images.example/studio.png",
+  const values = (place: Agent["place"]) =>
+    agentSections({
+      agents,
+      agent: { ...agent, place } as Agent,
+      type: undefined,
+      memories: undefined,
+    }).map((tab) => tab.value);
+  expect(values("here")).toEqual([
+    "agent:settings",
+    "agent:added:buzz.example/every",
+    "agent:added:buzz.example/local",
+    "agent:memory",
+  ]);
+  // Settings (version history) stays local; a tab without `when` is for hosted agents too.
+  expect(values("hosted")).toEqual([
+    "agent:added:buzz.example/every",
+    "agent:memory",
+  ]);
+  expect(values("elsewhere")).toEqual([]);
+  render(
+    agentSections({ agents, agent, type: undefined, memories: undefined })
+      .find((tab) => tab.value === "agent:added:buzz.example/every")
+      ?.render(),
   );
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  const popup = await screen.findByRole("dialog", { name: "Attention scope" });
-  expect(within(popup).getByText("Studio")).toBeInTheDocument();
-  expect(popup).toHaveTextContent(
-    "Attention is specific to this community and isn’t shared with other communities.",
-  );
-  await user.keyboard("{Escape}");
-  expect(trigger).toHaveFocus();
-  expect(
-    screen.getByRole("switch", { name: "Attention on this device" }),
-  ).toBeChecked();
-  expect(save).not.toHaveBeenCalled();
-  act(() => {
-    memberships = [
-      {
-        id: "https://relay.example",
-        name: "Studio",
-        localName: "Renamed",
-        publishedIcon: "javascript:alert(1)",
-      },
-    ];
-    known = { memberships };
-    for (const listener of listeners) listener();
+  expect(screen.getByText("every Ada")).toBeInTheDocument();
+});
+
+it("adds a plugin tab only to the agents its `when` accepts", () => {
+  const tab = (id: string, when?: (agent: Agent) => boolean) => ({
+    id,
+    key: `example/${id}`,
+    pluginId: "example",
+    revision: "1",
+    title: id,
+    component: () => null,
+    ...(when && { when }),
   });
-  expect(
-    screen
-      .getByRole("button", { name: "Attention scope: Renamed" })
-      .querySelector("img"),
-  ).toBeNull();
-  act(() => {
-    memberships = [];
-    known = { memberships };
-    for (const listener of listeners) listener();
-  });
-  expect(
-    screen.getByRole("button", { name: "Attention scope: relay.example" }),
-  ).toBeInTheDocument();
-  view.unmount();
-  expect(listeners.size).toBe(0);
+  const agents = {
+    configHistory: () => undefined,
+    addedTabs: () => [
+      tab("every"),
+      tab("ada", (shown) => shown.name === "Ada"),
+      tab("broken", () => {
+        throw new Error("broken");
+      }),
+    ],
+  } as unknown as Agents;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const values = (name: string) =>
+    agentSections({
+      agents,
+      agent: { ...agent, name },
+      type: undefined,
+      memories: undefined,
+    }).map((section) => section.value);
+  expect(values("Ada")).toEqual([
+    "agent:added:example/every",
+    "agent:added:example/ada",
+    "agent:memory",
+  ]);
+  // A tab whose `when` throws hides only itself.
+  expect(values("Bea")).toEqual(["agent:added:example/every", "agent:memory"]);
+  expect(error).toHaveBeenCalled();
+  error.mockRestore();
 });

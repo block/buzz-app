@@ -1,11 +1,49 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { afterEach, expect, it } from "vitest";
 import { Select } from "./Select";
+import userEvent from "@testing-library/user-event";
 
 afterEach(cleanup);
+
+it("separates groups without adding a keyboard selection stop", async () => {
+  const user = userEvent.setup();
+  function Grouped() {
+    const [value, setValue] = useState("public");
+    return (
+      <Select
+        label="Access"
+        value={value}
+        onValueChange={setValue}
+        groups={[
+          { label: "", options: [{ value: "public", label: "Public" }] },
+          {
+            label: "",
+            separator: true,
+            options: [{ value: "private", label: "Private" }],
+          },
+        ]}
+      />
+    );
+  }
+  render(<Grouped />);
+  const trigger = screen.getByRole("combobox", { name: "Access" });
+  await user.click(trigger);
+  const listbox = await screen.findByRole("listbox");
+  expect(listbox.querySelector(".buzz-select-separator")).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Public" })).toHaveFocus(),
+  );
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Private" })).toHaveFocus(),
+  );
+  await user.keyboard("{Enter}");
+  expect(trigger).toHaveTextContent("Private");
+  expect(trigger).toHaveFocus();
+});
 
 function Late({ variant }: { variant: "inline" | "compact" | "field" }) {
   const [ready, setReady] = useState(false);

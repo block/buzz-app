@@ -10,6 +10,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -24,6 +25,7 @@ import { useAgentOwnerEvidence } from "../profiles/useAgentOwnerEvidence";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
+import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -83,6 +85,35 @@ const Management = createContext<
     }
   | undefined
 >(undefined);
+type MessageVisit = Readonly<{
+  session: RelaySession;
+  channelId: string | undefined;
+  token: object;
+  entryMessageIds: ReadonlySet<string>;
+  entryHistoryComplete: boolean;
+  entryReadRevision: number;
+  entryAttention: ReadonlyMap<
+    string,
+    Pick<MessageAttention, "unread" | "forced"> | null
+  >;
+  active: boolean;
+  ready: boolean;
+  failed: boolean;
+}>;
+const MessageVisitContext = createContext<MessageVisit | undefined>(undefined);
+
+/** The channel visit that owns automatic reading and its entry reconciliation. */
+export function useMessageVisit(
+  session: RelaySession,
+  channelId: string,
+): MessageVisit | null | undefined {
+  const visit = useContext(MessageVisitContext);
+  if (!visit) return undefined;
+  return visit.session === session && visit.channelId === channelId
+    ? visit
+    : null;
+}
+
 export function useMessageDeletion() {
   const management = useContext(Management);
   const editor = useMessageEditScope();
@@ -90,6 +121,66 @@ export function useMessageDeletion() {
     ? (row: ChannelMessage, done?: (focus: boolean) => void) =>
         management.remove(row, done, () => editor?.focusTarget() ?? null)
     : undefined;
+}
+
+/**
+ * Selected-message keys act as the message menu does, read when the key is
+ * pressed. Delete covers your own messages; the menu also deletes for agent
+ * owners, which needs ownership evidence a key cannot wait for.
+ */
+export function useMessageKeyActions(session: RelaySession) {
+  const management = useContext(Management);
+  const editor = useMessageEditScope();
+  return useMemo(() => {
+    if (!management) return undefined;
+    const joined = (row: ChannelMessage) => {
+      const channel = session.channels
+        .list()
+        .channels.find((item) => item.id === row.channelId);
+      return channel &&
+        !channel.cached &&
+        (!channel.readOnly || channel.viewerRole === "guest") &&
+        !row.membership &&
+        !row.diff &&
+        (!row.delivery || ["accepted", "seen"].includes(row.delivery))
+        ? channel
+        : undefined;
+    };
+    return {
+      canDelete(row: ChannelMessage) {
+        const channel = joined(row);
+        return (
+          !!channel &&
+          !channel.readOnly &&
+          !channel.archived &&
+          !!session.viewer &&
+          row.authorId === session.viewer &&
+          !!session.outbox?.supports(5)
+        );
+      },
+      remove(row: ChannelMessage) {
+        management.remove(row, undefined, () => editor?.focusTarget() ?? null);
+      },
+      canMarkUnread(row: ChannelMessage) {
+        // Coordination between agents is never unread, so it has no read state.
+        if (!joined(row) || row.audience === "agents") return false;
+        const attention = session.unread.attention(row.channelId, row.id);
+        return !attention.unread && !attention.forced;
+      },
+      markUnread(row: ChannelMessage) {
+        management.report(undefined);
+        void session.unread
+          .markMessageUnread(row.channelId, row.id)
+          .catch((cause) =>
+            management.report(
+              cause instanceof Error
+                ? cause.message
+                : "Could not update unread state. Try again.",
+            ),
+          );
+      },
+    };
+  }, [management, editor, session]);
 }
 
 /** Recovery stays outside virtualized rows; each conversation has one edit destination. */
@@ -134,36 +225,80 @@ export function MessageManagement({
       if (!operations.some((item) => item.event.id === id))
         completions.current.delete(id);
   }, [operations]);
-  const channels = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
+  const deletable = useListedChannel(
+    session.channels,
+    selection?.row.channelId,
+    (channel) =>
+      !!channel &&
+      !channel.cached &&
+      (!channel.readOnly ||
+        (channel.viewerRole === "guest" && !!selection?.authorization)),
   );
   const available =
     !selection ||
     ((!channelId || channelId === selection.row.channelId) &&
-      channels.channels.some(
-        (channel) =>
-          channel.id === selection.row.channelId && !channel.readOnly,
-      ));
+      (selection.row.delivery === "failed" || deletable));
   useEffect(() => {
     if (!available) setSelection(undefined);
   }, [available]);
-  const visitChannelId = channels.channels.find(
+  const visitChannelId = useListedChannel(
+    session.channels,
+    channelId,
     (channel) =>
       active &&
-      channel.id === channelId &&
+      channel &&
       !channel.cached &&
-      !!session.viewer &&
-      channel.members?.includes(session.viewer),
-  )?.id;
-  const [notice, setNotice] = useState<{
-    visit: {
-      session: RelaySession;
-      channelId: string | undefined;
-      visitChannelId: string | undefined;
+      session.viewer &&
+      channel.members?.includes(session.viewer)
+        ? channel.id
+        : undefined,
+  );
+  // The timeline may mount only after loading or an inline seek completes.
+  // Entry membership and provisional read evidence belong to this visit, not
+  // to that later render or the first complete read snapshot.
+  const captureVisit = () => {
+    const window = channelId ? session.channels.window(channelId) : undefined;
+    const rows = window?.rows ?? [];
+    const entryAttention = new Map<
+      string,
+      Pick<MessageAttention, "unread" | "forced"> | null
+    >();
+    if (channelId)
+      for (const row of rows) {
+        const attention = session.unread.attention(channelId, row.id);
+        entryAttention.set(
+          row.id,
+          attention.status === "unknown" || attention.pending
+            ? null
+            : { unread: attention.unread, forced: attention.forced },
+        );
+      }
+    return {
+      session,
+      channelId,
+      visitChannelId,
+      entryMessageIds: new Set(rows.map((row) => row.id)),
+      entryHistoryComplete:
+        window?.status === "ready" &&
+        window.freshness === "verified" &&
+        !window.refreshing &&
+        !window.loadingOlder &&
+        !window.hasMore &&
+        !window.historyLimited,
+      entryReadRevision: session.unread.revision(),
+      entryAttention,
     };
+  };
+  const [notice, setNotice] = useState<{
+    visit: ReturnType<typeof captureVisit>;
     error?: string | undefined;
-  }>(() => ({ visit: { session, channelId, visitChannelId } }));
+    entryReady: boolean;
+    entryFailed: boolean;
+  }>(() => ({
+    visit: captureVisit(),
+    entryReady: false,
+    entryFailed: false,
+  }));
   const { visit } = notice;
   const currentVisit =
     visit.session === session &&
@@ -171,15 +306,49 @@ export function MessageManagement({
     visit.visitChannelId === visitChannelId;
   if (!currentVisit)
     setNotice({
-      visit: { session, channelId, visitChannelId },
+      visit: captureVisit(),
       error: undefined,
+      entryReady: false,
+      entryFailed: false,
     });
   // Captured reporters cannot overwrite errors from a later visit, even to
   // the same channel. Reset during render so stale alerts never reach children.
-  const report = (error: string | undefined) =>
-    setNotice((current) =>
-      current.visit === visit ? { ...current, error } : current,
-    );
+  // Consumers include every message row; a new value would re-render them all.
+  const management = useMemo(
+    () => ({
+      session,
+      channelId,
+      operations,
+      report: (error: string | undefined) =>
+        setNotice((current) =>
+          current.visit === visit ? { ...current, error } : current,
+        ),
+      remove(
+        row: ChannelMessage,
+        done?: (focus: boolean) => void,
+        focus?: () => HTMLElement | null,
+        authorization?: AgentOwnerAuthorization,
+      ) {
+        setSelection({ row, done, focus, authorization });
+      },
+    }),
+    [session, channelId, operations, visit],
+  );
+  const messageVisit = useMemo(
+    () => ({
+      session: visit.session,
+      channelId: visit.channelId,
+      token: visit,
+      entryMessageIds: visit.entryMessageIds,
+      entryHistoryComplete: visit.entryHistoryComplete,
+      entryReadRevision: visit.entryReadRevision,
+      entryAttention: visit.entryAttention,
+      active: !!visit.visitChannelId,
+      ready: notice.visit === visit && notice.entryReady,
+      failed: notice.visit === visit && notice.entryFailed,
+    }),
+    [visit, notice.visit, notice.entryReady, notice.entryFailed],
+  );
   useEffect(() => {
     const { session, visitChannelId } = visit;
     let active = true;
@@ -187,38 +356,48 @@ export function MessageManagement({
       ? enterVisit(session, visitChannelId)
       : undefined;
     if (presence)
-      void presence.ready.catch((cause) => {
-        if (active)
-          setNotice((current) =>
-            current.visit === visit
-              ? {
-                  ...current,
-                  error:
-                    cause instanceof Error
-                      ? cause.message
-                      : "Could not restore unread state.",
-                }
-              : current,
-          );
-      });
+      void presence.ready.then(
+        () => {
+          if (active)
+            setNotice((current) =>
+              current.visit === visit
+                ? { ...current, entryReady: true }
+                : current,
+            );
+        },
+        (cause) => {
+          if (active)
+            setNotice((current) =>
+              current.visit === visit
+                ? {
+                    ...current,
+                    entryReady: true,
+                    entryFailed: true,
+                    error:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Could not restore unread state.",
+                  }
+                : current,
+            );
+        },
+      );
+    else
+      setNotice((current) =>
+        current.visit === visit
+          ? { ...current, entryReady: true, entryFailed: false }
+          : current,
+      );
     return () => {
       active = false;
       presence?.leave();
     };
   }, [visit]);
   return (
-    <Management.Provider
-      value={{
-        session,
-        channelId,
-        operations,
-        report,
-        remove(row, done, focus, authorization) {
-          setSelection({ row, done, focus, authorization });
-        },
-      }}
-    >
-      <MessageEditScope>{children}</MessageEditScope>
+    <Management.Provider value={management}>
+      <MessageVisitContext.Provider value={messageVisit}>
+        <MessageEditScope>{children}</MessageEditScope>
+      </MessageVisitContext.Provider>
       {currentVisit && notice.error && <p role="alert">{notice.error}</p>}
       {presented && selection && available && (
         <DeleteMessageDialog
@@ -244,17 +423,19 @@ export function MessageManagement({
   );
 }
 
-/** Read-state, edit and delete items share one gate: a managed, delivered row
- * in a writable channel. */
+/** Personal read/follow actions need current membership, not writing access. */
 function useManagedMessage(row: ChannelMessage, session: RelaySession) {
   const management = useContext(Management);
-  const writable = useListedChannel(
+  const joined = useListedChannel(
     session.channels,
     row.channelId,
-    (channel) => !!channel && !channel.readOnly,
+    (channel) =>
+      !!channel &&
+      !channel.cached &&
+      (!channel.readOnly || channel.viewerRole === "guest"),
   );
   return management &&
-    writable &&
+    joined &&
     !row.membership &&
     !row.diff &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
@@ -279,7 +460,8 @@ export function MessageReadStateItem({
     (listener) => session.unread.subscribe(target, listener),
     () => session.unread.snapshot(target),
   );
-  if (!management) return null;
+  // Coordination between agents is never unread, so it has no read state.
+  if (!management || row.audience === "agents") return null;
   const attention = session.unread.attention(row.channelId, row.id);
   const unread = attention.unread || attention.forced;
   return (
@@ -312,6 +494,51 @@ export function MessageManagementItems({
   row: ChannelMessage;
   session: RelaySession;
 }) {
+  return row.delivery === "failed" ? (
+    <UnsentMessageItems row={row} session={session} />
+  ) : (
+    <ManagedMessageItems row={row} session={session} />
+  );
+}
+
+/** The relay never stored a failed send, so Delete, which discards it from this
+ * device, is its only item, and channel state does not gate it. */
+function UnsentMessageItems({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
+  const management = useContext(Management);
+  const editor = useMessageEditScope();
+  const afterClose = useAfterMessageMenuClose();
+  if (
+    !management ||
+    row.authorId !== session.viewer ||
+    row.membership ||
+    row.diff
+  )
+    return null;
+  const remove = () =>
+    management.remove(row, undefined, () => editor?.focusTarget() ?? null);
+  return (
+    <MenuItem onClick={() => (afterClose ? afterClose(remove) : remove())}>
+      <MenuIcon>
+        <TrashIcon size={14} />
+      </MenuIcon>
+      Delete message
+    </MenuItem>
+  );
+}
+
+function ManagedMessageItems({
+  row,
+  session,
+}: {
+  row: ChannelMessage;
+  session: RelaySession;
+}) {
   const management = useManagedMessage(row, session);
   const editor = useMessageEditScope();
   const afterClose = useAfterMessageMenuClose();
@@ -324,6 +551,11 @@ export function MessageManagementItems({
     session.channels,
     row.channelId,
     (channel) => channel?.channelType === "dm",
+  );
+  const writable = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => !!channel && !channel.readOnly && !channel.cached,
   );
   const threadRootId = row.threadRootId ?? row.id;
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
@@ -343,7 +575,8 @@ export function MessageManagementItems({
       item.event.tags.some(([name, id]) => name === "e" && id === row.id),
   );
   const own = row.authorId === session.viewer && !archived;
-  const canEdit = own && editor?.current && lastEditableMessage(session, [row]);
+  const canEdit =
+    writable && own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
     row.authorId !== session.viewer &&
     session.viewer &&
@@ -351,7 +584,8 @@ export function MessageManagementItems({
     ownership.owner === session.viewer
       ? { agentId: row.authorId, ownerId: session.viewer }
       : undefined;
-  const canDelete = (own || !!authorization) && session.outbox?.supports(5);
+  const canDelete =
+    ((writable && own) || !!authorization) && session.outbox?.supports(5);
   const act = (action: () => void) =>
     afterClose ? afterClose(action) : action();
   return (
@@ -452,8 +686,11 @@ function DeleteMessageDialog({
   );
   const cancelAction = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string>();
+  // The relay never stored a failed send; deleting it discards the outbox intent.
+  const unsent = row.delivery === "failed";
+  const [discarding, setDiscarding] = useState(false);
   const operation = operations.find((item) => item.event.id === operationId);
-  const pending = operation?.delivery === "sending";
+  const pending = operation?.delivery === "sending" || discarding;
   const retryable =
     operation?.delivery === "failed" || operation?.delivery === "unknown";
   useEffect(() => {
@@ -466,24 +703,42 @@ function DeleteMessageDialog({
       close();
     }
   }, [operationId, operation, close]);
-  const run = (event: MouseEvent<HTMLButtonElement>) => {
+  const run = async (event: MouseEvent<HTMLButtonElement>) => {
     const dialog = event.currentTarget.closest('[role="alertdialog"]');
     setError(undefined);
     try {
       if (
+        !unsent &&
         !session.channels
           .list()
           .channels.some(
             (channel) =>
               channel.id === row.channelId &&
               !channel.archived &&
-              !channel.readOnly,
+              !channel.cached &&
+              (!channel.readOnly ||
+                (channel.viewerRole === "guest" && !!authorization)),
           )
       )
         throw new Error(
           "This conversation is no longer available for changes.",
         );
-      if (operationId) {
+      if (unsent) {
+        // dismiss() leaves a send that is retrying alone, without an error.
+        if (
+          !session.outbox
+            ?.snapshot()
+            .some(
+              (item) => item.event.id === row.id && item.delivery === "failed",
+            )
+        )
+          throw new Error(
+            "This message’s delivery changed. Cancel to see its current status.",
+          );
+        setDiscarding(true);
+        await session.outbox.dismiss(row.id);
+        close();
+      } else if (operationId) {
         session.outbox?.retry(operationId);
         dispatched(operationId, dialog);
       } else {
@@ -492,6 +747,7 @@ function DeleteMessageDialog({
         dispatched(id, dialog);
       }
     } catch (cause) {
+      setDiscarding(false);
       setError(
         cause instanceof Error
           ? cause.message
@@ -503,9 +759,15 @@ function DeleteMessageDialog({
     <AlertDialog
       title="Delete message?"
       initialFocus={cancelAction}
-      description="This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
+      description={
+        unsent
+          ? "This message wasn’t sent. Deleting it removes it from this device. This cannot be undone."
+          : "This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
+      }
       pending={pending}
-      finalFocus={() => (operationId ? (selection.focus?.() ?? true) : true)}
+      finalFocus={() =>
+        operationId || discarding ? (selection.focus?.() ?? true) : true
+      }
       onClose={close}
       actions={
         <>
@@ -535,9 +797,6 @@ export function MessageManagementStatus() {
   const [error, setError] = useState<string>();
   if (!management) return null;
   const { session, channelId, operations } = management;
-  const channel = session.channels
-    .list()
-    .channels.find((item) => item.id === channelId);
   const pending = operations.filter(
     (item) =>
       (item.event.kind === 40003 ||
@@ -568,12 +827,7 @@ export function MessageManagementStatus() {
               same operation; dismissing does not undo it.
             </p>
           )}
-          <Button
-            disabled={!channel || channel.archived || channel.readOnly}
-            onClick={() => session.outbox?.retry(item.event.id)}
-          >
-            Retry message update
-          </Button>
+          <RetryMessageUpdate session={session} event={item.event} />
           <Button
             onClick={async () => {
               try {
@@ -596,5 +850,33 @@ export function MessageManagementStatus() {
       ))}
       {error && <p role="alert">{error}</p>}
     </>
+  );
+}
+
+function RetryMessageUpdate({
+  session,
+  event,
+}: {
+  session: RelaySession;
+  event: OutgoingEvent["event"];
+}) {
+  const eligible = useSyncExternalStore(
+    (listener) => {
+      const offChannels = session.channels.subscribeList(listener);
+      const offProfiles = session.profiles.subscribe(listener);
+      return () => {
+        offChannels();
+        offProfiles();
+      };
+    },
+    () => session.messages.canRetry(event),
+  );
+  return (
+    <Button
+      disabled={!eligible}
+      onClick={() => session.outbox?.retry(event.id)}
+    >
+      Retry message update
+    </Button>
   );
 }

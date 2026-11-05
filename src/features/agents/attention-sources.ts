@@ -1,14 +1,31 @@
 // Lifecycle for plugin producers. The host owns registration, cancellation and delivery;
 // plugins own execution. A resolved run is terminal until its watch is edited.
+import type { ComponentType } from "react";
+import type { DefinedIcon } from "../../shared/design-system/icons";
 import type { HostProcess, HostProcessOptions } from "../host/service";
 import type { Agent } from "./service";
 import type { AttentionObject, SourceWatch } from "./attention";
 
+/** How Agent Attention shows a provider's watch, in place of its name. */
+export type SourcePresentation = Readonly<{
+  /** The kind of watch, such as "GitHub PR". */
+  type: string;
+  icon?: DefinedIcon;
+  /** What it watches, shown beside its kind, with `subtitle` after it. */
+  target?: string;
+  subtitle?: string;
+  /** Opens what it watches. */
+  link?: Readonly<{ href: string; title: string }>;
+  /** Replaces the name in its details. */
+  details?: ComponentType;
+}>;
 export type AttentionSource = Readonly<{
   id: string;
   /** Discovery metadata for tools that configure this provider. */
   description?: string;
   configExample?: Readonly<Record<string, unknown>>;
+  /** `title` is the watch's display name. */
+  present?(watch: SourceWatch, title: string): SourcePresentation;
   run(
     input: Readonly<{
       /** Stable Attention object slug, unique within the agent. */
@@ -18,6 +35,9 @@ export type AttentionSource = Readonly<{
       watch: SourceWatch;
       signal: AbortSignal;
       /** Runs a declared process as this watch's agent and destination.
+       * On macOS and Linux, only one instance of each declared process may run
+       * per agent, provider and watch, including across Buzz builds. A concurrent
+       * instance waits for its predecessor to stop. Await `process.exited` before respawning.
        * Buzz revokes access when this run returns, throws or is cancelled. */
       spawn(
         process: string,

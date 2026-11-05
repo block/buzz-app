@@ -43,6 +43,7 @@ function sessions(
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
+    started: (sessionId: string, systemPrompt: string) => void;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
@@ -80,6 +81,7 @@ function sessions(
     },
     fingerprint: () => model,
     newId: () => `new-${++ids}`,
+    ...(options.started ? { started: options.started } : {}),
   });
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
@@ -176,6 +178,22 @@ it("hands the spare's tools to the agent that takes it", async () => {
   expect(answered(process, "later")).toMatchObject({
     response: { mcp_response: { from: "agent" } },
   });
+});
+
+it("hands over no spare that has run a turn without its prompt", async () => {
+  const { pool, spare, claudes } = withSpare();
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  const [used] = claudes();
+  // Another Claude session messaged the spare, so its prompt is fixed.
+  used?.emit({ type: "system", subtype: "init", session_id: "spare-1" });
+  await pool.deliver("c/root", "hi", 1);
+  await flush();
+  expect(used?.killed).toBe(true);
+  expect(used?.prompts).toEqual([]);
+  expect(claudes().find((process) => process.prompts.length)?.prompts).toEqual([
+    "hi",
+  ]);
 });
 
 it("hands over no spare that lists other tools than there are now", async () => {
@@ -359,7 +377,8 @@ it("opens one process for messages that arrive together in a new conversation", 
 it("resumes a saved conversation after its process stops", async () => {
   vi.useFakeTimers();
   const store = memoryStore();
-  const { pool, claudes } = sessions({ store });
+  const started = vi.fn();
+  const { pool, claudes } = sessions({ store, started });
   await pool.deliver("c/root", "first", 1);
   const first = claudes()[0];
   vi.advanceTimersByTime(IDLE_MS + 1);
@@ -371,6 +390,8 @@ it("resumes a saved conversation after its process stops", async () => {
   expect(resumed?.options.args).toContain("new-1");
   expect(resumed?.prompts).toEqual(["later"]);
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
+  // Only the new session tells what it started with; the resume does not.
+  expect(started.mock.calls).toEqual([["new-1", "prompt"]]);
 });
 
 it("bounds a channel session's thread history while retaining recently used threads", async () => {
@@ -593,6 +614,90 @@ it("asks a one-off turn for its prompt only once its process is ready", async ()
   expect(claudes().some((process) => process.prompts.includes("wake"))).toBe(
     false,
   );
+});
+
+it("stops and waits for processes still starting when it shuts down", async () => {
+  let release!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ initialized });
+  const starting = [
+    pool.metadata(),
+    pool.deliver("c/root", "hi", 1),
+    pool.runOnce("timer/a", () => "work"),
+  ];
+  try {
+    await vi.waitFor(() => expect(claudes()).toHaveLength(3));
+    // The host only signals them; they exit later, as after a grace period.
+    for (const claude of claudes()) claude.exitOnKill = false;
+    let stopped = false;
+    const shutdown = pool.shutdown().then(() => {
+      stopped = true;
+    });
+    await flush();
+    expect(claudes().map((claude) => claude.killed)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(stopped).toBe(false);
+    for (const claude of claudes()) claude.exit(null);
+    await shutdown;
+  } finally {
+    release();
+    await Promise.allSettled(starting);
+  }
+});
+
+it("stops and waits for a spare it took when it shuts down", async () => {
+  let release!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, spare, claudes } = withSpare({ initialized });
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  const [taken] = claudes();
+  if (!taken) throw new Error("no spare");
+  const delivering = pool.deliver("c/root", "hello", 10);
+  try {
+    // Taking it starts the next spare; the rest of the handover queues no
+    // timer, so it is initializing as the agent's after one turn of the loop.
+    await vi.waitFor(() => expect(claudes()).toHaveLength(2));
+    await flush();
+    taken.exitOnKill = false;
+    let stopped = false;
+    const shutdown = pool.shutdown().then(() => {
+      stopped = true;
+    });
+    await flush();
+    expect(taken.killed).toBe(true);
+    expect(stopped).toBe(false);
+    taken.exit(null);
+    await shutdown;
+  } finally {
+    release();
+    spare.dispose();
+    await delivering;
+  }
+});
+
+it("starts no process for a conversation still launching when it shuts down", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  const delivering = pool.deliver("c/root", "hi", 1);
+  try {
+    await flush();
+    await pool.shutdown();
+  } finally {
+    release();
+  }
+  await expect(delivering).resolves.toMatchObject({ ok: false });
+  expect(claudes()).toEqual([]);
 });
 
 it("keeps a one-off turn's entry until its process has exited", async () => {

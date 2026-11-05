@@ -1,3 +1,5 @@
+import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
+
 /** Section and section-choice registers. No persistence or publication owner. */
 export type SidebarRegister = [number, string, unknown];
 type Tree = { [key: string]: Tree | SidebarRegister };
@@ -285,27 +287,145 @@ export function editSidebarRecord(
   return { ...current, ...projected, meta };
 }
 
-/** Appending uses canonical orders, not the densely numbered legacy projection. */
+function pluginSortRegisters(value: unknown): Tree {
+  if (value === undefined) return {};
+  const data = object(value);
+  if (
+    data.v !== 1 ||
+    Object.keys(data).some((key) => !["v", "g"].includes(key))
+  )
+    throw new Error("Unsupported plugin sidebar sort");
+  const groups = map(data.g, 264, (value) =>
+    register(
+      value,
+      (mode) =>
+        typeof mode === "string" &&
+        mode.startsWith("plugin:") &&
+        isSidebarSortMode(mode),
+    ),
+  );
+  if (Object.keys(groups).length > 104)
+    throw new Error("Plugin sidebar sort budget exceeded");
+  return groups;
+}
+
+/** Plugin choices stay outside the strict metadata understood by older hosts. */
+export function projectSidebarSort(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const projected = projectSidebarRecord("channel-sort", value);
+  const groups = { ...object(projected.groups) };
+  if (Object.keys(groups).length > 104)
+    throw new Error("Sidebar sort budget exceeded");
+  const base =
+    value.meta === undefined
+      ? {}
+      : (metadata("channel-sort", value.meta, true).g as Tree);
+  for (const [key, choice] of Object.entries(
+    pluginSortRegisters(value.pluginSort),
+  )) {
+    const bound = own(base, key);
+    if (
+      Array.isArray(choice) &&
+      Array.isArray(bound) &&
+      (bound[2] === "alpha" || bound[2] === null) &&
+      choice[0] === bound[0] &&
+      choice[1] === bound[1]
+    )
+      Object.defineProperty(groups, key, {
+        value: choice[2],
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+  }
+  return groups;
+}
+
+export function editSidebarSortRecord(
+  current: Record<string, unknown>,
+  createdAt: number,
+  group: string,
+  mode: SidebarSortMode,
+  now: number,
+): Record<string, unknown> {
+  const choices = pluginSortRegisters(current.pluginSort);
+  const previousCount = Object.keys(choices).length;
+  const plugin = mode.startsWith("plugin:");
+  const source =
+    plugin && current.meta === undefined
+      ? {
+          ...current,
+          meta: { v: 1, ...importLegacy("channel-sort", current, createdAt) },
+        }
+      : current;
+  // Older A–Z writers tombstone with null and skip equal values. A distinct
+  // alpha anchor lets their explicit choice supersede the plugin binding.
+  const next = editSidebarRecord(
+    "channel-sort",
+    source,
+    createdAt,
+    [[["g", group], plugin ? "alpha" : mode === "recent" ? "recent" : null]],
+    now,
+  );
+  const base =
+    next.meta === undefined
+      ? {}
+      : (metadata("channel-sort", next.meta, true).g as Tree);
+  // Section presence is a separate record; a caller snapshot cannot prove deletion.
+  for (const [key, choice] of Object.entries(choices)) {
+    const bound = own(base, key);
+    if (
+      !Array.isArray(choice) ||
+      !Array.isArray(bound) ||
+      (bound[2] !== "alpha" && bound[2] !== null) ||
+      choice[0] !== bound[0] ||
+      choice[1] !== bound[1]
+    )
+      delete choices[key];
+  }
+  const pruned = Object.keys(choices).length !== previousCount;
+  if (plugin) {
+    const bound = own(base, group) as SidebarRegister;
+    const previous = own(choices, group);
+    if (
+      next === current &&
+      !pruned &&
+      Array.isArray(previous) &&
+      previous[0] === bound[0] &&
+      previous[1] === bound[1] &&
+      previous[2] === mode
+    )
+      return current;
+    Object.defineProperty(choices, group, {
+      value: [bound[0], bound[1], mode],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  } else {
+    if (!Object.hasOwn(choices, group) && !pruned) return next;
+    delete choices[group];
+  }
+  const pluginSort = { v: 1, g: choices };
+  pluginSortRegisters(pluginSort);
+  return { ...next, pluginSort };
+}
+
+/** Insertion uses canonical orders, not the densely numbered legacy projection. */
 export function nextSidebarSectionOrder(
   current: Record<string, unknown>,
+  position: "first" | "last" = "last",
 ): number {
-  if (current.meta === undefined)
-    return (
-      Math.max(
-        -1,
-        ...(current.sections as { order: number }[]).map(({ order }) =>
+  const orders =
+    current.meta === undefined
+      ? (current.sections as { order: number }[]).map(({ order }) =>
           Math.round(order),
-        ),
-      ) + 1
-    );
-  const tree = metadata("channel-sections", current.meta);
-  return (
-    Object.values(tree.s as Tree).reduce<number>(
-      (max, node) =>
-        val(node as Tree, "live") === true
-          ? Math.max(max, Number(val(node as Tree, "order") ?? 0))
-          : max,
-      -1,
-    ) + 1
-  );
+        )
+      : Object.values(metadata("channel-sections", current.meta).s as Tree)
+          .filter((node) => val(node as Tree, "live") === true)
+          .map((node) => Number(val(node as Tree, "order") ?? 0));
+  return position === "first"
+    ? Math.min(0, ...orders) - 1
+    : Math.max(-1, ...orders) + 1;
 }

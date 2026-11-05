@@ -27,7 +27,10 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   page,
   app,
 }) => {
-  app.relay.holdProfiles([app.viewer]);
+  const history = app.histories.get("primary/alpha");
+  const target = history.find((row) => row.content === "Broadcast reply");
+  // The linked author stays unnamed until the link is focused, too.
+  app.relay.holdProfiles([app.viewer, target.pubkey]);
   await open(page, app);
   const libraryReads = () =>
     app.report.brokerRequests.filter(({ url }) =>
@@ -35,8 +38,6 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     ).length;
   // Owner inventory survives the startup roster; previews add no further read.
   await expect.poll(libraryReads).toBe(1);
-  const history = app.histories.get("primary/alpha");
-  const target = history.find((row) => row.content === "Broadcast reply");
   const href = `buzz://message?channel=alpha&id=${target.id}`;
   const message = app.append(
     "primary",
@@ -46,19 +47,22 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
   );
-  await expect(
-    row.getByRole("link", { name: "Alpha", exact: true }),
-  ).toBeVisible();
+  // A message link names its channel until its author has a name.
+  const unnamed = row.getByRole("link", { name: "Alpha", exact: true });
+  await expect(unnamed).toBeVisible();
   await expect(
     row.getByRole("link", { name: "#Beta", exact: true }),
   ).toBeVisible();
   await expect(row).not.toContainText("<buzz:");
-  const link = row.getByRole("link", { name: "Alpha", exact: true });
-  await expect(link).toHaveCSS("text-decoration-line", "underline");
+  const link = row.getByRole("link", {
+    name: "Alice Fixture in #Alpha",
+    exact: true,
+  });
+  await expect(unnamed).toHaveCSS("text-decoration-line", "underline");
   // Received-bubble links use the message-specific accent role.
-  await expect(link).toHaveCSS(
+  await expect(unnamed).toHaveCSS(
     "color",
-    await link.evaluate((node) => {
+    await unnamed.evaluate((node) => {
       const probe = document.createElement("span");
       probe.style.color = "var(--text-message-link)";
       node.parentElement?.append(probe);
@@ -67,7 +71,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
       return color;
     }),
   );
-  // Release the held profile while the link is focused, before the navigation
+  // Release the held profiles while the link is focused, before the navigation
   // below: profile reads give up after 10s, and a loaded engine can spend that
   // long on navigation, leaving nothing pending to release.
   const preview = page.getByLabel("Message preview", { exact: true });
@@ -79,12 +83,12 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await page.keyboard.press("Shift+Tab");
   // WebKit follows macOS's tab-to-links preference; retain keyboard modality
   // while focusing the specific trigger under test.
-  await link.focus();
-  await expect(link).toBeFocused();
+  await unnamed.focus();
+  await expect(unnamed).toBeFocused();
   expect(
-    await link.evaluate((element) => element.matches(":focus-visible")),
+    await unnamed.evaluate((element) => element.matches(":focus-visible")),
   ).toBe(true);
-  const focusedTrigger = await link.elementHandle();
+  const focusedTrigger = await unnamed.elementHandle();
   app.relay.releaseProfiles();
   await expect(
     row.getByRole("button", {
@@ -92,10 +96,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
       exact: true,
     }),
   ).toBeVisible();
+  // Naming the author relabels the focused anchor in place.
+  await expect(link).toBeFocused();
   expect(await focusedTrigger.evaluate((element) => element.isConnected)).toBe(
     true,
   );
-  await expect(link).toBeFocused();
   await expect(preview).toBeVisible();
   expect(libraryReads()).toBe(1);
   await link.press("Tab");
@@ -149,10 +154,11 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     .click();
   await expect(panel).toHaveCount(0);
   await button(page, "Go back").click();
-  await expect(
-    panel.locator(`[data-message-id="${target.id}"]`),
-  ).toBeInViewport();
-  await button(page, "Go back").click();
+  // X retires this thread's visits; Back skips them. Passive restoration was
+  // exercised above, before explicit dismissal.
+  await expect(panel).toHaveCount(0);
+  await expect(button(page, "Go forward")).toBeEnabled();
+  await button(page, "Go forward").click();
   await expect(panel).toHaveCount(0);
   expect(libraryReads()).toBe(1);
   await row.getByRole("link", { name: "#Beta", exact: true }).click();
@@ -175,7 +181,10 @@ test("activating a panel from a linked thread retires the navigation-owned threa
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
   );
-  const link = row.getByRole("link", { name: "Alpha", exact: true });
+  const link = row.getByRole("link", {
+    name: "Alice Fixture in #Alpha",
+    exact: true,
+  });
   await expect(link).toBeVisible();
   // Virtua holds the list's pointer events off for 150ms after every scroll
   // event, and a late scroll can land after the timeline looks settled. A click
@@ -220,15 +229,21 @@ test("a message link's context menu opens its thread as a tab without leaving th
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
   );
-  const link = row.getByRole("link", { name: "Beta", exact: true });
+  const link = row.getByRole("link", {
+    name: "Alice Fixture in #Beta",
+    exact: true,
+  });
   await expect(link).toBeVisible();
   await virtuaIdle(page);
   const before = (await state(page)).entry;
-  // Target the link itself instead of a cached coordinate: under load WebKit can
-  // spend the first pointer move opening the preview and toolbar, shifting the
-  // actionable point before the contextmenu event. The test is about the link's
-  // composed context-menu owner, not stale coordinate hit-testing.
-  await link.click({ button: "right" });
+  // A right-click that meets Virtua's 150ms pointer-event hold is intercepted by
+  // the scroller; Playwright's retry scrolls the list, restarting the hold, and
+  // the contextmenu event can then reach the scroller instead of the link. This
+  // test is about the link's composed context-menu owner, not hit testing: open
+  // it by keyboard, which no scroll can intercept.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await link.press("Shift+F10");
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Open link",
@@ -281,7 +296,7 @@ test("a hovered message preview survives scroll anchoring and closes when its li
   );
   const link = page
     .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
-    .getByRole("link", { name: "Alpha", exact: true });
+    .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true });
   await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
@@ -348,7 +363,7 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   );
   const link = page
     .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
-    .getByRole("link", { name: "Alpha", exact: true });
+    .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true });
   await expect(link).toBeInViewport();
   await virtuaIdle(page);
   const preview = page.getByLabel("Message preview", { exact: true });
@@ -447,7 +462,8 @@ test("a hovered message preview survives the timeline's scroll-time pointer-even
   await expect(preview).toHaveAttribute("data-open", "");
   // The link cannot hear a real leave while the list ignores the pointer.
   await hitTest("none");
-  await page.mouse.move(point.x, box.y - 120, { steps: 4 });
+  // Leave sideways: the preview sits above the message.
+  await page.mouse.move(box.x - 200, point.y, { steps: 4 });
   await expect(preview).toHaveCount(0);
 });
 
@@ -639,14 +655,16 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   app,
 }) => {
   await open(page, app);
-  const target = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content === "Thread root 0");
+  const history = app.histories.get("primary/alpha");
+  const target = history.find((row) => row.content === "Thread root 0");
+  const plain = history.find((row) =>
+    row.content.startsWith("primary alpha message 637\n"),
+  );
   const href = `buzz://message?channel=alpha&id=${target.id}&thread=${"f".repeat(64)}`;
   const message = app.append(
     "primary",
     "alpha",
-    `<${href}> <buzz://message?channel=alpha&id=${"0".repeat(64)}>`,
+    `<${href}> <buzz://message?channel=alpha&id=${plain.id}> <buzz://message?channel=alpha&id=${"0".repeat(64)}>`,
   );
   const row = page.locator(
     `[data-channel-timeline] [data-message-id="${message.id}"]`,
@@ -658,33 +676,68 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   await selectSettingsSection(page, "Manage plugins");
   await setPluginEnabled(page, "Links", false);
   await closeSettings(page);
-  await row.locator("a").first().click();
-  const targetRow = page.locator(`[data-message-id="${target.id}"]`);
-  await expect(targetRow).toBeFocused();
-  await expect(targetRow).toBeInViewport();
+  // Activate by keyboard: revealing one target can reposition the timeline
+  // under the next click.
+  const activate = async (index) => {
+    const link = row.locator("a").nth(index);
+    await link.focus();
+    await expect(link).toBeFocused();
+    await link.press("Enter");
+  };
+  await activate(0);
+  // A root with replies opens its own thread. The deliberately wrong hint must
+  // not select a different root.
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(
+    thread.locator(`[data-message-id="${target.id}"]`),
+  ).toBeInViewport();
+  await expect(
+    thread.getByText("Thread root 0", { exact: true }),
+  ).toBeVisible();
   await expect.poll(async () => (await state(page)).status).toBe("opened");
-  // The deliberately wrong hint must not select a different root or force a
-  // visible root out of the ordinary timeline.
-  // Revealing the prior target can still reposition the timeline. Activate the
-  // unavailable link by keyboard so this routing check does not click a moving row.
-  const unavailable = row.locator("a").nth(1);
-  await unavailable.focus();
-  await expect(unavailable).toBeFocused();
-  await unavailable.press("Enter");
+  // A root without replies stays in the ordinary timeline.
+  await activate(1);
+  const plainRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${plain.id}"]`,
+  );
+  await expect(plainRow).toBeFocused();
+  await expect(plainRow).toBeInViewport();
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  await activate(2);
   await expect
     .poll(async () => (await state(page)).entry.target.messageId)
     .toBe("0".repeat(64));
-  await expect(button(page, "Retry navigation")).toBeVisible();
+  await expect(button(page, "Try again")).toBeVisible();
   expect((await state(page)).status).toBe("failed");
 });
 
 test.describe("links to channels the reader hasn't joined", () => {
   test.use({ openSearch: true });
-  test("name an open channel with a hover card and lock a withheld one", async ({
+  test("name an open channel with a hover card, preview its messages and lock a withheld one", async ({
     page,
     app,
   }) => {
     await open(page, app);
+    // Before any channel link looks it up, a message card does, as a click
+    // does, and only then reads the message.
+    const [openRoot] = app.histories.get(`primary/${app.openChannelId}`);
+    const href = `buzz://message?channel=${app.openChannelId}&id=${openRoot.id}`;
+    const linking = app.append("primary", "alpha", `Read <${href}>.`);
+    const messageLink = page.locator(
+      `[data-channel-timeline] [data-message-id="${linking.id}"] a[href="${href}"]`,
+    );
+    await expect(messageLink).toBeVisible();
+    await virtuaIdle(page);
+    await messageLink.hover();
+    const preview = page.getByLabel("Message preview", { exact: true });
+    await expect(
+      preview.getByText("Public conversation root", { exact: true }),
+    ).toBeVisible();
+    await expect(preview.getByText("open", { exact: true })).toBeVisible();
+    await expect(preview).toHaveAttribute("href", href);
     const secret = "5ec2e700-0000-4000-8000-000000000001";
     const message = app.append(
       "primary",
@@ -700,7 +753,12 @@ test.describe("links to channels the reader hasn't joined", () => {
       name: "Private channel",
       exact: true,
     });
-    await expect(locked).toHaveAttribute("title", /aren’t a member/);
+    // Links don't record their community: one from another community is
+    // withheld here too, so the explanation covers it.
+    await expect(locked).toHaveAttribute(
+      "title",
+      "Private channel. You aren’t a member, it no longer exists, or the link is from another community.",
+    );
     // The authored label is message text; it stays beside the lock.
     const authored = row.getByRole("link", {
       name: "#launch-plans",
@@ -711,5 +769,36 @@ test.describe("links to channels the reader hasn't joined", () => {
     await named.hover();
     const card = page.getByLabel("Channel preview", { exact: true });
     await expect(card).toContainText("Public channel · Not joined");
+  });
+
+  test("link previews open above the message's hover actions", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    // A link below the first line puts its preview's default place over the
+    // actions above the message.
+    const message = app.append(
+      "primary",
+      "alpha",
+      `Release notes:\nsee <buzz://channel/${app.openChannelId}>`,
+    );
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${message.id}"]`,
+    );
+    const channel = row.getByRole("link", { name: "#open", exact: true });
+    await expect(channel).toBeVisible();
+    await virtuaIdle(page);
+    await channel.hover();
+    const card = page.getByRole("link", {
+      name: "Channel preview",
+      exact: true,
+    });
+    await expect(card).toContainText("Public channel · Not joined");
+    const actions = row.getByRole("group", { name: "Message actions" });
+    await expect(actions).toBeVisible();
+    // A trial click fails while the preview covers the action.
+    for (const control of await actions.getByRole("button").all())
+      await control.click({ trial: true });
   });
 });

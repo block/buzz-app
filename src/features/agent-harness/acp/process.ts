@@ -3,6 +3,7 @@
 // HTTP MCP server for its agent's Buzz tools, which the app serves and
 // answers: the harness is given its address and token in `session/new`, never
 // a Buzz key. What a harness adds to plain ACP comes from its `AcpHooks`.
+import { isFinalMessage, MESSAGE_TOOLS } from "../../../buzz-mcp/session-tools";
 import type { HostMcpServer, HostProcess } from "../../host/service";
 import { AcpSession, type ConfigOptions } from "./session";
 import { allow, errorMessage } from "./steps";
@@ -17,7 +18,7 @@ import type {
 
 /** The Buzz tools that answer where people see it. A read, or a send that
  * failed, still leaves the harness's text to post. */
-const ANSWERS = new Set(["send", "edit", "react"]);
+const ANSWERS = new Set<string>([...MESSAGE_TOOLS, "edit", "react"]);
 const STOPPED =
   "Buzz stopped this session's tools: another program used their token";
 
@@ -31,7 +32,7 @@ export const REQUEST_TIMEOUT_MS = 60_000;
 export const TOOL_SERVER = "buzz";
 
 /** How long a harness that failed to start has to exit once stopped. */
-const STOP_TIMEOUT_MS = 5_000;
+export const STOP_TIMEOUT_MS = 5_000;
 
 const STDERR_LIMIT = 4_000;
 
@@ -63,6 +64,8 @@ type Pending = {
 export class AcpProcess {
   readonly exited: Promise<number | null>;
   private readonly sessions = new Map<string, AcpSession>();
+  /** Sessions whose close is in flight or failed, by id. */
+  private readonly closing = new Map<string, Promise<Error | undefined>>();
   private readonly calls = new Map<number, Pending>();
   private requests = 0;
   private buffer = "";
@@ -108,6 +111,9 @@ export class AcpProcess {
       env?: Readonly<Record<string, string | null>>;
       serve?: ServeMcp;
       signal?: AbortSignal;
+      /** Given the harness as soon as it has started, before `initialize`, so
+       * a caller can keep one whose start fails until it has exited. */
+      onProcess?: (acp: AcpProcess) => void;
     }>,
   ) {
     const { signal } = launch;
@@ -142,6 +148,7 @@ export class AcpProcess {
         .finally(() => signal?.removeEventListener("abort", cancel));
     });
     acp = new AcpProcess(process, hooks, launch.serve);
+    launch.onProcess?.(acp);
     for (const data of earlyErrors) acp.readError(data);
     for (const data of early) acp.read(data);
     // A cancel rejects the pending `initialize` at once, clearing its
@@ -177,6 +184,8 @@ export class AcpProcess {
         void acp.stop(STOP_TIMEOUT_MS);
         throw signal.reason;
       }
+      // Rejects once it has exited or the time limit has passed; a caller
+      // that must keep one still running takes it through `onProcess`.
       await acp.stop(STOP_TIMEOUT_MS);
       // A program `env` cannot find or run exits before it answers.
       if (hooks.diagnoseStartup && MISSING_CODES.has(acp.code ?? 0))
@@ -221,6 +230,9 @@ export class AcpProcess {
       named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
+      /** Given the session as soon as the harness has opened it, before it
+       * is set up, so a caller can close one whose open then fails. */
+      onSession?: (session: AcpSession) => void;
     }>,
   ): Promise<AcpSession> {
     const { hooks } = this;
@@ -295,6 +307,7 @@ export class AcpProcess {
     session.offer(opened);
     session.named = named;
     this.sessions.set(sessionId, session);
+    launch.onSession?.(session);
     if (stopped) {
       void this.close(session);
       throw new Error(STOPPED);
@@ -316,22 +329,41 @@ export class AcpProcess {
   }
 
   /** Ends a session. Its turn, if any, is cancelled first. The harness is
-   * asked to close it only when it says it can. */
-  async close(session: AcpSession) {
-    if (!this.sessions.delete(session.id)) return;
+   * asked to close it only when it says it can. A close already started is
+   * shared, and one that failed stays failed while the harness runs: `strict`
+   * rejects with it, as with a harness that cannot acknowledge one. Once the
+   * harness has exited the session counts as closed. */
+  async close(session: AcpSession, strict = false) {
+    let ending = this.closing.get(session.id);
+    if (!ending) {
+      if (!this.sessions.delete(session.id)) return;
+      ending = this.end(session);
+      this.closing.set(session.id, ending);
+      const settled = (failure?: unknown) => {
+        if (!failure) this.closing.delete(session.id);
+      };
+      void ending.then(settled, settled);
+    }
+    const failure = await ending;
+    if (failure && strict && this.alive) throw failure;
+  }
+  private async end(session: AcpSession) {
     session.fail("The session was closed");
     void session.server?.close();
     if (!this.alive) return;
     this.notify("session/cancel", { sessionId: session.id });
     if (this.hooks.closeSession !== "always" && !this.advertises("close"))
-      return;
-    await this.request(
-      "session/close",
-      { sessionId: session.id },
-      REQUEST_TIMEOUT_MS,
-    ).catch((error) =>
-      console.warn(`${this.hooks.label} did not close a session`, error),
-    );
+      return new Error("The harness cannot acknowledge session retirement");
+    try {
+      await this.request(
+        "session/close",
+        { sessionId: session.id },
+        REQUEST_TIMEOUT_MS,
+      );
+    } catch (error) {
+      console.warn(`${this.hooks.label} did not close a session`, error);
+      return error instanceof Error ? error : new Error(String(error));
+    }
   }
 
   kill() {
@@ -459,7 +491,7 @@ export class AcpProcess {
     return this.write(reply).catch(() => undefined);
   }
   /** One MCP message for a session's Buzz tools, answered with its JSON-RPC
-   * response; a notification gets none. A final `send` that succeeded ends
+   * response; a notification gets none. A final message that succeeded ends
    * its turn. The host answers a throw with an internal error. */
   private async mcp(
     tools: ToolServer,
@@ -482,7 +514,7 @@ export class AcpProcess {
       !response.error &&
       !(response.result as { isError?: unknown } | undefined)?.isError;
     if (worked && ANSWERS.has(String(call.name))) session?.answered();
-    if (worked && call.name === "send" && call.arguments?.final === true)
+    if (worked && isFinalMessage(call.name, call.arguments))
       session?.finished();
     return response;
   }

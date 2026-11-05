@@ -1,3 +1,5 @@
+import { nativeHookOutput } from "../hook-output";
+import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
 // this computer. Each conversation the agent is in is one continuing session;
@@ -18,7 +20,7 @@ export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
-export const inject = ["agents", "host"];
+export const inject = ["agents", "host", "agentProtection"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
@@ -28,6 +30,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = host.spawn && withScript(host.spawn.bind(host));
   const readFile = host.readFile?.bind(host);
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
+  ctx.agentProtection.registerModels({
+    label: "Claude",
+    models: async () =>
+      (await setup.catalog()).map((model) => ({
+        id: model.value,
+        label: model.displayName ?? model.value,
+      })),
+    complete: (model, prompt, signal) => setup.review(model, prompt, signal),
+  });
   const providerDefaults = new ClaudeDefaults(agents.storage);
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
@@ -37,6 +48,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
     repositoriesContext,
+    async (agent, session, event, input) => {
+      return ((await agents.dispatchHook(
+        typeKey,
+        event,
+        input,
+        { agent, session },
+        {
+          accepts: (output) =>
+            !!output &&
+            typeof output === "object" &&
+            Object.keys(output).length > 0,
+          milliseconds: 25000,
+          compose: nativeHookOutput,
+        },
+      )) ?? {}) as Record<string, unknown>;
+    },
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -75,6 +102,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const {
     Create,
     CreateModel,
+    CreateThinking,
     DefaultControl,
     ProviderDialogBody,
     SettingsTab,
@@ -86,6 +114,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   agents.register<Config>({
     id: TYPE_ID,
+    hooks: { events: CLAUDE_HOOK_EVENTS },
+    retire: (pubkey) => runtime.retire(pubkey),
+    protection: true,
     title: "Claude",
     icon: ClaudeLogoIcon,
     description:
@@ -93,6 +124,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    CreateThinking,
     importShared: (source) =>
       source.runtime === "claude" &&
       (!source.provider || source.provider === "anthropic")
@@ -194,6 +226,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     // A mention during the first download waits for it, within its deadline.
-    ...claudeRun(runtime, (signal) => setup.installed(signal)),
+    ...claudeRun(runtime, (signal, agent) =>
+      agent?.protection
+        ? setup.protectedInstalled(signal)
+        : setup.installed(signal),
+    ),
   });
 };

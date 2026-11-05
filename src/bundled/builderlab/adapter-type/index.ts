@@ -1,5 +1,7 @@
+import { BuilderlabLogoIcon } from "../../../shared/design-system/icons";
 import { createActivityTab } from "./Activity";
 import { createSettingsTab } from "./Instructions";
+import { createProfileActions, createSignInFooter } from "./SignInFooter";
 import { creationConfig, createCreationFields, EMPTY_CREATION } from "./Create";
 import type { AgentType } from "../../../features/agents/service";
 import type { RelayData } from "../../../features/relay/service";
@@ -9,7 +11,7 @@ import {
   type RegistrationIntent,
 } from "../agents/registration";
 import { oauthTarget } from "../oauth/browser";
-import type { OAuthSession } from "../oauth/session";
+import type { BuilderlabSession } from "../session";
 
 const PREFIX = "buzz.builderlab.adapter-identity.v1:";
 type Identity = {
@@ -22,8 +24,10 @@ type Identity = {
 /** Bridge Agents' lifecycle and provider settings to Beekeeper. */
 export function builderlabType(
   client: AgentClient,
-  session: OAuthSession,
+  session: BuilderlabSession,
   relay: RelayData,
+  openIdentity?: () => void,
+  openSettings?: (section: string) => void,
 ): AgentType {
   const scope = () => ({
     target: oauthTarget(),
@@ -73,6 +77,19 @@ export function builderlabType(
     if (!agent) throw new Error("Agent not found in this Builderlab account.");
     return remember(pubkey, agent.id);
   }
+  /** The signed-in account's listing of the agent, with its instructions.
+   * It never starts browser login: only the pane's Sign in does, so a tab
+   * that reads instructions when it opens asks the owner to sign in first. */
+  async function listed(pubkey: string, signal: AbortSignal) {
+    const credential = session.credential();
+    const agent = (await client.list(signal)).find(
+      (row) => row.pubkey === pubkey,
+    );
+    if (session.credential() !== credential)
+      throw new DOMException("Builderlab session changed.", "AbortError");
+    if (!agent) throw new Error("Agent not found in this Builderlab account.");
+    return agent;
+  }
   async function validateCreation(config: unknown, signal: AbortSignal) {
     await session.ensureSignedIn(signal);
     const catalog = await client.modelCatalog(signal);
@@ -87,29 +104,32 @@ export function builderlabType(
         ?.supportedReasoningEfforts.includes(draft.reasoningEffort)
     )
       throw new Error(
-        "Choose a model and reasoning effort offered in the model catalog.",
+        "Choose a model and thinking level offered in the model catalog.",
       );
     return draft;
   }
   return {
     id: "builderlab",
     title: "Builderlab",
+    icon: BuilderlabLogoIcon,
     description: "Sign in to Builderlab when creating an agent.",
     defaults: () => ({ config: { ...EMPTY_CREATION } }),
-    Create: createCreationFields(client, session),
+    ...createCreationFields(client, session),
+    PanelFooter: createSignInFooter(session),
+    ProfileActions: createProfileActions(session),
     tabs: [
       {
         id: "settings",
         title: "Settings",
         role: "settings",
         splitSettings: true,
-        component: createSettingsTab(client, session),
+        component: createSettingsTab(client, session, openIdentity),
       },
       {
         id: "activity",
         title: "Activity",
         role: "activity",
-        component: createActivityTab(relay),
+        component: createActivityTab(relay, openSettings),
       },
     ],
     remote: {
@@ -147,6 +167,18 @@ export function builderlabType(
         // A stop is urgent: it never waits on an interactive sign-in.
         session.credential();
         return client.cancelTurn(await resolve(pubkey, signal), place, signal);
+      },
+      instructions: {
+        async get({ pubkey, signal }) {
+          return (await listed(pubkey, signal)).instructions ?? "";
+        },
+        async set({ pubkey, instructions, signal }) {
+          await client.updateInstructions(
+            await listed(pubkey, signal),
+            instructions,
+            signal,
+          );
+        },
       },
       async remove({ pubkey, signal }) {
         await session.ensureSignedIn(signal);

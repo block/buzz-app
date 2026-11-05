@@ -1,5 +1,9 @@
+import { profileHistoryTarget, profileHistoryRoute } from "./target";
 import { expect, it } from "vitest";
 import {
+  claimProfileTranscript,
+  openProfileTranscript,
+  profileTranscriptRequest,
   profileAgentHint,
   profileActivityViewTarget,
   profileActivityViewKey,
@@ -65,4 +69,90 @@ it("recognizes only the exact local profile Activity destination", () => {
     `buzz:profile?agent=${key}&tab=info`,
   ])
     expect(profileActivityViewKey(invalid)).toBeUndefined();
+});
+
+it.each([false, true])(
+  "preserves the Activity opening through version addresses (transcript %s)",
+  (transcript) => {
+    const pubkey = "a".repeat(64);
+    const base = profileActivityViewTarget(pubkey) as string;
+    const version = profileHistoryTarget(base, {
+      side: "instructions",
+      id: "b".repeat(64),
+    });
+    for (const target of [profileHistoryTarget(base), version]) {
+      expect(profileActivityViewKey(target)).toBe(pubkey);
+      expect(profilePanelKey(target)).toBe(pubkey);
+    }
+    if (transcript) {
+      openProfileTranscript(base, () => true);
+      expect(profileTranscriptRequest(version)).toBe(
+        profileTranscriptRequest(base),
+      );
+      expect(claimProfileTranscript(version)).toBeDefined();
+      expect(profileTranscriptRequest(base)).toBeUndefined();
+    }
+  },
+);
+
+it("gives an agent one Activity destination, with no transcript variant", () => {
+  const key = "ab".repeat(32);
+  const plain = profileActivityViewTarget(key) ?? "";
+  // A transcript is asked for alongside the destination, never as another
+  // destination, so a link naming one cannot open a second Activity tab.
+  for (const link of [`${plain}&open=transcript`, `${plain}&open=other`]) {
+    expect(profileActivityViewKey(link)).toBeUndefined();
+    // Nor does it open the profile any other way.
+    expect(profilePanelKey(link)).toBeUndefined();
+  }
+  expect(profileActivityViewKey(plain)).toBe(key);
+});
+
+it("asks for a transcript once per opening until its profile claims it", () => {
+  const key = "cd".repeat(32);
+  const activity = profileActivityViewTarget(key) ?? "";
+  const other = `nostr:${"x".repeat(5)}`;
+  const opened: string[] = [];
+  const open = (next: string) => {
+    opened.push(next);
+    return true;
+  };
+  // A target that is not an Activity destination only opens.
+  expect(openProfileTranscript(other, open)).toBe(true);
+  expect(profileTranscriptRequest(other)).toBeUndefined();
+  // An opening that fails leaves nothing for a later remount to act on.
+  expect(openProfileTranscript(activity, () => false)).toBe(false);
+  expect(profileTranscriptRequest(activity)).toBeUndefined();
+  expect(openProfileTranscript(activity, open)).toBe(true);
+  expect(opened).toEqual([other, activity]);
+  const first = profileTranscriptRequest(activity);
+  expect(first).toBeDefined();
+  expect(claimProfileTranscript(activity)).toBe(first);
+  expect(profileTranscriptRequest(activity)).toBeUndefined();
+  expect(claimProfileTranscript(activity)).toBeUndefined();
+  // Opening the same target again is a new opening.
+  openProfileTranscript(activity, open);
+  expect(claimProfileTranscript(activity)).toBeGreaterThan(first ?? 0);
+});
+
+it("restores version addresses only for a recognized underlying profile", () => {
+  const pubkey = "a".repeat(64);
+  const selected = { side: "instructions", id: "b".repeat(64) } as const;
+  for (const base of [
+    profileTarget(pubkey),
+    profileTarget(pubkey, { agent: true }),
+    profileActivityViewTarget(pubkey),
+  ]) {
+    const opened = profileHistoryTarget(base as string, selected);
+    expect(profileHistoryRoute(opened)).toEqual(selected);
+    expect(profilePanelKey(opened)).toBe(pubkey);
+    expect(profileHistoryTarget(opened)).toBe(`${base}#versions`);
+    expect(profilePanelKey(`${base}#versions`)).toBe(pubkey);
+    expect(profilePanelKey(`${opened}#extra`)).toBeUndefined();
+  }
+  expect(
+    profilePanelKey(
+      `https://example.com#version=instructions/${"b".repeat(64)}`,
+    ),
+  ).toBeUndefined();
 });

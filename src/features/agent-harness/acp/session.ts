@@ -15,9 +15,20 @@ type Waiter = (settled: Settled) => void;
 export type ConfigOptions = {
   configOptions?: {
     category?: string | null;
-    options?: { value: string }[];
+    options?: ConfigValue[];
   }[];
 };
+/** A select's choice, or a group of them. */
+export type ConfigValue = { value?: string; options?: ConfigValue[] };
+/** Every choice's value, groups flattened. */
+export const valuesOf = (options: readonly ConfigValue[] = []): string[] =>
+  options.flatMap((option) =>
+    option.options
+      ? valuesOf(option.options)
+      : typeof option.value === "string"
+        ? [option.value]
+        : [],
+  );
 
 /** One conversation's ACP session. Messages sent while a turn runs are
  * steered into it, when the harness can steer; one that arrives as the turn
@@ -125,7 +136,7 @@ export class AcpSession {
 
   /** Sends one user message, whose turn runs on `model` of the provider and
    * thinking level `effort` when given. Resolves when it, and anything sent
-   * after it, has been answered, or a final `send` ended the work. */
+   * after it, has been answered, or a final message ended the work. */
   send(
     text: string,
     activity: ActivityReceipt = {},
@@ -170,7 +181,7 @@ export class AcpSession {
     return settled;
   }
 
-  /** A final `send` succeeded: the work counts as done at once, unless
+  /** A final message succeeded: the work counts as done at once, unless
    * another message is still waiting for its answer. The harness may still end
    * its turn with one more model call, whose text nobody posts. */
   finished() {
@@ -442,7 +453,7 @@ export class AcpSession {
     const option = configOptions.find(
       (item) => item.category === "thought_level",
     );
-    this.levels = (option?.options ?? []).map(({ value }) => value);
+    this.levels = valuesOf(option?.options);
   }
 
   private ranAs(runId: string | undefined) {

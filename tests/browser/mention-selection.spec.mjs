@@ -14,15 +14,15 @@ const variants = [
   {
     title: "one-word labels",
     query: "",
-    first: (keys) => `Honey ${keys.first}`,
-    second: (keys) => `Honey (agent) ${keys.second}`,
+    first: (keys) => keys.first,
+    second: (keys) => keys.second,
     value: "@Honey say hello to @Honey ",
   },
   {
     title: "a label with a space",
     query: "?delayed-profiles",
-    first: (keys) => `Honey ${keys.second}`,
-    second: (keys) => `Mary Jane ${keys.first}`,
+    first: (keys) => keys.second,
+    second: (keys) => keys.first,
     value: "@Honey say hello to @Mary Jane ",
   },
 ];
@@ -35,11 +35,15 @@ async function compose(page, variant) {
     second: window.mentionFixture.second,
   }));
   const input = page.getByRole("textbox", { name: "Message #General" });
-  const mention = async (name) => {
+  // Rows no longer spell out their key, so each picks by the key it carries.
+  const mention = async (key) => {
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
-    await page.getByRole("button", { name, exact: true }).click();
+    await page
+      .getByRole("button")
+      .and(page.locator(`[data-mention-choice="${key}"]`))
+      .click();
     // The picker restores focus and the caret on the next animation frame.
     await page.evaluate(() => new Promise(requestAnimationFrame));
     await expect(input).toBeFocused();
@@ -404,13 +408,23 @@ test("selection remains visible on outgoing bubbles and their neutral content", 
         while (getComputedStyle(parent).backgroundColor === "rgba(0, 0, 0, 0)")
           parent = parent.parentElement;
         const selection = getComputedStyle(el, "::selection");
-        const hex = (rgb) =>
-          "#" +
-          rgb
-            .match(/\d+/g)
-            .slice(0, 3)
-            .map((n) => Number(n).toString(16).padStart(2, "0"))
-            .join("");
+        // WebKit serializes mixed hover fills as color(srgb ...), not rgb().
+        // Let the browser resolve CSS colors before comparing the same ratios.
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        const hex = (color) => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return (
+            "#" +
+            [...context.getImageData(0, 0, 1, 1).data]
+              .slice(0, 3)
+              .map((value) => value.toString(16).padStart(2, "0"))
+              .join("")
+          );
+        };
         return {
           surface: hex(getComputedStyle(parent).backgroundColor),
           fill: hex(selection.backgroundColor),

@@ -2,6 +2,7 @@ import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { settlePanelMotion } from "./navigation.mjs";
+import { generateSecretKey, getPublicKey } from "nostr-tools";
 
 test.use({
   productionBroker: true,
@@ -156,7 +157,9 @@ test("nested replies send, stay open, and reveal through links at readable panel
   await expect(editor).toHaveJSProperty("value", "Unsent nested draft");
   await editor.fill("");
   await expect(editor).toHaveJSProperty("value", "");
+  // Up selects the newest message in the thread; E edits it in this composer.
   await editor.press("ArrowUp");
+  await page.keyboard.press("e");
   const editInput = panel.getByRole("textbox", {
     name: "Edit message",
     exact: true,
@@ -339,7 +342,9 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const linkRow = page.locator(
     `[data-channel-timeline] [data-message-id="${linked.id}"]`,
   );
-  await linkRow.getByRole("link", { name: "Alpha", exact: true }).click();
+  await linkRow
+    .getByRole("link", { name: "Fixture Reader in #Alpha", exact: true })
+    .click();
   await expect(grandchildRow).toBeInViewport();
   await expect(grandchildRow).toBeFocused();
   await expect
@@ -431,6 +436,15 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   page,
   app,
 }) => {
+  const agent = generateSecretKey();
+  await page.route("**/agent-library", (route) =>
+    route.fulfill({
+      json: {
+        definitions: [],
+        identities: [{ pubkey: getPublicKey(agent), name: "Hook Agent" }],
+      },
+    }),
+  );
   const root = app.histories
     .get("primary/alpha")
     .find((event) => event.content === "Thread root 0");
@@ -465,6 +479,7 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   const emoji = post("Emoji branch", false);
   const emojiReply = post("🎉", false, emoji.id);
   await open(page, app);
+  app.serveProfile(agent, { name: "Hook Agent", is_agent: true });
   await page.setViewportSize({ width: 1280, height: 1600 });
   await page
     .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
@@ -490,6 +505,13 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
     if (await summary.count()) await summary.click();
   }
   await expect(row(startReply)).toBeVisible();
+  for (const event of [agentPeerReply, ownAgentsLeft, ownAgents]) {
+    await panel
+      .getByRole("button", {
+        name: new RegExp(`^Show activity history: .*: ${event.content}$`),
+      })
+      .click();
+  }
 
   // Peer- and viewer-started branches hook on their own side; a reply on the
   // other side gets a straight line past it.
@@ -537,7 +559,12 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   await reacted.scrollIntoViewIfNeeded();
   await hoverMessage(reacted);
   await reacted
-    .getByRole("button", { name: "React with 👍", exact: true })
+    .getByRole("button", { name: "Add reaction", exact: true })
+    .click();
+  await page.locator('em-emoji-picker input[type="search"]').fill("thumbsup");
+  await page
+    .locator("em-emoji-picker")
+    .getByRole("button", { name: "👍", exact: true })
     .click();
   await expect(
     reacted.getByRole("button", { name: /👍/ }).last(),
@@ -546,6 +573,56 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
   const hook = await hookFor(reacted);
   expect(hook.itemBottom - hook.avatar.center).toBeGreaterThan(30);
   expectHookOnAvatar(hook, "left");
+
+  // An agent's activity under a reply carries the agent's avatar on the left;
+  // the hook stays on the reply's own avatar rather than crossing the
+  // transparent activity bubble to reach it. An agents reply mounts its
+  // activity only inside its open disclosure.
+  const disclosure = row(agentPeerReply).getByRole("button", {
+    name: /coordination note/,
+  });
+  await row(agentPeerReply).scrollIntoViewIfNeeded();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await row(agentPeerReply).evaluate((node) =>
+    Promise.all(
+      node.getAnimations({ subtree: true }).map((motion) => motion.finished),
+    ),
+  );
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  for (const [index, reply] of [
+    peerReply,
+    viewerReply,
+    agentPeerReply,
+  ].entries())
+    app.observer(
+      {
+        kind: "turn_started",
+        seq: index + 1,
+        timestamp: new Date().toISOString(),
+        channelId: "alpha",
+        sessionId: "hooks",
+        turnId: `hooks-${index}`,
+        payload: { triggeringEventIds: [reply.id] },
+      },
+      agent,
+    );
+  for (const [reply, side] of [
+    [peerReply, "left"],
+    [viewerReply, "right"],
+    [agentPeerReply, "left"],
+  ]) {
+    const activity = row(reply).getByRole("region", {
+      name: "Agent activity on this message",
+      exact: true,
+    });
+    await expect(activity).toBeVisible();
+    await activity.evaluate((section) =>
+      Promise.all(section.getAnimations().map((motion) => motion.finished)),
+    );
+    await row(reply).scrollIntoViewIfNeeded();
+    expectHookOnAvatar(await hookFor(row(reply)), side);
+  }
 });
 
 test("an exact linked reply stays readable when its parent is outside loaded history", async ({
@@ -575,7 +652,7 @@ test("an exact linked reply stays readable when its parent is outside loaded his
   await open(page, app);
   await page
     .locator(`[data-channel-timeline] [data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Alpha", exact: true })
+    .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true })
     .click();
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -729,6 +806,9 @@ for (const width of [1492, 1280, 1024, 700, 390])
     const expandAll = async () => {
       const branch = branchFor(ids[0]);
       await expect(branch).toHaveAttribute("data-open", "false");
+      await expect(
+        panel.getByRole("region", { name: "Thread messages", exact: true }),
+      ).toHaveAttribute("aria-busy", "false");
       await branch
         .locator(":scope > div")
         .nth(1)

@@ -1,22 +1,34 @@
-import { useCallback, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ChannelChoice } from "../../features/agents/attention";
 import type {
   Agent,
   AgentConversation,
   AgentSettingsHost,
   Agents,
+  AgentViewProps,
   RegisteredAgentType,
+  TranscriptRequest,
 } from "../../features/agents/service";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type { CommunityReader } from "../../features/communities/service";
-import { agentSections, AttentionSection } from "../../features/agents/tabs";
+import { agentSections } from "../../features/agents/tabs";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
-import { Button } from "../../shared/design-system/ui/Button";
-import { AgentSaveState } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveState,
+  DiscardChanges,
+  useAgentSaveReports,
+  useAgentSaveState,
+} from "../../features/agents/AgentSaveButton";
 
 /** An agent's sections as tabs, opening on the first. */
 export function AgentTabs(props: {
+  showSettings?: boolean | undefined;
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
@@ -27,20 +39,11 @@ export function AgentTabs(props: {
   settingsContent: ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean | undefined;
+  initialTranscript?: TranscriptRequest | undefined;
+  close?: (() => void) | undefined;
+  openConversation?: AgentViewProps["openConversation"];
   onDiscard?: () => void;
 }) {
-  const settingsContent = (
-    <>
-      {props.agent.place === "here" && (
-        <AttentionSection
-          agent={props.agent}
-          agents={props.agents}
-          communities={props.communities}
-        />
-      )}
-      {props.settingsContent}
-    </>
-  );
   const split = props.type?.tabs?.some(
     (section) => section.role === "settings" && section.splitSettings,
   );
@@ -56,34 +59,39 @@ export function AgentTabs(props: {
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
     ...supplied.filter((section) => section.value === "agent:activity"),
-    ...supplied.filter((section) => section.value === "agent:history"),
+    ...supplied.filter((section) => section.value.startsWith("agent:added:")),
     {
       value: "agent:management",
       label: "Settings",
-      render: () => settingsContent,
+      render: () => props.settingsContent,
     },
   ];
   const [tab, setTab] = useState<string>(
-    props.initialActivity ? "agent:activity" : (sections[0]?.value ?? ""),
+    props.showSettings
+      ? "agent:management"
+      : props.initialActivity
+        ? "agent:activity"
+        : (sections[0]?.value ?? ""),
   );
-  const [draft, setDraft] = useState({ dirty: false, saving: false });
-  const drafts = useRef(new Map<string, { dirty: boolean; saving: boolean }>());
-  const reportDraft = useCallback(
-    (state: { dirty: boolean; saving: boolean } | null, id: string) => {
-      if (state) drafts.current.set(id, state);
-      else drafts.current.delete(id);
-      const states = [...drafts.current.values()];
-      setDraft({
-        dirty: states.some((state) => state.dirty),
-        saving: states.some((state) => state.saving),
-      });
-    },
-    [],
+  const [draft, reportDraft] = useAgentSaveReports();
+  // Hosts that replace or close the whole pane ask with the same total.
+  useAgentSaveState(
+    draft.dirty || Boolean(props.settingsHost.pendingSave),
+    draft.saving,
   );
   const [pendingTab, setPendingTab] = useState<string>();
   const panelPrefix = useId();
   const selected =
     sections.find((section) => section.value === tab) ?? sections[0];
+  const choose = (value: string) => {
+    if (value === selected?.value || draft.saving) return;
+    if (draft.dirty || props.settingsHost.pendingSave) setPendingTab(value);
+    else setTab(value);
+  };
+  const requestSettings = useEffectEvent(() => choose("agent:management"));
+  useEffect(() => {
+    if (props.showSettings) requestSettings();
+  }, [props.showSettings]);
   const settingsSelected =
     selected?.value === "agent:settings" ||
     selected?.value === "agent:management";
@@ -93,7 +101,7 @@ export function AgentTabs(props: {
         ...props,
         settingsSection:
           selected?.value === "agent:management" ? "runtime" : "identity",
-        settingsContent,
+        settingsContent: props.settingsContent,
       }).find((section) => section.value === "agent:settings")
     : undefined;
   const settingsValue =
@@ -101,16 +109,22 @@ export function AgentTabs(props: {
       ? "agent:management"
       : "agent:settings";
   const panelId = (value: string) => `${panelPrefix}-${value}`;
+  // A new transcript request shows Activity, as choosing its tab would.
+  const opening = props.initialTranscript?.opening;
+  const [asked, setAsked] = useState(opening);
+  if (opening !== asked) {
+    setAsked(opening);
+    if (
+      opening !== undefined &&
+      sections.some((section) => section.value === "agent:activity")
+    )
+      choose("agent:activity");
+  }
   return (
     <AgentSaveState value={reportDraft}>
       <Tabs
         value={selected?.value ?? ""}
-        onValueChange={(value) => {
-          if (value === selected?.value || draft.saving) return;
-          if (draft.dirty || props.settingsHost.pendingSave)
-            setPendingTab(value);
-          else setTab(value);
-        }}
+        onValueChange={choose}
         items={sections.map(({ value, label }) => ({
           value,
           label,
@@ -149,28 +163,14 @@ export function AgentTabs(props: {
           </div>
         ))}
       {pendingTab && (
-        <AlertDialog
-          title="Discard changes?"
+        <DiscardChanges
           description="Your unsaved changes will be lost if you switch tabs."
-          onClose={() => setPendingTab(undefined)}
-          actions={
-            <>
-              <Button onClick={() => setPendingTab(undefined)}>
-                Keep editing
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  props.onDiscard?.();
-                  setDraft({ dirty: false, saving: false });
-                  setTab(pendingTab);
-                  setPendingTab(undefined);
-                }}
-              >
-                Discard changes
-              </Button>
-            </>
-          }
+          onKeep={() => setPendingTab(undefined)}
+          onDiscard={() => {
+            props.onDiscard?.();
+            setTab(pendingTab);
+            setPendingTab(undefined);
+          }}
         />
       )}
     </AgentSaveState>

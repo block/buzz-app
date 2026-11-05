@@ -82,7 +82,8 @@ it.each(["revoke", "disconnect", "cache", "dispose", "release"])(
     await view.refresh();
     expect(view.snapshot().listing).toEqual(listing);
     const pending = view.refresh();
-    expect(view.snapshot()).toEqual({ status: "loading" });
+    // The kept listing shows while the read goes on.
+    expect(view.snapshot()).toEqual({ status: "loading", listing });
     if (mode === "revoke") h.live.receive([roster(relay, "a", [], 2)]);
     if (mode === "disconnect") h.live.state({ status: "error", routes: [] });
     if (mode === "cache") await h.clearCache();
@@ -93,6 +94,14 @@ it.each(["revoke", "disconnect", "cache", "dispose", "release"])(
     resolve(listing);
     await pending;
     expect(view.snapshot().listing).toBeUndefined();
+    // Every mode but closing one view also drops the listing kept for reopening.
+    if (mode !== "release" && mode !== "dispose") {
+      read.mockImplementationOnce(() => new Promise(() => {}));
+      const reopened = h.session.agentMemories.open(agent.pubkey);
+      void reopened.refresh();
+      expect(reopened.snapshot().listing).toBeUndefined();
+      reopened.dispose();
+    }
   },
 );
 it("does not leak across relay/viewer sessions and does not refresh while disconnected", async () => {
@@ -131,12 +140,42 @@ it("reports denied/error separately, retries, rejects malformed host output and 
     status: "ready",
     listing: { entries: [], partial: false },
   });
+  // A failed refresh keeps what the view showed.
   await view.refresh();
-  expect(view.snapshot()).toEqual({ status: "error" });
+  expect(view.snapshot()).toEqual({
+    status: "error",
+    listing: { entries: [], partial: false },
+  });
   for (let i = 0; i < 3; i++) h.session.agentMemories.open(agent.pubkey);
   expect(() => h.session.agentMemories.open(agent.pubkey)).toThrow();
   view.dispose();
   expect(() => h.session.agentMemories.open(agent.pubkey)).not.toThrow();
+});
+
+it("passes deleted entries' tombstones through a runtime read and rejects malformed ones", async () => {
+  const deleted = { slug: "mem/gone", createdAt: 4_000_000_001 };
+  const read = vi
+    .fn<MemoryReader>()
+    .mockResolvedValueOnce({ ...listing, deleted: [deleted] });
+  const h = harness(read);
+  const signal = new AbortController().signal;
+  await expect(
+    h.session.agentMemories.read(agent.pubkey, signal),
+  ).resolves.toEqual({ ...listing, deleted: [deleted] });
+  for (const bad of [
+    { slug: "gone", createdAt: 1 },
+    { slug: "core", createdAt: 1 },
+    { slug: "mem/gone", createdAt: -1 },
+    { slug: "mem/gone" },
+  ]) {
+    read.mockResolvedValueOnce({
+      ...listing,
+      deleted: [bad],
+    } as unknown as MemoryListing);
+    await expect(
+      h.session.agentMemories.read(agent.pubkey, signal),
+    ).rejects.toThrow("Invalid memory entry");
+  }
 });
 
 it("serializes runtime reads outside the mounted-view budget", async () => {

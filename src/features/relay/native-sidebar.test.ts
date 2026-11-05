@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { finalizeEvent, nip44 } from "nostr-tools";
 import { connectNativeTransport } from "./native";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
-import { keypair } from "./testing";
+import { keypair, nativeSignatureChecks } from "./testing";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -55,6 +55,7 @@ function decode(events: ReturnType<typeof finalizeEvent>[]) {
         "channel-mutes",
         "channel-sort",
         "channel-filter",
+        "main-agent",
       ].includes(coordinate)
     )
       throw new Error("Invalid sidebar record");
@@ -69,6 +70,8 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (command, args) => {
       if (command === "identity_restore") return viewer.pubkey;
+      if (command === "relay_verify_signatures")
+        return nativeSignatureChecks(args);
       if (command === "relay_sign")
         return finalizeEvent(
           (args as { event: Parameters<typeof finalizeEvent>[0] }).event,
@@ -158,6 +161,122 @@ it("decodes four self-encrypted coordinates through the narrow IPC command", asy
   });
   // Main also grants purpose-bound channel recipes (kind 30078); sidebar writes stay on narrow IPC.
   expect(transport.writer?.kinds).toContain(30078);
+});
+
+it("clears a deleted agent from an account with no record without writing one", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(
+    await transport.clearMainAgent?.("a".repeat(64), signal),
+  ).toBeUndefined();
+  // Still no record: never choosing a Bestie isn't saving none.
+  expect(await transport.readMainAgent?.(signal)).toBeUndefined();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.some(([command]) => command === "relay_sign_sidebar"),
+  ).toBe(false);
+});
+
+it("leaves a saved none alone when clearing a deleted agent", async () => {
+  const transport = await connectNativeTransport(community);
+  await transport.writeMainAgent?.(null, signal);
+  const signed = () =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_sign_sidebar")
+      .length;
+  const before = signed();
+  expect(
+    await transport.clearMainAgent?.("a".repeat(64), signal),
+  ).toBeUndefined();
+  expect(signed()).toBe(before);
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+});
+
+it("saves and reads back the account's main agent", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(await transport.readMainAgent?.(signal)).toBeUndefined();
+  await transport.writeMainAgent?.("a".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBe("a".repeat(64));
+  const signedBeforeMismatch = vi
+    .mocked(invoke)
+    .mock.calls.filter(([command]) => command === "relay_sign_sidebar").length;
+  expect(await transport.clearMainAgent?.("b".repeat(64), signal)).toBe(
+    "a".repeat(64),
+  );
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_sign_sidebar"),
+  ).toHaveLength(signedBeforeMismatch);
+  expect(await transport.readMainAgent?.(signal)).toBe("a".repeat(64));
+  expect(
+    await transport.clearMainAgent?.("a".repeat(64), signal),
+  ).toBeUndefined();
+  // A cleared choice leaves a record of none, read as null.
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+  await transport.writeMainAgent?.("a".repeat(64), signal);
+  await transport.writeMainAgent?.(null, signal);
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+  expect(invoke).toHaveBeenCalledWith(
+    "relay_sign_sidebar",
+    expect.objectContaining({ payload: { version: 1, agent: null } }),
+  );
+  await expect(
+    transport.writeMainAgent?.("A".repeat(64), signal),
+  ).rejects.toThrow("Invalid main agent intent");
+  records.set("main-agent", signedRecord("main-agent", { version: 2 }));
+  await expect(transport.readMainAgent?.(signal)).rejects.toThrow(
+    "Invalid main agent record",
+  );
+});
+
+it("reads a main agent record of none as null, and replaces it", async () => {
+  const transport = await connectNativeTransport(community);
+  records.set(
+    "main-agent",
+    signedRecord("main-agent", { version: 1, agent: null }),
+  );
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+  await transport.writeMainAgent?.("b".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBe("b".repeat(64));
+});
+
+it("saves none as the account's main agent, and reads it back as none, not as no record", async () => {
+  const transport = await connectNativeTransport(community);
+  // Never saved: no record.
+  expect(await transport.readMainAgent?.(signal)).toBeUndefined();
+  await transport.writeMainAgent?.("a".repeat(64), signal);
+  await transport.writeMainAgent?.(null, signal);
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+  await transport.writeMainAgent?.("b".repeat(64), signal);
+  expect(await transport.readMainAgent?.(signal)).toBe("b".repeat(64));
+});
+
+it("saves none on an account with no record, so it reads back as none", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(await transport.readMainAgent?.(signal)).toBeUndefined();
+  await transport.writeMainAgent?.(null, signal);
+  expect(await transport.readMainAgent?.(signal)).toBeNull();
+});
+
+it("prepends a drag-created section through native encrypted readback", async () => {
+  const transport = await connectNativeTransport(community);
+  const existing = "11111111-1111-1111-1111-111111111111";
+  const id = "22222222-2222-2222-2222-222222222222";
+  await transport.writeSidebarAssignment?.(
+    { channelId: "c1", createSection: { id: existing, name: "Work" } },
+    signal,
+  );
+  const groups = await transport.writeSidebarAssignment?.(
+    {
+      channelId: "c1",
+      createSection: { id, name: "Launch", position: "first" },
+    },
+    signal,
+  );
+  expect(groups?.sections.map(({ id }) => id)).toEqual([id, existing]);
+  expect(groups?.assignments).toEqual({ c1: id });
 });
 
 it("creates a section, moves a channel, stars, mutes and sorts with encrypted readback", async () => {
@@ -836,6 +955,28 @@ it.each([
   },
 );
 
+it.each(["channels", "section:work"])(
+  "confirms native plugin sort choices for %s through encrypted readback",
+  async (group) => {
+    const transport = await connectNativeTransport(community);
+    await transport.writeSidebarSort?.("forums", "recent", [], signal);
+    for (const mode of [
+      "plugin:example.plugin/rows/reverse",
+      "plugin:example.plugin/rows/other",
+      "recent",
+      "alpha",
+    ] as const) {
+      await expect(
+        transport.writeSidebarSort?.(group, mode, ["work"], signal),
+      ).resolves.toEqual(
+        mode === "alpha"
+          ? { forums: "recent" }
+          : { forums: "recent", [group]: mode },
+      );
+    }
+  },
+);
+
 it("uses the native filter signer and confirmed writer without changing sort", async () => {
   const transport = await connectNativeTransport(community);
   await transport.writeSidebarSort?.("channels", "recent", [], signal);
@@ -925,4 +1066,36 @@ it("rejects a same-mode native readback with a conflicting duration", async () =
     transport.writeSidebarFilter?.("channels", "active", [], signal, 86401),
   ).rejects.toThrow("Invalid sidebar filter intent");
   expect(vi.mocked(invoke).mock.calls).toHaveLength(before);
+});
+
+it("creates an empty Team section and confirms retry without touching placements or stars", async () => {
+  records.set(
+    "channel-sections",
+    signedRecord("channel-sections", {
+      version: 1,
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: { alpha: "work" },
+    }),
+  );
+  const transport = await connectNativeTransport(community);
+  if (!transport.writeSidebarAssignment)
+    throw new Error("Missing sidebar writer");
+  const intent = {
+    createSection: {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: " Launch ",
+    },
+  };
+  const created = await transport.writeSidebarAssignment(intent, signal);
+  expect(created.assignments).toEqual({ alpha: "work" });
+  expect(created.sections.at(-1)).toMatchObject({
+    id: intent.createSection.id,
+    name: "Launch",
+  });
+  const head = records.get("channel-sections");
+  expect(await transport.writeSidebarAssignment(intent, signal)).toEqual(
+    created,
+  );
+  expect(records.get("channel-sections")).toBe(head);
+  expect(records.has("channel-stars")).toBe(false);
 });

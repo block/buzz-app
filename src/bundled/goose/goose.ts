@@ -4,6 +4,7 @@
 import {
   AcpProcess,
   REQUEST_TIMEOUT_MS,
+  STOP_TIMEOUT_MS,
 } from "../../features/agent-harness/acp/process";
 import type {
   AcpSession,
@@ -86,10 +87,10 @@ export const GOOSE: AcpHooks = {
   newSessionMeta: (buzz, { title, provider }) => ({
     // The session's whole tool set: goose's developer tools and the Buzz
     // tools, so extensions in the owner's goose config and plugins never load
-    // into a Buzz agent. goose stores this list with the session. Since
-    // aaif-goose/goose#12908 it leaves out the Buzz entry and holds the
-    // `mcpServers` copy in memory, so the token stays out of sessions.db;
-    // older goose uses this one.
+    // into a Buzz agent. The pinned Goose persists this list, including the
+    // Buzz MCP token; aaif-goose/goose#12908 is not in v1.57.0. Keep the entry
+    // until upstream supports client MCP servers alongside this allowlist.
+    // The non-persistence acceptance test remains a known failure.
     enabledExtensions: buzz ? [DEVELOPER, { type: "mcp", server: buzz }] : [],
     ...(title ? { sessionTitle: title } : {}),
     // On the provider's default model, whatever goose's config holds.
@@ -167,18 +168,48 @@ export const GOOSE: AcpHooks = {
 
 /** Starts `goose-acp` and checks it can reach the Buzz tools. */
 export const GooseProcess = {
-  start: (
+  start: async (
     spawn: Spawn,
     launch: Readonly<{
       cwd: string;
       env?: Readonly<Record<string, string | null>>;
       serve?: ServeMcp;
+      protected?: boolean;
+      signal?: AbortSignal;
+      onProcess?: (goose: AcpProcess) => void;
     }>,
-  ) =>
-    AcpProcess.start(spawn, GOOSE, {
+  ) => {
+    const goose = await AcpProcess.start(spawn, GOOSE, {
       ...launch,
-      env: { ...databricks(), ...launch.env },
-    }),
+      env: {
+        ...databricks(),
+        ...launch.env,
+        ...(launch.protected && { GOOSE_DISABLE_SESSION_NAMING: "true" }),
+      },
+    });
+    const cancel = () => void goose.kill();
+    launch.signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      launch.signal?.throwIfAborted();
+      if (launch.protected) {
+        const capability = (await goose.request(
+          "_buzz/security/capabilities",
+          {},
+          REQUEST_TIMEOUT_MS,
+        )) as { version?: number };
+        if (capability.version !== 2)
+          throw new Error("This Goose build lacks mandatory security hooks");
+      }
+      launch.signal?.throwIfAborted();
+      return goose;
+    } catch (error) {
+      // Rejects once it has exited or `STOP_TIMEOUT_MS` has passed.
+      await goose.stop(STOP_TIMEOUT_MS);
+      throw error;
+    } finally {
+      launch.signal?.removeEventListener("abort", cancel);
+    }
+  },
 };
 
 async function defaultModel(goose: AcpProcess, provider: string) {

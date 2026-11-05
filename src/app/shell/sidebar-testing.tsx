@@ -1,12 +1,19 @@
+import { useState, type ReactNode } from "react";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import type { SidebarScope } from "../../features/channel-navigation/sidebar-scope-service";
 import { act, render } from "@testing-library/react";
 import { vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelaySession } from "../../features/relay/session";
+import type { ReadTransport } from "../../features/relay/transport";
+import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
-import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
+import {
+  ChannelNavigationProvider,
+  useChannelNavigation,
+} from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
@@ -34,8 +41,13 @@ export function fixture(
   newer = 0,
   chatIcons?: ContributionReader<ChatIcon>,
   chatMenus?: ContributionReader<ChatMenu>,
+  host: {
+    transport?: ReadTransport;
+    federatedIdentity?: FederatedIdentity;
+    sidebarScope?: SidebarScope;
+  } = {},
 ) {
-  const owner = createRelaySession(null);
+  const owner = createRelaySession(host.transport ?? null);
   owners.push(owner);
   const base = owner.session;
   const listeners = new Set<() => void>();
@@ -114,6 +126,12 @@ export function fixture(
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
     channels: { ...base.channels, list: () => list, ensureList() {} },
+    sidebarPreferences: {
+      ...base.sidebarPreferences,
+      sectionCreationWritable: canCreate,
+      snapshot: () => preferences,
+      ensure: async () => {},
+    },
     soloPreferences: {
       ...base.soloPreferences,
       sectionCreationWritable: canCreate,
@@ -163,6 +181,7 @@ export function fixture(
     session,
     generation: 1,
     scope,
+    viewer,
   };
   const relay: RelayData = {
     snapshot: () => snapshot,
@@ -191,24 +210,40 @@ export function fixture(
   const publish = () => {
     for (const listener of listeners) listener();
   };
+  let handoff: ReturnType<typeof useChannelNavigation>;
+  const HandoffProbe = () => {
+    handoff = useChannelNavigation();
+    return null;
+  };
   const tree = () => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
+        <HandoffProbe />
         {combined ? (
-          <>
-            <NewMenu relay={relay} navigator={navigator} agents={agents} />
-            {sidebarVisible && (
-              <PrimarySidebar
-                relay={relay}
-                navigator={navigator}
-                target={target}
-                chatIcons={chatIcons}
-                chatMenus={chatMenus}
-              >
-                <button type="button">Inbox</button>
-              </PrimarySidebar>
-            )}
-          </>
+          <SidebarCreationHost
+            relay={relay}
+            navigator={navigator}
+            agents={agents}
+          >
+            {(creationAction) =>
+              sidebarVisible && (
+                <PrimarySidebar
+                  creationAction={creationAction}
+                  relay={relay}
+                  navigator={navigator}
+                  target={target}
+                  chatIcons={chatIcons}
+                  chatMenus={chatMenus}
+                  sidebarScope={host.sidebarScope}
+                  {...(host.federatedIdentity
+                    ? { federatedIdentity: host.federatedIdentity }
+                    : {})}
+                >
+                  <button type="button">Inbox</button>
+                </PrimarySidebar>
+              )
+            }
+          </SidebarCreationHost>
         ) : (
           <SoloInventory
             session={snapshot.session}
@@ -225,6 +260,7 @@ export function fixture(
   const rendered = render(tree());
   return {
     session,
+    relay,
     navigate(next: OpenTarget) {
       target = next;
       rendered.rerender(tree());
@@ -246,6 +282,8 @@ export function fixture(
       });
     },
     open,
+    /** The sidebar's hand-off to the conversation page it opens. */
+    handoff: () => handoff,
     markThrough,
     listeners,
     typing(next: typeof typing) {
@@ -274,4 +312,19 @@ export function fixture(
     },
     activitySnapshot: activity,
   };
+}
+
+function SidebarCreationHost({
+  children,
+  ...props
+}: Parameters<typeof NewMenu>[0] & {
+  children: (action: ReactNode) => ReactNode;
+}) {
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  return (
+    <>
+      <NewMenu {...props} triggerContainer={container} />
+      {children(<div ref={setContainer} />)}
+    </>
+  );
 }

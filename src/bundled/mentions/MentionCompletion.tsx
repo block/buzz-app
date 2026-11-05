@@ -1,17 +1,58 @@
+import { useProfileGeneration } from "../../features/relay/react";
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { ComposerSession } from "../../features/messages/composer-session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { outsideMentionDetail } from "./mention-candidates";
-import { matchesMentionQuery } from "./mention-query";
+import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
+import { continuedMention, matchingMentions } from "./mention-ranking";
+import { resolveSpaceMention } from "./resolve-space-mention";
+import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import { AgentsContext } from "../../features/agents/react";
 import { avatarMedia } from "../../shared/avatar-source";
+import {
+  PROFILE_CACHE_BASE,
+  profileRosterRoom,
+} from "../../features/relay/budget";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
-const demands = new WeakMap<ComposerSession, Set<string>>();
+// `failed` outlives the per-keystroke mount: a failed read stays reported, with
+// Retry, until a later read of those names succeeds or the demand resets.
+type Demand = {
+  generation: number;
+  evictions: number;
+  ids: Set<string>;
+  failed: Set<string>;
+};
+const demands = new WeakMap<ComposerSession, Demand>();
+const failureListeners = new WeakMap<ComposerSession, Set<() => void>>();
+function settle(
+  session: ComposerSession,
+  demand: Demand,
+  ids: readonly string[],
+  failed: boolean,
+) {
+  // A reset demand (purge, eviction) starts over; its old outcome is stale.
+  if (demands.get(session) !== demand) return;
+  for (const id of ids) {
+    // A batch that failed may still have answered for some of its names.
+    if (failed && !session.profiles.snapshot().has(id)) demand.failed.add(id);
+    else demand.failed.delete(id);
+  }
+  for (const listener of failureListeners.get(session) ?? []) listener();
+}
 export function MentionCompletion({
   session,
   scope,
@@ -30,14 +71,7 @@ export function MentionCompletion({
     query.query,
     JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
   );
-  const {
-    profiles,
-    agents,
-    channel,
-    list,
-    choices,
-    roster: draftRoster,
-  } = model;
+  const { profiles, agents, channel, list, choices } = model;
   const teams = useTeamMentions(
     session,
     channelId,
@@ -45,6 +79,10 @@ export function MentionCompletion({
     query.query,
     model,
   );
+  const selected = useContext(SelectedMentionContext);
+  const roster = useContext(DraftMentionRoster);
+  const community = useContext(AgentsContext);
+  const draftRoster = roster?.recipients;
   const members = draftRoster?.map((p) => p.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const parentAdmission = !!channel && channel.channelType !== "solo";
@@ -56,35 +94,98 @@ export function MentionCompletion({
     ids: string[];
   }>(undefined);
   const [attempt, retry] = useState(0);
-  const [error, setError] = useState(false);
+  // A failed read reports only names still unresolved: a member loaded since
+  // (by any reader) or known unnamed, or one no longer in the roster, is not.
+  const error = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => {
+        const listeners = failureListeners.get(session) ?? new Set();
+        failureListeners.set(session, listeners);
+        listeners.add(listener);
+        const unsubscribe = session.profiles.subscribe(listener);
+        return () => {
+          listeners.delete(listener);
+          unsubscribe();
+        };
+      },
+      [session],
+    ),
+    () => {
+      const failed = demands.get(session)?.failed;
+      if (draftRoster || !failed?.size) return false;
+      const loaded = session.profiles.snapshot();
+      const unnamed = session.profiles.unnamed?.();
+      return members.some(
+        (key) => failed.has(key) && !loaded.has(key) && !unnamed?.has(key),
+      );
+    },
+  );
+  const profileGeneration = useProfileGeneration(session.profiles);
+  // Evictions also count cancelled reads, so a shrink asks again for this roster.
+  const readEvictions = () => session.profiles.evictions?.() ?? 0;
+  const evictions = useSyncExternalStore(
+    session.profiles.subscribe,
+    readEvictions,
+    readEvictions,
+  );
   useEffect(() => {
     if (draftRoster) return;
     session.channels.ensureList();
-    const requested = demands.get(session) ?? new Set<string>();
-    demands.set(session, requested);
-    const ids = memberKey
-      .split(":")
-      .filter((id) => id && (attempt > 0 || !requested.has(id)))
-      .slice(0, attempt > 0 ? 1024 : Math.max(0, 1024 - requested.size));
+    // An access purge, an eviction or a cancelled read drops names, so its
+    // reads start a new budget. Names still loaded cost no read when requested
+    // again.
+    let demand = demands.get(session);
+    if (
+      demand?.generation !== profileGeneration ||
+      demand.evictions !== evictions
+    ) {
+      demand = {
+        generation: profileGeneration,
+        evictions,
+        ids: new Set(),
+        failed: new Set(),
+      };
+      demands.set(session, demand);
+      for (const listener of failureListeners.get(session) ?? []) listener();
+    }
+    const requested = demand.ids;
+    // An open channel reserves room for its whole roster (ConversationChannel).
+    // The base stays free for names outside this roster.
+    const limit = profileRosterRoom(
+      session.profiles.limit?.() ?? PROFILE_CACHE_BASE,
+    );
+    // A member a completed read found no profile for stays known unnamed, so
+    // reopening the menu does not read it again; Retry does.
+    const unnamed = session.profiles.unnamed?.();
+    const roster = memberKey.split(":").filter(Boolean);
+    // Only this roster's earlier requests use its allowance: another channel's
+    // members must not stop this one from loading.
+    const asked = roster.filter((id) => requested.has(id)).length;
+    const ids = roster
+      .filter((id) => attempt > 0 || (!requested.has(id) && !unnamed?.has(id)))
+      .slice(0, attempt > 0 ? limit : Math.max(0, limit - asked));
     if (!ids.length) return;
     for (const id of ids) requested.add(id);
-    let live = true;
-    void session.profiles.ensure(ids, "background").catch(() => {
-      if (live) setError(true);
-    });
-    return () => {
-      live = false;
-    };
-  }, [session, memberKey, attempt, draftRoster]);
+    // Retry is explicit: a foreground read rereads known absences. The
+    // outcome belongs to the session's demand, not this keystroke's mount.
+    const current = demand;
+    void session.profiles
+      .ensure(ids, attempt > 0 ? "foreground" : "background")
+      .then(
+        () => settle(session, current, ids, false),
+        () => settle(session, current, ids, true),
+      );
+  }, [session, memberKey, attempt, draftRoster, profileGeneration, evictions]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const admitted =
       matchesMentionQuery(
         query.query,
-        [...model.candidates, ...choices].flatMap((c) => [
-          ...c.aliases,
-          c.label,
-        ]),
+        // Both rules need a name that starts with the query.
+        [
+          ...matchingMentions(model.candidates, query.query),
+          ...choices,
+        ].flatMap((c) => [...c.aliases, c.label]),
       ) ||
       (teams.names.length > 0 && matchesMentionQuery(query.query, teams.names));
     const matching = admitted ? choices : [];
@@ -92,7 +193,6 @@ export function MentionCompletion({
     const membershipMissing =
       !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
     const membershipError = !draftRoster && list.error;
-    const missing = !draftRoster && members.some((key) => !profiles.has(key));
     // A multi-word query that continues no known name is prose, not a search.
     if (
       !admitted &&
@@ -105,44 +205,56 @@ export function MentionCompletion({
         if (withdraw) withdraw();
       };
     }
+    // Each shown row asks; one pass instead of one scan per row.
+    const memberKeys = new Set(members);
     const available = [
-      ...matching.map(({ recipient, label, elsewhere, disabled }) => ({
-        disabled,
-        canSelect: (key: string) =>
-          (key !== " " || !teams.blocksSpace) &&
-          model.canSelect(recipient.pubkey, key === " "),
-        id: recipient.pubkey,
-        label,
-        detail:
-          disabled ??
-          (members.includes(recipient.pubkey)
-            ? recipient.pubkey
-            : inviteAgents
-              ? `${parentAdmission ? "Adds to channel" : "Adds to chat"} · ${recipient.pubkey}`
-              : outsideMentionDetail(channel, elsewhere)),
-        preview: (
-          <Avatar
-            alt=""
-            fallback={label}
-            src={avatarMedia(
-              profiles.get(recipient.pubkey)?.picture ??
-                model.directory.people.find(
-                  (person) => person.pubkey === recipient.pubkey,
-                )?.picture,
-              session.media,
-            )}
-            size="default"
-            shape={
-              model.candidates.some(
-                (c) => c.recipient.pubkey === recipient.pubkey && c.agent,
-              )
-                ? "squircle"
-                : "circle"
-            }
-          />
-        ),
-        edit: { mention: recipient },
-      })),
+      ...matching.map(
+        ({ recipient, label, elsewhere, disabled, fullName, agent }) => {
+          const detail =
+            disabled ??
+            // A verified full name sits beside the detail.
+            ([
+              fullName !== label ? fullName : undefined,
+              model.managedBy.get(recipient.pubkey),
+              memberKeys.has(recipient.pubkey)
+                ? undefined
+                : inviteAgents
+                  ? parentAdmission
+                    ? "Adds to channel"
+                    : "Adds to chat"
+                  : outsideMentionDetail(channel, elsewhere),
+            ]
+              .filter(Boolean)
+              .join(" · ") ||
+              undefined);
+          return {
+            disabled,
+            canSelect: (key: string) =>
+              (key !== " " || !teams.blocksSpace) &&
+              model.canSelect(recipient.pubkey, key === " "),
+            id: recipient.pubkey,
+            label,
+            agent,
+            ...(detail ? { detail } : {}),
+            preview: (
+              <Avatar
+                alt=""
+                fallback={label}
+                src={avatarMedia(
+                  profiles.get(recipient.pubkey)?.picture ??
+                    model.directory.people.find(
+                      (person) => person.pubkey === recipient.pubkey,
+                    )?.picture,
+                  session.media,
+                )}
+                size="default"
+                shape={agent ? "squircle" : "circle"}
+              />
+            ),
+            edit: { mention: recipient },
+          };
+        },
+      ),
       ...matchingTeams.map((team) => ({
         id: team.id,
         label: team.name,
@@ -182,8 +294,49 @@ export function MentionCompletion({
     const next = [...ids, ...additions.map((item) => item.id)].slice(0, 50);
     shown.current = { session, key, ids: next };
     const byId = new Map(available.map((item) => [item.id, item]));
+    // Space is undecided, not declined, only while evidence is still arriving:
+    // members, names or agents loading, or the directory search waiting or
+    // running. Then the host may hold the name and let the resolver apply
+    // section 5 once the choice set is known. A name already known to continue
+    // the query declines Space whatever else arrives: the next word may
+    // complete that longer name, so Space stays prose and the query open. The
+    // known set is every candidate the chooser has, not only the shown rows:
+    // members or roster, offered agents and the directory rows received so
+    // far, the same set `spaceId` is decided over. Anything else is prose.
+    const undecided =
+      admitted &&
+      model.spaceId === undefined &&
+      !teams.blocksSpace &&
+      (model.pending || model.directory.loading) &&
+      pendingMentionQuery(query.query) &&
+      // A continuing name starts with the query: only indexed matches can have one.
+      !continuedMention(
+        matchingMentions(model.candidates, query.query),
+        query.query,
+      );
     const withdraw = publish({
       spaceId: teams.blocksSpace ? undefined : model.spaceId,
+      ...(undecided
+        ? {
+            spacePending: {
+              name: query.query,
+              resolve: (signal: AbortSignal) =>
+                resolveSpaceMention(
+                  session,
+                  {
+                    channelId,
+                    inviteAgents,
+                    roster,
+                    selected,
+                    elsewhere: community?.joinable(),
+                    teamNames: teams.readNames,
+                  },
+                  query.query,
+                  signal,
+                ),
+            },
+          }
+        : {}),
       items: next.flatMap((id) => byId.get(id) ?? []),
       ...(model.pending
         ? { status: "Loading recipients…" }
@@ -199,22 +352,18 @@ export function MentionCompletion({
                   ? { status: "Channel membership unavailable." }
                   : admitted && membershipError
                     ? { status: "Could not refresh channel membership." }
-                    : error || missing
+                    : // Only a failed read: a member who never set a name is
+                      // a complete answer, not an error.
+                      error
                       ? {
                           status:
-                            "Some names unavailable. Exact public keys still identify recipients.",
+                            "Could not load some names. Retry to refresh.",
                         }
                       : model.directory.loading
                         ? { status: "Searching community…" }
-                        : model.directory.more ||
-                            model.truncated ||
-                            matching.length + matchingTeams.length > 50
-                          ? {
-                              status: "Narrow your search to see more members.",
-                            }
-                          : teams.status
-                            ? { status: teams.status }
-                            : {}),
+                        : teams.status
+                          ? { status: teams.status }
+                          : {}),
       ...((admitted && teams.canRetry) ||
       model.directory.error ||
       (admitted &&
@@ -223,8 +372,7 @@ export function MentionCompletion({
           agents.error ||
           membershipMissing ||
           membershipError ||
-          error ||
-          missing))
+          error))
         ? {
             retry: () => {
               teams.retry();
@@ -233,7 +381,6 @@ export function MentionCompletion({
                 !!inviteAgents || teams.includeLegacy,
               );
               void session.archives?.refresh();
-              setError(false);
               retry((value) => value + 1);
               if (membershipMissing || membershipError)
                 session.channels.refreshList?.();
@@ -260,8 +407,11 @@ export function MentionCompletion({
     choices,
     channel,
     draftRoster,
+    roster,
     inviteAgents,
     parentAdmission,
+    selected,
+    community,
   ]);
   return null;
 }

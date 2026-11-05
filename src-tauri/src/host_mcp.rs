@@ -15,6 +15,10 @@
 //!   `initialize`, `server/discover` and `ping` are answered. A second
 //!   `initialize` means two clients hold the token, so the server stops: the
 //!   one that claimed the session may not be the agent.
+//! - A plugin can explicitly opt into a shared session for cooperating clients.
+//!   Every client holding the token can initialize and obtain the same session
+//!   ID. This forfeits stolen-token replay protection; use only when the handler
+//!   fixes the identity and all clients intentionally share its authority.
 //! - A refused request gets 404, never 401 or 403: MCP clients answer those
 //!   by starting an OAuth sign-in.
 //! - It answers in JSON, never SSE. `POST /mcp` carries one message: a request
@@ -36,13 +40,17 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tauri::ipc::Channel;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
+mod authorization;
+pub(crate) use authorization::plugin_host_mcp_authorize;
+pub(crate) mod pairing;
+pub(crate) use pairing::plugin_host_mcp_pairing;
 
 /// Servers running at once across all plugins.
 const MAX_SERVERS: usize = 64;
@@ -88,6 +96,11 @@ struct Shared {
     /// `UNCLAIMED`, `CLAIMING` while an `initialize` waits for its answer, or
     /// `CLAIMED` once one succeeded.
     claim: AtomicU8,
+    /// Explicitly let clients holding the token join the same session.
+    shared_session: bool,
+    authorization: Mutex<Option<authorization::Exchange>>,
+    pairing: Mutex<Option<pairing::Grant>>,
+    pairing_pending: AtomicBool,
     events: Channel<McpEvent>,
     stop: CancellationToken,
     pending: Mutex<Pending>,
@@ -141,6 +154,7 @@ impl HostMcpServers {
         page: u64,
         plugin: String,
         events: Channel<McpEvent>,
+        shared_session: bool,
     ) -> Result<McpServerInfo, String> {
         let mut registry = self.registry();
         if registry.page != page {
@@ -165,6 +179,10 @@ impl HostMcpServers {
             token: token.clone(),
             session: secret()?,
             claim: AtomicU8::new(UNCLAIMED),
+            shared_session,
+            authorization: Mutex::new(None),
+            pairing: Mutex::new(None),
+            pairing_pending: AtomicBool::new(false),
             events,
             stop: CancellationToken::new(),
             pending: Mutex::default(),
@@ -248,7 +266,7 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
         };
         let shared = shared.clone();
         tauri::async_runtime::spawn(async move {
-            let shared = &*shared;
+            let shared = &shared;
             // One request per connection. hyper drops a request whose client
             // closes before its answer, so the page's late reply is refused.
             let connection = http1::Builder::new()
@@ -270,9 +288,12 @@ async fn accept(listener: std::net::TcpListener, shared: Arc<Shared>) {
 }
 
 async fn answer(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    if request.uri().path() == "/authorize/exchange" {
+        return Ok(authorization::exchange(shared, request).await);
+    }
     let (status, body, joined) = match refuse(shared, &request) {
         Err(status) => (status, None, false),
         Ok(named) => {
@@ -334,9 +355,8 @@ async fn forward(shared: &Shared, body: String) -> (StatusCode, Option<String>) 
         request
     };
     let _waiting = Waiting(shared, request);
-    if shared
-        .events
-        .send(McpEvent::Message { request, body })
+    if pairing::forward(shared, McpEvent::Message { request, body })
+        .await
         .is_err()
     {
         // Nobody is listening: the page that started it is gone.
@@ -414,6 +434,9 @@ fn join(shared: &Shared, named: bool, body: &str) -> Result<Join, StatusCode> {
         .and_then(|message| message.method);
     match method.as_deref() {
         Some("initialize") => {
+            if shared.shared_session {
+                return Ok(Join::Claiming);
+            }
             if shared
                 .claim
                 .compare_exchange(UNCLAIMED, CLAIMING, Ordering::SeqCst, Ordering::SeqCst)
@@ -455,7 +478,7 @@ impl Claim<'_> {
 impl Drop for Claim<'_> {
     fn drop(&mut self) {
         // Only the claim this guard holds is released.
-        if !self.claimed {
+        if !self.claimed && !self.shared.shared_session {
             let _ = self.shared.claim.compare_exchange(
                 CLAIMING,
                 UNCLAIMED,
@@ -484,6 +507,7 @@ pub(crate) async fn plugin_host_mcp_serve(
     id: String,
     revision: String,
     on_event: Channel<McpEvent>,
+    shared_session: Option<bool>,
 ) -> Result<McpServerInfo, String> {
     let page = servers.page();
     let plugin = id.clone();
@@ -494,7 +518,7 @@ pub(crate) async fn plugin_host_mcp_serve(
     if !granted {
         return Err("MCP servers are not declared".into());
     }
-    servers.serve(page, plugin, on_event)
+    servers.serve(page, plugin, on_event, shared_session.unwrap_or(false))
 }
 
 /// Answers a message with the JSON-RPC `body`; without one, with 202.

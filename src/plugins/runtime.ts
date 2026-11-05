@@ -39,12 +39,17 @@ export class PluginRuntime {
     root: Context,
     load: (plugin: PluginInfo) => Promise<PluginModule>,
     timeoutMs = 10_000,
+    /** Whether the manager is still reading which plugins to run. */
+    configuring = () => false,
   ) {
     this.root = root;
     this.load = load;
     root.provide("pluginStatus", {
       isActive: this.isActive,
       subscribe: this.subscribe,
+      settled: () =>
+        !configuring() &&
+        Object.values(this.states).every(({ status }) => status !== "starting"),
     });
     this.timeoutMs = timeoutMs;
   }
@@ -104,6 +109,8 @@ export class PluginRuntime {
       this.update(entry, "starting", null);
       void this.start(entry);
     }
+    // Configuration can settle without changing the desired activations.
+    this.publish();
   }
 
   private update(
@@ -148,6 +155,12 @@ export class PluginRuntime {
         pluginOwner: Object.freeze({
           id: entry.plugin.manifest.id,
           revision: entry.plugin.revision,
+          agentHooks: Object.freeze([
+            ...(entry.plugin.manifest.host?.agentHooks ?? []),
+          ]),
+          agentExecution: Object.freeze([
+            ...(entry.plugin.manifest.host?.agentExecution ?? []),
+          ]),
         }),
       });
       const fiber = scope.plugin({

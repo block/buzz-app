@@ -1,8 +1,11 @@
+import type { ProtectionAction } from "../features/agent-protection/service";
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
 import type { AgentAttention } from "../features/agents/service";
+import type { AgentPlugins } from "../plugins/requests";
+import type { SettingState } from "../shared/device-settings";
 
 export type BuzzEvent = Readonly<{
   id: string;
@@ -49,6 +52,8 @@ export type ChannelTemplate = Readonly<{
  * limit, a deadline or the relay's rate limit. */
 export type Memories = Readonly<{
   entries: readonly Memory[];
+  /** Deleted entries' tombstones, which a write recreating one must follow. */
+  deleted?: readonly Readonly<{ slug: string; createdAt: number }>[];
   partial: boolean;
 }>;
 
@@ -75,6 +80,9 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
+  protect?(action: ProtectionAction): Promise<void>;
+  /** The runtime reviews each tool call itself before Buzz dispatches it. */
+  readonly nativeToolGate?: true;
   readonly pubkey: string;
   /** The agent's membership key in this client's community: its pubkey in
    * its home community, which is the only one a standalone client has. */
@@ -82,7 +90,12 @@ export interface BuzzClient {
   /** Owner-reviewed creation requests, bound by the app to the caller's owner/community. */
   agentTypes?(): Promise<readonly Readonly<{ key: string; title: string }>[]>;
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: Readonly<{
+      type: string;
+      name: string;
+      /** Uploads the picture once the request is valid: its URL. */
+      picture?: () => Promise<string>;
+    }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   updateAgent?(
     input: Readonly<{
@@ -90,8 +103,13 @@ export interface BuzzClient {
       name?: string;
       type?: string;
       instructions?: string;
+      /** Uploads the picture once the request is valid: its URL. */
+      picture?: () => Promise<string>;
     }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins, where the host has them: read directly, changed
+   * by owner-confirmed request. */
+  plugins?: AgentPlugins;
   /** Wakes the agent in another of its conversations here, `from` this one. */
   handoff?(
     handoff: Readonly<{
@@ -119,6 +137,9 @@ export interface BuzzClient {
   publish(event: Template): Promise<BuzzEvent>;
   /** Uploads a file; `mime` is a hint, and the community decides the type. */
   upload(data: Uint8Array, mime: string): Promise<Upload>;
+  /** Uploads an image for an avatar, without its metadata, as the owner's
+   * own avatar upload prepares it. Only where the host can prepare images. */
+  uploadPicture?(data: Uint8Array, mime: string): Promise<Upload>;
   /** Saves a community media blob of any type, by its URL or
    * `sha256[.ext]`, to a local file. */
   media(url: string): Promise<Media>;
@@ -130,8 +151,9 @@ export interface BuzzClient {
   read(path: string): Promise<Uint8Array>;
   /** The agent's memory entries, decrypted; only entry `slug` when given. */
   memories(slug?: string): Promise<Memories>;
-  /** Writes entry `slug`, newer than the one it replaces (`after`, or 0). */
-  remember(slug: string, body: string, after: number): Promise<void>;
+  /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
+   * a `null` body deletes it. */
+  remember(slug: string, body: string | null, after: number): Promise<void>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the
@@ -139,6 +161,13 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  /** Buzz settings on this device, in an agent's own run. Each call checks
+   * the turn first, as the other tools do. */
+  settings?: Readonly<{
+    list(): readonly SettingState[];
+    get(key: unknown): SettingState;
+    set(key: unknown, value: unknown): SettingState;
+  }>;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

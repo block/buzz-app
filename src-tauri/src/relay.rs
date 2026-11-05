@@ -1,6 +1,10 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 pub(crate) mod agent;
 mod huddle;
+use crate::federated_identity::{
+    assertion::{Authorization, HEADER},
+    FederatedIdentity,
+};
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
@@ -154,16 +158,26 @@ pub(crate) struct WorkflowCursor {
 #[tauri::command]
 pub(crate) async fn relay_workflow_runs(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     id: String,
     cursor: Option<WorkflowCursor>,
 ) -> Result<RelayResponse> {
     let url = workflow_runs_url(&community, &id, cursor.as_ref())?;
-    send(host.inner(), url, "GET", None, true, 1024 * 1024).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "GET",
+        None,
+        true,
+        1024 * 1024,
+    )
+    .await
 }
 
 /// A Buzz git repository on this community: `<origin>/git/<owner hex>/<name>`.
-fn git_repository(community: &str, repository: &str) -> Result<Url> {
+pub(crate) fn git_repository(community: &str, repository: &str) -> Result<Url> {
     let origin = origin(community)?;
     let url = Url::parse(repository).map_err(|_| "Not a repository in this community")?;
     let segments: Vec<_> = url.path().split('/').skip(1).collect();
@@ -201,10 +215,18 @@ fn git_repository(community: &str, repository: &str) -> Result<Url> {
 #[tauri::command]
 pub(crate) async fn relay_git_authorization(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     repository: String,
 ) -> Result<String> {
     let url = git_repository(&community, &repository)?;
+    let assertion = evidence(host.inner(), Some(fi.inner()), &url).await?;
+    let proof = git_authorization(host.inner(), &url).await?;
+    admit(host.inner(), Some(fi.inner()), assertion.as_ref()).await?;
+    Ok(proof)
+}
+
+pub(crate) async fn git_authorization(host: &IdentityHost, url: &Url) -> Result<String> {
     let auth = host
         .sign(EventTemplate {
             kind: 27235,
@@ -231,12 +253,23 @@ pub(crate) async fn relay_git_authorization(
 /// `agent-config-artifacts.ts`.
 const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
 
+/// Content of a live channel Canvas, in UTF-8 bytes. Mirrors
+/// `LIVE_CANVAS_BYTES` in `canvas-limits.ts`.
+pub(crate) const LIVE_CANVAS_BYTES: usize = 256 * 1024;
+
+/// The largest complete signed Canvas event: the relay's default 512 KiB frame
+/// less the `["EVENT",…]` wrapper. Content within `LIVE_CANVAS_BYTES` can still
+/// escape past it. Mirrors `CANVAS_MAX_EVENT_BYTES` in `canvas-limits.ts`.
+pub(crate) const CANVAS_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
+
 /// Kinds whose events may exceed the default 64 KiB signing bound.
 fn signing_limit(kind: u16) -> Option<usize> {
     if catalog::is_catalog(kind) {
         Some(catalog::MAX_EVENT_BYTES)
     } else if kind == 45010 {
         Some(ARTIFACT_MAX_EVENT_BYTES)
+    } else if kind == 40100 {
+        Some(CANVAS_MAX_EVENT_BYTES)
     } else {
         None
     }
@@ -264,14 +297,19 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let artifact = event.kind == 45010;
+    let complete_limit = match event.kind {
+        45010 => Some(ARTIFACT_MAX_EVENT_BYTES),
+        40100 => Some(CANVAS_MAX_EVENT_BYTES),
+        _ => None,
+    };
     let signed = match signing_limit(event.kind) {
         Some(limit) => host.sign_bounded(event, limit).await?,
         None => host.sign(event).await?,
     };
     // The commitment bound above omits id, pubkey key and sig; the relay
     // limits the whole event.
-    if artifact && serde_json::to_vec(&signed).map_or(true, |b| b.len() > ARTIFACT_MAX_EVENT_BYTES)
+    if complete_limit
+        .is_some_and(|limit| serde_json::to_vec(&signed).map_or(true, |bytes| bytes.len() > limit))
     {
         return Err("Relay event is too large".into());
     }
@@ -392,7 +430,13 @@ fn valid_member_command(event: &EventTemplate) -> bool {
 
 // Match the broker's purpose-bound Canvas admission, including legacy untagged retries.
 fn valid_canvas(event: &EventTemplate) -> bool {
-    event.content.len() <= 24 * 1024
+    event.content.len() <= LIVE_CANVAS_BYTES
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("canvas-instructions"))
+            .count()
+            <= 1
         && event
             .tags
             .iter()
@@ -412,6 +456,7 @@ fn valid_canvas(event: &EventTemplate) -> bool {
             match tag[0].as_str() {
                 "h" => channel_writes::uuid(&tag[1]),
                 "client-id" => tag[1].encode_utf16().count() <= 128,
+                "canvas-instructions" => tag[1] == "unapproved",
                 "expected-revision" => {
                     tag[1] == "none"
                         || (tag[1].len() == 64
@@ -606,6 +651,7 @@ pub(crate) async fn relay_sign_read_state(
 #[tauri::command]
 pub(crate) async fn relay_publish_read_state(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     event: serde_json::Value,
 ) -> Result<RelayResponse> {
@@ -615,7 +661,16 @@ pub(crate) async fn relay_publish_read_state(
         return Err("Invalid read-state event".into());
     }
     host.decode_read_state(vec![event]).await?;
-    send(host.inner(), url, "POST", Some(body), true, MAX_RESPONSE).await
+    send(
+        host.inner(),
+        Some(fi.inner()),
+        url,
+        "POST",
+        Some(body),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -654,6 +709,37 @@ async fn admit_app_data(
     }
     kit::validate_ciphertext(host, event, community).await?;
     Ok(())
+}
+
+/// An incoming event's signature claim: the webview checks shape and that `id`
+/// hashes the event, then asks libsecp256k1 whether `sig` signs `id` for `pubkey`.
+#[derive(serde::Deserialize)]
+pub(crate) struct SignatureClaim {
+    id: String,
+    pubkey: String,
+    sig: String,
+}
+
+/// BIP-340 checks off the webview's main thread; one result per claim, in order.
+#[tauri::command]
+pub(crate) async fn relay_verify_signatures(claims: Vec<SignatureClaim>) -> Result<Vec<bool>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secp = secp256k1::Secp256k1::verification_only();
+        claims.iter().map(|claim| signs(&secp, claim)).collect()
+    })
+    .await
+    .map_err(|_| "Signature verification could not complete".into())
+}
+
+fn signs(secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>, claim: &SignatureClaim) -> bool {
+    let (Ok(id), Ok(pubkey), Ok(sig)) = (
+        nostr::event::EventId::from_hex(&claim.id),
+        claim.pubkey.parse::<secp256k1::XOnlyPublicKey>(),
+        claim.sig.parse::<secp256k1::schnorr::Signature>(),
+    ) else {
+        return false;
+    };
+    secp.verify_schnorr(&sig, id.as_bytes(), &pubkey).is_ok()
 }
 
 fn verify_signature(event: &serde_json::Value) -> Result<()> {
@@ -698,27 +784,61 @@ pub(crate) async fn relay_info(community: &str) -> Result<serde_json::Value> {
     serde_json::from_slice(&body).map_err(|_| "Invalid community information".into())
 }
 
+static USER_AGENT: OnceLock<String> = OnceLock::new();
+
+/// Records the app version native relay requests report, once at startup.
+pub(crate) fn set_user_agent(version: impl std::fmt::Display) {
+    let _ = USER_AGENT.set(format!("Buzz/{version}"));
+}
+
+/// `User-Agent` for native relay HTTP and WebSocket requests.
+pub(crate) fn user_agent() -> &'static str {
+    USER_AGENT.get().map_or("Buzz", String::as_str)
+}
+
 fn client() -> Result<&'static reqwest::Client> {
     static CLIENT: OnceLock<std::result::Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            let builder = reqwest::Client::builder()
+                .user_agent(user_agent())
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(30))
-                .build()
+                .timeout(Duration::from_secs(30));
+            // Tests' loopback communities use one self-signed root.
+            #[cfg(test)]
+            let builder =
+                builder.tls_certs_only([crate::federated_identity::testing::trusted_root()]);
+            builder.build()
         })
         .as_ref()
         .map_err(|_| "Relay network client is unavailable".into())
 }
 
+/// Status of a read the renderer abandoned; the renderer has stopped listening.
+const CANCELLED_READ: u16 = 499;
+
+/// Searches and reads the renderer may abandon. A dispatched write may already
+/// have reached the relay, so it is never cancelled. Mirrors `nativeRelayRequest`.
+fn cancellable_read(method: &str, path: &str) -> bool {
+    method == "POST" && matches!(path, "/query" | "/profiles/search" | "/gifs/search")
+}
+
+/// The upload registry's semantics: a cancel may overtake its read IPC.
+fn read_cancels() -> &'static Uploads {
+    static CANCELS: OnceLock<Uploads> = OnceLock::new();
+    CANCELS.get_or_init(Uploads::default)
+}
+
 #[tauri::command]
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     community: String,
     path: String,
     method: String,
     body: Option<String>,
+    id: Option<String>,
 ) -> Result<RelayResponse> {
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
@@ -755,19 +875,120 @@ pub(crate) async fn relay_http(
             return Err("Invalid outgoing signature".into());
         }
     }
-    send(
+    let request = send(
         host.inner(),
+        Some(fi.inner()),
         url,
         &method,
         body,
         method == "POST",
         MAX_RESPONSE,
-    )
-    .await
+    );
+    cancellable(id.as_deref(), &method, &path, request).await
+}
+
+/// Runs `request`, or for a read with an `id`, until `relay_http_cancel` names it.
+async fn cancellable(
+    id: Option<&str>,
+    method: &str,
+    path: &str,
+    request: impl std::future::Future<Output = Result<RelayResponse>>,
+) -> Result<RelayResponse> {
+    let Some(id) = id else {
+        return request.await;
+    };
+    if !cancellable_read(method, path) {
+        return Err("Relay writes cannot be cancelled".into());
+    }
+    let id = upload_id(Some(id)).map_err(|_| "Invalid relay read")?;
+    let Some(cancelled) = read_cancels()
+        .start(id)
+        .map_err(|_| "Relay reads are busy")?
+    else {
+        return Ok(cancelled_read());
+    };
+    // Dropping the request future closes its connection.
+    let result = tokio::select! {
+        biased;
+        _ = cancelled => Ok(cancelled_read()),
+        result = request => result,
+    };
+    read_cancels().finish(id);
+    result
+}
+
+#[tauri::command]
+pub(crate) fn relay_http_cancel(id: String) -> Result<()> {
+    read_cancels().cancel(upload_id(Some(&id)).map_err(|_| "Invalid relay read")?);
+    Ok(())
+}
+
+fn cancelled_read() -> RelayResponse {
+    RelayResponse {
+        status: CANCELLED_READ,
+        headers: BTreeMap::new(),
+        body: String::new(),
+    }
+}
+
+async fn evidence(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: &Url,
+) -> Result<Option<Authorization>> {
+    match fi {
+        Some(fi) => fi.assertion_for_relay(host, url).await.map(Some),
+        None => Ok(None),
+    }
+}
+#[derive(Clone, Copy)]
+struct AuthorizationContext<'a> {
+    fi: Option<&'a FederatedIdentity>,
+    assertion: Option<&'a Authorization>,
+}
+async fn admit(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
+) -> Result<()> {
+    if let (Some(fi), Some(assertion)) = (fi, assertion) {
+        fi.admit_authorization(host, assertion).await?;
+    }
+    Ok(())
 }
 
 async fn send(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    method: &str,
+    body: Option<String>,
+    authenticated: bool,
+    response_limit: usize,
+) -> Result<RelayResponse> {
+    let assertion = if authenticated {
+        evidence(host, fi, &url).await?
+    } else {
+        None
+    };
+    send_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        method,
+        body,
+        authenticated,
+        response_limit,
+    )
+    .await
+}
+
+async fn send_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
     url: Url,
     method: &str,
     body: Option<String>,
@@ -821,12 +1042,40 @@ async fn send(
     } else {
         request = request.header("Accept", "application/nostr+json");
     }
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
+    let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
     // Never replay a write after a transport error: it may already have reached the relay.
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "Relay request could not be confirmed")?;
-    read_response(response, response_limit).await
+    let operation = async {
+        let response = request
+            .send()
+            .await
+            .map_err(|_| "Relay request could not be confirmed")?;
+        if response.status() == 401 {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
+        }
+        if let Some(reason) = authorization
+            .assertion
+            .and_then(|authorization| authorization.refusal(response.status().as_u16()))
+        {
+            return Err(reason.into());
+        }
+        read_response(response, response_limit).await
+    };
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+        fi.during_admitted_operation(host, assertion, mutation, operation)
+            .await?
+    } else {
+        operation.await
+    }
 }
 
 async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<RelayResponse> {
@@ -1049,6 +1298,7 @@ pub(crate) async fn relay_upload_chunk<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn relay_upload<R: tauri::Runtime>(
     webview: tauri::Webview<R>,
+    fi: tauri::State<'_, FederatedIdentity>,
     host: tauri::State<'_, IdentityHost>,
     uploads: tauri::State<'_, Uploads>,
     spools: tauri::State<'_, Spools>,
@@ -1071,10 +1321,10 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
         let (spool, mut cancelled) = spools.take(id)?;
         process_spool(
             host.inner(),
+            Some(fi.inner()),
             url,
             spool,
-            header("x-buzz-content-type"),
-            header("x-buzz-preparation"),
+            (header("x-buzz-content-type"), header("x-buzz-preparation")),
             progress,
             &mut cancelled,
         )
@@ -1088,10 +1338,10 @@ pub(crate) async fn relay_upload<R: tauri::Runtime>(
 
 async fn process_spool(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     spool: upload_spool::Spool,
-    kind: Option<&str>,
-    preparation: Option<&str>,
+    (kind, preparation): (Option<&str>, Option<&str>),
     progress: Option<UploadProgress>,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<RelayResponse> {
@@ -1133,7 +1383,7 @@ async fn process_spool(
             .map_err(|_| "Upload hashing could not complete")??
     };
     tokio::select! {
-        result = upload_file(host, url, kind, path, hash, progress) => result,
+        result = upload_file(host, fi, url, kind, path, hash, progress) => result,
         _ = &mut *cancelled => Err("Upload cancelled".into()),
     }
 }
@@ -1205,6 +1455,32 @@ fn file_chunks(
 
 async fn upload_file(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+    kind: Option<&str>,
+    path: std::path::PathBuf,
+    (size, hash): (usize, String),
+    progress: Option<UploadProgress>,
+) -> Result<RelayResponse> {
+    let assertion = evidence(host, fi, &url).await?;
+    upload_file_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        kind,
+        path,
+        (size, hash),
+        progress,
+    )
+    .await
+}
+
+async fn upload_file_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
     url: Url,
     kind: Option<&str>,
     path: std::path::PathBuf,
@@ -1225,26 +1501,66 @@ async fn upload_file(
         vec![vec!["x".into(), hash.clone()]],
     )
     .await?;
-    let response = client()?
-        .put(url)
-        .timeout(Duration::from_secs(600))
-        .header("Authorization", auth)
-        .header("Content-Type", kind)
-        .header("X-SHA-256", hash)
-        .header(reqwest::header::CONTENT_LENGTH, size)
-        .body(reqwest::Body::wrap_stream(file_chunks(
-            file,
-            size as u64,
-            move |sent| {
-                if let Some(channel) = &progress {
-                    let _ = channel.send(sent);
-                }
-            },
-        )))
-        .send()
-        .await
-        .map_err(|_| "Upload did not finish")?;
-    read_response(response, 8192).await
+    let mut request = client()?.put(url);
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
+    let operation = async {
+        let response = request
+            .timeout(Duration::from_secs(600))
+            .header("Authorization", auth)
+            .header("Content-Type", kind)
+            .header("X-SHA-256", &hash)
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::wrap_stream(file_chunks(
+                file,
+                size as u64,
+                move |sent| {
+                    if let Some(channel) = &progress {
+                        let _ = channel.send(sent);
+                    }
+                },
+            )))
+            .send()
+            .await
+            .map_err(|_| "Upload did not finish")?;
+        if response.status() == 401 {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
+        }
+        if let Some(reason) = authorization
+            .assertion
+            .and_then(|authorization| authorization.refusal(response.status().as_u16()))
+        {
+            return Err(reason.into());
+        }
+        let response = read_response(response, 8192).await?;
+        if (200..300).contains(&response.status) {
+            // Only this host knows the final bytes when preparation converted
+            // the source. Bind the returned descriptor before JavaScript can
+            // use it in the user's signed message.
+            let descriptor: serde_json::Value = serde_json::from_str(&response.body)
+                .map_err(|_| "Upload response is not a valid descriptor")?;
+            if descriptor["sha256"].as_str() != Some(hash.as_str())
+                || descriptor["size"].as_u64() != Some(size as u64)
+            {
+                return Err("Upload response does not match uploaded bytes".into());
+            }
+        }
+        Ok(response)
+    };
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+        fi.during_admitted_operation(host, assertion, true, operation)
+            .await?
+    } else {
+        operation.await
+    }
 }
 
 /// Largest whole-file media response buffered in memory: the relay's document
@@ -1257,8 +1573,9 @@ const FILE_DOWNLOAD_MAX: usize = 10 * 1024 * 1024;
 /// development broker's video limit. A video of exactly this size plays; a
 /// larger `Content-Length` gets 413 before any download, and a response
 /// without one is stopped and rejected with 413 once it passes this size.
-/// Edit this value to change the limit; it is compiled into the binary.
-const WHOLE_VIDEO_MAX: u64 = 500 * 1024 * 1024;
+/// On macOS it also bounds a download from the native media menu. Edit this
+/// value to change the limit; it is compiled into the binary.
+pub(crate) const WHOLE_VIDEO_MAX: u64 = 500 * 1024 * 1024;
 /// Open-ended ranges are shortened so playback starts after one small chunk;
 /// the media element requests the next range itself.
 const MEDIA_CHUNK: u64 = 4 * 1024 * 1024;
@@ -1283,15 +1600,20 @@ pub(crate) fn media_protocol<R: tauri::Runtime>(
     // bytes, e.g. to sample avatar colors; `<img>` display never needed it.
     let origin = ctx
         .app_handle()
-        .get_webview(ctx.webview_label())
+        .get_webview_window(ctx.webview_label())
         .and_then(|webview| webview.url().ok())
         .and_then(|url| window_origin(&url));
+    let fi = ctx
+        .app_handle()
+        .state::<FederatedIdentity>()
+        .inner()
+        .clone();
     tauri::async_runtime::spawn(async move {
         let response = match media_request(&request) {
             Ok((url, Some((start, end)))) => {
-                media_blocks::read(&host, &url, start, end, WHOLE_VIDEO_MAX).await
+                media_blocks::read(&host, Some(&fi), &url, start, end, WHOLE_VIDEO_MAX).await
             }
-            Ok((url, None)) => fetch_media(&host, url, None).await,
+            Ok((url, None)) => fetch_media(&host, Some(&fi), url, None).await,
             Err(status) => Err(status),
         };
         let mut response = response.unwrap_or_else(|status| {
@@ -1322,7 +1644,7 @@ fn window_origin(url: &Url) -> Option<tauri::http::HeaderValue> {
 
 /// Decode only the custom scheme URLs emitted by convertFileSrc. The media URL
 /// is independently checked before any authenticated request is made.
-fn download_target(source: &str) -> Option<Url> {
+pub(crate) fn download_target(source: &str) -> Option<Url> {
     let url = Url::parse(source).ok()?;
     let host_ok = match url.scheme() {
         "buzz-media" => url.host_str() == Some("localhost"),
@@ -1346,7 +1668,7 @@ fn download_target(source: &str) -> Option<Url> {
 
 /// Never interpret untrusted attachment names as paths. A missing or invalid name
 /// falls back to the validated blob's basename.
-fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
+pub(crate) fn download_name<'a>(name: &'a str, url: &'a Url) -> &'a str {
     if safe_download_name(name) {
         name
     } else {
@@ -1432,27 +1754,33 @@ pub(crate) fn mark_download(_file: &std::fs::File, _path: &std::path::Path) -> s
     Ok(())
 }
 
+/// `filename`, then `stem (1).ext` up to `stem (999).ext`: the names a
+/// download tries in turn while each is taken. `Ada.agent.png` counts as
+/// `Ada (1).agent.png`, which still reads as a snapshot by its suffix.
+pub(crate) fn download_names(filename: &str) -> impl Iterator<Item = String> + '_ {
+    let (stem, ext) = filename
+        .find(".agent.")
+        .or_else(|| filename.rfind('.'))
+        .filter(|&at| at > 0)
+        .map_or((filename, ""), |at| (&filename[..at], &filename[at + 1..]));
+    (0..1000).map(move |index| {
+        if index == 0 {
+            filename.to_owned()
+        } else if ext.is_empty() {
+            format!("{stem} ({index})")
+        } else {
+            format!("{stem} ({index}).{ext}")
+        }
+    })
+}
+
 fn save_download(
     directory: &std::path::Path,
     filename: &str,
     body: &[u8],
 ) -> Result<std::path::PathBuf> {
     use std::io::Write as _;
-    // `Ada.agent.png` counts as `Ada (1).agent.png`, which still reads as a
-    // snapshot by its suffix.
-    let (stem, ext) = filename
-        .find(".agent.")
-        .or_else(|| filename.rfind('.'))
-        .filter(|&at| at > 0)
-        .map_or((filename, ""), |at| (&filename[..at], &filename[at + 1..]));
-    for index in 0..1000 {
-        let candidate = if index == 0 {
-            filename.to_owned()
-        } else if ext.is_empty() {
-            format!("{stem} ({index})")
-        } else {
-            format!("{stem} ({index}).{ext}")
-        };
+    for candidate in download_names(filename) {
         let path = directory.join(candidate);
         match std::fs::OpenOptions::new()
             .write(true)
@@ -1647,10 +1975,11 @@ fn clipboard_pixels(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
 pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
 ) -> Result<()> {
     let url = download_target(&source).ok_or("Invalid media URL")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
         .await
         .map_err(|_| "Could not fetch image")?;
     if !response
@@ -1664,7 +1993,7 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     let pixels = tauri::async_runtime::spawn_blocking(move || clipboard_pixels(response.body()))
         .await
         .map_err(|_| "Could not decode image".to_owned())??;
-    crate::image_clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
+    crate::clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
 }
 
 /// Persist an authenticated bounded response without replacing an existing file.
@@ -1674,6 +2003,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     webview: tauri::Webview<R>,
     host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
     source: String,
     name: String,
 ) -> Result<()> {
@@ -1694,7 +2024,7 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    let response = fetch_media(host.inner(), url, None)
+    let response = fetch_media(host.inner(), Some(fi.inner()), url, None)
         .await
         .map_err(|_| "Media download failed")?;
     let body = response.into_body();
@@ -1772,6 +2102,7 @@ fn media_url(target: &str) -> Option<Url> {
     let (hash, extension) = name.split_once('.').unwrap_or((name, ""));
     let extension_ok = extension.is_empty()
         || extension == "thumb.jpg"
+        || extension == "thumb.webp"
         || (extension.len() <= 8
             && extension
                 .bytes()
@@ -1802,24 +2133,42 @@ fn media_range(value: &str) -> Option<(u64, u64)> {
 
 async fn fetch_media(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    fetch_media_bounded(host, url, range, MAX_MEDIA).await
+    fetch_media_bounded(host, fi, url, range, MAX_MEDIA).await
 }
 
 async fn fetch_media_bounded(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
     url: Url,
     range: Option<String>,
     max_bytes: usize,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
-    buffer_media(send_media(host, url, range.as_deref()).await?, max_bytes).await
+    let assertion = evidence(host, fi, &url).await.map_err(|_| 401u16)?;
+    let operation = async {
+        buffer_media(
+            send_media(host, fi, assertion.as_ref(), url, range.as_deref()).await?,
+            max_bytes,
+        )
+        .await
+    };
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.during_admitted_operation(host, assertion, false, operation)
+            .await
+            .map_err(|_| 401u16)?
+    } else {
+        operation.await
+    }
 }
 
 /// One freshly signed upstream GET; only a 200 or 206 is returned.
 async fn send_media(
     host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    assertion: Option<&Authorization>,
     url: Url,
     range: Option<&str>,
 ) -> std::result::Result<reqwest::Response, u16> {
@@ -1835,8 +2184,20 @@ async fn send_media(
     if let Some(range) = range {
         request = request.header("Range", range);
     }
+    admit(host, fi, assertion).await.map_err(|_| 401u16)?;
+    if let Some(header) = assertion.and_then(Authorization::header) {
+        request = request.header(HEADER, header);
+    }
     let upstream = request.send().await.map_err(|_| 502u16)?;
     let status = upstream.status().as_u16();
+    if status == 401 {
+        if let (Some(fi), Some(assertion)) = (
+            fi,
+            assertion.and_then(|authorization| authorization.assertion.as_ref()),
+        ) {
+            fi.reject_assertion(assertion).await;
+        }
+    }
     if !matches!(status, 200 | 206) {
         return Err(status);
     }

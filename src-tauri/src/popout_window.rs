@@ -80,6 +80,29 @@ pub(crate) struct View {
     #[serde(default)]
     root: Option<DiscussionRow>,
     replies: Vec<DiscussionRow>,
+    /// Main's unresolved reaction operations on shown messages.
+    #[serde(default)]
+    reaction_operations: Vec<ReactionOperation>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReactionOperation {
+    id: String,
+    message_id: String,
+    kind: u8,
+    delivery: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+impl ReactionOperation {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        hex(&self.id)
+            && hex(&self.message_id)
+            && matches!(self.kind, 7 | 5)
+            && matches!(self.delivery.as_str(), "sending" | "failed" | "unknown")
+            && self.error.as_ref().is_none_or(|e| e.len() <= 2048)
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -162,6 +185,8 @@ fn validate(view: &View) -> Result<()> {
                 .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
         })
         || view.replies.len() > 500
+        || view.reaction_operations.len() > 64
+        || view.reaction_operations.iter().any(|op| !op.valid())
         || view
             .root
             .iter()
@@ -620,6 +645,7 @@ mod tests {
             detached: false,
             root: None,
             replies: vec![],
+            reaction_operations: vec![],
         }
     }
     #[test]

@@ -91,6 +91,10 @@ function fixture() {
   const reply = vi.fn(() => "accepted-id");
   const react = vi.fn(() => "reaction-id");
   const remove = vi.fn(() => "removal-id");
+  const outbox: { items: import("../relay/outbox").OutgoingEvent[] } = {
+    items: [],
+  };
+  const retry = vi.fn();
   const session = {
     ...store.session,
     viewer: VIEWER,
@@ -105,10 +109,26 @@ function fixture() {
       dispose: () => {},
     }),
     messages: { ...store.session.messages, reply, react, remove },
+    outbox: {
+      snapshot: () => outbox.items,
+      subscribe: () => () => {},
+      retry,
+      supports: () => true,
+    },
   } as unknown as RelaySession;
   const thread = createPopoutThread(session, "channel", ROOT, () => {});
   clean.push(() => thread.dispose());
-  return { session, channel, snapshot, thread, reply, react, remove };
+  return {
+    session,
+    channel,
+    snapshot,
+    thread,
+    reply,
+    react,
+    remove,
+    outbox,
+    retry,
+  };
 }
 const OWN_EVENT = "c".repeat(64);
 const OTHER_EVENT = "d".repeat(64);
@@ -185,7 +205,11 @@ it("admits reactions only for shown messages and removes only the viewer's own",
     () => h.thread.rootVerified(),
     undefined,
     ROOT,
-    (id) => h.thread.shown(id),
+    {
+      message: (id) => h.thread.shown(id),
+      reactionBusy: (id) => h.thread.reactionBusy(id),
+      retryReaction: (id) => h.thread.retryReaction(id),
+    },
   );
   clean.push(owner.dispose);
   const client = createHuddleComposerClient(owner.token);
@@ -217,4 +241,62 @@ it("admits reactions only for shown messages and removes only the viewer's own",
   await expect(
     client.react({ messageId: ROOT, content: "🎉" }),
   ).rejects.toThrow();
+});
+
+it("fences reactions while main still has one in flight, and retries only main's own events", async () => {
+  const h = fixture();
+  const owner = createHuddleComposerOwner(
+    h.session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => h.thread.rootVerified(),
+    undefined,
+    ROOT,
+    {
+      message: (id) => h.thread.shown(id),
+      reactionBusy: (id) => h.thread.reactionBusy(id),
+      retryReaction: (id) => h.thread.retryReaction(id),
+    },
+  );
+  clean.push(owner.dispose);
+  const client = createHuddleComposerClient(owner.token);
+  clean.push(client.dispose);
+  await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
+  const sending = "9".repeat(64);
+  h.outbox.items = [
+    {
+      event: {
+        id: sending,
+        pubkey: VIEWER,
+        created_at: 1,
+        kind: 7,
+        content: "👍",
+        tags: [
+          ["h", "channel"],
+          ["e", ROOT],
+        ],
+      },
+      delivery: "sending",
+    },
+  ];
+  // Projected for the companion, and blocking another change meanwhile.
+  expect(h.thread.snapshot().reactionOperations).toEqual([
+    { id: sending, messageId: ROOT, kind: 7, delivery: "sending" },
+  ]);
+  await expect(
+    client.react({ messageId: ROOT, content: "🎉" }),
+  ).rejects.toThrow(/still being sent/);
+  expect(h.react).not.toHaveBeenCalled();
+  // Retry is admitted only for main's own reaction event on a shown message.
+  await expect(client.retryReaction({ id: sending })).resolves.toBeUndefined();
+  expect(h.retry).toHaveBeenCalledWith(sending, expect.any(Function));
+  await expect(client.retryReaction({ id: "8".repeat(64) })).rejects.toThrow(
+    /no longer be retried/,
+  );
+  h.outbox.items = [];
+  await expect(client.react({ messageId: ROOT, content: "🎉" })).resolves.toBe(
+    "reaction-id",
+  );
 });

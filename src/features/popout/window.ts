@@ -247,7 +247,11 @@ export function createPopoutWindows(
       () => entry.thread.rootVerified(),
       options.agents,
       target.threadRootId,
-      (id) => entry.thread.shown(id),
+      {
+        message: (id) => entry.thread.shown(id),
+        reactionBusy: (id) => entry.thread.reactionBusy(id),
+        retryReaction: (id) => entry.thread.retryReaction(id),
+      },
     );
     entry.reading = createReadingOwner(
       session.unread,

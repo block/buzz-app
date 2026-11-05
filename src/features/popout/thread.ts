@@ -25,7 +25,18 @@ export type PopoutThreadView = {
   version: number;
   root?: CompanionRow | undefined;
   replies: CompanionRow[];
+  /** Main's in-flight or failed reaction operations on shown messages, so a
+   * companion shows real delivery state and retries the admitted event. */
+  reactionOperations: ReactionOperation[];
 };
+export type ReactionOperation = {
+  id: string;
+  messageId: string;
+  kind: 7 | 5;
+  delivery: "sending" | "failed" | "unknown";
+  error?: string | undefined;
+};
+const MAX_REACTION_OPERATIONS = 64;
 const MAX_REPLIES = 500;
 const visible = (rows: readonly ChannelMessage[]) =>
   rows.filter((row) => !row.membership && !row.huddle);
@@ -60,6 +71,7 @@ export function createPopoutThread(
   }
   const stops = [
     thread?.subscribe(notify),
+    session.outbox?.subscribe(notify),
     session.channels.subscribeList(notify),
     session.profiles.subscribe(notify),
     session.unread.subscribe({ kind: "channel", channelId }, notify),
@@ -108,6 +120,38 @@ export function createPopoutThread(
         .slice(-MAX_REPLIES)
         .find((row) => row.id === id);
     },
+    /** Main's pending/failed/unknown reaction operations on shown messages. */
+    reactionOperations(): ReactionOperation[] {
+      const shown = this.known();
+      return (session.outbox?.snapshot() ?? [])
+        .flatMap((item) => {
+          if (!["sending", "failed", "unknown"].includes(item.delivery))
+            return [];
+          if (item.event.kind !== 7 && item.event.kind !== 5) return [];
+          const messageId = session.messages.reactionTarget(item.event);
+          if (!messageId || !shown.has(messageId)) return [];
+          return [
+            {
+              id: item.event.id,
+              messageId,
+              kind: item.event.kind as 7 | 5,
+              delivery: item.delivery as ReactionOperation["delivery"],
+              ...(item.error ? { error: item.error.slice(0, 2048) } : {}),
+            },
+          ];
+        })
+        .slice(0, MAX_REACTION_OPERATIONS);
+    },
+    /** A reaction operation is still in flight or unresolved for this message. */
+    reactionBusy(messageId: string) {
+      return this.reactionOperations().some((op) => op.messageId === messageId);
+    },
+    /** Retry main's own admitted reaction event, if it is one of this window's. */
+    retryReaction(id: string) {
+      if (!this.reactionOperations().some((op) => op.id === id)) return false;
+      session.outbox?.retry(id, writable);
+      return true;
+    },
     /** Ids this window presents; the reading owner claims nothing else. */
     known(): ReadonlySet<string> {
       const snap = thread?.snapshot();
@@ -145,6 +189,7 @@ export function createPopoutThread(
         version,
         root: snap?.root && available() ? project(snap.root) : undefined,
         replies: available() ? replies.slice(-MAX_REPLIES).map(project) : [],
+        reactionOperations: this.reactionOperations(),
       };
     },
     retry() {

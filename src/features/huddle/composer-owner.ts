@@ -29,11 +29,16 @@ export function createHuddleComposerOwner(
   agents?: import("../agents/service").Agents,
   /** Reply into this thread of `room` instead of posting to the room. */
   thread?: string,
-  /** The messages this window currently shows, by id: reactions are admitted
-   * only against them, from main's own view of their reaction events. */
-  shown?: (
-    id: string,
-  ) => import("../relay/contracts").ChannelMessage | undefined,
+  /** The messages this window currently shows: reactions are admitted only
+   * against them, from main's own view of their reaction events, and never
+   * while main still has a reaction operation in flight for the message. */
+  shown?: {
+    message(
+      id: string,
+    ): import("../relay/contracts").ChannelMessage | undefined;
+    reactionBusy(messageId: string): boolean;
+    retryReaction(id: string): boolean;
+  },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
   async function modelChoices(pubkeys: readonly string[]) {
@@ -328,10 +333,14 @@ export function createHuddleComposerOwner(
         const { messageId } = request.args;
         const target =
           typeof messageId === "string" && /^[0-9a-f]{64}$/.test(messageId)
-            ? shown(messageId)
+            ? shown.message(messageId)
             : undefined;
         if (!target || target.channelId !== room)
           throw new Error("This message is not shown in this window.");
+        // One reaction change at a time per message, through delivery: a
+        // companion's acknowledgment arrives before its row projection does.
+        if (shown.reactionBusy(messageId))
+          throw new Error("A reaction on this message is still being sent.");
         if (request.op === "react") {
           const { content, emoji } = request.args;
           if (typeof content !== "string" || content.length > 512)
@@ -365,6 +374,19 @@ export function createHuddleComposerOwner(
         )
           throw new Error("Only your own reactions can be removed here.");
         session.messages.remove(ids);
+        return;
+      }
+      case "retryReaction": {
+        check(true);
+        const id = request.args.id;
+        if (
+          !thread ||
+          !shown ||
+          typeof id !== "string" ||
+          !/^[0-9a-f]{64}$/.test(id) ||
+          !shown.retryReaction(id)
+        )
+          throw new Error("This reaction can no longer be retried here.");
         return;
       }
       case "release":

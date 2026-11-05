@@ -111,6 +111,11 @@ export function PopoutWindowView({
     return { session, tools: extensions.tools, inline: extensions.inline };
   }, [client, bridgeSession, toolKeys]);
   useEffect(() => () => reactions?.session.dispose(), [reactions]);
+  // Main's own reaction operations ride the view: delivery, failure, retry.
+  const mainOperations = view.reactionOperations;
+  useEffect(() => {
+    reactions?.session.setMainOperations(mainOperations);
+  }, [reactions, mainOperations]);
   const focusConversation = () => {
     const editor = composerHost.current?.querySelector<HTMLElement>(
       '[role="textbox"]:not([aria-disabled="true"]), textarea:not(:disabled)',

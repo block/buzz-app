@@ -40,6 +40,7 @@ const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
   loadingOlder: false,
   reading: undefined,
   readingRevision: 0,
+  reactionOperations: [],
   version: 1,
   root: row("1".repeat(64), "Root message"),
   replies: [row("2".repeat(64), "First reply")],

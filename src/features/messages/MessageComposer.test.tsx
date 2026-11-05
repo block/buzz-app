@@ -11839,7 +11839,7 @@ it.each(["channel", "optional submission", "explicit recipient"])(
           };
     writeView("scope", submission?.draftKey ?? "draft:channel", draft);
     const h = mount({
-      submission,
+      ...(submission ? { submission } : {}),
       requireMention: mode !== "optional submission",
     });
     h.retarget({ defaultMention: first });

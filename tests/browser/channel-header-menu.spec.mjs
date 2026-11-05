@@ -563,7 +563,7 @@ test.describe("dialog origin retirement", () => {
         }),
     ).toBeVisible();
   }
-  test("Canvas retires without reading the next channel or losing its original draft", async ({
+  test("Canvas stays open for its channel until closed, without reading the next channel", async ({
     page,
     app,
   }) => {
@@ -602,20 +602,30 @@ test.describe("dialog origin retirement", () => {
         exact: true,
       }),
     ).toBeVisible();
+    // The returning tab keeps its view and the channel's draft.
+    await expect(editor).toHaveValue("Draft belongs to the original channel");
+    // Choosing channels from the sidebar keeps the tab the same way.
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("tab", { name: "Beta", exact: true }),
+    ).toBeVisible();
     await expect(canvas).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Channel actions", exact: true })
-      .click();
-    await page
-      .getByRole("menuitem", { name: "View canvas", exact: true })
-      .click();
-    // A fresh Canvas opens on View and focuses it; Edit keeps the draft.
-    await expect(view).toBeFocused();
-    await edit.click();
+    await page.locator(`button[data-channel-id="${channelId}"]`).click();
     await expect(editor).toHaveValue("Draft belongs to the original channel");
     await page
       .getByRole("button", { name: "Close Canvas tab", exact: true })
       .click();
+    await expect(canvas).toHaveCount(0);
+    // Close is the end: returning to the channel does not reopen it.
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("tab", { name: "Beta", exact: true }),
+    ).toBeVisible();
+    await page.locator(`button[data-channel-id="${channelId}"]`).click();
+    await expect(
+      page.getByRole("tab", { name: channelName, exact: true }),
+    ).toBeVisible();
+    await expect(canvas).toHaveCount(0);
     expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   });
   for (const entrance of ["header", "sidebar"]) {

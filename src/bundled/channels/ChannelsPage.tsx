@@ -733,7 +733,7 @@ function ChannelWorkspace({
     "messages",
     navigator,
   );
-  const { settings, setSettings, retireMenuEntries } = tabState;
+  const { settings, setSettings } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -1494,11 +1494,6 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
-  // Menu panels belong to one visit. Retire only this visit's keyed entries.
-  useEffect(() => {
-    if (!currentId) return;
-    return () => retireMenuEntries();
-  }, [currentId, retireMenuEntries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {

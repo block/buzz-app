@@ -185,6 +185,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
+- **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
+  nothing typed lists your other unread channels and DMs first, most recently
+  active first, and selects the first, so Enter opens it. Muted conversations
+  are left out.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.

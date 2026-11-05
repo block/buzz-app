@@ -591,6 +591,39 @@ it("reopens where it was left after opening a channel, and fresh after Escape or
   }
 });
 
+it("reopens an empty All view fresh, so it leads with what is unread now", async () => {
+  const t = connected();
+  try {
+    t.render();
+    await openSearch();
+    const recent = await screen.findByRole("group", {
+      name: "Recent activity",
+    });
+    await waitFor(() =>
+      expect(within(recent).getAllByRole("option")).not.toHaveLength(0),
+    );
+    await userEvent.keyboard("{ArrowDown}");
+    expect(within(recent).getAllByRole("option")[0]).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Search Buzz" })).toBeNull(),
+    );
+    await openSearch();
+    const reopened = await screen.findByRole("group", {
+      name: "Recent activity",
+    });
+    await waitFor(() =>
+      expect(within(reopened).getAllByRole("option")).not.toHaveLength(0),
+    );
+    expect(field()).not.toHaveAttribute("aria-activedescendant");
+  } finally {
+    await t.dispose();
+  }
+});
+
 it("shows the directory's first page while the rest loads", async () => {
   let release = () => {};
   const later = new Promise<void>((resolve) => {

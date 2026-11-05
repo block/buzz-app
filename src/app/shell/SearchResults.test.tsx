@@ -32,6 +32,10 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
+import {
+  readJournal,
+  type ReadJournal,
+} from "../../features/relay/read-state-storage";
 import type { AppServices } from "../services";
 import type { SearchGroup } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
@@ -167,6 +171,121 @@ it("opens with a conversation action and recent channels in activity order", asy
     expect(second).toHaveTextContent("older");
     fireEvent.click(action);
     expect(changeScope).toHaveBeenCalledExactlyOnceWith("older");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("leads an empty search with other unmuted unread channels and DMs, selecting the first for Enter", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const friend = keypair();
+  let journal: ReadJournal | undefined;
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = ["alpha", "dm", "muted", "other", "quiet", "read"].flatMap(
+    (id) => [
+      metadata(relay, id, id, undefined, id === "dm" ? [["t", "dm"]] : []),
+      roster(
+        relay,
+        id,
+        id === "dm" ? [viewer.pubkey, friend.pubkey] : [viewer.pubkey],
+      ),
+    ],
+  );
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      query(filters) {
+        return Promise.resolve(
+          discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          ),
+        );
+      },
+      decodeSidebarPreferences: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: ["muted"],
+      }),
+    },
+    {
+      readStateFloor: () => 0,
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        close() {},
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+      },
+    },
+  );
+  const open = vi.fn();
+  const props = {
+    session: owner.session,
+    onQueryChange() {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    currentChannelId: "read",
+    onScopeChange() {},
+    openConversation: open,
+  };
+  const markUnread = (channelId: string) =>
+    act(async () => {
+      await owner.session.unread.markUnreadLocal({
+        kind: "channel",
+        channelId,
+      });
+    });
+  const rowsOf = (group: string) =>
+    within(screen.getByRole("group", { name: group })).getAllByRole("option");
+  try {
+    await owner.session.sidebarPreferences.refresh();
+    const first = render(<SearchResults {...props} query="" />);
+    await waitFor(() => expect(rowsOf("Recent activity")).toHaveLength(4));
+    // Nothing unread: the suggestions are unchanged and Enter opens nothing.
+    const idle = screen.getByRole("combobox", { name: "Search Buzz" });
+    expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
+    expect(idle).not.toHaveAttribute("aria-activedescendant");
+    fireEvent.keyDown(idle, { key: "Enter" });
+    expect(open).not.toHaveBeenCalled();
+    first.unmount();
+    // The conversation already open is not somewhere to jump to.
+    for (const id of ["other", "muted", "dm", "read"]) await markUnread(id);
+    const mounted = render(<SearchResults {...props} query="" />);
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(2));
+    const rows = rowsOf("Unread");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Direct message"),
+      expect.stringMatching(/^other/),
+    ]);
+    // Unread leads, before the conversation action, and is not repeated.
+    expect(
+      screen
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label")),
+    ).toEqual(["Unread", "This conversation", "Recent activity"]);
+    expect(rowsOf("Recent activity").map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^alpha/),
+      expect.stringMatching(/^muted/),
+      expect.stringMatching(/^quiet/),
+      expect.stringMatching(/^read/),
+    ]);
+    expect(input).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    // An unread arriving above while open does not redirect Enter.
+    await markUnread("alpha");
+    expect(rowsOf("Unread")[0]).toHaveTextContent(/^alpha/);
+    expect(input).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledExactlyOnceWith("other");
+    // Typed text searches as before, without an Unread group.
+    mounted.rerender(<SearchResults {...props} query="other" />);
+    await screen.findByRole("group", { name: "Channels" });
+    expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
   } finally {
     cleanup();
     owner.dispose();

@@ -1,3 +1,5 @@
+import { ACTIVITY_PAGE } from "./activity-context";
+import { ActivityNavigationIcon } from "./ActivityNavigation";
 import {
   cloneElement,
   useEffect,
@@ -70,6 +72,15 @@ export function PageNavigation({
                 shape={avatar.shape}
                 size="small"
               />
+            ) : page.key === ACTIVITY_PAGE ? (
+              <ActivityNavigationIcon size="dock">
+                <PageIcon
+                  icon={icon}
+                  image={image}
+                  size={20}
+                  strokeWidth={2.5}
+                />
+              </ActivityNavigationIcon>
             ) : (
               <PageIcon icon={icon} image={image} size={20} strokeWidth={2.5} />
             ),
@@ -117,7 +128,7 @@ export function PageNavigation({
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
     };
-    const pageIcon = avatar ? (
+    const baseIcon = avatar ? (
       <Avatar
         key={page.key}
         src={avatar.src}
@@ -135,6 +146,14 @@ export function PageNavigation({
         strokeWidth={2.5}
       />
     );
+    const pageIcon =
+      page.key === ACTIVITY_PAGE ? (
+        <ActivityNavigationIcon key={page.key}>
+          {baseIcon}
+        </ActivityNavigationIcon>
+      ) : (
+        baseIcon
+      );
     const item = (
       <NavigationItem
         key={page.key}

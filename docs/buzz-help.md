@@ -86,6 +86,9 @@ the interface unless an available tool actually supports that action.
   name beside it. Search finds people by their profile names; once found, a
   verified full name also matches as you refine. Search and new direct messages
   also find people already verified by a matching verified name or username.
+- Profile names omit surrounding whitespace. Names with layout or directional
+  controls fall back to a safe handle or public-key fragment. Names that match
+  a loaded verified name after ignoring hidden characters gain a public-key suffix.
 
 ## Connect an external app
 
@@ -129,6 +132,9 @@ that agent in Buzz; they do not notify the external app through this connection.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
   copy its link, forward it, or open More. **Copy message** is in More. Keyboard
   focus also reveals these actions; touch layouts keep actions inline.
+- Plugins can add actions to this toolbar. A link to an active plugin panel
+  opens that panel in the conversation. If the plugin is removed, its actions
+  and panel links become unavailable.
 - **Forward message** in a message's hover actions or message menu sends its link
   to one person in the current community, with an optional note. Buzz opens or
   creates the direct message for you. The link previews the original message;
@@ -171,11 +177,16 @@ that agent in Buzz; they do not notify the external app through this connection.
   until you add one or turn worktree mode off.
 - **Activity** (the bell in the sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
-  threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs) narrow it by
+  threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
   activity clears the loading error.
+  **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
+  Reactions have no unread state or badge count. Clicking one opens your exact message in its conversation or thread.
+  New reactions from updated clients appear; older unaddressed reactions are not backfilled.
+  While Buzz is visible, a live reaction briefly replaces the Activity bell with its emoji for three seconds.
+  Further reactions during that hold do not change the icon; history loading does not trigger it.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. It is absent for a visit
@@ -374,10 +385,10 @@ that agent in Buzz; they do not notify the external app through this connection.
   The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
   the current app has a creation sidebar.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
-  **Activity** in the app dock to see recent mentions, DMs, and thread replies
+  **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
   **Open Activity** opens the page. The card's **Unread only** switch is
-  separate from the Activity page's filters. The preview is not shown on touch
+  separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
   devices or while the Activity page is open.
 - **Sidebar width**: drag the sidebar's right edge, or focus its resize handle
   and use the Left/Right arrow keys. Double-click the handle to reset the width.

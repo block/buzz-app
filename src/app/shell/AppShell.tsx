@@ -1,3 +1,4 @@
+import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
 import { orderPages, pagePlacement } from "./presentation";
 import {
@@ -45,7 +46,12 @@ export function AppShell(props: ComponentProps<typeof AppShellContent>) {
       pages={props.pages}
       relay={props.communities.relay}
     >
-      <AppShellContent {...props} />
+      <ActivityNavigationProvider
+        pages={props.pages}
+        relay={props.communities.relay}
+      >
+        <AppShellContent {...props} />
+      </ActivityNavigationProvider>
     </BestieNavigationProvider>
   );
 }

@@ -66,6 +66,10 @@ type WindowState = {
    * reached the start. Only falls while the window lives: a catch-up head can
    * move `cursor` past rows the reader already has, and those must stay. */
   floor?: number | undefined;
+  /** The viewer's sends this window saw unconfirmed. They show whatever
+   * their date, as they did while sending; confirmed sends from before the
+   * window wait for their page. */
+  sent: Set<string>;
   generation: number;
   controller?: AbortController | undefined;
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
@@ -447,13 +451,7 @@ export function createChannelStore(
   }
   function moveCursor(state: WindowState, cursor: WindowCursor | null) {
     state.cursor = cursor;
-    // Nothing written after a page loads is older than it, even when its
-    // rows are dated ahead of this clock.
-    state.floor = Math.min(
-      state.floor ?? Infinity,
-      cursor?.createdAt ?? 0,
-      nowSeconds(),
-    );
+    state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
   }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
@@ -462,8 +460,7 @@ export function createChannelStore(
       // viewer's own confirmed sends can carry rows from before the loaded
       // history. Showing one leaves a gap that a later page fills mid-list,
       // where the timeline can neither anchor the reader nor tell it from new
-      // arrivals. That page shows them instead. Unconfirmed sends stay, since
-      // only their row offers Retry.
+      // arrivals. That page shows them instead.
       const floor =
         (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
       const shown = (event: import("./events").EventData) =>
@@ -476,9 +473,11 @@ export function createChannelStore(
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
-      const own = (local?.snapshot() ?? []).filter(
-        (item) => item.delivery !== "seen" || shown(item.event),
-      );
+      const own = (local?.snapshot() ?? []).filter((item) => {
+        // An unconfirmed send's row is the only place that offers Retry.
+        if (item.delivery !== "seen") state.sent.add(item.event.id);
+        return state.sent.has(item.event.id) || shown(item.event);
+      });
       for (const item of own)
         if (
           [9, 40002, 40008].includes(item.event.kind) &&
@@ -601,6 +600,7 @@ export function createChannelStore(
       events: [],
       notices: new Map(),
       atHead: true,
+      sent: new Set(),
       generation: 0,
     };
     windows.set(channelId, state);

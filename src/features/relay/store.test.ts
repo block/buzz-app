@@ -232,34 +232,6 @@ describe("channel store", () => {
     expect(pending.length).toBe(0);
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
-  it("shows rows written after a page loads even when the page is dated ahead", async () => {
-    // A head page from a peer whose clock runs ahead must not hide what is
-    // written below its dates after it loads, such as the viewer's next send.
-    const { queries, next, pending, store } = setup(2, () => 10_000);
-    const ahead = message(alice, "c", "ahead", 60),
-      live = message(alice, "c", "live", 11);
-    queries.ensure("c");
-    next().respond([
-      ahead,
-      bounds(relay, "c", "head", {
-        has_more: true,
-        next_cursor: { created_at: 60, id: ahead.id },
-      }),
-    ]);
-    await flush();
-    const read = store.session.read([{ ids: [live.id], limit: 1 }]);
-    const entry = pending.find(
-      ({ filters }) => filters[0]?.ids?.[0] === live.id,
-    );
-    assert.exists(entry);
-    entry.respond([live]);
-    await read;
-    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
-      live.id,
-      ahead.id,
-    ]);
-    store.dispose();
-  });
   it("keeps rows older than a paged window's history bound out until a page reaches them", async () => {
     // Agents, search and previews read single old messages through the
     // session. Merging one into an open window above its loaded history makes

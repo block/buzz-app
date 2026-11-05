@@ -1231,3 +1231,25 @@ it("starts from an agent card's name, picture and instructions, in each harness 
     config: { notes: "start", instructions: "You are Tinker." },
   });
 });
+
+it("shows an agent card's pack avatar as that Gloopie", () => {
+  const pack = agentAvatars.find((avatar) => avatar.id === "gloopies-13");
+  if (!pack) throw new Error("gloopies-13 is missing from the catalog");
+  render(
+    <AgentCreateDialog
+      agents={{ create: vi.fn() } as unknown as Agents}
+      types={[echo]}
+      draft={{ name: "Tinker", picture: pack.url, instructions: "" }}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  const tabs = within(
+    within(dialog).getByRole("tablist", { name: "Avatar type" }),
+  );
+  expect(tabs.getByRole("tab", { name: "Gloopies" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});

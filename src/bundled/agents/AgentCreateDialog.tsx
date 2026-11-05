@@ -1,7 +1,10 @@
 // Avatar selection above the agent identity and type-owned setup fields.
 import { useEffect, useId, useRef, useState } from "react";
 import type { AgentCardDraft } from "../../features/agents/agent-card";
-import { randomAgentAvatar } from "../../features/agents/avatar-packs";
+import {
+  agentAvatars,
+  randomAgentAvatar,
+} from "../../features/agents/avatar-packs";
 import type {
   Agent,
   Agents,
@@ -98,8 +101,11 @@ export function AgentCreateDialog({
     const picture = update
       ? (update.request.picture ?? update.agent.picture ?? "")
       : (request?.picture ?? draft?.picture);
-    return picture === undefined
-      ? { kind: "gloopie", picture: randomAgentAvatar().url }
+    if (picture === undefined)
+      return { kind: "gloopie", picture: randomAgentAvatar().url };
+    // A card or request can name a pack avatar, which then animates.
+    return agentAvatars.some((avatar) => avatar.url === picture)
+      ? { kind: "gloopie", picture }
       : { kind: "image", picture };
   });
   const [typeKey, setTypeKey] = useState(

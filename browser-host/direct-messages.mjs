@@ -5,8 +5,8 @@ import { finalizeEvent } from "nostr-tools";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Idempotent participant-set command (kind 41010), or with `channel`, adding
- * people to that DM (kind 41011): a person keeps its history only with
- * `includeHistory`; agents always join it. Keys stay in the broker. */
+ * people to that DM (kind 41011). Only with `includeHistory` may anyone join
+ * an existing DM and read its history. Keys stay in the broker. */
 export function directMessageEvent(input, viewer, key) {
   if (
     !input ||
@@ -21,7 +21,8 @@ export function directMessageEvent(input, viewer, key) {
       ? typeof input.channel !== "string" ||
         !UUID.test(input.channel) ||
         typeof input.includeHistory !== "boolean"
-      : input.includeHistory !== undefined
+      : input.includeHistory !== undefined &&
+        typeof input.includeHistory !== "boolean"
   )
     throw new Error("Choose a direct message to add people to.");
   return finalizeEvent(
@@ -32,7 +33,7 @@ export function directMessageEvent(input, viewer, key) {
       tags: [
         ...(adding ? [["h", input.channel]] : []),
         ...input.pubkeys.map((pubkey) => ["p", pubkey]),
-        ...(adding && input.includeHistory ? [["history", "include"]] : []),
+        ...(input.includeHistory ? [["history", "include"]] : []),
         ["client", randomUUID()],
       ],
     },

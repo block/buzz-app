@@ -177,14 +177,24 @@ export function createDirectMessages(
     searched(pubkey: string, authority: VerifiedProfileAuthority) {
       return searchProfiles.answered(pubkey, authority);
     },
-    async open(pubkeys: readonly string[], signal: AbortSignal) {
+    /** Open the DM of `pubkeys`. With `includeHistory`, the caller has warned
+     * that named agents join the DM of these people and can read it. */
+    async open(
+      pubkeys: readonly string[],
+      signal: AbortSignal,
+      includeHistory = false,
+    ) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
       if (!validDirectMessageParticipants(pubkeys, transport.viewer))
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
-      const id = await transport.openDirectMessage(pubkeys, active);
+      const id = await transport.openDirectMessage(
+        pubkeys,
+        active,
+        includeHistory ? { includeHistory } : undefined,
+      );
       active.throwIfAborted();
       const expected = new Set([transport.viewer, ...pubkeys]);
       const members = await confirmed(id, [...expected], active);
@@ -222,9 +232,8 @@ export function createDirectMessages(
       return id;
     },
     /** Add `pubkeys` to the DM `channelId` and return the DM they ended up
-     * in: this one, a new DM of everyone when a person is added without
-     * `includeHistory`, or an existing DM of the grown set of people. Agents
-     * always join this DM. */
+     * in: this one, a new DM of everyone without `includeHistory`, or an
+     * existing DM of the grown set of people. */
     async add(
       channelId: string,
       pubkeys: readonly string[],

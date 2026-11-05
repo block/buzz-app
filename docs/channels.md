@@ -392,7 +392,10 @@ exact command receipt, and returns the canonical channel ID. A unique client tag
 allows reissuing this participant-set command after a lost response without
 receiving a generic duplicate-event receipt. No private key or arbitrary signing
 capability is exposed to the page. Other host adapters report this capability as
-unavailable until they implement it.
+unavailable until they implement it. Without `["history", "include"]` the relay
+finds or makes the DM of exactly the named members, agents included. New
+message sends the tag only while it shows an existing DM, so named agents join
+the DM on screen, with its history, as the page says; every other open omits it.
 
 Before sending, the session requires signed DM metadata and a signed roster
 containing the viewer and selected people, plus only agents they did not name.
@@ -402,8 +405,9 @@ containing the viewer and selected people, plus only agents they did not name.
 The access dialog of a DM adds people and agents through the same
 purpose-bound endpoint, which signs kind 41011 with the DM's `h` tag. An agent
 joins in place with the DM's history and never changes which DM it is; the
-dialog sends it with `["history", "include"]`, so someone the relay counts as a
-person still joins in place. Only whether to ask depends on the app's agent
+dialog sends it with `["history", "include"]`, without which the relay starts a
+new DM of everyone, and someone the relay counts as a person still joins in
+place. Only whether to ask depends on the app's agent
 classification. Adding a person first asks **Include history** or **Start new DM**. Include history
 adds them in place with `["history", "include"]`; the DM is then identified by
 the grown set of people, so messaging only the original people later starts a

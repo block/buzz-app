@@ -21,6 +21,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { DirectMessageHistory } from "../../features/relay/transport";
 import { createRelaySession } from "../../features/relay/session";
 import type { VerifiedProfileAuthority } from "../../features/relay/verified-profile";
 import {
@@ -159,10 +160,11 @@ async function setup(
     async (
       pubkeys: readonly string[],
       _signal: AbortSignal,
-      into?: { channelId: string; includeHistory: boolean },
+      into?: DirectMessageHistory,
     ) => {
       if (failure) throw new Error(failure);
-      if (into?.includeHistory || pubkeys.includes(agent.pubkey)) {
+      // As the relay: only the history tag joins this DM in place.
+      if (into?.includeHistory) {
         members.push(...pubkeys);
         clock++;
         return id;

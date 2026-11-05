@@ -284,9 +284,10 @@ pub(crate) async fn relay_kit_decode(
 }
 
 /// Opens the DM of `pubkeys` (kind:41010), or, with `channel`, adds them to
-/// that DM (kind:41011). An added person joins that DM with its history when
-/// `include_history`, and otherwise starts a new DM of everyone; agents always
-/// join that DM. Returns the DM the relay settled on.
+/// that DM (kind:41011). Only with `include_history` may anyone join an
+/// existing DM and read its history: an open then finds the DM of these
+/// people and adds any named agents, and an add joins that DM instead of
+/// starting a new DM of everyone. Returns the DM the relay settled on.
 #[tauri::command]
 pub(crate) async fn relay_direct_message(
     host: tauri::State<'_, IdentityHost>,
@@ -374,9 +375,6 @@ pub(super) fn direct_message_tags(
     match channel {
         Some(channel) if uuid(&channel) => tags.push(vec!["h".into(), channel]),
         Some(_) => return Err("Choose a direct message to add people to.".into()),
-        None if include_history.is_some() => {
-            return Err("Choose a direct message to add people to.".into())
-        }
         None => {}
     }
     tags.extend(pubkeys.into_iter().map(|p| vec!["p".into(), p]));
@@ -1024,6 +1022,17 @@ mod direct_message_tests {
     }
 
     #[test]
+    fn an_open_carries_the_history_choice() {
+        let shared = direct_message_tags(&key('a'), vec![key('b')], None, Some(true)).unwrap();
+        assert_eq!(
+            shared[1],
+            vec!["history".to_string(), "include".to_string()]
+        );
+        let exact = direct_message_tags(&key('a'), vec![key('b')], None, Some(false)).unwrap();
+        assert!(!exact.iter().any(|tag| tag[0] == "history"));
+    }
+
+    #[test]
     fn an_addition_leads_with_its_dm_and_carries_the_history_choice() {
         let dm = uuid::Uuid::nil().to_string();
         let kept =
@@ -1045,7 +1054,6 @@ mod direct_message_tests {
             (vec!["b".into()], None, None),
             ((0..9).map(|i| format!("{i:064}")).collect(), None, None),
             (vec![key('b')], Some("not-a-uuid".to_string()), Some(true)),
-            (vec![key('b')], None, Some(true)),
         ] {
             assert!(direct_message_tags(&viewer, pubkeys, channel, history).is_err());
         }

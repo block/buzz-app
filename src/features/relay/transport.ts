@@ -92,11 +92,13 @@ export interface RelayWriter {
     signal: AbortSignal,
   ): Promise<string> | Promise<void>;
 }
-/** Adding to an existing DM. A person joins it with its history only when
- * `includeHistory`; otherwise they start a new DM of everyone. Agents always
- * join it. */
-export type DirectMessageAddition = {
-  readonly channelId: string;
+/** Whether a DM command may share an existing DM's history. With
+ * `channelId`, it adds to that DM: they join it with its history only when
+ * `includeHistory`, and otherwise start a new DM of everyone. Without, it
+ * opens a DM: with `includeHistory`, the DM of these people, adding any named
+ * agents to it; otherwise the DM of exactly these members. */
+export type DirectMessageHistory = {
+  readonly channelId?: string;
   readonly includeHistory: boolean;
 };
 
@@ -121,13 +123,13 @@ export interface ReadTransport {
     repository: string,
   ) => Promise<{ repository: string; token: string } | null>;
   readonly uploadAttachment?: AttachmentUpload;
-  /** Host-owned idempotent DM opening, or with `into`, adding `pubkeys` to that
-   * DM. Returns the DM the relay settled on; the session verifies membership
-   * before use. */
+  /** Host-owned idempotent DM opening, or with `history.channelId`, adding
+   * `pubkeys` to that DM. Returns the DM the relay settled on; the session
+   * verifies membership before use. */
   readonly openDirectMessage?: (
     pubkeys: readonly string[],
     signal: AbortSignal,
-    into?: DirectMessageAddition,
+    history?: DirectMessageHistory,
   ) => Promise<string>;
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
@@ -701,18 +703,18 @@ export async function connectBrokerTransport(
           async openDirectMessage(
             pubkeys: readonly string[],
             signal: AbortSignal,
-            into?: DirectMessageAddition,
+            history?: DirectMessageHistory,
           ) {
             const result = await fetch(`${endpoint}/direct-message`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(
-                into
+                history
                   ? {
                       pubkeys,
-                      channel: into.channelId,
-                      includeHistory: into.includeHistory,
+                      channel: history.channelId,
+                      includeHistory: history.includeHistory,
                     }
                   : { pubkeys },
               ),
@@ -720,7 +722,7 @@ export async function connectBrokerTransport(
             });
             if (!result.ok)
               throw new Error(
-                into
+                history?.channelId
                   ? "Couldn’t add them. A DM holds up to 9 people, not counting agents."
                   : "Could not open the direct message. Try again.",
               );

@@ -397,6 +397,9 @@ export function NewMessage({
             : await session.directMessages.open(
                 recipients.map((person) => person.pubkey),
                 controller.signal,
+                // Sending goes to the DM shown here, which named agents join
+                // with its history, as the page says.
+                existing !== undefined,
               );
         controller.signal.throwIfAborted();
         prepared.current = { key, id };

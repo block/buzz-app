@@ -1,3 +1,4 @@
+import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
 import { executionSpawn } from "./execution";
 // Turns Agents deliveries into Claude turns. Each agent of this type has its
@@ -232,14 +233,14 @@ export class ClaudeRuntime {
   private executionKey(agent: AgentKey, conversation: string) {
     const scope = this.reads(agent)?.scope;
     if (!scope) throw new Error("Buzz is not connected");
-    return `buzz.claude-code.execution.v1:${JSON.stringify([scope, agent, conversation])}`;
+    return `buzz.claude-code.sessions.execution.v1:${JSON.stringify([scope, agent, conversation])}`;
   }
   private savedSessions(agent: AgentKey) {
     return localSessions(
       this.storage,
       agent,
       this.targetKey
-        ? `buzz.claude-code.remote.v1:${this.targetKey}`
+        ? `buzz.claude-code.sessions.remote.v1:${this.targetKey}`
         : undefined,
       !!this.target,
     );
@@ -295,8 +296,14 @@ export class ClaudeRuntime {
           key,
           JSON.stringify({ key: saved.key, intent: "existing" }),
         );
-        await this.storage.read(
-          `buzz.claude-code.remote.v1:${saved.key}:${agent}`,
+        const savedKey = `buzz.claude-code.sessions.remote.v1:${saved.key}:${agent}`;
+        const savedText = await this.storage.read(savedKey);
+        const storage = fileStore(
+          new Map(savedText === null ? [] : [[savedKey, savedText]]),
+          (key, value) => this.storage.set(key, value),
+          (key, value) => this.storage.add(key, value),
+          (key) => this.storage.read(key),
+          (prefix) => this.storage.scan(prefix),
         );
         abort.signal.throwIfAborted();
         execution.signal.throwIfAborted();
@@ -304,7 +311,7 @@ export class ClaudeRuntime {
           { spawn: executionSpawn(execution) },
           (key) => (key === agent ? this.reads(key) : undefined),
           this.core,
-          this.storage,
+          storage,
           (raw) => ({
             ...this.resolveConfig(raw, true),
             workspace: execution.workspace,
@@ -513,17 +520,19 @@ export class ClaudeRuntime {
     const saved = this.bound(agent)
       ? this.storage
           .keys()
-          .filter((key) => key.startsWith("buzz.claude-code.execution.v1:"))
+          .filter((key) =>
+            key.startsWith("buzz.claude-code.sessions.execution.v1:"),
+          )
           .flatMap((key) => {
             const [scope, owner] = JSON.parse(
-              key.slice("buzz.claude-code.execution.v1:".length),
+              key.slice("buzz.claude-code.sessions.execution.v1:".length),
             ) as string[];
             if (owner !== agent || scope !== reads?.scope) return [];
             const session = this.record(this.storage.get(key) ?? "null");
             return localSessions(
               this.storage,
               agent,
-              `buzz.claude-code.remote.v1:${session.key}`,
+              `buzz.claude-code.sessions.remote.v1:${session.key}`,
             ).list();
           })
       : this.savedSessions(agent).list();
@@ -1291,8 +1300,10 @@ export class ClaudeRuntime {
           }),
         delete: (key) => saved.delete(key),
       },
-      started: (session, text) =>
-        void this.prompts(agent).save(session, [{ label: "", text }]),
+      started: (session, text) => {
+        if (!this.target)
+          void this.prompts(agent).save(session, [{ label: "", text }]);
+      },
       onChange: () => this.notify(),
       fingerprint: (key) =>
         JSON.stringify([

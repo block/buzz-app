@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createShortcutBindings } from "../../features/shortcuts/preferences";
 import { ShortcutsService } from "../../features/shortcuts/service";
@@ -34,6 +42,7 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
+  vi.useRealTimers();
   cleanup();
   await dispose();
   highlights.clear();
@@ -174,4 +183,115 @@ it("still counts and scrolls without the Custom Highlight API", async () => {
   await user.paste("match");
   expect(await screen.findByText("1 of 1")).toBeInTheDocument();
   expect(scrolled).toHaveBeenCalled();
+});
+
+it("follows a dialog that opens and closes while it is open", async () => {
+  function Page() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open members
+        </button>
+        <p id="page">page topic</p>
+        <Dialog open={open} title="Members" onOpenChange={setOpen}>
+          <p id="inside">dialog topic</p>
+        </Dialog>
+      </>
+    );
+  }
+  const { user } = setup(<Page />);
+  await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+  await user.paste("topic");
+  expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Open members" }));
+  const dialog = await screen.findByRole("dialog", { name: "Members" });
+  // The bar moves into the modal, where it stays reachable, and searches it.
+  await waitFor(() => expect(dialog).toContainElement(findBar()));
+  await waitFor(() =>
+    expect(painted("buzz-find-active")).toEqual([
+      { text: "topic", in: "inside" },
+    ]),
+  );
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(findBar()).toBeInTheDocument();
+  await waitFor(() =>
+    expect(painted("buzz-find-active")).toEqual([
+      { text: "topic", in: "page" },
+    ]),
+  );
+});
+
+it("leaves Enter and Escape to an input method while composing", async () => {
+  const { user } = setup(<p>one two one</p>);
+  await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+  await user.paste("one");
+  expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+  for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+    expect(fireEvent.keyDown(field(), { key: "Enter", ...init })).toBe(true);
+    expect(fireEvent.keyDown(field(), { key: "Escape", ...init })).toBe(true);
+  }
+  expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  expect(screen.getByText("2 of 2")).toBeInTheDocument();
+});
+
+it("recounts when a retained panel is covered or uncovered", async () => {
+  // jsdom has no layout; an inert panel's text reports as not visible.
+  Object.defineProperty(Element.prototype, "checkVisibility", {
+    configurable: true,
+    value(this: Element) {
+      return !this.closest("[inert]");
+    },
+  });
+  const { user } = setup(
+    <>
+      <section id="one-panel">
+        <p id="one">panequery and panequery</p>
+      </section>
+      <section id="two-panel" inert>
+        <p id="two">panequery</p>
+      </section>
+    </>,
+  );
+  await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+  await user.paste("panequery");
+  expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+
+  // Switching tabs changes only attributes; the text stays mounted.
+  act(() => {
+    document.getElementById("one-panel")?.setAttribute("inert", "");
+    document.getElementById("two-panel")?.removeAttribute("inert");
+  });
+  expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+  expect(painted("buzz-find-active")).toEqual([
+    { text: "panequery", in: "two" },
+  ]);
+  delete (Element.prototype as { checkVisibility?: unknown }).checkVisibility;
+});
+
+it("recounts at least once a second while content keeps changing", async () => {
+  const { user } = setup(
+    <main>
+      <p>tick</p>
+    </main>,
+  );
+  await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+  await user.paste("tick");
+  expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+
+  vi.useFakeTimers();
+  const main = screen.getByRole("main");
+  // A streaming reply: an update every 50 ms never leaves a quiet pause.
+  for (let tick = 0; tick < 30; tick++)
+    await act(async () => {
+      const line = document.createElement("p");
+      line.textContent = "tick";
+      main.append(line);
+      await vi.advanceTimersByTimeAsync(50);
+    });
+  expect(findBar()).not.toHaveTextContent("1 of 1");
 });

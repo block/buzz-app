@@ -18,6 +18,18 @@ const ACTIVE = "buzz-find-active";
 /** Typing waits this long; arriving messages recount after a longer pause. */
 const TYPING_DELAY = 100;
 const MUTATION_DELAY = 250;
+/** Content that never pauses, such as a streaming reply, still recounts. */
+const MUTATION_MAX_WAIT = 1000;
+/** Attributes that show, hide or cover content without changing its text. */
+const VISIBILITY = [
+  "class",
+  "style",
+  "hidden",
+  "inert",
+  "aria-hidden",
+  "aria-modal",
+  "open",
+];
 
 function paint(ranges: readonly Range[], active: number) {
   // Without the Custom Highlight API the bar still counts and scrolls.
@@ -33,7 +45,6 @@ function unpaint() {
   globalThis.CSS?.highlights?.delete(MATCHES);
   globalThis.CSS?.highlights?.delete(ACTIVE);
 }
-
 /**
  * Find on screen: Chrome's find bar over the rendered window. It paints with
  * the Custom Highlight API, so the DOM React and the composer own is never
@@ -74,12 +85,15 @@ export function FindInPage({
       });
   }, []);
   const close = useCallback(() => {
+    const scope = latest.current.root;
     unpaint();
     ranges.current = [];
     setRoot(null);
     const focus = returnFocus.current;
     returnFocus.current = null;
-    if (focus?.isConnected) focus.focus({ preventScroll: true });
+    // Not into the page behind a dialog that opened meanwhile.
+    if (focus?.isConnected && scope?.contains(focus))
+      focus.focus({ preventScroll: true });
   }, []);
   /** Recount from the DOM, keeping the active match where it was. */
   const search = useCallback(
@@ -135,21 +149,35 @@ export function FindInPage({
     typing.current = setTimeout(() => search(true), TYPING_DELAY);
     return () => clearTimeout(typing.current);
   }, [root, query, search]);
-  // Messages arrive and tabs change underneath; keep the count current.
+  // Messages arrive, tabs change and dialogs open underneath; keep the scope
+  // and count current.
   useEffect(() => {
     if (!root) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let since = 0;
     const observer = new MutationObserver((records) => {
       if (records.every((record) => bar.current?.contains(record.target)))
         return;
+      // The bar follows the top modal in and out, so it stays reachable.
+      const scope = activeModal(document) ?? document.body;
+      if (scope !== latest.current.root) return setRoot(scope);
+      if (timer === undefined) since = Date.now();
       clearTimeout(timer);
-      timer = setTimeout(() => search(false), MUTATION_DELAY);
+      const wait = Math.min(
+        MUTATION_DELAY,
+        since + MUTATION_MAX_WAIT - Date.now(),
+      );
+      timer = setTimeout(() => {
+        timer = undefined;
+        search(false);
+      }, wait);
     });
-    // The body, not the root: a closing modal must also close its bar.
+    // The body, not the root: modals open and close outside it.
     observer.observe(document.body, {
       childList: true,
       subtree: true,
       characterData: true,
+      attributeFilter: VISIBILITY,
     });
     return () => {
       observer.disconnect();
@@ -174,6 +202,9 @@ export function FindInPage({
       aria-label="Find on screen"
       className={styles.bar}
       onKeyDown={(event) => {
+        // Enter and Escape belong to an input method while it composes.
+        if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
+          return;
         if (event.key === "Escape") {
           // Close only the bar, never a dialog underneath.
           event.preventDefault();

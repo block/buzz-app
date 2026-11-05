@@ -22,7 +22,6 @@ import { createAgentClient } from "../agents/client";
 import { deferred, createTestSession } from "../test-helpers";
 import { builderlabType } from "./index";
 import { PanelCard } from "../../../features/panels/PanelCard";
-import { createSignInFooter } from "./SignInFooter";
 
 vi.mock("../oauth/browser", async (original) => ({
   ...(await original<typeof import("../oauth/browser")>()),
@@ -177,37 +176,28 @@ it("does not start sign-in or provider reads on mount, then loads after explicit
   const mark = harness.querySelector("svg");
   expect(mark).toHaveAttribute("width", "1.25rem");
   expect(screen.getByRole("button", { name: "Model:" })).toBeDisabled();
-  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveAttribute(
-    "placeholder",
-    "",
-  );
-  expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
+  const action = screen.getByRole("button", { name: "Sign in to Builderlab" });
+  expect(harness.closest(".buzz-preference-row")).toContainElement(action);
   expect(signIn).not.toHaveBeenCalled();
   expect(h.request).not.toHaveBeenCalled();
-  await act(() => h.session.signIn());
+  const user = userEvent.setup();
+  await user.click(action);
   expect(await loadedInstructions()).toHaveValue("First instructions.");
   expect(
     screen.getByRole("button", { name: "Change harness from Builderlab" }),
   ).toBe(harness);
   expect(harness.querySelector("svg")).toBe(mark);
-  const user = userEvent.setup();
   await user.type(
     screen.getByRole("textbox", { name: "Instructions" }),
     " Draft",
   );
   act(() => h.session.signOut());
-  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
-    "First instructions. Draft",
-  );
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-  const field = screen.getByRole("textbox", { name: "Instructions" });
-  expect(field).toBeDisabled();
-  await user.type(field, " Ignored while signed out");
-  expect(field).toHaveValue("First instructions. Draft");
   expect(signIn).toHaveBeenCalledTimes(1);
   await act(() => h.session.signIn());
-  expect(await loadedInstructions()).toBe(field);
-  expect(field).toHaveValue("First instructions. Draft");
+  expect(await loadedInstructions()).toHaveValue("First instructions. Draft");
   h.session.dispose();
 });
 
@@ -360,7 +350,7 @@ it("hides a failed settings load and Retry while signed out, then loads after ex
   act(() => h.session.signOut());
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-  expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
   expect(signIn).not.toHaveBeenCalled();
   expect(h.request).toHaveBeenCalledTimes(before);
   await act(() => h.session.signIn());
@@ -409,14 +399,8 @@ it.each([
       "https://staging.builderlab.example:8443/api",
     );
     const h = await fixture();
-    const Footer = createSignInFooter(h.session);
-    render(
-      <>
-        <h.Tab agent={agent()} save={vi.fn()} />
-        <Footer />
-      </>,
-    );
-    const field = await loadedInstructions();
+    render(<h.Tab agent={agent()} save={vi.fn()} />);
+    let field = await loadedInstructions();
     const user = userEvent.setup();
     await user.type(field, " Draft");
     const reads = h.request.mock.calls.length;
@@ -426,6 +410,7 @@ it.each([
       canUseRemoteAgents,
     });
     await act(() => h.session.signIn());
+    field = screen.getByRole("textbox", { name: "Instructions" });
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
       "Sign in as a@example.com to edit this agent.",
@@ -479,7 +464,9 @@ it.each([
         screen.queryByRole("button", { name: "Use another account" }),
       ).toBeNull();
       expect(screen.queryByRole("alert")).toBeNull();
-      expect(field).toBeDisabled();
+      expect(
+        screen.queryByRole("textbox", { name: "Instructions" }),
+      ).toBeNull();
       h.prepareAccount({
         subject: "account-a",
         email: "a@example.com",
@@ -488,10 +475,9 @@ it.each([
       await user.click(
         screen.getByRole("button", { name: "Sign in to Builderlab" }),
       );
-      await waitFor(() => expect(field).toBeEnabled());
+      const restored = await loadedInstructions();
       expect(h.acquire).toHaveBeenCalledTimes(attempts + 1);
-      expect(screen.getByRole("textbox", { name: "Instructions" })).toBe(field);
-      expect(field).toHaveValue("First instructions. Draft");
+      expect(restored).toHaveValue("First instructions. Draft");
       expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     } finally {
@@ -503,13 +489,7 @@ it.each([
 it("recovers an unloaded no-access account through logout and normal sign-in, retaining ordinary Retry", async () => {
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   const h = await fixture(false);
-  const Footer = createSignInFooter(h.session);
-  render(
-    <>
-      <h.Tab agent={agent()} save={vi.fn()} />
-      <Footer />
-    </>,
-  );
+  render(<h.Tab agent={agent()} save={vi.fn()} />);
   h.prepareAccount({
     subject: "account-b",
     email: "b@example.com",
@@ -616,10 +596,11 @@ it("retries a failed load and refuses to save a draft through another account", 
   expect(screen.getByRole("textbox", { name: "Instructions" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Retry" }));
-  const field = await loadedInstructions();
+  let field = await loadedInstructions();
   expect(field).toHaveValue("First instructions.");
   await user.type(field, "Changed.");
   await act(async () => h.changeAccount());
+  field = screen.getByRole("textbox", { name: "Instructions" });
   const before = h.request.mock.calls.length;
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Sign in as a@example.com to edit this agent.",
@@ -646,7 +627,7 @@ it("settles an aborted catalog read after switching accounts without losing the 
   });
   render(<h.Tab agent={agent()} save={vi.fn()} />, { wrapper: StrictMode });
   try {
-    const field = await loadedInstructions();
+    let field = await loadedInstructions();
     await waitFor(() => expect(catalog).toHaveBeenCalled());
     expect(field.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
     const user = userEvent.setup();
@@ -654,6 +635,7 @@ it("settles an aborted catalog read after switching accounts without losing the 
     act(() => h.session.signOut());
     expect(catalog.mock.calls.at(-1)?.[0].aborted).toBe(true);
     await act(() => h.changeAccount());
+    field = screen.getByRole("textbox", { name: "Instructions" });
     await waitFor(() =>
       expect(field.closest("[aria-busy]")).toHaveAttribute(
         "aria-busy",

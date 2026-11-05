@@ -33,15 +33,21 @@ function callbackPage(status) {
       .toString()
       .replace("<!-- {{style}} -->", `<style>${style}</style>`)
       .replace("<!-- {{script}} -->", `<script>${script}</script>`)
+      .replace(
+        "<!-- {{pageBrand}} -->",
+        `<div class="brand" role="img" aria-label="Builderlab">${readFileSync(
+          new URL("../public/builderlab-mark.svg", import.meta.url),
+        ).toString()}</div>`,
+      )
+      .replace("<!-- {{cardBrand}} -->", "")
+      .replace(
+        "<!-- {{artwork}} -->",
+        `<div class="artwork" aria-hidden="true"><img src="data:image/webp;base64,${read("cubes.webp").toString("base64")}" alt=""></div>`,
+      )
+      .replace("<!-- {{closeHint}} -->", read("close-hint.html").toString())
+      .replaceAll("{{provider}}", "Builderlab")
       .replaceAll("{{complete}}", status === 200 ? "true" : "false")
       .replaceAll("{{closeDelay}}", "3")
-      .replace(
-        "{{brand}}",
-        readFileSync(
-          new URL("../public/builderlab-mark.svg", import.meta.url),
-        ).toString(),
-      )
-      .replace("{{artwork}}", read("cubes.webp").toString("base64"))
       .replace(
         "{{heading}}",
         status === 200 ? "Signing you in…" : "Sign-in needs attention",

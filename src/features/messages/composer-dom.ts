@@ -108,6 +108,11 @@ export type ComposerInputElement = HTMLDivElement & {
     /** Automatic edits preserve focus and the current selection. */
     focus?: boolean,
   ): boolean;
+  readDraft(): import("../conversation/contracts").ComposerDraftSnapshot | null;
+  replaceDraft(
+    snapshot: import("../conversation/contracts").ComposerDraftSnapshot,
+    text: string,
+  ): boolean;
   replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
   /** Replace the typed `@name` with a chip the host is still resolving; the
    * returned id names it until `settlePendingMention`. One undo step. */

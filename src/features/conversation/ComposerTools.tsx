@@ -70,6 +70,9 @@ function OwnedTool({
     useState<
       Pick<
         ComposerToolProps,
+        | "readDraft"
+        | "replaceDraft"
+        | "isFocused"
         | "insertText"
         | "insertMention"
         | "insertMentions"
@@ -85,7 +88,18 @@ function OwnedTool({
     let release: (() => void) | undefined;
     const active = () =>
       live && registry.snapshot().includes(tool) && !current.current.disabled;
+    const snapshots = new WeakSet<object>();
     setCommands({
+      readDraft: () => {
+        const snapshot = active() ? current.current.readDraft() : null;
+        if (snapshot) snapshots.add(snapshot);
+        return snapshot;
+      },
+      replaceDraft: (snapshot, text) =>
+        active() &&
+        snapshots.has(snapshot) &&
+        current.current.replaceDraft(snapshot, text),
+      isFocused: () => active() && current.current.isFocused(),
       capture: (Capture) => {
         if (!active() || !current.current.capture) return false;
         const cancel = current.current.capture((props) => (

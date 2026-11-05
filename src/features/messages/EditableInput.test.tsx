@@ -4828,3 +4828,60 @@ describe("oversized paste feedback", () => {
     expect(onPasteTooLong).toHaveBeenCalledTimes(2);
   });
 });
+
+it("rewrites a draft with rich source and explicit mention identities in one undoable edit", () => {
+  const person = { pubkey: "a".repeat(64), name: "Honey" };
+  const h = mount();
+  act(() => {
+    h.input.insertText("Hello ");
+    h.input.insertText("@Honey ", person);
+    h.input.toggleFormat("bold");
+    h.input.insertText("friend");
+  });
+  const original = h.markdown();
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  expect(snapshot.text).toContain("**friend**");
+  expect(snapshot.mentions).toEqual([
+    { name: "Honey", marker: expect.any(String) },
+  ]);
+  expect(snapshot.text).not.toContain("@Honey");
+  act(() => {
+    expect(
+      h.input.replaceDraft(
+        snapshot,
+        `Hi ${snapshot.mentions[0]?.marker}, dear **friend**`,
+      ),
+    ).toBe(true);
+  });
+  expect(h.markdown()).toContain("Hi @Honey, dear **friend**");
+  expect(h.draft().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    person.pubkey,
+  ]);
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe(original);
+  act(() => h.input.undo(true));
+  expect(h.markdown()).toContain("Hi @Honey, dear **friend**");
+});
+
+it("refuses stale or forged rewrite snapshots, lost or duplicate mentions, and overlong results", () => {
+  const person = { pubkey: "b".repeat(64), name: "Honey" };
+  const h = mount("", { maxLength: 30 });
+  act(() => h.input.insertText("@Honey ", person));
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  const marker = snapshot.mentions[0]?.marker;
+  act(() => {
+    expect(h.input.replaceDraft({ ...snapshot }, `${marker} hello`)).toBe(
+      false,
+    );
+    expect(h.input.replaceDraft(snapshot, "Lost mention")).toBe(false);
+    expect(h.input.replaceDraft(snapshot, `${marker} ${marker}`)).toBe(false);
+    expect(h.input.replaceDraft(snapshot, `${marker} ${"x".repeat(40)}`)).toBe(
+      false,
+    );
+    h.input.insertText("new text");
+    expect(h.input.replaceDraft(snapshot, `${marker} stale`)).toBe(false);
+  });
+  expect(h.input).toHaveValue("@Honey new text");
+});

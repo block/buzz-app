@@ -492,6 +492,9 @@ confirmation.
 
 ## Optional features and limits
 
+- Plugins can offer draft rewrite controls. These controls can preserve explicit
+  mentions and support Undo. A rewrite does not send a message. Host-issued
+  snapshots prevent late responses from replacing a changed draft.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a

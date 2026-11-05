@@ -57,6 +57,7 @@ export type {
 } from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
+  ComposerDraftSnapshot,
   ComposerObservation,
   CompletionContext,
   CompletionQuery,

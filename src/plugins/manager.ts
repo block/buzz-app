@@ -209,6 +209,23 @@ export function createPluginManager(
       else void pending.then(finish, finish);
     }
   }
+  // One read per installed revision; a failed read is forgotten so a later
+  // mount can retry, and an updated revision is a new key.
+  const icons = new Map<string, Promise<string | undefined>>();
+  function icon(id: string, revision: string) {
+    const key = `${id}\0${revision}`;
+    let url = icons.get(key);
+    if (!url) {
+      url = storage.readContent(id, revision).then(({ iconPng, iconJpg }) => {
+        if (iconPng) return `data:image/png;base64,${iconPng}`;
+        if (iconJpg) return `data:image/jpeg;base64,${iconJpg}`;
+        return undefined;
+      });
+      icons.set(key, url);
+      url.catch(() => icons.delete(key));
+    }
+    return url;
+  }
   const change = (action: ManagementAction, id: string) =>
     update(() => storage.changePlugin(action, id));
   const requests = createPluginRequests({
@@ -233,6 +250,7 @@ export function createPluginManager(
       };
     },
     imports: storage.imports,
+    icon,
     installImport: (token: string, path: string) =>
       update(() => {
         if (!storage.imports)

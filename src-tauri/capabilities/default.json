@@ -105,6 +105,7 @@
     "allow-plugin-change",
     "allow-plugin-reload",
     "allow-plugin-module",
+    "allow-plugin-content",
     "allow-plugin-recover",
     "allow-plugin-host-run-command",
     "allow-plugin-host-call-context",

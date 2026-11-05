@@ -13,7 +13,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCommunityMembership } from "../bundled/moderation/membership";
 import {
   SettingsCardsService,
@@ -499,6 +499,90 @@ it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
   fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
   expect(content).toHaveFocus();
   expect(search).toHaveValue("Invoices");
+});
+
+describe("installed plugin icons", () => {
+  const dataUrl = "data:image/png;base64,iVBORw0KGgo=";
+  function renderExternal(
+    icon: (id: string, revision: string) => Promise<string | undefined>,
+    iconPngRevision?: string,
+  ) {
+    const { cards } = registry([]);
+    const snapshot = {
+      ...pluginState,
+      configuration: {
+        status: "ready" as const,
+        externalPluginsPaused: false,
+        catalog: {
+          profile: "test",
+          location: "test",
+          plugins: [
+            {
+              manifest: {
+                id: "example.helper",
+                name: "External helper",
+                apiVersion: 1 as const,
+              },
+              source: "external" as const,
+              enabled: true,
+              revision: "abc123",
+              previous: null,
+              reloadable: true,
+              error: null,
+              ...(iconPngRevision ? { iconPngRevision } : {}),
+            },
+          ],
+        },
+      },
+    };
+    const plugins = {
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      requests: noRequests,
+      icon,
+    } as unknown as Parameters<typeof Settings>[0]["plugins"];
+    render(<Settings {...host} cards={cards} plugins={plugins} />);
+    fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+    return screen.getByRole("button", { name: "View External helper details" });
+  }
+  const grid = (card: HTMLElement) =>
+    card.querySelector("span[aria-hidden='true'] > svg");
+
+  it("shows the plugin's own icon without branded styling, then falls back if it cannot be decoded", async () => {
+    const icon = vi.fn(async () => dataUrl);
+    const card = renderExternal(icon, "png-revision");
+    await waitFor(() => expect(card.querySelector("img")).not.toBeNull());
+    const image = card.querySelector("img") as HTMLImageElement;
+    expect(image).toHaveAttribute("src", dataUrl);
+    expect(icon).toHaveBeenCalledExactlyOnceWith("example.helper", "abc123");
+    expect(grid(card)).toBeNull();
+    expect(card.querySelector("[data-packaged]")).not.toBeNull();
+    expect(card.querySelector("[data-branded]")).toBeNull();
+
+    fireEvent.error(image);
+    expect(card.querySelector("img")).toBeNull();
+    expect(grid(card)).not.toBeNull();
+    expect(card.querySelector("[data-packaged]")).toBeNull();
+  });
+
+  it("keeps the grid, without reading content, when the plugin has no icon revision", () => {
+    const icon = vi.fn(async () => dataUrl);
+    const card = renderExternal(icon);
+    expect(icon).not.toHaveBeenCalled();
+    expect(card.querySelector("img")).toBeNull();
+    expect(grid(card)).not.toBeNull();
+  });
+
+  it("keeps the grid when reading the icon fails", async () => {
+    const icon = vi.fn(() =>
+      Promise.reject(new Error("Plugin was updated; refresh the catalog")),
+    );
+    const card = renderExternal(icon, "png-revision");
+    await waitFor(() => expect(icon).toHaveBeenCalledTimes(1));
+    await icon.mock.results[0]?.value.catch(() => undefined);
+    expect(card.querySelector("img")).toBeNull();
+    expect(grid(card)).not.toBeNull();
+  });
 });
 
 it("opens each plugin's existing metadata and controls in a detail aside", () => {

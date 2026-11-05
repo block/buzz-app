@@ -175,25 +175,53 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
 
 function PluginIcon({
   plugin,
+  plugins,
   size = 24,
 }: {
   plugin: PluginInfo;
+  plugins: PluginManager;
   size?: number;
 }) {
+  const { source, revision } = plugin;
+  const id = plugin.manifest.id;
+  const key = `${id}\0${revision}`;
+  // Installed packages carry their own icon; the revisions say whether one exists.
+  const packaged =
+    source !== "bundled" &&
+    Boolean(plugin.iconPngRevision || plugin.iconJpgRevision);
+  const [installed, setInstalled] = useState<{ key: string; url: string }>();
+  useEffect(() => {
+    if (!packaged) return;
+    let current = true;
+    plugins.icon(id, revision).then(
+      (url) => {
+        if (current && url) setInstalled({ key, url });
+      },
+      // Unreadable or stale: keep the generic icon.
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [packaged, plugins, id, revision, key]);
   const url =
-    plugin.source === "bundled"
-      ? bundledIcons.get(plugin.manifest.id)
-      : undefined;
+    source === "bundled"
+      ? bundledIcons.get(id)
+      : packaged && installed?.key === key
+        ? installed.url
+        : undefined;
   const [failedUrl, setFailedUrl] = useState<string>();
+  const shown = url !== failedUrl ? url : undefined;
   return (
     <span
       className={styles.pluginIcon}
-      data-branded={Boolean(url && url !== failedUrl) || undefined}
+      data-branded={Boolean(shown && source === "bundled") || undefined}
+      data-packaged={Boolean(shown && source !== "bundled") || undefined}
       data-category={plugin.manifest.discovery?.category}
       aria-hidden="true"
     >
-      {url && url !== failedUrl ? (
-        <img src={url} alt="" onError={() => setFailedUrl(url)} />
+      {shown ? (
+        <img src={shown} alt="" onError={() => setFailedUrl(shown)} />
       ) : (
         <SquaresFourIcon size={size} />
       )}
@@ -357,7 +385,12 @@ function PluginDetails({
     >
       <div className={styles.pluginAsideHeader}>
         <div className={styles.pluginAsideIdentity}>
-          <PluginIcon key={plugin.manifest.id} plugin={plugin} size={48} />
+          <PluginIcon
+            key={plugin.manifest.id}
+            plugin={plugin}
+            plugins={plugins}
+            size={48}
+          />
           <h2>{plugin.manifest.name}</h2>
           <div className={styles.pluginBadges}>
             {plugin.source === "bundled" ? (
@@ -1073,7 +1106,7 @@ export function Settings({
                       )}
                       {core ? (
                         <>
-                          <PluginIcon plugin={plugin} />
+                          <PluginIcon plugin={plugin} plugins={plugins} />
                           {name}
                           <span
                             id={`plugin-description-${id}`}
@@ -1084,7 +1117,9 @@ export function Settings({
                         </>
                       ) : (
                         <ChoiceRow
-                          leading={<PluginIcon plugin={plugin} />}
+                          leading={
+                            <PluginIcon plugin={plugin} plugins={plugins} />
+                          }
                           label={name}
                           description={
                             plugin.manifest.description ? (

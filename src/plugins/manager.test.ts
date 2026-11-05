@@ -48,6 +48,11 @@ function harness(
     changePlugin: vi.fn(async () => ready(false)),
     recoverSettings: vi.fn(async () => ready()),
     readModule: vi.fn(async () => ""),
+    readContent: vi.fn(async () => ({
+      readme: null,
+      iconPng: null,
+      iconJpg: null,
+    })),
     reloadPlugin: vi.fn(async () => ready(false)),
     ...overrides,
   };
@@ -540,6 +545,35 @@ it("loads an enabled external plugin regardless of its id", async () => {
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.startup()).toBe("ready");
   expect(installation.readModule).toHaveBeenCalledWith("monitor", "one");
+});
+
+it("reads an installed plugin's icon once per revision, preferring PNG, and retries after a failed read", async () => {
+  const content = (png: string | null, jpg: string | null) => ({
+    readme: null,
+    iconPng: png,
+    iconJpg: jpg,
+  });
+  const readContent = vi
+    .fn<PluginStorage["readContent"]>()
+    .mockResolvedValueOnce(content("UE5H", "SlBH"))
+    .mockResolvedValueOnce(content(null, "SlBH"))
+    .mockRejectedValueOnce(new Error("Plugin was updated; refresh the catalog"))
+    .mockResolvedValueOnce(content(null, null));
+  const { plugins } = harness({ readContent });
+  await expect(plugins.icon("example", "one")).resolves.toBe(
+    "data:image/png;base64,UE5H",
+  );
+  await expect(plugins.icon("example", "one")).resolves.toBe(
+    "data:image/png;base64,UE5H",
+  );
+  expect(readContent).toHaveBeenCalledTimes(1);
+  await expect(plugins.icon("example", "two")).resolves.toBe(
+    "data:image/jpeg;base64,SlBH",
+  );
+  expect(readContent).toHaveBeenLastCalledWith("example", "two");
+  await expect(plugins.icon("example", "three")).rejects.toThrow("updated");
+  await expect(plugins.icon("example", "three")).resolves.toBeUndefined();
+  expect(readContent).toHaveBeenCalledTimes(4);
 });
 
 it("offers agents the plugins it reads, through the context", async () => {

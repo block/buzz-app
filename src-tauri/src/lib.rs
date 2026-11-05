@@ -102,7 +102,7 @@ use buzzodz_plugins::{
         check_saved_folder, prepare_folder, prepare_saved_folder, prepare_upload, FolderUpload,
         PreparedImport, Preview,
     },
-    Catalog, InstallationResult, Manager,
+    Catalog, InstallationResult, Manager, PluginContent,
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
@@ -630,6 +630,14 @@ async fn plugin_module(
     with_manager(manager, move |m| m.module(&id, &revision)).await
 }
 #[tauri::command]
+async fn plugin_content(
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+    revision: String,
+) -> Result<PluginContent, String> {
+    with_manager(manager, move |m| m.content(&id, &revision)).await
+}
+#[tauri::command]
 async fn plugin_recover(
     manager: tauri::State<'_, PluginManager>,
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
@@ -739,6 +747,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_change,
         plugin_reload,
         plugin_module,
+        plugin_content,
         plugin_recover,
         plugin_host_run_command,
         plugin_host_call_context,

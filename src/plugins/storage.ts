@@ -2,6 +2,7 @@ import { migrateAgentFlag } from "./migrate-agent-flag";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Catalog,
+  PluginContent,
   StorageResult,
   ManagementAction,
   PluginImports,
@@ -113,6 +114,13 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     if (!desktop) throw new Error("Local plugins require the desktop app");
     return invoke("plugin_module", { id, revision });
   }
+  async function readContent(
+    id: string,
+    revision: string,
+  ): Promise<PluginContent> {
+    if (!desktop) throw new Error("Local plugins require the desktop app");
+    return invoke("plugin_content", { id, revision });
+  }
   async function reloadPlugin(id: string): Promise<StorageResult> {
     if (!desktop) throw new Error("Plugin reload requires the desktop app");
     return invoke("plugin_reload", { id });
@@ -149,6 +157,7 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     changePlugin,
     recoverSettings,
     readModule,
+    readContent,
     reloadPlugin,
     imports,
   };

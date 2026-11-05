@@ -1152,6 +1152,19 @@ export function createRelaySession(
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
   const channelQueries = Object.freeze({
     ...channels.queries,
+    /** Loads every listed channel's latest message time while held, as a
+     * Recent sort or Active filter does. */
+    retainActivity() {
+      activityDemand++;
+      refreshChannelActivity();
+      let held = true;
+      return () => {
+        if (!held) return;
+        held = false;
+        activityDemand--;
+        refreshChannelActivity();
+      };
+    },
     list() {
       const snapshot = channels.queries.list();
       const activityRevision = channelActivity.revision();
@@ -3623,10 +3636,12 @@ export function createRelaySession(
     },
   });
   let activityRosterKey: string | undefined;
+  let activityDemand = 0;
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
     if (
+      !activityDemand &&
       !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
       !Object.values(preferences?.filters ?? {}).includes("active")
     ) {

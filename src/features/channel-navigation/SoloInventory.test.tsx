@@ -13,7 +13,7 @@ import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { writeView } from "../../shared/view-state";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import type { Contribution } from "../../plugins/contributions";
-import type { ChatIcon, ChatMenu } from "../conversation/service";
+import type { ChatIcon, ChatList, ChatMenu } from "../conversation/service";
 
 import {
   fixture,
@@ -338,4 +338,40 @@ it("shows plugin actions in the primary sidebar right-click menu", async () => {
   expect(
     await screen.findByRole("menuitem", { name: "Unlink pull request" }),
   ).toBeVisible();
+});
+
+it("arranges Solo with the first plugin chat list, keeping pinned chats out of its fold", async () => {
+  const seen: unknown[] = [];
+  const lists: readonly Contribution<ChatList>[] = [
+    {
+      id: "chat-list",
+      key: "tidy/chat-list",
+      pluginId: "tidy",
+      revision: "one",
+      arrange(entries) {
+        seen.push(...entries);
+        return {
+          order: [other, id],
+          folded: { label: "Quiet", ids: entries.map((entry) => entry.id) },
+        };
+      },
+      rowAction: ({ title }) => <span data-testid="row-action">{title}</span>,
+    },
+  ];
+  const read = { observedCount: 0, attentionCount: 0 };
+  fixture(false, false, undefined, read, 0, undefined, undefined, {
+    chatLists: { snapshot: () => lists, subscribe: () => () => {} },
+  });
+  // Other is open, so it stays listed; only the read Planning folds.
+  expect(seen.at(-2)).toMatchObject({ id, pinned: false });
+  expect(seen.at(-1)).toMatchObject({ id: other, pinned: true });
+  const fold = screen.getByRole("button", { name: /^Quiet\s*1/ });
+  expect(fold).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: /^Planning/ })).toBeNull();
+  expect(screen.getByRole("button", { name: /^Other/ })).toBeVisible();
+  await userEvent.setup().click(fold);
+  expect(screen.getByRole("button", { name: /^Planning/ })).toBeInTheDocument();
+  expect(
+    screen.getAllByTestId("row-action").map((node) => node.textContent),
+  ).toEqual(["Other", "Planning"]);
 });

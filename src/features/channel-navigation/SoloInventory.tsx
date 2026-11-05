@@ -1,6 +1,7 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
 import { useSoloNavigation } from "./solo-navigation-react";
 import {
+  useEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -44,7 +45,8 @@ import creationStyles from "./SoloInventory.module.css";
 import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ContributionReader } from "../conversation/contracts";
-import type { ChatIcon, ChatMenu } from "../conversation/service";
+import type { ChatIcon, ChatList, ChatMenu } from "../conversation/service";
+import { arrangeChatList } from "./chat-list-arrangement";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 
@@ -63,6 +65,7 @@ export function SoloInventory({
   target,
   chatIcons,
   chatMenus,
+  chatLists,
   renderContents,
 }: {
   session: RelaySession;
@@ -72,6 +75,7 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  chatLists?: ContributionReader<ChatList> | undefined;
   renderContents?: (
     content: ReactNode,
     actions: ReactNode,
@@ -117,6 +121,15 @@ export function SoloInventory({
   const menus = useSyncExternalStore(
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
+  );
+  const chatList = useSyncExternalStore(
+    chatLists?.subscribe ?? noSubscription,
+    () => chatLists?.snapshot()[0],
+  );
+  const arranges = !!chatList?.arrange;
+  useEffect(
+    () => (arranges ? session.channels.retainActivity?.() : undefined),
+    [session, arranges],
   );
   const workingChannels = new Set<string>(JSON.parse(workingIds));
   const open = (channelId: string) =>
@@ -169,6 +182,19 @@ export function SoloInventory({
     session.unread,
     JSON.stringify(conversations.map((item) => item.id)),
   );
+  const arranged = arrangeChatList(
+    chatList?.arrange,
+    conversations.map((item) => ({
+      id: item.id,
+      title: item.name,
+      ...(item.lastActivityAt !== undefined
+        ? { lastMessageAt: item.lastActivityAt }
+        : {}),
+      pinned: selected === item.id || workingChannels.has(item.id),
+      unread: unreadChats.has(item.id),
+    })),
+  );
+  const RowAction = chatList?.rowAction;
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -290,14 +316,23 @@ export function SoloInventory({
               ?.focus({ preventScroll: true });
           });
         }}
-        chats={conversations.map((item) => ({
-          id: item.id,
-          title: item.name,
-          pinned:
-            selected === item.id ||
-            workingChannels.has(item.id) ||
-            unreadChats.has(item.id),
+        chats={arranged.chats.map(({ id, title, pinned, unread }) => ({
+          id,
+          title,
+          pinned: pinned || unread,
         }))}
+        folded={arranged.folded}
+        renderRowAction={
+          RowAction &&
+          ((item, archive) => (
+            <RowAction
+              session={session}
+              channelId={item.id}
+              title={item.title}
+              archive={archive}
+            />
+          ))
+        }
         onNew={newChat}
         renderChat={(item, rename) => (
           <SoloConversationRow

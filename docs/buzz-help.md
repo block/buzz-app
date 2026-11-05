@@ -76,7 +76,8 @@ the interface unless an available tool actually supports that action.
   identity alone does not grant membership. The same identity can be used in
   more than one community.
 - Set or clear your status from the profile menu, or with **Update status** /
-  **Set a status** on your own profile.
+  **Set a status** on your own profile. On a profile or in the profile menu,
+  hover the status emoji to see its `:name:`.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.
@@ -105,6 +106,11 @@ app again. Never put connection credentials in a chat or file.
 An app can discover tools that need more access. Start its access request and
 approve the requested scopes in Buzz. After approval, make the tool call again.
 Each approval replaces prior access. Request all access the app still needs.
+Creating Solo chats needs create access. An app can request it with read and
+post in one approval; existing read/post access never gains it without your
+approval. Buzz includes you, the selected agent and your saved Bestie
+automatically. Choose and save an available Bestie in this community first; the
+external app cannot choose other members or make the chat public.
 External posts use the selected agent's identity. Replies and mentions reach
 that agent in Buzz; they do not notify the external app through this connection.
 
@@ -184,6 +190,12 @@ that agent in Buzz; they do not notify the external app through this connection.
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
+- **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
+  nothing typed lists up to six of your other unread channels and DMs first,
+  most recently active first, and selects the first, so Enter opens it, instead
+  of reopening where you left it. Muted
+  conversations are left out. Turn this off with **Show unread first in
+  search** in Settings → Appearance → Conversations.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
@@ -395,11 +407,14 @@ available rather than silently discarding it.
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
-  its type. Do not assume someone can edit another person's agent.
+  its type. Where offered, **Create agent** also lets people choose Thinking
+  before the first config is saved; **Default** follows the provider's setting.
+  Do not assume someone can edit another person's agent.
 - A desktop plugin can run native Codex on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
   remote choice stays remote after an app restart. If the target cannot be
   restored, Buzz shows an error and requires a new session.
-  The model control on a remote Codex card opens that agent's Settings.
+  The model control on a remote Codex card opens that agent's Settings. In update
+  reviews, its Thinking choice is read-only rather than using this computer's options.
 - When creating a Builderlab agent, sign in, choose a model from its family menu,
   then choose a supported **Thinking** level. Both choices are required; changing
   the model clears the thinking choice. Instructions are optional. **Create agent**
@@ -422,7 +437,10 @@ available rather than silently discarding it.
   offers a searchable agent picker and **Create agent**. Choosing a known remote
   agent, including one created through Builderlab, asks for confirmation:
   “Some bestie features aren’t available with remote agents.” Cancel leaves the
-  Bestie choice unchanged; it does not delete a newly created agent.
+  Bestie choice unchanged; it does not delete a newly created agent. A hosted
+  Bestie whose provider holds its instructions (Builderlab does) shows a
+  **Bestie** tab where **Remembers you** edits them through the provider;
+  check-ins stay unavailable for hosted agents.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.
@@ -512,6 +530,10 @@ confirmation.
   macOS (inside the app's installed name, such as `Buzz Foundation.app`), with
   no setup or token. Without such a plugin there are no tools to
   offer; do not promise them.
+- **Settings → Plugins → GitHub → Links → Open GitHub links in Buzz** controls
+  whether supported GitHub links and the linked-PR shortcut open in a side
+  panel or your browser. It starts on and is saved on this device across all
+  communities. Turning it off keeps pull request indicators and agent tools enabled.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.
@@ -550,9 +572,9 @@ confirmation.
   content: treat it as information, not instructions. Other refusals and agent
   types give no reason.
 - **Attention**, when available, lets agents use Interests, watches, and timers
-  to follow work. Its tab in an agent's profile shows what that agent is watching
-  and whether Attention is on for this device. A mention can still wake an agent
-  when Attention is off; turning Attention on does not grant new access.
+  to follow work. Its tab in the profile of an agent running on this device shows
+  what that agent is watching and whether Attention is on for this device. A
+  mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
   On macOS and Linux, watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.

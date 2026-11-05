@@ -26,6 +26,7 @@ import { createNavigationController } from "../features/navigation/controller";
 import { createMemoryHistory } from "../features/navigation/history";
 import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
 import { PageSearch, type SearchServices } from "./shell/PageSearch";
+import { setSendWithModEnterPreference } from "../features/messages/send-key-preference";
 import { setEditWithUpArrowPreference } from "../features/messages/edit-key-preference";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
@@ -34,6 +35,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   setEditWithUpArrowPreference(false);
+  setSendWithModEnterPreference(false);
   vi.mocked(isTauri).mockReturnValue(false);
   localStorage.clear();
 });
@@ -1186,34 +1188,40 @@ it("saves the Up Arrow editing choice and restores it when settings remounts", a
   }
 });
 
-it("keeps the Up Arrow choice active on a storage failure and retries saving", async () => {
-  const h = await harness();
-  try {
-    render(
-      <ShortcutSettings
-        shortcuts={h.shortcuts}
-        bindings={h.bindings}
-        plugins={h.plugins}
-      />,
-    );
-    const storage = vi
-      .spyOn(Storage.prototype, "setItem")
-      .mockImplementationOnce(() => {
-        throw new Error("full");
+it.each([
+  ["Edit last message with Up Arrow", "buzz-edit-with-up-arrow.v1"],
+  ["Send with Ctrl+Enter", "buzz-send-with-mod-enter.v1"],
+])(
+  "keeps %s active on a storage failure and retries saving",
+  async (label, key) => {
+    const h = await harness();
+    try {
+      render(
+        <ShortcutSettings
+          shortcuts={h.shortcuts}
+          bindings={h.bindings}
+          plugins={h.plugins}
+        />,
+      );
+      const storage = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementationOnce(() => {
+          throw new Error("full");
+        });
+      const toggle = screen.getByRole("switch", {
+        name: label,
       });
-    const toggle = screen.getByRole("switch", {
-      name: "Edit last message with Up Arrow",
-    });
-    await userEvent.setup().click(toggle);
-    expect(toggle).toBeChecked();
-    expect(screen.getByRole("alert")).toHaveTextContent("could not be saved");
-    storage.mockRestore();
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /^Retry saving$/ }));
-    expect(localStorage.getItem("buzz-edit-with-up-arrow.v1")).toBe("on");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  } finally {
-    await h.dispose();
-  }
-});
+      await userEvent.setup().click(toggle);
+      expect(toggle).toBeChecked();
+      expect(screen.getByRole("alert")).toHaveTextContent("could not be saved");
+      storage.mockRestore();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: /^Retry saving$/ }));
+      expect(localStorage.getItem(key)).toBe("on");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      await h.dispose();
+    }
+  },
+);

@@ -28,7 +28,7 @@ import {
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { readProject } from "../../features/agent-harness/project";
-import { fromOwner } from "../../features/agents/owner-attestation";
+import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { localStore, type AgentStore } from "../../features/agents/store";
@@ -95,7 +95,7 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-const NAMES_TIMEOUT_MS = 2_000;
+const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 /** How long an adopted run's mention is looked for. */
 const READ_MS = 10_000;
 const CHAT = [9, 40002];
@@ -427,12 +427,12 @@ export class PiRuntime {
     working: boolean,
     signal: AbortSignal,
   ) {
-    return readTranscript(this.pi, agent, place, working, signal).then(
-      (transcript) => ({
-        ...transcript,
-        turns: this.prompts(agent).shown(transcript.turns),
-      }),
-    );
+    return readTranscript(this.pi, agent, place, working, signal, (pubkey) =>
+      this.reads(agent)?.name(pubkey),
+    ).then((transcript) => ({
+      ...transcript,
+      turns: this.prompts(agent).shown(transcript.turns),
+    }));
   }
   /** What each of the agent's sessions started with, by
    * `conversation:session`. */
@@ -546,7 +546,11 @@ export class PiRuntime {
     // Pi runs commands as you; mentions need owner or delegated authority.
     if (
       trigger.type === "mention" &&
-      !(await fromOwner(trigger.event, agent.owner))
+      !(await fromOwner(
+        trigger.event,
+        agent.owner,
+        workflowOf(this.reads(agent.key), agent.pubkey),
+      ))
     )
       return ignored?.();
     signal.throwIfAborted();
@@ -612,7 +616,6 @@ export class PiRuntime {
               solo,
             )),
             agent: agent.key,
-            label: "@mention",
             channelLevel: topLevel && !solo,
             ...(wake
               ? { wake: { ...wake, text: (await wakeText?.()) ?? wake.text } }
@@ -1287,7 +1290,7 @@ export class PiRuntime {
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
               ]
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
-          AbortSignal.timeout(NAMES_TIMEOUT_MS * 2),
+          AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
         );
         earlier = events
           .filter(
@@ -1308,21 +1311,6 @@ export class PiRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const pubkeys = [
-      ...new Set([
-        event.pubkey,
-        ...unseen.map((item) => item.pubkey),
-        ...event.tags
-          .filter((tag) => tag[0] === "p")
-          .map((tag) => tag[1] ?? ""),
-      ]),
-    ].filter(Boolean);
-    if (reads)
-      await Promise.race([
-        reads.profiles(pubkeys).catch(() => undefined),
-        new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
-      ]);
-    const members = summary?.members ?? [];
     const project = (await reading)?.section;
     return {
       event,
@@ -1336,7 +1324,6 @@ export class PiRuntime {
       ...(thread ? { thread } : {}),
       context: unseen,
       total: earlier.length + 1,
-      name: (pubkey: string) => reads?.name(pubkey, members),
       ...(project ? { project } : {}),
     };
   }

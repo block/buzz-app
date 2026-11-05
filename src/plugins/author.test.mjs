@@ -33,7 +33,7 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PageSidebarProps, SidebarSectionContribution, SidebarSections, UnreadCapability } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -46,6 +46,8 @@ const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
   void target.kind;
   return children;
 };
+const ExamplePreview = ({ close }: PagePreviewProps) =>
+  createElement("button", { type: "button", onClick: close }, "Open");
 export const inject = ["agents", "decisions", "host", "identityNames", "pages", "relay"];
 export function apply(ctx: Context) {
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
@@ -81,6 +83,32 @@ export function apply(ctx: Context) {
     },
   };
   ctx.agents.addTool(tool);
+  const { harness } = ctx.agents;
+  ctx.agents.register({
+    id: "example",
+    title: "Example",
+    defaults: () => ({ config: {} }),
+    async run(delivery: Delivery) {
+      const conversation: HarnessConversation | undefined = await harness.conversation(delivery, "thread");
+      if (!conversation) return delivery.ignored?.();
+      void [conversation.key, conversation.channel, conversation.root, conversation.topLevel, conversation.where];
+      const system: string = await harness.systemPrompt(delivery, { scope: "thread", cwd: "~", instructions: "", tools: false });
+      const first = await harness.turnPrompt(delivery, conversation);
+      const prompt = await harness.turnPrompt(delivery, conversation, { cursor: first.cursor });
+      const next: string = prompt.cursor;
+      const tools: McpHandler = harness.tools(delivery.agent, conversation, { read: async () => new Uint8Array() });
+      void host.serveMcp?.(tools);
+      void [system, prompt.text, next];
+      prompt.restore();
+      await harness.reply(delivery.agent, conversation, "Done", { notifyOwner: true });
+    },
+    async runOnce(turn: StandaloneTurn): Promise<TurnResult> {
+      const text = await turn.prompt();
+      if (text !== undefined) void harness.standalonePrompt(turn.delivery.agent, text);
+      void harness.tools(turn.delivery.agent);
+      return { ok: true };
+    },
+  });
   void host.runCommand("status").then((output: string | null) => void output);
   void host.request({
     url: "https://api.example.com/graphql",
@@ -118,6 +146,14 @@ export function apply(ctx: Context) {
     primary: true,
     placement: "toolbar",
     sidebar: ExampleSidebar,
+    preview: ExamplePreview,
+  });
+  ctx.pages.register({
+    id: "bad-preview",
+    title: "Bad preview",
+    component: () => null,
+    // @ts-expect-error A page preview must be a React component.
+    preview: "card",
   });
   ctx.pages.register({
     id: "bad-sidebar",
@@ -145,6 +181,17 @@ export function apply(ctx: Context) {
   // @ts-expect-error Row counts are numeric, not display text.
   const badCount: SidebarSectionContribution = { ...section, rows: { snapshot: () => [{ id: "bad", label: "Bad", count: "two" }], subscribe: () => () => {} } };
   void badCount;
+  const hostRows: SidebarRows | undefined = ctx.reflect.get("sidebarRows");
+  const decoration: SidebarRowContribution = {
+    version: 1, id: "details",
+    render: (row, Default) => row.kind === "dm" ? createElement("div", { title: row.label }, Default) : Default,
+    sortModes: [{ id: "reverse", label: "Reverse", compare: (a, b) => b.label.localeCompare(a.label) }],
+  };
+  hostRows?.register(decoration);
+  // @ts-expect-error Host row contribution versions are explicit.
+  hostRows?.register({ ...decoration, version: 2 });
+  // @ts-expect-error Render results must be elements or an intentional null.
+  hostRows?.register({ version: 1, id: "invalid", render: () => "text" });
   ctx.pages.register({
     id: "other",
     title: "Other",

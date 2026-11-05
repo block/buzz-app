@@ -1,6 +1,4 @@
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
-import { workflowLabel } from "../../features/relay/workflow-attribution";
-import { LightningIcon } from "../../shared/design-system/icons";
 import {
   type ReactNode,
   useCallback,
@@ -27,16 +25,19 @@ import type { NavigationScope } from "../../features/navigation/targets";
 import type { PageNavigation } from "../../features/navigation/service";
 import { routeOf } from "./route";
 import {
+  hasUnread,
+  InboxRowButton,
+  rowIdentity,
+  rowProfileIds,
+} from "./InboxRow";
+import {
   useChannelList,
   useProfileGeneration,
   useRelayConnection,
 } from "../../features/relay/react";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { messagePreview } from "../../features/notifications/content";
-import { formatPublicKey } from "../../shared/identity/public-key";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -47,7 +48,6 @@ import {
 } from "./InboxFilters";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   PanelHeader,
   PanelHeaderLabel,
@@ -64,8 +64,6 @@ import {
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import styles from "./Inbox.module.css";
-import { dmLabel } from "./dm-label";
-import { channelText } from "../../features/channels/channel-icon";
 import {
   readView,
   subscribeView,
@@ -80,7 +78,6 @@ import {
   reopenArchives,
   updateArchive,
 } from "./archive";
-import { avatarMedia } from "../../shared/avatar-source";
 
 type AttentionFilter = "all" | "unread";
 const shows = [
@@ -109,6 +106,21 @@ type Filters = {
   attention: AttentionFilter;
 };
 const filtersKey = "inbox:filters";
+
+/** Whether focus is in the page or in a popup it opened, which portals outside it. */
+function holdsFocus(page: HTMLElement | null) {
+  const active = document.activeElement;
+  if (!page || !active) return false;
+  if (page.contains(active)) return true;
+  const popup = active.closest('[role="menu"]')?.id;
+  return (
+    !!popup &&
+    [...page.querySelectorAll("[aria-controls]")].some(
+      (trigger) => trigger.getAttribute("aria-controls") === popup,
+    )
+  );
+}
+
 /** Saved choices are per device/viewer/community; unknown or missing fields use defaults. */
 function readFilters(scope: string): Filters {
   const saved = readView<unknown>(scope, filtersKey, undefined);
@@ -146,7 +158,6 @@ const matchesActivity = (
       return item.thread;
   }
 };
-const hasUnread = (item: InboxItem) => item.unreadCount > 0 || item.manual;
 const targetOf = (item: InboxItem) => ({
   channelId: item.channelId,
   messageId: item.messageId,
@@ -306,7 +317,7 @@ function InboxList({
   close(target: PageTabTarget): boolean;
   isOpen(target: PageTabTarget): boolean;
 }) {
-  const split = usePanelSplit(undefined, 316, {
+  const split = usePanelSplit(session.scope, "inbox", undefined, 316, {
     defaultWidth: 420,
     maxRatio: 0.5,
   });
@@ -355,8 +366,22 @@ function InboxList({
     )
       return;
     appliedRoutes.add(navigation);
-    setFilter({ show: "inbox", ...route });
-    setDrafts(false);
+    // Like the menu, entering or leaving Drafts retires the Inbox action and
+    // restores focus the swapped surface dropped. Only focus in this page or
+    // its popups can drop; a fresh open leaves focus where navigation put it.
+    if (drafts !== "drafts" in route) {
+      cancelRetry();
+      viewFocus.current = holdsFocus(split.ref.current);
+    }
+    setDrafts("drafts" in route);
+    if ("drafts" in route) return;
+    const next = route.show ?? "inbox";
+    // Like the menu's Inbox/Archived choice, a new list ends the selection.
+    if (next !== show) {
+      cancelRetry();
+      setSelectedTarget(undefined);
+    }
+    setFilter({ ...route, show: next });
   }, [navigation]);
   const subscribeArchives = useCallback(
     (listener: () => void) => subscribeView(archiveScope, listener),
@@ -602,19 +627,12 @@ function InboxList({
   const profileKey = [
     ...new Set([
       ...authorIds,
-      ...matching
-        .slice(0, 50)
-        .flatMap((item) =>
-          item.workflowOwnerId ? [item.workflowOwnerId] : [],
+      ...matching.slice(0, 50).flatMap((item) =>
+        rowProfileIds(
+          item,
+          list.channels.find((entry) => entry.id === item.channelId),
         ),
-      ...matching.slice(0, 50).flatMap((item) => {
-        const channel = list.channels.find(
-          (entry) => entry.id === item.channelId,
-        );
-        return channel?.channelType === "dm"
-          ? (channel.participants?.slice(0, 3) ?? [])
-          : [];
-      }),
+      ),
     ]),
   ]
     .sort()
@@ -841,7 +859,9 @@ function InboxList({
       else if (item.target.kind === "channel") {
         readChannel ??= session.unread.prepareChannelRead(item.channelId);
         await readChannel();
-      } else
+      } else if (item.timeline)
+        await session.unread.markTimelineRead(item.channelId, item.messageIds);
+      else
         while (remaining.length) {
           // Close/Escape retires undispatched steps, not the admitted save.
           // Its genuine storage/access rejection still propagates through run.
@@ -1058,30 +1078,8 @@ function InboxList({
                   const channel = list.channels.find(
                     (candidate) => candidate.id === item.channelId,
                   );
-                  const displayId = item.workflowOwnerId ?? item.authorId;
-                  const profile = profiles.get(displayId);
-                  const resolved = name(
-                    displayId,
-                    profile?.name ??
-                      formatPublicKey(displayId) ??
-                      "Unknown sender",
-                    channel?.members,
-                  );
-                  const sender = item.workflowOwnerId
-                    ? workflowLabel(resolved)
-                    : resolved;
-                  const dmName = dmLabel(
-                    channel?.participants,
-                    profiles,
-                    name,
-                    channel?.name ?? "Direct message",
-                  );
-                  const context =
-                    channel?.channelType === "dm"
-                      ? `DM · ${dmName}`
-                      : channel
-                        ? channelText(channel)
-                        : "Conversation";
+                  const identity = rowIdentity(item, channel, profiles, name);
+                  const { sender, context } = identity;
                   const unread = hasUnread(item);
                   const rowArchived = archived(item);
                   return (
@@ -1113,100 +1111,19 @@ function InboxList({
                             }
                           }}
                         >
-                          <NavigationItem
-                            aria-label={`Open ${sender} in ${context}`}
-                            aria-describedby={`${previewId}-${item.id}`}
+                          <InboxRowButton
+                            item={item}
+                            identity={identity}
+                            media={session.media}
+                            feed={feed}
+                            time={relativeTimestamp(item.createdAt)}
+                            previewId={`${previewId}-${item.id}`}
                             disabled={pending}
                             selected={selectedId === item.id}
                             ref={
                               item.id === visible[0]?.id
                                 ? fallbackRow
                                 : undefined
-                            }
-                            icon={
-                              <Avatar
-                                size="default"
-                                alt=""
-                                fallback={sender}
-                                fallbackContent={
-                                  item.workflowOwnerId ? (
-                                    <LightningIcon size={20} />
-                                  ) : undefined
-                                }
-                                src={
-                                  item.workflowOwnerId
-                                    ? undefined
-                                    : avatarMedia(
-                                        profile?.picture,
-                                        session.media,
-                                      )
-                                }
-                                shape={
-                                  item.workflowOwnerId || profile?.isAgent
-                                    ? "squircle"
-                                    : "circle"
-                                }
-                              />
-                            }
-                            label={
-                              <span className={styles.content}>
-                                <span className={styles.heading}>
-                                  <span className={styles.identity}>
-                                    <strong
-                                      className={`text-label-sm text-standard ${styles.sender}`}
-                                    >
-                                      {sender}
-                                    </strong>
-                                    <span
-                                      className={`text-caption ${styles.source}`}
-                                      data-inbox-source=""
-                                    >
-                                      {context}
-                                    </span>
-                                  </span>
-                                  <time
-                                    className={`text-caption text-subtle ${styles.rowDate}`}
-                                    dateTime={new Date(
-                                      item.createdAt * 1000,
-                                    ).toISOString()}
-                                  >
-                                    {relativeTimestamp(item.createdAt)}
-                                  </time>
-                                </span>
-                                <span
-                                  id={`${previewId}-${item.id}`}
-                                  className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
-                                >
-                                  {[
-                                    item.previewMessageId,
-                                    ...item.messageIds,
-                                  ].some(
-                                    (id) =>
-                                      id !== undefined &&
-                                      feed.incomplete.includes(id),
-                                  )
-                                    ? feed.status === "error"
-                                      ? "Preview unavailable. Retry inbox."
-                                      : "Preview updating…"
-                                    : messagePreview(item.preview)}
-                                </span>
-                              </span>
-                            }
-                            trailing={
-                              unread ? (
-                                <span
-                                  className={styles.unreadSlot}
-                                  role="img"
-                                  aria-label="Unread"
-                                >
-                                  <span className={styles.unreadDot} />
-                                </span>
-                              ) : (
-                                <span
-                                  className={styles.unreadSlot}
-                                  aria-hidden="true"
-                                />
-                              )
                             }
                             onClick={() => {
                               if (busy.current) return;

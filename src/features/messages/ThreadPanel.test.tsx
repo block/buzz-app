@@ -203,10 +203,11 @@ function messagesHarness(
     .mockImplementationOnce(() => first)
     .mockImplementation(makeView);
   const ensure = vi.fn(async () => {});
+  const profiles = new Map();
   const session = {
     viewer,
     thread,
-    profiles: { ensure },
+    profiles: { ensure, snapshot: () => profiles, subscribe: () => () => {} },
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     media: () => undefined,
@@ -1464,13 +1465,19 @@ it.each([
   {
     channelType: "stream" as const,
     joinRole: "guest" as const,
-    joinable: false,
+    joinable: true,
   },
   { channelType: "stream" as const, archived: true as const, joinable: false },
   { channelType: "solo" as const, archived: true as const, joinable: false },
+  { channelType: "solo" as const, joinRole: "guest" as const, joinable: true },
+  {
+    channelType: "solo" as const,
+    joinRole: "member" as const,
+    joinable: false,
+  },
   { channelType: "solo" as const, joinable: false },
 ])(
-  "replaces the reply composer for a $channelType preview (joinable: $joinable)",
+  "replaces the reply composer for a $channelType preview (joinRole: $joinRole, joinable: $joinable)",
   ({ joinable, ...metadata }) => {
     const h = messagesHarness();
     Object.assign(h.props, {
@@ -1499,8 +1506,10 @@ it.each([
             ? "Archived chat"
             : "Archived channel"
           : metadata.joinRole === "guest"
-            ? "Read-only channel"
-            : "Channel preview",
+            ? `Read-only ${metadata.channelType === "solo" ? "chat" : "channel"}`
+            : metadata.channelType === "solo"
+              ? "Chat preview"
+              : "Channel preview",
       }),
     ).toBeVisible();
     if (metadata.archived) {

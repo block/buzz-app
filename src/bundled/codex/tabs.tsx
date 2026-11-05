@@ -1,3 +1,5 @@
+import type { AgentExecutionBinding } from "../../features/agents/execution";
+import type { AgentKey } from "../../features/agents/membership";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -209,20 +211,22 @@ export class CodexProvider {
     );
     this.set({ defaults });
   }
-  resolve(raw: unknown): Config {
+  resolve(raw: unknown, remote = false): Config {
     const explicit = readConfig(raw);
+    if (remote) return explicit;
+    const data = this.state.data;
     const inheritedModel = this.state.defaults.model;
     const unavailable = Boolean(
-      inheritedModel && this.state.data && !this.model(inheritedModel),
+      inheritedModel && data && !catalogModel(inheritedModel, data),
     );
     const model = explicit.model || (unavailable ? "" : inheritedModel);
     if (explicit.effort) return { ...explicit, model };
-    const selected = this.model(model);
+    const selected = catalogModel(model, data);
     const preferred =
       unavailable && !explicit.model ? "" : this.state.defaults.effort;
     const effort = !preferred
       ? ""
-      : !this.state.data
+      : !data
         ? preferred
         : selected?.supportedReasoningEfforts.some(
               (choice) => choice.reasoningEffort === preferred,
@@ -418,29 +422,121 @@ export function createTabs(
   runtime: CodexRuntime,
   spawn: Spawn,
   setup: CodexSetup,
+  binding: (
+    agent: AgentKey,
+  ) => Promise<AgentExecutionBinding | undefined> = async () => undefined,
 ) {
   const login = setup;
 
-  function useProvider() {
+  function useBinding(member?: AgentViewProps<Config>["agent"]) {
+    const agent = member?.key;
+    const executionBinding = JSON.stringify(member?.executionBinding);
+    const [attempt, setAttempt] = useState(0);
+    const [read, setRead] = useState<{
+      agent?: AgentKey;
+      observed?: string;
+      binding?: AgentExecutionBinding;
+      error?: string;
+    }>();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: binding changes and retry requests require a saved-state read.
+    useEffect(() => {
+      let current = true;
+      if (!agent) {
+        setRead({});
+        return;
+      }
+      void binding(agent).then(
+        (binding) => {
+          if (current)
+            setRead({
+              agent,
+              ...(executionBinding ? { observed: executionBinding } : {}),
+              ...(binding ? { binding } : {}),
+            });
+        },
+        (error) => {
+          if (current)
+            setRead({
+              agent,
+              ...(executionBinding ? { observed: executionBinding } : {}),
+              error: message(error),
+            });
+        },
+      );
+      return () => {
+        current = false;
+      };
+    }, [agent, executionBinding, attempt]);
+    const held =
+      read?.agent === agent && read?.observed === executionBinding
+        ? read
+        : undefined;
+    return {
+      bound: held?.binding,
+      checking: !!agent && !held,
+      error: held?.error ?? "",
+      retry: () => {
+        setRead(undefined);
+        setAttempt((value) => value + 1);
+      },
+    };
+  }
+  function useProvider(agent?: AgentViewProps<Config>["agent"]) {
+    const inspected = useBinding(agent);
     const state = useSyncExternalStore(
       provider.subscribe,
       provider.snapshot,
       provider.snapshot,
     );
     useEffect(() => {
-      if (state.readiness === "checking" && !state.checking)
+      if (
+        !inspected.checking &&
+        !inspected.error &&
+        !inspected.bound &&
+        state.readiness === "checking" &&
+        !state.checking
+      )
         void provider.check();
-    }, [state.readiness, state.checking]);
-    return state;
+    }, [
+      state.readiness,
+      state.checking,
+      inspected.checking,
+      inspected.error,
+      inspected.bound,
+    ]);
+    return {
+      ...state,
+      bound: inspected.bound,
+      local: !inspected.bound && !inspected.checking && !inspected.error,
+      ...(inspected.bound || inspected.checking || inspected.error
+        ? {
+            data: undefined,
+            checking: inspected.checking,
+            error: inspected.error,
+          }
+        : {}),
+      check: () =>
+        inspected.error ? inspected.retry() : void provider.check(),
+    };
   }
 
   function CreateModel({
+    agent,
+    openSettings,
     config,
     onChange,
     ...props
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
-    const { data, checking, error, defaults: providerDefaults } = useProvider();
+    const {
+      data,
+      checking,
+      error,
+      defaults: providerDefaults,
+      bound,
+      local,
+      check,
+    } = useProvider(agent);
     // The setup's status holds through the provider's next check, so the
     // button, and its focus, stays put as Install Codex becomes Sign in.
     const { status } = useSyncExternalStore(
@@ -448,9 +544,10 @@ export function createTabs(
       login.snapshot,
       login.snapshot,
     );
-    const retry = () => void provider.check();
-    const step =
-      status?.state === "missing" || error === NOT_INSTALLED
+    const retry = check;
+    const step = !local
+      ? undefined
+      : status?.state === "missing" || error === NOT_INSTALLED
         ? "install"
         : status?.state === "signed-out" || error === SIGN_IN_ERROR
           ? "login"
@@ -472,6 +569,18 @@ export function createTabs(
       if (unfocused())
         field.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
     }, [step, checking]);
+    if (bound)
+      return (
+        <Button
+          variant={props.modelAppearance ?? "ghost"}
+          size="xs"
+          aria-label="Model settings"
+          disabled={props.disabled || !openSettings}
+          onClick={openSettings}
+        >
+          {current.model || "Codex default"}
+        </Button>
+      );
     if (step)
       return (
         <CodexSignIn
@@ -567,6 +676,8 @@ export function createTabs(
     const [draft, setDraft] = useState(state.defaults);
     const [saveError, setSaveError] = useState("");
     const [savingDefaults, setSavingDefaults] = useState(false);
+    // Keeps a ready-state sign-in's output once it ends, failed or not.
+    const [signingIn, setSigningIn] = useState(false);
     const action =
       error === NOT_INSTALLED
         ? ({ step: "install", label: "Install Codex" } as const)
@@ -603,7 +714,63 @@ export function createTabs(
             {installing.notice}
           </p>
         )}
-        <div className="grid gap-2" hidden={state.readiness === "ready"}>
+        <form
+          id={defaultsForm}
+          className="grid gap-3"
+          hidden={state.readiness !== "ready"}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (savingDefaults) return;
+            setSaveError("");
+            setSavingDefaults(true);
+            // Closes only once saved; else the draft stays to try again.
+            provider
+              .saveDefaults(draft)
+              .then(onClose, (reason) => setSaveError(message(reason)))
+              .finally(() => setSavingDefaults(false));
+          }}
+        >
+          <Select
+            label="Default thinking"
+            valueLabel={
+              draft.effort ? undefined : codexDefaultEffortLabel("", selected)
+            }
+            valueSuffix={draft.effort ? undefined : " · Default"}
+            variant="preference"
+            value={draft.effort}
+            groups={[{ label: "", options: efforts }]}
+            disabled={checking || !selected || savingDefaults}
+            onValueChange={(effort) => setDraft({ ...draft, effort })}
+          />
+          {saveError && (
+            <p role="alert" className="buzz-field-error">
+              {saveError}
+            </p>
+          )}
+        </form>
+        {/* Signed in elsewhere, Codex is ready, but reviews need a sign-in
+            made here, which records its workspace. */}
+        {state.readiness === "ready" && (
+          <div className="grid justify-items-start gap-2">
+            <p className="m-0 text-body-sm text-subtle">
+              Security reviews need a ChatGPT sign-in made in Buzz.
+            </p>
+            <Button
+              loading={installing.running === "login"}
+              disabled={installing.running === "install"}
+              onClick={() => {
+                setSigningIn(true);
+                void setup.run("login");
+              }}
+            >
+              Sign in again
+            </Button>
+          </div>
+        )}
+        <div
+          className="grid gap-2"
+          hidden={state.readiness === "ready" && !signingIn}
+        >
           {installing.running ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="status" className="m-0 text-body-sm">
@@ -639,40 +806,6 @@ export function createTabs(
             </div>
           )}
         </div>
-        <form
-          id={defaultsForm}
-          className="grid gap-3"
-          hidden={state.readiness !== "ready"}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (savingDefaults) return;
-            setSaveError("");
-            setSavingDefaults(true);
-            // Closes only once saved; else the draft stays to try again.
-            provider
-              .saveDefaults(draft)
-              .then(onClose, (reason) => setSaveError(message(reason)))
-              .finally(() => setSavingDefaults(false));
-          }}
-        >
-          <Select
-            label="Default thinking"
-            valueLabel={
-              draft.effort ? undefined : codexDefaultEffortLabel("", selected)
-            }
-            valueSuffix={draft.effort ? undefined : " · Default"}
-            variant="preference"
-            value={draft.effort}
-            groups={[{ label: "", options: efforts }]}
-            disabled={checking || !selected || savingDefaults}
-            onValueChange={(effort) => setDraft({ ...draft, effort })}
-          />
-          {saveError && (
-            <p role="alert" className="buzz-field-error">
-              {saveError}
-            </p>
-          )}
-        </form>
         <ProviderDialogActions>
           <Button
             onClick={() =>
@@ -741,12 +874,19 @@ export function createTabs(
     useEffect(() => {
       const abort = new AbortController();
       setLoading(true);
-      void readTranscript(
-        spawn,
-        { agent: { key: agent.key, name: agent.name }, ...conversation },
-        abort.signal,
-        (pubkey) => runtime.name(agent.key, pubkey),
-      )
+      const reading = binding(agent.key).then((bound) => {
+        if (bound)
+          throw new Error(
+            "Transcripts are unavailable for remote Codex agents.",
+          );
+        return readTranscript(
+          spawn,
+          { agent: { key: agent.key, name: agent.name }, ...conversation },
+          abort.signal,
+          (pubkey) => runtime.name(agent.key, pubkey),
+        );
+      });
+      void reading
         .then(
           (transcript): Read =>
             transcript
@@ -821,23 +961,62 @@ export function createTabs(
 
   /** The agent's sessions: the one it was opened from, recent ones, and their
    * transcripts. */
-  function ActivityTab({
+  function ActivityTab(props: Parameters<typeof ActivityContent>[0]) {
+    const agent = props.agent.key;
+    const revision = useSyncExternalStore(
+      runtime.subscribe,
+      () =>
+        `${runtime.conversationVersion(agent)}:${runtime
+          .sessions(agent)
+          .map(({ key, status }) => `${key}:${status}`)
+          .join("\0")}`,
+    );
+    const [attempt, retry] = useState(0);
+    const [read, setRead] = useState<
+      | { agent: AgentKey; rows: SavedConversation[] }
+      | { agent: AgentKey; error: string }
+    >();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: turn state and retries refresh saved inventory.
+    useEffect(() => {
+      let current = true;
+      void runtime.listConversations(agent).then(
+        (rows) => current && setRead({ agent, rows }),
+        (error) => current && setRead({ agent, error: message(error) }),
+      );
+      return () => {
+        current = false;
+      };
+    }, [agent, revision, attempt]);
+    if (read?.agent !== agent)
+      return <p role="status">Loading saved conversations…</p>;
+    if ("error" in read)
+      return (
+        <div className="grid gap-2">
+          <p role="alert">{read.error}</p>
+          <Button onClick={() => retry((value) => value + 1)}>Try again</Button>
+        </div>
+      );
+    return <ActivityContent {...props} listed={read.rows} />;
+  }
+  function ActivityContent({
     agent,
     conversation,
     initialTranscript,
     close,
     openConversation,
+    listed,
   }: {
     agent: AgentViewProps<Config>["agent"];
     conversation?: AgentViewProps<Config>["conversation"];
     initialTranscript?: AgentViewProps<Config>["initialTranscript"];
     close?: AgentViewProps<Config>["close"];
     openConversation?: AgentViewProps<Config>["openConversation"];
+    listed?: SavedConversation[];
   }) {
     const sessions = useSyncExternalStore(runtime.subscribe, () =>
       runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = listed ?? runtime.conversations(agent.key);
     const {
       session: here,
       searching,
@@ -861,6 +1040,7 @@ export function createTabs(
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const unbound = sessions.filter((view) => !saved.has(view.key));
+    const current = here && views.get(here.key);
     const detail = (text: string, status?: string) =>
       status !== "Working" ? (
         <p className="m-0 whitespace-pre-wrap break-words text-body-sm text-subtle">
@@ -884,7 +1064,8 @@ export function createTabs(
             session={here}
             searching={searching}
             error={lookupError}
-            status={here && views.get(here.key)?.status}
+            status={current?.status}
+            detail={current?.detail && detail(current.detail, current.status)}
             onView={() => here && show(here)}
           />
         )}
@@ -991,11 +1172,13 @@ export function createTabs(
       error: catalogError,
       checking,
       defaults: providerDefaults,
-    } = useProvider();
+      check,
+      bound,
+    } = useProvider(agent);
     useEffect(() => {
       setDraft(readConfig(agent.config));
     }, [agent.config]);
-    const effective = provider.resolve({ ...draft, effort: "" });
+    const effective = provider.resolve({ ...draft, effort: "" }, !!bound);
     const selected = catalogModel(effective.model, data);
     const supported = selected?.supportedReasoningEfforts ?? [];
     const efforts = [
@@ -1023,7 +1206,10 @@ export function createTabs(
       setSaving(true);
       setError("");
       try {
-        const settings = readConfig(draft);
+        const settings = readConfig({
+          ...draft,
+          workspace: draft.workspace,
+        });
         if (!validWorkspace(settings.workspace))
           throw new Error("Enter an absolute or ~/… workspace path.");
         await save(settings);
@@ -1044,43 +1230,47 @@ export function createTabs(
               variant="ghost"
               disabled={checking}
               focusableWhenDisabled
-              onClick={() => void provider.check()}
+              onClick={check}
             >
               Check again
             </Button>
           </div>
         )}
-        <>
-          <ModelPicker
-            allowCustomModel={false}
-            models={choices(data)}
-            value={draft.model}
-            defaultModel={
-              catalogModel(providerDefaults.model, data)?.model ?? ""
-            }
-            defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
-            defaultDescription="Following the provider's model default"
-            loading={checking}
-            disabled={saving}
-            onChange={(model) =>
-              setDraft({ ...draft, ...modelChange(model, data) })
-            }
-          />
-          <Select
-            label="Thinking"
-            valueLabel={
-              draft.effort
-                ? undefined
-                : codexDefaultEffortLabel(effective.effort, selected)
-            }
-            valueSuffix={draft.effort ? undefined : " · Default"}
-            variant="preference"
-            value={draft.effort}
-            groups={[{ label: "", options: efforts }]}
-            disabled={checking || saving || !selected}
-            onValueChange={(effort) => setDraft({ ...draft, effort })}
-          />
-        </>
+        <ModelPicker
+          allowCustomModel={!!bound}
+          models={choices(data)}
+          value={draft.model}
+          defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
+          defaultLabel={
+            bound
+              ? "Codex default"
+              : providerDefaultLabel(providerDefaults.model, data)
+          }
+          defaultDescription={
+            bound
+              ? "Use the model default on the target computer"
+              : "Following the provider's model default"
+          }
+          loading={checking}
+          disabled={saving}
+          onChange={(model) =>
+            setDraft({ ...draft, ...modelChange(model, data) })
+          }
+        />
+        <Select
+          label="Thinking"
+          valueLabel={
+            draft.effort
+              ? undefined
+              : codexDefaultEffortLabel(effective.effort, selected)
+          }
+          valueSuffix={draft.effort ? undefined : " · Default"}
+          variant="preference"
+          value={draft.effort}
+          groups={[{ label: "", options: efforts }]}
+          disabled={checking || saving || !selected}
+          onValueChange={(effort) => setDraft({ ...draft, effort })}
+        />
       </>
     );
     return (
@@ -1119,10 +1309,17 @@ export function createTabs(
           <>
             <Field
               label="Workspace"
-              description="Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+              description={
+                bound
+                  ? "The adapter selects a workspace for each conversation session."
+                  : "Codex starts here with full access to your files and network. Buzz tools run inside the app. Inherited MCP/Apps/plugin tools are disabled."
+              }
             >
               <Input
-                value={draft.workspace}
+                value={
+                  bound ? "Selected when the session starts" : draft.workspace
+                }
+                readOnly={!!bound}
                 placeholder="~/.buzz"
                 disabled={saving}
                 onValueChange={(workspace) => setDraft({ ...draft, workspace })}

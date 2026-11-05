@@ -24,6 +24,7 @@ import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
+import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
@@ -618,6 +619,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                   chatIcons={services.conversation.chatIcons}
                   chatMenus={services.conversation.chatMenus}
                   sidebarSections={services.sidebarSections}
+                  sidebarScope={services.sidebarScope}
+                  sidebarRows={services.sidebarRows}
                   target={workspace.target}
                 >
                   {pageNavigation}
@@ -665,6 +668,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               relay={services.relay}
             />
             <InterruptedNotice agents={services.agents} />
+            <MediaMenuDownloadNotice />
             <CreationReview agents={services.agents} />
             <UpdateReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
@@ -760,6 +764,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                     communities={services.communities}
                     identity={services.identity}
                     federatedIdentity={services.federatedIdentity}
+                    builderlabIdentity={services.firstRunFederatedIdentity}
                     appearance={services.appearance}
                     shortcuts={services.shortcuts}
                     shortcutBindings={services.shortcutBindings}

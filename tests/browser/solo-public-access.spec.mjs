@@ -58,7 +58,7 @@ async function capture(surface, info, name) {
     await surface.screenshot({ path: info.outputPath(`${name}.png`) });
 }
 
-// These preserve the two browser journeys: actual routing, signed discovery,
+// These journeys preserve actual routing, signed discovery,
 // broker save/readback, focus and responsive overlays. Role matrices stay in Vitest.
 test.describe("owner", () => {
   test.use({
@@ -176,6 +176,19 @@ test.describe("owner", () => {
       await openAccess();
       await expect(audience).toHaveText("View only");
       await expect(audience).toBeEnabled();
+      // A title update can arrive while Share access stays open. Switching
+      // back to Private must review the current signed details, not overwrite
+      // that update or fail against the snapshot from opening the dialog.
+      if (saves === 1) {
+        app.setChannelMetadata(own, [
+          ["t", "stream"],
+          ["t", "buzz.solo"],
+          ["P", app.viewer],
+          ["name", "Renamed while sharing"],
+          ["public"],
+          ["join_role", "guest"],
+        ]);
+      }
       await audience.click();
       await expect(
         page.getByRole("option", { name: "Public", exact: true }),
@@ -194,36 +207,53 @@ test.describe("owner", () => {
         "visibility",
         "private",
       ]);
+      if (saves === 2)
+        expect(app.report.detailsPublications.at(-1).tags).toContainEqual([
+          "name",
+          "Renamed while sharing",
+        ]);
       await expect(
         dialog.getByRole("button", { name: "Done", exact: true }),
       ).toBeInViewport({ ratio: 1 });
       await page.keyboard.press("Escape");
     }
+    expect(app.report.detailsPublications.map(({ kind }) => kind)).toEqual(
+      Array(8).fill(9002),
+    );
+    expect(app.report.lifecyclePublications ?? []).toEqual([]);
+    expect(app.report.publications).toEqual([]);
+  });
+
+  test("explains retained access for joined viewers and existing Public chats", async ({
+    page,
+    app,
+  }, info) => {
+    await openChat(page, app, own);
+    const access = page
+      .getByRole("button", { name: "Share access", exact: true })
+      .last();
+    const dialog = page.getByRole("dialog", {
+      name: "Share access",
+      exact: true,
+    });
+    const audience = dialog.getByRole("combobox", { name: "General access" });
+    const openAccess = async () => {
+      // Cached startup renders Share access too. Its local dialog is replaced
+      // with the live session; Chat actions exists only on the live header.
+      await expect(
+        page.getByRole("button", { name: "Chat actions", exact: true }),
+      ).toBeVisible();
+      await access.click();
+    };
+    const confirm = page.getByRole("alertdialog", {
+      name: "Change general access?",
+    });
     // The longer conditional descriptions need real modal geometry and focus
     // coverage. Guest/status matrices remain in the component/session tests.
     const guest = app.serveProfile(generateSecretKey(), {
       name: "Aria viewer",
     });
-    await page.route("**/api/relay/**/query", async (route) => {
-      const filters = route.request().postDataJSON();
-      if (!filters.some((filter) => filter.kinds?.includes(39002)))
-        return route.continue();
-      const response = await route.fetch();
-      const events = await response.json();
-      await route.fulfill({
-        json: events.map((event) =>
-          event.kind === 39002 &&
-          event.tags.some(([key, value]) => key === "d" && value === own)
-            ? app.signRelay({
-                ...event,
-                // A changed signed roster must supersede the startup version.
-                created_at: event.created_at + 1,
-                tags: [...event.tags, ["p", guest.pubkey, "", "guest"]],
-              })
-            : event,
-        ),
-      });
-    });
+    app.addChannelGuest(own, guest.pubkey);
     for (const presentation of presentations) {
       const suffix = `${presentation.mode}_${presentation.width}`;
       app.setChannelMetadata(own, [
@@ -302,9 +332,7 @@ test.describe("owner", () => {
       await expect(audience).toBeFocused();
       await page.keyboard.press("Escape");
     }
-    expect(app.report.detailsPublications.map(({ kind }) => kind)).toEqual(
-      Array(8).fill(9002),
-    );
+    expect(app.report.detailsPublications ?? []).toEqual([]);
     expect(app.report.lifecyclePublications ?? []).toEqual([]);
     expect(app.report.publications).toEqual([]);
   });
@@ -350,12 +378,15 @@ test.describe("visitor", () => {
       const message = article.locator("[data-message-id]").last();
       await expect(message).toBeVisible();
       await expect(
-        page.getByText("This chat is read-only", { exact: true }),
+        page.getByText(
+          "This chat is read-only. Join to keep it in your sidebar and appear as a viewer.",
+          { exact: true },
+        ),
       ).toBeVisible();
       await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "Join", exact: true }),
-      ).toHaveCount(0);
+      ).toBeVisible();
       await expect(
         page.locator(`[data-solo-channel-id="${shared}"]`),
       ).toHaveCount(0);
@@ -417,6 +448,12 @@ test.describe("visitor", () => {
     ]);
     await page.reload();
     await expect(article.locator("[data-message-id]").last()).toBeVisible();
+    await expect(
+      article.getByRole("region", { name: "Chat preview", exact: true }),
+    ).toBeVisible();
+    await expect(
+      article.getByRole("button", { name: "Join", exact: true }),
+    ).toHaveCount(0);
     await page
       .getByRole("button", { name: /^Share access/ })
       .last()
@@ -443,5 +480,120 @@ test.describe("visitor", () => {
     expect(app.report.detailsPublications ?? []).toEqual([]);
     expect(app.report.lifecyclePublications ?? []).toEqual([]);
     expect(app.report.publications).toEqual([]);
+  });
+
+  // Browser boundary: signed join/readback must update the real Solo inventory,
+  // both action menus and role presentation without enabling composition.
+  test("joins as a viewer, keeps Private access and leaves without write access", async ({
+    page,
+    app,
+  }, info) => {
+    const tags = [
+      ["name", "Release planning"],
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["P", "a".repeat(64)],
+      ["join_role", "guest"],
+    ];
+    app.setChannelMetadata(shared, [...tags, ["public"]]);
+    await openChat(page, app, shared);
+    const article = page.getByRole("article", {
+      name: "Conversation",
+      exact: true,
+    });
+    const row = page.locator(`[data-solo-channel-id="${shared}"]`);
+    await expect(row).toHaveCount(0);
+    const join = page.getByRole("button", { name: "Join", exact: true });
+    await present(page, presentations[0]);
+    await expect(article.locator("[data-message-id]").last()).toBeVisible();
+    await expect(join).toBeVisible();
+    await capture(page, info, "VIEWER_JOIN_NOTICE_dark_1440");
+    await join.focus();
+    await join.press("Enter");
+    await expect(row).toBeVisible();
+    await expect(join).toHaveCount(0);
+    await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
+    await expect(
+      page.getByText("This chat is read-only", { exact: true }),
+    ).toBeVisible();
+    expect(app.report.lifecyclePublications.map(({ kind }) => kind)).toEqual([
+      9021,
+    ]);
+    for (const presentation of presentations) {
+      await present(page, presentation);
+      await expect(article.locator("[data-message-id]").last()).toBeVisible();
+      if (presentation.width === 1440) await expect(row).toBeVisible();
+      await expect(join).toHaveCount(0);
+      await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
+      await expect(
+        page.getByText("This chat is read-only", { exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+      await capture(
+        page,
+        info,
+        `VIEWER_JOINED_${presentation.mode}_${presentation.width}`,
+      );
+    }
+    await present(page, presentations[0]);
+    await page.reload();
+    await expect(row).toBeVisible();
+    await page
+      .getByRole("button", { name: /^Share access/ })
+      .last()
+      .click();
+    const access = page.getByRole("dialog", {
+      name: "Chat access",
+      exact: true,
+    });
+    await expect(
+      access.getByText("Viewing only", { exact: true }),
+    ).toBeVisible();
+    await capture(access, info, "VIEWER_JOINED_ACCESS_dark_1440");
+    await page.keyboard.press("Escape");
+    app.setChannelMetadata(shared, [...tags, ["private"]]);
+    await page.reload();
+    await expect(article.locator("[data-message-id]").last()).toBeVisible();
+    await expect(row).toBeVisible();
+    await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
+    const actions = page.getByRole("button", {
+      name: "Chat actions",
+      exact: true,
+    });
+    await actions.click();
+    await expect(
+      page.getByRole("menuitem", { name: "Archive chat", exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("menuitem", { name: "Leave chat", exact: true })
+      .click();
+    const leave = page.getByRole("dialog", {
+      name: "Leave chat: Release planning",
+      exact: true,
+    });
+    await expect(
+      leave.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(actions).toBeFocused();
+    await actions.click();
+    await page
+      .getByRole("menuitem", { name: "Leave chat", exact: true })
+      .click();
+    await leave
+      .getByRole("button", { name: "Leave chat", exact: true })
+      .click();
+    await expect(row).toHaveCount(0);
+    await expect(leave).toHaveCount(0);
+    expect(app.report.lifecyclePublications.map(({ kind }) => kind)).toEqual([
+      9021, 9022,
+    ]);
+    await openChat(page, app, shared);
+    await expect(article.locator("[data-message-id]")).toHaveCount(0);
+    app.setChannelMetadata(shared, [...tags, ["public"]]);
+    await openChat(page, app, shared);
+    await expect(join).toBeVisible();
+    await expect(row).toHaveCount(0);
+    expect(app.report.publications).toEqual([]);
+    expect(app.report.unexpected).toEqual([]);
   });
 });

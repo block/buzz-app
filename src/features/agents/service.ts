@@ -1,5 +1,13 @@
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
+import {
+  createAgentExecutions,
+  type AgentExecution,
+  type AgentExecutionBinding,
+  type AgentExecutionProvider,
+  type AgentExecutionSession,
+} from "./execution";
+import type { JsonValue } from "../navigation/targets";
 import { removeSessionPrompts } from "./session-prompts";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { respond } from "../../buzz-mcp/rpc";
@@ -7,6 +15,8 @@ import { respondExternal } from "../../buzz-mcp/external";
 import type { ExternalScope } from "./external-connection";
 import { externalMcpEnabled } from "./external-connection";
 import { connectMcp } from "../../buzz-mcp/connection";
+import { type HarnessKit, harnessKit } from "../agent-harness/kit";
+import { repositoriesContext } from "../communities/repositories";
 import type {
   HostMcpServer,
   HostProcess,
@@ -58,6 +68,7 @@ import {
   dispatchAgentHooks,
   type AgentHook,
   type AgentHookContext,
+  type AgentHookDispatchOptions,
 } from "./hooks";
 import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
@@ -76,7 +87,7 @@ import { ownerReads } from "./reads";
 import { migrateAgentStorage } from "./migrate-storage";
 import { migrateWatchFilters } from "./migrate-filter";
 import { migrateWatchKeywords } from "./migrate-keywords";
-import { agentStorage, type AgentStore } from "./state";
+import { agentStorage, executionStorage, type AgentStore } from "./state";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -151,6 +162,7 @@ import {
   readArchiveUnchecked,
   readRecords,
   recordKey,
+  recordText,
   readTeams,
   readUnfinished,
   setAttention,
@@ -184,6 +196,8 @@ import {
   clearDeletedDefaultAgent,
   forgetDefaultAgent,
 } from "../solo/default-agent";
+import type { AgentPlugins } from "../../plugins/requests";
+import type { DeviceSettings } from "../../shared/device-settings";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -216,6 +230,8 @@ export type Agent<Config = unknown> = Readonly<{
   deleting?: true;
   protection?: ProtectionBinding;
   protectionRevision?: number;
+  /** Saved execution selection for this membership on this device. */
+  executionBinding?: AgentExecutionBinding;
   attention: Readonly<Record<string, AttentionObject>>;
   /** Stored attention objects that are invalid or over a limit, by slug. */
   skipped: Readonly<Record<string, SkippedObject>>;
@@ -299,8 +315,13 @@ export type AgentViewProps<Config = unknown> = {
  * starting config, from `defaults`, to fill in. The app owns its key, name and
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
+  /** Existing cards supply their membership and scoped settings action. */
+  agent?: Agent<Config>;
+  openSettings?: () => void;
   /** Model fields may use the compact card treatment in the library. */
-  modelAppearance?: "glass-ghost";
+  modelAppearance?: "glass-ghost" | "inverted";
+  /** Hide effort editing in streamlined connection setup. */
+  showEffort?: boolean;
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
@@ -418,12 +439,14 @@ export type AgentHandle = Readonly<{
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
-    input: Readonly<{ type: string; name: string }>,
+    input: AgentCreationInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** Owner-reviewed changes to one of the owner's agents here. */
   updateAgent?(
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** This device's plugins, as the agent may read and change them. */
+  plugins?: AgentPlugins | undefined;
   /** On a run's handle only: wakes this agent in another of its
    * conversations, as `Agents.wake` would, telling it the wake is its own. */
   handoff?(handoff: AgentHandoff): void;
@@ -464,6 +487,8 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** On a run's handle only: Buzz settings on this device. */
+  settings?: DeviceSettings;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -750,6 +775,17 @@ export type AgentType<Config = unknown> = {
   /** The type's choices in the New agent dialog, such as model and
    * instructions; the new agent starts with the config it settles on. */
   Create?: ComponentType<AgentCreateProps<Config>>;
+  /** Optional creation configuration group. The type places the host's Harness
+   * row alongside its own controls and keeps discovery/recovery with them.
+   * Takes precedence over CreateModel in the creation dialog. Report readiness
+   * of the displayed choices through onReadyChange, independently of edits;
+   * the dialog waits for true before allowing creation. */
+  CreateConfiguration?: ComponentType<
+    AgentCreateProps<Config> & {
+      harnessControl: ReactNode;
+      onReadyChange?: (ready: boolean) => void;
+    }
+  >;
   /** Provider-owned account notice, pinned across the agent's tabs.
    * Return null when no account notice is needed. The active settings view may
    * replace this slot through the AgentSaveFooter context's setPanelNotice(content),
@@ -808,6 +844,8 @@ export type AgentType<Config = unknown> = {
   }>;
   /** Runtime routes its supported security boundaries through AgentHandle.protection. */
   protection?: true;
+  /** Uses the agent's saved execution target for native process and file I/O. */
+  execution?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;
   /** Fully retires native sessions for this membership key before policy changes. */
@@ -897,24 +935,35 @@ export type RetypePreview = Readonly<{
     outcome: "reset" | "dropped";
   }>[];
 }>;
-/** An unsaved creation request. Only the owner-facing review may approve it. */
-export type AgentCreationRequest = Readonly<{
-  id: string;
-  requester: string;
-  requesterName: string;
-  owner: string;
-  community: string;
-  type: string;
-  name: string;
-}>;
-/** Proposed changes; absent fields stay as they are. */
+/** A proposal's picture: uploads it once the proposal is valid, giving its
+ * HTTPS image URL. */
+export type ProposedPicture = () => Promise<string>;
+type AgentCreation = Readonly<{ type: string; name: string }>;
+/** A requested agent. */
+export type AgentCreationInput = AgentCreation &
+  Readonly<{ picture?: ProposedPicture }>;
+/** An unsaved creation request; `picture` is an HTTPS image URL. Only the
+ * owner-facing review may approve it. */
+export type AgentCreationRequest = AgentCreation &
+  Readonly<{
+    picture?: string;
+    id: string;
+    requester: string;
+    requesterName: string;
+    owner: string;
+    community: string;
+  }>;
+/** Proposed changes; absent fields stay as they are. `picture` is an HTTPS
+ * image URL. */
 export type AgentUpdate = Readonly<{
   name?: string;
   type?: string;
   instructions?: string;
+  picture?: string;
 }>;
 /** `agent` is a pubkey or the exact name of one of the owner's agents here. */
-export type AgentUpdateInput = AgentUpdate & Readonly<{ agent: string }>;
+export type AgentUpdateInput = Omit<AgentUpdate, "picture"> &
+  Readonly<{ agent: string; picture?: ProposedPicture }>;
 /** An unsaved change request. Only the owner-facing review may approve it. */
 export type AgentUpdateRequest = AgentUpdate &
   Readonly<{
@@ -962,7 +1011,13 @@ export type TeamChange = Omit<Team, "id" | "revision"> &
 /** What `port` imports: an identity an earlier agent system saved on this
  * machine, or an agent a community member shared. */
 export type PortInput = Readonly<
-  | { source: PortSource; pubkey: string; type: string }
+  | {
+      source: PortSource;
+      pubkey: string;
+      type: string;
+      config?: unknown;
+      scope?: string;
+    }
   | {
       source: "shared";
       type: string;
@@ -1017,6 +1072,19 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  registerExecution(provider: AgentExecutionProvider): void;
+  /** Select the adapter while the agent is idle. This is write-once. */
+  bindExecution(
+    agent: AgentKey,
+    binding: Readonly<{ id: string; config?: JsonValue }>,
+  ): Promise<void>;
+  executionBinding(agent: AgentKey): AgentExecutionBinding | undefined;
+  inspectExecution(agent: AgentKey): Promise<AgentExecutionBinding | undefined>;
+  /** Only the agent's native harness can open its bound target. */
+  execution(
+    agent: AgentKey,
+    session: AgentExecutionSession,
+  ): Promise<AgentExecution | undefined>;
   registerHook(hook: AgentHook): void;
   /** Dispatches hooks for this plugin's agent types in contribution order. */
   dispatchHook(
@@ -1024,7 +1092,7 @@ export type Agents = {
     event: string,
     input: unknown,
     context: AgentHookContext,
-    options: { accepts(output: unknown): boolean; milliseconds: number },
+    options: AgentHookDispatchOptions,
   ): Promise<unknown>;
   /** Registers a deterministic source owned by this plugin. Attention controls
    * its lifetime; output goes privately to the watch's saved conversation.
@@ -1064,6 +1132,10 @@ export type Agents = {
   addTool(tool: AddedTool): void;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** The Buzz side of a turn for an agent type a plugin brings: where a
+   * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
+   * an MCP handler, and its replies. */
+  readonly harness: HarnessKit;
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
    * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
@@ -1486,11 +1558,73 @@ const recordPicture = (value: unknown) => {
   const source = avatarSource(value);
   return source?.startsWith("https:") ? source : undefined;
 };
+/** A proposed picture as a record carries it; refuses any other. */
+const proposedPicture = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  const picture = recordPicture(value);
+  if (!picture) throw new Error("Propose an HTTPS image URL as the picture");
+  return picture;
+};
 /** The `wss://` URL of a community, as agents and their providers know it. */
 const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  private readonly executions;
+  private async checkExecution(key: AgentKey, type: string) {
+    if (!(await this.executions.inspect(key))) return;
+    if (!this.types().find((kind) => kind.key === type)?.execution)
+      throw new Error(
+        "This runtime does not support the saved execution binding",
+      );
+    await this.executions.check(key, type);
+  }
+  private async checkExecutionType(pubkey: string, type: string) {
+    for (const member of this.identities)
+      if (member.pubkey === pubkey && !member.deleted)
+        await this.checkExecution(member.key, type);
+  }
+
+  registerExecution(provider: AgentExecutionProvider) {
+    this.executions.register(this.ctx, provider);
+  }
+  async bindExecution(
+    key: AgentKey,
+    binding: Readonly<{ id: string; config?: JsonValue }>,
+  ) {
+    const member = this.liveMember(key);
+    if (
+      !member ||
+      !this.types().find((type) => type.key === member.type)?.execution
+    )
+      throw new Error("This agent does not support plugin execution");
+    if (member.protection)
+      throw new Error("Plugin execution does not support protected agents");
+    if (!this.types().find((type) => type.key === member.type)?.retire)
+      throw new Error(
+        "This runtime cannot safely change its execution provider",
+      );
+    await this.runners.retype(key, member.name, () =>
+      this.typeChange(member, async () => {
+        await this.executions.bind(this.ctx, key, member.type, binding);
+      }),
+    );
+  }
+  executionBinding(key: AgentKey) {
+    if (!this.liveMember(key)) throw new Error("No such agent on this device");
+    return this.executions.read(key);
+  }
+  async inspectExecution(key: AgentKey) {
+    if (!this.liveMember(key)) throw new Error("No such agent on this device");
+    return this.executions.inspect(key);
+  }
+  async execution(key: AgentKey, session: AgentExecutionSession) {
+    const member = this.liveMember(key);
+    if (!member) throw new Error("No such agent on this device");
+    if (member.protection && (await this.executions.inspect(key)))
+      throw new Error("Plugin execution does not support protected agents");
+    return this.executions.open(this.ctx, key, member.type, session);
+  }
   private readonly hookContributions;
   registerHook(hook: AgentHook) {
     const adapter = this.contributions
@@ -1507,7 +1641,7 @@ export class AgentsService extends Service implements Agents {
     event: string,
     input: unknown,
     context: AgentHookContext,
-    options: { accepts(output: unknown): boolean; milliseconds: number },
+    options: AgentHookDispatchOptions,
   ) {
     const owner = this.ctx.pluginOwner;
     if (!owner || !harness.startsWith(`${owner.id}/`))
@@ -1520,6 +1654,7 @@ export class AgentsService extends Service implements Agents {
       context,
       options.accepts,
       options.milliseconds,
+      options.compose,
     );
   }
   private readonly contributions;
@@ -1569,6 +1704,11 @@ export class AgentsService extends Service implements Agents {
   /** Memberships a re-import or add is taking back; no cleanup starts for
    * them. */
   private reclaiming = new Set<AgentKey>();
+  /** Durable reviewed settings awaiting an observed native installation. */
+  private importDrafts = new Map<
+    string,
+    { type: string; record: AgentRecord }
+  >();
   /** Memberships, imported or added, whose archive state could not be
    * checked yet, saved so Retry survives a restart until a check confirms
    * the state. */
@@ -1633,8 +1773,11 @@ export class AgentsService extends Service implements Agents {
     /** Which artifact types an agent has synced, from its config channel
      * binding. Unset, every agent starts `local`. */
     private readonly bindingFor?: (agent: Agent) => ConfigBinding,
+    /** The Buzz settings on this device that agents' runs can change. */
+    private readonly deviceSettings?: DeviceSettings,
   ) {
     super(ctx, "agents");
+    this.executions = createAgentExecutions(ctx, executionStorage(storage));
     this.contributions = createContributions<AgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
@@ -1698,6 +1841,12 @@ export class AgentsService extends Service implements Agents {
               "This runtime cannot safely change protection while Buzz is open",
             );
           await this.runners.retype(agent.key, agent.name, async () => {
+            if (policy !== null)
+              for (const member of members)
+                if (await this.executions.inspect(member.key))
+                  throw new Error(
+                    "Plugin execution does not support protected agents",
+                  );
             for (const member of members) await type.retire?.(member.key);
             await setProtection(pubkey, revision, provider, policy);
             await this.refresh();
@@ -1795,8 +1944,13 @@ export class AgentsService extends Service implements Agents {
       changing: (key) => this.changing.has(key),
       timers: (key) => this.timersOf(key),
       progress: (key, ran) => this.progress(key, ran),
-      start: (agent) =>
-        this.resolve(agent, (this.records[agent.pubkey] ?? agent).config),
+      start: async (agent) => {
+        await this.checkExecution(agent.key, agent.type);
+        return this.resolve(
+          agent,
+          (this.records[agent.pubkey] ?? agent).config,
+        );
+      },
       team: (key) => {
         const member = this.liveMember(key);
         const origin = member && originOf(member.relay);
@@ -1810,69 +1964,82 @@ export class AgentsService extends Service implements Agents {
         this.types()
           .filter((type) => !type.remote)
           .map(({ key, title }) => ({ key, title })),
-      createAgent: async (agent, input) => {
-        const binding = this.bindingOf(agent);
-        if (!binding || !this.liveMember(agent.key))
-          throw new Error("The requesting agent is no longer available");
-        if (!input.name.trim()) throw new Error("Name the agent");
-        const kind = this.types().find((entry) => entry.key === input.type);
-        if (!kind) throw new Error("That agent type is not available");
-        if (kind.remote)
-          throw new Error("A hosted agent's key stays with its provider");
-        if (this.requests.length + this.updates.length >= 16)
-          throw new Error("Review the pending agent requests first");
-        const id = crypto.randomUUID();
-        this.requests = [
-          ...this.requests,
-          {
-            id,
+      createAgent: async (agent, { picture: upload, ...input }) => {
+        const request = (picture?: string): AgentCreationRequest => {
+          const binding = this.bindingOf(agent);
+          if (!binding || !this.liveMember(agent.key))
+            throw new Error("The requesting agent is no longer available");
+          if (!input.name.trim()) throw new Error("Name the agent");
+          const kind = this.types().find((entry) => entry.key === input.type);
+          if (!kind) throw new Error("That agent type is not available");
+          if (kind.remote)
+            throw new Error("A hosted agent's key stays with its provider");
+          if (this.requests.length + this.updates.length >= 16)
+            throw new Error("Review the pending agent requests first");
+          return {
+            id: crypto.randomUUID(),
             requester: agent.pubkey,
             requesterName: agent.name,
             owner: agent.owner,
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
-          },
-        ];
-        this.notify();
-        return { requestId: id, saved: false };
-      },
-      updateAgent: async (agent, { agent: target, ...proposed }) => {
-        const binding = this.bindingOf(agent);
-        if (!binding || !this.liveMember(agent.key))
-          throw new Error("The requesting agent is no longer available");
-        const matches = this.identities.filter(
-          (identity) =>
-            !identity.deleted &&
-            !identity.deleting &&
-            identity.owner === agent.owner &&
-            originOf(identity.relay) === binding.origin &&
-            (identity.pubkey === target || identity.name === target),
-        );
-        const [identity] = matches;
-        if (!identity)
-          throw new Error("Your owner has no agent here by that name or key");
-        if (matches.length > 1)
-          throw new Error("Several agents have that name; use its pubkey");
-        const name = proposed.name?.trim();
-        const change: AgentUpdate = {
-          ...(name !== undefined && name !== identity.name && { name }),
-          ...(proposed.type !== undefined &&
-            proposed.type !== identity.type && { type: proposed.type }),
-          ...(proposed.instructions !== undefined && {
-            instructions: proposed.instructions,
-          }),
+            ...(picture && { picture }),
+          };
         };
-        if (Object.keys(change).length === 0)
-          throw new Error("Propose at least one change");
-        this.updateKind(identity, change);
-        if (this.requests.length + this.updates.length >= 16)
-          throw new Error("Review the pending agent requests first");
-        const id = crypto.randomUUID();
-        this.updates = [
-          ...this.updates,
-          {
-            id,
+        // Its picture uploads only for a valid request, which is then
+        // checked again.
+        request();
+        const next = request(proposedPicture(await upload?.()));
+        this.requests = [...this.requests, next];
+        this.notify();
+        return { requestId: next.id, saved: false };
+      },
+      updateAgent: async (
+        agent,
+        { agent: target, picture: upload, ...proposed },
+      ) => {
+        /** `wanted`: the target; `pending`: a picture still to upload, a
+         * change until its URL is known. */
+        const request = (
+          wanted: (identity: AgentIdentity) => boolean,
+          picture?: string,
+          pending = false,
+        ): AgentUpdateRequest => {
+          const binding = this.bindingOf(agent);
+          if (!binding || !this.liveMember(agent.key))
+            throw new Error("The requesting agent is no longer available");
+          const matches = this.identities.filter(
+            (identity) =>
+              !identity.deleted &&
+              !identity.deleting &&
+              identity.owner === agent.owner &&
+              originOf(identity.relay) === binding.origin &&
+              wanted(identity),
+          );
+          const [identity] = matches;
+          if (!identity)
+            throw new Error("Your owner has no agent here by that name or key");
+          if (matches.length > 1)
+            throw new Error("Several agents have that name; use its pubkey");
+          const name = proposed.name?.trim();
+          const change: AgentUpdate = {
+            ...(name !== undefined && name !== identity.name && { name }),
+            ...(proposed.type !== undefined &&
+              proposed.type !== identity.type && { type: proposed.type }),
+            ...(proposed.instructions !== undefined && {
+              instructions: proposed.instructions,
+            }),
+            ...(picture !== undefined &&
+              picture !== identity.picture && { picture }),
+          };
+          if (Object.keys(change).length === 0 && !pending)
+            throw new Error("Propose at least one change");
+          this.updateKind(identity, change);
+          if (this.requests.length + this.updates.length >= 16)
+            throw new Error("Review the pending agent requests first");
+          return {
+            id: crypto.randomUUID(),
             requester: agent.pubkey,
             requesterName: agent.name,
             owner: agent.owner,
@@ -1881,11 +2048,29 @@ export class AgentsService extends Service implements Agents {
             agentName: identity.name,
             agentType: identity.type,
             ...change,
-          },
-        ];
+          };
+        };
+        // Its picture uploads only for a valid request, which is then
+        // checked again for the same agent, even if renamed meanwhile.
+        const { agent: key } = request(
+          (identity) => identity.pubkey === target || identity.name === target,
+          undefined,
+          upload !== undefined,
+        );
+        const next = request(
+          (identity) => identity.pubkey === key,
+          proposedPicture(await upload?.()),
+        );
+        this.updates = [...this.updates, next];
         this.notify();
-        return { requestId: id, saved: false };
+        return { requestId: next.id, saved: false };
       },
+      plugins: (agent) =>
+        this.ctx.pluginRequests?.forAgent({
+          pubkey: agent.pubkey,
+          name: agent.name,
+          live: () => !!this.liveMember(agent.key),
+        }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
       templates: (agent) => {
@@ -1910,6 +2095,7 @@ export class AgentsService extends Service implements Agents {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session, ctx.navigation);
       },
+      settings: () => this.deviceSettings,
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
@@ -2097,7 +2283,16 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         "A hosted agent type has provision, activate, profile and remove, and no run, models or timeoutMs",
       );
-    this.contributions.register(this.ctx, type as unknown as AgentType);
+    const models = type.models;
+    this.contributions.register(this.ctx, {
+      ...type,
+      ...(models && {
+        models: async (agent: Agent<Config>) => {
+          await this.checkExecution(agent.key, agent.type);
+          return models(agent);
+        },
+      }),
+    } as unknown as AgentType);
   }
   types = () => this.contributions.snapshot();
   registerTab(tab: AgentAddedTab) {
@@ -2260,6 +2455,7 @@ export class AgentsService extends Service implements Agents {
     };
     const spawn = async (
       key: AgentKey,
+      watch: string,
       process: string,
       options: Omit<HostProcessOptions, "mcp"> & {
         signal: AbortSignal;
@@ -2277,13 +2473,27 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           "Protected agents cannot run external Attention commands until that execution path supports complete protection",
         );
-      const source = ownerReads(this.relay(key), pubkeyOf(key));
-      if (!source) throw new Error("The agent's community is not connected");
+      const connectionSource = ownerReads(this.relay(key), pubkeyOf(key));
+      if (!connectionSource)
+        throw new Error("The agent's community is not connected");
       const spawn = host.spawn.bind(host);
       return spawnAgentCommand(
         {
           connect: (signal) => connect(key, { ...options, signal }),
-          spawn: (settings) => spawn(process, settings),
+          spawn: (settings) =>
+            spawn(process, {
+              ...settings,
+              env: {
+                ...settings.env,
+                BUZZ_ATTENTION_COMMAND: JSON.stringify([
+                  key,
+                  plugin,
+                  source.id,
+                  watch,
+                  process,
+                ]),
+              },
+            }),
           subscribe: (changed) => {
             const agent = this.subscribe(changed);
             const community = this.relay(key)?.subscribe(changed);
@@ -2297,7 +2507,7 @@ export class AgentsService extends Service implements Agents {
               throw new Error("Attention is off");
             if (
               ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
-              source.connection
+              connectionSource.connection
             )
               throw new Error("The agent's community connection changed");
           },
@@ -2318,7 +2528,7 @@ export class AgentsService extends Service implements Agents {
           await source.run({
             ...input,
             spawn: (process, options) =>
-              spawn(agent, process, {
+              spawn(agent, input.id, process, {
                 ...options,
                 signal,
                 channel,
@@ -2446,6 +2656,12 @@ export class AgentsService extends Service implements Agents {
     };
   }
   tools = () => this.addedTools.snapshot();
+  readonly harness = harnessKit({
+    relay: (key) => this.relay(key),
+    core: (key) => this.core(key),
+    added: () => this.tools(),
+    repositories: repositoriesContext,
+  });
   wake(key: AgentKey, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");
@@ -2999,7 +3215,14 @@ export class AgentsService extends Service implements Agents {
   async port(input: PortInput): Promise<Ported> {
     const { type } = input;
     if (input.source !== "shared")
-      return this.portIdentity(input.source, input.pubkey, type);
+      return this.portIdentity(
+        input.source,
+        input.pubkey,
+        type,
+        undefined,
+        input.config,
+        input.scope,
+      );
     const name = input.name.trim();
     if (!name) throw new Error("Name the agent");
     const { picture, instructions } = input;
@@ -3027,12 +3250,49 @@ export class AgentsService extends Service implements Agents {
     pubkey: string,
     type: string,
     given?: Binding,
+    config?: unknown,
+    scope?: string,
   ): Promise<Ported> {
     const binding = given ?? this.selectedBinding();
+    if (scope && binding.scope !== scope)
+      throw new Error(
+        "The community changed. Reopen this conversation to connect.",
+      );
+    if (this.reclaiming.has(pubkey))
+      throw new Error(
+        "This agent is already being connected. Wait for that attempt to finish.",
+      );
+    let staged: AgentRecord | undefined;
     const notes: string[] = [];
-    // A cleanup still running from its Delete must not touch it once it is back.
-    await this.reclaim(pubkey);
+    // Hold the identity before staging: another port must not observe an
+    // optimistic store value whose write has not reached disk yet.
     try {
+      await this.reclaim(pubkey);
+      if (config !== undefined) {
+        const kind = this.types().find(
+          (entry) => entry.key === type && !entry.remote,
+        );
+        if (!kind) throw new Error("That agent type is not available");
+        if (
+          this.identities.some(
+            (identity) => identity.pubkey === pubkey && !identity.deleted,
+          )
+        )
+          throw new Error(
+            "This agent has already been imported. Open its Settings to configure it.",
+          );
+        // Save the reviewed choices before installing the identity, so a failed
+        // write cannot start an imported agent with unintended model defaults.
+        const draft = { ...defaults(pubkey, kind), config };
+        const text = recordText(draft);
+        const kept = await this.storage.add(recordKey(pubkey), text);
+        if (kept !== text)
+          throw new Error(
+            "This agent already has saved setup. Finish importing it from Agents, then review its Settings.",
+          );
+        staged = draft;
+        this.importDrafts.set(pubkey, { type, record: draft });
+      }
       const agent = await this.add(
         type,
         async (native, destination, owner) => {
@@ -3043,14 +3303,30 @@ export class AgentsService extends Service implements Agents {
             owner,
             type,
           );
+          if (staged) this.records = { ...this.records, [pubkey]: staged };
           notes.push(...(ported.notes ?? []));
           return ported;
         },
-        {},
+        config === undefined ? {} : { config, strict: true },
         binding,
       );
+      this.importDrafts.delete(pubkey);
       await this.unarchiveHere(agent, binding, notes);
       return { agent, notes };
+    } catch (error) {
+      if (staged) {
+        try {
+          // Refresh adopts the durable draft if installation persisted before
+          // rejecting. Keep it for a later refresh if native listing also fails.
+          await this.refresh();
+        } catch (recoveryError) {
+          console.warn(
+            "Imported agent setup recovery did not finish",
+            recoveryError,
+          );
+        }
+      }
+      throw error;
     } finally {
       this.reclaiming.delete(pubkey);
     }
@@ -3224,7 +3500,11 @@ export class AgentsService extends Service implements Agents {
       destination: string,
       owner: string,
     ) => Promise<Readonly<{ agent: AgentIdentity; carry?: Carry }>>,
-    made: Readonly<{ config?: unknown; picture?: string | undefined }> = {},
+    made: Readonly<{
+      config?: unknown;
+      picture?: string | undefined;
+      strict?: true;
+    }> = {},
     given?: Binding,
   ) {
     const native = this.native;
@@ -3249,6 +3529,11 @@ export class AgentsService extends Service implements Agents {
       await this.change(identity.pubkey, () => record);
     } catch (error) {
       // The agent exists either way; unsaved settings start from the defaults.
+      if (made.strict)
+        throw new Error(
+          "The identity was imported, but its settings could not be saved. Open Agents → Settings to finish setup.",
+          { cause: error },
+        );
       console.warn(`Agent ${identity.name} settings were not saved`, error);
     }
     // Before the refresh, which publishes its profile with the picture. The
@@ -3561,6 +3846,7 @@ export class AgentsService extends Service implements Agents {
     if (!kind) throw new Error("That agent type is not available");
     if (kind.remote)
       throw new Error("A hosted provider cannot take over a local agent key");
+    await this.checkExecutionType(identity.pubkey, type);
     if (type === identity.type) return [];
     this.refuseWhileMoving(identity);
     const retyped = async () => {
@@ -3621,6 +3907,7 @@ export class AgentsService extends Service implements Agents {
     type: string,
     config: object,
   ) {
+    await this.checkExecutionType(identity.pubkey, type);
     const settings = this.configBinding(identity).settings;
     if (!settings || !isSynced(this.configStore, settings)) return;
     const head = this.configStore.state(settings.subject).head;
@@ -3646,6 +3933,7 @@ export class AgentsService extends Service implements Agents {
     type: string,
     config: unknown,
   ) {
+    await this.checkExecutionType(identity.pubkey, type);
     const native = this.native;
     if (!native) throw new Error("No such agent on this device");
     const { pubkey } = identity;
@@ -4836,6 +5124,7 @@ export class AgentsService extends Service implements Agents {
   }
   private view(identity: Member, record: AgentRecord): Agent {
     const editor = this.editorConfig(identity, record.config as object);
+    const executionBinding = this.executions.read(identity.key);
     return Object.freeze({
       key: identity.key,
       pubkey: identity.pubkey,
@@ -4847,6 +5136,7 @@ export class AgentsService extends Service implements Agents {
       place: "here",
       ...(identity.protection ? { protection: identity.protection } : {}),
       protectionRevision: identity.protectionRevision ?? 0,
+      ...(executionBinding ? { executionBinding } : {}),
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
@@ -5050,6 +5340,14 @@ export class AgentsService extends Service implements Agents {
       // One still joining, or a Join a crash cut short, is no membership.
       const identities = this.withKeys(rows.filter((row) => !row.joining));
       this.identities = identities;
+      for (const identity of identities) {
+        if (identity.deleted) continue;
+        const draft = this.importDrafts.get(identity.pubkey);
+        if (!draft || draft.type !== identity.type) continue;
+        if (!this.records[identity.pubkey])
+          this.records = { ...this.records, [identity.pubkey]: draft.record };
+        this.importDrafts.delete(identity.pubkey);
+      }
       // A read that succeeds ends the failure the last one reported.
       const { error: _, ...state } = this.state;
       this.state = Object.freeze({ ...state, status: "ready" });
@@ -5060,7 +5358,9 @@ export class AgentsService extends Service implements Agents {
           .filter((saved) => !saved.deleted)
           .flatMap((saved) => [saved.key, saved.pubkey]),
       );
-      const gone = Object.keys(this.records).filter((key) => !live.has(key));
+      const gone = Object.keys(this.records).filter(
+        (key) => !live.has(key) && !this.reclaiming.has(key),
+      );
       for (const key of gone)
         void this.change(key, () => null).catch((error) =>
           console.warn(`Agent ${key} settings were not removed`, error),
@@ -5404,6 +5704,8 @@ export class AgentsService extends Service implements Agents {
           prior.picture === identity.picture &&
           prior.type === identity.type &&
           prior.protectionRevision === (identity.protectionRevision ?? 0) &&
+          JSON.stringify(prior.executionBinding) ===
+            JSON.stringify(this.executions.read(identity.key)) &&
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&

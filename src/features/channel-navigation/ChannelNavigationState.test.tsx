@@ -442,10 +442,13 @@ it("offers Refresh channels when a lifecycle action failed on stale state", asyn
     within(toast).getByRole("button", { name: "Dismiss notification" }),
     refresh,
   ]);
+  expect(view.result.current.lifecycleRefreshes).toBe(0);
   fireEvent.click(refresh);
   expect(h.refreshList).toHaveBeenCalledExactlyOnceWith({
     consistency: "strong",
   });
+  // Settings reads its channel actions again on each one.
+  expect(view.result.current.lifecycleRefreshes).toBe(1);
   await waitFor(() =>
     expect(
       screen.queryByRole("dialog", { name: "Archive channel failed" }),

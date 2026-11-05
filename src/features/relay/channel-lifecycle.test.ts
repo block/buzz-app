@@ -648,6 +648,7 @@ it("rereads authority after signing; a removed admin cannot publish", async () =
   const run = h.owner.capability.run("archive", id);
   // Stale state the viewer can refresh, and copy naming that control.
   await expect(run).rejects.toBeInstanceOf(ChannelLifecycleStale);
+  await expect(run).rejects.toMatchObject({ name: "ChannelLifecycleStale" });
   await expect(run).rejects.toThrow(
     /^This action is no longer permitted\. Refresh channels to see what you can do now\.$/,
   );
@@ -1433,6 +1434,24 @@ describe("channel owner-agent Archive and Delete eligibility", () => {
       h.owner.dispose();
     },
   );
+  it("a strong load reads channel state and owner profiles from the writer", async () => {
+    const h = ownedAgent("member");
+    h.read.mockClear();
+    expect(
+      await h.owner.capability.load(id, undefined, { consistency: "strong" }),
+    ).toMatchObject({ canArchive: true, canDelete: true });
+    expect(h.read.mock.calls.map(([filters]) => filters)).toEqual([
+      [39000, 39001, 39002].map((kind) => ({
+        kinds: [kind],
+        consistency: "strong",
+        authors: [relayAuthor],
+        "#d": [id],
+        limit: 1,
+      })),
+      [{ kinds: [0], consistency: "strong", authors: [other], limit: 1 }],
+    ]);
+    h.owner.dispose();
+  });
   it("a member owning an owner-agent can archive and unarchive", async () => {
     const h = ownedAgent("member");
     await h.owner.capability.run("archive", id);

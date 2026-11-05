@@ -89,6 +89,10 @@ type State = {
     | undefined;
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
   queuedUndos: readonly ChannelSummary[];
+  /** Counts Refresh channels chosen from a lifecycle failure. Settings reads
+   * its channel actions again on each one: 39001 roles and owner-agent
+   * profiles can change without the roster's role hint. */
+  lifecycleRefreshes: number;
 };
 type ActivityThread = {
   channelId: string;
@@ -433,6 +437,10 @@ export function ChannelNavigationProvider({
                 connection.session.channels.refreshList?.({
                   consistency: "strong",
                 });
+                update((previous) => ({
+                  ...previous,
+                  lifecycleRefreshes: previous.lifecycleRefreshes + 1,
+                }));
                 setFailure(undefined);
               }}
             >
@@ -451,5 +459,6 @@ function restore(session: RelaySession, scope: string): State {
     preparingDm: undefined,
     lifecycleDialog: undefined,
     queuedUndos: [],
+    lifecycleRefreshes: 0,
   };
 }

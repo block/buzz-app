@@ -616,7 +616,8 @@ confirmation has an uncertain outcome, the failure toast warns that the command 
 have taken effect and disables blind resubmission. That toast, and the "no longer
 permitted" toast shown when signed channel state no longer allows the action, offer
 **Refresh channels**: a writer-consistent channel list read that closes the toast.
-Settings rereads its actions when the refreshed role or archive state changes.
+Settings' channel actions follow the refreshed channel state; confirmation rechecks
+permissions against fresh relay state.
 Other failures offer only Dismiss. Cancellation/cache clear/session replacement
 fence late results but cannot retract a request already sent. Cancellation returns focus to the originating row;
 confirmed Delete, Leave or Hide moves an active conversation to another available destination

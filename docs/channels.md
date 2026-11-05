@@ -361,7 +361,16 @@ only the selected recipient identities and names to both mention tools. Removing
 a selection updates both menus; an already-inserted mention still requires actual
 DM membership on Send. Mentioning never opens the DM early or adds recipients.
 The existing `MessageComposer` owns the draft and ordinary input behavior. Its placeholder is blank before selection and lists the selected names
-afterward. Disabled mention and emoji icons stay unfilled. No timeline is mounted before the first message is confirmed. DMs omit the date
+afterward. Disabled mention and emoji icons stay unfilled. When the recipients
+plus the viewer are exactly an existing DM's participants, in any order, that
+DM's history loads inline above the draft. This includes a DM removed with
+Remove from Team or Hide conversation. A subset or superset of a group's
+participants shows the recipients' avatars instead. Each recipient change
+replaces the preview with the newly matched DM's timeline, or with the avatars.
+Previewing does not open, restore or mark the DM read, and it remains when
+this connection cannot start DMs. Send performs the confirmed
+open, which clears a local removal and asks the relay to unhide the DM. With no
+match, no timeline is mounted before the first message is confirmed. DMs omit the date
 pill at the beginning of their complete history, while retaining message times
 and date separators between days.
 
@@ -590,11 +599,13 @@ acceptance remains outstanding.
 Main’s DM × remains local removal, including restoration on new message evidence.
 The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
 visibility snapshot (`d=viewer`, `p=viewer`, hidden DM `h` tags) only filters sidebar
-rows; it does not deny access or prevent exact conversation navigation. Visibility
+rows; it does not deny access, prevent exact conversation navigation or stop
+New message from previewing the DM's history (see
+[Starting a direct message](#starting-a-direct-message)). Visibility
 refreshes with the channel roster, preserves the last good set on failure and
-rejects older snapshots. Live cross-device visibility updates and an in-app DM
-reopen/unhide flow are deferred; opening a DM through another supported client's
-`41010` flow and refreshing restores the row.
+rejects older snapshots. Live cross-device visibility updates are deferred; any
+confirmed `41010` open, including New message Send, unhides the DM, and its row
+returns when visibility next refreshes.
 
 A definitive rejection offers retry without optimistic removal. If publication or
 confirmation has an uncertain outcome, the dialog warns that the command may have
@@ -637,14 +648,16 @@ left-to-right fade on hover or keyboard focus (always visible on touch, no anima
 for reduced motion). The pencil follows the final text line;
 balanced side padding keeps the text centered and lets long titles wrap without clipping it.
 Description has a small pencil after its label,
-revealed with a short left-to-right fade on whole-row hover or keyboard focus
+revealed with a short left-to-right fade on row hover or keyboard focus
 (always visible on touch, no animation for reduced motion) without shifting layout;
-the whole row opens the shared Dialog with one Name/Description/Duration draft.
+only the label, a 24px target, opens the shared Dialog with one Name/Description/Duration draft.
+Every viewer sees the description rendered as message Markdown: its URLs, Buzz links
+and `#channel` references open their targets, so its value is not part of the Edit target.
 Opening Description focuses its textarea; the title focuses Name.
-Only authorized editors get the interactive rows; other viewers retain plain metadata.
+Only authorized editors get the edit actions; other viewers see the same linked description.
 Members has a right chevron and opens the existing member list. Channel ID has a
-small inline copy icon with the same hover/focus/touch behavior; selecting its row
-copies the exact ID. Only a successful copy opens a confirmation tooltip, without
+small inline copy icon revealed on whole-row hover or keyboard focus (always visible
+on touch, no animation for reduced motion); selecting its row copies the exact ID. Only a successful copy opens a confirmation tooltip, without
 growing the row; hovering or focusing does not open a hint or replay old feedback.
 Clipboard failure shows an inline error and leaves the row available to retry. The redundant standalone
 Edit details button, header-menu Edit details entry and informational Channel type
@@ -1454,6 +1467,54 @@ not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 
+### Scrolling long threads
+
+These are the requirements for scrolling a long thread; the targets below measure
+how close the panel is, and [performance runs](performance.md)
+report where it stands. A thread with hundreds of replies must scroll as smoothly
+as a short one, for every reply the panel has loaded, up to the bounded history
+above, whatever the mix of Markdown, mentions, links and authors. Reaching replies
+beyond those bounds belongs to the relay's thread retention, not to scrolling.
+
+- **Smooth and responsive:** wheel, trackpad and keyboard input move the pane from
+  the first event, at the display's frame rate, and a reversal follows at once.
+  The panel's own position corrections never stall input or cut a trackpad coast
+  short.
+- **Always available:** loaded replies are painted as they come into view, at any
+  scroll speed and through direction changes. The pane never blinks or shows empty
+  space where loaded replies belong, and replies already shown stay readable while
+  an older page loads.
+- **Final on arrival:** a reply appears at its final size and position. It does not
+  rewrap, resize or move after it is on screen; media occupy their reserved frame.
+- **Reading position holds:** older pages, resolved media and profiles, live
+  replies and panel resizes keep the message being read at the same offset. New
+  replies are followed only while the reader is at or near the bottom.
+- **Bounded work:** the cost of a scroll gesture depends on the replies near the
+  viewport, not on how many are loaded. If replies far from the viewport are not
+  rendered, scrolling, exact links, keyboard selection and Back/Forward still reach
+  every loaded reply, and focus, selection, editing, drafts and expanded branches
+  keep working for them.
+
+#### Targets
+
+These targets are measured on a fixed mock thread of 460 replies (the strict
+window's full history) in the macOS app, with every reply loaded and a 60 Hz
+display. A measured run is two upward trackpad flings with a reversal, then Jump to
+latest.
+They are advisory: the [performance suite](performance.md) reports them and does
+not fail CI on them.
+
+| While scrolling the loaded thread | Target | Ceiling |
+| --- | --- | --- |
+| 95th-percentile frame interval | 16.7 ms (60 fps) | 33 ms |
+| Frames longer than two 60 Hz frames, per run | 0 | 5 |
+| Captured frames with a blank band (35% of the pane or more), per run | 0 | 5 |
+
+The target is the goal; the ceiling is the line regressions must not cross while
+the target is out of reach. Browser engines show a different subset: Chromium's
+frame rate cannot see compositing stalls, so its runs report main-thread cost, and
+macOS WebKit reproduces the frame intervals but not momentum or painted pixels.
+
 ## Validation and limits
 
 `just scan` runs frontend checks/build, runtime/CLI tests, relay behavior tests,
@@ -1502,7 +1563,8 @@ the new block, and one undo restores the typed marker and its space. The typed
 `• ` alias sends as Markdown `- `. The channel placeholder appears only in an empty plain
 paragraph, not beside a list marker. Enter
 continues a list and exits an empty item; use the Send button to send while the caret is
-in a list (or Save changes when editing). Enter in ordinary prose still sends or saves. Inside a
+in a list (or Save changes when editing). Enter in ordinary prose still sends or saves;
+with **Send with ⌘ Enter** on, ⌘/Ctrl+Enter sends or saves instead, including in a list. Inside a
 quote the markers nest: `- ` opens a list and `> ` a second quote. Inside a list item only a
 marker of the item's own list kind, typed as the only text of an item after the first,
 converts, nesting that item as Tab does. A marker typed after prose on the same line, as
@@ -1709,13 +1771,18 @@ Unavailable media keeps the same reserved frame and displays its status within i
 Exceptionally small frames can clip the visible label while retaining the complete
 accessible status.
 Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
-that same frame when it intersects the viewport. No thumbnail is fetched. The
-preview is removed entirely (including behind transparency) only after the lazy
-original decodes; failure retains the preview. Missing/invalid hashes or canvas
+that same frame when it intersects the viewport. Relay-hosted images also lazily
+request the relay's small thumbnail and, once it loads, show it blurred above the
+blurhash. PNG, GIF, WebP and AVIF originals request the WebP variant, which keeps
+transparency; uploads that predate it fail and keep the blurhash. Third-party
+images and re-adopted decoded originals request none, and a failed thumbnail
+leaves the blurhash. These previews are removed entirely
+(including behind transparency) only after the lazy original decodes; failure
+retains them. Missing/invalid hashes or canvas
 failures keep the existing background. Syntax validation bounds hashes to 166
-base83 characters / 9×9 components; folding does no pixel work. Preview work is
+base83 characters / 9×9 components; folding does no pixel work. Blurhash work is
 per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
-Without IntersectionObserver, only the ordinary placeholder/original is used.
+Without IntersectionObserver, no blurhash is painted.
 This favors bounded visible work over instant offscreen previews on scrolling.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
 bottom following, reading anchors and narrow layout in Chromium and WebKit.

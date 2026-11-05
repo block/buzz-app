@@ -6,9 +6,8 @@ import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Host, HostResponse } from "../../../features/host/service";
 import { createAgentClient } from "../agents/client";
-import { createOAuthSession } from "../oauth/session";
-import type { Credential } from "../oauth/browser";
-import { deferred } from "../test-helpers";
+import type { Credential } from "../session";
+import { deferred, createTestSession } from "../test-helpers";
 import { createCreationFields, EMPTY_CREATION } from "./Create";
 
 beforeEach(() =>
@@ -33,7 +32,7 @@ const catalog = [
 ];
 async function fixture(signedIn = true, recommended?: unknown) {
   const acquire = vi.fn(async () => ({
-    value: "credential",
+    revision: "credential",
     account: {
       subject: "account",
       email: "a@example.com",
@@ -41,7 +40,7 @@ async function fixture(signedIn = true, recommended?: unknown) {
       canUseBuilderlabDecisions: false,
     },
   }));
-  const session = createOAuthSession(acquire, undefined, {
+  const session = createTestSession(acquire, undefined, {
     request: (input) => request(input),
   });
   if (signedIn) await session.signIn();
@@ -236,7 +235,7 @@ it("moves an untouched recommendation to a newly signed-in account", async () =>
   await screen.findByRole("button", { name: "Model: Sol 6.1" });
   act(() => h.session.signOut());
   h.acquire.mockResolvedValue({
-    value: "other-credential",
+    revision: "other-credential",
     account: {
       subject: "other",
       email: "b@example.com",
@@ -289,7 +288,7 @@ it.each([
     });
     act(() => h.session.signOut());
     h.acquire.mockResolvedValue({
-      value: "other-credential",
+      revision: "other-credential",
       account: {
         subject: "other",
         email: "b@example.com",
@@ -367,7 +366,7 @@ it("requires new account choices while retaining the draft instructions", async 
   act(() => h.session.signOut());
   expect(h.ready).toHaveBeenLastCalledWith(false);
   h.acquire.mockResolvedValue({
-    value: "other-credential",
+    revision: "other-credential",
     account: {
       subject: "other",
       email: "b@example.com",
@@ -471,7 +470,7 @@ it("waits for explicit sign-in before loading the creation catalog", async () =>
 it("can cancel a pending shared sign-in even while the creation form is disabled", async () => {
   const login = deferred<Credential>();
   let aborted = false;
-  const session = createOAuthSession(
+  const session = createTestSession(
     (signal) => {
       signal.addEventListener("abort", () => (aborted = true));
       return login.promise;

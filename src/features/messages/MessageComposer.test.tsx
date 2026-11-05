@@ -94,6 +94,7 @@ import { profileTarget } from "../profiles/target";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import * as modelStorage from "./solo-model-picks-storage";
+import { setSendWithModEnterPreference } from "./send-key-preference";
 import { setDefaultAgent } from "../solo/default-agent";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
@@ -619,6 +620,41 @@ it.each([undefined, "thread-root"])(
     ).toBeNull();
   },
 );
+
+it("consumes a handled slash command without publishing it", async () => {
+  const onCommand = vi.fn((command: string) =>
+    command === "/leave" ? Promise.resolve(true) : false,
+  );
+  const h = mount({ onCommand });
+  h.fill("  /leave  ");
+  h.submit();
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  expect(onCommand).toHaveBeenCalledExactlyOnceWith(
+    "/leave",
+    expect.any(AbortSignal),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+
+  h.fill("/shrug");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "/shrug", [], []);
+});
+
+it("keeps a slash command draft when its handler refuses", async () => {
+  const h = mount({
+    onCommand: async () => {
+      throw new Error("Transfer ownership before leaving the channel.");
+    },
+  });
+  h.fill("/leave");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Transfer ownership before leaving the channel.",
+  );
+  expect(h.input()).toHaveValue("/leave");
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {
   const text = `[Honey](${profileTarget(first.pubkey)})`;
@@ -4936,6 +4972,9 @@ it("keeps initial saved choices pending, then supports retry without submitting 
     screen.getByRole("button", { name: "Retry saved choices" }),
   );
   await choicesLoaded();
+  expect(
+    h.input().closest("form")?.querySelector(".buzz-loading-region"),
+  ).not.toBeInTheDocument();
   await send(h);
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual({
@@ -6105,6 +6144,45 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.messages.send).toHaveBeenCalledTimes(1);
   expect(h.onSend.mock.calls).toEqual([["channel-id"], ["reply-id"]]);
   expect(h.input()).toHaveValue("");
+});
+
+it("sends with Ctrl+Enter and adds lines with Enter once that is chosen", async () => {
+  const h = mount();
+  try {
+    act(() => {
+      setSendWithModEnterPreference(true);
+    });
+    await h.user.type(h.input(), "first{Enter}second");
+    expect(h.input()).toHaveValue("first\nsecond");
+    fireEvent.keyDown(h.input(), { key: "Enter", ctrlKey: true, repeat: true });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    await h.user.keyboard("{Control>}{Enter}{/Control}");
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      "first\nsecond",
+      [],
+      [],
+    );
+    expect(h.input()).toHaveValue("");
+    // In a list, Enter still continues it and Ctrl+Enter still sends.
+    await h.user.type(h.input(), "- one{Enter}two");
+    expect(h.input().querySelectorAll("ul > li")).toHaveLength(2);
+    await h.user.keyboard("{Control>}{Enter}{/Control}");
+    expect(h.messages.send).toHaveBeenLastCalledWith(
+      "channel",
+      "- one\n- two",
+      [],
+      [],
+    );
+    act(() => {
+      setSendWithModEnterPreference(false);
+    });
+    await h.user.type(h.input(), "back{Enter}");
+    expect(h.messages.send).toHaveBeenLastCalledWith("channel", "back", [], []);
+  } finally {
+    setSendWithModEnterPreference(false);
+    localStorage.clear();
+  }
 });
 
 it.each([
@@ -11671,6 +11749,106 @@ it.each(["A ||hidden|| caption", "Use `a || b` here"])(
       `${link}\n\n${caption}`,
       [],
       [],
+    );
+  },
+);
+
+it.each(["saved", "recovered", "typed before the default"])(
+  "adds the required submission recipient to prose %s without losing rich content",
+  async (source) => {
+    const draft = {
+      text: "Keep this brief",
+      recipients: [],
+      document: {
+        version: 1 as const,
+        content: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: "Keep this brief",
+                  marks: [{ type: "bold" }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    if (source === "saved") writeView("scope", "task-brief", draft);
+    const submit = vi.fn();
+    const h = mount({
+      requireMention: true,
+      defaultMention: source === "typed before the default" ? undefined : first,
+      submission: {
+        draftKey: "task-brief",
+        recoveredDraft: source === "recovered" ? draft : undefined,
+        locked: false,
+        disabled: false,
+        submit,
+      },
+    });
+    if (source === "typed before the default") {
+      h.fill("Keep this brief");
+      act(() => {
+        h.input().setSelectionRange(0, draft.text.length);
+        h.input().toggleFormat("bold");
+      });
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      h.retarget({ defaultMention: first });
+    }
+    expect(h.input()).toHaveValue("@Honey Keep this brief");
+    expect(h.input().querySelector("strong")).toHaveTextContent(
+      "Keep this brief",
+    );
+    expect(h.commands().recipients).toEqual([first]);
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(submit).toHaveBeenCalledOnce();
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({
+      text: "@Honey Keep this brief",
+      recipients: [{ ...first, start: 0, end: 6 }],
+      document: { version: 1 },
+    });
+    expect(h.input().querySelector("strong")).toHaveTextContent(
+      "Keep this brief",
+    );
+  },
+);
+
+it.each(["channel", "optional submission", "explicit recipient"])(
+  "keeps a saved draft unchanged for %s when a default arrives",
+  (mode) => {
+    const draft = typedDraft({
+      text:
+        mode === "explicit recipient"
+          ? "@Honey Keep this brief"
+          : "Keep this brief",
+      recipients:
+        mode === "explicit recipient" ? [{ ...second, start: 0, end: 6 }] : [],
+    });
+    const submission =
+      mode === "channel"
+        ? undefined
+        : {
+            draftKey: "task-brief",
+            locked: false,
+            disabled: false,
+            submit: vi.fn(),
+          };
+    writeView("scope", submission?.draftKey ?? "draft:channel", draft);
+    const h = mount({
+      ...(submission ? { submission } : {}),
+      requireMention: mode !== "optional submission",
+    });
+    h.retarget({ defaultMention: first });
+    expect(h.input()).toHaveValue(draft.text);
+    expect(h.commands().recipients).toEqual(
+      mode === "explicit recipient" ? [second] : [],
     );
   },
 );

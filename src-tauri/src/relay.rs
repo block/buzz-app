@@ -313,9 +313,12 @@ pub(crate) async fn relay_sign(
     {
         return Err("Relay event is too large".into());
     }
-    if coordinate_delete
-        .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
-    {
+    // Canonical workflow deletes may target an agent owned by the signer.
+    // The relay authorizes ownership; other coordinate deletes remain author-only.
+    if coordinate_delete.is_some_and(|coordinate| {
+        !coordinate.starts_with("30620:")
+            && coordinate.split(':').nth(1) != signed["pubkey"].as_str()
+    }) {
         return Err("Only the author can delete this event".into());
     }
     Ok(signed)
@@ -434,6 +437,12 @@ fn valid_canvas(event: &EventTemplate) -> bool {
         && event
             .tags
             .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("canvas-instructions"))
+            .count()
+            <= 1
+        && event
+            .tags
+            .iter()
             .filter(|tag| tag.first().map(String::as_str) == Some("h"))
             .count()
             == 1
@@ -450,6 +459,7 @@ fn valid_canvas(event: &EventTemplate) -> bool {
             match tag[0].as_str() {
                 "h" => channel_writes::uuid(&tag[1]),
                 "client-id" => tag[1].encode_utf16().count() <= 128,
+                "canvas-instructions" => tag[1] == "unapproved",
                 "expected-revision" => {
                     tag[1] == "none"
                         || (tag[1].len() == 64
@@ -2095,6 +2105,7 @@ fn media_url(target: &str) -> Option<Url> {
     let (hash, extension) = name.split_once('.').unwrap_or((name, ""));
     let extension_ok = extension.is_empty()
         || extension == "thumb.jpg"
+        || extension == "thumb.webp"
         || (extension.len() <= 8
             && extension
                 .bytes()

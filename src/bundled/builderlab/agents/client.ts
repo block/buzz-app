@@ -136,9 +136,8 @@ export function createAgentClient(
     )
       throw new DOMException("Builderlab session changed.", "AbortError");
   }
-  function signOutIfExpired(credential: Credential, response: HostResponse) {
+  function refuseExpired(response: HostResponse) {
     if (response.status !== 401) return;
-    session.expired(credential);
     throw Object.assign(
       new Error("Your Builderlab session expired. Sign in again."),
       { status: 401 },
@@ -167,7 +166,7 @@ export function createAgentClient(
       throw new BuilderlabUnavailable("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    signOutIfExpired(credential, response);
+    refuseExpired(response);
     if (response.status === 403)
       throw Object.assign(
         new Error("This Builderlab account cannot manage remote agents."),
@@ -234,7 +233,7 @@ export function createAgentClient(
       throw new Error("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    signOutIfExpired(credential, response);
+    refuseExpired(response);
     let result: Record<string, unknown> | undefined;
     try {
       const parsed = JSON.parse(response.body);
@@ -326,9 +325,7 @@ export function createAgentClient(
   }
   function backupLinkedIdentity() {
     if (nativeIdentityEnabled())
-      void invoke("nsec_backup_retry", { source: "builderlab" }).catch(
-        () => {},
-      );
+      void invoke("nsec_backup_retry").catch(() => {});
   }
   async function activate(
     pubkey: string,

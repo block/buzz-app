@@ -65,6 +65,9 @@ import {
   seedMentions,
 } from "./remembered-mentions";
 import { rememberAgentsPreference } from "./mention-preferences";
+import { useSendWithModEnterPreference } from "./send-key-preference";
+import { matches } from "../shortcuts/bindings";
+import { isApplePlatform } from "../shortcuts/format";
 import { useChosenAgent } from "../solo/default-agent";
 import { useAgentChoices } from "../agents/use-choices";
 import {
@@ -283,7 +286,7 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   soloConversation?: boolean | undefined;
   ownSoloConversation?: boolean | undefined;
-  /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
+  /** Seeds an empty draft, or an unaddressed submission that requires a recipient. */
   defaultMention?: MentionRecipient | undefined;
   /** Whether a retained tab shows this composer, apart from its read policy.
    * A composer shown again may reseed its remembered agents (see seedMentions). */
@@ -294,6 +297,11 @@ export type MessageComposerProps = {
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
+  /** A plain slash command with no recipients or attachments may be consumed by
+   * its conversation owner. Return false to send it as an ordinary message. */
+  onCommand?:
+    | ((command: string, signal: AbortSignal) => boolean | Promise<boolean>)
+    | undefined;
   /** Inbox may retire only after saving the replacement or confirming no draft remains. */
   onDraftSaved?: (() => void) | undefined;
   /** Before a focused form detaches, its host can hand focus to retained content. */
@@ -478,6 +486,7 @@ function Composer({
   label: customLabel,
   placeholder,
   onSend,
+  onCommand,
   onDraftSaved,
   onFocusedRemoval,
   editMessages,
@@ -1029,6 +1038,7 @@ function Composer({
   const [activeFormats, setActiveFormats] = useState<readonly ComposerFormat[]>(
     [],
   );
+  const sendWithModEnter = useSendWithModEnterPreference();
   const saveDraft = (next: MentionDraft, save = true) => {
     next = stageChatCards(
       {
@@ -1554,6 +1564,50 @@ function Composer({
     caret.current = next.text.length;
     setError(undefined);
   });
+  const startQueuedEdit = (id: string) => {
+    if (
+      !host ||
+      !permitted.current ||
+      editingDisabled ||
+      submission ||
+      !input.current
+    )
+      return;
+    if (editing.target) {
+      setError("Finish or cancel your current edit first.");
+      input.current.focus();
+      return;
+    }
+    try {
+      const queue = followUpQueue(host);
+      const entry = queue
+        .snapshot()
+        .find((entry) => entry.id === id && entry.channelId === channelId);
+      if (!entry?.message)
+        throw new Error("This queued message is no longer available to edit.");
+      const lease = queue.edit(id);
+      completion.invalidate();
+      beforeEdit.current = {
+        value: valueRef.current,
+        restore: input.current.checkpoint(),
+      };
+      const body = editing.startDraft({
+        id,
+        content: entry.text,
+        saveDraft: lease.save,
+        cancelDraft: lease.cancel,
+      });
+      const next = stageChatCards(mentionDraft(body), channels());
+      valueRef.current = next;
+      updateDraft(next);
+      input.current.reset(next);
+      setLinkEdit(null);
+      caret.current = next.text.length;
+      setError(undefined);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
@@ -2167,14 +2221,16 @@ function Composer({
         autoTagged.current = draftKey;
       return;
     }
-    // A shortcut may seed an ordinary editable link. Still add the default
-    // agent once while that freshly seeded text is untouched; a restored draft
-    // keeps its recipients as saved, so a removed tag never returns.
+    // Required submissions can restore prose or receive a default after typing.
+    // Other drafts keep their saved recipients, including an absent tag.
     const untouchedInitial =
       seededKey === draftKey &&
       typeof submission?.initialDraft === "string" &&
       draft === submission.initialDraft;
-    if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
+    if (
+      value.recipients.length ||
+      (draft.trim() && !untouchedInitial && !(submission && requireMention))
+    ) {
       autoTagged.current = draftKey;
       return;
     }
@@ -2353,6 +2409,10 @@ function Composer({
     if (!permitted.current || voice.isCapturing()) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
+      if ("saveDraft" in editing.target) {
+        editing.save(composerMarkdown(valueRef.current), undefined);
+        return;
+      }
       if (
         !valueRef.current.text.trim() &&
         !valueRef.current.chatCards?.length
@@ -2525,6 +2585,16 @@ function Composer({
     const capturedRunPicks = stickyPicks
       ? { ...(choicesNow?.value ?? {}) }
       : { ...capturedPicks, ...(choicesNow?.value ?? {}) };
+    const command =
+      onCommand &&
+      !captured.recipients.length &&
+      !captured.pending?.length &&
+      !captured.chatCards?.length &&
+      !captured.gifs?.length &&
+      !capturedAttachments.length &&
+      captured.text.trim().startsWith("/")
+        ? captured.text.trim()
+        : undefined;
     // A send is an agent follow-up unless it addresses a confirmed person
     // (a loaded, non-agent profile). Those, and untagged conversation in a
     // shared chat, go out now; recipients still being classified keep the
@@ -2547,6 +2617,30 @@ function Composer({
         agentKeys,
       );
     try {
+      if (command && onCommand) {
+        const handled = onCommand(command, attempt.signal);
+        if (handled !== false) {
+          setSending(true);
+          if (await handled) {
+            attempt.signal.throwIfAborted();
+            if (valueRef.current !== captured) return;
+            if (viewRevision(scope, draftKey) !== savedRevision) {
+              setConflict(true);
+              return;
+            }
+            const next = mentionDraft("");
+            saveDraft(next);
+            completion.invalidate();
+            caret.current = undefined;
+            input.current?.reset(next);
+            input.current?.focus();
+            setError(undefined);
+            automaticTag.current = undefined;
+            seedClosed.current = false;
+            return;
+          }
+        }
+      }
       const bringable = new Set(
         (agents?.joinable() ?? []).map((agent) => agent.pubkey),
       );
@@ -3086,7 +3180,8 @@ function Composer({
         <QueuedFollowUps
           session={host}
           channelId={channelId}
-          disabled={disabled || !active}
+          disabled={disabled || !active || !!editing.target}
+          onEdit={startQueuedEdit}
           focusComposer={() => input.current?.focus()}
         />
       )}
@@ -3382,7 +3477,21 @@ function Composer({
                   }
                   return;
                 }
+                // With ⌘/Ctrl+Enter chosen, plain Enter falls through to the editor's line break.
                 if (
+                  sendWithModEnter &&
+                  matches(
+                    [{ key: "Enter", mod: true }],
+                    event.nativeEvent,
+                    isApplePlatform(navigator.platform),
+                  )
+                ) {
+                  event.preventDefault();
+                  if (!event.repeat) send();
+                  return;
+                }
+                if (
+                  !sendWithModEnter &&
                   event.key === "Enter" &&
                   !event.shiftKey &&
                   !event.altKey &&
@@ -3561,31 +3670,33 @@ function Composer({
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
         )}
-        {stickyPicks && (
-          <LoadingRegion
-            pending={pickReadPending}
-            label="Loading saved model and effort…"
-            statusVisibility="screen-reader"
-            feedback={
-              pickReadFailed ? (
-                <div>
-                  <p role="alert">
-                    Could not read saved model and effort for this chat on this
-                    device. Retry before sending.
-                  </p>
-                  <Button
-                    type="button"
-                    disabled={pickReadPending}
-                    onClick={() => void refreshPicks()}
-                  >
-                    Retry saved choices
-                  </Button>
-                </div>
-              ) : undefined
-            }
-          >
-            {null}
-          </LoadingRegion>
+        {stickyPicks && (pickReadPending || pickReadFailed) && (
+          <div className={pickReadFailed ? undefined : "sr-only"}>
+            <LoadingRegion
+              pending={pickReadPending}
+              label="Loading saved model and effort…"
+              statusVisibility="screen-reader"
+              feedback={
+                pickReadFailed ? (
+                  <div>
+                    <p role="alert">
+                      Could not read saved model and effort for this chat on
+                      this device. Retry before sending.
+                    </p>
+                    <Button
+                      type="button"
+                      disabled={pickReadPending}
+                      onClick={() => void refreshPicks()}
+                    >
+                      Retry saved choices
+                    </Button>
+                  </div>
+                ) : undefined
+              }
+            >
+              {null}
+            </LoadingRegion>
+          </div>
         )}
         {pickStorageFailed && (
           <p role="alert">

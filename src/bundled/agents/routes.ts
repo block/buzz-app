@@ -1,10 +1,17 @@
 import type { AgentViewProps } from "../../features/agents/service";
+import { AGENT_CARD_ID } from "../../features/navigation/buzz-links";
 import type { Navigation } from "../../features/navigation/controller";
 import type {
   JsonValue,
   NavigationScope,
   OpenTarget,
 } from "../../features/navigation/targets";
+
+import {
+  historySelection,
+  historySelectionKey,
+  type HistorySelection,
+} from "../../features/agents/history-presentation";
 
 type PageTarget = Extract<OpenTarget, { kind: "page" }>;
 const providerKey = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
@@ -26,16 +33,34 @@ export function agentRoute(value: JsonValue | undefined) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const keys = Object.keys(value);
   const agent = (value as Readonly<Record<string, JsonValue>>).agent;
-  return keys.length === 1 &&
-    keys[0] === "agent" &&
+  return (keys.length === 1 ||
+    (keys.length === 2 &&
+      ((value as Record<string, JsonValue>).revision === "" ||
+        !!historySelection((value as Record<string, JsonValue>).revision)))) &&
+    keys.includes("agent") &&
     typeof agent === "string" &&
     /^[0-9a-f]{64}$/.test(agent)
     ? agent
     : undefined;
 }
 
+/** A published agent card to start an agent from, as `{ card: id }`. */
+export function agentCardRoute(value: JsonValue | undefined) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const keys = Object.keys(value);
+  const card = (value as Readonly<Record<string, JsonValue>>).card;
+  return keys.length === 1 &&
+    keys[0] === "card" &&
+    typeof card === "string" &&
+    AGENT_CARD_ID.test(card)
+    ? card
+    : undefined;
+}
+
 export const availableAgentProviderRoute = (value: JsonValue) =>
-  Boolean(agentProviderRoute(value) ?? agentRoute(value));
+  Boolean(
+    agentProviderRoute(value) ?? agentRoute(value) ?? agentCardRoute(value),
+  );
 
 /** The Agents page with `pubkey` open. */
 export const agentTarget = (pubkey: string) =>
@@ -72,4 +97,39 @@ export function conversationOpener(
       channelId,
       ...(threadRootId ? { messageId: threadRootId, threadRootId } : {}),
     });
+}
+
+/** A version address preserves the agent and the page's account/community scope. */
+export function agentHistoryTarget(
+  target: PageTarget,
+  agent: string,
+  selected?: HistorySelection,
+): PageTarget {
+  return {
+    ...target,
+    route: {
+      version: 1,
+      params: {
+        agent,
+        revision: selected ? historySelectionKey(selected) : "",
+      },
+    },
+  };
+}
+export function agentHistoryRoute(value: JsonValue | undefined) {
+  return agentRoute(value) &&
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? historySelection((value as Record<string, JsonValue>).revision)
+    : undefined;
+}
+
+export function agentHistoryActive(value: JsonValue | undefined) {
+  return (
+    !!agentRoute(value) &&
+    value !== null &&
+    typeof value === "object" &&
+    "revision" in value
+  );
 }

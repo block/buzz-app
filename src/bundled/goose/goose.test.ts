@@ -128,6 +128,56 @@ describe("GooseProcess", () => {
     expect(fake.geese[0]?.killed).toBe(true);
   });
 
+  /** A fake goose that reports `capability` for its security hooks. */
+  const reporting = (capability: object) => {
+    const fake = fakeSpawn();
+    const spawn: typeof fake.spawn = async (id, options = {}) => {
+      const process = await fake.spawn(id, options);
+      return {
+        ...process,
+        write: async (data) => {
+          if (!data.includes('"method":"_buzz/security/capabilities"'))
+            return process.write(data);
+          const { id: request } = JSON.parse(data);
+          options.onStdout?.(
+            `${JSON.stringify({ jsonrpc: "2.0", id: request, result: capability })}\n`,
+          );
+        },
+      };
+    };
+    return { fake, spawn };
+  };
+
+  it.each([
+    ["off with the security bridge", "http://127.0.0.1:1/", false],
+    ["on without it", null, true],
+  ])(
+    "refuses a protected goose whose security gate is %s",
+    async (_, url, enabled) => {
+      const { fake, spawn } = reporting({ version: 2, enabled });
+      await expect(
+        GooseProcess.start(spawn, {
+          cwd: "/work",
+          protected: true,
+          env: { BUZZ_SECURITY_URL: url },
+        }),
+      ).rejects.toThrow(
+        "Protected Goose's security gate is in the wrong state",
+      );
+      expect(fake.geese[0]?.killed).toBe(true);
+    },
+  );
+
+  it("starts a protected goose released before it reported its security gate", async () => {
+    const { fake, spawn } = reporting({ version: 2 });
+    await GooseProcess.start(spawn, {
+      cwd: "/work",
+      protected: true,
+      env: { BUZZ_SECURITY_URL: "http://127.0.0.1:1/" },
+    });
+    expect(fake.geese[0]?.killed).toBe(false);
+  });
+
   it("still fails a protected start at its time limit when a goose without the security hooks never exits", async () => {
     vi.useFakeTimers();
     const fake = fakeSpawn();
@@ -452,6 +502,56 @@ describe("GooseProcess", () => {
       "session-1 thinking_effort=high",
       "session-1 model=gpt-4.1",
     ]);
+  });
+
+  it("runs a synced level goose lists inside an option group", async () => {
+    const fake = fakeSpawn({
+      thinking: {
+        "": { current: "high", levels: ["low", "high"], grouped: true },
+      },
+    });
+    const goose = await GooseProcess.start(fake.spawn, {
+      cwd: "/work",
+      serve: fake.serve,
+    });
+    const [process] = fake.geese;
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      tools: ok,
+      choice: () => ({ provider: "openai", model: "", effort: "high" }),
+    });
+    await expect(
+      session.send("one", {}, undefined, undefined, "high"),
+    ).resolves.toEqual({ ok: true });
+    expect(process?.turns.map((turn) => turn.text)).toEqual(["one"]);
+  });
+
+  it("runs a grouped synced level already current, setting nothing", async () => {
+    const fake = fakeSpawn({
+      thinking: {
+        "": { current: "high", levels: ["low", "high"], grouped: true },
+      },
+    });
+    const goose = await GooseProcess.start(fake.spawn, {
+      cwd: "/work",
+      serve: fake.serve,
+    });
+    const [process] = fake.geese;
+    const choice = { provider: "openai", model: "", effort: "high" };
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      tools: ok,
+      choice: () => choice,
+    });
+    // Already on the level goose opened it at.
+    session.chosen = choice;
+    await expect(
+      session.send("one", {}, undefined, undefined, "high"),
+    ).resolves.toEqual({ ok: true });
+    expect(process?.configured).toEqual([]);
+    expect(process?.turns.map((turn) => turn.text)).toEqual(["one"]);
   });
 
   it("refuses a synced level when goose lists none for the model", async () => {

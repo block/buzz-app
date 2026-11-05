@@ -15,7 +15,10 @@ import {
   usePanelTabHost,
   usePanelTabTitle,
 } from "../../features/panels/PanelWorkspace";
-import { AgentSaveFooter } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveFooter,
+  useAgentSaveState,
+} from "../../features/agents/AgentSaveButton";
 import type { ChannelChoice } from "../../features/agents/attention";
 import type { AgentMemories } from "../../features/agents/MemoryPanel";
 import type {
@@ -65,6 +68,8 @@ import { AgentPortrait, useAgentPortraitSource } from "./AgentCard";
 import { AgentIdentityDialog } from "./AgentIdentityDialog";
 import { useNamePrompt, useShake } from "./useNamePrompt";
 import { AgentTabs } from "./AgentTabs";
+import type { HistoryPresentation } from "../../features/agents/history-presentation";
+import { AgentConfigHistoryRow } from "../../features/agents/AgentConfigHistoryRow";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
 import styles from "./AgentsPage.module.css";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
@@ -89,7 +94,9 @@ export function AgentDetails({
   openConversation,
   communities,
   openSettings,
+  historyPresentation,
 }: {
+  historyPresentation?: HistoryPresentation | undefined;
   agents: Agents;
   agent: Agent;
   type: RegisteredAgentType | undefined;
@@ -211,6 +218,8 @@ export function AgentDetails({
   const [name, setName] = useState(agent.name);
   const [namePending, setNamePending] = useState(false);
   const [nameError, setNameError] = useState("");
+  // The name editor sits outside the sections, so it reports to the host.
+  useAgentSaveState(editingName && name !== agent.name, namePending);
   const nameInput = useRef<HTMLInputElement>(null);
   const nameEditor = useRef<HTMLDivElement>(null);
   const namePrompt = useNamePrompt(nameInput);
@@ -480,6 +489,7 @@ export function AgentDetails({
               </p>
             )}
             <AgentTabs
+              showSettings={historyPresentation?.active}
               agents={agents}
               agent={settings.agent}
               type={settings.type}
@@ -525,6 +535,13 @@ export function AgentDetails({
                         />
                       }
                     />
+                    {agent.place === "here" && (
+                      <AgentConfigHistoryRow
+                        agents={agents}
+                        pubkey={agent.pubkey}
+                        presentation={historyPresentation}
+                      />
+                    )}
                     <AgentArchiveRetry agents={agents} agent={agent} />
                     {inSeveral(agents, agent) && (
                       <PreferenceRow

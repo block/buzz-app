@@ -508,7 +508,15 @@ The timeline, channel-list preview and filtered plugin views share that operatio
 
 - Reads: three active slots, at most one background request, 128 pending distinct
   requests, ten-second deadlines including queue time, four filters per request,
-  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget.
+  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget. Full-roster
+  discovery reads (scan pages and omission confirmation) and the read-state
+  snapshot, whose results can approach that budget, get 30 seconds
+  (`LARGE_READ_DEADLINE_MS`, the native per-request ceiling); a read-state
+  operation that takes a snapshot gets that plus its usual ten seconds. This lets
+  the measured large reads finish on a slow link; one that needs longer still
+  fails and enters recovery. A slow background snapshot can hold the one
+  background slot that long. The browser development broker still caps upstream
+  queries at 20 seconds.
 - Outbox: at most 256 operations / 2 MiB persisted, 32 KiB per submitted payload,
   three concurrent deliveries, ten-second delivery deadlines including queue time. Only outstanding
   operations count toward capacity; completed events move to a separate 2,048-event /
@@ -558,7 +566,10 @@ metadata/name read: a later name-fetch error does not discard membership evidenc
 Completeness cannot erase a newer signed roster received after that request began;
 metadata completion cannot replay the older membership snapshot.
 
-The session cancels all pending reads on revocation, because broad/ID/reference
+Own-author kind-30078 reads with only marker-topic or coordinate filters also finish
+across channel access changes: encrypted read state belongs to the viewer, not a
+channel. Cache clear, disconnect and session disposal still cancel those reads.
+The session cancels pending channel reads on revocation, because broad/ID/reference
 filters cannot establish event ownership before results arrive. Completion epochs
 also fence already-resolved requests. Directory browsing/searching retries one
 access-epoch invalidation through the same verified scheduler, without admitting
@@ -631,7 +642,8 @@ server-side. The opt-in dev broker accepts bounded Nostr kinds and event-ID read
 ## Current scope and validation
 
 Channels supports top-level text messages and direct thread replies, Enter to send ordinary prose,
-Shift+Enter for a newline. Inside a formatted list, Enter continues the list or exits an
+Shift+Enter for a newline (or, with **Send with ⌘ Enter** on, the reverse; see
+[the help guide](buzz-help.md)). Inside a formatted list, Enter continues the list or exits an
 empty item; the Send button sends while the caret is in the list. Channels also supports
 immediate rows and shared preview data (not currently rendered in the sidebar),
 delivery status, and retry. The dev broker
@@ -1137,3 +1149,15 @@ edits in a writable conversation publish an empty, scoped kind-20002 pulse at
 most once every three seconds through the existing authenticated live socket.
 Opening a composer or restoring a draft does not publish. Pulses expire rather
 than retry; they never enter the durable outbox or trigger a reconnect.
+
+
+### Addressed reaction activity
+
+`session.inboxFeed.reactions` reads kind 7 with `#p: [viewer]` and a limit of 50.
+It retains at most 100 candidates, resolves exact message IDs, and reads paginated
+edit/deletion closure using `(until, before_id)`. Closure reads cap at 2,000 events
+or 4 MiB; combined evidence caps at 8 MiB. Incomplete or inaccessible overlay
+settlement fails closed. This evidence stays outside the unread projection.
+Live/replay provenance is carried through target hydration; only deduplicated eligible
+live events emit an arrival to the shell. App and MCP reaction writers now include
+the target author's `p` tag. Legacy unaddressed reactions are not searched.

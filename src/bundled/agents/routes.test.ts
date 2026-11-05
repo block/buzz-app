@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
 import {
+  agentCardRoute,
+  agentHistoryRoute,
+  agentHistoryTarget,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
@@ -46,4 +49,44 @@ it("admits an agent of yours to open, by its key", () => {
   ] as const)
     expect(agentRoute(invalid)).toBeUndefined();
   expect(agentProviderRoute({ agent: pubkey })).toBeUndefined();
+});
+
+it("validates a version locator without treating it as authority or accepting extra route fields", () => {
+  const base = { ...agentTarget("a".repeat(64)), scope: null };
+  const selected = { side: "settings", id: "b".repeat(64) } as const;
+  const opened = agentHistoryTarget(base, "a".repeat(64), selected);
+  expect(agentRoute(opened.route?.params)).toBe("a".repeat(64));
+  expect(agentHistoryRoute(opened.route?.params)).toEqual(selected);
+  expect(agentHistoryTarget(opened, "a".repeat(64))).toEqual(
+    agentHistoryTarget(base, "a".repeat(64)),
+  );
+  expect(availableAgentProviderRoute(opened.route?.params ?? null)).toBe(true);
+  for (const revision of [
+    "settings/bad",
+    `memory/${"b".repeat(64)}`,
+    "instructions/",
+  ]) {
+    expect(agentRoute({ agent: "a".repeat(64), revision })).toBeUndefined();
+  }
+  expect(
+    agentRoute({
+      agent: "a".repeat(64),
+      revision: `settings/${"b".repeat(64)}`,
+      extra: true,
+    }),
+  ).toBeUndefined();
+});
+
+it("admits an agent card to start an agent from, by its id", () => {
+  expect(agentCardRoute({ card: "tinker" })).toBe("tinker");
+  expect(availableAgentProviderRoute({ card: "av_x-1" })).toBe(true);
+  for (const invalid of [
+    { card: "" },
+    { card: "../x" },
+    { card: 1 },
+    { card: "tinker", extra: true },
+  ] as const) {
+    expect(agentCardRoute(invalid)).toBeUndefined();
+    expect(availableAgentProviderRoute(invalid)).toBe(false);
+  }
 });

@@ -49,12 +49,14 @@ import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type AgentHandle,
   AgentsService,
   type AgentType,
   type ConfigBinding,
   type Delivery,
   type Trigger,
   fromOwner,
+  HOSTED_INSTRUCTIONS_CHANGED,
   teamPrompt,
 } from "./service";
 import {
@@ -74,6 +76,11 @@ import { SyncedTeams } from "./team-config";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
 import { createPluginRequests } from "../../plugins/requests";
+import {
+  createDeviceSettings,
+  type DeviceSettings,
+  type SettingValue,
+} from "../../shared/device-settings";
 import {
   bot,
   channel,
@@ -181,6 +188,8 @@ async function setup({
   /** Whether another plugin is still starting after setup, so startup is not
    * over. */
   starting = false,
+  /** The Buzz settings agents' runs can change. */
+  deviceSettings = undefined as DeviceSettings | undefined,
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -221,6 +230,7 @@ async function setup({
     activity,
     decisions,
     binding,
+    deviceSettings,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -448,6 +458,113 @@ it("brings over an identity not already an agent, with its type's defaults and w
   await expect(
     service.port({ source: "harness", pubkey: bot, type: "nope/none" }),
   ).rejects.toThrow("That agent type is not available");
+});
+
+it("binds a dedicated native agent and preserves its target when a provider change is refused", async () => {
+  const storage = memoryStorage();
+  const { ctx, plugin, service, native } = await setup({ storage });
+  const retire = vi.fn(async () => {});
+  plugin.agents.register({
+    id: "native",
+    title: "Native",
+    execution: true,
+    protection: true,
+    retire,
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  const target = {
+    workspace: "/work/task",
+    spawn: vi.fn(),
+    readFile: vi.fn(),
+    resolveDirectory: vi.fn(),
+    dispose: vi.fn(async () => {}),
+  };
+  const adapter = ctx.extend({
+    pluginOwner: {
+      id: "internal",
+      revision: "one",
+      agentExecution: ["example/native"],
+    },
+  });
+  adapter.agents.registerExecution({
+    id: "remote",
+    harnesses: ["example/native"],
+    connect: async () => target,
+  });
+  const agent = await service.create({
+    type: "example/native",
+    name: "Dedicated",
+  });
+  await service.retype(agent.key, "example/native");
+  const observed: Agent[] = [];
+  const off = service.subscribe(() => {
+    const current = service.find(agent.key);
+    if (current) observed.push(current);
+  });
+  const binding = { id: "remote", config: { profile: "scratch" } };
+  native.claim.mockResolvedValueOnce(false);
+  await expect(
+    adapter.agents.bindExecution(agent.key, binding),
+  ).rejects.toThrow("Another copy of Buzz is running this agent");
+  expect(service.executionBinding(agent.key)).toBeUndefined();
+  let finishRetirement = () => {};
+  const retiring = new Promise<void>((resolve) => {
+    finishRetirement = resolve;
+  });
+  retire.mockClear();
+  retire.mockImplementationOnce(() => retiring);
+  const changing = adapter.agents.bindExecution(agent.key, binding);
+  try {
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledWith(agent.key));
+    expect(service.executionBinding(agent.key)).toBeUndefined();
+  } finally {
+    finishRetirement();
+  }
+  await changing;
+  off();
+  expect(observed.at(-1)?.executionBinding).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
+  expect(service.executionBinding(agent.key)).toEqual({
+    provider: "internal/remote",
+    config: { profile: "scratch" },
+  });
+  const setProtection = vi.fn(async () => {});
+  Object.assign(native, { setProtection });
+  await expect(
+    plugin.agentProtection.saveAgent(agent.pubkey, 0, {}),
+  ).rejects.toThrow("Plugin execution does not support protected agents");
+  expect(setProtection).not.toHaveBeenCalled();
+  await plugin.agentProtection.saveAgent(agent.pubkey, 0, null);
+  expect(setProtection).toHaveBeenCalledWith(agent.pubkey, 0, "example", null);
+  const session = { key: "session-1", intent: "new" as const };
+  await expect(adapter.agents.execution(agent.key, session)).rejects.toThrow(
+    "Only the native harness",
+  );
+  expect((await plugin.agents.execution(agent.key, session))?.workspace).toBe(
+    "/work/task",
+  );
+  const get = storage.get;
+  const cached = vi
+    .spyOn(storage, "get")
+    .mockImplementation((key) =>
+      key.startsWith("buzz.agent.execution.v1:") ? null : get(key),
+    );
+  const read = vi.spyOn(storage, "read");
+  read.mockRejectedValueOnce(new Error("Saved state is unavailable"));
+  await expect(service.retype(agent.key, "example/echo")).rejects.toThrow(
+    "Saved state is unavailable",
+  );
+  await expect(service.retype(agent.key, "example/echo")).rejects.toThrow(
+    "does not support the saved execution binding",
+  );
+  expect(native.setType).not.toHaveBeenCalled();
+  cached.mockRestore();
+  expect(service.executionBinding(agent.key)?.config).toEqual({
+    profile: "scratch",
+  });
 });
 
 it("brings back unarchived an agent whose Delete cleanup archived it, or says it stays archived", async () => {
@@ -4808,8 +4925,8 @@ it("starts a timer due while a change was saving as soon as it is saved", async 
 it("starts a due timer in a free Interest while another timer's progress saves", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   let hold: Promise<void> | undefined;
-  const storage = fileStore(new Map(), async () => {
-    await hold;
+  const storage = fileStore(new Map(), async (key) => {
+    if (!key.startsWith("buzz.agent.execution.v1:")) await hold;
   });
   const { service, run } = await setup({ storage });
   await service.create({ type: "example/echo", name: "Echo" });
@@ -5063,7 +5180,7 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     type: "example/echo",
     name: " Echo ",
     picture,
-    config: { reply: "chosen" },
+    config: { reply: "chosen", model: "model-b", effort: "high" },
   });
   expect(native.create).toHaveBeenCalledWith(
     "https://relay.example.test",
@@ -5076,17 +5193,23 @@ it("creates an agent with the config it was given, not its type's defaults, and 
     picture,
   );
   expect(agent).toMatchObject({ pubkey: bot, name: "Echo", picture });
-  expect(agent.config).toEqual({ reply: "chosen" });
+  expect(agent.config).toEqual({
+    reply: "chosen",
+    model: "model-b",
+    effort: "high",
+  });
   expect(service.find(bot)).toMatchObject({
     picture,
-    config: { reply: "chosen" },
+    config: { reply: "chosen", model: "model-b", effort: "high" },
   });
   // Everything but the config still starts from the type's defaults.
   expect(Object.keys(service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
     "watch/channel",
   ]);
-  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain("chosen");
+  expect(
+    JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "null").config,
+  ).toEqual({ reply: "chosen", model: "model-b", effort: "high" });
 });
 
 it("keeps a new agent whose picture could not be set", async () => {
@@ -9423,6 +9546,66 @@ it("has a hosted agent's provider stop its turn in one conversation", async () =
   ).resolves.toBe(true);
 });
 
+it("reads and replaces a hosted agent's instructions through its provider", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  const instructions = {
+    get: vi.fn(
+      async (_: { pubkey: string; community: string; signal: AbortSignal }) =>
+        "Be brief.",
+    ),
+    set: vi.fn(
+      async (_: {
+        pubkey: string;
+        community: string;
+        instructions: string;
+        signal: AbortSignal;
+      }) => {},
+    ),
+  };
+  plugin.agents.register({ ...type, remote: { ...remote, instructions } });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  const hosted = service.hostedInstructions(hostedKey);
+  await expect(hosted?.get()).resolves.toBe("Be brief.");
+  await hosted?.set("Be kind.", "Be brief.");
+  expect(instructions.get).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    signal: expect.any(AbortSignal),
+  });
+  expect(instructions.set).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    instructions: "Be kind.",
+    signal: expect.any(AbortSignal),
+  });
+  // An edit saved elsewhere since the caller read is never replaced.
+  instructions.set.mockClear();
+  await expect(hosted?.set("Be kind.", "Be terse.")).rejects.toThrow(
+    HOSTED_INSTRUCTIONS_CHANGED,
+  );
+  expect(instructions.set).not.toHaveBeenCalled();
+  // A caller's own signal stops the call too.
+  const stop = new AbortController();
+  await hosted?.get(stop.signal);
+  const signal = instructions.get.mock.calls.at(-1)?.[0].signal;
+  if (!signal) throw new Error("The provider was not called.");
+  expect(signal.aborted).toBe(false);
+  stop.abort();
+  expect(signal.aborted).toBe(true);
+  // A local agent, or one nobody has, has none.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.hostedInstructions(bot)).toBeUndefined();
+  expect(service.hostedInstructions("f".repeat(64))).toBeUndefined();
+});
+
+it("offers no instructions for a hosted agent whose provider has none", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.hostedInstructions(hostedKey)).toBeUndefined();
+});
+
 it("refuses to stop a hosted agent whose provider cannot", async () => {
   const { service, plugin } = await setup();
   const { type } = cloud();
@@ -13211,6 +13394,333 @@ it.each(["community selection", "reconnect", "identity", "runtime", "revoke"])(
   },
 );
 
+describe("external private Solo creation", () => {
+  async function fixture(
+    scopes: readonly import("./external-connection").ExternalScope[] = [
+      "create",
+    ],
+  ) {
+    vi.stubEnv(
+      "VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES",
+      "https://relay.example.test",
+    );
+    const f = await setup();
+    const saved = vi.fn<NonNullable<RelaySession["mainAgent"]>["read"]>(
+      async () => sibling,
+    );
+    const libraryRead = vi.fn(async () => ({
+      definitions: [],
+      identities: [{ pubkey: sibling, name: "Saved remote Bestie" }],
+    }));
+    const lifetime = new AbortController();
+    const choices = createAgentChoices({
+      scope: `https://relay.example.test:${viewer}`,
+      library: createAgentLibrary(libraryRead).queries,
+      native: {
+        snapshot: f.service.local,
+        subscribe: f.service.subscribe,
+        refresh: () => f.service.refresh(),
+      },
+      archives: {
+        snapshot: () => ({
+          status: "ready",
+          archived: [...f.archives.archived],
+        }),
+        subscribe: () => () => {},
+        state: (key) => f.archives.state(key),
+        ensure: f.archives.ensure,
+        refresh: f.archives.refresh,
+      },
+      signal: lifetime.signal,
+    });
+    Object.assign(f.session, {
+      mainAgent: { read: saved, write: vi.fn(async () => {}) },
+      agentChoices: choices,
+    });
+    let handler: import("../host/service").McpHandler | undefined;
+    const closed = runnerGate();
+    const close = vi.fn(async () => closed.resolve());
+    f.ctx.provide("host", {
+      serveMcp: async (receive: import("../host/service").McpHandler) => {
+        handler = receive;
+        return {
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [],
+          closed: closed.promise,
+          close,
+        };
+      },
+    } as unknown as import("../host/service").Host);
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    const owner = f.ctx.extend({
+      pluginOwner: { id: "buzz.agents", revision: "one" },
+    });
+    const controller = new AbortController();
+    const server = await owner.agents.connectExternal(
+      bot,
+      controller.signal,
+      () => {},
+      scopes,
+    );
+    const call = handler;
+    if (!call) throw new Error("Missing external server handler");
+    f.native.publish.mockClear();
+    f.native.query.mockImplementation(async (_member, filters) => {
+      const created = f.native.publish.mock.calls.find(
+        ([, value]) => value.kind === 9007,
+      )?.[1];
+      if (!created) return [];
+      const id = created.tags?.find(([key]) => key === "h")?.[1] as string;
+      const kind = (filters[0] as { kinds?: number[] } | undefined)?.kinds?.[0];
+      if (kind === 39000)
+        return [
+          event("metadata", {
+            kind,
+            tags: [
+              ["d", id],
+              ["name", "Triage"],
+              ["private"],
+              ["t", "stream"],
+              ["t", "buzz.solo"],
+              ["t", "buzz.session.named"],
+            ],
+          }),
+        ];
+      if (kind === 39002)
+        return [
+          event("roster", {
+            kind,
+            tags: [
+              ["d", id],
+              ["p", bot, "", "owner"],
+              ...(created.tags ?? [])
+                .filter(([key]) => key === "p")
+                .map((tag) => [...tag]),
+            ],
+          }),
+        ];
+      return [];
+    });
+    return {
+      ...f,
+      saved,
+      libraryRead,
+      controller,
+      close,
+      create: (args: Record<string, unknown> = { name: "Triage" }) =>
+        call({
+          id: 1,
+          method: "tools/call",
+          params: { name: "channel_create", arguments: args },
+        }),
+      cleanup: async () => {
+        await server.close();
+        lifetime.abort();
+        await f.ctx.fiber.dispose();
+      },
+    };
+  }
+
+  it.each([sibling, bot])(
+    "uses native owner/caller and the account-saved worker %s",
+    async (worker) => {
+      const f = await fixture();
+      try {
+        f.saved.mockResolvedValueOnce(worker);
+        const reply = await f.create();
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringMatching(/^created /),
+        );
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.not.stringContaining("did not keep the Solo label"),
+        );
+        expect(f.saved).toHaveBeenCalledOnce();
+        expect(f.libraryRead).toHaveBeenCalledOnce();
+        expect(f.native.publish).toHaveBeenCalledOnce();
+        expect(f.native.publish).toHaveBeenCalledWith(
+          { pubkey: bot, relay: "wss://relay.example.test" },
+          {
+            kind: 9007,
+            content: "",
+            tags: [
+              ["h", expect.any(String)],
+              ["name", "Triage"],
+              ["visibility", "private"],
+              ["channel_type", "stream"],
+              ["t", "buzz.solo"],
+              ["t", "buzz.session.named"],
+              ["p", viewer],
+              ...(worker === bot ? [] : [["p", worker]]),
+            ],
+          },
+        );
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringContaining(`added ${viewer}`),
+        );
+        if (worker !== bot)
+          expect(reply).toHaveProperty(
+            "result.content.0.text",
+            expect.stringContaining(`added ${worker}`),
+          );
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it.each([
+    "unset",
+    "missing",
+    "invalid",
+    "unavailable",
+    "archived",
+    "unreadable",
+    "unsupported",
+  ])(
+    "fails before publication when the configured worker is %s",
+    async (reason) => {
+      const f = await fixture();
+      try {
+        if (reason === "unset") f.saved.mockResolvedValueOnce(undefined);
+        else if (reason === "missing") f.saved.mockResolvedValueOnce(null);
+        else if (reason === "invalid")
+          f.saved.mockResolvedValueOnce("not-a-key");
+        else if (reason === "unavailable")
+          f.saved.mockResolvedValueOnce("e".repeat(64));
+        else if (reason === "archived") f.archives.archived.add(sibling);
+        else if (reason === "unreadable")
+          f.saved.mockRejectedValueOnce(new Error("offline"));
+        else Object.assign(f.session, { mainAgent: undefined });
+        const reply = await f.create();
+        expect(reply).toHaveProperty("result.isError", true);
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          expect.stringMatching(
+            /Bestie.*Buzz|Bestie could not be read|Bestie is not available/,
+          ),
+        );
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it("requires new consent without even looking up the configured worker", async () => {
+    const f = await fixture(["read", "post"]);
+    try {
+      expect(await f.create()).toHaveProperty("result._meta.buzz/error", {
+        code: "authorization_required",
+        required_scopes: ["create"],
+      });
+      expect(f.saved).not.toHaveBeenCalled();
+      expect(f.libraryRead).not.toHaveBeenCalled();
+      expect(f.native.publish).not.toHaveBeenCalled();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it.each(["library", "refresh"])(
+    "offers retry guidance when the worker's %s lookup fails",
+    async (source) => {
+      const f = await fixture();
+      try {
+        if (source === "library")
+          f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
+        else
+          vi.spyOn(f.service, "refresh").mockRejectedValueOnce(
+            new Error("inventory offline"),
+          );
+        const reply = await f.create();
+        expect(reply).toHaveProperty("result.isError", true);
+        expect(reply).toHaveProperty(
+          "result.content.0.text",
+          "Your saved Bestie could not be checked. Check the community connection and try again.",
+        );
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  it("uses a verified local Bestie despite a partial library failure", async () => {
+    const f = await fixture();
+    try {
+      f.saved.mockResolvedValueOnce(bot);
+      f.libraryRead.mockRejectedValueOnce(new Error("inventory offline"));
+      expect(await f.create()).toHaveProperty(
+        "result.content.0.text",
+        expect.stringMatching(/^created /),
+      );
+      expect(f.native.publish).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it("reports native publication refusal without claiming that a Solo exists", async () => {
+    const f = await fixture();
+    try {
+      f.native.publish.mockRejectedValueOnce(
+        new Error("This member cannot join the Solo."),
+      );
+      const reply = await f.create();
+      expect(reply).toHaveProperty("result.isError", true);
+      expect(reply).toHaveProperty(
+        "result.content.0.text",
+        "This member cannot join the Solo.",
+      );
+      expect(f.native.publish).toHaveBeenCalledOnce();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it.each(["account", "inventory"])(
+    "revokes creation during the pending %s lookup",
+    async (stage) => {
+      const f = await fixture();
+      const started = runnerGate(),
+        release = runnerGate();
+      if (stage === "account")
+        f.saved.mockImplementationOnce(async () => {
+          started.resolve();
+          await release.promise;
+          return sibling;
+        });
+      else
+        f.libraryRead.mockImplementationOnce(async () => {
+          started.resolve();
+          await release.promise;
+          return {
+            definitions: [],
+            identities: [{ pubkey: sibling, name: "Bestie" }],
+          };
+        });
+      const outcome = f.create().catch((error) => error);
+      try {
+        await started.promise;
+        f.controller.abort();
+      } finally {
+        release.resolve();
+      }
+      try {
+        expect(await outcome).toBeInstanceOf(Error);
+        await vi.waitFor(() => expect(f.close).toHaveBeenCalled());
+        expect(f.native.publish).not.toHaveBeenCalled();
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+});
+
 it.each(["return", "throw"])(
   "revokes source commands on %s without losing queued output",
   async (ending) => {
@@ -14784,4 +15294,87 @@ it("gives a run this device's plugins as the agent, and refuses a request its re
   } finally {
     await ctx.fiber.dispose();
   }
+});
+
+describe("Buzz settings", () => {
+  const root = "e".repeat(64);
+  function catalog() {
+    let value: SettingValue = "calm";
+    const write = vi.fn((next: SettingValue) => {
+      value = next;
+    });
+    const deviceSettings = createDeviceSettings([
+      {
+        key: "example.mood",
+        description: "A mood.",
+        schema: { type: "string", enum: ["calm", "busy"] },
+        read: () => ({ value }),
+        write,
+      },
+    ]);
+    return { deviceSettings, write };
+  }
+  /** The agent's handle from a run. */
+  async function running(f: Awaited<ReturnType<typeof setup>>) {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const handle = runnerGate<AgentHandle>();
+    f.run.mockImplementationOnce(async ({ agent }) => {
+      handle.resolve(agent);
+    });
+    f.plugin.agents.wake(bot, { channel, root, text: "hi" });
+    return handle.promise;
+  }
+
+  it("are on every run's handle, with no switch, and not a plugin's", async () => {
+    const { deviceSettings, write } = catalog();
+    const f = await setup({ deviceSettings });
+    const agent = await running(f);
+    expect(agent.settings?.list().map(({ key }) => key)).toEqual([
+      "example.mood",
+    ]);
+    expect(agent.settings?.set("example.mood", "busy")).toMatchObject({
+      value: "busy",
+      saved: true,
+    });
+    expect(write).toHaveBeenCalledExactlyOnceWith("busy");
+    expect(agent.settings?.get("example.mood").value).toBe("busy");
+    expect(f.plugin.agents.handle(bot)).not.toHaveProperty("settings");
+  });
+
+  it.each(["the call's turn signal aborts", "the agent is removed"])(
+    "change nothing when %s while the call waits for review",
+    async (what) => {
+      const { deviceSettings, write } = catalog();
+      const f = await setup({ deviceSettings });
+      const agent = await running(f);
+      const turn = new AbortController();
+      const review = runnerGate();
+      const reviewing = runnerGate();
+      const client = {
+        ...appClient(agent, {
+          read: vi.fn(),
+          memories: async () => ({ entries: [], partial: false }),
+          signal: turn.signal,
+        }),
+        protect: vi.fn(async (action: { kind: string }) => {
+          if (action.kind !== "tool") return;
+          reviewing.resolve();
+          await review.promise;
+        }),
+      };
+      const call = callSessionTool(client, {}, "settings_set", {
+        key: "example.mood",
+        value: "busy",
+      });
+      await reviewing.promise;
+      if (what === "the call's turn signal aborts")
+        turn.abort(new Error("Turn ended"));
+      else await f.service.remove(bot);
+      review.resolve();
+      await expect(call).rejects.toThrow();
+      expect(write).not.toHaveBeenCalled();
+    },
+  );
 });

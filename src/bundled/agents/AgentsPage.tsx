@@ -1,4 +1,11 @@
 import { visibleTeams } from "../../features/agents/visible-teams";
+import type { OpenTarget } from "../../features/navigation/targets";
+import {
+  agentHistoryActive,
+  agentHistoryRoute,
+  agentHistoryTarget,
+} from "./routes";
+import { historyPresentation } from "../../features/agents/history-presentation";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { AgentDetails } from "./AgentDetails";
 import { communityDestination } from "../../features/communities/destination";
@@ -35,6 +42,8 @@ import {
 import { AgentShareDialog } from "./AgentShareDialog";
 import type { SharedAgent } from "../../features/agents/shared-agents";
 import { AgentCard, AgentPortrait, TeamCard } from "./AgentCard";
+import { AgentInventoryDrag, DraggableAgentRow } from "./AgentInventoryDrag";
+import { useAgentOrder } from "./agent-order";
 import { AgentCreateDialog, TypeIcon } from "./AgentCreateDialog";
 import { NewAgentTile } from "./NewAgentTile";
 import type { ChannelChoice } from "../../features/agents/attention";
@@ -45,6 +54,11 @@ import {
   sharedAgentSettings,
 } from "../../features/agents/AgentManage";
 import { AttentionSummary } from "../../features/agents/AttentionPanel";
+import {
+  AgentSaveState,
+  DiscardChanges,
+  useAgentSaveReports,
+} from "../../features/agents/AgentSaveButton";
 import { useAgents, useChannelChoices } from "../../features/agents/react";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import type {
@@ -109,11 +123,13 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { readView, writeView } from "../../shared/view-state";
 import {
+  agentCardRoute,
   agentProviderRoute,
   agentProviderTarget,
   agentRoute,
   conversationOpener,
 } from "./routes";
+import { AgentCardCreate } from "./AgentCardCreate";
 import { writeClipboardText } from "../../shared/clipboard";
 
 const message = (error: unknown) =>
@@ -266,13 +282,74 @@ export function AgentsPage({
       );
     }
   };
+  // Opened from an agent card's link: Create agent, filled in from the card.
+  const card =
+    routed && navigation.target.kind === "page"
+      ? agentCardRoute(navigation.target.route?.params)
+      : undefined;
+  const closeCard = () => {
+    if (
+      !navigation ||
+      !navigator ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "page" ||
+      navigator.snapshot().entry.id !== navigation.entryId
+    )
+      return;
+    const target = agentProviderTarget(navigation.target);
+    const pageKey = targetKey(target);
+    navigator.dismiss(
+      (visit) =>
+        visit.kind === "page" &&
+        agentCardRoute(visit.route?.params) === card &&
+        targetKey(agentProviderTarget(visit)) === pageKey,
+      target,
+    );
+  };
   const typeOf = (agent: Agent) =>
     types.find((type) => type.key === agent.type);
   const find = (pubkey: string | undefined) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey);
   const selected = find(selectedKey);
-  const browse = (pubkey?: string) => setSelectedKey(pubkey);
+  // The open panel's unsaved edits, asked about before it is replaced or closed.
+  const [unsaved, reportUnsaved] = useAgentSaveReports();
+  const [leaving, setLeaving] = useState<{
+    pubkey: string | undefined;
+    then: (() => void) | undefined;
+  }>();
+  // The prompt is stale once nothing is left to discard behind it.
+  if (leaving && !unsaved.dirty) setLeaving(undefined);
+  // Choosing another agent or none asks first, as switching sections does,
+  // and returns false while the current one stays.
+  const browse = (pubkey?: string, then?: () => void) => {
+    const leaves = pubkey !== selectedKey;
+    if (leaves && (unsaved.saving || unsaved.dirty)) {
+      if (!unsaved.saving) setLeaving({ pubkey, then });
+      return false;
+    }
+    setSelectedKey(pubkey);
+    then?.();
+    return true;
+  };
   const build = (pubkey: string) => browse(pubkey);
+  // Removing an agent closes only its own panel, without asking.
+  const removed = (pubkey: string) =>
+    setSelectedKey((key) => (key === pubkey ? undefined : key));
+  // Focus inside the panel goes with it, so the closed agent's card takes it
+  // once the close goes ahead. Focus elsewhere stays.
+  const profileSide = useRef<HTMLElement>(null);
+  const closePanel = () => {
+    const pubkey = selectedKey;
+    const focus = document.activeElement;
+    const inside =
+      focus === document.body || profileSide.current?.contains(focus);
+    return browse(
+      undefined,
+      inside
+        ? () => focusCard(document.getElementById("agents-yours"), pubkey)
+        : undefined,
+    );
+  };
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   // Teams are shared by every community; this one shows each with a member
@@ -295,6 +372,10 @@ export function AgentsPage({
     routed && navigation.target.kind === "page"
       ? agentRoute(navigation.target.route?.params)
       : undefined;
+  const historyParams =
+    navigation?.target.kind === "page" && routedAgent === selected?.pubkey
+      ? navigation.target.route?.params
+      : undefined;
   const routedEntry = navigation?.entryId;
   useEffect(() => {
     if (!routedAgent || !routedEntry) return;
@@ -308,19 +389,24 @@ export function AgentsPage({
     changeTab(next);
   };
   const returnToAgents = returnTo("yours");
+  // The listing and its trigger go with it, so focus follows to the tab now
+  // shown.
+  const leaveListing = () => {
+    flushSync(() => {
+      setSharedSelection(undefined);
+      returnToAgents();
+    });
+    document.getElementById("agents-yours-tab")?.focus();
+  };
 
   const toolbarAction =
     (tab === "teams" ? teams.length > 0 : snapshot.agents.length > 0) ||
     snapshot.status === "error" ||
     snapshot.status === "unavailable";
-  const openImport = () => {
-    browse();
-    setFlow("import");
-  };
-  const openMarketplace = () => {
-    browse();
-    changeTab("marketplace");
-  };
+  // Import is a dialog over the page, so an open agent and its draft stay.
+  const openImport = () => setFlow("import");
+  const openMarketplace = () =>
+    browse(undefined, () => changeTab("marketplace"));
   // Shown only beside the tabs; with no agents yet, the tiles stand in for it.
   const newAgentMenu = (
     <MenuRoot onOpenChange={refreshOnOpen}>
@@ -452,6 +538,8 @@ export function AgentsPage({
       typeOf,
       onSelect: browse,
       onBuild: build,
+      onRemoved: removed,
+      busy: unsaved.saving,
       newAgent: !toolbarAction && starts,
       // A published agent's toast opens it where everyone else finds it.
       onViewListing: (agent: SharedAgent) => {
@@ -472,7 +560,11 @@ export function AgentsPage({
         {...inventory}
       />
     ) : (
-      <Inventory {...inventory} />
+      <Inventory
+        key={connection.scope}
+        {...inventory}
+        scope={connection.scope}
+      />
     );
   })();
 
@@ -488,11 +580,31 @@ export function AgentsPage({
         agent={selected}
         type={typeOf(selected)}
         channels={channels}
-        onClose={() => browse()}
+        onClose={closePanel}
+        onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
       />
     ) : (
       <AgentDetails
+        historyPresentation={
+          navigation &&
+          navigator &&
+          !navigation.signal.aborted &&
+          navigator.snapshot().entry.id === navigation.entryId &&
+          navigation.target.kind === "page"
+            ? historyPresentation(
+                navigator,
+                agentHistoryRoute(historyParams),
+                (selection) =>
+                  agentHistoryTarget(
+                    navigation.target as Extract<OpenTarget, { kind: "page" }>,
+                    selected.pubkey,
+                    selection,
+                  ),
+                agentHistoryActive(historyParams),
+              )
+            : undefined
+        }
         communities={communities}
         messageAction={(variant) => (
           <AgentMessageButton
@@ -514,7 +626,7 @@ export function AgentsPage({
             ? connection.session.agentMemories
             : undefined
         }
-        onRemoved={() => browse()}
+        onRemoved={() => removed(selected.pubkey)}
         openSettings={openSettings}
         openConversation={conversationOpener(
           navigator,
@@ -629,20 +741,9 @@ export function AgentsPage({
                         selection={shared}
                         agents={agents}
                         types={runnable}
-                        // The panel and its trigger go with it, so focus
-                        // follows to the tab now shown.
-                        onImported={() => {
-                          flushSync(() => {
-                            setSharedSelection(undefined);
-                            returnToAgents();
-                          });
-                          document.getElementById("agents-yours-tab")?.focus();
-                        }}
-                        onOpen={(agent) => {
-                          setSharedSelection(undefined);
-                          returnToAgents();
-                          browse(agent.pubkey);
-                        }}
+                        onImported={leaveListing}
+                        // Stays on the listing if an unsaved draft is kept.
+                        onOpen={(agent) => browse(agent.pubkey, leaveListing)}
                       />
                     ),
                   },
@@ -652,7 +753,11 @@ export function AgentsPage({
           </aside>
         )}
         {panel && selected && (
-          <aside className={styles.side} hidden={tab !== "yours"}>
+          <aside
+            ref={profileSide}
+            className={styles.side}
+            hidden={tab !== "yours"}
+          >
             {split.handle}
             <Panel aria-label="Agent profile">
               <PanelWorkspace
@@ -664,8 +769,12 @@ export function AgentsPage({
                   {
                     id: selected.pubkey,
                     label: selected.name,
-                    content: panel,
-                    close: () => browse(),
+                    content: (
+                      <AgentSaveState value={reportUnsaved}>
+                        {panel}
+                      </AgentSaveState>
+                    ),
+                    close: closePanel,
                   },
                 ]}
               />
@@ -700,6 +809,17 @@ export function AgentsPage({
           />
         </Dialog>
       )}
+      {leaving && selected && (
+        <DiscardChanges
+          description={`Your unsaved changes to ${selected.name} will be lost.`}
+          onKeep={() => setLeaving(undefined)}
+          onDiscard={() => {
+            setLeaving(undefined);
+            setSelectedKey(leaving.pubkey);
+            leaving.then?.();
+          }}
+        />
+      )}
       {creating && (
         <AgentCreateDialog
           agents={agents}
@@ -715,10 +835,28 @@ export function AgentsPage({
           }}
         />
       )}
+      {card && (
+        <AgentCardCreate
+          key={`${routedEntry}:${card}`}
+          card={card}
+          agents={agents}
+          types={types}
+          community={
+            connection.status === "ready" ? connection.origin : undefined
+          }
+          onClose={closeCard}
+          onCreated={(agent) => {
+            closeCard();
+            changeTab("yours");
+            build(agent.pubkey);
+          }}
+        />
+      )}
       {providerKey && (
         <ProviderDialog
           type={types.find((type) => type.key === providerKey)}
           finalFocus={newAgentButton}
+          visit={routed}
           onClose={() => setProviderKey(undefined)}
         />
       )}
@@ -727,12 +865,18 @@ export function AgentsPage({
 }
 
 type InventoryProps = {
+  scope?: string | undefined;
   service: Agents;
   agents: readonly Agent[];
   selected: string | undefined;
   typeOf(agent: Agent): RegisteredAgentType | undefined;
-  onSelect(pubkey?: string): void;
+  /** False while the current agent stays selected; then runs once another
+   * is, which may wait on a discard prompt. */
+  onSelect(pubkey?: string, then?: () => void): boolean;
   onBuild(pubkey: string): void;
+  onRemoved(pubkey: string): void;
+  /** A save is pending, so choosing another agent waits for it. */
+  busy?: boolean | undefined;
   newAgent: ReactNode;
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
@@ -763,6 +907,8 @@ function DefaultAgentInventory({
     <>
       <Inventory
         {...props}
+        key={scope}
+        scope={scope}
         session={session}
         bestie={bestie.saved}
         defaultChoices={
@@ -828,22 +974,71 @@ function CardContextMenu({
   );
 }
 
+/** By key: the list can change while a discard prompt is open. */
+function focusCard(root: ParentNode | null, pubkey: string | undefined) {
+  root
+    ?.querySelector<HTMLElement>(`[role="gridcell"][data-agent="${pubkey}"]`)
+    ?.focus();
+}
+
 /** Cards retain arrow navigation; their embedded controls have their own tab stops. The
  * New agent tile leads the grid but is its own stop. */
-function Inventory({
+function Inventory({ scope, agents, typeOf, ...props }: InventoryProps) {
+  const { ordered, save, error } = useAgentOrder(scope, agents);
+  return (
+    <>
+      <AgentInventoryDrag
+        agents={ordered}
+        enabled={!!scope}
+        onMove={save}
+        overlay={(agent) => (
+          <AgentCard
+            agent={agent}
+            community={agent.relay || undefined}
+            icon={<TypeIcon type={typeOf(agent)} />}
+            detail={summaryOf(agent, typeOf(agent))}
+          />
+        )}
+      >
+        {(preview, dragging) => (
+          <InventoryGrid
+            {...props}
+            scope={scope}
+            agents={preview}
+            dragging={dragging}
+            typeOf={typeOf}
+          />
+        )}
+      </AgentInventoryDrag>
+      {error && (
+        <p role="alert" className="text-body-sm text-danger">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+function InventoryGrid({
+  scope,
   service,
   agents,
   selected,
   typeOf,
   onSelect,
   onBuild,
+  onRemoved,
+  busy,
   newAgent,
   bestie,
   defaultChoices,
   onMakeBestie,
   session,
   onViewListing,
-}: InventoryProps) {
+  dragging,
+}: InventoryProps & {
+  dragging: boolean;
+}) {
   const grid = useRef<HTMLDivElement>(null);
   const index = agents.findIndex((agent) => agent.pubkey === selected);
   const columns = () =>
@@ -851,6 +1046,7 @@ function Inventory({
       ? getComputedStyle(grid.current).gridTemplateColumns.split(" ").length
       : 1;
   const onKeyDown = (event: KeyboardEvent) => {
+    if (dragging) return;
     if (
       !(event.target instanceof HTMLElement) ||
       event.target.getAttribute("role") !== "gridcell"
@@ -878,24 +1074,24 @@ function Inventory({
       return;
     } else if (event.key === "Escape" && selected) {
       event.preventDefault();
-      onSelect();
+      onSelect(undefined, () => focusCard(grid.current, selected));
       return;
     }
     if (next === undefined) return;
     event.preventDefault();
-    onSelect(agents[next]?.pubkey);
-    grid.current
-      ?.querySelectorAll<HTMLElement>('[role="gridcell"]')
-      [next]?.focus();
+    // Focus follows the selection, including after a discard is confirmed.
+    const target = agents[next]?.pubkey;
+    onSelect(target, () => focusCard(grid.current, target));
   };
   return (
-    <div ref={grid} className={cardStyles.grid}>
+    <div ref={grid} className={cardStyles.grid} data-agent-grid="">
       {newAgent}
       {agents.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: This is a wrapping layout grid of interactive cards, not tabular data.
         <div
           role="grid"
           aria-label="Agents"
+          aria-busy={busy || undefined}
           className="contents"
           onKeyDown={onKeyDown}
         >
@@ -904,9 +1100,11 @@ function Inventory({
             const active = agent.pubkey === selected;
             const isBestie = agent.pubkey === bestie;
             return (
-              // biome-ignore lint/a11y/useSemanticElements: Layout grid rows group cards without table layout.
-              // biome-ignore lint/a11y/useFocusableInteractive: Roving focus belongs to the gridcell, not its row wrapper.
-              <div role="row" className="contents" key={agent.pubkey}>
+              <DraggableAgentRow
+                key={agent.pubkey}
+                agent={agent}
+                enabled={!!scope}
+              >
                 <InventoryCard
                   tag={isBestie ? "Bestie" : undefined}
                   bestie={
@@ -923,8 +1121,9 @@ function Inventory({
                   type={type}
                   onViewListing={onViewListing}
                   onBuild={() => onBuild(agent.pubkey)}
-                  onRemoved={() => onSelect()}
+                  onRemoved={() => onRemoved(agent.pubkey)}
                   role="gridcell"
+                  data-agent={agent.pubkey}
                   aria-label={isBestie ? `${agent.name}, Bestie` : agent.name}
                   data-selected={active}
                   aria-selected={active}
@@ -936,8 +1135,14 @@ function Inventory({
                       !(event.target as Element).closest(
                         "[data-card-control], button, input",
                       )
-                    )
-                      onSelect(active ? undefined : agent.pubkey);
+                    ) {
+                      // A kept agent keeps focus, as the arrow keys leave it.
+                      const chose = onSelect(
+                        active ? undefined : agent.pubkey,
+                        () => focusCard(grid.current, agent.pubkey),
+                      );
+                      if (!chose) focusCard(grid.current, selected);
+                    }
                   }}
                   onDoubleClick={(event) => {
                     if (
@@ -953,7 +1158,7 @@ function Inventory({
                   icon={<TypeIcon type={type} />}
                   detail={summaryOf(agent, type)}
                 />
-              </div>
+              </DraggableAgentRow>
             );
           })}
         </div>
@@ -1072,6 +1277,8 @@ function InventoryCard({
             >
               {Model && (
                 <Model
+                  agent={agent}
+                  openSettings={onBuild}
                   config={agent.config}
                   modelAppearance="glass-ghost"
                   disabled={saving}
@@ -1156,6 +1363,7 @@ function AgentPeek({
   type,
   channels,
   onClose,
+  onRemoved,
   openSettings,
 }: {
   agents: Agents;
@@ -1163,6 +1371,7 @@ function AgentPeek({
   type: RegisteredAgentType | undefined;
   channels: readonly ChannelChoice[];
   onClose(): void;
+  onRemoved(): void;
   openSettings: ((section: string) => void) | undefined;
 }) {
   const [finishing, setFinishing] = useState(false);
@@ -1218,7 +1427,7 @@ function AgentPeek({
               {error}
             </p>
           )}
-          <AgentDelete agents={agents} agent={agent} onRemoved={onClose} />
+          <AgentDelete agents={agents} agent={agent} onRemoved={onRemoved} />
           {agent.place === "here" && (
             <Section title="Wakes on">
               <AttentionSummary agent={agent} channels={channels} />

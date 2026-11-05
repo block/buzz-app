@@ -1054,7 +1054,7 @@ export function ChannelInventory({
               return;
             }
             // Its neighbor takes its place, so the sidebar stays where it is.
-            const listed = sections.flatMap((section) => section.rows);
+            const listed = filteredSections.flatMap((section) => section.rows);
             const next =
               (lifecycleNeighbors.current?.id === id
                 ? lifecycleNeighbors.current.ids

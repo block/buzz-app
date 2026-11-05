@@ -1874,6 +1874,36 @@ it("deleting the open channel skips a neighbor hidden because it is muted", asyn
   }
 });
 
+it("deleting the open channel opens the empty Channels page when every other row is hidden by mute", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: ["alpha", "gamma"],
+    }),
+    available: true,
+  });
+  await preferences.queries.ensure();
+  act(() => setHideMutedChannelsPreference(true));
+  try {
+    const h = pendingLifecycle("delete", preferences.queries);
+    await h.start();
+    expect(screen.queryByRole("button", { name: /^alpha/ })).toBeNull();
+    h.drop("beta");
+    await act(async () => h.finish());
+    await waitFor(() =>
+      expect(h.navigator.open).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "page", pageId: "channels" }),
+      ),
+    );
+    expect(h.navigator.open).toHaveBeenCalledOnce();
+  } finally {
+    act(() => setHideMutedChannelsPreference(false));
+    preferences.dispose();
+  }
+});
+
 it("deleting the only row in its section opens the nearest row below it", async () => {
   const preferences = createSidebarPreferencesStore({
     read: async () => ({

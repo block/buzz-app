@@ -51,7 +51,7 @@ export function setUnreadFirstPreference(enabled: boolean): void {
 export const unreadFirstSetting: DeviceSetting = {
   key: "search.unread_first",
   description:
-    "Opening search with nothing typed lists unread channels and DMs first and selects the first.",
+    "With nothing typed, search leads with unread channels and DMs and selects the newest.",
   schema: { type: "boolean" },
   read: () => ({
     value: unreadFirstPreference(),

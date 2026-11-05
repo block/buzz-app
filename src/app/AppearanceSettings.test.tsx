@@ -586,7 +586,7 @@ it("keeps an unsaved unread-first choice active and retries the same choice", as
   );
   write.mockRestore();
   await user.click(
-    screen.getByRole("button", { name: "Retry saving unread first" }),
+    screen.getByRole("button", { name: "Retry saving search preference" }),
   );
   expect(localStorage.getItem("buzz-search-unread-first.v1")).toBe("off");
   await waitFor(() =>

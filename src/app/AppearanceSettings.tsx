@@ -366,7 +366,7 @@ export function AppearanceSettings({
           )}
           <SwitchPreferenceRow
             label="Show unread first in search"
-            description="Opening search with nothing typed lists unread channels and DMs first and selects the first."
+            description="With nothing typed, search leads with unread channels and DMs and selects the newest."
             checked={unreadFirst.enabled}
             onCheckedChange={setUnreadFirstPreference}
           />
@@ -424,7 +424,7 @@ export function AppearanceSettings({
               size="sm"
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
-              Retry saving unread first
+              Retry saving search preference
             </Button>
           </ToastNotice>
         )}

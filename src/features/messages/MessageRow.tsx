@@ -1217,6 +1217,8 @@ function MessageRowContent({
                             session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
+                            // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
+                            small={media(url, "small")}
                             cached={cached}
                             compact={group.length >= 4}
                             overlayCount={

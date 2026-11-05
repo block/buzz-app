@@ -1780,7 +1780,10 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
     const links = screen.getAllByRole("link", {
       name: "Open image attachment",
     });
-    expect(media).toHaveBeenCalledExactlyOnceWith("https://safe.test/a.png");
+    expect(media).toHaveBeenCalledWith("https://safe.test/a.png");
+    expect(media.mock.calls.map(([url]) => url)).toEqual(
+      Array(media.mock.calls.length).fill("https://safe.test/a.png"),
+    );
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://safe.test/a.png");
     expect(view.container.innerHTML).not.toContain("unsafe.test");

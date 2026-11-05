@@ -33,6 +33,7 @@ const memoryStore = (): SessionStore & { all: Map<string, SavedSession> } => {
 function sessions(
   options: Partial<{
     known: Set<string>;
+    strictResume: boolean;
     store: ReturnType<typeof memoryStore>;
     /** Every process keeps its turns open until finished. */
     hold: boolean;
@@ -67,6 +68,7 @@ function sessions(
   };
   const pool = new AgentSessions({
     spawn,
+    strictResume: !!options.strictResume,
     ...(options.spare ? { spare: options.spare } : {}),
     store,
     launch: async () => {
@@ -1184,4 +1186,50 @@ it("releases a conversation handover when its refresh fails", async () => {
   } finally {
     f.pool.dispose();
   }
+});
+
+it("retains a missing remote session until the owner starts a new session", async () => {
+  const store = memoryStore();
+  store.set("room", { id: "missing", seen: 10, at: 1 });
+  const { pool, claudes } = sessions({ store, strictResume: true });
+  try {
+    await expect(pool.deliver("room", "continue", 20)).resolves.toMatchObject({
+      ok: false,
+      error:
+        "The remote Claude session cannot be restored. Start a new session to continue.",
+    });
+    expect(store.get("room")?.id).toBe("missing");
+    expect(claudes()).toHaveLength(1);
+    await pool.forget("room");
+    await expect(pool.deliver("room", "new", 30)).resolves.toEqual({
+      ok: true,
+    });
+    expect(store.get("room")?.id).toBe("new-1");
+  } finally {
+    await pool.shutdown();
+  }
+});
+
+it("waits for a remote session save before it sends the first prompt", async () => {
+  const store = memoryStore();
+  let saved!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    saved = resolve;
+  });
+  const write = store.set;
+  store.set = (key, value) => {
+    write(key, value);
+    return gate;
+  };
+  const { pool, claudes } = sessions({ store, strictResume: true });
+  const sent = pool.deliver("room", "hello", 10);
+  try {
+    await vi.waitFor(() => expect(store.get("room")?.id).toBe("new-1"));
+    expect(claudes()[0]?.prompts).toEqual([]);
+  } finally {
+    saved();
+  }
+  await expect(sent).resolves.toEqual({ ok: true });
+  expect(claudes()[0]?.prompts).toEqual(["hello"]);
+  await pool.shutdown();
 });

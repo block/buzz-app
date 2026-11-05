@@ -36,12 +36,13 @@ export type SavedSession = Readonly<{
 }>;
 export type SessionStore = {
   get(key: string): SavedSession | undefined;
-  set(key: string, session: SavedSession): void;
+  set(key: string, session: SavedSession): void | Promise<void>;
   delete(key: string): void | Promise<void>;
 };
 
 export type SessionsOptions = Readonly<{
   spawn: Spawn;
+  strictResume?: boolean;
   /** Where a new conversation looks for a process already started. */
   spare?: Spare;
   store: SessionStore;
@@ -304,7 +305,7 @@ export class AgentSessions {
           !live.process.busy)
       )
         continue;
-      this.touch(key, live, seen, contextRoot);
+      await this.touch(key, live, seen, contextRoot);
       const activity = {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
@@ -324,6 +325,12 @@ export class AgentSessions {
       // A saved session that no longer loads starts over rather than failing
       // every message in the conversation, shown the conversation so far.
       if (!delivered.ok && saved && !live.process.started) {
+        if (this.options.strictResume)
+          return {
+            ...delivered,
+            error:
+              "The remote Claude session cannot be restored. Start a new session to continue.",
+          };
         let retry: string;
         try {
           await this.options.store.delete(key);
@@ -372,6 +379,12 @@ export class AgentSessions {
     const settled = await this.answer(key, live, "/compact", {});
     // A saved session that no longer loads is the message's to start over.
     if (!settled.ok && !live.process.started) {
+      if (this.options.strictResume)
+        return {
+          ...settled,
+          error:
+            "The remote Claude session cannot be restored. Start a new session to continue.",
+        };
       await this.options.store.delete(key);
       this.drop(key, live);
       return { ok: true };
@@ -477,13 +490,18 @@ export class AgentSessions {
     contextRoot?: string,
   ): Promise<Live | Settled> {
     const opened = this.start(resume, key).then(
-      (live): Live | Settled => {
+      async (live): Promise<Live | Settled> => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.disposed) {
           void live.process.kill();
           return { ok: false, error: "Claude was stopped", undelivered: true };
         }
-        this.adopt(key, live, seen, contextRoot);
+        try {
+          await this.adopt(key, live, seen, contextRoot);
+        } catch (error) {
+          this.drop(key, live);
+          throw error;
+        }
         return live;
       },
       (error): Settled => {
@@ -546,15 +564,23 @@ export class AgentSessions {
     await process.initialize(launch);
     return process;
   }
-  private adopt(key: string, live: Live, seen: number, contextRoot?: string) {
+  private async adopt(
+    key: string,
+    live: Live,
+    seen: number,
+    contextRoot?: string,
+  ) {
     live.process.conversation = key;
     live.process.onActivity = this.options.onChange;
     // Not a stop: a turn that reports finished work may be about to start.
     live.process.onQuiet = () => {
-      if (this.live.get(key) === live) this.touch(key, live);
+      if (this.live.get(key) === live)
+        void Promise.resolve(this.touch(key, live)).catch((error) =>
+          console.error(`Claude session ${key} was not saved`, error),
+        );
     };
     this.live.set(key, live);
-    this.touch(key, live, seen, contextRoot);
+    await this.touch(key, live, seen, contextRoot);
     this.options.onChange?.();
     void live.process.exited.then(() => {
       if (this.live.get(key) === live) this.drop(key, live);
@@ -571,7 +597,7 @@ export class AgentSessions {
     this.options.onChange?.();
     const settled = await sent;
     if (this.live.get(key) === live) {
-      this.touch(key, live);
+      await this.touch(key, live);
       if (
         live.fingerprint !== this.options.fingerprint(key) &&
         !live.process.busy
@@ -600,7 +626,7 @@ export class AgentSessions {
         }).slice(-SAVED_LIMIT),
       );
     }
-    this.options.store.set(key, {
+    return this.options.store.set(key, {
       id,
       seen: Math.max(seen ?? 0, prior?.seen ?? 0),
       ...(threads ? { threads } : {}),
@@ -750,6 +776,7 @@ export function localSessions(
   storage: AgentStore,
   agent: string,
   name = LEGACY_SESSIONS,
+  durable = false,
 ): SessionStore & {
   /** Saved sessions, most recently used first. */
   list(): [string, SavedSession][];
@@ -798,9 +825,11 @@ export function localSessions(
       return saved && typeof saved.id === "string" ? saved : undefined;
     },
     set: (conversation, session) => {
-      void update((sessions) => {
+      const saved = update((sessions) => {
         sessions[conversation] = session;
-      }).catch((error) =>
+      });
+      if (durable) return saved;
+      void saved.catch((error) =>
         console.warn("Claude sessions were not saved", error),
       );
     },

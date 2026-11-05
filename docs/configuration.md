@@ -13,7 +13,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
-| `BUZZ_RECOMMENDED_AGENT` | Frontend build and dev server: JSON array of candidates for a recommended agent setup, best first. Unset in OSS builds. See [Recommended agent](#recommended-agent). |
+| `BUZZ_RECOMMENDED_AGENT` | Frontend build and dev server: JSON array of candidates for a recommended agent setup, best first, behind **Automatic (Recommended)** for new agents. Unset in OSS builds, which don't offer the choice. See [Recommended agent](#recommended-agent). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native build: federated identity authority, adapter prefix and community hosts. See below. |
@@ -105,19 +105,37 @@ Leave it unset for OSS builds: the create form then works as before.
 
 With it set:
 
-- An agent on Recommended has `preset: "recommended"` in its config, with
-  its own model, provider and thinking level cleared. Its harness is never
-  changed for it.
+- **Create agent** gains an **AI settings** row: **Automatic (Recommended)**,
+  the default, or **Manual**. Automatic uses the first candidate whose harness
+  is installed here and ready and whose model it lists now (Codex: installed,
+  signed in, model in its catalog; goose: provider set up, model in its live
+  list with the candidate's thinking level), and shows it as **Uses** with the
+  model and thinking level, plus a one-line note when a harness ahead of it
+  isn't set up. Each check may take up to 8 seconds; one that fails or takes
+  longer skips that candidate. Codex is not offered on Windows. When nothing
+  is ready, Automatic says so and Create waits for **Manual**. **Manual**
+  opens the Harness, Provider (goose only), Model and Thinking rows in place,
+  starting from what Automatic picked, and works while the check runs.
+- When a hosted agent type such as Builderlab is registered, a **Runs on** row
+  above it chooses **This computer** or the hosted type, which shows **Coming
+  soon** while its provider reports it unavailable. A hosted type's Automatic
+  is its own default model and thinking level, saved as the agent's own
+  settings, never as Recommended.
+- The agent saves only `preset: "recommended"` in its config, with its own
+  model, provider and thinking level cleared. Its harness is never changed for
+  it.
 - At run time it uses the first candidate for its own harness whose model is
-  still offered, checked once per app launch (Codex: installed, signed in,
-  model in its catalog with the candidate's thinking level; goose: provider
-  set up, model in its live list with the candidate's thinking level). Each
-  check may take up to 8 seconds. If none is, it runs on the harness's own
-  default instead of failing, and it asks again at a run a minute or more
-  later, so a harness set up or signed in since then is picked up. A later
-  build's recommendation reaches it the same way.
-- Any model, provider or thinking change, on the agent's card or in Settings,
-  takes it off Recommended.
+  still offered, checked the same way once per app launch. If none is, it runs
+  on the harness's own default instead of failing, and it asks again at a run
+  a minute or more later, so a harness set up or signed in since then is
+  picked up. A later build's recommendation reaches it the same way.
+- The agent's **Identity** tab shows a read-only **Runs on** row and the same
+  **AI settings** row. Automatic shows what it runs on, or that it fell back
+  to the harness default; it keeps the agent's harness even when another is
+  recommended first. **Manual** opens the Harness row and the harness's model
+  rows; changing the harness there is the usual harness change. Any model,
+  provider or thinking change, on the agent's card or in Settings, takes it
+  off Recommended.
 
 The mark stays in this computer's agent state and is never written to the
 agent's synced `buzz.agent.settings` (kind 45010), because older app versions

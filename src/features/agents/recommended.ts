@@ -224,3 +224,51 @@ export function recommendedRun(
     },
   };
 }
+
+/** The agent type fields a pick reads. */
+type Harness = Readonly<{
+  id: string;
+  title: string;
+  remote?: unknown;
+  recommends?(candidate: RecommendedCandidate): Promise<boolean>;
+}>;
+export type RecommendedPick<T extends Harness = RegisteredType> = Readonly<{
+  type: T;
+  candidate: RecommendedCandidate;
+  /** Other installed harnesses ahead of it that aren't ready here. */
+  skipped: readonly T[];
+}>;
+type RegisteredType = import("./service").RegisteredAgentType;
+
+/** One line when Automatic skipped a preferred harness, never the order. */
+export const recommendedNote = (pick: RecommendedPick<Harness>) => {
+  const [first] = pick.skipped;
+  return first
+    ? `${first.title} isn’t set up on this computer, so this uses ${pick.type.title}.`
+    : undefined;
+};
+
+/** The first candidate this computer can run now: its harness is installed
+ * here (Codex is not on Windows), follows Recommended, and says, within
+ * `CHECK_MS`, that it is ready and offers the candidate's model. Undefined
+ * when none is. */
+export async function pickRecommended<T extends Harness>(
+  types: readonly T[],
+): Promise<RecommendedPick<T> | undefined> {
+  const skipped: T[] = [];
+  for (const candidate of recommendedCandidates()) {
+    const type = types.find(
+      (item) =>
+        item.id === candidate.harness && item.recommends && !item.remote,
+    );
+    if (!type) continue;
+    if (await bounded(type.recommends?.(candidate)))
+      return {
+        type,
+        candidate,
+        skipped: skipped.filter((item) => item !== type),
+      };
+    if (!skipped.includes(type)) skipped.push(type);
+  }
+  return undefined;
+}

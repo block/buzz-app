@@ -1,4 +1,6 @@
 import { ProviderDialog } from "./ProviderDialog";
+import { RunsOnRow } from "../../features/agents/AISettings";
+import { recommendedCandidates } from "../../features/agents/recommended";
 import { useId, useRef, useState } from "react";
 import type {
   Agent,
@@ -100,6 +102,19 @@ export function useAgentSettingsHost({
       agents && agent
         ? {
             ...(pendingTypeSave ? { pendingSave: pendingTypeSave } : {}),
+            ...(recommendedCandidates().length
+              ? {
+                  runsOn: (
+                    <RunsOnRow
+                      hosted={
+                        agent.place === "hosted" && type
+                          ? { title: type.title, icon: type.icon }
+                          : undefined
+                      }
+                    />
+                  ),
+                }
+              : {}),
             ...(showTypeControl
               ? {
                   typeControl: (dirty: boolean) => (

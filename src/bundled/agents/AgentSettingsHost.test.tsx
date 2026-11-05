@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
   Agents,
@@ -12,6 +12,7 @@ import { RobotIcon } from "../../shared/design-system/icons";
 import { useAgentSettingsHost } from "./AgentSettingsHost";
 
 afterEach(cleanup);
+afterEach(() => vi.unstubAllEnvs());
 
 function fixture({
   hosted = true,
@@ -76,6 +77,7 @@ function fixture({
     });
     return (
       <>
+        {host.settingsHost.runsOn}
         {host.settingsHost.typeControl?.(false)}
         <output aria-label="Selected harness">{host.agent.type}</output>
         <output aria-label="Pending change">
@@ -288,4 +290,46 @@ it("withholds the harness control for a hosted agent whose type is unregistered"
   expect(screen.getByLabelText("Pending change")).toHaveTextContent("false");
   expect(previewRetype).not.toHaveBeenCalled();
   expect(retype).not.toHaveBeenCalled();
+});
+
+describe("Runs on", () => {
+  const recommend = () =>
+    vi.stubEnv(
+      "VITE_BUZZ_RECOMMENDED_AGENT",
+      JSON.stringify([
+        {
+          harness: "codex",
+          model: "model-a",
+          effort: "high",
+          label: "Model A",
+        },
+      ]),
+    );
+
+  it("shows where an agent runs, fixed when it was created", () => {
+    recommend();
+    fixture();
+    expect(screen.getByText("Runs on")).toBeInTheDocument();
+    expect(
+      screen.getByText("Set when the agent was created."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("This computer")).toBeInTheDocument();
+    // It is read-only: there is nothing to change it with.
+    expect(
+      screen.queryByRole("combobox", { name: "Runs on" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names the hosted type a hosted agent runs on", () => {
+    recommend();
+    fixture({ place: "hosted", remoteSource: true });
+    expect(screen.getByText("Builderlab (hosted)")).toBeInTheDocument();
+    expect(screen.queryByText("This computer")).not.toBeInTheDocument();
+  });
+
+  it("is absent in builds without a recommendation", () => {
+    vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", "");
+    fixture();
+    expect(screen.queryByText("Runs on")).not.toBeInTheDocument();
+  });
 });

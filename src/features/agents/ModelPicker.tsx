@@ -244,7 +244,8 @@ export function ModelPicker({
     <>
       <div
         ref={control}
-        className="flex max-w-full flex-wrap items-center gap-3"
+        // Rows span the settings group, aligned like their siblings.
+        className={`flex max-w-full flex-wrap items-center gap-3${compact ? "" : " [&>*]:basis-full"}`}
       >
         {groupByFamily ? (
           <ModelFamilyMenu

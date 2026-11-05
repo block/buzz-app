@@ -1,6 +1,25 @@
 // Avatar selection above the agent identity and type-owned setup fields.
-import { useId, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
+import {
+  AISettings,
+  runsOnIcon,
+  UsesLine,
+} from "../../features/agents/AISettings";
+import {
+  followRecommended,
+  pickRecommended,
+  recommendedCandidates,
+  recommendedNote,
+  type RecommendedPick,
+  withRecommended,
+} from "../../features/agents/recommended";
 import type {
   Agent,
   Agents,
@@ -48,6 +67,9 @@ export function TypeIcon({
   return <Icon size={size} aria-hidden="true" />;
 }
 
+const noSubscribe = () => () => {};
+const noProvider = () => undefined;
+
 const startingConfig = (type: RegisteredAgentType | undefined) => {
   try {
     return type?.defaults().config;
@@ -94,8 +116,14 @@ export function AgentCreateDialog({
       ? { kind: "gloopie", picture: randomAgentAvatar().url }
       : { kind: "image", picture };
   });
+  // A new agent starts on Recommended when this build has candidates and
+  // this computer can run one; until that is known, the choice waits.
+  const recommendable =
+    !update && !request && recommendedCandidates().length > 0;
   const [typeKey, setTypeKey] = useState(
     (update ? (update.request.type ?? update.agent.type) : request?.type) ??
+      // Recommended starts on this computer, not a hosted type.
+      (recommendable ? types.find((item) => !item.remote) : types[0])?.key ??
       types[0]?.key ??
       "",
   );
@@ -121,6 +149,21 @@ export function AgentCreateDialog({
       : config;
   };
   const [config, setConfig] = useState(() => seed(type));
+  const [automatic, setAutomatic] = useState(recommendable);
+  const [pick, setPick] = useState<RecommendedPick | null | undefined>(
+    recommendable ? undefined : null,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Read once, as the dialog opens.
+  useEffect(() => {
+    if (!recommendable) return;
+    let current = true;
+    void pickRecommended(types).then((found) => {
+      if (current) setPick(found ?? null);
+    });
+    return () => {
+      current = false;
+    };
+  }, []);
   const preview = migration(type);
   const [dirty, setDirty] = useState(Boolean(update));
   const [pending, setPending] = useState(false);
@@ -134,6 +177,7 @@ export function AgentCreateDialog({
   const form = useId();
   const Create = type?.Create;
   const Model = type?.CreateModel;
+  const Rows = type?.CreateRows;
   const close = () => setOpen(false);
   const chooseModel = (item: RegisteredAgentType, next: unknown) => {
     setTypeKey(item.key);
@@ -141,21 +185,73 @@ export function AgentCreateDialog({
     setDirty(true);
     setError("");
   };
-  const choose = (key: string) => {
-    const item = types.find((candidate) => candidate.key === key);
-    if (!item || key === type?.key) return;
+  /** `item`'s config for the agent, with what the owner has typed. */
+  const carried = (item: RegisteredAgentType) => {
     const next = seed(item);
     // Typed instructions follow a new agent to its new harness.
     const instructions = update
       ? undefined
       : type?.carry?.(config).instructions;
-    chooseModel(
-      item,
-      instructions && item.adopt ? item.adopt({ instructions }, next) : next,
-    );
+    return instructions && item.adopt
+      ? item.adopt({ instructions }, next)
+      : next;
+  };
+  // Once known, Automatic on this computer takes its harness.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Follows only the pick.
+  useEffect(() => {
+    if (!pick || !automatic || type?.remote) return;
+    if (pick.type.key !== type?.key) {
+      setTypeKey(pick.type.key);
+      setConfig(carried(pick.type));
+    }
+  }, [pick]);
+  const choose = (key: string) => {
+    const item = types.find((candidate) => candidate.key === key);
+    if (!item || key === type?.key) return;
+    chooseModel(item, carried(item));
+  };
+  /** Automatic, or the harness and model chosen manually. */
+  const chooseAutomatic = (on: boolean) => {
+    if (on === automatic) return;
+    setAutomatic(on);
+    setDirty(true);
+    setError("");
+    // A hosted type picks its own default.
+    if (type?.remote) return;
+    // While the pick runs, its effect takes the harness once known.
+    if (on && pick && pick.type.key !== type?.key)
+      chooseModel(pick.type, carried(pick.type));
+    // Manual starts from what Automatic picked.
+    if (!on && pick && pick.type.key === type?.key)
+      setConfig(
+        followRecommended(
+          withRecommended(config as object),
+          config as { model: string; effort: string },
+          pick.candidate,
+        ),
+      );
+  };
+  // Automatic has nothing to create with until, and unless, a pick is found.
+  const waiting = automatic && !type?.remote && !pick;
+  // Where it runs: this computer's harnesses, or a hosted provider.
+  const local = recommendable ? types.filter((item) => !item.remote) : types;
+  const hostedType = recommendable
+    ? types.find((item) => item.remote)
+    : undefined;
+  const hostedState = useSyncExternalStore(
+    hostedType?.provider?.subscribe ?? noSubscribe,
+    hostedType?.provider?.snapshot ?? noProvider,
+  );
+  const chooseRunsOn = (key: string) => {
+    const item =
+      key === hostedType?.key
+        ? hostedType
+        : (pick?.type ?? local.find((candidate) => !candidate.remote));
+    setAutomatic(true);
+    if (item && item.key !== type?.key) chooseModel(item, carried(item));
   };
   const create = async () => {
-    if (!type || pending || avatarBusy) return;
+    if (!type || pending || avatarBusy || waiting) return;
     if (!name.trim()) {
       namePrompt.prompt();
       return;
@@ -170,7 +266,14 @@ export function AgentCreateDialog({
         type: type.key,
         name: name.trim(),
         ...(picture ? { picture } : {}),
-        ...(config !== undefined ? { config } : {}),
+        ...(config !== undefined
+          ? {
+              config:
+                automatic && pick?.type.key === type.key
+                  ? withRecommended(config as object)
+                  : config,
+            }
+          : {}),
       };
       if (update) await update.onSave(input);
       else onCreated(await (onCreate ? onCreate(input) : agents.create(input)));
@@ -179,6 +282,57 @@ export function AgentCreateDialog({
       setPending(false);
     }
   };
+  const manualSettings = (
+    <>
+      <PreferenceRow
+        title="Harness"
+        trailing={
+          <Select
+            label="Harness"
+            variant="compact"
+            align="end"
+            value={type?.key ?? ""}
+            leading={<TypeIcon type={type} size={20} />}
+            disabled={pending || local.length < 2}
+            groups={[
+              {
+                label: "",
+                options: local.map((item) => ({
+                  value: item.key,
+                  leading: <TypeIcon type={item} size={20} />,
+                  label: item.remote ? `${item.title} (hosted)` : item.title,
+                })),
+              },
+            ]}
+            onValueChange={choose}
+          />
+        }
+      />
+      {Model &&
+        (recommendable ? (
+          // Under Manual, a harness's own rows: Provider, Model, Thinking.
+          <Model
+            key={type.key}
+            layout="rows"
+            config={config}
+            disabled={pending}
+            onChange={(next) => chooseModel(type, next)}
+          />
+        ) : (
+          <PreferenceRow
+            title="Model"
+            trailing={
+              <Model
+                key={type.key}
+                config={config}
+                disabled={pending}
+                onChange={(next) => chooseModel(type, next)}
+              />
+            }
+          />
+        ))}
+    </>
+  );
   return (
     <Dialog
       open={open}
@@ -213,7 +367,7 @@ export function AgentCreateDialog({
           type="submit"
           form={form}
           loading={pending}
-          disabled={avatarBusy || pending || !type}
+          disabled={avatarBusy || pending || !type || waiting}
         >
           {update ? "Save changes" : "Create agent"}
         </Button>
@@ -279,50 +433,115 @@ export function AgentCreateDialog({
             className={styles.configuration}
           >
             <SettingsGroup>
-              <PreferenceRow
-                title="Harness"
-                trailing={
-                  <Select
-                    label="Harness"
-                    variant="compact"
-                    align="end"
-                    value={type?.key ?? ""}
-                    leading={<TypeIcon type={type} size={20} />}
-                    disabled={pending || types.length < 2}
-                    groups={[
-                      {
-                        label: "",
-                        options: types.map((item) => ({
-                          value: item.key,
-                          leading: <TypeIcon type={item} size={20} />,
-                          label: item.remote
-                            ? `${item.title} (hosted)`
-                            : item.title,
-                        })),
-                      },
-                    ]}
-                    onValueChange={choose}
-                  />
-                }
-              />
-              {Model && (
+              {hostedType && (
                 <PreferenceRow
-                  title="Model"
+                  icon={runsOnIcon(type?.remote ? type.icon : undefined)}
+                  title="Runs on"
+                  subtitle={
+                    type?.remote
+                      ? `${type.title} runs it in the cloud, even when this computer is off.`
+                      : "This computer runs the agent while Buzz is open."
+                  }
                   trailing={
-                    <Model
+                    <Select
+                      label="Runs on"
+                      variant="compact"
+                      align="end"
+                      value={type?.remote ? type.key : "local"}
+                      leading={runsOnIcon(type?.remote ? type.icon : undefined)}
+                      disabled={pending}
+                      groups={[
+                        {
+                          label: "",
+                          options: [
+                            {
+                              value: "local",
+                              label: "This computer",
+                              leading: runsOnIcon(undefined),
+                            },
+                            {
+                              value: hostedType.key,
+                              label: hostedState?.unavailable
+                                ? `${hostedType.title} (hosted) · Coming soon`
+                                : `${hostedType.title} (hosted)`,
+                              leading: runsOnIcon(hostedType.icon),
+                              disabled: Boolean(hostedState?.unavailable),
+                              description:
+                                hostedState?.unavailable ??
+                                "Runs in the cloud.",
+                            },
+                          ],
+                        },
+                      ]}
+                      onValueChange={chooseRunsOn}
+                    />
+                  }
+                />
+              )}
+              {recommendable && type?.remote ? (
+                <AISettings
+                  automatic={automatic}
+                  disabled={pending}
+                  onChange={chooseAutomatic}
+                  automaticHint={`${type.title} picks its default model and thinking level.`}
+                  manualHint={`You choose the ${type.title} model and thinking level.`}
+                  summary={
+                    Rows ? (
+                      // The hosted type shows, and sets, its own default.
+                      <Rows
+                        key={`${type.key}:automatic`}
+                        layout="rows"
+                        automatic
+                        config={config}
+                        disabled={pending}
+                        onChange={setConfig}
+                      />
+                    ) : (
+                      `${type.title} picks a good default.`
+                    )
+                  }
+                >
+                  {Rows && (
+                    <Rows
                       key={type.key}
+                      layout="rows"
                       config={config}
                       disabled={pending}
                       onChange={(next) => chooseModel(type, next)}
                     />
+                  )}
+                </AISettings>
+              ) : recommendable ? (
+                <AISettings
+                  automatic={automatic}
+                  disabled={pending}
+                  onChange={chooseAutomatic}
+                  summary={
+                    pick === undefined ? (
+                      "Checking this computer…"
+                    ) : pick ? (
+                      <UsesLine
+                        icon={pick.type.icon}
+                        title={pick.type.title}
+                        candidate={pick.candidate}
+                        note={recommendedNote(pick)}
+                      />
+                    ) : (
+                      "Nothing is set up on this computer yet. Choose Manual to pick a harness, or set one up in Settings → Agent setup."
+                    )
                   }
-                />
+                >
+                  {manualSettings}
+                </AISettings>
+              ) : (
+                manualSettings
               )}
             </SettingsGroup>
           </section>
           {Create ? (
             <Create
               key={type.key}
+              {...(recommendable ? { layout: "rows" as const } : {})}
               config={config}
               disabled={pending}
               onChange={(next) => {

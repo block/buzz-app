@@ -6,9 +6,11 @@ import {
   onRecommended,
   parseRecommended,
   candidatesFor,
+  pickRecommended,
   recommendedCandidates,
   RETRY_MS,
   recommendedRun,
+  recommendedNote,
   withRecommended,
 } from "./recommended";
 
@@ -30,10 +32,22 @@ const recommend = (...candidates: object[]) =>
   vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", JSON.stringify(candidates));
 afterEach(() => vi.unstubAllEnvs());
 
+const harness = (id: string, ready: boolean | Error) => ({
+  id,
+  title: id === "codex" ? "Codex" : "Goose",
+  recommends: vi.fn(async () => {
+    if (ready instanceof Error) throw ready;
+    return ready;
+  }),
+});
+
 it("has no recommendation when the build sets none", async () => {
   vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", "");
   expect(recommendedCandidates()).toEqual([]);
   expect(candidatesFor("goose")).toEqual([]);
+  const goose = harness("goose", true);
+  expect(await pickRecommended([goose])).toBeUndefined();
+  expect(goose.recommends).not.toHaveBeenCalled();
   // An agent saved on Recommended by another build runs on the default.
   const offered = vi.fn(async () => true);
   const run = recommendedRun("goose", offered);
@@ -155,6 +169,72 @@ it("leaves a config off Recommended unchanged, and drops only the preset", () =>
     instructions: "Be brief.",
     preset: "recommended",
   });
+});
+
+it("picks the first candidate this computer is ready for", async () => {
+  recommend(CODEX, GOOSE);
+  const codex = harness("codex", true);
+  const goose = harness("goose", true);
+  expect(await pickRecommended([goose, codex])).toEqual({
+    type: codex,
+    candidate: CODEX,
+    skipped: [],
+  });
+  expect(goose.recommends).not.toHaveBeenCalled();
+  // Nothing was skipped, so there is no note.
+  const pick = await pickRecommended([goose, codex]);
+  expect(pick && recommendedNote(pick)).toBeUndefined();
+});
+
+it("falls back to goose when Codex is missing, signed out or failing", async () => {
+  recommend(CODEX, GOOSE);
+  const goose = harness("goose", true);
+  for (const ready of [false, new Error("not installed")]) {
+    const codex = harness("codex", ready);
+    expect(await pickRecommended([codex, goose])).toEqual({
+      type: goose,
+      candidate: GOOSE,
+      skipped: [codex],
+    });
+    expect(codex.recommends).toHaveBeenCalledWith(CODEX);
+    // One line names what it skipped, never the order.
+    const pick = await pickRecommended([codex, goose]);
+    expect(pick && recommendedNote(pick)).toBe(
+      "Codex isn’t set up on this computer, so this uses Goose.",
+    );
+  }
+  // On Windows Codex isn't registered at all, so nothing was skipped.
+  expect(await pickRecommended([goose])).toEqual({
+    type: goose,
+    candidate: GOOSE,
+    skipped: [],
+  });
+  // Hosted types and types that don't follow Recommended are never picked.
+  expect(
+    await pickRecommended([
+      { id: "goose", title: "Goose", remote: {}, recommends: async () => true },
+      { id: "codex", title: "Codex" },
+    ]),
+  ).toBeUndefined();
+  expect(await pickRecommended([harness("goose", false)])).toBeUndefined();
+});
+
+it("skips a harness whose check hangs, after a bounded wait", async () => {
+  vi.useFakeTimers();
+  try {
+    recommend(CODEX, GOOSE);
+    const codex = {
+      id: "codex",
+      title: "Codex",
+      recommends: vi.fn(() => new Promise<boolean>(() => {})),
+    };
+    const goose = harness("goose", true);
+    const picked = pickRecommended([codex, goose]);
+    await vi.advanceTimersByTimeAsync(CHECK_MS);
+    expect(await picked).toMatchObject({ type: goose, skipped: [codex] });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("finds again after RETRY_MS when a failed check cut the finding short", async () => {

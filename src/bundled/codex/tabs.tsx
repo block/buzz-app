@@ -5,6 +5,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ArrowsClockwiseIcon,
   CaretRightIcon,
+  CodexLogoIcon,
 } from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
@@ -22,12 +23,14 @@ import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
+import { AISettings, runsOnLine } from "../../features/agents/AISettings";
 import {
   candidatesFor,
   followRecommended,
   offRecommended,
   onRecommended,
   type RecommendedCandidate,
+  withRecommended,
 } from "../../features/agents/recommended";
 import {
   ConversationName,
@@ -484,6 +487,7 @@ export function createTabs(
   function CreateModel({
     config,
     onChange,
+    layout,
     ...props
   }: AgentCreateProps<Config>) {
     // A pick here takes the agent off Recommended, from what it runs on.
@@ -530,6 +534,14 @@ export function createTabs(
           checking={checking}
           check={retry}
           disabled={props.disabled}
+        />
+      );
+    if (layout === "rows")
+      return (
+        <ModelRows
+          config={current}
+          disabled={props.disabled}
+          onChange={(next) => onChange(readConfig(next))}
         />
       );
     return (
@@ -1046,32 +1058,23 @@ export function createTabs(
   }
 
   /** What the agent runs with. Saving applies to the next turn. */
-  function SettingsTab({
-    agent,
-    save,
-    settingsHost,
-    settingsSection,
-    settingsContent,
-  }: AgentViewProps<Config>) {
-    const form = useId();
-    const saved = readConfig(agent.config);
-    const [draft, setDraft] = useState(saved);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState("");
-    const saveErrorRef = useRef<HTMLParagraphElement>(null);
-    useEffect(() => {
-      if (error) saveErrorRef.current?.focus();
-    }, [error]);
+  /** The agent's model and thinking level, as settings rows. */
+  function ModelRows({
+    config,
+    disabled,
+    onChange,
+  }: Readonly<{
+    config: Config;
+    disabled: boolean;
+    onChange(config: Config): void;
+  }>) {
     const {
       data,
       error: catalogError,
       checking,
       defaults: providerDefaults,
     } = useProvider();
-    useEffect(() => {
-      setDraft(readConfig(agent.config));
-    }, [agent.config]);
-    const effective = provider.resolve({ ...draft, effort: "" });
+    const effective = provider.resolve({ ...config, effort: "" });
     const selected = catalogModel(effective.model, data);
     const supported = selected?.supportedReasoningEfforts ?? [];
     const efforts = [
@@ -1079,12 +1082,12 @@ export function createTabs(
         value: "",
         label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
       },
-      ...(draft.effort &&
-      !supported.some((effort) => effort.reasoningEffort === draft.effort)
+      ...(config.effort &&
+      !supported.some((effort) => effort.reasoningEffort === config.effort)
         ? [
             {
-              value: draft.effort,
-              label: `${effortName(draft.effort)} (unavailable)`,
+              value: config.effort,
+              label: `${effortName(config.effort)} (unavailable)`,
             },
           ]
         : []),
@@ -1093,27 +1096,7 @@ export function createTabs(
         label: effortName(effort.reasoningEffort),
       })),
     ];
-    const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
-    const changed = configChanged || Boolean(settingsHost?.pendingSave);
-    const submit = async () => {
-      setSaving(true);
-      setError("");
-      try {
-        const settings = readConfig(draft);
-        if (!validWorkspace(settings.workspace))
-          throw new Error("Enter an absolute or ~/… workspace path.");
-        // A Custom agent's save drops a mark left from before, which a later
-        // blank synced model would otherwise turn back on.
-        await save(
-          onRecommended(settings) ? settings : offRecommended(settings),
-        );
-      } catch (reason) {
-        setError(message(reason));
-      } finally {
-        setSaving(false);
-      }
-    };
-    const customization = (
+    return (
       <>
         {catalogError && (
           <div className="grid justify-items-start gap-2">
@@ -1134,39 +1117,88 @@ export function createTabs(
           <ModelPicker
             allowCustomModel={false}
             models={choices(data)}
-            value={draft.model}
+            value={config.model}
             defaultModel={
               catalogModel(providerDefaults.model, data)?.model ?? ""
             }
             defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
             defaultDescription="Following the provider's model default"
             loading={checking}
-            disabled={saving}
-            // A manual choice, even of the default, is never Recommended.
+            disabled={disabled}
             onChange={(model) =>
-              setDraft(
-                offRecommended({ ...draft, ...modelChange(model, data) }),
-              )
+              onChange({ ...config, ...modelChange(model, data) })
             }
           />
           <Select
             label="Thinking"
             valueLabel={
-              draft.effort
+              config.effort
                 ? undefined
                 : codexDefaultEffortLabel(effective.effort, selected)
             }
-            valueSuffix={draft.effort ? undefined : " · Default"}
+            valueSuffix={config.effort ? undefined : " · Default"}
             variant="preference"
-            value={draft.effort}
+            value={config.effort}
             groups={[{ label: "", options: efforts }]}
-            disabled={checking || saving || !selected}
-            onValueChange={(effort) =>
-              setDraft(offRecommended({ ...draft, effort }))
-            }
+            disabled={checking || disabled || !selected}
+            onValueChange={(effort) => onChange({ ...config, effort })}
           />
         </>
       </>
+    );
+  }
+
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    settingsSection,
+    settingsContent,
+  }: AgentViewProps<Config>) {
+    const form = useId();
+    const saved = readConfig(agent.config);
+    const [draft, setDraft] = useState(saved);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState("");
+    const saveErrorRef = useRef<HTMLParagraphElement>(null);
+    useEffect(() => {
+      if (error) saveErrorRef.current?.focus();
+    }, [error]);
+    // Read again as Codex is checked, for what Automatic resolves to.
+    useProvider();
+    useEffect(() => {
+      setDraft(readConfig(agent.config));
+    }, [agent.config]);
+    const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
+    const changed = configChanged || Boolean(settingsHost?.pendingSave);
+    // Inert in a build that recommends nothing for Codex.
+    const following = onRecommended(draft) && candidatesFor("codex").length > 0;
+    const resolved = provider.recommended();
+    const submit = async () => {
+      setSaving(true);
+      setError("");
+      try {
+        const settings = readConfig(draft);
+        if (!validWorkspace(settings.workspace))
+          throw new Error("Enter an absolute or ~/… workspace path.");
+        // A Custom agent's save drops a mark left from before, which a later
+        // blank synced model would otherwise turn back on.
+        await save(
+          onRecommended(settings) ? settings : offRecommended(settings),
+        );
+      } catch (reason) {
+        setError(message(reason));
+      } finally {
+        setSaving(false);
+      }
+    };
+    const customization = (
+      <ModelRows
+        config={draft}
+        disabled={saving}
+        // A manual choice, even of the default, is never Recommended.
+        onChange={(next) => setDraft(offRecommended(next))}
+      />
     );
     return (
       <form
@@ -1190,8 +1222,36 @@ export function createTabs(
         {settingsSection !== "runtime" && (
           <>
             <SettingsGroup>
-              {settingsHost?.typeControl?.(configChanged)}
-              {customization}
+              {settingsHost?.runsOn}
+              {candidatesFor("codex").length ? (
+                <AISettings
+                  automatic={following}
+                  disabled={saving}
+                  short
+                  summary={runsOnLine(
+                    { title: "Codex", icon: CodexLogoIcon },
+                    resolved,
+                  )}
+                  onChange={(on) =>
+                    // Manual starts from the recommendation it ran on.
+                    setDraft(
+                      on
+                        ? readConfig(withRecommended(draft))
+                        : offRecommended(
+                            followRecommended(draft, draft, resolved),
+                          ),
+                    )
+                  }
+                >
+                  {settingsHost?.typeControl?.(configChanged)}
+                  {customization}
+                </AISettings>
+              ) : (
+                <>
+                  {settingsHost?.typeControl?.(configChanged)}
+                  {customization}
+                </>
+              )}
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}

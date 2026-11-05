@@ -263,6 +263,9 @@ export type AgentSettingsHost = Readonly<{
   typeControl?: (dirty: boolean) => ReactNode;
   /** Host-owned type change committed with the target type's settings draft. */
   pendingSave?: (config?: unknown) => Promise<void>;
+  /** A read-only "Runs on" row for the top of the AI settings group, where
+   * the build offers a recommended agent setup. */
+  runsOn?: ReactNode;
 }>;
 /** What each of a type's settings tabs receives. A type writes only its own
  * config; the app owns the name and attention. */
@@ -309,6 +312,12 @@ export type AgentCreateProps<Config = unknown> = {
   modelAppearance?: "glass-ghost" | "inverted";
   /** Hide effort editing in streamlined connection setup. */
   showEffort?: boolean;
+  /** Inside a settings group: the model choices as their own rows, such as
+   * Model and Thinking, rather than one compact field. */
+  layout?: "rows";
+  /** With `rows`, Automatic is selected: a type that picks its own default,
+   * as a hosted one may, shows that pick and puts it in `config`. */
+  automatic?: boolean;
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;
@@ -692,6 +701,9 @@ export type Models = Readonly<{
 }>;
 export type AgentProviderSnapshot = Readonly<{
   readiness: "checking" | "ready" | "attention";
+  /** Why the type can't be chosen here yet, such as access that is coming
+   * soon; choices show it disabled with this reason, not as an error. */
+  unavailable?: string;
   /** Action-oriented menu copy for direct recovery or recovery guidance. */
   attentionLabel?: string;
   /** Installation and sign-in work must be cancelled before its dialog closes. */
@@ -773,6 +785,9 @@ export type AgentType<Config = unknown> = {
   ProfileActions?: ComponentType<{ children: ReactNode }>;
   /** Compact model field for creation and library cards; the type owns discovery and configuration. */
   CreateModel?: ComponentType<AgentCreateProps<Config>>;
+  /** Under Create agent's AI settings, in place of `CreateModel`'s rows: the
+   * type's model choices as settings rows, or with `automatic`, its own pick. */
+  CreateRows?: ComponentType<AgentCreateProps<Config>>;
   /** Device-wide readiness and management. Agents supplies the menu row,
    * provider identity, modal framing and focus behavior. */
   provider?: AgentProvider;

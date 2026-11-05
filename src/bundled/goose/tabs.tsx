@@ -13,11 +13,14 @@ import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { ActivityTranscript } from "../../features/agents/ActivityTranscript";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
+import { AISettings, runsOnLine } from "../../features/agents/AISettings";
 import {
+  candidatesFor,
   offRecommended,
   onRecommended,
   type RecommendedRun,
   recommendedRun,
+  withRecommended,
 } from "../../features/agents/recommended";
 import {
   type ModelChoice,
@@ -1093,7 +1096,43 @@ export function createTabs({
     );
   }
 
-  function CreateModel({
+  function CreateModel(props: AgentCreateProps<Config>) {
+    return props.layout === "rows" ? (
+      <CreateRows {...props} />
+    ) : (
+      <CreateCard {...props} />
+    );
+  }
+
+  /** The provider, model and thinking level as rows, as Settings has them. */
+  function CreateRows({
+    config,
+    onChange,
+    disabled,
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    return (
+      <>
+        <ProviderFields
+          rows
+          value={current}
+          disabled={disabled}
+          onChange={(choice) =>
+            onChange(offRecommended({ ...current, ...choice }))
+          }
+        />
+        <ThinkingField
+          choice={current}
+          value={current.effort}
+          onChange={(effort) =>
+            onChange(offRecommended({ ...current, effort }))
+          }
+        />
+      </>
+    );
+  }
+
+  function CreateCard({
     config,
     onChange,
     disabled,
@@ -1239,9 +1278,11 @@ export function createTabs({
     }, [error]);
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
-    const resolved = useRecommended(onRecommended(draft));
+    // Inert in a build that recommends nothing for goose.
+    const following = onRecommended(draft) && candidatesFor("goose").length > 0;
+    const resolved = useRecommended(following);
     const manual = (
-      <SettingsGroup>
+      <>
         {settingsHost?.typeControl?.(configChanged)}
         {/* A manual choice, even of the default, is never Recommended. */}
         <ProviderFields
@@ -1258,7 +1299,7 @@ export function createTabs({
           value={draft.effort}
           onChange={(effort) => setDraft(offRecommended({ ...draft, effort }))}
         />
-      </SettingsGroup>
+      </>
     );
     const submit = async () => {
       setSaving(true);
@@ -1298,7 +1339,31 @@ export function createTabs({
         )}
         {settingsSection !== "runtime" && (
           <>
-            {manual}
+            <SettingsGroup>
+              {settingsHost?.runsOn}
+              {candidatesFor("goose").length ? (
+                <AISettings
+                  automatic={following}
+                  short
+                  summary={runsOnLine(
+                    { title: "Goose", icon: GooseLogoIcon },
+                    resolved,
+                  )}
+                  onChange={(on) =>
+                    // Manual starts from the recommendation it ran on.
+                    setDraft(
+                      on
+                        ? readConfig(withRecommended(draft))
+                        : offRecommended(running(draft, resolved)),
+                    )
+                  }
+                >
+                  {manual}
+                </AISettings>
+              ) : (
+                manual
+              )}
+            </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
               disabled={false}

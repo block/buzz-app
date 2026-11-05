@@ -350,6 +350,17 @@ available rather than silently discarding it.
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
   its type. Do not assume someone can edit another person's agent.
+- Some builds offer **AI settings → Automatic (Recommended)** when creating an
+  agent. Buzz picks the first recommended harness that is set up on this
+  computer, with its model and thinking level, shows it as **Uses** with the
+  model and level, and keeps those current in later versions. It never changes
+  the harness afterwards. If no recommended model is offered when the agent
+  runs, it uses the harness's default. If nothing recommended is set up on this
+  computer, Automatic says so and Create waits for **Manual**. **Manual** opens
+  Harness, Provider (goose only), Model and Thinking in place, starting from
+  what Automatic picked. An agent's **Identity** tab shows the same **AI
+  settings** row; changing the model, provider or thinking level turns Automatic
+  off. Builds without a recommendation show none of this.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.

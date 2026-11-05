@@ -699,13 +699,17 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
       const { x, y, width, height } = range.getBoundingClientRect();
       return { x, y, width, height };
     });
-  const text = await link.boundingBox();
+  // End inside the link's last fragment: when it wraps, the center of its
+  // union box can fall between lines.
+  const end = await link.evaluate((node) => {
+    const fragments = Array.from(node.getClientRects());
+    const { right, top, height } = fragments[fragments.length - 1];
+    return { x: right - 1, y: top + height / 2 };
+  });
   await page.mouse.move(prose.x + 1, prose.y + 1);
   await expect(actions).toHaveCSS("opacity", "1");
   await page.mouse.down();
-  await page.mouse.move(text.x + text.width - 1, text.y + text.height / 2, {
-    steps: 10,
-  });
+  await page.mouse.move(end.x, end.y, { steps: 10 });
   await page.mouse.up();
   await expect
     .poll(() => page.evaluate(() => getSelection()?.toString()))

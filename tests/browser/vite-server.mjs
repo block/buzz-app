@@ -185,14 +185,26 @@ export async function createServer(config) {
     const server = await keepNodeEnv(() =>
       createViteServer({ ...fixture, cacheDir }),
     );
-    const close = server.close.bind(server);
-    server.close = async () => {
+    // server.restart() copies the new server's members onto this one with
+    // Object.assign, which would replace a plain close. An accessor takes the
+    // new close as the one it wraps, so a restarted server still removes its
+    // cache.
+    let close = server.close;
+    const owned = async () => {
       try {
-        await close();
+        await close.call(server);
       } finally {
         await rm(cacheDir, { recursive: true, force: true });
       }
     };
+    Object.defineProperty(server, "close", {
+      configurable: true,
+      enumerable: true,
+      get: () => owned,
+      set: (next) => {
+        close = next;
+      },
+    });
     return server;
   } catch (error) {
     await rm(cacheDir, { recursive: true, force: true });

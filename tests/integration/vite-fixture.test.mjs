@@ -167,9 +167,15 @@ test("port 0 servers, restarts and previews bind where the OS assigns, not a pro
     });
     await server.listen();
     bound(server);
+    const { cacheDir } = server.config;
     // A restart binds a new HTTP server to the port Vite recorded at start.
     await server.restart();
     bound(server);
+    // It also replaces the server's members, and close must still remove the
+    // cache the restarted server kept using.
+    assert.equal(server.config.cacheDir, cacheDir);
+    await server.close();
+    await assert.rejects(stat(cacheDir), { code: "ENOENT" });
     previewServer = await preview({
       root,
       configFile: false,

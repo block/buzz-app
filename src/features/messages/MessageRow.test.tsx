@@ -1792,6 +1792,30 @@ it("rejects attachment URLs outside the shared safe-link policy", () => {
   }
 });
 
+it.each([
+  ["jpg", "small:.jpg"],
+  // JPEG drops alpha; formats that can be transparent use the WebP variant.
+  ["png", ".thumb.webp"],
+  ["gif", ".thumb.webp"],
+])("passes a %s image attachment its relay thumbnail", (extension, suffix) => {
+  const hash = "a".repeat(64);
+  const url = `https://relay.test/media/${hash}.${extension}`;
+  const view = renderMessage({
+    row: { ...row, attachments: [{ url, kind: "image" }] },
+    media: (value, size) => (size ? `small:${value}` : value),
+  });
+  try {
+    expect(view.container.querySelector("img[data-thumbnail]")).toHaveAttribute(
+      "src",
+      suffix.startsWith("small:")
+        ? `small:${url}`
+        : `https://relay.test/media/${hash}${suffix}`,
+    );
+  } finally {
+    view.unmount();
+  }
+});
+
 it.each([true, false])(
   "renders a stripped timecode body with seeking available=%s",
   (canSeek) => {

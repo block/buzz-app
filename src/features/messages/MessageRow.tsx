@@ -1209,7 +1209,19 @@ function MessageRowContent({
                         // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
                         const small = media(url, "small");
                         // Third-party URLs map to themselves: no thumbnail.
-                        const thumbnail = small !== source ? small : undefined;
+                        // JPEG drops alpha, so formats that can be transparent
+                        // use the WebP variant; older uploads lack it and keep
+                        // the blurhash.
+                        const alpha =
+                          /^(.+\/[0-9a-f]{64})\.(?:png|gif|webp|avif)$/.exec(
+                            url,
+                          );
+                        const thumbnail =
+                          small === source
+                            ? undefined
+                            : alpha
+                              ? media(`${alpha[1]}.thumb.webp`)
+                              : small;
                         const image = (
                           <AttachmentImage
                             onOpenLink={

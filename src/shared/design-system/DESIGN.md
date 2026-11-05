@@ -1375,7 +1375,9 @@ feedback with the action owner. Pointer offsets clear the physical cursor silhou
 rather than following text-scale spacing. Real pointer geometry needs browser/native
 inspection; DOM tests do not establish placement.
 Overlay layers keep toasts, then menus and hints, above dialogs, so feedback a
-dialog raises stays visible.
+dialog raises stays visible. A hint inside a native top-layer surface, such as a
+hover preview or floating message actions, joins the top layer after it so the
+hint paints above that surface.
 Adding a hint must preserve the host's keyboard contract. A focus-opened tooltip
 can consume Escape before a panel's Back handler; the existing PanelSubview
 controls expose this conflict. Preserve their accessible names and current Back
@@ -1417,6 +1419,10 @@ blocked-page recovery inline. Channel LiveStatus is lasting, feature-owned recov
 keep it in the conversation flow immediately above the composer, with bounded
 overflow, so Send and companion-panel controls remain usable. Its retry policy
 and diagnostics belong to Channels; it does not enter the floating toast stack.
+
+A notice can make its body open a related destination with `navigation`. The
+body has a hover state and a keyboard action. Its explicit buttons and Dismiss
+keep their own hit areas and actions. The destination stays feature-owned.
 
 Use `useToastNotification` for completed-action feedback that must outlive its
 source row (such as copying profile metadata); the host stack owns its finite

@@ -131,9 +131,10 @@ computer access, then select **Install plugin**. Opening the link does not insta
 enable, or grant access. You can close the dialog while the preview loads. A late
 result is discarded. Confirmed installation remains protected from dismissal.
 
-SSH uses the desktop process's inherited `SSH_AUTH_SOCK` and known hosts.
-The importer disables SSH config and interactive prompts. If terminal Git uses
-an `IdentityAgent`, launch Buzz with that socket as `SSH_AUTH_SOCK`.
+SSH uses known hosts and, unless a [repository access rule](repository-access.md)
+selects another agent, the desktop process's inherited `SSH_AUTH_SOCK`. The importer
+disables SSH config and interactive prompts. If terminal Git uses an `IdentityAgent`,
+add a rule with that socket, or launch Buzz with it as `SSH_AUTH_SOCK`.
 
 A new installation completes identity setup before the app can show the linked
 preview. For a repository hosted by a Buzz community, select that community and
@@ -163,6 +164,8 @@ The CLI prints readable results and reports errors with a nonzero exit code.
 existing enabled state. `recover` backs up management settings and resets to
 bundled defaults, preserving artifacts for reinstallation. `managed` prints the
 [managed plugin policy](managed-plugins.md) and how each recommendation stands.
+`access [URL]` prints the [repository access rules](repository-access.md) and, for a
+URL, the rule, clone URL and agent socket a Git import would use.
 
 `--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
 also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
@@ -191,6 +194,44 @@ or install scripts. See [import behavior and limits](#loading-from-folders-and-r
 Browser installation is not supported; the browser shows a desktop-only explanation.
 An organization can recommend plugin sources through a policy file next to the profile
 folders; see [managed plugin sources](managed-plugins.md).
+
+## Git plugin updates
+
+A plugin declares support in its installed `manifest.json`:
+
+```json
+"updates": { "defaultEnabled": true }
+```
+
+`true` enables background checks by default. `false` requires the user to enable
+them. An absent `updates` declaration excludes the plugin from this mechanism.
+The user can change **Check for updates automatically** in the plugin's actions
+menu. Buzz saves the choice per installed plugin and preserves it across updates,
+rollback, and restart. A saved choice overrides the plugin default.
+
+The desktop shell checks eligible saved Git sources at startup and once per hour
+while Buzz is visible. `imports.checkGit` reads metadata without taking the import
+preview slot. Checks do not install, reload, or stop a plugin. Folder sources
+keep their existing update flow.
+
+A shell notice offers **Update and reload** when access does not increase.
+An increase in declared host access requires **Review permissions** and explicit
+confirmation in the existing access review. A publisher change also requires
+review and remains subject to native signing rules. **Later** hides the notice
+for the current app run and candidate. The update stays in the profile menu's
+**Plugins** submenu. A newer candidate can show a notice again.
+
+An update action fetches a fresh immutable preview. The importer checks access
+and publisher data from that preview before it applies the update. It checks
+the live source again before installation. A managed source retains its commit
+pin. A changed source or recommendation retires the pending action.
+
+Save unfinished forms and stop active plugin workers before confirmation.
+Installation preserves the enabled state. An enabled plugin reloads immediately
+through the existing manager. Checks, review, Later, and cancellation leave
+plugin work running. Failed checks and imports offer retry. An activation
+failure offers **Retry activation** and the existing plugin menu for rollback.
+The rollback confirmation and signing limits still apply.
 
 ## Emoji and reusable conversation UI
 
@@ -1837,14 +1878,12 @@ requires deleting the plugin and adding it again. Git checks remain explicit in 
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
 and `user@host:owner/repository.git` shorthand, including organization-specific
-usernames. On macOS, sources at `ssh://org-49461806@github.com/squareup/…` on
-port 22 use Block's agent when its socket exists at
-`~/Library/Application Support/block-ssh-agent/agent.sock`. When that socket exists,
-`https://github.com/squareup/…` sources are read over that SSH URL instead; the saved
-source keeps the HTTPS URL. Public Square repositories then also need a working agent. Other SSH sources use
-the desktop process's inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with
-interactive prompts and SSH config disabled. For another agent selected by
-`IdentityAgent` in SSH config, launch the app with that socket in `SSH_AUTH_SOCK`.
+usernames. [Repository access rules](repository-access.md) select the SSH user and
+agent socket for matching sources, and can read matching HTTPS sources over SSH; the
+saved source keeps the entered URL. Other SSH sources use the desktop process's
+inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with interactive prompts and SSH
+config disabled. For another agent selected by `IdentityAgent` in SSH config, add a
+rule with that socket, or launch the app with it in `SSH_AUTH_SOCK`.
 Each check reads metadata from its own temporary clone; only Update retains an
 immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
@@ -2146,7 +2185,7 @@ pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
 Invalid source shows Pele's error with the source.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -2175,6 +2214,22 @@ Channels, showing a thread is one visit to its channel for unread state, and
 that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
+
+`conversation.ui.Conversation({ session, scope, channelId, channelName?, threadId?, children })`
+gives a page's own `ui.Message` rows and `ui.Composer` for one channel the host
+behavior Channels rows have, without showing a thread or visiting the channel:
+mounting it never marks anything read, follows a thread or holds the channel's
+roster. `children(interactions)` receives the host's `onOpenLink`, `canOpenLink`
+and `onOpenMediaReview` for those rows. Inside it, rows offer Edit and Delete
+under the usual permissions; Edit fills the `ui.Composer` inside the same
+`ui.Conversation` (pass the rows it may edit as `editMessages`), and a row has
+no Edit without one. Delete asks for confirmation, and a failed edit or deletion
+shows a notice to retry or discard it before `children`. Media review and
+registered panels open over the page and stop opening once its session is no
+longer the ready one. Render one `ui.Conversation` per channel or card, so each
+card's edits and recovery stay its own; `threadId` keeps panels opened from a
+card in that thread. Writes, mark read/unread and follow remain explicit menu
+actions.
 
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.

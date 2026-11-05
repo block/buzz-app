@@ -2,28 +2,44 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import { highlightWhenSettled, onScreen } from "./message-highlight";
 import { readingPositioned } from "./use-reading";
 
-// Presses and clicks, counted from the first request. An opening may move
-// focus itself; a move the person makes while the target loads is theirs.
+// Presses and clicks, counted from the first request, and the element the
+// latest of them focused. A press moves focus within its own task (mousedown,
+// Tab); focus that arrives later, as an opening's handoff or a closing menu's
+// restore, is not the person's choice, whatever they pressed meanwhile.
 let inputs = 0;
+let pressing = 0;
+let chosen: { element: EventTarget | null; input: number } | undefined;
 let counting = false;
 const countInput = () => {
-  inputs++;
+  const input = ++inputs;
+  pressing = input;
+  setTimeout(() => {
+    if (pressing === input) pressing = 0;
+  });
 };
-const requests = new WeakMap<
-  AbortSignal,
-  { focus: Element | null; inputs: number }
->();
+const noteFocus = (event: FocusEvent) => {
+  if (pressing) chosen = { element: event.target, input: pressing };
+};
+const requests = new WeakMap<AbortSignal, number>();
 
-/** Records where focus was when a reveal request began. Owners that wait
- * before passing a request on call this when they first receive it. */
+/**
+ * Starts a reveal request. Its reveal leaves focus that a press or click made
+ * since, while focus is still there. The first call for a signal fixes the
+ * start; later calls are no-ops. The hook calls this when it receives a
+ * signal, so owners that hold a request before then call it on receipt: the
+ * channels page for a message visit, a retained thread before its retarget.
+ * Other requests start late: a conversation tab's or Inbox preview's reveal
+ * when its timeline mounts, and a visit made while the community is still
+ * connecting when the channel workspace mounts.
+ */
 export function beginReveal(signal: AbortSignal) {
   if (!counting) {
     counting = true;
     document.addEventListener("pointerdown", countInput, true);
     document.addEventListener("keydown", countInput, true);
+    document.addEventListener("focusin", noteFocus, true);
   }
-  if (!requests.has(signal))
-    requests.set(signal, { focus: document.activeElement, inputs });
+  if (!requests.has(signal)) requests.set(signal, inputs);
 }
 
 /** One reveal per request signal, never per row/profile/image update. */
@@ -120,13 +136,11 @@ export function useMessageReveal({
       // control after this request already focused a row successfully. Nor
       // does the first reveal take focus the person moved since the request.
       const start = requests.get(signal);
-      const active = document.activeElement;
       const moved =
-        !!start &&
-        inputs > start.inputs &&
-        !!active &&
-        active !== document.body &&
-        active !== start.focus;
+        start !== undefined &&
+        !!chosen &&
+        chosen.input > start &&
+        chosen.element === document.activeElement;
       let focusPending = false;
       if (
         focus &&

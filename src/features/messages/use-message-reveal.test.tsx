@@ -309,6 +309,59 @@ it("counts the person's move from when the request began, before the hook receiv
   expect(complete).toHaveBeenCalledTimes(2);
 });
 
+/** End the press's task, as the browser does before an opening's later work. */
+const nextTask = () =>
+  act(() => new Promise<void>((resolve) => setTimeout(resolve)));
+
+it.each([{ key: "Shift" }, { key: "Escape" }, { key: "Enter", repeat: true }])(
+  "takes focus an opening moves after a press that moved none (%o)",
+  async (key) => {
+    const { row, outside, complete } = mount();
+    fireEvent.keyDown(document.body, key);
+    await nextTask();
+    // The opening's own move, as a closing menu restoring its trigger.
+    outside.focus();
+    await frame();
+    await frame();
+    await frame();
+    expect(document.activeElement).toBe(row);
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it("takes focus an opening moves after a click focused the timeline", async () => {
+  const { row, outside, complete } = mount();
+  const scroller = row.parentElement as HTMLElement;
+  scroller.tabIndex = -1;
+  // Clicking message text focuses its scroller, not a control.
+  fireEvent.pointerDown(screen.getByText("Other"));
+  scroller.focus();
+  await nextTask();
+  outside.focus();
+  await frame();
+  await frame();
+  await frame();
+  expect(document.activeElement).toBe(row);
+  expect(complete).toHaveBeenCalledOnce();
+});
+
+it("takes focus moved by the press that began the request", async () => {
+  const { row, outside, complete, next } = mount();
+  await idle();
+  const request = new AbortController();
+  // Enter on a menu item opens the message, and the closing menu restores
+  // focus to its trigger within the same press.
+  fireEvent.keyDown(document.body, { key: "Enter" });
+  beginReveal(request.signal);
+  outside.focus();
+  next(request.signal);
+  await frame();
+  await frame();
+  await frame();
+  expect(document.activeElement).toBe(row);
+  expect(complete).toHaveBeenCalledTimes(2);
+});
+
 it("retries a focus attempt that did not acquire ownership", async () => {
   const { row, complete } = mount();
   const blocked = vi.spyOn(row, "focus").mockImplementation(() => {});

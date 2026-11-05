@@ -92,6 +92,14 @@ export interface RelayWriter {
     signal: AbortSignal,
   ): Promise<string> | Promise<void>;
 }
+/** Adding to an existing DM. A person joins it with its history only when
+ * `includeHistory`; otherwise they start a new DM of everyone. Agents always
+ * join it. */
+export type DirectMessageAddition = {
+  readonly channelId: string;
+  readonly includeHistory: boolean;
+};
+
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any
    * request after connecting: its sign-in ended, or it has no access. One
@@ -113,10 +121,13 @@ export interface ReadTransport {
     repository: string,
   ) => Promise<{ repository: string; token: string } | null>;
   readonly uploadAttachment?: AttachmentUpload;
-  /** Host-owned idempotent DM opening. The session verifies membership before use. */
+  /** Host-owned idempotent DM opening, or with `into`, adding `pubkeys` to that
+   * DM. Returns the DM the relay settled on; the session verifies membership
+   * before use. */
   readonly openDirectMessage?: (
     pubkeys: readonly string[],
     signal: AbortSignal,
+    into?: DirectMessageAddition,
   ) => Promise<string>;
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
@@ -690,16 +701,29 @@ export async function connectBrokerTransport(
           async openDirectMessage(
             pubkeys: readonly string[],
             signal: AbortSignal,
+            into?: DirectMessageAddition,
           ) {
             const result = await fetch(`${endpoint}/direct-message`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pubkeys }),
+              body: JSON.stringify(
+                into
+                  ? {
+                      pubkeys,
+                      channel: into.channelId,
+                      includeHistory: into.includeHistory,
+                    }
+                  : { pubkeys },
+              ),
               signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
             });
             if (!result.ok)
-              throw new Error("Could not open the direct message. Try again.");
+              throw new Error(
+                into
+                  ? "These people could not be added. Try again."
+                  : "Could not open the direct message. Try again.",
+              );
             const value = await result.json();
             if (
               typeof value?.channelId !== "string" ||

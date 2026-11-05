@@ -2510,6 +2510,51 @@ test("direct-message transport signs only bounded participants and binds the ret
   }
 });
 
+test("direct-message transport adds people to a DM with or without its history", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const h = await harness((call) =>
+    Response.json({
+      accepted: true,
+      event_id: call.body.id,
+      message: `response:${JSON.stringify({ channel_id: channelId })}`,
+    }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const person = "a".repeat(64);
+    for (const includeHistory of [true, false])
+      await expect(
+        transport.openDirectMessage([person], new AbortController().signal, {
+          channelId,
+          includeHistory,
+        }),
+      ).resolves.toBe(channelId);
+    const [grown, forked] = h.calls.map((call) => call.body);
+    expect(verifyEvent(grown)).toBe(true);
+    expect(grown.kind).toBe(41011);
+    expect(grown.tags.filter(([tag]) => tag !== "client")).toEqual([
+      ["h", channelId],
+      ["p", person],
+      ["history", "include"],
+    ]);
+    expect(forked.kind).toBe(41011);
+    expect(forked.tags.filter(([tag]) => tag !== "client")).toEqual([
+      ["h", channelId],
+      ["p", person],
+    ]);
+    for (const body of [
+      { pubkeys: [person], channel: "not-a-channel", includeHistory: true },
+      { pubkeys: [person], channel: channelId },
+      { pubkeys: [person], channel: channelId, includeHistory: "yes" },
+      { pubkeys: [person], includeHistory: true },
+    ])
+      expect((await h.post("direct-message", body)).status).toBe(400);
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
 test.each([
   {
     accepted: false,

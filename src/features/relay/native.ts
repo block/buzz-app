@@ -635,11 +635,14 @@ export async function connectNativeTransport(
           },
         }
       : {}),
-    async openDirectMessage(pubkeys, signal) {
+    async openDirectMessage(pubkeys, signal, into) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {
         community: origin,
         pubkeys,
+        ...(into
+          ? { channel: into.channelId, includeHistory: into.includeHistory }
+          : {}),
       });
       signal.throwIfAborted();
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))

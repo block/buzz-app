@@ -945,6 +945,37 @@ it("previews only the DM whose participants exactly match, in any order", async 
   expect(t.publish).not.toHaveBeenCalled();
 });
 
+it("previews a group DM of the same people even when it also holds an agent", async () => {
+  const t = setup();
+  groupHistory(t);
+  const bot = keypair();
+  t.events.unshift(
+    signed(bot, {
+      kind: 0,
+      content: JSON.stringify({ name: "Bot" }),
+      tags: [["auth", viewer.pubkey, "", "a".repeat(128)]],
+    }),
+  );
+  const at = t.events.findIndex(
+    (event) =>
+      event.kind === 39002 &&
+      event.tags.some(([name, value]) => name === "d" && value === group),
+  );
+  t.events[at] = roster(relay, group, [
+    viewer.pubkey,
+    other.pubkey,
+    another.pubkey,
+    bot.pubkey,
+  ]);
+  const owner = t.create();
+  t.mount(owner);
+  await owner.session.profiles.ensure([bot.pubkey]);
+  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await addRecipient(t, "Avery");
+  await showsHistory(owner, group, "Group history");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});
+
 it("never shows a previous match's history that finishes loading after an edit", async () => {
   const t = setup();
   groupHistory(t);

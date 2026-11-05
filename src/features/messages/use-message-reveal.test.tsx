@@ -274,6 +274,44 @@ it("takes focus the app handed to another control without the person's input", a
   expect(complete).toHaveBeenCalledOnce();
 });
 
+it.each(["Shift", "ArrowDown", "Escape"])(
+  "takes focus the app handed off when a key moved nothing (%s)",
+  async (key) => {
+    const { row, composer, complete } = mount();
+    await frame();
+    composer.focus();
+    fireEvent.keyDown(composer, { key });
+    fireEvent.keyUp(composer, { key });
+    await frame();
+    expect(document.activeElement).toBe(row);
+    await frame();
+    expect(complete).toHaveBeenCalledOnce();
+  },
+);
+
+it("leaves focus with a composer the app focused once the person types into it", async () => {
+  const { row, composer, complete } = mount();
+  const focus = vi.spyOn(row, "focus");
+  await frame();
+  composer.focus();
+  fireEvent.keyDown(composer, { key: "a" });
+  fireEvent(
+    composer,
+    new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: "a",
+    }),
+  );
+  await frame();
+  expect(row.scrollIntoView).toHaveBeenCalled();
+  expect(document.activeElement).toBe(composer);
+  expect(focus).not.toHaveBeenCalled();
+  await frame();
+  expect(complete).toHaveBeenCalledOnce();
+});
+
 it.each([false, true])(
   "preserves moved focus before verification (mutation: %s)",
   async (mutation) => {

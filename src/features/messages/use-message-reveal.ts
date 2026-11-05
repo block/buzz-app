@@ -55,7 +55,9 @@ export function useMessageReveal({
   );
   // Focus as each request arrives: the control that opened it, or none once
   // that control unmounted. Recorded before the target loads, however late,
-  // with whether the person has pressed a key or pointer since.
+  // with whether the person has since moved focus or typed into the focused
+  // control. A key or pointer press counts only once focus follows it, so a
+  // press that moves nothing (Shift, an arrow, Escape) is not a claim.
   const opener = useRef<{
     signal: AbortSignal;
     element: Element | null;
@@ -70,14 +72,27 @@ export function useMessageReveal({
         input: false,
       };
     const request = opener.current;
-    const input = () => {
-      request.input = true;
+    let pressed = false;
+    const press = () => {
+      pressed = true;
     };
-    document.addEventListener("pointerdown", input, true);
-    document.addEventListener("keydown", input, true);
+    const moved = () => {
+      if (pressed) request.input = true;
+    };
+    const typed = (event: Event) => {
+      if (event.target === document.activeElement) request.input = true;
+    };
+    const listeners = [
+      ["pointerdown", press],
+      ["keydown", press],
+      ["focusin", moved],
+      ["beforeinput", typed],
+    ] as const;
+    for (const [type, listener] of listeners)
+      document.addEventListener(type, listener, true);
     return () => {
-      document.removeEventListener("pointerdown", input, true);
-      document.removeEventListener("keydown", input, true);
+      for (const [type, listener] of listeners)
+        document.removeEventListener(type, listener, true);
     };
   }, [signal]);
   useLayoutEffect(() => {
@@ -118,10 +133,11 @@ export function useMessageReveal({
       });
       placed?.();
       settled.current = true;
-      // The first focus yields to a control the person moved to after the
-      // request arrived, such as the composer of a still-loading conversation,
-      // so their typing stays there. Focus handed off by the app meanwhile, or
-      // left on the opener or the surface around the scroller, is still taken.
+      // The first focus yields to a control the person moved to, or typed
+      // into, after the request arrived, such as the composer of a
+      // still-loading conversation, so their typing stays there. Focus handed
+      // off by the app meanwhile, or left on the opener or the surface around
+      // the scroller, is still taken.
       // A replacement may recover lost focus, but must not take it from
       // another control after this request already focused a row successfully.
       const active = document.activeElement;

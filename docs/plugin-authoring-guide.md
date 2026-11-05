@@ -46,7 +46,7 @@ export function apply(ctx) {
 - Plugin `id`: starts with a lowercase letter, then lowercase letters, digits, `.` and `-` only, at most 80 bytes, no empty segments (no `..`, `-.`, trailing `.`). No underscores. Ids of bundled plugins are reserved. `name`: 1-80 bytes. Updates match on `id`.
 - Contribution ids (page, panel, shortcut, settings card, sidebar section and its actions): `/^[a-z0-9][a-z0-9._-]*$/`, unique within the plugin. Hosts add the plugin identity, so ids are local.
 - Module evaluation must be pure: no work at top level. Do everything in `apply`. Enabled plugins activate even if their page is never opened.
-- Declare every service you use in `inject` (for example `["react", "pages", "shortcuts"]`). `apply` runs only once all are available. `sidebarSections` and `pluginInstaller` are optional services: read them with `ctx.reflect.get("name")` (returns `undefined` on older hosts) instead of listing them in `inject`.
+- Declare every service you use in `inject` (for example `["react", "pages", "shortcuts"]`). `apply` runs only once all are available. `sidebarSections`, `subjectLift` and `pluginInstaller` are optional services: read them with `ctx.reflect.get("name")` (returns `undefined` on older hosts) instead of listing them in `inject`.
 - Own every timer, listener, subscription or process with `ctx.effect(() => { start(); return () => stop(); })`. Cleanup runs on disable, replacement and app teardown. React effects inside components clean up when the page unmounts.
 - Everything you register is owned by the plugin and removed when it is disabled or replaced. A `register` call that throws on invalid fields fails activation; the error appears in Settings and `plugin_status`.
 - React state resets when the revision changes (a reload remounts the selected page). The module is evaluated once per revision per app session, so module-level variables survive a disable and enable of the same revision. There is no key-value storage API; `ctx.artifactStorage` is a structured IndexedDB store for synced artifacts.
@@ -67,6 +67,7 @@ export function apply(ctx) {
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
+| `subjectLift` (optional) | Lift a message image's subject | `const lift = ctx.reflect.get("subjectLift")`. `lift?.supports(source)`, then `await lift.lift(source, signal?)` resolves a transparent PNG `File` ready for `session.emoji.upload`, or rejects with a reason. `source` is `session.media(attachment.url)`. Mac app only; see the plugin architecture's Subject lift contract. |
 | `pluginInstaller` (optional) | Ask the owner to install another plugin | `await ctx.reflect.get("pluginInstaller")?.requestInstall({ repository, reference, path?, commit? })` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"`. It never installs silently. |
 
 ## Host access (`manifest.host`)
@@ -103,7 +104,7 @@ Add `"host"` to `inject`, then:
 ## Common mistakes
 
 - Adding `import ... from "react"` or any runtime import, or compiling JSX with the automatic runtime (`react/jsx-runtime`). Use `ctx.react` and classic `React.createElement`.
-- Forgetting a service in `inject` (`ctx.pages` is undefined and activation fails) or listing optional services (`sidebarSections`, `pluginInstaller`) there instead of using `ctx.reflect.get`.
+- Forgetting a service in `inject` (`ctx.pages` is undefined and activation fails) or listing optional services (`sidebarSections`, `subjectLift`, `pluginInstaller`) there instead of using `ctx.reflect.get`.
 - Doing work at module top level (it must be pure) or using `ctx.react` outside `apply`.
 - Starting timers, listeners or subscriptions without `ctx.effect` cleanup, so they leak across reloads.
 - A bundler emitting several chunks, CSS, or asset files. Only one `plugin.js` is loaded.

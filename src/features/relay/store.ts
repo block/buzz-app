@@ -456,7 +456,8 @@ export function createChannelStore(
       // viewer's own confirmed sends can carry rows from before the loaded
       // history. Showing one leaves a gap that a later page fills mid-list,
       // where the timeline can neither anchor the reader nor tell it from new
-      // arrivals. That page shows them instead.
+      // arrivals. That page shows them instead. Unconfirmed sends stay, since
+      // only their row offers Retry.
       const floor =
         (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
       const shown = (event: import("./events").EventData) =>
@@ -469,7 +470,9 @@ export function createChannelStore(
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
-      const own = (local?.snapshot() ?? []).filter((item) => shown(item.event));
+      const own = (local?.snapshot() ?? []).filter(
+        (item) => item.delivery !== "seen" || shown(item.event),
+      );
       for (const item of own)
         if (
           [9, 40002, 40008].includes(item.event.kind) &&

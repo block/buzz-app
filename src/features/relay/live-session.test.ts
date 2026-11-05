@@ -1643,12 +1643,14 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
 it("shows the viewer's own sends from before the loaded history only once paging reaches them", async () => {
   // The outbox keeps confirmed sends. One older than the head page must wait
   // for the older page, as every other row does: shown early, the reader
-  // scrolls up through their own messages with everyone else's missing.
+  // scrolls up through their own messages with everyone else's missing. A
+  // failed send stays, since only its row offers Retry.
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const mine = message(viewer, "c", "mine", 5),
+  const lost = message(viewer, "c", "lost", 3),
+    mine = message(viewer, "c", "mine", 5),
     before = message(alice, "c", "before", 4),
     after = message(alice, "c", "after", 6),
     seen = message(alice, "c", "seen", 10);
@@ -1665,7 +1667,10 @@ it("shows the viewer's own sends from before the loaded history only once paging
     {
       prepared: true,
       outboxStorage: {
-        load: () => [{ event: mine, delivery: "accepted" }],
+        load: () => [
+          { event: lost, delivery: "failed" },
+          { event: mine, signed: mine, delivery: "seen" },
+        ],
         save() {},
       },
     },
@@ -1692,7 +1697,7 @@ it("shows the viewer's own sends from before the loaded history only once paging
       }),
     ]);
     await flush();
-    expect(rows()).toEqual([seen.id]);
+    expect(rows()).toEqual([lost.id, seen.id]);
     // Other reads (profiles, outbox readback) answer empty.
     for (const entry of wire.pending.splice(0)) entry.respond([]);
     await flush();
@@ -1711,7 +1716,7 @@ it("shows the viewer's own sends from before the loaded history only once paging
       }),
     ]);
     await flush();
-    expect(rows()).toEqual([before.id, mine.id, after.id, seen.id]);
+    expect(rows()).toEqual([lost.id, before.id, mine.id, after.id, seen.id]);
   } finally {
     owner.dispose();
   }

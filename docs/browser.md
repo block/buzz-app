@@ -48,7 +48,10 @@ If the native exchange is unconfigured or its endpoint returns 404, the same
 account-isolated guest opens through browser login. Other errors stay closed.
 When the exchange refuses the viewer (403), the panel shows **You can’t open this
 app** with **Try again** in place of the website instead of the error bar. It
-gives no reason for the refusal.
+gives no reason for the refusal. When the exchange cannot be reached, fails on
+its side or answers malformed, the panel shows **Buzz couldn’t load this app**
+with **Try again** and **Open in browser**, which opens the app in the system
+browser through its own login.
 The guest stays blank until installation or this fallback finishes and its account lifetime is checked. No
 credential or generic cookie/header capability is exposed to the guest. Each
 account selects its own storage, kept across sign-ins and restarts so a browser

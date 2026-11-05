@@ -11,6 +11,7 @@ import {
   ArrowsClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  CloudOffIcon,
   DotsThreeIcon,
   LockIcon,
 } from "../../shared/design-system/icons/index";
@@ -121,6 +122,7 @@ export function BrowserHostView({
   const [localError, setLocalError] = useState<string | null>(null);
   // Shown in the viewport instead of the error bar when attach fails this way.
   const [page, setPage] = useState<BrowserViewerPage | null>(null);
+  const [openFailed, setOpenFailed] = useState(false);
 
   useEffect(() => {
     if (!editing.current && status.url) setDraft(status.url);
@@ -310,6 +312,7 @@ export function BrowserHostView({
       attachStarted = false;
       setLocalError(null);
       setPage(null);
+      setOpenFailed(false);
       begin();
     };
 
@@ -501,6 +504,40 @@ export function BrowserHostView({
                 >
                   Try again
                 </Button>
+              }
+            />
+          </div>
+        ) : page === "unavailable" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<CloudOffIcon />}
+              title="Buzz couldn’t load this app"
+              description={
+                openFailed
+                  ? "Couldn’t open it in your browser. Try again in a moment."
+                  : "Something went wrong reaching Builderlab. Try again, or open the app in your browser."
+              }
+              action={
+                <>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => retryAttach.current?.()}
+                  >
+                    Try again
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setOpenFailed(false);
+                      platform
+                        .openExternal(resumeUrl.current)
+                        .catch(() => setOpenFailed(true));
+                    }}
+                  >
+                    Open in browser
+                  </Button>
+                </>
               }
             />
           </div>

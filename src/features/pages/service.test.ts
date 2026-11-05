@@ -67,6 +67,34 @@ describe("page decoration validation", () => {
     return snapshot;
   }
 
+  it("copies valid replacement keys and rejects malformed navigation targets", async () => {
+    const keys = ["buzz.inbox/inbox"];
+    const [page] = await registerMain({ replaces: keys });
+    keys.push("buzz.other/main");
+    expect(page?.replaces).toEqual(["buzz.inbox/inbox"]);
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const pages = new PagesService(root);
+    for (const replaces of [
+      "buzz.inbox/inbox",
+      ["inbox"],
+      [1],
+      Array(9).fill("buzz.inbox/inbox"),
+    ])
+      expect(() =>
+        pages.register({
+          id: "main",
+          title: "Main",
+          component: () => null,
+          replaces,
+        } as never),
+      ).toThrow("Page replacements");
+    await root.fiber.dispose();
+  });
+
   it.each([undefined, "sidebar", "topbar", "toolbar"])(
     "preserves placement %j without changing the primary opt-in",
     async (placement) => {

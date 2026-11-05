@@ -2642,6 +2642,28 @@ export function createUnread({
   });
   return {
     capability,
+    /** Inbox history must stop before admitting a page that would reset retained evidence. */
+    canRetain(batch: readonly RelayEvent[]) {
+      const incoming = new Map(batch.map((event) => [event.id, event]));
+      const owners = channelOwnership(
+        (id) => incoming.get(id) ?? events.get(id),
+      );
+      let count = events.size;
+      let size = bytes;
+      for (const event of incoming.values()) {
+        if (
+          ![9, 40002, 40008, 40003, 5, 9005].includes(event.kind) ||
+          events.has(event.id)
+        )
+          continue;
+        const channels = owners(event);
+        if (!channels || [...channels].some((channel) => !allowed(channel)))
+          continue;
+        count++;
+        size += new TextEncoder().encode(JSON.stringify(event)).byteLength;
+      }
+      return count <= 4096 && size <= 8 * 1024 * 1024;
+    },
     // Private session evidence lookup; never seeds timeline windows or grants access.
     // Reference-only auxiliaries inherit every owning channel through the same
     // bounded, fail-closed ancestry used for retention.

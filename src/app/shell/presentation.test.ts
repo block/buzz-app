@@ -35,6 +35,23 @@ const inbox = page("buzz.inbox/inbox", "Inbox");
 const bestie = page("buzz.bestie/bestie", "Bestie");
 const projects = page("fixture.projects/projects", "Projects");
 
+test("a replacement hides navigation only while its primary contribution is active", () => {
+  const tabs = {
+    ...page("prashant.inbox-tabs/main", "Inbox Tabs"),
+    primary: true,
+    replaces: [inbox.key],
+  };
+  const registry = [messages, inbox, tabs];
+  expect(orderPages(registry).map((p) => p.key)).toEqual([
+    messages.key,
+    tabs.key,
+  ]);
+  expect(registry).toContain(inbox); // Original routes and shortcuts remain registered.
+  expect(orderPages([inbox], registry)).toEqual([]); // Replacement can be in another placement.
+  expect(orderPages([messages, inbox])).toContain(inbox);
+  expect(orderPages([inbox, { ...tabs, primary: false }])).toContain(inbox);
+});
+
 test("bundled page order ignores activation order without mutating the registry", () => {
   const input = Object.freeze([projects, bestie, messages, inbox]);
   expect(orderPages(input)).toEqual([messages, inbox, bestie, projects]);

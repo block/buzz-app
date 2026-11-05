@@ -345,6 +345,17 @@ again. Remove is unavailable once delivery owns the message; use its delivery
 recovery controls instead. A save or recovery error keeps the draft or queued row
 available rather than silently discarding it.
 
+## Inbox extensions
+
+An Inbox plugin can offer **Load older** to scan another batch of accessible
+messages. A batch can contain no matching entries while more history remains.
+Loading stops at the device retention limit and preserves existing entries.
+Refresh restarts the scan from recent activity; it does not clear read status.
+
+A plugin can replace another page's navigation entry while enabled. The original
+page remains reachable by its links and shortcuts. Its navigation entry returns
+when the replacement is disabled, provided the original plugin is still enabled.
+
 ## Choosing and customizing agents
 
 - Buzz supports different agent types, including Claude, Codex, Goose, and Pi.

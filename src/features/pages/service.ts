@@ -47,6 +47,9 @@ export type Page = Readonly<{
    * listed in search and reachable by deep link or from another page.
    */
   primary?: boolean;
+  /** Hide these contribution keys from navigation while this primary page is active.
+   * Target pages remain enabled and addressable; disposal restores their entries. */
+  replaces?: readonly string[];
   /** Preferred navigation location for a primary page; omitted means sidebar.
    * The host may move header entries into an overflow menu when space is tight.
    */
@@ -119,9 +122,31 @@ export class PagesService extends Service implements Pages {
         typeof page.route.validate !== "function")
     )
       throw new Error("Invalid page route contract");
+    if (
+      page.replaces !== undefined &&
+      (!Array.isArray(page.replaces) ||
+        page.replaces.length > 8 ||
+        page.replaces.some(
+          (key) =>
+            typeof key !== "string" ||
+            !/^[a-z0-9][a-z0-9._-]{0,127}\/[a-z0-9][a-z0-9._-]{0,127}$/.test(
+              key,
+            ),
+        ))
+    )
+      throw new Error(
+        "Page replacements must name at most eight contribution keys",
+      );
     this.contributions.register(
       this.ctx,
-      this.withAcceptedPlacement(this.withAcceptedIcon(page)),
+      this.withAcceptedPlacement(
+        this.withAcceptedIcon({
+          ...page,
+          ...(page.replaces
+            ? { replaces: Object.freeze([...page.replaces]) }
+            : {}),
+        }),
+      ),
     );
   }
   private withAcceptedPlacement(page: Page): Page {

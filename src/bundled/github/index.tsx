@@ -61,7 +61,9 @@ import { PullFiles } from "./PullFiles";
 import { AuthorSettings } from "./AuthorSettings";
 import { GitHubHooks } from "./GitHubHooks";
 import { PullCard } from "./PullCard";
-import { announcedUrl } from "./relay-pull";
+import { announcedUrl, isAnnouncement } from "./relay-pull";
+import { startPublisher } from "./publisher";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { createPullSources } from "./relay-pulls";
 import type { ChannelSummary } from "../../features/relay/contracts";
 
@@ -78,6 +80,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const sources = createPullSources(ctx.relay);
   ctx.effect(() => () => sources.dispose());
   const states = createPullStates(gh, sources);
+  const nameOf = (pubkey: string) => {
+    const state = ctx.relay.snapshot();
+    return (
+      (state.status === "ready"
+        ? state.session.profiles.snapshot().get(pubkey)?.name
+        : undefined) ??
+      formatPublicKey(pubkey) ??
+      "a member"
+    );
+  };
+  ctx.effect(() => startPublisher(ctx.relay, gh));
   const pulls = new WeakMap<RelaySession, SoloPulls>();
   const pullsFor = (session: RelaySession) => {
     let found = pulls.get(session);
@@ -143,19 +156,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerMessage({
     id: "pull-card",
     title: "Pull request card",
+    // A publisher's announcement is an ordinary member's message, so its
+    // exact shape claims it; the card shows that publisher's record only.
     matches: (message) => {
       const state = ctx.relay.snapshot();
-      return (
-        state.status === "ready" &&
-        !!state.session.relayAuthor &&
-        (message.signerId ?? message.authorId) === state.session.relayAuthor &&
-        !!announcedUrl(message.content)
-      );
+      if (state.status !== "ready") return false;
+      const relayAuthor = state.session.relayAuthor;
+      return relayAuthor &&
+        (message.signerId ?? message.authorId) === relayAuthor
+        ? !!announcedUrl(message.content)
+        : isAnnouncement(message.content);
     },
     component: ({ message, open, canOpen }) => (
       <PullCard
         message={message}
         sources={sources}
+        nameOf={nameOf}
         open={open}
         canOpen={canOpen}
       />

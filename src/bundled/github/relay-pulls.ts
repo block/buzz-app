@@ -1,15 +1,18 @@
-// The pull requests the relay follows for the channels shown: each channel's
-// current `buzz.github.pull` artifacts, kept current by NIP-AR sync and
-// trusted only when the relay itself signed them.
+// The pull requests followed in the channels shown: each channel's current
+// `buzz.github.pull` and `buzz.github.hook` artifacts, kept current by NIP-AR
+// sync. A card is trusted when the relay signed it, or the publisher of the
+// live hook it names did.
 import type { VerifiedEvent } from "nostr-tools";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ARTIFACT_REVISION_KIND } from "../../features/relay/artifact-sync";
+import { HOOK_TYPE, parseHook, type Hook } from "./hooks";
 import { keyOf, type PullSource } from "./pull-states";
 import {
   PULL_TYPE,
-  parseRecord,
+  parseCard,
   pullStateOf,
+  trust,
   type PullRecord,
 } from "./relay-pull";
 
@@ -21,7 +24,8 @@ export type RelayPulls = Readonly<{
   /** Syncs `channel`'s pull requests while watched, and a while after. */
   watch(channel: string): () => void;
   subscribe(listener: () => void): () => void;
-  /** The newest pull request record for a canonical URL. */
+  /** The newest pull request record for a canonical URL, the relay's own
+   * ahead of any publisher's. */
   byUrl(url: string): PullRecord | undefined;
   /** The record rooted on the relay's announcement `id`. */
   byRoot(id: string): PullRecord | undefined;
@@ -38,30 +42,60 @@ type Synced = {
 export function createRelayPulls(session: RelaySession): RelayPulls {
   const listeners = new Set<() => void>();
   const synced = new Map<string, Synced>();
-  const parsed = new WeakMap<VerifiedEvent, PullRecord | null>();
+  // Cards are parsed once each; trust is decided again on every rebuild,
+  // since it follows the hooks.
+  const cards = new WeakMap<VerifiedEvent, PullRecord | null>();
+  const trusted = new WeakMap<PullRecord, PullRecord>();
   let urls = new Map<string, PullRecord>();
   let roots = new Map<string, PullRecord>();
-  const recordOf = (event: VerifiedEvent) => {
-    let record = parsed.get(event);
-    if (record === undefined) {
-      record = parseRecord(event, session.relayAuthor) ?? null;
-      parsed.set(event, record);
+  const cardOf = (event: VerifiedEvent) => {
+    let card = cards.get(event);
+    if (card === undefined) {
+      card = parseCard(event) ?? null;
+      cards.set(event, card);
     }
-    return record ?? undefined;
+    return card ?? undefined;
+  };
+  /** The same object for the same trusted card, so an unchanged rebuild
+   * notifies no one. */
+  const stable = (card: PullRecord, record: PullRecord) => {
+    if (record === card) return card;
+    const held = trusted.get(card);
+    if (held && held.publisher === record.publisher) return held;
+    trusted.set(card, record);
+    return record;
+  };
+  const rank = (record: PullRecord) =>
+    [record.publisher ? 0 : 1, record.createdAt] as const;
+  const outranks = (a: PullRecord, b: PullRecord) => {
+    const [x, y] = [rank(a), rank(b)];
+    return x[0] !== y[0] ? x[0] > y[0] : x[1] > y[1];
   };
   const rebuild = () => {
     const nextUrls = new Map<string, PullRecord>();
     const nextRoots = new Map<string, PullRecord>();
-    for (const { view } of synced.values())
-      for (const event of view.snapshot().events) {
-        const record = recordOf(event);
-        if (!record) continue;
-        const key = keyOf(record.pull.url);
-        const held = key ? nextUrls.get(key) : undefined;
-        if (key && (!held || held.createdAt < record.createdAt))
-          nextUrls.set(key, record);
-        if (record.root) nextRoots.set(record.root, record);
-      }
+    const hooks = new Map<string, Hook>();
+    const events = [...synced.values()].flatMap(
+      ({ view }) => view.snapshot().events,
+    );
+    for (const event of events) {
+      const hook = parseHook(event);
+      const channel = event.tags.find((entry) => entry[0] === "h")?.[1];
+      if (hook && channel) hooks.set(`${channel}\0${hook.d}`, hook);
+    }
+    const hookOf = (channel: string, d: string) =>
+      hooks.get(`${channel}\0${d}`);
+    for (const event of events) {
+      const card = cardOf(event);
+      const vouched =
+        card && trust(card, event.pubkey, session.relayAuthor, hookOf);
+      if (!card || !vouched) continue;
+      const record = stable(card, vouched);
+      const key = keyOf(record.pull.url);
+      const held = key ? nextUrls.get(key) : undefined;
+      if (key && (!held || outranks(record, held))) nextUrls.set(key, record);
+      if (record.root) nextRoots.set(record.root, record);
+    }
     const same = (a: Map<string, PullRecord>, b: Map<string, PullRecord>) =>
       a.size === b.size &&
       [...a].every(([key, record]) => b.get(key) === record);
@@ -88,7 +122,7 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
             artifact: "current",
             kinds: [ARTIFACT_REVISION_KIND],
             "#h": [channel],
-            "#type": [PULL_TYPE],
+            "#type": [PULL_TYPE, HOOK_TYPE],
           });
           entry = { view, stop: view.subscribe(rebuild), readers: 0 };
           synced.set(channel, entry);

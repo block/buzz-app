@@ -1,6 +1,8 @@
 // A channel follows a GitHub repository by holding a `buzz.github.hook`
-// artifact: the repository and the webhook's secret, which only the relay can
-// read. The relay posts each pull request to the channel as GitHub reports it.
+// artifact. Either it holds the webhook's secret, which only the relay can
+// read, and the relay posts each pull request as GitHub reports it; or it
+// names its author as the publisher, whose own Buzz reads GitHub and posts
+// them (publisher.ts).
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   ARTIFACT_KIND,
@@ -21,6 +23,7 @@ export const HOOK_EVENTS = [
 ] as const;
 
 const REPOSITORY = /^[\w.-]+\/[\w.-]+$/;
+const PUBKEY = /^[0-9a-f]{64}$/;
 
 export type Hook = Readonly<{
   /** The artifact's `d`, which names the webhook's URL. */
@@ -28,6 +31,12 @@ export type Hook = Readonly<{
   repo: string;
   /** The revision holding it, so a change builds on it. */
   head: string;
+  author: string;
+  /** When the head was written, in Unix seconds. */
+  createdAt: number;
+  /** Who posts its pull requests from their own Buzz; absent when the relay
+   * does. Only ever the hook's own author. */
+  publisher?: string | undefined;
 }>;
 
 const tag = (event: EventData, name: string) =>
@@ -54,7 +63,17 @@ export function parseHook(event: EventData): Hook | undefined {
     repositoryOf(repo) !== repo
   )
     return undefined;
-  return { d, repo, head: event.id };
+  const publisher = tag(event, "publisher");
+  return {
+    d,
+    repo,
+    head: event.id,
+    author: event.pubkey,
+    createdAt: event.created_at,
+    ...(publisher &&
+      PUBKEY.test(publisher) &&
+      publisher === event.pubkey && { publisher }),
+  };
 }
 
 /** Where GitHub posts the repository's webhook: the community's own host. */
@@ -99,6 +118,7 @@ type Revision = Readonly<{
   prev?: string | undefined;
   repo: string;
   content?: { secret: string };
+  publisher?: string | undefined;
 }>;
 
 async function save(
@@ -108,7 +128,7 @@ async function save(
 ) {
   const writer = session.configArtifactWriter;
   if (!writer) throw new Error("This community connection can't save hooks.");
-  const { d, channel, op, prev, repo, content } = revision;
+  const { d, channel, op, prev, repo, content, publisher } = revision;
   const event = await writer.sign(
     {
       kind: ARTIFACT_KIND,
@@ -124,6 +144,7 @@ async function save(
         ["op", op],
         ...(prev ? [["prev", prev]] : []),
         ...(op === "delete" ? [] : [["repo", repo]]),
+        ...(op !== "delete" && publisher ? [["publisher", publisher]] : []),
       ],
     },
     signal,
@@ -170,6 +191,22 @@ export async function follow(
     signal,
   );
   return { d, secret };
+}
+
+/** Follows `repo` in `channel` with the person's own Buzz as its publisher:
+ * no webhook, so it works wherever the relay can't hear GitHub, but only
+ * while that Buzz is open. */
+export async function followFromDevice(
+  session: RelaySession,
+  channel: string,
+  repo: string,
+  signal = AbortSignal.timeout(20_000),
+) {
+  const publisher = session.viewer;
+  if (!publisher) throw new Error("Your key is not known yet.");
+  const d = crypto.randomUUID();
+  await save(session, { d, channel, op: "create", repo, publisher }, signal);
+  return d;
 }
 
 /** Gives `hook` a new secret, to give GitHub in place of the old. */

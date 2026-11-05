@@ -4,6 +4,7 @@ import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import {
   follow,
+  followFromDevice,
   HOOK_TYPE,
   newSecret,
   parseHook,
@@ -117,9 +118,43 @@ it("follows a repository by creating a hook artifact whose secret only the relay
   expect(publish).toHaveBeenCalledOnce();
 });
 
+it("follows from this device with no secret, naming the viewer as its publisher", async () => {
+  const { session: held, sign, publish } = session();
+  (held as { viewer?: string }).viewer = "c".repeat(64);
+  const d = await followFromDevice(held, channel, "block/buzz");
+  const template = signed(sign);
+  expect(template.tags).toEqual([
+    ["ar", "1"],
+    ["d", d],
+    ["h", channel],
+    ["type", HOOK_TYPE],
+    ["title", "block/buzz"],
+    ["op", "create"],
+    ["repo", "block/buzz"],
+    ["publisher", "c".repeat(64)],
+  ]);
+  expect(JSON.parse(template.content)).toEqual({
+    version: 1,
+    repo: "block/buzz",
+  });
+  expect(publish).toHaveBeenCalledOnce();
+
+  const anonymous = session();
+  await expect(
+    followFromDevice(anonymous.session, channel, "block/buzz"),
+  ).rejects.toThrow("not known");
+  expect(anonymous.sign).not.toHaveBeenCalled();
+});
+
 it("regenerates a hook's secret as an update on its head", async () => {
   const { session: held, sign } = session();
-  const hook: Hook = { d: "hook-d", repo: "block/buzz", head };
+  const hook: Hook = {
+    d: "hook-d",
+    repo: "block/buzz",
+    head,
+    author: "c".repeat(64),
+    createdAt: 1,
+  };
   const secret = await regenerate(held, origin, sealer(), channel, hook);
   const template = signed(sign);
   expect(tags(template, "op")).toEqual(["update"]);
@@ -135,7 +170,13 @@ it("regenerates a hook's secret as an update on its head", async () => {
 
 it("unfollows with a delete revision that carries no title or content", async () => {
   const { session: held, sign } = session();
-  await unfollow(held, channel, { d: "hook-d", repo: "block/buzz", head });
+  await unfollow(held, channel, {
+    d: "hook-d",
+    repo: "block/buzz",
+    head,
+    author: "c".repeat(64),
+    createdAt: 1,
+  });
   const template = signed(sign);
   expect(template.content).toBe("");
   expect(template.tags).toEqual([
@@ -171,7 +212,13 @@ it("saves nothing when the secret cannot be sealed, the relay is unknown, or the
     unread.session.snapshotRead as unknown as ReturnType<typeof vi.fn>
   ).mockResolvedValue([]);
   await expect(
-    unfollow(unread.session, channel, { d: "hook-d", repo: "x/y", head }),
+    unfollow(unread.session, channel, {
+      d: "hook-d",
+      repo: "x/y",
+      head,
+      author: "c".repeat(64),
+      createdAt: 1,
+    }),
   ).rejects.toThrow("could not be read");
   expect(unread.sign).not.toHaveBeenCalled();
 });
@@ -205,7 +252,21 @@ it("lists a hook only from a well formed hook artifact", () => {
     d: "hook-d",
     repo: "block/buzz",
     head,
+    author: "c".repeat(64),
+    createdAt: 1,
   });
+  expect(
+    parseHook(
+      event({
+        pubkey: "c".repeat(64),
+        tags: [...event().tags, ["publisher", "c".repeat(64)]],
+      }),
+    )?.publisher,
+  ).toBe("c".repeat(64));
+  expect(
+    parseHook(event({ tags: [...event().tags, ["publisher", "9".repeat(64)]] }))
+      ?.publisher,
+  ).toBeUndefined();
   expect(parseHook(event({ kind: 9 }))).toBeUndefined();
   expect(
     parseHook(

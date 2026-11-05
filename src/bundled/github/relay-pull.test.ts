@@ -1,6 +1,12 @@
 import { expect, it } from "vitest";
 import type { EventData } from "../../features/relay/events";
-import { announcedUrl, parseRecord, pullStateOf } from "./relay-pull";
+import type { Hook } from "./hooks";
+import {
+  announcedUrl,
+  isAnnouncement,
+  parseRecord,
+  pullStateOf,
+} from "./relay-pull";
 
 const relay = "a".repeat(64);
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -197,4 +203,62 @@ it("finds the pull request URL an announcement links", () => {
   expect(announcedUrl("https://github.com/block/buzz-app/issues/7")).toBe(
     undefined,
   );
+});
+
+it("trusts a publisher's revision only for the live hook that names them, in its channel and repository", () => {
+  const mike = "c".repeat(64);
+  const hook: Hook = {
+    d: "hook-d",
+    repo: "block/buzz-app",
+    head: "1".repeat(64),
+    author: mike,
+    createdAt: 1,
+    publisher: mike,
+  };
+  const hooks = new Map([[`${channel}\0hook-d`, hook]]);
+  const hookOf = (at: string, d: string) => hooks.get(`${at}\0${d}`);
+  const signed = (body: unknown = content, extra: Partial<EventData> = {}) =>
+    event(body, { pubkey: mike, ...extra }, [["hook", "hook-d"]]);
+
+  expect(parseRecord(signed(), relay, hookOf)).toMatchObject({
+    publisher: mike,
+    hook: "hook-d",
+    pull: { url, state: "open" },
+  });
+  expect(parseRecord(signed(), relay)).toBeUndefined();
+  expect(
+    parseRecord(signed(content, { pubkey: "9".repeat(64) }), relay, hookOf),
+  ).toBeUndefined();
+  expect(
+    parseRecord(signed({ ...content, repo: "block/other" }), relay, hookOf),
+  ).toBeUndefined();
+  expect(
+    parseRecord(
+      signed({
+        ...content,
+        url: "https://github.com/block/other/pull/7",
+      }),
+      relay,
+      hookOf,
+    ),
+  ).toBeUndefined();
+  expect(
+    parseRecord(signed(), relay, (at, d) =>
+      at === channel && d === "hook-d"
+        ? { ...hook, publisher: undefined }
+        : undefined,
+    ),
+  ).toBeUndefined();
+  expect(parseRecord(signed(), relay, () => undefined)).toBeUndefined();
+  expect(parseRecord(event(), relay, hookOf)?.publisher).toBeUndefined();
+});
+
+it("knows an announcement only by its exact shape", () => {
+  expect(isAnnouncement(`#7 · Add the card\n${url}`)).toBe(true);
+  expect(isAnnouncement(`#8 · Add the card\n${url}`)).toBe(false);
+  expect(isAnnouncement(`#7 · Add the card\n${url} thanks`)).toBe(false);
+  expect(isAnnouncement(`see #7 · Add the card\n${url}`)).toBe(false);
+  expect(
+    isAnnouncement("#7 · x\nhttps://github.com.evil.example/a/b/pull/7"),
+  ).toBe(false);
 });

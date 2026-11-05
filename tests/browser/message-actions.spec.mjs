@@ -699,13 +699,18 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
       const { x, y, width, height } = range.getBoundingClientRect();
       return { x, y, width, height };
     });
-  // End inside the link's last fragment: when it wraps, the center of its
-  // union box can fall between lines.
-  const end = await link.evaluate((node) => {
-    const fragments = Array.from(node.getClientRects());
-    const { right, top, height } = fragments[fragments.length - 1];
-    return { x: right - 1, y: top + height / 2 };
-  });
+  // Aim at one of the link's line fragments: when it wraps, its union box
+  // includes prose before the first line and gaps between lines.
+  const fragmentPoint = (which) =>
+    link.evaluate((node, which) => {
+      const fragments = Array.from(node.getClientRects());
+      const rect = fragments[which === "first" ? 0 : fragments.length - 1];
+      return {
+        x: which === "first" ? rect.left + rect.width / 2 : rect.right - 1,
+        y: rect.top + rect.height / 2,
+      };
+    }, which);
+  const end = await fragmentPoint("last");
   await page.mouse.move(prose.x + 1, prose.y + 1);
   await expect(actions).toHaveCSS("opacity", "1");
   await page.mouse.down();
@@ -727,7 +732,18 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
       { once: true },
     );
   });
-  await link.click({ position: { x: 10, y: 1 } });
+  const first = await fragmentPoint("first");
+  await page.mouse.move(first.x, first.y);
+  await expect
+    .poll(() =>
+      link.evaluate(
+        (node, { x, y }) => node.contains(document.elementFromPoint(x, y)),
+        first,
+      ),
+    )
+    .toBe(true);
+  await page.mouse.down();
+  await page.mouse.up();
   await expect(link).toHaveAttribute("data-clicked", "true");
   // Chromium retains focus on the clicked link. Return to the composer.
   await page

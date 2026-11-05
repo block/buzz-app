@@ -708,6 +708,21 @@ it.each(["sidebar", "topbar"] as const)(
         ).toBeVisible();
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         expect(inbox).toHaveFocus();
+        // Pressed Inbox, then pressed Home: when an arrow key moves roving
+        // focus back, the earlier press no longer hides Inbox's label.
+        view.rerender(shell("example/Home"));
+        const home = within(nav).getByRole(role, { name: "Home" });
+        await user.click(home);
+        await user.unhover(home);
+        await waitFor(() =>
+          expect(screen.queryByRole("tooltip", { name: "Inbox" })).toBeNull(),
+        );
+        await user.keyboard("{ArrowDown}");
+        expect(inbox).toHaveFocus();
+        expect(
+          await screen.findByRole("tooltip", { name: "Inbox" }),
+        ).toBeVisible();
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       } else {
         expect(within(nav).getByRole(role, { name: "Inbox" })).toHaveAttribute(
           "title",

@@ -158,6 +158,7 @@ that agent in Buzz; they do not notify the external app through this connection.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
+- **Reactions history**: in Inbox, choose **Reactions** from the filter menu to see other people's reactions to your messages in joined, active channels. Select a row to open the original message. Use **Refresh reactions** for new reactions and **Load older reactions** to scan older history. This view does not add unread badges or desktop alerts.
 - **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
   replied in, or follow. Solo chats appear under All, not DMs; their nested threads stay separate. Agent-only
   coordination stays out. If loading fails, use **Retry inbox** on the page or

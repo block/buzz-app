@@ -3844,7 +3844,7 @@ it("combines the existing filter choices without placeholder actions", async () 
     expect(
       within(menu).getByRole("menuitemradio", { name }),
     ).toBeInTheDocument();
-  for (const name of ["Projects", "Needs action", "Reactions"])
+  for (const name of ["Projects", "Needs action"])
     expect(within(menu).queryByRole("menuitemradio", { name })).toBeNull();
   await user.keyboard("{Escape}");
   expect(trigger).toHaveFocus();

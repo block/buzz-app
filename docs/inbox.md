@@ -295,3 +295,11 @@ Common splitter checks stay in Inbox; Drafts keeps cross-view width, header
 alignment, narrow sizing, editing and modal/focus coverage. No browser cases were
 removed. Human confirmation and required review remain open; local synthetic
 checks do not attest native/live acceptance.
+
+## Reactions history
+
+The Reactions filter opens a separate, newest-first history of reactions to the viewer's own messages. It reuses NavigationItem, Avatar, ReactionGlyph and the existing conversation tab target. Choosing a row opens the exact original message, including replies. Own reactions are excluded. Sender, archive and unread controls do not apply; reaction history has no read-state or notification side effects.
+
+`session.reactionHistory` owns verified remote discovery and original-message hydration. Ordinary reads deliberately hide auxiliary events whose originals are not loaded. The session keeps that raw evidence private, checks original ownership and access, applies edits and deletions, and fences the result against access changes and disposal. Older clients omit recipient tags, so each page scans up to 100 reactions across admitted channels. A page can have no matching reactions while still offering older history. Reference-only deletion events are supported.
+
+The view loads on entry and refreshes explicitly. Load older reactions continues using the raw page cursor; duplicate reactions from the same person to the same message and emoji display once. Membership changes cancel the active read and retire its displayed rows. This is history, not a live notification feed.

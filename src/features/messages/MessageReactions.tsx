@@ -135,7 +135,7 @@ export function MessageReactionControls(props: Props) {
   );
 }
 
-function ReactionGlyph({
+export function ReactionGlyph({
   reaction,
   session,
 }: {

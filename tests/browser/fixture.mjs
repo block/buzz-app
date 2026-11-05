@@ -1590,6 +1590,27 @@ export const test = base.extend({
                 )),
           )
           .slice(0, filter.limit);
+      if (filter.kinds?.length === 1 && filter.kinds[0] === 7 && filter["#h"]) {
+        return (community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              event.kind === 7 &&
+              event.tags.some(
+                ([key, value]) => key === "h" && filter["#h"].includes(value),
+              ),
+          )
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      }
       if (
         filter["#e"] &&
         filter.kinds?.every((kind) => [5, 7, 9005, 39005, 40003].includes(kind))
@@ -2813,6 +2834,21 @@ export const test = base.extend({
               if (client.channels.includes(channel))
                 client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           }
+          return event;
+        },
+        serveReaction(target) {
+          const channel = target.tags.find(([key]) => key === "h")[1];
+          const event = sign(
+            7,
+            [
+              ["h", channel],
+              ["e", target.id],
+            ],
+            "✅",
+            peerKey,
+            target.created_at + 1,
+          );
+          targetEvents.push(event);
           return event;
         },
         deleteTarget(target = exact.target) {

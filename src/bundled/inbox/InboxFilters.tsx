@@ -20,13 +20,19 @@ import {
 } from "../../shared/design-system/icons";
 
 export type ShowFilter = "inbox" | "archived";
-export type ActivityFilter = "all" | "threads" | "mentions" | "dms";
+export type ActivityFilter =
+  | "all"
+  | "threads"
+  | "mentions"
+  | "dms"
+  | "reactions";
 export type SenderFilter = "everyone" | "humans" | "agents";
 const views = [
   { value: "all", label: "All" },
   { value: "threads", label: "Threads" },
   { value: "mentions", label: "Mentions" },
   { value: "dms", label: "DMs" },
+  { value: "reactions", label: "Reactions" },
   { value: "drafts", label: "Drafts" },
 ] as const;
 
@@ -52,7 +58,7 @@ export function InboxFilters({
   onUnreadChange(checked: boolean): void;
 }) {
   const selectionId = useId();
-  const drafts = view === "drafts";
+  const drafts = view === "drafts" || view === "reactions";
   const label = views.find((item) => item.value === view)?.label;
   const summary = drafts
     ? label

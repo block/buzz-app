@@ -14,6 +14,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import { ReactionHistory } from "./ReactionHistory";
 import { DraftsView } from "./DraftsView";
 import type {
   ConversationExtensions,
@@ -89,6 +90,7 @@ const activities = [
   { value: "dms", label: "DMs" },
   { value: "threads", label: "Threads" },
   { value: "mentions", label: "Mentions" },
+  { value: "reactions", label: "Reactions" },
 ] as const;
 const senders = [
   { value: "everyone", label: "Everyone" },
@@ -156,6 +158,8 @@ const matchesActivity = (
       return item.mentioned;
     case "threads":
       return item.thread;
+    case "reactions":
+      return false;
   }
 };
 const targetOf = (item: InboxItem) => ({
@@ -892,7 +896,14 @@ function InboxList({
   const canRead = sync.capability === "frontier-sync";
   // The Archive shortcut acts on the conversation opened last.
   useLayoutEffect(() => {
-    if (!archiveShortcut || !selected || pending || drafts) return;
+    if (
+      !archiveShortcut ||
+      !selected ||
+      pending ||
+      drafts ||
+      activity === "reactions"
+    )
+      return;
     const current = () => archive(selected, !archived(selected));
     archiveShortcut.current = current;
     return () => {
@@ -943,7 +954,7 @@ function InboxList({
           setFilter({ attention: checked ? "unread" : "all" })
         }
       />
-      {!drafts && (
+      {!drafts && activity !== "reactions" && (
         <div className={styles.headerTitle}>
           {loading && (
             <span
@@ -964,7 +975,7 @@ function InboxList({
       data-buzz-ui=""
       className={styles.page}
     >
-      {!drafts && failure && (
+      {!drafts && activity !== "reactions" && failure && (
         <div className={styles.notice} role="alert">
           <p className="text-body">{failure}</p>
           <Button ref={retryButton} size="sm" loading={pending} onClick={retry}>
@@ -972,7 +983,12 @@ function InboxList({
           </Button>
         </div>
       )}
-      {drafts ? (
+      {!drafts && activity === "reactions" ? (
+        <>
+          {toolbar}
+          <ReactionHistory session={session} open={openTab} />
+        </>
+      ) : drafts ? (
         <DraftsView
           toolbar={toolbar}
           resizeHandle={split.handle}

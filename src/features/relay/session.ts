@@ -1,5 +1,6 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { readReactionPage, type ReactionCursor } from "./reaction-history";
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -2639,6 +2640,67 @@ export function createRelaySession(
       finiteRead(undefined, settings, (signal) =>
         searchProfiles(query, { ...settings, signal }),
       ),
+    /** Resolve reaction targets privately before exposing history. Ordinary reads
+     * intentionally withhold orphan auxiliaries; this never exposes raw events. */
+    async reactionHistory(cursor?: ReactionCursor, settings?: ReadOptions) {
+      const epoch = accessEpoch;
+      const signal = settings?.signal
+        ? AbortSignal.any([settings.signal, lifetime.signal])
+        : lifetime.signal;
+      signal.throwIfAborted();
+      const ids = channels.queries
+        .list()
+        .channels.filter(
+          (channel) =>
+            !channel.cached &&
+            !channel.metadataPending &&
+            !channel.archived &&
+            !channel.huddle &&
+            channel.members?.includes(transport?.viewer ?? "") &&
+            canReadRemote(channel.id),
+        )
+        .map((channel) => channel.id);
+      const result = await readReactionPage(
+        {
+          viewer: transport?.viewer,
+          relayAuthor: transport?.relayAuthor,
+          signingAuthority: transport?.archiveAuthority,
+          read: async (filters, options) => {
+            try {
+              return await finiteRead(filters, options, (signal) =>
+                requests.reader.read(filters, { ...options, signal }),
+              );
+            } catch (error) {
+              const requested = new Set(
+                filters.flatMap((filter) => filter["#h"] ?? []),
+              );
+              const [id] = requested;
+              if (
+                !closed &&
+                epoch === accessEpoch &&
+                readErrorKind(error) === "denied" &&
+                requested.size === 1 &&
+                id !== undefined &&
+                filters.every((filter) => filter["#h"]?.length)
+              )
+                channels.denyChannel(id, error);
+              throw error;
+            }
+          },
+        },
+        ids,
+        signal,
+        cursor,
+      );
+      signal.throwIfAborted();
+      if (
+        closed ||
+        epoch !== accessEpoch ||
+        ids.some((id) => !canReadRemote(id))
+      )
+        throw new DOMException("Stale reaction history", "AbortError");
+      return result;
+    },
     /** A fresh verified remote page under the normal access guards, without
      * merging live observations or local outbox intent into paging evidence. */
     async readRemote(filters: readonly ReadFilter[], settings?: ReadOptions) {

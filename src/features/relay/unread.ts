@@ -76,10 +76,21 @@ export type ThreadActivityItem = Readonly<{
   preview: string;
   unreadCount: number;
 }>;
+export type MentionActivityItem = Readonly<{
+  channelId: string;
+  messageId: string;
+  authorId: string;
+  workflowOwnerId?: string | undefined;
+  createdAt: number;
+  preview: string;
+}>;
 export type ThreadActivitySnapshot = Readonly<{
   channelId: string;
   /** null means activity evidence is unknown or access is denied. */
   items: readonly ThreadActivityItem[] | null;
+  /** Unread top-level messages that mention the viewer, newest first. A
+   * reply's mention is listed under its thread instead. */
+  mentions?: readonly MentionActivityItem[];
   coverage: "unknown" | "observed";
   freshness: "unknown" | "observed" | "stale";
   error?: string | undefined;
@@ -1074,11 +1085,37 @@ export function createUnread({
     const state = reads.state();
     const dm = isDm(channelId);
     const grouped = new Map<string, ThreadActivityItem>();
-    // Only unread thread activity is presented; most publishes have none.
+    const mentions: MentionActivityItem[] = [];
+    // Only unread activity is presented; most publishes have none.
     let presented: Map<string, string> | undefined;
+    const previewOf = (event: RelayEvent) => {
+      presented ??= new Map(
+        folded(channelId).map((message) => [message.id, message.content]),
+      );
+      return presented.get(event.id) ?? event.content;
+    };
     for (const evidence of byChannel.get(channelId) ?? []) {
       const { event, rootId } = evidence;
       want(evidence, dm);
+      // A top-level mention is listed by message. A DM never has one, and a
+      // broadcast alone is not one.
+      if (!evidence.parentId) {
+        if (
+          category(evidence, dm) === "mention" &&
+          isUnread(evidence, state, dm)
+        )
+          mentions.push(
+            Object.freeze({
+              channelId,
+              messageId: event.id,
+              authorId: event.pubkey,
+              workflowOwnerId: workflowOwner(event, workflowAuthority),
+              createdAt: event.created_at,
+              preview: previewOf(event),
+            }),
+          );
+        continue;
+      }
       if (
         !rootId ||
         !activityEvidence(evidence) ||
@@ -1086,10 +1123,7 @@ export function createUnread({
       )
         continue;
       const current = grouped.get(rootId);
-      presented ??= new Map(
-        folded(channelId).map((message) => [message.id, message.content]),
-      );
-      const preview = presented.get(event.id) ?? event.content;
+      const preview = previewOf(event);
       if (!current) {
         grouped.set(
           rootId,
@@ -1135,6 +1169,12 @@ export function createUnread({
             a.latestMessageId.localeCompare(b.latestMessageId),
         ),
       ),
+      mentions: Object.freeze(
+        mentions.sort(
+          (a, b) =>
+            b.createdAt - a.createdAt || a.messageId.localeCompare(b.messageId),
+        ),
+      ),
       coverage: "observed",
       freshness,
       ...(error ? { error } : {}),
@@ -1162,7 +1202,18 @@ export function createUnread({
             item.preview === other.preview &&
             item.unreadCount === other.unreadCount
           );
-        })));
+        }))) &&
+    (a.mentions?.length ?? 0) === (b.mentions?.length ?? 0) &&
+    (a.mentions ?? []).every((mention, index) => {
+      const other = b.mentions?.[index];
+      return (
+        mention.messageId === other?.messageId &&
+        mention.authorId === other.authorId &&
+        mention.workflowOwnerId === other.workflowOwnerId &&
+        mention.createdAt === other.createdAt &&
+        mention.preview === other.preview
+      );
+    });
   function activity(channelId: string) {
     const previous = activitySnapshots.get(channelId);
     if (previous && !activityDirty.delete(channelId)) return previous;

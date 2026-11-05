@@ -222,8 +222,8 @@ do not contribute to “N unread” offscreen counts or avatar previews, even fo
 mentions, manual unread or thread replies. Muted
 channel and DM sidebar rows show a crossed-out bell immediately after their names,
 even with no unread activity. They hide all unread dots, including
-thread activity dots. Thread activity remains available through the row's activity popover,
-and its unread count remains accessible to assistive technology. Unmute restores
+thread activity dots. Mentions and thread activity remain available through the row's activity
+popover, and the thread dot's label remains accessible to assistive technology. Unmute restores
 the dots from retained unread evidence. The promoted Bestie DM also hides muted
 unread dots; its label follows the same mute rule.
 Solo chat labels strengthen for any observed unread message, including mentions,
@@ -232,8 +232,13 @@ Ordinary unread renders no row marker. Unmuted DMs, mentions, broadcasts, and
 relevant thread replies add one accent dot; non-DM row numerals are omitted and DM
 avatars are reserved for promoted offscreen cues. Thread activity reuses that dot:
 its hover/focus/click popover groups unread replies by canonical thread root and
-opens the existing thread panel, so overlapping priority and thread activity never
-produce duplicate dots. Merely revealing the popover does not acknowledge a reply.
+opens the existing thread panel. Above the threads it lists unread top-level messages that
+mention the viewer, newest first; a mention opens at its message and is read like any
+visit. A reply's mention stays under its thread; DMs and broadcasts list no
+mentions. A row with only mentions keeps its priority dot and still opens the
+popover; with threads, the dot's label counts both ("1 unread mention, 1 unread
+thread"). Overlapping priority, mention and thread activity never produce
+duplicate dots. Merely revealing the popover does not acknowledge a mention or reply.
 A local manual-unread mark strengthens the label without fabricating priority; the
 underlying observed count remains available.
 Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and

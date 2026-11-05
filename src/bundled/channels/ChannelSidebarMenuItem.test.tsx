@@ -93,10 +93,24 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
   expect(item.querySelector("[data-channel-priority]")).toBeNull();
   act(() => {
     unread = { ...unread, attentionCount: 1 };
+    activity = {
+      ...activity,
+      mentions: [
+        {
+          channelId: "alpha",
+          messageId: "mention",
+          authorId: "peer",
+          createdAt: 2,
+          preview: "Ask",
+        },
+      ],
+    };
     publish();
   });
   expect(label).not.toHaveAttribute("data-ordinary");
+  // A mention alone keeps the priority dot.
   expect(item.querySelector("[data-channel-priority]")).toBeInTheDocument();
+  expect(item.querySelector("[data-channel-activity]")).toBeNull();
   act(() => {
     activity = {
       ...activity,
@@ -114,9 +128,10 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
     };
     publish();
   });
+  // One dot names both.
   expect(
-    screen.getByRole("img", { name: "1 unread thread" }),
-  ).toBeInTheDocument();
+    screen.getByRole("img", { name: "1 unread mention, 1 unread thread" }),
+  ).toHaveAttribute("title", "1 unread mention, 1 unread thread");
   expect(item.querySelector("[data-channel-priority]")).toBeNull();
   act(() => {
     agents = {
@@ -139,7 +154,7 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
   ).toBeInTheDocument();
   act(() => {
     unread = { ...unread, observedCount: 0, attentionCount: 0 };
-    activity = { ...activity, items: [] };
+    activity = { ...activity, items: [], mentions: [] };
     publish();
   });
   expect(label).not.toHaveAttribute("data-ordinary");

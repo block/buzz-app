@@ -134,7 +134,9 @@ export function UnreadBadge({
   const unreadLabel = manual
     ? `Marked unread${snapshot.manual === "local-only" ? " on this device only" : ""}`
     : `${count} observed unread messages${snapshot.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`;
-  const threadLabel = `${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${activity.freshness === "stale" ? "; may be out of date" : ""}`;
+  // Mentions share the thread dot; a mention alone keeps the priority dot.
+  const mentionCount = activity.mentions?.length ?? 0;
+  const activityLabel = `${mentionCount ? `${mentionCount} unread ${mentionCount === 1 ? "mention" : "mentions"}, ` : ""}${threadCount} unread ${threadCount === 1 ? "thread" : "threads"}${activity.freshness === "stale" ? "; may be out of date" : ""}`;
   return (
     <>
       {label !== undefined && (
@@ -166,15 +168,15 @@ export function UnreadBadge({
       )}
       {threadCount > 0 &&
         (hideUnreadDots ? (
-          <span className="sr-only">{threadLabel}</span>
+          <span className="sr-only">{activityLabel}</span>
         ) : (
           <span
             className={styles.threadActivityDot}
             data-channel-activity=""
             data-channel-muted={muted || undefined}
             role="img"
-            aria-label={threadLabel}
-            title={threadLabel}
+            aria-label={activityLabel}
+            title={activityLabel}
           />
         ))}
     </>

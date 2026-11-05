@@ -840,6 +840,53 @@ it("resolves every activity item through its own channel hierarchy", () => {
   expect(h.session.unread.activity("other").items).toEqual([]);
 });
 
+it("lists unread top-level mentions apart from thread activity, never for a DM or a broadcast", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const tag = [["p", h.viewer.pubkey]];
+  const root = message(h.viewer, "room", "My thread", 20);
+  const older = message(h.alice, "room", "First ask", 21, tag);
+  const reply = message(h.alice, "room", "In your thread", 22, [
+    ["e", root.id, "", "reply"],
+    ...tag,
+  ]);
+  const broadcast = message(h.alice, "room", "Everyone", 23, [
+    ["broadcast", "1"],
+  ]);
+  h.emit([root, older, reply, broadcast]);
+  const changed = vi.fn();
+  h.session.unread.subscribeActivity("room", changed);
+  const newer = message(h.alice, "room", "Second ask", 24, tag);
+  h.emit([newer, message(h.alice, "dm", "Direct ask", 25, tag)]);
+
+  expect(changed).toHaveBeenCalled();
+  // The reply's mention stays with its thread.
+  expect(h.session.unread.activity("room")).toMatchObject({
+    items: [{ rootId: root.id, latestMessageId: reply.id }],
+    mentions: [
+      {
+        channelId: "room",
+        messageId: newer.id,
+        authorId: h.alice.pubkey,
+        createdAt: 24,
+        preview: "Second ask",
+      },
+      { messageId: older.id, createdAt: 21, preview: "First ask" },
+    ],
+  });
+  expect(h.session.unread.activity("dm").mentions).toEqual([]);
+
+  await h.session.unread.markThrough(
+    { kind: "message", channelId: "room", messageId: newer.id },
+    newer.id,
+  );
+  expect(h.session.unread.activity("room").mentions).toEqual([
+    expect.objectContaining({ messageId: older.id }),
+  ]);
+});
+
 it("distinguishes unknown thread-activity evidence from observed evidence", () => {
   const h = setup();
   h.grant("room");

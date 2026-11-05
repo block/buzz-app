@@ -7,6 +7,7 @@ import {
   readJournal,
   releaseReadingFocus,
 } from "./reading.mjs";
+import { openPage } from "./navigation.mjs";
 import { channelUnread } from "./unread-state.mjs";
 
 test.use({
@@ -1159,4 +1160,79 @@ test("a live reply in a main-pane thread stays unread while focus is in the side
   await expect.poll(() => unread(x.id)).toBeGreaterThan(0);
   await page.clock.runFor(1000);
   expect(await unread(x.id)).toBeGreaterThan(0);
+});
+
+test.describe("top-level mention activity", () => {
+  test.use({ historyCounts: { alpha: 20, beta: 0 } });
+
+  // Browser-only: hover opening, the exact opening in the timeline and the
+  // visibility read depend on real layout and focus.
+  test("a mention-only row opens Activity, and opening its mention reads it", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    // Load Beta's window first: an exact opening that arrives while the window
+    // is still settling opens the message as its own tab instead.
+    const beta = page.locator('button[data-channel-id="beta"]');
+    await beta.click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    await page.locator('button[data-channel-id="alpha"]').click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeVisible();
+    const mention = app.append(
+      "primary",
+      "beta",
+      "Can you sign off on Beta?",
+      true,
+      false,
+      undefined,
+      undefined,
+      [["p", app.viewer]],
+    );
+    await openPage(page, "Inbox");
+    const inbox = page.getByRole("region", { name: "Inbox", exact: true });
+    const row = inbox
+      .getByRole("list", { name: "Inbox conversations" })
+      .getByRole("listitem")
+      .filter({ has: page.getByRole("button", { name: / in #Beta$/ }) });
+    await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
+    await openPage(page, "Messages");
+    // A mention alone keeps the priority dot.
+    await expect(beta.locator("[data-channel-priority]")).toBeVisible();
+    await expect(beta.locator("[data-channel-activity]")).toHaveCount(0);
+    await beta.hover();
+    const popover = page.getByRole("dialog", { name: "Activity in Beta" });
+    const item = popover
+      .getByRole("region", { name: "Mentions" })
+      .getByRole("button", {
+        name: /^Open unread mention from .+: Can you sign off on Beta\?$/,
+      });
+    await expect(item).toBeVisible();
+    await expect(
+      popover.getByRole("region", { name: "Unread threads" }),
+    ).toHaveCount(0);
+    await item.click();
+    const message = page.locator(
+      `[data-channel-timeline] [data-message-id="${mention.id}"]`,
+    );
+    await expect(message).toBeInViewport();
+    await expect(message).toBeFocused();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id) =>
+            window.fixtureRelay.snapshot().session.unread.attention("beta", id)
+              .unread,
+          mention.id,
+        ),
+      )
+      .toBe(false);
+    await openPage(page, "Inbox");
+    await expect(row).toBeVisible();
+    await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  });
 });

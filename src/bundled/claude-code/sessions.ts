@@ -28,6 +28,7 @@ const SAVED_LIMIT = 200;
 export type SavedSession = Readonly<{
   protection?: string;
   id: string;
+  pending?: true;
   /** created_at of the newest event this session has been shown. */
   seen: number;
   /** Thread-local history in a shared channel session. Older saves have none. */
@@ -82,6 +83,7 @@ type Stoppable = Readonly<{ kill(): unknown; exited: Promise<unknown> }>;
 
 type Live = {
   process: ClaudeProcess;
+  submitted?: boolean;
   fingerprint: string;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
@@ -238,7 +240,16 @@ export class AgentSessions {
       if (this.handing.get(key) === pending) this.handing.delete(key);
     };
     const send = () => this.submit(key, text, seen, options, handed);
-    return (prior ? prior.then(send) : send()).finally(handed);
+    const delivered = (prior ? prior.then(send) : send()).finally(handed);
+    return this.options.strictResume
+      ? delivered.catch(
+          (error): Settled => ({
+            ok: false,
+            error: message(error),
+            undelivered: true,
+          }),
+        )
+      : delivered;
   }
 
   private async submit(
@@ -311,6 +322,13 @@ export class AgentSessions {
         if (current && !current()) return { ok: true, undelivered: true };
         if (this.disposed)
           return { ok: false, error: "Claude was stopped", undelivered: true };
+        if (
+          this.live.get(key) !== live ||
+          !live.process.running ||
+          (live.fingerprint !== this.options.fingerprint(key) &&
+            !live.process.busy)
+        )
+          continue;
       }
       const activity = {
         ...pick,
@@ -331,7 +349,10 @@ export class AgentSessions {
       // A saved session that no longer loads starts over rather than failing
       // every message in the conversation, shown the conversation so far.
       if (!delivered.ok && saved && !live.process.started) {
-        if (this.options.strictResume)
+        if (
+          this.options.strictResume &&
+          !(saved.pending && delivered.error?.includes("No conversation found"))
+        )
           return {
             ...delivered,
             error:
@@ -600,12 +621,25 @@ export class AgentSessions {
     text: string,
     activity: TurnPick & ActivityReceipt,
   ) {
+    live.submitted = true;
     const sent = live.process.send(text, activity);
+    const saving = this.options.strictResume
+      ? Promise.resolve(this.touch(key, live)).then(
+          () => ({ ok: true as const }),
+          (error: unknown) => ({ ok: false as const, error }),
+        )
+      : Promise.resolve({ ok: true as const });
     // Sending made it busy; a snapshot read when it started is not.
     this.options.onChange?.();
     const settled = await sent;
+    const saved = await saving;
+    if (!saved.ok) return { ok: false, error: message(saved.error) };
     if (this.live.get(key) === live) {
-      await this.touch(key, live);
+      try {
+        await this.touch(key, live);
+      } catch (error) {
+        return { ok: false, error: message(error) };
+      }
       if (
         live.fingerprint !== this.options.fingerprint(key) &&
         !live.process.busy
@@ -636,6 +670,12 @@ export class AgentSessions {
     }
     return this.options.store.set(key, {
       id,
+      ...(this.options.strictResume &&
+      !live.submitted &&
+      !live.process.started &&
+      (!prior || prior.pending)
+        ? { pending: true as const }
+        : {}),
       seen: Math.max(seen ?? 0, prior?.seen ?? 0),
       ...(threads ? { threads } : {}),
       at: live.used,

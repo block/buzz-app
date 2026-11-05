@@ -91,6 +91,7 @@ const result = () => send({type:'result', subtype:'success', session_id:'session
 createInterface({input:process.stdin}).on('line', (line) => {
   const wire = JSON.parse(line);
   log(wire);
+  if (wire.testComplete) { result(); return; }
   if (wire.type === 'control_request') {
     send({type:'control_response',response:{subtype:'success',request_id:wire.request_id,response:{models:[{value:'haiku'}]}}});
     if (wire.request.subtype === 'interrupt') {
@@ -100,8 +101,8 @@ createInterface({input:process.stdin}).on('line', (line) => {
     if (resume && !existsSync(session+'.saved')) { process.stderr.write('No conversation found'); process.exit(1); }
     writeFileSync(session+'.saved','saved');
     send({type:'system',subtype:'init',session_id:'session-1',model:'haiku'});
-    if (wire.message.content === 'hold' || wire.message.content.includes('hold-request')) return;
-    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'read',arguments:{path:'proof.bin'}}}}});
+    if (wire.message.content === 'hold' || wire.message.content.includes('hold-request') || (wire.message.content === '/compact' && existsSync('hold-compact'))) return;
+    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:wire.message.content.includes('read-path-request')?'send':'read',arguments:{path:'proof.bin'}}}}});
   } else if (wire.type === 'control_response') {
     if (wire.response.request_id === 'tool') {
       process.stderr.write(JSON.stringify(wire.response.response));
@@ -119,6 +120,15 @@ createInterface({input:process.stdin}).on('line', (line) => {
     guest,
     directory,
     output,
+    finish: () => {
+      for (const child of children)
+        if (
+          !child.killed &&
+          child.exitCode === null &&
+          child.signalCode === null
+        )
+          child.stdin?.write(`${JSON.stringify({ testComplete: true })}\n`);
+    },
     wires: async () =>
       (await readFile(join(directory, "wire.jsonl"), "utf8"))
         .trim()
@@ -176,8 +186,11 @@ it("carries Claude tools, hooks and Stop over guest stdio with guest authenticat
   }
 });
 
-it("resumes the same remote Claude session after restart and gives New a fresh target key", async () => {
-  const fixture = await guestFixture();
+async function remoteFixture() {
+  const guest = await guestFixture();
+  const readRemote = vi
+    .spyOn(guest.guest, "readFile")
+    .mockResolvedValue(new TextEncoder().encode("remote-file"));
   const data = new Map<string, string>();
   const storage = localStore({
     get length() {
@@ -210,24 +223,36 @@ it("resumes the same remote Claude session after restart and gives New a fresh t
     name: () => undefined,
     memoryListing: async () => ({ entries: [], partial: false }),
   } as unknown as AgentReads;
+  const control = {
+    connected: true,
+    bound: true,
+    inspect: async () => {},
+    open: async () => {},
+    dispose: async (_key: string) => {},
+  };
   const sessions: { key: string; intent: string }[] = [];
+  const disposed: string[] = [];
   const connect: Agents["execution"] = async (_agent, session) => {
     sessions.push({ key: session.key, intent: session.intent });
+    await control.open();
     const lifetime = new AbortController();
     return {
-      ...fixture.guest,
+      ...guest.guest,
       signal: lifetime.signal,
-      dispose: async () => lifetime.abort(),
+      dispose: async () => {
+        disposed.push(session.key);
+        lifetime.abort();
+        await control.dispose(session.key);
+      },
     };
   };
   const local = vi.fn(async () => {
     throw new Error("Local Claude must stay unused");
   });
-  let connected = true;
   const create = () =>
     new ClaudeRuntime(
       { spawn: local },
-      () => (connected ? reads : undefined),
+      () => (control.connected ? reads : undefined),
       async () => null,
       fileStore(
         new Map(),
@@ -241,90 +266,250 @@ it("resumes the same remote Claude session after restart and gives New a fresh t
       undefined,
       async () => ({}),
       connect,
-      async () => ({ provider: "test/remote" }),
-      () => true,
+      async () => {
+        await control.inspect();
+        return { provider: "test/remote" };
+      },
+      () => control.bound,
     );
   let runtime = create();
-  const event = {
-    id: "c".repeat(64),
-    pubkey: agent.owner,
-    kind: 9,
-    created_at: 1,
-    content: "hello",
-    tags: [["h", "room"]],
-  };
+  runtime.sync([agent]);
   const waits: Promise<unknown>[] = [];
-  const deliver = async () => {
+  let handovers = 0;
+  const deliver = async (
+    content = "hello",
+    signal = new AbortController().signal,
+    channel = "room",
+  ) => {
+    const event = {
+      id: "c".repeat(64),
+      pubkey: agent.owner,
+      kind: 9,
+      created_at: 1,
+      content,
+      tags: [["h", channel]],
+    };
     await runtime.run({
       agent: handle,
       config: DEFAULT_CONFIG,
-      channelId: "room",
+      channelId: channel,
       trigger: { type: "mention", event },
-      signal: new AbortController().signal,
-      workingUntil: (work: Promise<unknown>) => waits.push(work),
+      signal,
+      workingUntil: (work: Promise<unknown>) => {
+        handovers++;
+        waits.push(work);
+      },
     } as unknown as Delivery);
     await Promise.all(waits.splice(0));
   };
+  return {
+    ...guest,
+    agent,
+    handle,
+    sessions,
+    disposed,
+    control,
+    local,
+    readRemote,
+    deliver,
+    get runtime() {
+      return runtime;
+    },
+    get handovers() {
+      return handovers;
+    },
+    restart: async () => {
+      await runtime.retire(agent.key);
+      runtime.dispose();
+      control.bound = true;
+      runtime = create();
+      runtime.sync([agent]);
+    },
+    cleanup: async () => {
+      control.dispose = async () => {};
+      await runtime.retire(agent.key);
+      runtime.dispose();
+      await guest.cleanup();
+    },
+  };
+}
+
+it("resumes a saved target before its first post-restart compaction and gives New a fresh key", async () => {
+  const f = await remoteFixture();
   try {
-    runtime.sync([agent]);
-    expect(await runtime.models(agent.key)).toMatchObject({
+    expect(await f.runtime.models(f.agent.key)).toMatchObject({
       current: "",
       models: [],
     });
-    expect(sessions).toEqual([]);
-    await deliver();
-    await vi.waitFor(() =>
-      expect(runtime.sessions(agent.key)).toEqual([
-        { key: "room", busy: false },
-      ]),
-    );
-    const saved = runtime.conversations(agent.key)[0];
+    await f.runtime.session(f.agent, { channelId: "room" }, "compact");
+    expect(f.sessions).toEqual([]);
+    await f.deliver();
+    const saved = f.runtime.conversations(f.agent.key)[0];
     expect(saved?.sessionId).toBeTruthy();
-    expect(handle.publish).not.toHaveBeenCalled();
-    event.content = "hold-request";
-    const pending = deliver();
-    await vi.waitFor(() =>
-      expect(runtime.sessions(agent.key)).toEqual([
-        { key: "room", busy: true },
-      ]),
+    await f.restart();
+    await f.runtime.session(f.agent, { channelId: "room" }, "compact");
+    await f.deliver("read-path-request");
+    expect(f.readRemote).toHaveBeenCalledWith("proof.bin", {
+      cwd: f.directory,
+    });
+    expect(f.handle.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "remote-file" }),
+      expect.any(Function),
     );
-    connected = false;
-    try {
-      expect(runtime.sessionState(agent, { channelId: "room" })).toBe("active");
-      await runtime.session(agent, { channelId: "room" }, "interrupt");
-      await pending;
-    } finally {
-      connected = true;
-      event.content = "hello";
-    }
-    await runtime.retire(agent.key);
-    runtime.dispose();
-    runtime = create();
-    runtime.sync([agent]);
-    await deliver();
-    await vi.waitFor(() =>
-      expect(runtime.sessions(agent.key)).toEqual([
-        { key: "room", busy: false },
-      ]),
-    );
-    expect(runtime.conversations(agent.key)[0]?.sessionId).toBe(
+    expect(f.runtime.conversations(f.agent.key)[0]?.sessionId).toBe(
       saved?.sessionId,
     );
-    expect(sessions[1]).toEqual({ key: sessions[0]?.key, intent: "existing" });
+    expect(f.sessions[1]).toEqual({
+      key: f.sessions[0]?.key,
+      intent: "existing",
+    });
     expect(
-      (await fixture.wires()).some(
+      (await f.wires()).some(
         (wire) =>
           Array.isArray(wire.launch) && wire.launch.includes("--resume"),
       ),
     ).toBe(true);
-    await runtime.session(agent, { channelId: "room" }, "new");
-    await deliver();
-    expect(sessions[2]?.key).not.toBe(sessions[0]?.key);
-    expect(sessions[2]?.intent).toBe("new");
-    expect(local).not.toHaveBeenCalled();
+    await f.runtime.session(f.agent, { channelId: "room" }, "new");
+    await f.runtime.session(f.agent, { channelId: "room" }, "compact");
+    expect(f.sessions).toHaveLength(2);
+    await f.deliver();
+    expect(f.sessions[2]?.key).not.toBe(f.sessions[0]?.key);
+    expect(f.sessions[2]?.intent).toBe("new");
+    expect(f.local).not.toHaveBeenCalled();
   } finally {
-    await runtime.retire(agent.key);
-    runtime.dispose();
-    await fixture.cleanup();
+    await f.cleanup();
+  }
+});
+
+it("interrupts remote work with a stale binding cache and no relay scope", async () => {
+  const f = await remoteFixture();
+  const pending = f.deliver("hold-request");
+  try {
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(f.agent.key)).toEqual([
+        { key: "room", busy: true },
+      ]),
+    );
+    f.control.bound = false;
+    f.control.connected = false;
+    expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+      "active",
+    );
+    await f.runtime.session(f.agent, { channelId: "room" }, "interrupt");
+    await pending;
+    expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe("idle");
+  } finally {
+    f.control.connected = true;
+    await f.cleanup();
+  }
+});
+
+it("interrupts remote compaction and retains accepted work past its handover deadline", async () => {
+  const f = await remoteFixture();
+  await f.deliver();
+  await writeFile(join(f.directory, "hold-compact"), "");
+  const compactions = async () =>
+    (await f.wires()).filter(
+      (wire) =>
+        wire.type === "user" &&
+        (wire.message as { content?: string })?.content === "/compact",
+    ).length;
+  try {
+    const compact = f.runtime.session(
+      f.agent,
+      { channelId: "room" },
+      "compact",
+    );
+    const cancelled = expect(compact).rejects.toThrow("interrupted");
+    await vi.waitFor(async () => expect(await compactions()).toBe(1));
+    await f.runtime.session(f.agent, { channelId: "room" }, "interrupt");
+    await cancelled;
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "idle",
+      ),
+    );
+    const again = f.runtime.session(f.agent, { channelId: "room" }, "compact");
+    await vi.waitFor(async () => expect(await compactions()).toBe(2));
+    const expired = new AbortController();
+    const baseline = f.handovers;
+    const accepted = f.deliver("hello", expired.signal);
+    await vi.waitFor(() => expect(f.handovers).toBeGreaterThan(baseline));
+    expired.abort(new Error("handover deadline"));
+    f.finish();
+    await again;
+    await accepted;
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(f.agent, { channelId: "room" })).toBe(
+        "idle",
+      ),
+    );
+    expect(f.handle.publish).not.toHaveBeenCalled();
+  } finally {
+    f.finish();
+    await f.cleanup();
+  }
+});
+
+it("cancels an admitted remote handoff before its connection returns", async () => {
+  const f = await remoteFixture();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let inspections = 0;
+  let opening = false;
+  const spawn = vi.spyOn(f.guest, "spawn");
+  f.control.inspect = async () => {
+    if (++inspections === 2 && !opening) {
+      entered();
+      await gate;
+    }
+  };
+  f.control.open = async () => {
+    opening = true;
+    entered();
+    await gate;
+  };
+  const sent = f.deliver();
+  const cancelled = expect(sent).rejects.toThrow("stopped");
+  try {
+    await waiting;
+    await f.runtime.session(f.agent, { channelId: "room" }, "interrupt");
+  } finally {
+    release();
+  }
+  try {
+    await cancelled;
+    expect(spawn).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it("retires every remote conversation when one cleanup fails and retries only the failure", async () => {
+  const f = await remoteFixture();
+  try {
+    await f.deliver();
+    await f.deliver("hello", undefined, "another-room");
+    const [first, second] = f.sessions;
+    if (!first || !second) throw new Error("Both remote sessions must exist");
+    f.control.dispose = async (key) => {
+      if (key === first.key) throw new Error("cleanup refused");
+    };
+    await expect(f.runtime.retire(f.agent.key)).rejects.toThrow(
+      "cleanup failed",
+    );
+    expect(f.disposed).toEqual(expect.arrayContaining([first.key, second.key]));
+    f.control.dispose = async () => {};
+    await f.runtime.retire(f.agent.key);
+    expect(f.disposed.filter((key) => key === first.key)).toHaveLength(2);
+    expect(f.disposed.filter((key) => key === second.key)).toHaveLength(1);
+  } finally {
+    await f.cleanup();
   }
 });

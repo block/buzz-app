@@ -358,27 +358,33 @@ export function createTabs({
   defaults: ClaudeDefaults;
   runtime: ClaudeRuntime;
 }>) {
-  function useRemote(agent: string) {
+  function useRemote(agent: AgentViewProps<Config>["agent"]) {
+    const key = agent.key;
+    const selection = JSON.stringify(agent.executionBinding ?? null);
     const [state, setState] = useState<{
       agent: string;
+      selection: string;
       remote?: boolean;
       error?: string;
     }>();
     useEffect(() => {
       let current = true;
-      void runtime.isRemote(agent).then(
+      void runtime.isRemote(key).then(
         (remote) => {
-          if (current) setState({ agent, remote });
+          if (current) setState({ agent: key, selection, remote });
         },
         (error) => {
-          if (current) setState({ agent, error: message(error) });
+          if (current)
+            setState({ agent: key, selection, error: message(error) });
         },
       );
       return () => {
         current = false;
       };
-    }, [agent]);
-    return state?.agent === agent ? state : undefined;
+    }, [key, selection]);
+    return state?.agent === key && state.selection === selection
+      ? state
+      : undefined;
   }
   function useSetupCatalog(enabled = true) {
     const state = useSyncExternalStore(
@@ -1071,7 +1077,7 @@ export function createTabs({
   }: AgentViewProps<Config>) {
     const form = useId();
     const saved = readConfig(agent.config);
-    const execution = useRemote(agent.key);
+    const execution = useRemote(agent);
     const remote = execution?.remote === true;
     const setupState = useSetupCatalog(execution?.remote === false);
     const providerDefaults = useSyncExternalStore(

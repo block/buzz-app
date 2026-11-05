@@ -1233,3 +1233,106 @@ it("waits for a remote session save before it sends the first prompt", async () 
   expect(claudes()[0]?.prompts).toEqual(["hello"]);
   await pool.shutdown();
 });
+
+it("retries an unsent remote session in the same pool after restart", async () => {
+  const store = memoryStore();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const write = store.set;
+  store.set = (key, value) => {
+    write(key, value);
+    return gate;
+  };
+  const first = sessions({ store, strictResume: true });
+  let current = true;
+  const unsent = first.pool.deliver("room", "old", 1, {
+    current: () => current,
+  });
+  try {
+    await vi.waitFor(() => expect(store.get("room")?.pending).toBe(true));
+    current = false;
+  } finally {
+    release();
+  }
+  await expect(unsent).resolves.toMatchObject({ ok: true, undelivered: true });
+  expect(first.claudes().flatMap((process) => process.prompts)).toEqual([]);
+  await first.pool.shutdown();
+  store.set = write;
+  const restored = sessions({ store, strictResume: true });
+  try {
+    await expect(restored.pool.deliver("room", "retry", 2)).resolves.toEqual({
+      ok: true,
+    });
+    expect(restored.claudes().flatMap((process) => process.prompts)).toEqual([
+      "retry",
+    ]);
+    expect(store.get("room")?.pending).toBeUndefined();
+  } finally {
+    await restored.pool.shutdown();
+  }
+});
+
+it("uses current settings after a remote session save waits", async () => {
+  const store = memoryStore();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const write = store.set;
+  store.set = (key, value) => {
+    write(key, value);
+    return gate;
+  };
+  const f = sessions({ store, strictResume: true });
+  const sent = f.pool.deliver("room", "hello", 1);
+  try {
+    await vi.waitFor(() => expect(store.get("room")?.pending).toBe(true));
+    f.setModel("haiku");
+    f.pool.reconfigure();
+  } finally {
+    release();
+  }
+  try {
+    await expect(sent).resolves.toEqual({ ok: true });
+    expect(
+      f
+        .claudes()
+        .filter((process) => process.prompts.length)
+        .map((process) => process.model),
+    ).toEqual(["haiku"]);
+  } finally {
+    await f.pool.shutdown();
+  }
+});
+
+it("settles a failed remote save and permits the next delivery", async () => {
+  const store = memoryStore();
+  const write = store.set;
+  let fail = true;
+  store.set = (key, value) => {
+    if (fail && !value.pending) {
+      fail = false;
+      return Promise.reject(new Error("disk unavailable"));
+    }
+    return write(key, value);
+  };
+  const f = sessions({ store, strictResume: true });
+  try {
+    await expect(f.pool.deliver("room", "one", 1)).resolves.toMatchObject({
+      ok: false,
+      error: "disk unavailable",
+    });
+    expect(f.pool.active("room")).toBe(false);
+    await expect(f.pool.deliver("room", "two", 2)).resolves.toEqual({
+      ok: true,
+    });
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([
+      "one",
+      "two",
+    ]);
+  } finally {
+    await f.pool.shutdown();
+  }
+});

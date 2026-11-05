@@ -173,6 +173,7 @@ const NOTES_WAIT_MS = 2_000;
 
 export class ClaudeRuntime {
   private disposed = false;
+  private readonly confirmedRemote = new Set<AgentKey>();
   private readonly remote = new Map<
     string,
     {
@@ -271,7 +272,9 @@ export class ClaudeRuntime {
     signal?: AbortSignal,
   ): Promise<ClaudeRuntime> {
     if (this.disposed) throw new Error("Claude runtime is disposed");
-    if (!this.execution || !(await this.inspect?.(agent))) return this;
+    if (!this.execution)
+      throw new Error("The remote Claude execution is unavailable");
+    this.confirmedRemote.add(agent);
     if (this.disposed || this.retirements.has(agent))
       throw new Error("Claude runtime is retired");
     const key = this.executionKey(agent, conversation);
@@ -389,12 +392,21 @@ export class ClaudeRuntime {
             .map((item) => item.ready),
         );
         await entry?.sessions.shutdown();
-        for (const [key, remote] of this.remote) {
-          if (remote.agent !== pubkey) continue;
-          await remote.runtime.retire(pubkey);
-          await remote.execution.dispose();
-          this.remote.delete(key);
-        }
+        const cleaned = await Promise.allSettled(
+          [...this.remote]
+            .filter(([, remote]) => remote.agent === pubkey)
+            .map(async ([key, remote]) => {
+              await remote.runtime.retire(pubkey);
+              await remote.execution.dispose();
+              this.remote.delete(key);
+            }),
+        );
+        const failed = cleaned.filter((result) => result.status === "rejected");
+        if (failed.length)
+          throw new AggregateError(
+            failed.map((result) => result.reason),
+            "Claude target cleanup failed",
+          );
       })();
       this.retirements.set(pubkey, retiring);
     }
@@ -415,7 +427,10 @@ export class ClaudeRuntime {
       if (!current.has(key)) void this.retire(key).catch(() => undefined);
     for (const agent of agents) {
       if (this.retirements.has(agent.key)) continue;
-      const next = this.resolveConfig(agent.config, this.bound(agent.key));
+      const next = this.resolveConfig(
+        agent.config,
+        this.bound(agent.key) || this.confirmedRemote.has(agent.key),
+      );
       const entry = this.agents.get(agent.key);
       if (!entry) {
         const created = this.entry(agent, next);
@@ -438,7 +453,9 @@ export class ClaudeRuntime {
       ...agents
         .filter(
           (agent) =>
-            !agent.protection && !this.target && !this.bound(agent.key),
+            !agent.protection &&
+            !this.target &&
+            !(this.bound(agent.key) || this.confirmedRemote.has(agent.key)),
         )
         .map((agent) => where(this.resolveConfig(agent.config))),
     );
@@ -446,14 +463,16 @@ export class ClaudeRuntime {
   }
 
   async isRemote(agent: AgentKey) {
-    return !!(this.target || (await this.inspect?.(agent)));
+    const remote = !!(this.target || (await this.inspect?.(agent)));
+    if (remote) this.confirmedRemote.add(agent);
+    return remote;
   }
 
   /** The models the agent's next turn can run on, with their effort levels.
    * Without a pick it uses its own: the configured one, or else the one its
    * sessions report. `default` duplicates a listed model, so it is not offered. */
   async models(agent: AgentKey, raw?: unknown): Promise<Models> {
-    if (await this.inspect?.(agent)) {
+    if (await this.isRemote(agent)) {
       const current = this.resolveConfig(
         raw ?? this.agents.get(agent)?.config,
         true,
@@ -518,11 +537,12 @@ export class ClaudeRuntime {
   sessions(agent: AgentKey): ReturnType<AgentSessions["snapshot"]> {
     let view = this.views.get(agent);
     if (!view) {
-      view = this.bound(agent)
-        ? [...this.remote.values()]
-            .filter((item) => item.agent === agent)
-            .flatMap((item) => item.runtime.sessions(agent))
-        : (this.agents.get(agent)?.sessions.snapshot() ?? []);
+      view =
+        this.bound(agent) || this.confirmedRemote.has(agent)
+          ? [...this.remote.values()]
+              .filter((item) => item.agent === agent)
+              .flatMap((item) => item.runtime.sessions(agent))
+          : (this.agents.get(agent)?.sessions.snapshot() ?? []);
       this.views.set(agent, view);
     }
     return view;
@@ -530,25 +550,26 @@ export class ClaudeRuntime {
   /** The agent's saved sessions, most recently used first. */
   conversations(agent: AgentKey): SavedConversation[] {
     const reads = this.reads(agent);
-    const saved = this.bound(agent)
-      ? this.storage
-          .keys()
-          .filter((key) =>
-            key.startsWith("buzz.claude-code.sessions.execution.v1:"),
-          )
-          .flatMap((key) => {
-            const [scope, owner] = JSON.parse(
-              key.slice("buzz.claude-code.sessions.execution.v1:".length),
-            ) as string[];
-            if (owner !== agent || scope !== reads?.scope) return [];
-            const session = this.record(this.storage.get(key) ?? "null");
-            return localSessions(
-              this.storage,
-              agent,
-              `buzz.claude-code.sessions.remote.v1:${session.key}`,
-            ).list();
-          })
-      : this.savedSessions(agent).list();
+    const saved =
+      this.bound(agent) || this.confirmedRemote.has(agent)
+        ? this.storage
+            .keys()
+            .filter((key) =>
+              key.startsWith("buzz.claude-code.sessions.execution.v1:"),
+            )
+            .flatMap((key) => {
+              const [scope, owner] = JSON.parse(
+                key.slice("buzz.claude-code.sessions.execution.v1:".length),
+              ) as string[];
+              if (owner !== agent || scope !== reads?.scope) return [];
+              const session = this.record(this.storage.get(key) ?? "null");
+              return localSessions(
+                this.storage,
+                agent,
+                `buzz.claude-code.sessions.remote.v1:${session.key}`,
+              ).list();
+            })
+        : this.savedSessions(agent).list();
     return saved.map(([key, saved]) => {
       const [channelId = key, root] = key.split("/");
       return {
@@ -645,7 +666,7 @@ export class ClaudeRuntime {
     const key = this.controlKey(agent, place);
     if (this.controls.compacting(`${agent.key}/${key}`)) return "compacting";
     if (this.controls.active(`${agent.key}/${key}`)) return "active";
-    if (this.bound(agent.key)) {
+    if (this.bound(agent.key) || this.confirmedRemote.has(agent.key)) {
       if (
         [...this.opening.values()].some(
           (entry) => entry.agent === agent.key && entry.conversation === key,
@@ -676,7 +697,7 @@ export class ClaudeRuntime {
     const key = this.controlKey(agent, place);
     if (await this.inspect?.(agent.key)) {
       if (action === "interrupt") {
-        if (this.controls.interrupt(`${agent.key}/${key}`)) return;
+        this.controls.interrupt(`${agent.key}/${key}`);
         for (const pending of this.opening.values())
           if (pending.agent === agent.key && pending.conversation === key)
             pending.abort.abort(new Error("Claude was stopped"));
@@ -708,13 +729,25 @@ export class ClaudeRuntime {
             this.notify();
             return;
           }
+          const stored = await this.storage.read(remoteKey);
+          if (!stored) return;
+          const saved = this.record(stored);
+          const text = await this.storage.read(
+            `buzz.claude-code.sessions.remote.v1:${saved.key}:${agent.key}`,
+          );
+          const session = JSON.parse(text ?? "{}")[key];
+          if (!session?.id || session.pending) return;
+          signal.throwIfAborted();
           const runtime = await this.connection(agent.key, key, signal);
           await runtime.session(agent, place, action);
         },
       );
     }
     const control = `${agent.key}/${key}`;
-    const entry = this.entry(agent, config(agent.config));
+    const entry = this.entry(
+      agent,
+      this.target ? this.resolveConfig(agent.config) : config(agent.config),
+    );
     if (action === "interrupt") {
       this.controls.interrupt(control);
       entry.policies.get(key)?.cancel();
@@ -772,7 +805,10 @@ export class ClaudeRuntime {
       interruptible,
       named,
     } = delivery;
-    const settings = this.resolveConfig(raw, this.bound(agent.key));
+    const settings = this.resolveConfig(
+      raw,
+      this.bound(agent.key) || this.confirmedRemote.has(agent.key),
+    );
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
       trigger.type !== "mention" &&
@@ -829,7 +865,10 @@ export class ClaudeRuntime {
             key,
             deferred ? undefined : signal,
           );
-          await runtime.run(delivery);
+          const accepted = deferred ? runtime.target?.signal : signal;
+          if (!accepted)
+            throw new Error("The remote Claude lifetime is unavailable");
+          await runtime.run({ ...delivery, signal: accepted });
         },
       );
       if (handoff.deferred) {
@@ -959,9 +998,10 @@ export class ClaudeRuntime {
             prior?.cancel();
           },
           handed: handed.catch(() => undefined),
-          settled: Promise.all([same ? prior.settled : undefined, done]).then(
-            () => undefined,
-          ),
+          settled: Promise.allSettled([
+            same ? prior.settled : undefined,
+            done,
+          ]).then(() => undefined),
         };
         entry.policies.set(key, policy);
         void policy.settled.then(() => {
@@ -1242,7 +1282,8 @@ export class ClaudeRuntime {
     {
       key: agent,
       protection,
-    }: Readonly<{ key: AgentKey; protection?: unknown }>,
+      name,
+    }: Readonly<{ key: AgentKey; protection?: unknown; name?: string }>,
     initial: Config,
   ): Entry {
     if (this.retirements.has(agent))
@@ -1251,6 +1292,7 @@ export class ClaudeRuntime {
     if (existing) return existing;
     const entry: Entry = {
       protected: !!protection,
+      ...(name ? { name } : {}),
       config: initial,
       team: "",
       sessions: undefined as unknown as AgentSessions,

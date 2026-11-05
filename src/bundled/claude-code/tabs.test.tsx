@@ -298,7 +298,15 @@ function applied({
     effect: vi.fn(),
   };
   apply(ctx as never);
-  return { type, spawn, home, execution: ctx.agents.execution };
+  return {
+    type,
+    spawn,
+    home,
+    execution: ctx.agents.execution,
+    setRemote: (value: boolean) => {
+      remote = value;
+    },
+  };
 }
 function installed(options?: Parameters<typeof applied>[0]) {
   const result = applied(options);
@@ -2177,4 +2185,26 @@ it("uses target model settings for remote Claude without a local catalog or a ta
     ),
   ).toBe(false);
   expect(execution).not.toHaveBeenCalled();
+});
+
+it("refreshes mounted Claude Settings after an execution binding changes", async () => {
+  const f = installed();
+  const Settings = tab(f.type, 0);
+  const save = vi.fn(async () => {});
+  const view = render(<Settings agent={agent()} save={save} />);
+  await waitFor(() => expect(screen.getByLabelText("Workspace")).toBeEnabled());
+  f.setRemote(true);
+  view.rerender(
+    <Settings
+      agent={{ ...agent(), executionBinding: { provider: "nexus/blox" } }}
+      save={save}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Target default",
+    ),
+  );
+  expect(screen.getByLabelText("Workspace")).toBeDisabled();
+  expect(f.execution).not.toHaveBeenCalled();
 });

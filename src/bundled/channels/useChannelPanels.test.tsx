@@ -257,9 +257,9 @@ it.each(["bottom", "side"] as const)(
 
 it("keeps the huddle last, with the linked PR just before it, regardless of registration order", () => {
   const available = [
+    "buzz.huddles/huddles",
     "other/tool",
     "buzz.github/object",
-    "buzz.huddles/huddles",
   ].map((key) => ({
     key,
     id: key,

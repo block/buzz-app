@@ -490,6 +490,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("typesafe manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
             .expect("focus manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/stickers/manifest.json"))
+            .expect("stickers manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.

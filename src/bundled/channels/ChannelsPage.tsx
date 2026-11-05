@@ -31,7 +31,7 @@ import {
   useChannelTabState,
 } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { ChannelHeaderIdentity } from "./ChannelHeaderIdentity";
+import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   soloDraft,
   soloDraftTarget,
@@ -2206,6 +2206,7 @@ function ChannelWorkspace({
                           session={queries}
                           channelId={current.id}
                           name={current.name}
+                          access={memberAccess(current)}
                           ref={membersHeaderTrigger}
                           aria-expanded={membersOpen}
                           onClick={(event) => openMembers(event.currentTarget)}

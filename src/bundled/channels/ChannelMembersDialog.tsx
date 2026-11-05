@@ -1,4 +1,4 @@
-import { ChannelHeaderIdentity } from "./ChannelHeaderIdentity";
+import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -440,6 +440,14 @@ export function ChannelMembersButton({
   const open = presentation ? presentation.open : localOpen;
   const setOpen = presentation ? presentation.onOpenChange : setLocalOpen;
   const trigger = useRef<HTMLButtonElement>(null);
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const channel =
+    list.channels.find((item) => item.id === channelId) ??
+    session.channels.get?.(channelId);
   return (
     <>
       {conversationName !== undefined ? (
@@ -448,6 +456,7 @@ export function ChannelMembersButton({
           session={session}
           channelId={channelId}
           name={conversationName}
+          access={memberAccess(channel)}
           detail={owner && soloOwnerLabel(owner)}
           aria-expanded={open}
           onClick={() => setOpen(true)}
@@ -1811,14 +1820,7 @@ export function ChannelMembersDialog({
             : selection.expectedRole === "absent"
               ? "Add member?"
               : `Change access to ${memberAccessLabel(selection.role)}?`
-          : (title ??
-            (solo && readOnlyAccess
-              ? "Chat access"
-              : solo
-                ? "Share access"
-                : readOnlyAccess
-                  ? "Channel access"
-                  : "Manage members"))
+          : (title ?? memberAccess(channel).title)
       }
       height={selection ? "content" : generalAccess ? "stable-tall" : "stable"}
       bodyLayout={selection ? "flow" : "flex"}

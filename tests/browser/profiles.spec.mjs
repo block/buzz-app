@@ -1237,7 +1237,7 @@ test("profile preview stays inside a Solo conversation beside another pane", asy
   await page.goto("/tests/fixtures/profiles.html?solo");
   await page.getByRole("button", { name: "One", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Manage members of One", exact: true }),
+    page.getByRole("button", { name: "Share access to One", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "View Viewer profile", exact: true })

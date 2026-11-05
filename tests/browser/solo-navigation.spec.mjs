@@ -136,7 +136,7 @@ test.describe("Solo layout", () => {
     await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
     await expect(
       workspace.getByRole("button", {
-        name: "Manage members of Alpha",
+        name: "Share access to Alpha",
         exact: true,
       }),
     ).toBeVisible();

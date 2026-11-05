@@ -528,14 +528,14 @@ test("composable rows retain narrow rename and immediate keyboard/touch activati
   await page.clock.runFor(500);
   await expect(composer(page)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Manage members of Beta", exact: true }),
+    page.getByRole("button", { name: "Share access to Beta", exact: true }),
   ).toBeVisible();
   await expect(sidebar(page)).not.toBeVisible();
   await page.clock.resume();
   await show.click();
   await regionRow(page, alpha).press("Enter");
   await expect(
-    page.getByRole("button", { name: "Manage members of Alpha", exact: true }),
+    page.getByRole("button", { name: "Share access to Alpha", exact: true }),
   ).toBeVisible();
   await expect(sidebar(page)).not.toBeVisible();
   await show.click();

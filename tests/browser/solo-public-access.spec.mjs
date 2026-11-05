@@ -76,7 +76,7 @@ function accessControls(page) {
         page.getByRole("button", { name: "Chat actions", exact: true }),
       ).toBeVisible();
       await page
-        .getByRole("button", { name: /^Manage members of /, exact: true })
+        .getByRole("button", { name: /^Share access to /, exact: true })
         .last()
         .click();
     },
@@ -407,7 +407,7 @@ test.describe("visitor", () => {
       );
       await capture(article, info, `SOLO_DROPDOWN_VISITOR_${suffix}`);
       await page
-        .getByRole("button", { name: /^Manage members of / })
+        .getByRole("button", { name: /^Chat access for / })
         .last()
         .click();
       const dialog = page.getByRole("dialog", {
@@ -444,7 +444,7 @@ test.describe("visitor", () => {
       article.getByRole("button", { name: "Join", exact: true }),
     ).toHaveCount(0);
     await page
-      .getByRole("button", { name: /^Manage members of / })
+      .getByRole("button", { name: /^Share access to / })
       .last()
       .click();
     const existingAccess = page.getByRole("dialog", {
@@ -527,7 +527,7 @@ test.describe("visitor", () => {
     await page.reload();
     await expect(row).toBeVisible();
     await page
-      .getByRole("button", { name: /^Manage members of / })
+      .getByRole("button", { name: /^Chat access for / })
       .last()
       .click();
     const access = page.getByRole("dialog", {

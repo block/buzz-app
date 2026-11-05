@@ -477,7 +477,7 @@ test.describe("Solo chat lifecycle", () => {
     });
     await expect(composer).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /^Manage members of /, exact: true }),
+      page.getByRole("button", { name: /^Share access to /, exact: true }),
     ).toBeVisible();
     const url = page.url();
     await row.focus();
@@ -518,7 +518,7 @@ test.describe("Solo chat lifecycle", () => {
     ).toHaveText("This chat is archived");
     await expect(composer).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: /^Manage members of /, exact: true }),
+      page.getByRole("button", { name: /^Share access to /, exact: true }),
     ).toHaveCount(0);
     await page.reload();
     await expect(
@@ -569,7 +569,7 @@ test.describe("Solo chat lifecycle", () => {
     await expect(row).toBeVisible();
     await expect(composer).toBeEnabled();
     await expect(
-      page.getByRole("button", { name: /^Manage members of /, exact: true }),
+      page.getByRole("button", { name: /^Share access to /, exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(url);
     await header.click();

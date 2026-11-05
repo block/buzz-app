@@ -1141,7 +1141,7 @@ it("names the owner on the access controls of someone else's shared chat", async
   const user = userEvent.setup();
   // The header names the owner; the sidebar mark retains the owner avatar.
   const header = await screen.findByRole("button", {
-    name: "Manage members of Planning, Teammate’s chat",
+    name: "Share access to Planning, Teammate’s chat",
   });
   expect(header).toHaveTextContent("Planning");
   expect(header).toHaveAttribute("title", "Teammate’s chat");
@@ -1171,7 +1171,7 @@ it.each([
 ])("names no owner on %s", async (_, options) => {
   fixture(options).mountWithSidebar();
   expect(
-    await screen.findByRole("button", { name: "Manage members of Planning" }),
+    await screen.findByRole("button", { name: "Share access to Planning" }),
   ).toBeInTheDocument();
   expect(screen.queryByText(/’s chat/)).toBeNull();
 });
@@ -1181,7 +1181,7 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   await screen.findByRole("button", { name: "Chat actions" });
   expect(screen.getAllByText("Archived")).toHaveLength(1);
   expect(
-    screen.queryByRole("button", { name: "Manage members of Planning" }),
+    screen.queryByRole("button", { name: "Share access to Planning" }),
   ).toBeNull();
   expect(
     await screen.findByRole("region", { name: "Archived chat" }),

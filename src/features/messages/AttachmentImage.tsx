@@ -224,8 +224,6 @@ function ImagePixels({
       setRetained(false);
       return;
     }
-    // A row can unmount after decode but before its ready state commits.
-    original.style.visibility = "visible";
     host.current?.append(original);
     onDecoded({ width: original.naturalWidth, height: original.naturalHeight });
     return () => {
@@ -289,9 +287,11 @@ function ImagePixels({
       original.removeEventListener("load", loaded);
       observer?.disconnect();
       // Only a deleted row detaches its original; a rerun keeps it mounted.
-      // Unparent it so the pool retains the element, not the deleted row.
+      // Unparent it so the pool retains the element, not the deleted row, and
+      // show it: the row can unmount before its ready state commits.
       if (session && decoded && !original.isConnected) {
         original.remove();
+        original.style.visibility = "visible";
         retainDecodedImage(session, source, original, capture);
       }
     };

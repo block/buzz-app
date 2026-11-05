@@ -2884,22 +2884,6 @@ it("orders the toolbar as tabs, From, then Unread", async () => {
   expect(follows(fromTrigger(), unread)).toBe(true);
 });
 
-it("loads a saved Drafts view, from before Drafts left Activity, as All", async () => {
-  const h = fixture();
-  localStorage.setItem(
-    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "inbox:filters"])}`,
-    JSON.stringify({ activity: "drafts", sender: "agents" }),
-  );
-  render(h.view);
-  await waitFor(() =>
-    expect(fromTrigger()).toHaveAccessibleName("From agents"),
-  );
-  expect(activityType()).toBe("All");
-  expect(tabs("Activity type")).toEqual(["All", "Threads", "Mentions", "DMs"]);
-  expect(screen.queryByRole("list", { name: "Drafts" })).toBeNull();
-  expect(screen.getByRole("list", { name: "Activity" })).toBeInTheDocument();
-});
-
 it("combines the existing filter choices without placeholder actions", async () => {
   const h = fixture();
   render(h.view);

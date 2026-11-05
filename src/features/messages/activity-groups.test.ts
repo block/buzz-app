@@ -147,7 +147,7 @@ it.each([1, 2])(
   },
 );
 
-it("hands unparented thread replies to the latest request without overriding explicit reply links", () => {
+it("hands unparented and root-linked thread replies to the latest request without overriding explicit reply links", () => {
   const { audience: _requestAudience, ...request } = activity("request", {
     authorId: "human",
     threadRootId: "root",
@@ -165,8 +165,27 @@ it("hands unparented thread replies to the latest request without overriding exp
     ).representedAgents;
   expect(projected({}).get("request")).toEqual(["agent"]);
   expect(projected({}).get("root")).toBeUndefined();
-  expect(projected({ replyParentId: "root" }).get("root")).toEqual(["agent"]);
-  expect(projected({ replyParentId: "root" }).get("request")).toBeUndefined();
+  // Flat thread sends link every reply to the root, so that link names the
+  // thread, not the request.
+  expect(projected({ replyParentId: "root" }).get("request")).toEqual([
+    "agent",
+  ]);
+  expect(projected({ replyParentId: "root" }).get("root")).toBeUndefined();
+  expect(projected({ replyParentId: "earlier" }).get("earlier")).toEqual([
+    "agent",
+  ]);
+  expect(
+    projected({ replyParentId: "earlier" }).get("request"),
+  ).toBeUndefined();
+  // A request in another thread says nothing about this thread's replies.
+  const elsewhere = publicMessage("elsewhere", { authorId: "human" });
+  expect(
+    activityPresentation(
+      [elsewhere, { ...reply, replyParentId: "root" }],
+      undefined,
+      new Set(["agent"]),
+    ).representedAgents.get("root"),
+  ).toEqual(["agent"]);
 });
 
 it.each([

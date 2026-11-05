@@ -166,6 +166,7 @@ export function activityPresentation(
       .map((row) => row.authorId),
   );
   let request = rootId;
+  let requestThread = rootId;
   for (const row of rows) {
     const isAgent =
       activityAuthors.has(row.authorId) || agents?.has(row.authorId);
@@ -175,13 +176,22 @@ export function activityPresentation(
       !row.membership &&
       agents &&
       !agents.has(row.authorId)
-    )
+    ) {
       request = row.id;
+      requestThread = row.threadRootId ?? row.id;
+    }
     // A thread root is a scope, not necessarily the latest triggering request.
-    // Preserve explicit reply links; otherwise follow the preceding request.
-    const parentRequest = row.replyParentId
-      ? (requests.get(row.replyParentId) ?? row.replyParentId)
-      : undefined;
+    // Flat thread replies link to the root, so a root link only says which
+    // thread: follow the preceding request in that thread. Preserve other
+    // explicit reply links.
+    const linksScope =
+      !!row.threadRootId &&
+      row.replyParentId === row.threadRootId &&
+      requestThread === row.threadRootId;
+    const parentRequest =
+      row.replyParentId && !linksScope
+        ? (requests.get(row.replyParentId) ?? row.replyParentId)
+        : undefined;
     const rowRequest = isAgent ? (parentRequest ?? request) : request;
     if (rowRequest) requests.set(row.id, rowRequest);
     if (rowRequest && !row.membership && isAgent) {

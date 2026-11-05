@@ -1531,6 +1531,77 @@ it.each([false, true])(
   },
 );
 
+it("hands a thread follow-up's controls to the history its root-linked update starts", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  local
+    .begin({
+      scope: "test",
+      agent: A,
+      channelId: "c",
+      messageId: next,
+      threadRootId: root,
+      thread: true,
+    })
+    .interruptible(async () => {});
+  // Flat thread sends link every reply to the root, whichever request it serves.
+  const reply = { threadRootId: root, replyParentId: root };
+  const answer = {
+    ...f.props.message,
+    ...reply,
+    id: "answer",
+    authorId: A,
+    content: "Done",
+  };
+  const followUp = { ...f.props.message, ...reply, id: next, content: "More" };
+  const step = {
+    ...f.props.message,
+    ...reply,
+    id: "step",
+    authorId: A,
+    audience: "agents" as const,
+    content: "Checking the files",
+  };
+  const group = activityPresentation(
+    [answer, followUp, step],
+    f.props.session.agentActivity.snapshot(),
+    new Set([A]),
+    root,
+  ).groups[0];
+  if (!group) throw new Error("Missing group");
+  expect(group.requestId).toBe(next);
+  const view = render(
+    <ActivityIndicatorPresentation>
+      <ActivityAccessory
+        {...f.props}
+        message={followUp}
+        messageLayout="thread"
+      />
+      <ActivityGroupPreview
+        session={f.props.session}
+        group={group}
+        profiles={f.profiles}
+        media={() => undefined}
+        expanded
+        onToggle={() => {}}
+        openActivity={f.props.open}
+        canOpenActivity={f.props.canOpen}
+      />
+    </ActivityIndicatorPresentation>,
+  );
+  try {
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Stop Blossom" }),
+    ).toHaveLength(1);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("hands request controls to recorded history and keeps Stop and transcript there", async () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

@@ -1186,7 +1186,8 @@ export function createUnread({
               ...(representative.rootId
                 ? { rootId: representative.rootId }
                 : {}),
-              ...(representative.rootId &&
+              ...(dm &&
+              representative.rootId &&
               unread.every((entry) => entry.rootId === representative.rootId)
                 ? { threadOnly: true as const }
                 : {}),

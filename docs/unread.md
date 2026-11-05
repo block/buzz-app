@@ -95,12 +95,22 @@ timeline and the thread being read, without reading unopened threads' replies.
   channel's oldest ordinary evidence goes first, and a channel left with none is
   unknown rather than zero. The remembered threads' evidence goes last while it
   holds at most a quarter of the events; beyond that, the busiest thread's
-  oldest goes first, so channels keep three quarters across repairs. A repair
-  reads each joined channel's recent window on its own, the newest events of up
-  to 128 channels at a time, and the threads the viewer took part in; earlier
-  results publish progressively and survive a later
-  transport failure. See [Inbox: ownership and limits](inbox.md#ownership-and-limits)
-  for what it reads. Missing thread roots can affect inherited markers.
+  oldest goes first, so channels keep three quarters across repairs. A full
+  repair reads each joined channel's recent window on its own, the newest events
+  of up to 128 channels at a time, and the threads the viewer took part in;
+  earlier results publish progressively and survive a later transport failure.
+  The device keeps what the next repair would read and how far it last read the
+  whole roster. While that record (or, in a session whose record was too large
+  to save, what that session still holds) is complete and was confirmed within
+  the last day, a launch, reconnect, periodic check or access change catches up
+  instead, reading only what the joined channels gained since that point, from
+  far enough before it that a late commit is still read and never from after the
+  present, however far ahead an event is dated. A device's first launch, a lost
+  or incomplete record or one not confirmed within the day, a catch-up with more
+  new events than it takes, and an explicit `refresh()` run the full repair. See
+  [Inbox: ownership and limits](inbox.md#ownership-and-limits) for what each
+  reads and when the point moves. Missing thread roots can affect inherited
+  markers.
   Repair evidence does not seed channel windows, alter cursors, or mark messages read.
 - Initial marker/evidence observation and explicit evidence refresh are foreground
   reads so optional profiles do not block them. Reconnect/periodic sync and marker

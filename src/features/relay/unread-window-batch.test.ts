@@ -6,6 +6,7 @@ import {
 } from "./unread-window-batch";
 
 const kinds = [9, 40002, 40008];
+const overlay = [40003, 5, 9005];
 const root = "a".repeat(64);
 const viewer = "b".repeat(64);
 const channel = (i: number) => `room-${i}`;
@@ -48,10 +49,22 @@ it("admits each of the repair's shapes, up to 128 filters a request", () => {
     [
       {
         kinds,
-        ids: Array.from({ length: 100 }, (_, i) =>
+        ids: Array.from({ length: 50 }, (_, i) =>
           i.toString(16).padStart(64, "0"),
         ),
         include_aux: true,
+        limit: 50,
+      },
+    ],
+    // The edits and deletions of held events, fresh and resumed.
+    [{ kinds: overlay, "#e": [root], since: 5, limit: 100 }],
+    [
+      {
+        kinds: overlay,
+        "#e": [root, viewer],
+        since: 5,
+        until: 9,
+        before_id: viewer,
         limit: 100,
       },
     ],
@@ -90,6 +103,27 @@ it.each([
         limit: 500,
       },
     ],
+  ],
+  [
+    "a root fetch of 51 ids",
+    [
+      {
+        kinds,
+        ids: Array.from({ length: 51 }, (_, i) =>
+          i.toString(16).padStart(64, "0"),
+        ),
+        include_aux: true,
+        limit: 51,
+      },
+    ],
+  ],
+  [
+    "an overlay read without since",
+    [{ kinds: overlay, "#e": [root], limit: 100 }],
+  ],
+  [
+    "an overlay read of content kinds",
+    [{ kinds, "#e": [root], since: 5, limit: 100 }],
   ],
   [
     "a root fetch whose limit is not its count",

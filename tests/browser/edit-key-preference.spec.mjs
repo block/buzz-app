@@ -27,6 +27,11 @@ test("Up Arrow editing follows the saved preference in channels and threads", as
     .filter({ hasText: "Channel shortcut message" });
   await expect(row).toBeVisible();
   await expect(input).toHaveJSProperty("value", "");
+  // Optimistic rows render before delivery makes them eligible for editing.
+  await hoverMessage(row);
+  await expect(
+    row.getByRole("button", { name: "Reply", exact: true }),
+  ).toBeEnabled();
   await input.press("ArrowUp");
   await expect(input).not.toBeFocused();
   await expect(
@@ -89,6 +94,13 @@ test("Up Arrow editing follows the saved preference in channels and threads", as
     panel.getByText("Thread shortcut reply", { exact: true }),
   ).toBeVisible();
   await expect(reply).toHaveJSProperty("value", "");
+  const replyRow = panel.locator("[data-message-id]").filter({
+    hasText: "Thread shortcut reply",
+  });
+  await hoverMessage(replyRow);
+  await expect(
+    replyRow.getByRole("button", { name: "Reply", exact: true }),
+  ).toBeEnabled();
   await reply.press("ArrowUp");
   const threadEditor = panel.getByRole("textbox", {
     name: "Edit message",

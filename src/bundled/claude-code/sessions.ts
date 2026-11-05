@@ -305,7 +305,13 @@ export class AgentSessions {
           !live.process.busy)
       )
         continue;
-      await this.touch(key, live, seen, contextRoot);
+      const savedState = this.touch(key, live, seen, contextRoot);
+      if (this.options.strictResume) {
+        await savedState;
+        if (current && !current()) return { ok: true, undelivered: true };
+        if (this.disposed)
+          return { ok: false, error: "Claude was stopped", undelivered: true };
+      }
       const activity = {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
@@ -361,7 +367,6 @@ export class AgentSessions {
    * starting for it has taken its message. */
   async interrupt(key: string) {
     await this.opening.get(key);
-    if (!this.live.get(key)?.process.active) await this.handing.get(key);
     await this.live.get(key)?.process.interrupt();
   }
   /** Compacts the conversation's session, resuming it when its process has

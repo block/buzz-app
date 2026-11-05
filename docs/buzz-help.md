@@ -178,7 +178,8 @@ that agent in Buzz; they do not notify the external app through this connection.
   removes muted channels from the sidebar. Starred channels, DMs, Solo chats and the
   channel you have open stay visible. A hidden muted channel comes back while it has an unread
   mention, a reply in a thread you're part of, a broadcast, or a manual unread mark,
-  and hides again once read. Hidden ones are listed under **Muted** in each section's
+  and hides again once read. While it's back for a mention, reply or broadcast, it shows
+  the usual mention dot so you can tell why. Hidden ones are listed under **Muted** in each section's
   **Filter** menu, and search still finds them.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,

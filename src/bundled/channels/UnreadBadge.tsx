@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
+import { useHideMutedChannelsPreference } from "./hide-muted-preference";
 
 type UnreadSnapshot = ReturnType<RelaySession["unread"]["snapshot"]>;
 
@@ -113,13 +114,16 @@ export function UnreadBadge({
     threadCount,
     muted,
   } = useUnreadState(session, channelId, dm);
+  const hideMuted = useHideMutedChannelsPreference().enabled;
   const unread =
     labelUnread === "all" || preserveUnread
       ? manual || (count ?? 0) > 0
       : quietUnread;
-  const hideUnreadDots = muted && labelUnread === "ordinary" && !preserveUnread;
-  if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (snapshot.attentionCount ?? 0) > 0;
+  // A hidden muted channel resurfaces for attention, so it shows why.
+  const quiet = muted && !(hideMuted && !dm && priority);
+  const hideUnreadDots = quiet && labelUnread === "ordinary" && !preserveUnread;
+  if (!unread && !threadCount && label === undefined) return null;
   const showUnreadDot =
     !hideUnreadDots &&
     priority &&
@@ -144,7 +148,7 @@ export function UnreadBadge({
         <span
           className={styles.unreadState}
           data-channel-unread=""
-          data-channel-muted={muted || undefined}
+          data-channel-muted={quiet || undefined}
           data-priority={priority}
           role="img"
           aria-label={unreadLabel}
@@ -165,7 +169,7 @@ export function UnreadBadge({
           <span
             className={styles.threadActivityDot}
             data-channel-activity=""
-            data-channel-muted={muted || undefined}
+            data-channel-muted={quiet || undefined}
             role="img"
             aria-label={threadLabel}
             title={threadLabel}

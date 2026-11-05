@@ -229,7 +229,8 @@ default (`buzz-hide-muted-channels.v1`). It removes muted channels from saved
 groups, **Channels** and **Forums** before the section filter applies; **Starred**,
 DMs and Solo chats are unaffected. The open channel stays visible, and so does a
 muted channel with unread attention (the badge `attentionCount`: mentions, replies
-in the viewer's threads, broadcasts) or a manual unread mark. Until unread evidence
+in the viewer's threads, broadcasts) or a manual unread mark; attention also shows its dot
+on the muted row ([unread](unread.md)). Until unread evidence
 loads, attention is unknown and the channel stays hidden, so a channel with a
 mention can appear shortly after startup. Saved and cached mutes hide at startup,
 and a pending Mute hides at once so the row menu returns focus to its section
